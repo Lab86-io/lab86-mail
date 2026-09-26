@@ -216,9 +216,44 @@ export const upsertConnectedAccount = mutation({
     } else {
       // Same-grant reconnects/token refreshes must not revoke an
       // already-synced corpus or restart backfill.
-      await ctx.db.patch(syncState._id, { provider: args.provider, updatedAt: ts });
+      // A reconnect clears a sync error left by the dead grant.
+      await ctx.db.patch(syncState._id, {
+        provider: args.provider,
+        ...(syncState.status === 'error'
+          ? { status: syncState.corpusReady ? ('ready' as const) : ('idle' as const), error: undefined }
+          : {}),
+        updatedAt: ts,
+      });
     }
     return { accountId: id, replacedGrantId };
+  },
+});
+
+// One account health state (SYNC-2, CAL-8). Grant webhooks and grant-gone
+// sync errors put each connected account on the grant into `error` with a
+// reconnect reason. Sync, backfill kicks, and calendar polls only run for
+// `connected` accounts, so the attempts stop. upsertConnectedAccount (a good
+// OAuth reconnect) sets `connected` and clears the reason.
+export const markGrantReconnectNeeded = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    grantId: v.string(),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_grant', (q) => q.eq('grantId', args.grantId))
+      .collect();
+    let updated = 0;
+    const ts = now();
+    for (const row of rows) {
+      if (row.status !== 'connected') continue;
+      await ctx.db.patch(row._id, { status: 'error', error: args.reason.slice(0, 300), updatedAt: ts });
+      updated += 1;
+    }
+    return { updated };
   },
 });
 
@@ -258,6 +293,8 @@ export const ACCOUNT_BULK_TABLES = [
   // One-time codes are live authentication secrets. They expire on their own,
   // but a disconnected account's codes must not outlive the disconnection.
   'mailOneTimeCodes',
+  // Snooze rows would otherwise keep waking threads of a removed mailbox.
+  'mailSnoozes',
   'calendarEvents',
   'calendarEventCorpus',
   'areaArtifactLinks',

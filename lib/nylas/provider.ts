@@ -31,6 +31,7 @@ import {
   normalizeNylasMessage,
   normalizeNylasThread,
 } from './normalize';
+import { RATE_LIMIT_MAX_DELAY_MS, retryAfterMs } from './retry';
 
 const mailCorpusApi = (api as any).mailCorpus;
 
@@ -43,6 +44,8 @@ export interface NylasAccountRow {
   displayName?: string;
   grantId: string;
   scopes: string[];
+  // The reconnect reason when status is `error` (see grant-health.ts).
+  error?: string;
 }
 
 interface UpdateNylasMessageFoldersArgs {
@@ -597,6 +600,91 @@ export async function updateNylasThread({
   return { ok: true };
 }
 
+export type MailboxMove = 'archive' | 'trash' | 'inbox';
+
+type FolderResolver = (canonicalFolder: string) => Promise<string | null>;
+
+/**
+ * Folder ids after a move (MUT-2). Gmail folders are labels, so a move edits
+ * only INBOX and TRASH and keeps every other label and category. Microsoft,
+ * iCloud, and IMAP keep a message in exactly one folder, with opaque ids, so a
+ * move sets the one resolved folder: Archive, Trash (Deleted Items), or Inbox.
+ */
+export async function folderIdsAfterMove(
+  provider: NylasAccountRow['provider'],
+  current: string[],
+  to: MailboxMove,
+  resolve: FolderResolver,
+): Promise<string[]> {
+  if (provider === 'google') {
+    const inbox = (await resolve('INBOX')) || 'INBOX';
+    const trash = (await resolve('TRASH')) || 'TRASH';
+    const kept = [...new Set(current.filter(Boolean))].filter((id) => id !== inbox && id !== trash);
+    if (to === 'archive') return kept;
+    if (to === 'trash') return [...kept, trash];
+    return [...kept, inbox];
+  }
+  const canonical = to === 'archive' ? 'ARCHIVE' : to === 'trash' ? 'TRASH' : 'INBOX';
+  const target = await resolve(canonical);
+  if (!target) {
+    const name = to === 'archive' ? 'Archive' : to === 'trash' ? 'Trash' : 'Inbox';
+    throw new Error(`This mailbox has no ${name} folder, so the message was not moved.`);
+  }
+  return [target];
+}
+
+/** Move a whole thread to Archive, Trash, or the Inbox for any provider. */
+export async function moveNylasThread({
+  userId,
+  account,
+  threadId,
+  to,
+}: {
+  userId?: string | null;
+  account: string;
+  threadId: string;
+  to: MailboxMove;
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const current = await withNylasRetry(() =>
+    requireNylas().threads.find({ identifier: row.grantId, threadId }),
+  );
+  const folders = await folderIdsAfterMove(row.provider, current.data.folders || [], to, (folder) =>
+    resolveProviderFolderId(row, folder),
+  );
+  await withNylasRetry(() =>
+    requireNylas().threads.update({ identifier: row.grantId, threadId, requestBody: { folders } }),
+  );
+  return { ok: true };
+}
+
+/** Move one message to Archive, Trash, or the Inbox for any provider. */
+export async function moveNylasMessage({
+  userId,
+  account,
+  messageId,
+  to,
+}: {
+  userId?: string | null;
+  account: string;
+  messageId: string;
+  to: MailboxMove;
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const current = await withNylasRetry(() =>
+    requireNylas().messages.find({ identifier: row.grantId, messageId }),
+  );
+  const folders = await folderIdsAfterMove(row.provider, current.data.folders || [], to, (folder) =>
+    resolveProviderFolderId(row, folder),
+  );
+  await withNylasRetry(() =>
+    requireNylas().messages.update({ identifier: row.grantId, messageId, requestBody: { folders } }),
+  );
+  return { ok: true };
+}
+
 export async function updateNylasMessage({
   userId,
   account,
@@ -1001,7 +1089,7 @@ async function withNylasRetry<T>(
     } catch (err) {
       lastError = err;
       if (!shouldRetry(err) || attempt === retries) break;
-      await sleep(baseDelayMs * 2 ** attempt);
+      await sleep(Math.min(RATE_LIMIT_MAX_DELAY_MS, retryAfterMs(err) ?? baseDelayMs * 2 ** attempt));
     }
   }
   throw lastError;

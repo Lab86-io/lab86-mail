@@ -25,7 +25,7 @@ import {
 import { explicitReplyRequested } from '../jev/fallback';
 import { loadJevPolicy } from '../jev/service';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
-import { getNylasThread, listNylasAccounts, searchNylasThreads } from '../nylas/provider';
+import { listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
 import type {
   DailyReport,
@@ -49,7 +49,7 @@ import {
 } from '../store/daily-report-dismissals';
 import { saveDailyReport } from '../store/daily-reports';
 import { listMemories } from '../store/memories';
-import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
+import { resolveThreadMessages } from '../store/messages';
 import { listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
 import { insightId, upsertThreadInsight } from '../store/thread-insights';
@@ -617,14 +617,7 @@ function collectSentRecipientsFromRaw(thread: Thread, self: Set<string>, out: Se
 }
 
 async function loadThreadMessages(account: string, threadId: string, userId?: string | null) {
-  const cached = await getThreadMessages(account, threadId);
-  if (cached.length) return cached.sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
-  const thread = await getNylasThread({ userId, account, threadId }).catch(() => null);
-  const messages = (thread?.messages || [])
-    .filter((message) => message._id)
-    .sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
-  for (const message of messages) await upsertMessageRecord(message).catch(() => undefined);
-  return messages;
+  return await resolveThreadMessages(account, threadId, { userId });
 }
 
 // Collapse duplicate automated notifications (same sender domain + subject,

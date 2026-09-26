@@ -251,7 +251,11 @@ export async function executeMobileCommand(
     case 'mail.unsnooze': {
       const result = await dependencies.invoke(
         'unsnooze_thread',
-        { account: command.payload.accountID, messageId: command.payload.messageID },
+        {
+          account: command.payload.accountID,
+          messageId: command.payload.messageID,
+          threadId: command.payload.threadID,
+        },
         user,
       );
       return {
@@ -330,6 +334,12 @@ export async function executeMobileCommand(
                   account: payload.accountID,
                   messageId: payload.messageID,
                   threadId: payload.threadID,
+                  // Recipients and subject the user edited in the composer
+                  // win over the ones the server derives from the anchor.
+                  to: payload.to?.trim() || undefined,
+                  cc: payload.cc?.trim() || undefined,
+                  bcc: payload.bcc?.trim() || undefined,
+                  subject: payload.subject?.trim() || undefined,
                   body: payload.bodyText,
                   html: payload.bodyHTML,
                 },

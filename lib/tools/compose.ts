@@ -4,16 +4,23 @@ import { recordOperation, registerUndoExecutor } from '../ai/operations';
 import { fetchEmailAttachment, fetchWebFile } from '../attachments/fetch-store';
 import { convexInternalSecret, isConvexConfigured } from '../hosted/env';
 import { listNylasScheduledMessages, sendNylasMessage, stopNylasScheduledMessage } from '../nylas/provider';
-import { emailFromHeader } from '../shared/format';
-import type { Draft, Message } from '../shared/types';
+import {
+  buildForwardMessagePayload,
+  replyAllTargetFor,
+  replyTargetFor,
+  resolveSendAnchor,
+} from '../send/anchor';
+import { cancelOutbox } from '../send/outbox';
+import type { Draft } from '../shared/types';
 import {
   deleteDraft as deleteDraftRecord,
   getDraft,
   listDrafts,
   saveDraft as saveDraftRecord,
 } from '../store/drafts';
-import { getMessage as getMessageRecord, getThreadMessages } from '../store/messages';
 import { defineTool, type ToolContext } from './registry';
+
+export { buildForwardMessagePayload };
 
 export async function recordSavedDraftOperation(
   input: {
@@ -96,7 +103,6 @@ const SendBase = z.object({
   subject: z.string(),
   body: z.string(),
   html: z.string().optional(),
-  from: z.string().optional(),
   attachments: z.array(AttachmentSource).optional(),
 });
 
@@ -127,6 +133,8 @@ async function resolveSendAttachments(
       filename: source.name?.trim() || blob.name,
       contentType: blob.contentType,
       content: Buffer.from(blob.bytes),
+      // Without a size the SDK takes the JSON path, which Nylas caps at 3 MB.
+      size: blob.bytes.byteLength,
     });
   }
   return resolved;
@@ -152,82 +160,20 @@ function sentResult(sent: { _id?: unknown; threadId?: unknown }) {
   return { ok: true as const, messageId, threadId };
 }
 
-async function resolveReplyAnchor(account: string, messageId?: string, threadId?: string) {
-  const anchor =
-    (messageId ? await getMessageRecord(account, messageId).catch(() => null) : null) ||
-    (threadId
-      ? (await getThreadMessages(account, threadId).catch(() => [])).sort(
-          (a, b) => Number(b.date || 0) - Number(a.date || 0),
-        )[0]
-      : null);
-  if (!anchor) {
-    throw new Error('Cannot reply — original message is not in the local cache. Open the thread first.');
-  }
-  return anchor;
-}
-
-async function resolveReplyTarget(account: string, messageId?: string, threadId?: string) {
-  const anchor = await resolveReplyAnchor(account, messageId, threadId);
-  const to = emailFromHeader(anchor.from) || anchor.from;
-  if (!to) throw new Error('Cannot reply — original sender is missing.');
-  return {
-    to,
-    subject: anchor.subject?.startsWith('Re:') ? anchor.subject : `Re: ${anchor.subject || '(no subject)'}`,
-  };
-}
-
-async function resolveReplyAllTarget(account: string, messageId?: string, threadId?: string) {
-  const anchor = await resolveReplyAnchor(account, messageId, threadId);
-  const self = account.toLowerCase();
-  const recipients = new Set<string>();
-  for (const field of [anchor.from, anchor.to, anchor.cc]) {
-    for (const item of String(field || '').split(/[,;]/)) {
-      const email = emailFromHeader(item) || item.trim();
-      if (!email || email.toLowerCase() === self) continue;
-      recipients.add(email);
-    }
-  }
-  return {
-    to: [...recipients].join(', '),
-    subject: anchor.subject?.startsWith('Re:') ? anchor.subject : `Re: ${anchor.subject || '(no subject)'}`,
-  };
-}
-
-export function buildForwardMessagePayload(
-  original: Message,
-  input: { body?: string; html?: string },
-): { subject: string; body: string; html?: string } {
-  const subject = original.subject?.startsWith('Fwd:')
-    ? original.subject
-    : `Fwd: ${original.subject || '(no subject)'}`;
-  const headerBlock = [
-    '---------- Forwarded message ----------',
-    `From: ${original.from}`,
-    `Date: ${new Date(original.date).toISOString()}`,
-    `Subject: ${original.subject || ''}`,
-    `To: ${original.to || ''}`,
-    original.cc ? `Cc: ${original.cc}` : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-  const quotedText = [input.body || '', '', headerBlock, '', original.textBody || ''].join('\n');
-  const quotedHtml = input.html
-    ? [
-        input.html,
-        '<br/><br/>',
-        `<div style="border-left:2px solid currentColor;padding-left:.6em;opacity:.72">`,
-        `<div>---------- Forwarded message ----------</div>`,
-        `<div>From: ${escapeHtml(original.from)}</div>`,
-        `<div>Date: ${new Date(original.date).toISOString()}</div>`,
-        `<div>Subject: ${escapeHtml(original.subject || '')}</div>`,
-        `<div>To: ${escapeHtml(original.to || '')}</div>`,
-        original.cc ? `<div>Cc: ${escapeHtml(original.cc)}</div>` : '',
-        `</div>`,
-        original.htmlBody || `<pre>${escapeHtml(original.textBody || '')}</pre>`,
-      ].join('')
-    : undefined;
-  return { subject, body: quotedText, html: quotedHtml };
-}
+// Reply recipients default to the anchor message. A caller that edited them
+// (the mobile composer, for one) passes its own to, cc, bcc, and subject.
+const ReplyInput = z.object({
+  account: z.string(),
+  messageId: z.string(),
+  threadId: z.string().optional(),
+  to: z.string().optional(),
+  cc: z.string().optional(),
+  bcc: z.string().optional(),
+  subject: z.string().optional(),
+  body: z.string(),
+  html: z.string().optional(),
+  attachments: z.array(AttachmentSource).optional(),
+});
 
 export const sendMessage = defineTool({
   name: 'send_message',
@@ -258,26 +204,21 @@ export const replyMessage = defineTool({
   description: 'Reply to a single message (to its sender).',
   category: 'compose',
   mutating: true,
-  input: z.object({
-    account: z.string(),
-    messageId: z.string(),
-    threadId: z.string().optional(),
-    body: z.string(),
-    html: z.string().optional(),
-    from: z.string().optional(),
-    attachments: z.array(AttachmentSource).optional(),
-  }),
+  input: ReplyInput,
   output: SentOutput,
-  async handler({ account, messageId, threadId, body, html, attachments }, ctx) {
-    const target = await resolveReplyTarget(account, messageId, threadId);
+  async handler({ account, messageId, threadId, to, cc, bcc, subject, body, html, attachments }, ctx) {
+    const anchor = await resolveSendAnchor({ account, messageId, threadId, userId: ctx.userId });
+    const target = replyTargetFor(anchor);
     const sent = await sendWithNylas({
       userId: ctx.userId,
       account,
-      to: target.to,
-      subject: target.subject,
+      to: to?.trim() || target.to,
+      cc,
+      bcc,
+      subject: subject?.trim() || target.subject,
       body,
       html,
-      replyToMessageId: messageId,
+      replyToMessageId: target.replyToMessageId,
       attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
     return sentResult(sent as any);
@@ -289,27 +230,23 @@ export const replyAllMessage = defineTool({
   description: 'Reply-all to a message (everyone on To: + Cc:).',
   category: 'compose',
   mutating: true,
-  input: z.object({
-    account: z.string(),
-    messageId: z.string(),
-    threadId: z.string().optional(),
-    body: z.string(),
-    html: z.string().optional(),
-    from: z.string().optional(),
-    attachments: z.array(AttachmentSource).optional(),
-  }),
+  input: ReplyInput,
   output: SentOutput,
-  async handler({ account, messageId, threadId, body, html, attachments }, ctx) {
-    const target = await resolveReplyAllTarget(account, messageId, threadId);
-    if (!target.to) throw new Error('Cannot reply-all — no recipients are available.');
+  async handler({ account, messageId, threadId, to, cc, bcc, subject, body, html, attachments }, ctx) {
+    const anchor = await resolveSendAnchor({ account, messageId, threadId, userId: ctx.userId });
+    const target = replyAllTargetFor(anchor, account);
+    const recipients = to?.trim() || target.to;
+    if (!recipients) throw new Error('Cannot reply-all — no recipients are available.');
     const sent = await sendWithNylas({
       userId: ctx.userId,
       account,
-      to: target.to,
-      subject: target.subject,
+      to: recipients,
+      cc,
+      bcc,
+      subject: subject?.trim() || target.subject,
       body,
       html,
-      replyToMessageId: messageId,
+      replyToMessageId: target.replyToMessageId,
       attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
     return sentResult(sent as any);
@@ -330,14 +267,11 @@ export const forwardMessage = defineTool({
     bcc: z.string().optional(),
     body: z.string().optional(),
     html: z.string().optional(),
-    from: z.string().optional(),
     attachments: z.array(AttachmentSource).optional(),
   }),
   output: SentOutput,
   async handler({ account, messageId, to, cc, bcc, body, html, attachments }, ctx) {
-    const original = await getMessageRecord(account, messageId);
-    if (!original)
-      throw new Error('Cannot forward — original message not in local cache. Open the thread first.');
+    const original = await resolveSendAnchor({ account, messageId, userId: ctx.userId });
     const quoted = buildForwardMessagePayload(original, { body, html });
     const sent = await sendWithNylas({
       userId: ctx.userId,
@@ -353,15 +287,6 @@ export const forwardMessage = defineTool({
     return sentResult(sent as any);
   },
 });
-
-function escapeHtml(s: string): string {
-  return String(s || '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
 
 export const saveDraftTool = defineTool({
   name: 'save_draft',
@@ -457,7 +382,7 @@ export const scheduleSend = defineTool({
   mutating: true,
   input: SendBase.extend({ scheduledFor: z.number().describe('Epoch ms when to send') }),
   output: z.object({ ok: z.boolean(), scheduleId: z.string().optional(), messageId: z.string().optional() }),
-  async handler({ account, to, cc, bcc, subject, body, html, scheduledFor }, ctx) {
+  async handler({ account, to, cc, bcc, subject, body, html, attachments, scheduledFor }, ctx) {
     if (scheduledFor < Date.now() + 60_000) {
       throw new Error('scheduledFor must be at least a minute in the future.');
     }
@@ -470,6 +395,7 @@ export const scheduleSend = defineTool({
       subject,
       body,
       html,
+      attachments: await resolveSendAttachments(ctx.userId, attachments),
       sendAt: scheduledFor,
     });
     return { ok: true, scheduleId: (sent as any).scheduleId, messageId: sent._id };
@@ -503,34 +429,42 @@ export const listScheduled = defineTool({
   },
 });
 
+const UNDO_NOTHING = 'Nothing was undone. The message may have already gone out, or the undo window closed.';
+
 export const undoSend = defineTool({
   name: 'undo_send',
-  description: 'Cancel a recently-queued undo-send window, including provider-backed scheduled sends.',
+  description:
+    'Cancel a message that is still in its undo-send window. Pass the pendingId from the send receipt (an outbox: key, or a provider-backed scheduled send).',
   category: 'compose',
   mutating: true,
   input: z.object({ pendingId: z.string() }),
-  output: z.object({ ok: z.boolean(), undone: z.boolean() }),
+  output: z.object({ ok: z.boolean(), undone: z.boolean(), error: z.string().optional() }),
   async handler({ pendingId }, ctx) {
+    const result = (undone: boolean) =>
+      undone ? { ok: true, undone } : { ok: false, undone, error: UNDO_NOTHING };
+    // Every current send holds in the Convex outbox under an `outbox:` key.
+    if (pendingId.startsWith('outbox:')) {
+      if (!ctx.userId) throw new Error('Sign in required to undo a send.');
+      return result(Boolean(await cancelOutbox(ctx.userId, pendingId)));
+    }
     // Lazy-load the pending queue from a shared module to avoid circular imports.
     const { cancelPending, parseProviderPendingId, rememberPendingStatus } = await import('../send/pending');
     const providerPending = parseProviderPendingId(pendingId, ctx.userId ?? undefined);
     if (providerPending) {
-      const { stopNylasScheduledMessage } = await import('../nylas/provider');
       try {
-        const result = await stopNylasScheduledMessage({
+        const cancelled = await stopNylasScheduledMessage({
           userId: ctx.userId,
           account: providerPending.account,
           scheduleId: providerPending.scheduleId,
         });
-        const undone = Boolean(result);
+        const undone = Boolean(cancelled);
         rememberPendingStatus(pendingId, undone ? 'cancelled' : 'failed');
-        return { ok: true, undone };
+        return result(undone);
       } catch (err) {
         rememberPendingStatus(pendingId, 'failed', err);
-        return { ok: true, undone: false };
+        return result(false);
       }
     }
-    const undone = cancelPending(pendingId);
-    return { ok: true, undone };
+    return result(cancelPending(pendingId));
   },
 });

@@ -1554,6 +1554,24 @@ export default defineSchema({
     .index('by_account', ['accountId'])
     .index('by_status', ['status']),
 
+  // Snoozed mail threads (MUT-1). Snooze moves the thread out of the inbox
+  // at the provider; the mail snooze cron moves it back when `untilTs` passes.
+  mailSnoozes: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    threadId: v.string(),
+    messageId: v.optional(v.string()),
+    untilTs: v.number(),
+    status: v.union(v.literal('active'), v.literal('restored'), v.literal('cancelled'), v.literal('failed')),
+    attempts: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_status_until', ['status', 'untilTs'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_account_thread', ['userId', 'accountId', 'threadId']),
+
   mailWebhookEvents: defineTable({
     eventId: v.string(),
     type: v.string(),
@@ -1568,8 +1586,14 @@ export default defineSchema({
     error: v.optional(v.string()),
     receivedAt: v.number(),
     processedAt: v.optional(v.number()),
+    // Durable retry (SYNC-3): failed events are retried with backoff until
+    // `attempts` reaches the cap; then `retryAbandoned` parks them.
+    attempts: v.optional(v.number()),
+    nextAttemptAt: v.optional(v.number()),
+    retryAbandoned: v.optional(v.boolean()),
   })
     .index('by_event', ['eventId'])
+    .index('by_status_next_attempt', ['status', 'nextAttemptAt'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_account', ['accountId'])
     .index('by_grant', ['grantId'])

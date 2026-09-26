@@ -254,7 +254,10 @@ describe('expanded mail commands', () => {
     );
 
     expect(calls).toEqual([
-      { name: 'unsnooze_thread', args: { account: 'account-1', messageId: 'message-4' } },
+      {
+        name: 'unsnooze_thread',
+        args: { account: 'account-1', messageId: 'message-4', threadId: 'thread-4' },
+      },
     ]);
     expect(result.syncPayload).toEqual({ accountID: 'account-1', snoozeCleared: true });
   });
@@ -328,6 +331,10 @@ describe('expanded mail commands', () => {
         account: 'account-1',
         messageId: 'message-7',
         threadId: 'thread-7',
+        to: undefined,
+        cc: undefined,
+        bcc: undefined,
+        subject: undefined,
         body: 'Sounds good',
         html: undefined,
       },
@@ -339,6 +346,10 @@ describe('expanded mail commands', () => {
       command('mail.send', {
         accountID: 'account-1',
         mode: 'replyAll',
+        to: ' kim@example.com ',
+        cc: 'lee@example.com',
+        bcc: '  ',
+        subject: 'Re: Plan',
         bodyText: 'Everyone',
         messageID: 'message-8',
       }),
@@ -346,6 +357,13 @@ describe('expanded mail commands', () => {
       replyAll.deps,
     );
     expect(replyAll.calls[0].name).toBe('reply_all');
+    // SEND-4: recipients the user edited on mobile reach the reply tool.
+    expect(replyAll.calls[0].args).toMatchObject({
+      to: 'kim@example.com',
+      cc: 'lee@example.com',
+      bcc: undefined,
+      subject: 'Re: Plan',
+    });
 
     const forward = recordingDependencies();
     await executeMobileCommand(

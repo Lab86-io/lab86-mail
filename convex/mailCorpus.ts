@@ -1,8 +1,10 @@
 import { v } from 'convex/values';
 import { buildCorpusSearchText } from '../lib/mail/corpus';
+import { pageEndsInTie, pageThroughTies } from '../lib/mail/search/page-ties';
 import { matchingMailExcerpt } from '../lib/mail/search/ranking';
-import { mutation, query } from './_generated/server';
-import { now, requireInternalSecret } from './lib';
+import { internal } from './_generated/api';
+import { internalAction, internalQuery, mutation, query } from './_generated/server';
+import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 import {
   classificationFreshnessPatch,
   classifierContent,
@@ -478,6 +480,15 @@ export const recordWebhookEvent = mutation({
   },
 });
 
+/** A failed webhook event is retried this many times, then abandoned. */
+export const WEBHOOK_MAX_ATTEMPTS = 6;
+const WEBHOOK_RETRY_BASE_MS = 2 * 60_000;
+const WEBHOOK_RETRY_MAX_MS = 6 * 60 * 60_000;
+
+export function nextWebhookAttemptAt(attempts: number, at: number) {
+  return at + Math.min(WEBHOOK_RETRY_MAX_MS, WEBHOOK_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1));
+}
+
 export const markWebhookEventProcessed = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -492,12 +503,88 @@ export const markWebhookEventProcessed = mutation({
       .withIndex('by_event', (q) => q.eq('eventId', args.eventId))
       .unique();
     if (!row) return { ok: false, missing: true };
+    const ts = now();
+    if (args.status === 'processed') {
+      await ctx.db.patch(row._id, {
+        status: 'processed',
+        error: undefined,
+        processedAt: ts,
+        nextAttemptAt: undefined,
+      });
+      return { ok: true };
+    }
+    const attempts = (row.attempts ?? 0) + 1;
+    const abandoned = attempts >= WEBHOOK_MAX_ATTEMPTS;
     await ctx.db.patch(row._id, {
-      status: args.status,
+      status: 'error',
       error: args.error,
-      processedAt: now(),
+      processedAt: ts,
+      attempts,
+      // Abandoned rows sort past every retry window, out of the index range.
+      nextAttemptAt: abandoned ? Number.MAX_SAFE_INTEGER : nextWebhookAttemptAt(attempts, ts),
+      retryAbandoned: abandoned || undefined,
     });
-    return { ok: true };
+    return { ok: true, attempts, abandoned };
+  },
+});
+
+// Failed events whose backoff has passed, plus events stuck in `received`
+// (the process that took them restarted before it finished). Oldest first.
+export const listRetryableWebhookEvents = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    stuckAfterMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = clampLimit(args.limit, 25, 100);
+    const ts = now();
+    const failed = await ctx.db
+      .query('mailWebhookEvents')
+      .withIndex('by_status_next_attempt', (q) => q.eq('status', 'error').lte('nextAttemptAt', ts))
+      .take(limit * 3);
+    const stuckBefore = ts - Math.max(60_000, args.stuckAfterMs ?? 15 * 60_000);
+    const stuck = await ctx.db
+      .query('mailWebhookEvents')
+      .withIndex('by_status_next_attempt', (q) => q.eq('status', 'received'))
+      .take(limit * 3);
+    return [
+      ...failed.filter((row) => !row.retryAbandoned),
+      ...stuck.filter((row) => row.receivedAt < stuckBefore),
+    ]
+      .slice(0, limit)
+      .map((row) => ({
+        eventId: row.eventId,
+        type: row.type,
+        grantId: row.grantId,
+        attempts: row.attempts ?? 0,
+        payload: row.payload,
+      }));
+  },
+});
+
+// Convex half of the repair cron (SYNC-3). The app owns Nylas, so this only
+// asks it to (1) retry failed webhook events and (2) run the bounded per-user
+// repair sweep. The app route ACKs at once and works in the background.
+export const repairTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[mail-repair cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    const targets = await ctx.runQuery((internal as any).dailyReports.reportTargets, {});
+    const bodies = [
+      { kind: 'webhooks' },
+      ...targets.map((target: { userId: string }) => ({ kind: 'sweep', userId: target.userId })),
+    ];
+    const ok = await fanOutInternalPost(`${appUrl}/api/cron/mail-repair`, secret, bodies, {
+      label: 'mail-repair cron',
+    });
+    console.log(`[mail-repair cron] requested ${ok}/${bodies.length} repair runs`);
   },
 });
 
@@ -832,26 +919,7 @@ export const getCorpusThreadBundle = query({
       )
       .order('asc')
       .collect();
-    const messages = rows.map((row) => ({
-      _id: row.providerMessageId,
-      threadId: row.providerThreadId,
-      account: row.accountId,
-      subject: row.subject || '(no subject)',
-      from: row.from || '',
-      to: row.to || '',
-      cc: row.cc || '',
-      bcc: row.bcc || '',
-      date: row.receivedAt || 0,
-      snippet: row.snippet || '',
-      textBody: row.textBody || '',
-      htmlBody: row.htmlBody ?? null,
-      labels: row.labels || [],
-      unread: Boolean(row.unread),
-      starred: Boolean(row.starred),
-      attachments: row.attachments || [],
-      headers: row.headers || {},
-      cachedAt: row.updatedAt || row.receivedAt || 0,
-    }));
+    const messages = rows.map(projectCorpusMessage);
     return {
       threadId: args.providerThreadId,
       subject: thread.subject || messages[0]?.subject || '(no subject)',
@@ -860,6 +928,51 @@ export const getCorpusThreadBundle = query({
     };
   },
 });
+
+// One message by provider id, for reply and forward anchors when the caller
+// has no thread id. The index has no userId column; tenancy is a filter.
+export const getCorpusMessage = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    providerMessageId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_account_message', (q) =>
+        q.eq('accountId', args.accountId).eq('providerMessageId', args.providerMessageId),
+      )
+      .take(5);
+    const row = rows.find((candidate) => candidate.userId === args.userId);
+    return row ? projectCorpusMessage(row) : null;
+  },
+});
+
+function projectCorpusMessage(row: any) {
+  return {
+    _id: row.providerMessageId,
+    threadId: row.providerThreadId,
+    account: row.accountId,
+    subject: row.subject || '(no subject)',
+    from: row.from || '',
+    to: row.to || '',
+    cc: row.cc || '',
+    bcc: row.bcc || '',
+    date: row.receivedAt || 0,
+    snippet: row.snippet || '',
+    textBody: row.textBody || '',
+    htmlBody: row.htmlBody ?? null,
+    labels: row.labels || [],
+    unread: Boolean(row.unread),
+    starred: Boolean(row.starred),
+    attachments: row.attachments || [],
+    headers: row.headers || {},
+    cachedAt: row.updatedAt || row.receivedAt || 0,
+  };
+}
 
 // Recent threads with stored verdicts, projected small. Feeds the category
 // stat counters and the command-palette seeds without scanning message rows.
@@ -1138,11 +1251,33 @@ export const pageRecentCorpusThreads = query({
           })
           .order('desc')
           .take(limit + 1);
-    const page = rows.slice(0, limit);
-    // A row without a usable lastDate cannot anchor a `lt` watermark; report
-    // the page as the last one rather than hand out a cursor that matches nothing.
-    const lastDate = page.length ? Number(page[page.length - 1].lastDate ?? 0) : 0;
-    const nextBefore = rows.length > page.length && lastDate > 0 ? lastDate : undefined;
+    const dateOf = (row: any) => Number(row.lastDate ?? 0);
+    // PAGE-1: a page that ends inside a group of same-second threads takes
+    // the whole group, so the `lt` watermark on the next page skips nothing.
+    let candidates = rows;
+    if (pageEndsInTie(rows, limit, dateOf)) {
+      const boundary = dateOf(rows[limit - 1]);
+      const byTime = (range: (q: any) => any, take: number) =>
+        (args.accountId
+          ? ctx.db
+              .query('mailCorpusThreads')
+              .withIndex('by_user_account_updated', (q) =>
+                range(q.eq('userId', args.userId).eq('accountId', args.accountId as string)),
+              )
+          : ctx.db
+              .query('mailCorpusThreads')
+              .withIndex('by_user_lastDate', (q) => range(q.eq('userId', args.userId)))
+        )
+          .order('desc')
+          .take(take);
+      const group = await byTime((q) => q.eq('lastDate', boundary), 200);
+      // One older row tells the helper whether another page exists.
+      const older = await byTime((q) => q.lt('lastDate', boundary), 1);
+      candidates = [...rows.filter((row) => dateOf(row) > boundary), ...group, ...older];
+    }
+    // A row without a usable lastDate cannot anchor a `lt` watermark; the
+    // helper reports that page as the last one.
+    const { page, nextBefore } = pageThroughTies(candidates, limit, dateOf);
     return { items: page.map(normalizeCorpusThread), nextBefore };
   },
 });
@@ -1185,3 +1320,149 @@ function withinReceivedAtBounds(row: any, args: any) {
   if (Number.isFinite(args.before) && row.receivedAt > args.before) return false;
   return true;
 }
+
+// ---- Snooze (MUT-1) -------------------------------------------------------
+// The app moves the thread at the provider; these rows only remember when to
+// move it back. One active row per thread: a new snooze replaces the old.
+
+const SNOOZE_MAX_ATTEMPTS = 5;
+
+async function activeSnoozes(ctx: any, userId: string, accountId: string, threadId: string) {
+  const rows = await ctx.db
+    .query('mailSnoozes')
+    .withIndex('by_user_account_thread', (q: any) =>
+      q.eq('userId', userId).eq('accountId', accountId).eq('threadId', threadId),
+    )
+    .collect();
+  return rows.filter((row: any) => row.status === 'active');
+}
+
+export const createSnooze = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    threadId: v.string(),
+    messageId: v.optional(v.string()),
+    untilTs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const ts = now();
+    for (const row of await activeSnoozes(ctx, args.userId, args.accountId, args.threadId)) {
+      await ctx.db.patch(row._id, { status: 'cancelled', updatedAt: ts });
+    }
+    const id = await ctx.db.insert('mailSnoozes', {
+      userId: args.userId,
+      accountId: args.accountId,
+      threadId: args.threadId,
+      messageId: args.messageId,
+      untilTs: args.untilTs,
+      status: 'active',
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    return { id };
+  },
+});
+
+// Cancels the active snooze for a thread, or for the thread that holds the
+// given message. Returns the thread ids it cancelled.
+export const cancelSnooze = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    threadId: v.optional(v.string()),
+    messageId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    let rows: any[] = [];
+    if (args.threadId) {
+      rows = await activeSnoozes(ctx, args.userId, args.accountId, args.threadId);
+    } else if (args.messageId) {
+      const active = await ctx.db
+        .query('mailSnoozes')
+        .withIndex('by_status_until', (q) => q.eq('status', 'active'))
+        .take(1000);
+      rows = active.filter(
+        (row) =>
+          row.userId === args.userId && row.accountId === args.accountId && row.messageId === args.messageId,
+      );
+    }
+    const ts = now();
+    for (const row of rows) await ctx.db.patch(row._id, { status: 'cancelled', updatedAt: ts });
+    return { threadIds: rows.map((row) => row.threadId) };
+  },
+});
+
+export const listDueSnoozes = query({
+  args: { internalSecret: v.optional(v.string()), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('mailSnoozes')
+      .withIndex('by_status_until', (q) => q.eq('status', 'active').lte('untilTs', now()))
+      .take(clampLimit(args.limit, 50, 200));
+    return rows.map((row) => ({
+      id: row._id,
+      userId: row.userId,
+      accountId: row.accountId,
+      threadId: row.threadId,
+      untilTs: row.untilTs,
+      attempts: row.attempts ?? 0,
+    }));
+  },
+});
+
+export const settleSnooze = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    id: v.id('mailSnoozes'),
+    ok: v.boolean(),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db.get(args.id);
+    if (!row || row.status !== 'active') return { ok: false };
+    const ts = now();
+    if (args.ok) {
+      await ctx.db.patch(row._id, { status: 'restored', error: undefined, updatedAt: ts });
+      return { ok: true, status: 'restored' };
+    }
+    const attempts = (row.attempts ?? 0) + 1;
+    const status = attempts >= SNOOZE_MAX_ATTEMPTS ? 'failed' : 'active';
+    await ctx.db.patch(row._id, { status, attempts, error: args.error?.slice(0, 300), updatedAt: ts });
+    return { ok: true, status };
+  },
+});
+
+export const hasDueSnoozes = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db
+      .query('mailSnoozes')
+      .withIndex('by_status_until', (q) => q.eq('status', 'active').lte('untilTs', now()))
+      .first();
+    return Boolean(row);
+  },
+});
+
+// Wakes due snoozes. The app owns Nylas, so this asks it to move the threads
+// back; it posts only when a snooze is due.
+export const snoozeTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const due = await ctx.runQuery((internal as any).mailCorpus.hasDueSnoozes, {});
+    if (!due) return;
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[mail-snooze cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    await fanOutInternalPost(`${appUrl}/api/cron/mail-snooze`, secret, [{}], { label: 'mail-snooze cron' });
+  },
+});

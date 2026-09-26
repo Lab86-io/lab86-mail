@@ -185,6 +185,7 @@ export function Rail({
           authed: boolean;
           primary?: boolean;
           displayName?: string;
+          reconnectReason?: string;
           sync?: {
             status: string;
             corpusReady: boolean;
@@ -204,6 +205,9 @@ export function Rail({
   });
   const accounts = accountsData?.accounts || [];
   const authedAccounts = accounts.filter((a) => a.authed);
+  // Mailboxes whose sign-in expired or was removed (SYNC-2). Sync stops for
+  // them until the user reconnects in Settings.
+  const reconnectAccounts = accounts.filter((a) => !a.authed);
   // Live areas — one rail row per active area, so areas behave like first-class
   // places instead of hiding behind one door. Auth-gated: a first-paint query
   // before the Clerk token lands would error.
@@ -454,6 +458,21 @@ export function Rail({
       </SidebarContent>
 
       <SidebarFooter>
+        {reconnectAccounts.length ? (
+          <div className="flex flex-col gap-0.5 px-2 group-data-[collapsible=icon]:hidden">
+            {reconnectAccounts.map((mailbox) => (
+              <Link
+                key={mailbox.accountId}
+                href="/settings"
+                onClick={closeMobileSidebar}
+                title={mailbox.reconnectReason || 'Reconnect needed'}
+                className="truncate text-[11.5px] font-medium text-[var(--color-danger)] hover:underline"
+              >
+                Reconnect needed: {mailbox.displayName || mailbox.email}
+              </Link>
+            ))}
+          </div>
+        ) : null}
         <nav
           aria-label="Account controls"
           className="flex items-center justify-between gap-2 border-t border-[var(--color-list-divider)] px-1 pt-3 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0"

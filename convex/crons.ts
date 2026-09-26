@@ -151,6 +151,12 @@ crons.interval(
   {},
 );
 
+// Mail repair (SYNC-3): retry failed Nylas webhook events with backoff, and
+// sweep each connected mailbox's recent mail for changes a lost event missed.
+crons.interval('mail corpus repair', { minutes: 30 }, (internal as any).mailCorpus.repairTick, {});
+// Snoozed threads come back to the inbox when due (MUT-1).
+crons.interval('mail snooze wake', { minutes: 5 }, (internal as any).mailCorpus.snoozeTick, {});
+
 crons.interval('mcp oauth state cleanup', { minutes: 30 }, internal.mcp.sweepExpiredOAuthStates, {});
 
 // Retention for tables that otherwise grow with no limit: expired one-time

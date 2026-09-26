@@ -9,12 +9,13 @@ import {
   includeInSmartCategory,
   SMART_CATEGORY_IDS,
 } from '../mail/smart-categories';
+import { normalizeNylasAccount } from '../nylas/normalize';
 import {
   getNylasAccount,
   getNylasMessage,
   getNylasThread,
-  listNylasAccounts,
   listNylasLabels,
+  type NylasAccountRow,
   searchNylasThreads,
 } from '../nylas/provider';
 import { emailFromHeader } from '../shared/format';
@@ -66,6 +67,8 @@ export const listAccounts = defineTool({
         primary: z.boolean().optional(),
         displayName: z.string().optional(),
         services: z.array(z.string()).optional(),
+        // Set when the grant is gone and the user must sign in again.
+        reconnectReason: z.string().optional(),
         sync: z
           .object({
             status: z.string(),
@@ -79,7 +82,17 @@ export const listAccounts = defineTool({
     ),
   }),
   async handler(_args, ctx) {
-    const accounts = await listNylasAccounts(ctx.userId);
+    // Connected mailboxes, plus mailboxes whose grant died (status `error`):
+    // those come back with authed:false so the Rail can show Reconnect.
+    const rows = ctx.userId
+      ? await convexQuery<NylasAccountRow[]>(api.accounts.listConnectedAccounts, { userId: ctx.userId })
+      : [];
+    const accounts = (rows || [])
+      .filter((row) => row.status === 'connected' || row.status === 'error')
+      .map((row) => ({
+        ...normalizeNylasAccount(row),
+        ...(row.status === 'error' ? { reconnectReason: row.error || 'Reconnect needed' } : {}),
+      }));
     const syncStates = ctx.userId
       ? await convexQuery<any[]>((api as any).mailCorpus.listSyncTargets, {
           userId: ctx.userId,

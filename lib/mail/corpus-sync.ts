@@ -1,11 +1,13 @@
 import { applyCalendarWebhookDelta, isCalendarWebhookType } from '@/lib/calendar/sync';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
+import { isGrantGoneError, markGrantNeedsReconnect, noteGrantFailure } from '@/lib/nylas/grant-health';
 import { normalizeNylasMessage } from '@/lib/nylas/normalize';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
-import { nylasErrorStatus, withNylasRetry } from '@/lib/nylas/retry';
+import { nylasErrorStatus, retryAfterMs, withNylasRetry } from '@/lib/nylas/retry';
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
+import { withFolderRoleLabels } from './search/folders';
 import { detectMailSuggestions } from './suggestion-detectors';
 import { scanIngestedMail } from './urgent-detectors';
 
@@ -159,6 +161,7 @@ export async function backfillMailCorpusAccount({
       }).catch(() => undefined);
       return await backfillMailCorpusAccount({ userId, accountId, limit });
     }
+    await noteGrantFailure(row.grantId, err);
     await markSync(row, {
       status: 'error',
       cursor: pageToken,
@@ -194,8 +197,10 @@ async function withRateLimitRetry<T>(operation: () => Promise<T>, attempts = 5):
       return await operation();
     } catch (err: any) {
       lastError = err;
-      if (!isTransientUpstreamError(err)) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 2_000 * 2 ** attempt));
+      if (!isTransientUpstreamError(err) || attempt === attempts - 1) throw err;
+      // Honor the server's Retry-After when it sends one, inside a bound.
+      const wait = Math.min(60_000, retryAfterMs(err) ?? 2_000 * 2 ** attempt);
+      await new Promise((resolve) => setTimeout(resolve, wait));
     }
   }
   throw lastError;
@@ -283,6 +288,7 @@ export async function runCorpusBackfill({
         page -= 1;
         continue;
       }
+      await noteGrantFailure(row.grantId, err);
       await markSync(row, {
         status: 'error',
         cursor: pageToken,
@@ -420,6 +426,7 @@ export async function reconcileMailCorpusAccount({
   } catch (err: any) {
     // A failed reconcile must not strand the account in "syncing" or revoke
     // readiness the corpus already earned.
+    await noteGrantFailure(row.grantId, err);
     await markSync(row, {
       status: 'error',
       error: err?.message || 'corpus reconcile failed',
@@ -459,6 +466,129 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
   if (event.duplicate) {
     return { ok: true, duplicate: true, eventId: metadata.eventId };
   }
+  return await processWebhookEvent(metadata, row, payload);
+}
+
+/**
+ * Durable retry (SYNC-3). Re-runs failed webhook events, and events that a
+ * restart left in `received`, after their backoff. Message events refetch
+ * the current message, so an old payload never overwrites newer state.
+ */
+export async function retryFailedWebhookEvents({ limit = 25 }: { limit?: number } = {}) {
+  const events = await webhookDeps.query<
+    Array<{ eventId: string; type: string; grantId?: string; attempts: number; payload: unknown }>
+  >(mailCorpusApi.listRetryableWebhookEvents, { limit });
+  let processed = 0;
+  let failed = 0;
+  for (const event of events || []) {
+    const metadata = { ...extractNylasWebhookMetadata(event.payload), eventId: event.eventId };
+    try {
+      const row = metadata.grantId ? await getConnectedAccountByGrant(metadata.grantId) : null;
+      const result = await processWebhookEvent(metadata, row, event.payload, { refetch: true });
+      if (result.ok) processed += 1;
+      else failed += 1;
+    } catch {
+      // processWebhookEvent already recorded the error and the next backoff.
+      failed += 1;
+    }
+  }
+  return { ok: true as const, attempted: (events || []).length, processed, failed };
+}
+
+const REPAIR_WINDOW_MS = 7 * 24 * 60 * 60_000;
+const REPAIR_MAX_PAGES = 5;
+
+/**
+ * Bounded repair sweep for one mailbox (SYNC-3). Nylas has no updated_after
+ * filter for messages, so the sweep re-reads the newest mail received in the
+ * last seven days (at most five pages of 20) and upserts its current state:
+ * read, folder, and star changes that a lost webhook missed.
+ */
+export async function repairMailCorpusAccount({
+  userId,
+  accountId,
+  maxPages = REPAIR_MAX_PAGES,
+  now = Date.now(),
+}: {
+  userId: string;
+  accountId: string;
+  maxPages?: number;
+  now?: number;
+}) {
+  const row = await getConnectedAccount(userId, accountId);
+  const receivedAfter = Math.floor((now - REPAIR_WINDOW_MS) / 1000);
+  let pageToken: string | undefined;
+  let messagesSeen = 0;
+  try {
+    for (let page = 0; page < Math.max(1, maxPages); page += 1) {
+      const token = pageToken;
+      const result = await withRateLimitRetry(() =>
+        requireNylas().messages.list({
+          identifier: row.grantId,
+          queryParams: { limit: 20, receivedAfter, ...(token ? { page_token: token } : {}) } as any,
+        }),
+      );
+      const messages = result.data.map((message) => corpusMessageFromNylas(row, message));
+      messagesSeen += messages.length;
+      if (messages.length) {
+        await upsertCorpus(row, {
+          messages,
+          threads: corpusThreadsFromMessages(messages),
+          progress: { stage: 'repair_sweep', page, lastBatchMessages: messages.length },
+          incremental: true,
+        });
+      }
+      pageToken = result.nextCursor || undefined;
+      if (!pageToken) break;
+    }
+  } catch (err) {
+    await noteGrantFailure(row.grantId, err);
+    throw err;
+  }
+  return { ok: true as const, accountId: row.accountId, messages: messagesSeen };
+}
+
+/** The repair sweep for every connected, corpus-ready mailbox of one user. */
+export async function repairUserMailCorpus(userId: string) {
+  const accounts = await convexQuery<NylasAccountRow[]>(accountsApi.listConnectedAccounts, { userId });
+  const states = await convexQuery<any[]>(mailCorpusApi.listSyncTargets, { userId, limit: 500 }).catch(
+    () => [],
+  );
+  const ready = new Set((states || []).filter((state) => state?.corpusReady).map((state) => state.accountId));
+  const results: Array<{ accountId: string; ok: boolean; messages?: number; error?: string }> = [];
+  for (const account of accounts || []) {
+    // Backfill owns accounts that are not ready yet; dead grants are skipped.
+    if (account.status !== 'connected' || !ready.has(account.accountId)) continue;
+    try {
+      const result = await repairMailCorpusAccount({ userId, accountId: account.accountId });
+      results.push({ accountId: account.accountId, ok: true, messages: result.messages });
+    } catch (err: any) {
+      results.push({ accountId: account.accountId, ok: false, error: String(err?.message || err) });
+    }
+  }
+  return results;
+}
+
+// Grant lifecycle events that mean the mailbox must sign in again.
+const GRANT_GONE_EVENTS = /^grant\.(expired|deleted)$/;
+
+async function processWebhookEvent(
+  metadata: NylasWebhookMetadata,
+  row: NylasAccountRow | null,
+  payload: unknown,
+  options: { refetch?: boolean } = {},
+) {
+  if (GRANT_GONE_EVENTS.test(metadata.type)) {
+    const updated = await markGrantNeedsReconnect(
+      metadata.grantId,
+      metadata.type === 'grant.deleted'
+        ? 'the mailbox connection was removed'
+        : 'the mailbox sign-in expired',
+      webhookDeps.mutate,
+    );
+    await markWebhookProcessed(metadata, 'processed');
+    return { ok: true, duplicate: false, eventId: metadata.eventId, reconnectNeeded: updated };
+  }
   if (!metadata.grantId || !row) {
     // Loud on purpose. This branch returns ok:false without throwing, so it
     // never reached the queue's failure log, and it touches no sync state —
@@ -485,7 +615,7 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
   }
 
   try {
-    await applyWebhookDelta(row, metadata, payload);
+    await applyWebhookDelta(row, metadata, payload, options);
     await markWebhookProcessed(metadata, 'processed');
     await markSync(row, {
       progress: { stage: 'webhook', type: metadata.type, eventId: metadata.eventId },
@@ -495,8 +625,10 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
     return { ok: true, duplicate: false, eventId: metadata.eventId };
   } catch (err: any) {
     await markWebhookProcessed(metadata, 'error', err?.message || 'webhook processing failed');
+    if (await noteGrantFailure(row.grantId, err, webhookDeps.mutate)) throw err;
     // A transient webhook failure must not revoke readiness the corpus earned
-    // from a completed backfill; the reconciler repairs any missed delta.
+    // from a completed backfill; the durable retry and the repair sweep fix
+    // any missed delta.
     await markSync(row, {
       error: err?.message || 'webhook processing failed',
       progress: { stage: 'webhook_error', type: metadata.type, eventId: metadata.eventId },
@@ -505,7 +637,12 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
   }
 }
 
-async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMetadata, payload: unknown) {
+async function applyWebhookDelta(
+  row: NylasAccountRow,
+  metadata: NylasWebhookMetadata,
+  payload: unknown,
+  options: { refetch?: boolean } = {},
+) {
   if (metadata.providerMessageId && /message.*deleted|deleted.*message/i.test(metadata.type)) {
     await convexMutation(mailCorpusApi.deleteCorpusMessage, {
       userId: row.userId,
@@ -524,23 +661,30 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
   }
   if (!metadata.providerMessageId || !/message/i.test(metadata.type)) return;
 
-  let raw: { data?: unknown };
-  try {
-    raw = await withNylasRetry(() =>
-      requireNylas().messages.find({
-        identifier: row.grantId,
-        messageId: metadata.providerMessageId as string,
-      }),
-    );
-  } catch (err: any) {
-    // A redelivered backlog references resources that may be gone; treat
-    // not-found as nothing to ingest rather than a hard failure. Transient 5xx
-    // were already retried; let those bubble so the reconciler picks them up.
-    const status = nylasErrorStatus(err);
-    if (status === 404 || status === 410) return;
-    throw err;
+  // The webhook carries the full message unless Nylas truncated it. Using it
+  // directly avoids a refetch per event, which is what hit 429 limits.
+  // A retry always refetches: a stored payload can be older than the mailbox.
+  let message: unknown = metadata.truncated || options.refetch ? null : webhookMessageObject(payload);
+  if (!message) {
+    try {
+      const raw = await withNylasRetry(() =>
+        requireNylas().messages.find({
+          identifier: row.grantId,
+          messageId: metadata.providerMessageId as string,
+        }),
+      );
+      message = raw.data || payload;
+    } catch (err: any) {
+      // A redelivered backlog references resources that may be gone; treat
+      // not-found as nothing to ingest rather than a hard failure. Transient
+      // 5xx and 429 were already retried; let those bubble so the durable
+      // retry picks the event up again.
+      const status = nylasErrorStatus(err);
+      if ((status === 404 || status === 410) && !isGrantGoneError(err)) return;
+      throw err;
+    }
   }
-  const messages = [corpusMessageFromNylas(row, raw.data || payload)];
+  const messages = [corpusMessageFromNylas(row, message)];
   detectMailSuggestions(row, messages);
   // Awaited, unlike the suggestion detectors: the value of an urgent alert is
   // entirely in how soon it lands, and this path already runs off the webhook
@@ -557,6 +701,17 @@ async function applyWebhookDelta(row: NylasAccountRow, metadata: NylasWebhookMet
     },
     incremental: true,
   });
+}
+
+// The message object inside a Nylas webhook, when it is complete enough to
+// ingest: it has ids and a body field. Truncated events drop the body.
+export function webhookMessageObject(payload: unknown): Record<string, unknown> | null {
+  const root = payload && typeof payload === 'object' ? (payload as Record<string, any>) : {};
+  const object = root.data?.object;
+  if (!object || typeof object !== 'object') return null;
+  if (typeof object.id !== 'string' || typeof object.thread_id !== 'string') return null;
+  if (typeof object.body !== 'string') return null;
+  return object;
 }
 
 async function getConnectedAccount(userId: string, accountId: string) {
@@ -586,13 +741,14 @@ async function upsertCorpus(
     incremental?: boolean;
   },
 ) {
+  const roled = await withProviderFolderRoles(row, input);
   await convexMutation(mailCorpusApi.upsertCorpusBatch, {
     userId: row.userId,
     accountId: row.accountId,
     grantId: row.grantId,
     provider: row.provider,
-    threads: input.threads,
-    messages: input.messages,
+    threads: roled.threads,
+    messages: roled.messages,
     cursor: input.cursor,
     corpusReady: input.corpusReady,
     progress: input.progress,
@@ -605,6 +761,51 @@ async function upsertCorpus(
       lastIncrementalSyncAt: Date.now(),
     });
   }
+}
+
+// Folder names by id for providers with opaque folder ids (Microsoft).
+const FOLDER_NAME_TTL_MS = 30 * 60_000;
+const folderNameCache = new Map<string, { at: number; names: Map<string, string> }>();
+
+export function __clearFolderNameCacheForTest() {
+  folderNameCache.clear();
+}
+
+async function providerFolderNames(row: NylasAccountRow): Promise<Map<string, string> | undefined> {
+  if (row.provider !== 'microsoft') return undefined;
+  const cached = folderNameCache.get(row.grantId);
+  if (cached && Date.now() - cached.at < FOLDER_NAME_TTL_MS) return cached.names;
+  try {
+    const page = await requireNylas().folders.list({ identifier: row.grantId, queryParams: { limit: 200 } });
+    const names = new Map(page.data.map((folder: any) => [String(folder.id), String(folder.name || '')]));
+    if (folderNameCache.size > 500) folderNameCache.clear();
+    folderNameCache.set(row.grantId, { at: Date.now(), names });
+    return names;
+  } catch {
+    // Roles are an aid; a failed folder read must not block ingest.
+    return undefined;
+  }
+}
+
+// SEARCH-1: store provider-neutral role labels (INBOX, SENT, TRASH, SPAM,
+// ARCHIVE, DRAFT) next to opaque iCloud and Microsoft folder ids, so search,
+// views, and filters match every provider. Gmail ids are roles already.
+async function withProviderFolderRoles(
+  row: NylasAccountRow,
+  input: { threads: CorpusThreadInput[]; messages: CorpusMessageInput[] },
+) {
+  if (row.provider === 'google') return input;
+  const names = await providerFolderNames(row);
+  return {
+    messages: input.messages.map((message) => ({
+      ...message,
+      labels: withFolderRoleLabels(message.labels || [], names),
+    })),
+    threads: input.threads.map((thread) => ({
+      ...thread,
+      labels: withFolderRoleLabels(thread.labels || [], names),
+    })),
+  };
 }
 
 async function markSync(
@@ -685,7 +886,7 @@ function corpusMessageFromNormalized(
     }),
     labels,
     unread: Boolean(flags.unread) || Boolean(message.unread) || labels.includes('UNREAD'),
-    starred: Boolean(flags.starred) || labels.includes('STARRED'),
+    starred: Boolean(flags.starred) || Boolean(message.starred) || labels.includes('STARRED'),
     attachments: message.attachments,
     headers: message.headers,
   };
