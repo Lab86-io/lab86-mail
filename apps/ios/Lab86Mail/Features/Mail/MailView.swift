@@ -288,7 +288,15 @@ struct MailView: View {
             }
             await environment.mailIdentity.resolve(entries: entries)
         }
-        .sheet(isPresented: $showsSenderCleanup) { SenderCleanupView() }
+        .sheet(isPresented: $showsSenderCleanup) {
+            #if os(macOS)
+            // A checkbox list with the batch action in a footer: a Mac sheet
+            // has no bottom bar for the phone's Block.
+            MacSenderCleanupView()
+            #else
+            SenderCleanupView()
+            #endif
+        }
         .sheet(item: $categoryInfoThread) { thread in
             CategoryExplanationSheet(thread: thread) { correction in
                 Task {
