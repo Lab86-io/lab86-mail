@@ -85,6 +85,9 @@ struct TodayView: View {
                         }
                     }
             }
+            #if os(macOS)
+            .macFormSheet()
+            #endif
         }
         .task { await environment.trust.refreshPlan() }
         .sheet(isPresented: $showsHistory) {

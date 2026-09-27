@@ -69,6 +69,9 @@ struct BriefSourceStrip: View {
                             }
                         }
                 }
+                #if os(macOS)
+                .macFormSheet()
+                #endif
             }
         }
     }

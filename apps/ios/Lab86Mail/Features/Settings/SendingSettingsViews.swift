@@ -210,6 +210,9 @@ struct SavedRepliesSettingsView: View {
                     replies.insert(saved, at: 0)
                 }
             }
+            #if os(macOS)
+            .macFormSheet(.editor)
+            #endif
         }
         .task { await load() }
     }
@@ -261,8 +264,15 @@ private struct SavedReplyEditor: View {
         NavigationStack {
             Form {
                 Section {
+                    #if os(macOS)
+                    // A Mac form shows a field's title as its label, so the
+                    // example goes in the field as its prompt.
+                    TextField("Name", text: $draft.name, prompt: Text("For example: Meeting times"))
+                        .accessibilityLabel("Saved reply name")
+                    #else
                     TextField("Name, for example: Meeting times", text: $draft.name)
                         .accessibilityLabel("Saved reply name")
+                    #endif
                 } footer: {
                     Text("\(draft.name.count) of \(SavedReply.nameLimit) characters")
                 }

@@ -53,6 +53,19 @@ struct MailAlertsSettingsView: View {
 
                 Section {
                     ForEach(settings.vipSenders, id: \.self) { entry in
+                        #if os(macOS)
+                        // A Mac form row has no swipe; Remove shows on the row.
+                        HStack {
+                            Text(entry)
+                            Spacer(minLength: 8)
+                            Button("Remove", role: .destructive) { remove(entry) }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel("Remove \(entry)")
+                        }
+                        .contextMenu {
+                            Button("Remove", role: .destructive) { remove(entry) }
+                        }
+                        #else
                         Text(entry)
                             .swipeActions {
                                 Button("Remove", role: .destructive) { remove(entry) }
@@ -60,8 +73,19 @@ struct MailAlertsSettingsView: View {
                             .contextMenu {
                                 Button("Remove", role: .destructive) { remove(entry) }
                             }
+                        #endif
                     }
                     HStack {
+                        #if os(macOS)
+                        // A Mac form shows a field's title as its label; the
+                        // example goes in the field as its prompt.
+                        TextField("VIP sender", text: $vipInput, prompt: Text(verbatim: "ann@example.com or @example.com"))
+                            .labelsHidden()
+                            .textContentType(.emailAddress)
+                            .autocorrectionDisabled()
+                            .onSubmit(addVIP)
+                            .accessibilityLabel("Add a VIP sender")
+                        #else
                         TextField("ann@example.com or @example.com", text: $vipInput)
                             .textContentType(.emailAddress)
                             .keyboardType(.emailAddress)
@@ -69,6 +93,7 @@ struct MailAlertsSettingsView: View {
                             .autocorrectionDisabled()
                             .onSubmit(addVIP)
                             .accessibilityLabel("Add a VIP sender")
+                        #endif
                         Button("Add", action: addVIP)
                             .disabled(MailAlertSettings.normalizedVIP(vipInput) == nil)
                     }
@@ -182,8 +207,14 @@ struct VoiceProfileSettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                #if os(macOS)
+                TextField("Greeting", text: $form.greeting, prompt: Text("Hi {name},"))
+                    .labelsHidden()
+                    .accessibilityLabel("Greeting")
+                #else
                 TextField("Hi {name},", text: $form.greeting)
                     .accessibilityLabel("Greeting")
+                #endif
             } header: {
                 Text("Greeting")
             } footer: {
@@ -209,8 +240,14 @@ struct VoiceProfileSettingsView: View {
                     ?? "How long your replies usually are.")
             }
             Section {
+                #if os(macOS)
+                TextField("Tone", text: $form.tone, prompt: Text("Warm and direct, short sentences"))
+                    .labelsHidden()
+                    .accessibilityLabel("Tone")
+                #else
                 TextField("Warm and direct, short sentences", text: $form.tone)
                     .accessibilityLabel("Tone")
+                #endif
             } header: {
                 Text("Tone")
             } footer: {

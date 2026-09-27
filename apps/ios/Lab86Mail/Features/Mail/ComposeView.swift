@@ -432,6 +432,10 @@ struct ComposeView: View {
         }
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
+        #if os(macOS)
+        // The trigger is an icon; the Mac names it on hover.
+        .help("Insert a saved reply")
+        #endif
         .accessibilityLabel("Insert a saved reply")
         .task { if savedRepliesState == .idle { await loadSavedReplies() } }
     }
