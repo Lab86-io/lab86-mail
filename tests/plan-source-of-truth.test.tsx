@@ -70,7 +70,9 @@ describe('one price and one name', () => {
   test('the privacy policy names the product the same way', () => {
     // Google checks that the policy names the app on the consent screen, so the name must match.
     const html = renderToStaticMarkup(<PrivacyPage />);
-    expect(html).toContain(`${PRODUCT_NAME} connects to your mail provider only with the access you authorize`);
+    expect(html).toContain(
+      `${PRODUCT_NAME} connects to your mail provider only with the access you authorize`,
+    );
     expect(html).toContain(
       `${PRODUCT_NAME}&#x27;s use and transfer of information received from Google APIs`,
     );
