@@ -7,6 +7,7 @@ import { api, internal } from '../convex/_generated/api';
 import { BRIEF_JOB_MAX_ATTEMPTS } from '../convex/briefJobState';
 import schema from '../convex/schema';
 import { getAiRequestContext } from '../lib/ai/context';
+import * as gateway from '../lib/ai/gateway';
 import * as hosted from '../lib/hosted/convex';
 import * as environment from '../lib/hosted/env';
 import { runBriefJob, waitForBriefJob } from '../lib/mail/brief-jobs';
@@ -475,6 +476,38 @@ test('area and narrative writers with no model access, or on the last attempt, c
     await runBriefJob('owner', 'job', deps as any);
     expect(deps.noAccess).not.toHaveBeenCalled();
     expect(calls.at(-1)?.args.error).toBeUndefined();
+  }
+});
+
+test('the default access check asks the gateway and stops retries only on a terminal error', async () => {
+  const cases: Array<{ resolve: () => Promise<unknown>; error: string | undefined }> = [
+    {
+      resolve: async () => {
+        throw new gateway.AiAccessError('Choose a plan to use models.');
+      },
+      error: undefined,
+    },
+    {
+      resolve: async () => {
+        throw Object.assign(new Error('Provider is busy'), { status: 429 });
+      },
+      error: 'The writer will retry automatically.',
+    },
+    { resolve: async () => ({ provider: 'openrouter' }), error: 'The writer will retry automatically.' },
+  ];
+  for (const { resolve, error } of cases) {
+    const runtime = spyOn(gateway, 'resolveAiRuntime').mockImplementation(resolve as any);
+    try {
+      const { deps, calls } = worker('narrative');
+      deps.narrative.mockResolvedValue({ status: 'partial' });
+      const { noAccess: _injected, ...withDefaultAccessCheck } = deps;
+      await runBriefJob('owner', 'job', withDefaultAccessCheck as any);
+      expect(runtime).toHaveBeenCalledWith({ userId: 'owner', speed: 'primary', feature: 'narrative_write' });
+      expect(calls.at(-1)?.name).toBe('briefJobs:settle');
+      expect(calls.at(-1)?.args.error).toBe(error);
+    } finally {
+      runtime.mockRestore();
+    }
   }
 });
 

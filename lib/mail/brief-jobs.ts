@@ -51,6 +51,9 @@ export async function waitForBriefJob(userId: string, id: string, signal?: Abort
   }
 }
 
+const RETRY_NOTE = 'The writer will retry automatically.';
+const FINAL_NOTE = 'The writer is unavailable. The edition was published without it.';
+
 // Another attempt is pointless when the writer has no model access at all.
 async function writerHasNoAccess(userId: string, feature: string) {
   try {
@@ -97,9 +100,6 @@ const defaults = {
   noAccess: writerHasNoAccess,
   now: () => Date.now(),
 };
-
-const RETRY_NOTE = 'The writer will retry automatically.';
-const FINAL_NOTE = 'The writer is unavailable. The edition was published without it.';
 
 // The daily writer recorded, during this run, that it cannot reach a model.
 function recordedNoAccess(report: DailyReport, since: number) {
