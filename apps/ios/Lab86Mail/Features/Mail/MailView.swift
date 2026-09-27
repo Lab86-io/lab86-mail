@@ -508,7 +508,16 @@ struct MailView: View {
                             Task { await environment.store.unsnooze(row) }
                         }
                     )
+                    #if os(macOS)
+                    // The reading pane shows the open row; the list marks it.
+                    .listRowBackground(
+                        navigation.threadRoute?.matches(row) == true
+                            ? environment.theme.accentSoftColor.opacity(0.6)
+                            : Color.clear
+                    )
+                    #else
                     .listRowBackground(Color.clear)
+                    #endif
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button("Unsnooze", systemImage: "clock.arrow.circlepath") {
                             Task { await environment.store.unsnooze(row) }

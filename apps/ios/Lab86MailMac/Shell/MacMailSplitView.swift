@@ -39,3 +39,11 @@ struct MacMailSplitView: View {
         }
     }
 }
+
+extension ThreadRoute {
+    // A Snoozed row is the open thread when the reading pane shows it. The
+    // list marks that row, as it marks an open inbox row.
+    func matches(_ row: MailSnoozedThread) -> Bool {
+        accountID == row.accountID && threadID == row.threadID
+    }
+}
