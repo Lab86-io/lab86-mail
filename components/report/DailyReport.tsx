@@ -9,6 +9,7 @@ import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/prov
 import { Ring } from '@/components/loading-ui/ring';
 import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
+import { BriefSourceLine, briefEditionNotes } from '@/components/report/BriefSourceLine';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { useBriefEditionRequest } from '@/components/report/brief-edition-request';
 import { PreparedWork } from '@/components/report/PreparedWork';
@@ -17,9 +18,10 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
-import { briefFreshness, briefIsStale } from '@/lib/albatross/today';
+import { briefFreshness, briefIsStale, briefStaleNote } from '@/lib/albatross/today';
 import { callTool } from '@/lib/api-client';
 import { hasLiveBriefSection } from '@/lib/brief/editorial';
+import { BRIEF_RETRY_NOTE, isBriefEditionGenerating, isBriefEditionRetrying } from '@/lib/brief/generation';
 import { BRIEF_LETTER_FAILED_COPY, briefLetterFromReport } from '@/lib/brief/letter';
 import { useClientStore } from '@/lib/client-state';
 import {
@@ -115,7 +117,9 @@ interface DailyReportArtifactError {
 
 interface DailyReportPayload {
   _id: string;
-  kind: 'morning' | 'evening' | 'manual';
+  kind: 'morning' | 'evening' | 'manual' | 'weekly';
+  first?: boolean;
+  light?: boolean;
   generatedAt: number;
   title: string;
   narrative: string;
@@ -149,6 +153,8 @@ interface DailyReportPayload {
   prose?: { lede: string; weekAhead: string; model: string };
   status?: 'partial' | 'ready';
   progress?: { stage: string; done: number; total: number };
+  // A readable edition that waits for another writer attempt.
+  retrying?: boolean;
   // Agent-authored self-contained HTML artifact (served in a sandboxed iframe).
   html?: string;
   document?: BriefDocumentV2;
@@ -159,7 +165,7 @@ interface DailyReportPayload {
 
 interface ReportSummary {
   _id: string;
-  kind: 'morning' | 'evening' | 'manual';
+  kind: 'morning' | 'evening' | 'manual' | 'weekly';
   generatedAt: number;
   title?: string;
 }
@@ -178,6 +184,7 @@ const EDITION: Record<DailyReportPayload['kind'], string> = {
   morning: 'Morning Edition',
   evening: 'Evening Edition',
   manual: 'Latest Edition',
+  weekly: 'Weekly Review',
 };
 
 // "Tuesday, May 26 · Morning Edition" — the broadsheet dateline.
@@ -386,9 +393,15 @@ if(d&&d.source==='lab86-host'&&d.type==='dismissed_tasks')hideDismissedTasks(d.c
 	})();
 	</script>`;
 
-function withReportArtifactRuntime(
+/* The frame scrolls on its own, so the room for the floating launcher has to
+   be inside it. The style goes last in the body, after the edition's own
+   styles, so a reset in the edition cannot remove it. */
+const REPORT_ARTIFACT_LAUNCHER_CLEARANCE = `<style id="lab86-launcher-clearance">html:root{padding-bottom:88px}</style>`;
+
+export function withReportArtifactRuntime(
   html: string,
   albatrossContext?: AlbatrossDailyReportContext | null,
+  options: { launcherClearance?: boolean } = {},
 ): string {
   if (!html) return html;
   let next = injectReportAreaBrief(html, albatrossContext ?? null).replace(
@@ -396,10 +409,10 @@ function withReportArtifactRuntime(
     '',
   );
   const bodyClose = next.toLowerCase().lastIndexOf('</body>');
-  next =
-    bodyClose >= 0
-      ? `${next.slice(0, bodyClose)}${REPORT_ARTIFACT_RUNTIME_JS}${next.slice(bodyClose)}`
-      : `${next}${REPORT_ARTIFACT_RUNTIME_JS}`;
+  const tail = options.launcherClearance
+    ? `${REPORT_ARTIFACT_LAUNCHER_CLEARANCE}${REPORT_ARTIFACT_RUNTIME_JS}`
+    : REPORT_ARTIFACT_RUNTIME_JS;
+  next = bodyClose >= 0 ? `${next.slice(0, bodyClose)}${tail}${next.slice(bodyClose)}` : `${next}${tail}`;
   return injectBriefArtifactReadyRuntime(next);
 }
 
@@ -733,7 +746,9 @@ function ReportArtifact({
     <iframe
       ref={frameRef}
       title="The Daily Brief"
-      srcDoc={withReportArtifactRuntime(html, albatrossContext)}
+      // A frame that grows to its own height scrolls with the page, and the
+      // page leaves the room; a frame that fills the pane leaves it inside.
+      srcDoc={withReportArtifactRuntime(html, albatrossContext, { launcherClearance: !autoHeight })}
       aria-busy={!artifactReady}
       onLoad={() => {
         postTheme();
@@ -847,8 +862,8 @@ export function DailyReport({
     // edition to land — so the page upgrades live.
     refetchInterval: (query) => {
       const r = query.state.data?.report;
-      if (r?.status === 'partial' || r?.artifactStatus === 'composing') return 2_000;
-      if (r?.artifactStatus === 'enriching') return 3_000;
+      if (isBriefEditionGenerating(r)) return 2_000;
+      if (r?.retrying) return 10_000;
       if (generatingSince && (!r || (r.generatedAt || 0) < generatingSince)) return 1_500;
       return selectedId ? false : 30_000;
     },
@@ -869,10 +884,13 @@ export function DailyReport({
   const report = reportQuery.data?.report || null;
   const artifactSource = report?.html ? (report.artifactSource ?? 'ai') : null;
   const displayDocument = Boolean(report?.document && report.artifactSource === 'document-v2');
-  // Embedded in Today, the brief sits under a live layer. It has to say when it
-  // was written, and say so louder when it describes an older day.
-  const embeddedFreshness = briefFreshness(report?.generatedAt ?? null, Date.now());
-  const embeddedStale = briefIsStale(report?.generatedAt ?? null, Date.now());
+  // Every edition says so when it describes an older day. Embedded in Today,
+  // the stamp in the section rule carries it; on its own page the note sits
+  // with the source line, in every format.
+  const now = Date.now();
+  const embeddedFreshness = briefFreshness(report?.generatedAt ?? null, now);
+  const stale = briefIsStale(report?.generatedAt ?? null, now);
+  const staleNote = embedded ? null : briefStaleNote(report?.generatedAt ?? null, now);
   // The deterministic HTML is the interim save while the letter composes. If
   // it is still the final artifact, the letter did not write.
   const composingLetter =
@@ -884,11 +902,8 @@ export function DailyReport({
   const displayArtifact = Boolean(report?.html && artifactSource === 'ai' && !displayDocument);
   // True between clicking Generate and the new edition actually appearing.
   const waitingForNew = Boolean(generatingSince && (!report || (report.generatedAt || 0) < generatingSince));
-  const generating =
-    waitingForNew ||
-    composingLetter ||
-    report?.status === 'partial' ||
-    report?.artifactStatus === 'composing';
+  const generating = waitingForNew || isBriefEditionGenerating(report);
+  const retrying = isBriefEditionRetrying(report);
   const showGeneratingState = generating;
   // The letter from the stored sections, for editions without a document of
   // their own: older editions and the ones whose composition failed.
@@ -937,11 +952,7 @@ export function DailyReport({
   // Stop the "generating" state once an edition newer than the click has settled.
   useEffect(() => {
     if (!generatingSince || !report) return;
-    if (
-      (report.generatedAt || 0) >= generatingSince &&
-      report.status !== 'partial' &&
-      report.artifactStatus !== 'composing'
-    ) {
+    if ((report.generatedAt || 0) >= generatingSince && !isBriefEditionGenerating(report)) {
       setGeneratingSince(null);
     }
   }, [report, generatingSince]);
@@ -964,11 +975,7 @@ export function DailyReport({
     },
     onSuccess: (result) => {
       // A completed response can release the refresh control immediately.
-      if (
-        result.report &&
-        result.report.status !== 'partial' &&
-        !['composing', 'enriching'].includes(result.report.artifactStatus || '')
-      ) {
+      if (result.report && !isBriefEditionGenerating(result.report)) {
         setGeneratingSince(null);
       } else if (result.started === false && result.report?.generatedAt) {
         setGeneratingSince(result.report.generatedAt);
@@ -996,13 +1003,13 @@ export function DailyReport({
           <p
             className={cn(
               'text-[12px]',
-              embeddedStale ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-faint)]',
+              stale ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-faint)]',
             )}
           >
             {!report
               ? 'Not written yet today.'
-              : embeddedStale
-                ? `${embeddedFreshness} — it describes an older day.`
+              : stale
+                ? briefStaleNote(report.generatedAt ?? null, now)
                 : `${embeddedFreshness}, from your mail and calendar.`}
           </p>
           <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
@@ -1015,6 +1022,15 @@ export function DailyReport({
             {busy ? 'Writing…' : report ? 'Write it again' : "Write today's brief"}
           </button>
         </div>
+      ) : null}
+
+      {retrying && !busy ? (
+        <p
+          role="status"
+          className={cn('text-[12px] text-[var(--color-text-muted)]', !embedded && 'px-5 pt-3')}
+        >
+          {BRIEF_RETRY_NOTE}
+        </p>
       ) : null}
 
       {/* The letter and the legacy artifact carry their own masthead, so the
@@ -1064,7 +1080,8 @@ export function DailyReport({
                 title="Inbox"
                 className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
               >
-                <Inbox className="size-3.5" />
+                {/* Icon when narrow, the word when wide: never an icon before text. */}
+                <Inbox className="size-3.5 @[360px]:hidden" />
                 <span className="hidden @[360px]:inline">Inbox</span>
               </Button>
               <Button
@@ -1075,8 +1092,12 @@ export function DailyReport({
                 aria-label="Write a new brief"
                 title="Write"
               >
-                {busy ? <Ring className="size-3" /> : <RefreshCw className="size-3" />}
-                <span className="hidden @[360px]:inline">Write</span>
+                {busy ? (
+                  <Ring className="size-3 @[360px]:hidden" />
+                ) : (
+                  <RefreshCw className="size-3 @[360px]:hidden" />
+                )}
+                <span className="hidden @[360px]:inline">{busy ? 'Writing…' : 'Write'}</span>
               </Button>
             </div>
           </div>
@@ -1162,7 +1183,7 @@ export function DailyReport({
             ? embedded
               ? ''
               : 'overflow-hidden'
-            : cn('@container', embedded ? 'py-1' : 'scrollable px-5 py-5'),
+            : cn('@container', embedded ? 'py-1' : 'scrollable assistant-launcher-clearance px-5 pt-5'),
         )}
       >
         {reportQuery.isError && !report ? (
@@ -1214,6 +1235,16 @@ export function DailyReport({
                   masthead={!embedded}
                   embedded={embedded}
                   noiseCount={noiseCount}
+                  belowMasthead={
+                    selectedId ? null : (
+                      <BriefSourceLine
+                        reportId={report._id}
+                        notes={briefEditionNotes(report)}
+                        staleNote={staleNote}
+                        className="daily-brief-layout"
+                      />
+                    )
+                  }
                   footer={
                     <>
                       {!selectedId && !hasLiveBriefSection(report.document, 'prepared_work') ? (
@@ -1246,6 +1277,16 @@ export function DailyReport({
                   masthead={!embedded}
                   embedded={embedded}
                   noiseCount={noiseCount}
+                  belowMasthead={
+                    selectedId ? null : (
+                      <BriefSourceLine
+                        reportId={report._id}
+                        notes={briefEditionNotes(report)}
+                        staleNote={staleNote}
+                        className="daily-brief-layout"
+                      />
+                    )
+                  }
                   footer={
                     <>
                       {letterFailed ? (
@@ -1297,19 +1338,33 @@ export function DailyReport({
             ) : report?.html ? (
               <motion.div
                 key="artifact"
-                className={embedded ? undefined : 'h-full'}
+                className={embedded ? undefined : 'flex h-full flex-col'}
                 initial={{ opacity: 0, scale: 0.92 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ type: 'spring', stiffness: 190, damping: 22, mass: 0.9 }}
               >
-                <ReportArtifact
-                  html={report.html}
-                  albatrossContext={asAlbatrossContext(report.sections.albatross)}
-                  dismissedTaskIds={dismissedTaskIds}
-                  dismissedThreadRecords={dismissedThreadRecords}
-                  onChanged={invalidate}
-                  autoHeight={embedded}
-                />
+                {/* An edition in the older format carries its own cover inside
+                    the frame, so the source line and the stale note sit in a
+                    strip above it. The strip keeps clear of the floating
+                    toolbar: under it on a phone, beside it from sm up. */}
+                {selectedId ? null : (
+                  <BriefSourceLine
+                    reportId={report._id}
+                    notes={briefEditionNotes(report)}
+                    staleNote={staleNote}
+                    className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-content)] px-5 pb-2.5 pt-[3.75rem] sm:pr-64 sm:pt-2.5"
+                  />
+                )}
+                <div className={embedded ? undefined : 'min-h-0 flex-1'}>
+                  <ReportArtifact
+                    html={report.html}
+                    albatrossContext={asAlbatrossContext(report.sections.albatross)}
+                    dismissedTaskIds={dismissedTaskIds}
+                    dismissedThreadRecords={dismissedThreadRecords}
+                    onChanged={invalidate}
+                    autoHeight={embedded}
+                  />
+                </div>
               </motion.div>
             ) : (
               <ReportGenerating report={report} />
@@ -1332,6 +1387,8 @@ export function DailyReport({
                 Press Write to get today&apos;s brief. The morning run files here each day.
               </EmptyDescription>
             </EmptyHeader>
+            {/* With no edition, the source line still says when a source is broken. */}
+            <BriefSourceLine className="mt-3 max-w-md" />
           </Empty>
         )}
       </div>

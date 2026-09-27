@@ -7,7 +7,7 @@ import { isConvexConfigured } from '../hosted/env';
 // the tenancy boundary. The old NeDB file store had none, which let one
 // user's daily brief, memories, and labels leak to every other user.
 
-const userDataApi = (api as any).userData;
+const userDataApi = api.userData;
 
 export interface KvRecord<T = any> {
   key: string;
@@ -120,24 +120,6 @@ export async function kvCompareAndSwap<T extends { revision: string }>(
   });
 }
 
-export async function kvDeleteMany(kind: string, ref?: string): Promise<void> {
-  const userId = requireStoreUserId();
-  if (!isConvexConfigured()) {
-    memoryDeleteMany(userId, kind, ref);
-    return;
-  }
-  for (let batch = 0; batch < 100; batch += 1) {
-    const result = await convexMutation<{ hasMore?: boolean }>(userDataApi.deleteDocs, {
-      userId,
-      kind,
-      ref,
-      limit: 500,
-    });
-    if (!result.hasMore) return;
-  }
-  throw new Error(`Too many ${kind} records to delete in one request.`);
-}
-
 // ---------------------------------------------------------------------------
 // In-memory fallback: used only when Convex is not configured (unit tests and
 // bare local dev). Still per-user keyed so tests exercise the same scoping.
@@ -179,11 +161,4 @@ function memoryUpsert(userId: string, kind: string, key: string, doc: any, ref?:
 
 function memoryDelete(userId: string, kind: string, key: string) {
   bucket(userId, kind).delete(key);
-}
-
-function memoryDeleteMany(userId: string, kind: string, ref?: string) {
-  const map = bucket(userId, kind);
-  for (const [key, row] of map) {
-    if (ref === undefined || row.ref === ref) map.delete(key);
-  }
 }

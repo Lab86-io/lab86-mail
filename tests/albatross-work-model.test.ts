@@ -10,7 +10,7 @@ import {
 import {
   appliedStepsFromApplyResult,
   buildAlbatrossApplicationPlan,
-  unresolvedArtifactsAfterUndo,
+  mergeAppliedSteps,
 } from '../lib/albatross/work-model';
 
 describe('Albatross plan application model', () => {
@@ -190,21 +190,19 @@ describe('Albatross plan application model', () => {
     ]);
   });
 
-  test('undone operations reappear as unresolved artifacts', () => {
-    const unresolved = unresolvedArtifactsAfterUndo(
-      {
-        artifacts: [
-          { kind: 'task', id: 'card_1', title: 'List missing tax documents' },
-          { kind: 'emailDraft', id: 'draft_1', title: 'Draft Andrew note' },
-        ],
-      },
+  test('a later approval never hides an artifact an earlier list created', () => {
+    const merged = mergeAppliedSteps(
+      [{ stepKey: 'step-1', kind: 'task', cardId: 'card_1' }],
       [
-        { status: 'undone', target: { kind: 'task', id: 'card_1' } },
-        { status: 'applied', target: { kind: 'emailDraft', id: 'draft_1' } },
+        { stepKey: 'step-1', kind: 'task' },
+        { stepKey: 'step-2', kind: 'email_send' },
       ],
+      [{ stepKey: 'step-2', kind: 'email_send' }],
     );
-
-    expect(unresolved).toEqual([{ kind: 'task', id: 'card_1', title: 'List missing tax documents' }]);
+    expect(merged).toEqual([
+      { stepKey: 'step-1', kind: 'task', cardId: 'card_1' },
+      { stepKey: 'step-2', kind: 'email_send' },
+    ]);
   });
 
   test('appliedSteps mapping records created artifact ids and bare keys for approvals', () => {

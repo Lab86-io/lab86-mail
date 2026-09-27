@@ -9,6 +9,7 @@ import {
   updateCalendarEvent,
 } from '../lib/calendar/mutate';
 import type { NylasAccountRow } from '../lib/nylas/provider';
+import { parseIsoInTimezone } from '../lib/shared/timezones';
 
 // ---------------------------------------------------------------------------
 // Calendar mutations go provider-first (Nylas over fetch) and then mirror into
@@ -569,7 +570,8 @@ describe('updateCalendarEvent', () => {
           patch: { startAt: START_AT },
         }),
       ).rejects.toThrow('Event times unknown; sync the calendar first.');
-      expect(h.nylasCalls).toHaveLength(0);
+      // Only the master lookup ran; nothing was written.
+      expect(h.nylasCalls.map((call) => call.method)).toEqual(['GET']);
     });
   });
 
@@ -591,6 +593,161 @@ describe('updateCalendarEvent', () => {
           patch: { title: 'x' },
         }),
       ).rejects.toThrow(/Couldn't update the event on ann@example\.com/);
+    });
+  });
+});
+
+describe('updateCalendarEvent series and zones (CAL-2, CAL-4, CAL-5)', () => {
+  const RULE = ['RRULE:FREQ=WEEKLY;BYDAY=MO'];
+
+  test('a series edit keeps the master rule when the client sends an empty rule', async () => {
+    await withHarness(async (h) => {
+      setupBase(h);
+      // Masters are not mirrored; the provider has the rule.
+      h.onConvex('calendarData:getEventByProviderId', () => null);
+      h.onNylas('GET', /\/v3\/grants\/grant_1\/events\/master_1$/, () => ({
+        json: eventResponse('master_1', { title: 'Weekly sync', recurrence: RULE }),
+      }));
+      h.onNylas('PUT', /\/v3\/grants\/grant_1\/events\/master_1$/, () => ({
+        json: eventResponse('master_1', { title: 'Weekly planning', recurrence: RULE }),
+      }));
+
+      await updateCalendarEvent({
+        userId: 'user_1',
+        accountId: 'acct_1',
+        calendarId: 'cal_primary',
+        eventId: 'master_1',
+        patch: { title: 'Weekly planning', recurrence: [] },
+      });
+      const update = h.nylasCalls.find((call) => call.method === 'PUT');
+      expect(update?.body).toEqual({ title: 'Weekly planning', recurrence: RULE });
+      // Undo can now restore the series, because the master was read.
+      const record = h.convexCalls.find((call) => call.path === 'operations:record');
+      expect(record?.args.inverse?.payload.fields).toMatchObject({ title: 'Weekly sync', recurrence: RULE });
+    });
+  });
+
+  test('clearRecurrence is the only way to stop a series', async () => {
+    await withHarness(async (h) => {
+      setupBase(h);
+      h.onConvex('calendarData:getEventByProviderId', () => null);
+      h.onNylas('GET', /\/v3\/grants\/grant_1\/events\/master_1$/, () => ({
+        json: eventResponse('master_1', { recurrence: RULE }),
+      }));
+      h.onNylas('PUT', /\/v3\/grants\/grant_1\/events\/master_1$/, () => ({
+        json: eventResponse('master_1'),
+      }));
+      await updateCalendarEvent({
+        userId: 'user_1',
+        accountId: 'acct_1',
+        calendarId: 'cal_primary',
+        eventId: 'master_1',
+        patch: { clearRecurrence: true },
+      });
+      expect(h.nylasCalls.find((call) => call.method === 'PUT')?.body).toEqual({ recurrence: [] });
+    });
+  });
+
+  test('an instance edit sends no rule and keeps the event zone', async () => {
+    await withHarness(async (h) => {
+      setupBase(h);
+      h.onConvex('calendarData:getEventByProviderId', () => ({
+        title: 'Weekly sync',
+        startAt: START_AT,
+        endAt: END_AT,
+        allDay: false,
+        masterEventId: 'master_1',
+        startTimezone: 'America/New_York',
+      }));
+      h.onNylas('PUT', /\/v3\/grants\/grant_1\/events\/inst_1$/, () => ({ json: eventResponse('inst_1') }));
+      await updateCalendarEvent({
+        userId: 'user_1',
+        accountId: 'acct_1',
+        calendarId: 'cal_primary',
+        eventId: 'inst_1',
+        timezone: 'Europe/Berlin',
+        patch: { startAt: START_AT + 3_600_000, endAt: END_AT + 3_600_000, recurrence: [] },
+      });
+      const update = h.nylasCalls.find((call) => call.method === 'PUT');
+      // No master lookup: the mirror row exists.
+      expect(h.nylasCalls.some((call) => call.method === 'GET')).toBe(false);
+      expect(update?.body.recurrence).toBeUndefined();
+      expect(update?.body.when).toMatchObject({
+        start_timezone: 'America/New_York',
+        end_timezone: 'America/New_York',
+      });
+    });
+  });
+
+  test('a timed edit without a row zone uses the user zone, not UTC', async () => {
+    await withHarness(async (h) => {
+      setupBase(h);
+      h.onConvex('calendarData:getEventByProviderId', () => ({ startAt: START_AT, endAt: END_AT }));
+      h.onNylas('PUT', /\/v3\/grants\/grant_1\/events\/evt_1$/, () => ({ json: eventResponse('evt_1') }));
+      await updateCalendarEvent({
+        userId: 'user_1',
+        accountId: 'acct_1',
+        calendarId: 'cal_primary',
+        eventId: 'evt_1',
+        timezone: 'America/Chicago',
+        patch: { startAt: START_AT + 3_600_000 },
+      });
+      expect(h.nylasCalls.find((call) => call.method === 'PUT')?.body.when.start_timezone).toBe(
+        'America/Chicago',
+      );
+    });
+  });
+
+  test('all-day writes take the date in the user zone', async () => {
+    await withHarness(async (h) => {
+      setupBase(h);
+      h.onNylas('POST', /\/v3\/grants\/grant_1\/events$/, () => ({ json: eventResponse('evt_day') }));
+      const base = { userId: 'user_1', accountId: 'acct_1', title: 'Offsite', allDay: true };
+      // Date-only input from Berlin: local midnight is 22:00Z the day before.
+      await createCalendarEvent({
+        ...base,
+        startAt: parseIsoInTimezone('2026-09-26', 'Europe/Berlin', 'start'),
+        endAt: parseIsoInTimezone('2026-09-27', 'Europe/Berlin', 'end'),
+        timezone: 'Europe/Berlin',
+      });
+      expect(h.nylasCalls[0].body.when).toEqual({ date: '2026-09-26' });
+      // New York at 21:00 is already the next day in UTC.
+      await createCalendarEvent({
+        ...base,
+        startAt: parseIsoInTimezone('2026-09-26T21:00:00', 'America/New_York', 'start'),
+        endAt: parseIsoInTimezone('2026-09-26T22:00:00', 'America/New_York', 'end'),
+        timezone: 'America/New_York',
+      });
+      expect(h.nylasCalls[1].body.when).toEqual({ date: '2026-09-26' });
+      // A date-only end is exclusive: 26 up to 29 is three days.
+      await createCalendarEvent({
+        ...base,
+        startAt: parseIsoInTimezone('2026-09-26', 'America/New_York', 'start'),
+        endAt: parseIsoInTimezone('2026-09-29', 'America/New_York', 'end'),
+        timezone: 'America/New_York',
+      });
+      expect(h.nylasCalls[2].body.when).toEqual({ start_date: '2026-09-26', end_date: '2026-09-29' });
+    });
+  });
+
+  test('switching a timed event to all day rewrites the when', async () => {
+    await withHarness(async (h) => {
+      setupBase(h);
+      h.onConvex('calendarData:getEventByProviderId', () => ({
+        startAt: START_AT,
+        endAt: END_AT,
+        allDay: false,
+      }));
+      h.onNylas('PUT', /\/v3\/grants\/grant_1\/events\/evt_1$/, () => ({ json: eventResponse('evt_1') }));
+      await updateCalendarEvent({
+        userId: 'user_1',
+        accountId: 'acct_1',
+        calendarId: 'cal_primary',
+        eventId: 'evt_1',
+        timezone: 'America/New_York',
+        patch: { allDay: true },
+      });
+      expect(h.nylasCalls.find((call) => call.method === 'PUT')?.body.when).toEqual({ date: '2026-08-03' });
     });
   });
 });

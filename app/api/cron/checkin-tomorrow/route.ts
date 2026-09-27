@@ -8,6 +8,7 @@ import {
 import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -61,7 +62,7 @@ export function createCheckinTomorrowPost(overrides: Partial<TomorrowDependencie
       const prefix = tomorrowExternalPrefix(checkinId);
       const existingRows =
         (await deps
-          .convexQuery<any[]>((api as any).albatrossIntents.listByExternalPrefix, { userId, prefix })
+          .convexQuery<any[]>(api.albatrossIntents.listByExternalPrefix, { userId, prefix })
           .catch(() => [])) || [];
       const existing = existingRows.map((row) => ({
         workId: String(row._id),
@@ -93,12 +94,12 @@ export function createCheckinTomorrowPost(overrides: Partial<TomorrowDependencie
         }
         const externalId = split.fallback ? prefix : tomorrowExternalId(checkinId, item.title, taken);
         taken.add(externalId);
-        const upserted = await deps.convexMutation<any>((api as any).albatrossIntents.createIntent, {
+        const upserted = await deps.convexMutation<any>(api.albatrossIntents.createIntent, {
           userId,
           externalId,
           rawText: item.rawText,
           source: 'text',
-          title: item.title.slice(0, 180),
+          title: truncateText(item.title, 180),
           replaceRawText: true,
           returnMetadata: true,
         });
@@ -108,7 +109,7 @@ export function createCheckinTomorrowPost(overrides: Partial<TomorrowDependencie
         workIds.push(workId);
         if (upserted?.changed === false) {
           const detail = await deps
-            .convexQuery<any>((api as any).albatrossWorkV2.workDetail, { userId, workId })
+            .convexQuery<any>(api.albatrossWorkV2.workDetail, { userId, workId })
             .catch(() => null);
           const existingStatus = tomorrowWorkPlanStatus(detail);
           if (existingStatus === 'needs_input') needsInput = true;
@@ -122,7 +123,7 @@ export function createCheckinTomorrowPost(overrides: Partial<TomorrowDependencie
       for (const row of existing) {
         if (kept.has(row.workId) || row.started || row.workState !== 'active') continue;
         await deps
-          .convexMutation((api as any).albatrossWorkV2.releaseUnstartedWork, {
+          .convexMutation(api.albatrossWorkV2.releaseUnstartedWork, {
             userId,
             workId: row.workId,
             reason: 'The revised check-in plan replaced this Work.',
@@ -138,7 +139,7 @@ export function createCheckinTomorrowPost(overrides: Partial<TomorrowDependencie
       }
 
       const status: 'ready' | 'needs_input' = needsInput ? 'needs_input' : 'ready';
-      await deps.convexMutation((api as any).albatrossNotifications.completeTomorrowPlan, {
+      await deps.convexMutation(api.albatrossNotifications.completeTomorrowPlan, {
         userId,
         checkinId,
         workId: workIds[0],
@@ -149,7 +150,7 @@ export function createCheckinTomorrowPost(overrides: Partial<TomorrowDependencie
     } catch (error) {
       deps.reportError('[cron/checkin-tomorrow] planning failed', checkinId, workIds[0], error);
       await deps
-        .convexMutation((api as any).albatrossNotifications.failTomorrowPlan, {
+        .convexMutation(api.albatrossNotifications.failTomorrowPlan, {
           userId,
           checkinId,
           ...(workIds[0] ? { workId: workIds[0] } : {}),

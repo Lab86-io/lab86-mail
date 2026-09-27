@@ -138,7 +138,7 @@ export const upsertEntitlement = mutation({
   args: {
     internalSecret: v.optional(v.string()),
     userId: v.string(),
-    plan: v.union(v.literal('free'), v.literal('pro'), v.literal('admin')),
+    plan: v.union(v.literal('free'), v.literal('byok'), v.literal('pro'), v.literal('admin')),
     status: v.union(
       v.literal('inactive'),
       v.literal('active'),
@@ -146,10 +146,8 @@ export const upsertEntitlement = mutation({
       v.literal('past_due'),
       v.literal('canceled'),
     ),
-    source: v.union(v.literal('manual'), v.literal('stripe'), v.literal('clerk')),
+    source: v.union(v.literal('manual'), v.literal('clerk')),
     monthlyCredits: v.number(),
-    stripeCustomerId: v.optional(v.string()),
-    stripeSubscriptionId: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -164,8 +162,6 @@ export const upsertEntitlement = mutation({
       status: args.status,
       source: args.source,
       monthlyCredits: args.monthlyCredits,
-      stripeCustomerId: args.stripeCustomerId,
-      stripeSubscriptionId: args.stripeSubscriptionId,
       currentPeriodEnd: args.currentPeriodEnd,
       updatedAt: ts,
     };
@@ -178,6 +174,51 @@ export const upsertEntitlement = mutation({
       ...patch,
       createdAt: ts,
     });
+  },
+});
+
+const TRIAL_DAY_MS = 86_400_000;
+
+/**
+ * Grant the one app-level Pro trial. Idempotent: a user who already had a
+ * trial gets the stored dates back, and a user who had Pro or admin before
+ * gets none. The server clock sets the dates.
+ */
+export const grantTrial = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    days: v.number(),
+    monthlyCredits: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const existing = await ctx.db
+      .query('aiEntitlements')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .unique();
+    if (existing?.trialStartedAt)
+      return {
+        granted: false,
+        trialStartedAt: existing.trialStartedAt,
+        trialEndsAt: existing.trialEndsAt ?? null,
+      };
+    if (existing && (existing.plan === 'pro' || existing.plan === 'admin'))
+      return { granted: false, trialStartedAt: null, trialEndsAt: null };
+    const ts = now();
+    const days = Math.min(Math.max(Math.round(args.days), 1), 30);
+    const trial = { trialStartedAt: ts, trialEndsAt: ts + days * TRIAL_DAY_MS };
+    const pro = {
+      plan: 'pro' as const,
+      status: 'trialing' as const,
+      monthlyCredits: Math.max(0, args.monthlyCredits),
+      ...trial,
+      updatedAt: ts,
+    };
+    if (existing) await ctx.db.patch(existing._id, pro);
+    else
+      await ctx.db.insert('aiEntitlements', { userId: args.userId, source: 'clerk', ...pro, createdAt: ts });
+    return { granted: true, ...trial };
   },
 });
 

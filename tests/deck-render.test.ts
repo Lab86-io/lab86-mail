@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { hiringDeck, referenceDeck } from '../lib/documents/deck-fixtures';
 import { checkDeck, estimateTextLines, repairDeck, textFits } from '../lib/documents/deck-quality';
 import { availableRenderBrowser, renderDeckHtml } from '../lib/documents/deck-render';
+import { setProcessEnv } from './tools/env';
 
 describe('deck render page', () => {
   test.each([
@@ -115,7 +116,7 @@ describe('deck render page', () => {
     expect(html).not.toContain('src="/art/');
   });
   test('reports a browser outside production without configuration', () => {
-    expect(['local', 'browserbase']).toContain(availableRenderBrowser());
+    expect(['local', 'browserbase']).toContain<unknown>(availableRenderBrowser());
   });
 });
 
@@ -295,7 +296,9 @@ describe('deck slide rendering', () => {
         events.push(`connect:${kind}`);
         return {
           browser: { newContext: async () => fakeContext } as never,
-          close: async () => events.push('browser-closed'),
+          close: async () => {
+            events.push('browser-closed');
+          },
         };
       },
     });
@@ -311,11 +314,11 @@ describe('deck slide rendering', () => {
   test('refuses to render without a browser', async () => {
     const { renderDeckSlides } = await import('../lib/documents/deck-render');
     const previous = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+    setProcessEnv('NODE_ENV', 'production');
     try {
       await expect(renderDeckSlides(hiringDeck())).rejects.toThrow('No render browser');
     } finally {
-      process.env.NODE_ENV = previous;
+      setProcessEnv('NODE_ENV', previous);
     }
   });
 });

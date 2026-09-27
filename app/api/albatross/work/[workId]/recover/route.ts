@@ -54,7 +54,7 @@ export function createWorkRecoveryPost(deps: WorkRecoveryDependencies = defaults
       if (typeof body.recovery !== 'string' || !recoveries.has(body.recovery as Recovery)) {
         return Response.json({ ok: false, error: 'Invalid recovery.' }, { status: 400 });
       }
-      const detail = await deps.convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
+      const detail = await deps.convexQuery<any>(api.albatrossWorkV2.workDetail, {
         userId: user.userId,
         workId,
       });
@@ -66,7 +66,7 @@ export function createWorkRecoveryPost(deps: WorkRecoveryDependencies = defaults
       );
       const recovery = body.recovery as Recovery;
       const revisedStep = recovery === 'shrink' ? shrinkSuggestion(step?.title) : undefined;
-      await deps.convexMutation((api as any).albatrossWorkV2.recordLapse, {
+      await deps.convexMutation(api.albatrossWorkV2.recordLapse, {
         userId: user.userId,
         workId,
         stepKey: step?.key,
@@ -91,7 +91,7 @@ export function createWorkRecoveryPost(deps: WorkRecoveryDependencies = defaults
       }
       const recoveryState = recoveryWorkState(recovery);
       if (recoveryState === 'waiting' || recoveryState === 'paused') {
-        await deps.convexMutation((api as any).albatrossWorkV2.updateWorkState, {
+        await deps.convexMutation(api.albatrossWorkV2.updateWorkState, {
           userId: user.userId,
           workId,
           state: recoveryState,
@@ -99,7 +99,7 @@ export function createWorkRecoveryPost(deps: WorkRecoveryDependencies = defaults
         return Response.json({ ok: true, recovery, state: recoveryState, replanned: false, revisedStep });
       }
       if (recoveryState === 'released') {
-        await deps.convexMutation((api as any).albatrossWorkV2.releaseWork, {
+        await deps.convexMutation(api.albatrossWorkV2.releaseWork, {
           userId: user.userId,
           workId,
           reason: 'This no longer deserves space after its planned block passed.',

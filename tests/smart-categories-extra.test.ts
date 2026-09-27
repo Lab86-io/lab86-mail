@@ -127,7 +127,7 @@ describe('classifyThreadDeterministic routes diverse mail', () => {
   for (const c of cases) {
     test(`${c.name} → ${c.expected}`, () => {
       const verdict = classifyThreadDeterministic(c.t);
-      expect(verdict.primary).toBe(c.expected);
+      expect(verdict.primary).toBe<string>(c.expected);
       expect(Array.isArray(verdict.secondary)).toBe(true);
       expect(verdict.confidence).toBeGreaterThanOrEqual(0);
       expect(verdict.confidence).toBeLessThanOrEqual(1);

@@ -10,6 +10,7 @@ struct TodayView: View {
     @State private var artifactReview: ArtifactReviewRequest?
     @State private var isRegenerating = false
     @State private var showsInlineDate = false
+    @State private var showsBriefSettings = false
 
     private var store: ProductStore { environment.store }
 
@@ -62,16 +63,33 @@ struct TodayView: View {
                 regenerateButton
             }
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task {
-                        await store.loadDailyReportHistory()
-                        showsHistory = true
+                Menu {
+                    Button("Past editions") {
+                        Task {
+                            await store.loadDailyReportHistory()
+                            showsHistory = true
+                        }
                     }
+                    Button("Delivery and schedule") { showsBriefSettings = true }
                 } label: {
-                    Label("Report history", systemImage: "clock.arrow.circlepath")
+                    Label("Brief options", systemImage: "ellipsis.circle")
                 }
             }
         }
+        .sheet(isPresented: $showsBriefSettings) {
+            NavigationStack {
+                BriefSettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showsBriefSettings = false }
+                        }
+                    }
+            }
+            #if os(macOS)
+            .macFormSheet()
+            #endif
+        }
+        .task { await environment.trust.refreshPlan() }
         .sheet(isPresented: $showsHistory) {
             DailyReportHistorySheet(reports: store.dailyReportHistory) { report in
                 await store.selectDailyReport(id: report.id)
@@ -159,7 +177,12 @@ struct TodayView: View {
                 // carried by the day itself rather than by the brief — so it is
                 // right on a morning when nothing has been written yet, and
                 // there is only ever one of it on the page.
-                DailyBriefMasthead(generatedAt: Self.editionDate(report: store.dailyReport, now: emptyEditionDate), art: store.dailyReport?.art)
+                DailyBriefMasthead(
+                    generatedAt: Self.editionDate(report: store.dailyReport, now: emptyEditionDate),
+                    art: store.dailyReport?.art,
+                    kind: store.dailyReport?.kind
+                )
+                sourceStrip
                 todayDeck
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     liveLayer(now: context.date)
@@ -180,6 +203,7 @@ struct TodayView: View {
             await store.refreshToday()
             await store.refreshExecution()
             await reloadNarrative()
+            await environment.refreshTodayWidget()
         }
         .task(id: "today-execution-poll") {
             while !Task.isCancelled {
@@ -207,9 +231,12 @@ struct TodayView: View {
         ScrollView {
             if let document = report.document, Self.rendersNativeDocument(report) {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    DailyBriefMasthead(generatedAt: report.generatedAt, art: report.art)
-                    NarrativeBriefView(memory: narrative, backend: environment.backend)
-                    if narrative.entry == nil {
+                    DailyBriefMasthead(generatedAt: report.generatedAt, art: report.art, kind: report.kind)
+                    sourceStrip
+                    if BriefOwnerMounts.mountsNarrative(document) {
+                        NarrativeBriefView(memory: narrative, backend: environment.backend)
+                    }
+                    if BriefOwnerMounts.mountsLede(document, narrativeLoaded: narrative.entry != nil) {
                         DailyBriefLede(text: document.summary)
                     }
                     BriefDocumentView(
@@ -218,9 +245,18 @@ struct TodayView: View {
                         surface: .daily,
                         reportID: report.id,
                         hideInactive: store.showsLatestDailyReport,
+                        liveSections: BriefOwnerMounts.liveSections(
+                            showsLatest: store.showsLatestDailyReport,
+                            narrative: narrative,
+                            backend: environment.backend
+                        ),
                         onReview: { artifactReview = $0 }
                     )
-                    if PreparedWorkPolicy.mounts(hasArtifact: report.hasArtifact, showsLatest: store.showsLatestDailyReport) {
+                    if BriefOwnerMounts.mountsPreparedWork(
+                        document,
+                        hasArtifact: report.hasArtifact,
+                        showsLatest: store.showsLatestDailyReport
+                    ) {
                         PreparedWorkSection()
                     }
                     BriefMailBacklog(items: report.overflow) { item in
@@ -233,6 +269,10 @@ struct TodayView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    // An older HTML edition draws its own masthead, so the
+                    // source line, the Reconnect rows, and the trial note
+                    // lead the page (round 2).
+                    sourceStrip
                     NarrativeBriefView(memory: narrative, backend: environment.backend)
                     DailyBriefView(
                         report: report,
@@ -263,6 +303,16 @@ struct TodayView: View {
         }
     }
     #endif
+
+    /// The source health line, the edition notes, and the trial note, under
+    /// the plate (round 2).
+    private var sourceStrip: some View {
+        BriefSourceStrip(
+            health: store.briefSources,
+            notes: BriefEditionNotes.notes(for: store.dailyReport),
+            trialNote: environment.trust.plan?.trialNote
+        )
+    }
 
     /// The deck under the plate: one sentence about the shape of the day. The
     /// plate already carries the date, so this never repeats it.
@@ -396,7 +446,8 @@ struct TodayView: View {
                 Rectangle()
                     .fill(Color.secondary.opacity(0.45))
                     .frame(width: 18, height: 1)
-                Text("The brief").font(.system(.subheadline, design: .serif).weight(.semibold))
+                Text(report?.isWeeklyReview == true ? "The weekly review" : "The brief")
+                    .font(.system(.subheadline, design: .serif).weight(.semibold))
                 Text(standing)
                     .font(.caption2)
                     .foregroundStyle(stale ? Color.orange : Color.secondary)
@@ -422,21 +473,37 @@ struct TodayView: View {
 
     @ViewBuilder
     private func briefContent(_ report: DailyReportModel?) -> some View {
-        NarrativeBriefView(memory: narrative, backend: environment.backend)
+        // An editorial edition places the narrative in its own body.
+        if BriefOwnerMounts.mountsNarrative(
+            report.flatMap { Self.rendersNativeDocument($0) ? $0.document : nil }
+        ) {
+            NarrativeBriefView(memory: narrative, backend: environment.backend)
+        }
         if let report, report.hasArtifact {
             if let document = report.document, Self.rendersNativeDocument(report) {
                 // Today has already given the date, so the brief brings no
                 // masthead of its own into the same scroll.
-                if narrative.entry == nil { DailyBriefLede(text: document.summary) }
+                if BriefOwnerMounts.mountsLede(document, narrativeLoaded: narrative.entry != nil) {
+                    DailyBriefLede(text: document.summary)
+                }
                 BriefDocumentView(
                     document: document,
                     isComposing: report.artifactStatus == "composing",
                     surface: .daily,
                     reportID: report.id,
                     hideInactive: store.showsLatestDailyReport,
+                    liveSections: BriefOwnerMounts.liveSections(
+                        showsLatest: store.showsLatestDailyReport,
+                        narrative: narrative,
+                        backend: environment.backend
+                    ),
                     onReview: { artifactReview = $0 }
                 )
-                if PreparedWorkPolicy.mounts(hasArtifact: report.hasArtifact, showsLatest: store.showsLatestDailyReport) {
+                if BriefOwnerMounts.mountsPreparedWork(
+                    document,
+                    hasArtifact: report.hasArtifact,
+                    showsLatest: store.showsLatestDailyReport
+                ) {
                     PreparedWorkSection()
                 }
                 BriefMailBacklog(items: report.overflow) { item in

@@ -68,7 +68,7 @@ describe('file library boundaries', () => {
   });
   test('does not turn malformed successful responses into an empty folder', async () => {
     for (const body of [{}, { ok: true, items: null }, { ok: true, items: [{}] }]) {
-      globalThis.fetch = (async () => Response.json(body)) as typeof fetch;
+      globalThis.fetch = (async () => Response.json(body)) as unknown as typeof fetch;
       await expect(readFilePage('/api/files/library')).rejects.toThrow('incomplete response');
     }
     const signal = new AbortController().signal;

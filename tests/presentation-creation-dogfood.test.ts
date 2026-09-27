@@ -158,11 +158,15 @@ describe('presentation creation dogfood', () => {
     );
     expect(created).toMatchObject({ ok: true, documentId: 'recovered-history' });
     expect(save).toHaveBeenCalledTimes(1);
-    const read = await runTool(documentGet.handler, { documentId: created.documentId });
+    const read = await runTool(documentGet.handler, {
+      documentId: (created as { documentId: string }).documentId,
+    });
     const model = read.document.model;
     if (model.kind !== 'deck' || model.version !== 2) throw new Error('Expected version 2 deck');
     expect(model.slides).toHaveLength(9);
-    expect(model.slides.map((slide) => slide.title)).toEqual(slides.map((slide) => slide.title));
+    expect(model.slides.map((slide: { title: string }) => slide.title)).toEqual(
+      slides.map((slide) => slide.title),
+    );
     expect(checkDeck(model).ok).toBe(true);
     expect(documentModelText(model)).toContain('Read the original archive account.');
     expect(model.slides[1].notes).toContain('"label":""');
@@ -356,7 +360,8 @@ describe('presentation creation dogfood', () => {
       generateDocumentProposal: generate,
       createDocument: async (input) => {
         saved = {
-          ...input,
+          // This deck has no import source.
+          ...(input as Omit<typeof input, 'importSource'>),
           model: input.model as AlbatrossDocumentRecord['model'],
           documentId: 'pubmed-deck',
           title: input.title!,

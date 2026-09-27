@@ -55,10 +55,17 @@ function report(overrides: Partial<DailyReport> = {}): DailyReport {
 
 describe('daily report tools attach deterministic edition art', () => {
   test('get_latest_daily_report attaches art matching getDailyArt(generatedAt)', async () => {
+    // Other files seed morning editions for the default test user, and the
+    // run order differs between local runs and CI, so this read runs as its
+    // own user: the latest edition must be the one seeded here.
+    const artUser = { userId: 'tool_art_latest_user' };
     const seeded = report();
-    await withToolContext(() => saveDailyReport(seeded));
+    await withToolContext(() => saveDailyReport(seeded), artUser);
 
-    const result = await runTool(getLatestDailyReportTool.handler, { kind: 'morning' });
+    const result = await withToolContext(
+      () => getLatestDailyReportTool.handler({ kind: 'morning' }, toolContext(artUser)),
+      artUser,
+    );
     expect(result.report).not.toBeNull();
     expect((result.report as any).art).toEqual(getDailyArt(seeded.generatedAt));
     // services already existed on DailyReport — must pass through untouched.
@@ -67,12 +74,12 @@ describe('daily report tools attach deterministic edition art', () => {
 
   test('get_latest_daily_report returns null without crashing when nothing matches', async () => {
     // The per-user kv store is shared across every suite in this process and
-    // other files seed evening reports for the default test user, so the
+    // other files seed reports for the default test user, so the
     // null path must run as a user nobody else writes for (file execution
     // order differs between local runs and CI).
     const emptyUser = { userId: 'tool_art_empty_user' };
     const result = await withToolContext(
-      () => getLatestDailyReportTool.handler({ kind: 'evening' }, toolContext(emptyUser)),
+      () => getLatestDailyReportTool.handler({ kind: 'manual' }, toolContext(emptyUser)),
       emptyUser,
     );
     expect(result.report).toBeNull();

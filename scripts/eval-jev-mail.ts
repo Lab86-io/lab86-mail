@@ -1,6 +1,11 @@
-/** Frozen synthetic regression cases for the production Jev questions. No customer mail. */
-import { writeFile } from 'node:fs/promises';
-import { evaluateJev, mapConcurrent } from '../lib/jev/client';
+/**
+ * Frozen synthetic regression cases for the production mail questions. No customer mail.
+ * Compare classifiers with `bun scripts/eval-jev-mail.ts --model <catalog id>`; a model
+ * should pass this set before it leaves `experimental` in lib/classifier/catalog.ts.
+ */
+import { mkdir, writeFile } from 'node:fs/promises';
+import { classifierById, DEFAULT_CLASSIFIER_ID } from '../lib/classifier/catalog';
+import { evaluateClassifier, mapConcurrent } from '../lib/classifier/client';
 import {
   assessmentFromResponse,
   buildMailQuestions,
@@ -126,8 +131,12 @@ const cases = [
     flags: [],
   },
 ] as const;
-const apiKey = process.env.OPENROUTER_API_KEY;
-if (!apiKey) throw new Error('OPENROUTER_API_KEY is required.');
+const modelFlag = process.argv.indexOf('--model');
+const model = classifierById(modelFlag > 0 ? process.argv[modelFlag + 1] : DEFAULT_CLASSIFIER_ID);
+if (!model) throw new Error('Unknown --model; use an id from lib/classifier/catalog.ts.');
+const keyName = model.credential === 'together' ? 'TOGETHER_API_KEY' : 'OPENROUTER_API_KEY';
+const apiKey = process.env[keyName];
+if (!apiKey) throw new Error(`${keyName} is required for ${model.label}.`);
 const results = await mapConcurrent(cases, 3, async (test) => {
   const messages: JevMailMessage[] = test.bodies.map((body, i) => ({
     id: `m${i}`,
@@ -152,18 +161,19 @@ const results = await mapConcurrent(cases, 3, async (test) => {
     contextComplete: true,
   };
   const start = Date.now();
-  const response = await evaluateJev({
+  const response = await evaluateClassifier({
     apiKey,
+    model,
     state: {
       mailboxOwnerAddresses: input.selfAddresses,
       messagesOldestToNewest: messages,
       contextComplete: true,
     },
-    questions: buildMailQuestions(input),
-    timeoutMs: 10_000,
+    questions: buildMailQuestions(input, model),
+    timeoutMs: 20_000,
   });
   const latencyMs = Date.now() - start;
-  const assessment = assessmentFromResponse(input, response);
+  const assessment = assessmentFromResponse(input, response, Date.now(), model);
   const flags = [
     ...assessment.obligations.map((o) => o.kind),
     ...(assessment.meaningfulChange ? ['change'] : []),
@@ -182,6 +192,8 @@ const results = await mapConcurrent(cases, 3, async (test) => {
 });
 const timings = results.map((r) => r.latencyMs).sort((a, b) => a - b);
 const summary = {
+  model: model.id,
+  served: [...new Set(results.map((r) => r.response.model))],
   cases: results.length,
   passed: results.filter((r) => r.pass).length,
   failed: results
@@ -189,10 +201,14 @@ const summary = {
     .map((r) => ({ name: r.name, expected: r.expected, actual: r.actual })),
   medianMs: timings[Math.floor(timings.length / 2)],
   p95Ms: timings[Math.ceil(timings.length * 0.95) - 1],
+  inputTokens: results.reduce((n, r) => n + r.response.usage.input_tokens, 0),
   cost: results.reduce((n, r) => n + (r.response.usage.cost || 0), 0),
 };
+await mkdir('docs/research/classifier-probes', { recursive: true });
 await writeFile(
-  'docs/research/jev-2026-09-21/production-question-probe.json',
+  model.id === DEFAULT_CLASSIFIER_ID
+    ? 'docs/research/jev-2026-09-21/production-question-probe.json'
+    : `docs/research/classifier-probes/${model.id}.json`,
   `${JSON.stringify({ at: new Date().toISOString(), summary, results }, null, 2)}\n`,
 );
 console.log(JSON.stringify(summary, null, 2));

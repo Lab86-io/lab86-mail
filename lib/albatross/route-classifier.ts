@@ -8,6 +8,7 @@ import {
   type RouteVerdict,
   routeHeuristic,
 } from '@/lib/albatross/route-rules';
+import { truncateText } from '@/lib/shared/text';
 
 // The model side of the Ask / Hold route. The deterministic rules live in
 // `route-rules.ts`, which the browser imports as well. This module adds one
@@ -76,9 +77,7 @@ export async function classifyRoute(
   input: ClassifyRouteInput,
   dependencies: RouteClassifierDependencies = defaultDependencies,
 ): Promise<RouteVerdict> {
-  const text = String(input.text || '')
-    .trim()
-    .slice(0, ROUTE_TEXT_MAX_CHARS);
+  const text = truncateText(String(input.text || '').trim(), ROUTE_TEXT_MAX_CHARS);
   const heuristic = routeHeuristic(text);
   if (heuristic) return heuristic;
   try {

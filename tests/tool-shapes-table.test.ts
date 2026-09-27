@@ -51,8 +51,6 @@ const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
   ],
   ['search_threads', { account: 'acct_1', query: 'q' }, { items: [thread] }, 'threads'],
   ['list_smart_category', { account: 'acct_1', category: 'Codes' }, { items: [thread] }, 'threads'],
-  ['recent_threads', {}, { threads: [thread] }, 'threads'],
-  ['list_account_threads', { account: 'acct_1' }, { threads: [thread] }, 'threads'],
   ['preview_smart_label', { name: 'Receipts' }, { items: [thread] }, 'threads'],
   ['corpus_search', { query: 'q' }, { items: [{ ...thread, source: 'mail' }] }, 'threads'],
   [
@@ -189,8 +187,6 @@ const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
     'board',
   ],
   ['tasks_list_boards', {}, { boards: [{ boardId: 'b1', title: 'Ops' }] }, 'text'],
-  ['tasks_due_cards', {}, { cards: [card] }, 'tasks'],
-  ['tasks_for_thread', { threadId: 't1' }, { cards: [card] }, 'tasks'],
   [
     'tasks_create_card',
     { boardId: 'b1', title: 'Task', column: 'Todo' },
@@ -498,7 +494,7 @@ describe('tool shape table', () => {
   test('empty list outputs resolve to nothing instead of an empty card', () => {
     expect(resolveToolShape('search_threads', { query: 'q' }, { items: [] })).toBeNull();
     expect(resolveToolShape('calendar_list_events', {}, { events: [] })).toBeNull();
-    expect(resolveToolShape('tasks_due_cards', {}, { cards: [] })).toBeNull();
+    expect(resolveToolShape('tasks_get_board', {}, { cards: [] })).toBeNull();
     expect(resolveToolShape('cloud_file_search', {}, { files: [] })).toBeNull();
     expect(resolveToolShape('mcp_search', {}, { items: [] })).toBeNull();
     expect(resolveToolShape('area_list', {}, { areas: [] })).toBeNull();

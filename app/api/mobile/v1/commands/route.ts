@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { requireCurrentUser } from '@/lib/auth/current-user';
-import { api, convexMutation } from '@/lib/hosted/convex';
+import { api, type ConvexCallArgs, convexMutation } from '@/lib/hosted/convex';
 import { mobileCommandPayloadHash } from '@/lib/mobile/v1/canonical';
 import { executeMobileCommand, mobileCommandDomain } from '@/lib/mobile/v1/command-executor';
 import { MobileCommandSchema } from '@/lib/mobile/v1/contract';
@@ -13,19 +13,24 @@ import {
 } from '@/lib/mobile/v1/http';
 import { commandReceiptFromRow } from '@/lib/mobile/v1/receipt';
 import { enforceUserRateLimit } from '@/lib/rate-limit';
+import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 const EXECUTION_LEASE_MS = 5 * 60_000;
+// A retryable failure runs again when the client sends the command again.
+// After this many runs the failure is final, so the client stops and rolls
+// back its optimistic change.
+export const MAX_EXECUTION_ATTEMPTS = 5;
 
 interface MobileCommandDependencies {
   requireCurrentUser: typeof requireCurrentUser;
   enforceUserRateLimit: typeof enforceUserRateLimit;
-  beginCommand(args: Record<string, unknown>): Promise<any>;
-  claimCommand(args: Record<string, unknown>): Promise<any>;
-  completeCommand(args: Record<string, unknown>): Promise<any>;
+  beginCommand(args: ConvexCallArgs<typeof api.mobile.beginCommand>): Promise<any>;
+  claimCommand(args: ConvexCallArgs<typeof api.mobile.claimCommand>): Promise<any>;
+  completeCommand(args: ConvexCallArgs<typeof api.mobile.completeCommand>): Promise<any>;
   executeMobileCommand: typeof executeMobileCommand;
   randomUUID: () => string;
 }
@@ -33,9 +38,9 @@ interface MobileCommandDependencies {
 const defaultDependencies: MobileCommandDependencies = {
   requireCurrentUser,
   enforceUserRateLimit,
-  beginCommand: (args) => convexMutation<any>((api as any).mobile.beginCommand, args),
-  claimCommand: (args) => convexMutation<any>((api as any).mobile.claimCommand, args),
-  completeCommand: (args) => convexMutation<any>((api as any).mobile.completeCommand, args),
+  beginCommand: (args) => convexMutation<any>(api.mobile.beginCommand, args),
+  claimCommand: (args) => convexMutation<any>(api.mobile.claimCommand, args),
+  completeCommand: (args) => convexMutation<any>(api.mobile.completeCommand, args),
   executeMobileCommand,
   randomUUID,
 };
@@ -99,14 +104,15 @@ export function createMobileCommandPost(deps: MobileCommandDependencies = defaul
         return mobileJSON(commandReceiptFromRow(completed), undefined, requestID);
       } catch (error) {
         const mapped = mapMobileHTTPError(error);
+        const attempts = Number(claimed.command?.attemptCount) || 1;
         const failed = await deps.completeCommand({
           userId: user.userId,
           commandId: begun.command._id,
           claimToken,
           status: 'failed',
           errorCode: mapped.code.slice(0, 100),
-          errorMessage: mapped.message.slice(0, 1_000),
-          errorRetryable: mapped.retryable,
+          errorMessage: truncateText(mapped.message, 1_000),
+          errorRetryable: mapped.retryable && attempts < MAX_EXECUTION_ATTEMPTS,
         });
         return mobileJSON(commandReceiptFromRow(failed), undefined, requestID);
       }

@@ -396,7 +396,7 @@ struct FilesView: View {
 
     private var emptyDetail: String {
         if !query.isEmpty { return "Try another name or location." }
-        return "Create an AI-editable file, connect a drive, or choose a file from iCloud Drive."
+        return "Create a file Albatross can edit, connect a drive, or choose a file from iCloud Drive."
     }
 
     private func selectLocation(_ id: String) {

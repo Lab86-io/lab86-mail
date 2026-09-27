@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
 const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
 const MAX_FILES = 5;
 const STORAGE_UPLOAD_TIMEOUT_MS = 45_000;
-const agentUploadsApi = (api as any).agentUploads;
+const agentUploadsApi = api.agentUploads;
 
 function errorResponse(err: any, fallback = 'Upload failed') {
   if (err instanceof RateLimitError) return rateLimitJson(err);

@@ -314,8 +314,8 @@ export function ToolUiDisplayPart({
         rel="noopener noreferrer"
         className="flex w-full max-w-[460px] items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3 text-[13px] font-medium text-[var(--color-text)]"
       >
-        <ExternalLink className="size-4 text-[var(--color-accent)]" />
         Open the synced Google file
+        <ExternalLink aria-hidden className="ml-auto size-4 text-[var(--color-accent)]" />
       </a>
     );
   }

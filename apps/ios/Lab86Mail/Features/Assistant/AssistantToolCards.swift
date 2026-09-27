@@ -55,8 +55,14 @@ enum AssistantToolCard: Equatable, Sendable {
         let subject: String
         let body: String
 
+        var replyAccountID: String? = nil
+        var replyThreadID: String? = nil
+
         var seed: AssistantDraftSeed {
-            AssistantDraftSeed(fromEmail: from, to: to, cc: cc, bcc: bcc, subject: subject, body: body)
+            AssistantDraftSeed(
+                fromEmail: from, to: to, cc: cc, bcc: bcc, subject: subject, body: body,
+                replyAccountID: replyAccountID, replyThreadID: replyThreadID
+            )
         }
     }
 
@@ -89,6 +95,59 @@ enum AssistantToolCard: Equatable, Sendable {
         let points: [Point]
     }
 
+    struct MediaCard: Equatable, Sendable {
+        let isVideo: Bool
+        let url: URL
+        let title: String?
+        let detail: String?
+        let artwork: URL?
+    }
+
+    struct CodeCard: Equatable, Sendable {
+        let language: String
+        let filename: String?
+        let code: String
+    }
+
+    struct CarouselItem: Equatable, Sendable {
+        let name: String
+        let subtitle: String?
+        let image: URL?
+    }
+
+    struct CarouselCard: Equatable, Sendable {
+        let title: String?
+        let detail: String?
+        let items: [CarouselItem]
+    }
+
+    struct OrderLine: Equatable, Sendable {
+        let name: String
+        let detail: String?
+        let quantity: Int
+        let unitPrice: Double
+    }
+
+    struct OrderCard: Equatable, Sendable {
+        let title: String?
+        let lines: [OrderLine]
+        let subtotal: Double?
+        let tax: Double?
+        let shipping: Double?
+        let discount: Double?
+        let total: Double?
+        let currency: String
+    }
+
+    struct SocialPostCard: Equatable, Sendable {
+        let network: String
+        let authorName: String
+        let handle: String?
+        let text: String?
+        let imageURL: URL?
+        let likes: Int?
+    }
+
     case stats(title: String?, [Stat])
     case table(TableCard)
     case plan(title: String, [PlanItem])
@@ -100,7 +159,21 @@ enum AssistantToolCard: Equatable, Sendable {
     case draft(DraftCard)
     case email(EmailCard)
     case chart(ChartCard)
+    case media(MediaCard)
+    case code(CodeCard)
+    case carousel(CarouselCard)
+    case order(OrderCard)
+    case socialPost(SocialPostCard)
     case summary(tool: String, String)
+
+    /// A draft card bound to the thread a `draft_reply` call of the same turn
+    /// drafted for. Other cards are unchanged.
+    func replying(to context: (accountID: String, threadID: String)?) -> AssistantToolCard {
+        guard let context, case .draft(var draft) = self else { return self }
+        draft.replyAccountID = context.accountID
+        draft.replyThreadID = context.threadID
+        return .draft(draft)
+    }
 
     // MARK: - Parsing
 
@@ -213,11 +286,82 @@ enum AssistantToolCard: Equatable, Sendable {
             if let node = AssistantDisplayNode.decode(toolName: toolName, payload: payload) {
                 return .briefNode(node)
             }
-            let location = payload["locationName"]?.stringValue ?? "Weather"
-            if let summary = output["summary"]?.stringValue {
+            // Only weather falls back to a weather card. A map, diff, or
+            // terminal that does not decode keeps its own title (NAT-6).
+            if toolName == "show_weather", let summary = output["summary"]?.stringValue {
+                let location = payload["locationName"]?.stringValue ?? "Weather"
                 return .weather(WeatherCard(location: location, line: summary))
             }
-            break
+
+        case "show_video", "show_audio":
+            guard let url = httpURL(payload["src"] ?? payload["url"]) else { break }
+            return .media(MediaCard(
+                isVideo: toolName == "show_video",
+                url: url,
+                title: payload["title"]?.stringValue?.nilIfBlank,
+                detail: payload["description"]?.stringValue?.nilIfBlank,
+                artwork: httpURL(payload["poster"] ?? payload["artwork"])
+            ))
+
+        case "show_code":
+            guard let code = payload["code"]?.stringValue, !code.isEmpty else { break }
+            return .code(CodeCard(
+                language: payload["language"]?.stringValue?.nilIfBlank ?? "text",
+                filename: payload["filename"]?.stringValue?.nilIfBlank,
+                code: code
+            ))
+
+        case "show_carousel":
+            let items = (payload["items"]?.arrayValue ?? []).compactMap { row -> CarouselItem? in
+                guard let name = row["name"]?.stringValue?.nilIfBlank else { return nil }
+                return CarouselItem(
+                    name: name,
+                    subtitle: row["subtitle"]?.stringValue?.nilIfBlank,
+                    image: httpURL(row["image"] ?? row["imageUrl"])
+                )
+            }
+            guard !items.isEmpty else { break }
+            return .carousel(CarouselCard(
+                title: payload["title"]?.stringValue?.nilIfBlank,
+                detail: payload["description"]?.stringValue?.nilIfBlank,
+                items: items
+            ))
+
+        case "show_order_summary":
+            let lines = (payload["items"]?.arrayValue ?? []).compactMap { row -> OrderLine? in
+                guard let name = row["name"]?.stringValue?.nilIfBlank,
+                      let price = row["unitPrice"]?.doubleValue else { return nil }
+                return OrderLine(
+                    name: name,
+                    detail: row["description"]?.stringValue?.nilIfBlank,
+                    quantity: max(1, Int(row["quantity"]?.doubleValue ?? 1)),
+                    unitPrice: price
+                )
+            }
+            guard !lines.isEmpty else { break }
+            let pricing = payload["pricing"]
+            return .order(OrderCard(
+                title: payload["title"]?.stringValue?.nilIfBlank,
+                lines: lines,
+                subtotal: pricing?["subtotal"]?.doubleValue,
+                tax: pricing?["tax"]?.doubleValue,
+                shipping: pricing?["shipping"]?.doubleValue,
+                discount: pricing?["discount"]?.doubleValue,
+                total: pricing?["total"]?.doubleValue,
+                currency: pricing?["currency"]?.stringValue?.nilIfBlank ?? "USD"
+            ))
+
+        case "show_social_post":
+            let post = payload["post"] ?? .null
+            guard let author = post["author"]?["name"]?.stringValue?.nilIfBlank else { break }
+            return .socialPost(SocialPostCard(
+                network: payload["network"]?.stringValue ?? "x",
+                authorName: author,
+                handle: post["author"]?["handle"]?.stringValue?.nilIfBlank,
+                text: post["text"]?.stringValue?.nilIfBlank,
+                imageURL: post["media"]?["type"]?.stringValue == "image" ? httpURL(post["media"]?["url"]) : nil,
+                likes: post["stats"]?["likes"]?.doubleValue.map { Int($0) }
+            ))
 
         case "show_message_draft":
             let to = addressList(payload["to"])
@@ -313,8 +457,33 @@ enum AssistantToolCard: Equatable, Sendable {
     }
 
     private static func describe(_ toolName: String) -> String {
-        toolName.replacingOccurrences(of: "show_", with: "Shared a ")
-            .replacingOccurrences(of: "_", with: " ")
+        "Shared \(displayName(toolName).lowercased())."
+    }
+
+    private static func httpURL(_ value: JSONValue?) -> URL? {
+        guard let raw = value?.stringValue, let url = URL(string: raw),
+              ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        return url
+    }
+
+    /// The title a fallback card carries: the display tool's own name.
+    static func displayName(_ toolName: String) -> String {
+        switch toolName {
+        case "show_map": return "Map"
+        case "show_code_diff": return "Code change"
+        case "show_terminal": return "Terminal output"
+        case "show_weather": return "Weather"
+        case "show_social_post": return "Social post"
+        case "show_order_summary": return "Order summary"
+        default:
+            let words = toolName.replacingOccurrences(of: "show_", with: "")
+                .replacingOccurrences(of: "_", with: " ")
+            return words.prefix(1).uppercased() + words.dropFirst()
+        }
+    }
+
+    static func formatPrice(_ value: Double, currency: String) -> String {
+        value.formatted(.currency(code: currency))
     }
 }
 
@@ -568,8 +737,128 @@ struct AssistantToolCardView: View {
                     .frame(height: 170)
                 }
 
-            case .summary(_, let text):
+            case .media(let media):
+                cardShell(media.title ?? (media.isVideo ? "Video" : "Audio")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let artwork = media.artwork {
+                            KFImage(artwork)
+                                .placeholder { Color.primary.opacity(0.06) }
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: media.isVideo ? 160 : 90)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        if let detail = media.detail {
+                            Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                        }
+                        Button(media.isVideo ? "Play video" : "Play audio") { openURL(media.url) }
+                            .font(.caption.weight(.medium))
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                }
+
+            case .code(let code):
+                cardShell(code.filename ?? code.language) {
+                    ScrollView(.horizontal) {
+                        Text(code.code)
+                            .font(.system(.footnote, design: .monospaced))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: true, vertical: true)
+                    }
+                    .frame(maxHeight: 280)
+                }
+
+            case .carousel(let carousel):
+                cardShell(carousel.title) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let detail = carousel.detail {
+                            Text(detail).font(.caption).foregroundStyle(.secondary)
+                        }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(alignment: .top, spacing: 10) {
+                                ForEach(Array(carousel.items.enumerated()), id: \.offset) { _, item in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        if let image = item.image {
+                                            KFImage(image)
+                                                .placeholder { Color.primary.opacity(0.06) }
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fill)
+                                                .frame(width: 140, height: 96)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        }
+                                        Text(item.name).font(.footnote.weight(.semibold)).lineLimit(2)
+                                        if let subtitle = item.subtitle {
+                                            Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                        }
+                                    }
+                                    .frame(width: 140, alignment: .leading)
+                                }
+                            }
+                        }
+                    }
+                }
+
+            case .order(let order):
+                cardShell(order.title ?? "Order summary") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(order.lines.enumerated()), id: \.offset) { _, line in
+                            HStack(alignment: .firstTextBaseline) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(line.quantity > 1 ? "\(line.quantity) × \(line.name)" : line.name)
+                                        .font(.footnote)
+                                    if let detail = line.detail {
+                                        Text(detail).font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer(minLength: 8)
+                                Text(AssistantToolCard.formatPrice(line.unitPrice * Double(line.quantity), currency: order.currency))
+                                    .font(.footnote.monospacedDigit())
+                            }
+                        }
+                        Divider()
+                        orderRow("Subtotal", order.subtotal, currency: order.currency)
+                        orderRow("Tax", order.tax, currency: order.currency)
+                        orderRow("Shipping", order.shipping, currency: order.currency)
+                        orderRow("Discount", order.discount.map { -$0 }, currency: order.currency)
+                        orderRow("Total", order.total, currency: order.currency, emphasized: true)
+                    }
+                }
+
+            case .socialPost(let post):
                 cardShell(nil) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(post.authorName).font(.footnote.weight(.semibold))
+                            if let handle = post.handle {
+                                Text("@\(handle)").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Text(post.network == "x" ? "X" : post.network.capitalized)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        if let text = post.text {
+                            Text(text).font(.footnote).fixedSize(horizontal: false, vertical: true)
+                        }
+                        if let image = post.imageURL {
+                            KFImage(image)
+                                .placeholder { Color.primary.opacity(0.06) }
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 150)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        if let likes = post.likes {
+                            Text("\(likes) likes").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+            case .summary(let tool, let text):
+                cardShell(tool.hasPrefix("show_") ? AssistantToolCard.displayName(tool) : nil) {
                     Text(text).font(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -586,6 +875,23 @@ struct AssistantToolCardView: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder private func orderRow(
+        _ label: String,
+        _ value: Double?,
+        currency: String,
+        emphasized: Bool = false
+    ) -> some View {
+        if let value {
+            HStack {
+                Text(label)
+                Spacer()
+                Text(AssistantToolCard.formatPrice(value, currency: currency)).monospacedDigit()
+            }
+            .font(emphasized ? .footnote.weight(.semibold) : .caption)
+            .foregroundStyle(emphasized ? .primary : .secondary)
         }
     }
 

@@ -2,6 +2,7 @@ import { paginationOptsValidator } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
 import { isReplyCandidate, mailAddresses, type ReplyWatch } from '../lib/albatross/reply-watch';
 import { isTerminalWork, workLifecycle } from '../lib/albatross/work-lifecycle';
+import { truncateText } from '../lib/shared/text';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -50,7 +51,7 @@ export const recordProgress = mutation({
     const work = await ownedWork(ctx, userId, args.workId);
     if (isTerminalWork(work))
       throw new ConvexError('This Albatross is closed. Reopen it before recording progress.');
-    const claim = args.claim.trim().slice(0, 2_000);
+    const claim = truncateText(args.claim.trim(), 2_000);
     if (!claim) throw new ConvexError('Describe the progress to save.');
     const ts = now();
     let replyWatch: ReplyWatch | undefined;
@@ -95,7 +96,7 @@ export const recordProgress = mutation({
         : recipients;
       if (!senderEmails.length)
         throw new ConvexError('Specify the email address of the person whose reply you are waiting for.');
-      const requirement = request.requirement.trim().slice(0, 600);
+      const requirement = truncateText(request.requirement.trim(), 600);
       if (!requirement) throw new ConvexError('Describe which reply will let this Albatross move forward.');
       const sameWatch =
         work.replyWatch &&
@@ -130,9 +131,9 @@ export const recordProgress = mutation({
         sourceId: args.sourceId,
         title: 'Progress reported in Albatross chat',
         claim,
-        summary: (args.detail || claim).slice(0, 2_000),
-        limits: (args.limits || 'User-confirmed partial progress; not proof of the entire outcome.').slice(
-          0,
+        summary: truncateText(args.detail || claim, 2_000),
+        limits: truncateText(
+          args.limits || 'User-confirmed partial progress; not proof of the entire outcome.',
           600,
         ),
         trust: 'confirmed',
@@ -272,7 +273,7 @@ export const messages = query({
         snippet: row.snippet,
         labels: row.labels,
         headers: row.headers,
-        textBody: row.textBody?.slice(0, 4_000),
+        textBody: truncateText(row.textBody, 4_000),
       })),
     };
   },
@@ -308,7 +309,7 @@ export const resume = mutation({
       throw new ConvexError('The reply no longer matches this watch.');
     }
     const ts = now();
-    const reason = args.reason.trim().slice(0, 600) || 'The reply you were waiting for arrived.';
+    const reason = truncateText(args.reason.trim(), 600) || 'The reply you were waiting for arrived.';
     await ctx.db.insert('albatrossEvidence', {
       userId,
       targetKind: 'work',
@@ -318,7 +319,7 @@ export const resume = mutation({
       accountId: message.accountId,
       title: message.subject || 'Reply received',
       claim: reason,
-      summary: message.snippet.slice(0, 600),
+      summary: truncateText(message.snippet, 600),
       limits: 'This reply resumes the work; it does not complete the outcome.',
       trust: 'observed',
       weight: 1,

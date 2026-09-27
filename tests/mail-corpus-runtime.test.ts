@@ -140,7 +140,7 @@ describe('incoming Area mail', () => {
     expect(after.mail).toHaveLength(30);
     const refreshed = await runtime.run((ctx) => ctx.db.get(linkId));
     expect(refreshed?.updatedAt).toBeGreaterThan(confirmed!.updatedAt);
-    expect({ ...refreshed, updatedAt: confirmed!.updatedAt }).toEqual(confirmed);
+    expect({ ...refreshed, updatedAt: confirmed!.updatedAt }).toEqual<unknown>(confirmed);
     const thread = await runtime.run((ctx) =>
       ctx.db
         .query('mailCorpusThreads')
@@ -508,7 +508,7 @@ describe('corpus reads', () => {
         _creationTime: unknown;
       };
       await ctx.db.insert('mailCorpusMessages', {
-        ...(copy as never),
+        ...(copy as any),
         userId: 'intruder',
         providerMessageId: 'intruder_msg',
       });
@@ -571,121 +571,9 @@ describe('corpus reads', () => {
     });
     expect(recentScoped).toEqual([]);
   });
-
-  test('threadBodyExcerpts returns capped bodies keyed by account:thread', async () => {
-    const t = newHarness();
-    await ingest(t, [message({ textBody: 'B'.repeat(5000) })]);
-    const out = await t.query(api.mailCorpus.threadBodyExcerpts, {
-      internalSecret: SECRET,
-      userId: USER,
-      items: [
-        { accountId: scope.accountId, providerThreadId: 'thread_1' },
-        { accountId: scope.accountId, providerThreadId: 'missing' },
-      ],
-      maxChars: 300,
-    });
-    expect(Object.keys(out)).toEqual(['account_1:thread_1']);
-    expect(out['account_1:thread_1']).toHaveLength(300);
-  });
-
-  test('categoryCountsInternal proxies the shared unread counter', async () => {
-    const t = newHarness();
-    await ingest(t, [message()]);
-    const { counts } = await t.query(api.mailCorpus.categoryCountsInternal, {
-      internalSecret: SECRET,
-      userId: USER,
-    });
-    expect(typeof counts.main?.unread).toBe('number');
-  });
 });
 
-describe('LLM-once queue', () => {
-  test('listLlmPending grounds items in the latest message and closes orphans', async () => {
-    const t = newHarness();
-    await ingest(t, [message()]);
-    // Orphan aggregate: pending thread with no message rows.
-    await t.run(async (ctx) => {
-      const ts = Date.now();
-      await ctx.db.insert('mailCorpusThreads', {
-        userId: USER,
-        accountId: scope.accountId,
-        grantId: scope.grantId,
-        provider: 'google',
-        providerThreadId: 'orphan_thread',
-        subject: 'Orphan',
-        fromAddress: 'ghost@example.com',
-        lastDate: TS,
-        snippet: '',
-        labels: [],
-        unread: true,
-        llmPending: true,
-        yearMonth: '2026-07',
-        createdAt: ts,
-        updatedAt: ts,
-      });
-    });
-    const out = await t.mutation(api.mailCorpus.listLlmPending, { internalSecret: SECRET, userId: USER });
-    expect(out.moreRemaining).toBe(false);
-    expect(out.items).toHaveLength(1);
-    expect(out.items[0]).toMatchObject({
-      providerThreadId: 'thread_1',
-      messageId: 'message_1',
-      subject: 'Project kickoff',
-    });
-    const orphan = await t.run(async (ctx) =>
-      (await ctx.db.query('mailCorpusThreads').collect()).find((r) => r.providerThreadId === 'orphan_thread'),
-    );
-    expect(orphan?.llmPending).toBeUndefined();
-  });
-
-  test('storeLlmVerdicts persists current verdicts and ignores stale message ids', async () => {
-    const t = newHarness();
-    await ingest(t, [message()]);
-    const stale = await t.mutation(api.mailCorpus.storeLlmVerdicts, {
-      internalSecret: SECRET,
-      userId: USER,
-      items: [
-        {
-          accountId: scope.accountId,
-          providerThreadId: 'thread_1',
-          messageId: 'not_latest',
-          verdict: { primary: 'orders' },
-        },
-      ],
-    });
-    expect(stale).toEqual({ stored: 0 });
-    const stored = await t.mutation(api.mailCorpus.storeLlmVerdicts, {
-      internalSecret: SECRET,
-      userId: USER,
-      items: [
-        {
-          accountId: scope.accountId,
-          providerThreadId: 'thread_1',
-          messageId: 'message_1',
-          verdict: { primary: 'orders', needsAttention: false, reason: 'model verdict' },
-        },
-      ],
-    });
-    expect(stored).toEqual({ stored: 1 });
-    const row = await t.run((ctx) => ctx.db.query('mailCorpusThreads').unique());
-    expect(row).toMatchObject({
-      smartPrimary: 'orders',
-      llmClassifiedMessageId: 'message_1',
-    });
-    // Legacy verdicts cannot close the new Jev classification queue.
-    expect(row?.llmPending).toBe(true);
-
-    // A missing legacy verdict still leaves Jev evaluation pending.
-    await t.run((ctx) => ctx.db.patch(row!._id, { llmPending: true, llmCategory: undefined }));
-    const closed = await t.mutation(api.mailCorpus.storeLlmVerdicts, {
-      internalSecret: SECRET,
-      userId: USER,
-      items: [{ accountId: scope.accountId, providerThreadId: 'thread_1', messageId: 'message_1' }],
-    });
-    expect(closed).toEqual({ stored: 0 });
-    expect((await t.run((ctx) => ctx.db.query('mailCorpusThreads').unique()))?.llmPending).toBe(true);
-  });
-
+describe('Smart Category pages', () => {
   test('listSmartCategoryThreads pages the shared category query', async () => {
     const t = newHarness();
     await ingest(t, [message()]);

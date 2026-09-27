@@ -22,7 +22,9 @@ export interface CollaboraSession {
   chrome?: { enabled: boolean };
 }
 export interface CollaboraHandle {
-  save: () => Promise<string>;
+  // `skipIfUnmodified` asks the editor not to upload an unchanged document.
+  // It then resolves with null, because no new save exists to confirm.
+  save: (options?: { skipIfUnmodified?: boolean }) => Promise<string | null>;
   /** Switch the toolbar live. The editor confirms with `Action_ChangeUIMode_Resp`. */
   setUiMode: (mode: EditorUiMode) => void;
   /** The mode the editor last confirmed. */
@@ -49,7 +51,7 @@ export const CollaboraFrame = forwardRef<
   const frame = useRef<HTMLIFrameElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const pending = useRef<{
-    resolve: (saveId: string) => void;
+    resolve: (result: { id: string; unmodified: boolean }) => void;
     id: string;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
@@ -88,8 +90,8 @@ export const CollaboraFrame = forwardRef<
       const message = changeUiModeMessage(mode);
       post(message.MessageId, message.Values);
     },
-    save: () =>
-      new Promise<string>((resolve, reject) => {
+    save: (options) =>
+      new Promise<{ id: string; unmodified: boolean }>((resolve, reject) => {
         if (pending.current) {
           reject(new Error('A save is already in progress.'));
           return;
@@ -102,11 +104,12 @@ export const CollaboraFrame = forwardRef<
         pending.current = { resolve, reject, timer, id };
         post('Action_Save', {
           DontTerminateEdit: true,
-          DontSaveIfUnmodified: false,
+          DontSaveIfUnmodified: Boolean(options?.skipIfUnmodified),
           Notify: true,
           ExtendedData: id,
         });
-      }).then(async (saveId) => {
+      }).then(async ({ id: saveId, unmodified }) => {
+        if (unmodified) return null;
         const deadline = Date.now() + 60_000;
         while (Date.now() < deadline) {
           if (!mounted.current) throw new Error('The editor closed before save confirmation.');
@@ -174,8 +177,10 @@ export const CollaboraFrame = forwardRef<
         const waiting = pending.current;
         pending.current = null;
         clearTimeout(waiting.timer);
-        if (message.Values?.success || message.Values?.result === 'unmodified') {
-          waiting.resolve(waiting.id);
+        if (message.Values?.result === 'unmodified') {
+          waiting.resolve({ id: waiting.id, unmodified: true });
+        } else if (message.Values?.success) {
+          waiting.resolve({ id: waiting.id, unmodified: false });
         } else waiting.reject(new Error(message.Values?.errorMsg || 'The editor could not save this copy.'));
       }
     };

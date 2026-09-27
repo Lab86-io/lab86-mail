@@ -1,17 +1,21 @@
+import { classifierForServedModel } from '../classifier/catalog';
+import { PAID_PLANS } from '../hosted/plans';
+
 export type AiProvider = 'openrouter' | 'openai' | 'anthropic';
 
-// Hosted-AI tier: Lab86 pays for the models, budgeted by credits.
-export const B2C_MONTHLY_PRICE_USD = 15;
-export const B2C_ANNUAL_PRICE_USD = 150;
-// BYOK tier: full feature set, user supplies their own model API key.
-export const B2C_BYOK_MONTHLY_PRICE_USD = 5;
-export const B2C_BYOK_ANNUAL_PRICE_USD = 50;
+// Prices come from the one source of truth in lib/hosted/plans.ts.
+// Pro: Lab86 pays for the models, budgeted by credits.
+export const B2C_MONTHLY_PRICE_USD = PAID_PLANS.pro.monthlyUsd;
+export const B2C_ANNUAL_PRICE_USD = PAID_PLANS.pro.annualUsd;
+// Own key: full feature set, user supplies their own model API key.
+export const B2C_BYOK_MONTHLY_PRICE_USD = PAID_PLANS.byok.monthlyUsd;
+export const B2C_BYOK_ANNUAL_PRICE_USD = PAID_PLANS.byok.annualUsd;
 export const B2C_INTERNAL_MONTHLY_CREDITS = 500;
 export const AI_CREDIT_VALUE_USD = 0.01;
 export const AI_BUDGET_SOFT_LIMIT_RATIO = 0.8;
 
 export interface AiUsageCostInput {
-  provider: AiProvider;
+  provider: AiProvider | 'together';
   model: string;
   promptTokens?: number;
   completionTokens?: number;
@@ -90,11 +94,13 @@ export function shouldDepleteLab86Budget(source: 'lab86' | 'byok') {
   return source === 'lab86';
 }
 
-function ratesForModel(provider: AiProvider, model: string) {
+function ratesForModel(provider: AiUsageCostInput['provider'], model: string) {
   const normalized = model.toLowerCase().split(':')[0];
   // OpenRouter catalog, verified 2026-09-08. Runs separately check live prices.
   if (normalized === 'z-ai/glm-5.3-flash') return rate(0.075, 0.015, 0.075, 0.25);
-  if (normalized.startsWith('typesafe/jev-1.13')) return rate(0.042, 0.042, 0.042, 0);
+  const classifier = classifierForServedModel(normalized);
+  if (classifier)
+    return rate(classifier.inputPerMillion, classifier.inputPerMillion, classifier.inputPerMillion, 0);
   if (normalized === 'openai/text-embedding-3-small') return rate(0.02, 0.02, 0.02, 0);
   if (provider === 'anthropic' || normalized.includes('anthropic/') || normalized.includes('claude')) {
     if (normalized.includes('haiku')) {

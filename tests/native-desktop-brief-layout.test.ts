@@ -23,9 +23,12 @@ describe('desktop brief chrome composition', () => {
 
     expect(body.match(/ScrollView \{/g)).toHaveLength(1);
     expect(body).toMatch(/ScrollView \{\s+if let document = report\.document/);
+    // An older HTML edition has no native masthead, so the source line and
+    // the Reconnect rows lead the legacy branch (round 2).
     expect(body).toMatch(
-      /BriefDocumentView\([\s\S]+\} else \{\s+LazyVStack\([^\n]+\{\s+NarrativeBriefView\([^\n]+\)\s+DailyBriefView\(/,
+      /BriefDocumentView\([\s\S]+\} else \{\s+LazyVStack\([^\n]+\{(?:\s+\/\/[^\n]*)*\s+sourceStrip\s+NarrativeBriefView\([^\n]+\)\s+DailyBriefView\(/,
     );
+    expect(body.match(/^\s+sourceStrip$/gm)).toHaveLength(2);
     expect(body).toMatch(/\.padding\(\.bottom, 32\)\s+\}\s+\}\s+\.background/);
     expect(body.match(/\.onScrollGeometryChange\(/g)).toHaveLength(1);
     expect(body).toContain('containerWidth: min(geometry.containerSize.width, 920)');

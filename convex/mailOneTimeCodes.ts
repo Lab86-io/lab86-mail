@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { truncateText } from '../lib/shared/text';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -147,42 +148,37 @@ export const recordCleanup = mutation({
     if (!row || row.userId !== userId) throw new Error('Code not found.');
     await ctx.db.patch(args.codeId, {
       cleanup: args.cleanup,
-      cleanupError: args.error?.slice(0, 300),
+      cleanupError: truncateText(args.error, 300),
       updatedAt: now(),
     });
     return { ok: true };
   },
 });
 
+const DAY_MS = 86_400_000;
+
 /**
  * Flips lapsed rows and drops long-dead ones. Expiry is enforced on read, so
- * this is housekeeping rather than a correctness guarantee.
+ * this is housekeeping rather than a correctness guarantee. A used or freshly
+ * expired row stays for a day so a retried consume still finds its locator;
+ * after that the secret is removed entirely. `more` is true when a full batch
+ * was deleted, so the caller can run again.
  */
-export const purgeExpired = mutation({
-  args: { internalSecret: v.optional(v.string()), limit: v.optional(v.number()) },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const ts = now();
-    const limit = Math.min(500, Math.max(1, Math.round(args.limit ?? 200)));
-    const lapsed = await ctx.db
-      .query('mailOneTimeCodes')
-      .withIndex('by_expires', (q) => q.lt('expiresAt', ts))
-      .take(limit);
-    let expired = 0;
-    let deleted = 0;
-    for (const row of lapsed) {
-      // Keep a used or freshly-expired row briefly so a retried consume still
-      // finds its locator, then remove the secret entirely.
-      if (row.expiresAt < ts - 86_400_000) {
-        await ctx.db.delete(row._id);
-        deleted += 1;
-        continue;
-      }
-      if (row.status === 'active') {
-        await ctx.db.patch(row._id, { status: 'expired', updatedAt: ts });
-        expired += 1;
-      }
-    }
-    return { expired, deleted };
-  },
-});
+export async function purgeExpiredCodes(ctx: MutationCtx, ts: number, limit: number) {
+  const dead = await ctx.db
+    .query('mailOneTimeCodes')
+    .withIndex('by_expires', (q) => q.lt('expiresAt', ts - DAY_MS))
+    .take(limit);
+  for (const row of dead) await ctx.db.delete(row._id);
+  const lapsed = await ctx.db
+    .query('mailOneTimeCodes')
+    .withIndex('by_expires', (q) => q.gte('expiresAt', ts - DAY_MS).lt('expiresAt', ts))
+    .take(limit);
+  let expired = 0;
+  for (const row of lapsed) {
+    if (row.status !== 'active') continue;
+    await ctx.db.patch(row._id, { status: 'expired', updatedAt: ts });
+    expired += 1;
+  }
+  return { expired, deleted: dead.length, more: dead.length === limit };
+}

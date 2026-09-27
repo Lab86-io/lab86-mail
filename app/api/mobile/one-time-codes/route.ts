@@ -40,11 +40,11 @@ export function createOneTimeCodeHandlers(deps: OneTimeCodesDependencies = defau
       // one call. Splitting them would let the app fill from a stale policy —
       // filing mail the user had just told it to leave alone.
       const [codes, preferences] = await Promise.all([
-        deps.convexQuery<OneTimeCodeRow[]>((api as any).mailOneTimeCodes.activeCodes, {
+        deps.convexQuery<OneTimeCodeRow[]>(api.mailOneTimeCodes.activeCodes, {
           userId: user.userId,
         }),
         deps.convexQuery<{ oneTimeCodeAutofillEnabled?: boolean; oneTimeCodeCleanupEnabled?: boolean }>(
-          (api as any).albatrossNotifications.mobilePreferences,
+          api.albatrossNotifications.mobilePreferences,
           { userId: user.userId },
         ),
       ]);

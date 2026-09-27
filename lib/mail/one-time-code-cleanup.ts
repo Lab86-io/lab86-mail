@@ -1,7 +1,8 @@
 import { api, convexMutation } from '@/lib/hosted/convex';
-import { updateNylasMessageFolders } from '@/lib/nylas/provider';
+import { MAIL_UNDO, recordMailOperation } from '@/lib/mail/mail-operations';
+import { moveNylasMessage } from '@/lib/nylas/provider';
 
-const oneTimeCodesApi = (api as any).mailOneTimeCodes;
+const oneTimeCodesApi = api.mailOneTimeCodes;
 
 export type CodeCleanupMode = 'none' | 'archive' | 'trash';
 
@@ -33,12 +34,14 @@ export interface ConsumeOneTimeCodeResult {
 
 interface ConsumeDependencies {
   mutate: typeof convexMutation;
-  updateFolders: typeof updateNylasMessageFolders;
+  moveMessage: typeof moveNylasMessage;
+  /** Activity entry with Undo for the cleanup move. */
+  record?: typeof recordMailOperation;
 }
 
 const defaultDependencies: ConsumeDependencies = {
   mutate: convexMutation,
-  updateFolders: updateNylasMessageFolders,
+  moveMessage: moveNylasMessage,
 };
 
 /**
@@ -89,13 +92,37 @@ export async function consumeOneTimeCode(
   }
 
   try {
-    await dependencies.updateFolders({
+    // Provider-aware move: Gmail edits labels, other providers change folder.
+    const change = await dependencies.moveMessage({
       userId: input.userId,
       account: used.accountId,
       messageId: used.providerMessageId,
-      ...(input.cleanup === 'trash' ? { add: ['TRASH'] } : { remove: ['INBOX'] }),
+      to: input.cleanup === 'trash' ? 'trash' : 'archive',
     });
     const status = input.cleanup === 'trash' ? 'trashed' : 'archived';
+    // An automatic cleanup is still a change to the user's mail: it shows in
+    // Activity with Undo, like every other mail move.
+    if (change?.before && change.after) {
+      await (dependencies.record ?? recordMailOperation)({
+        userId: input.userId,
+        tool: 'one_time_code_cleanup',
+        summary:
+          status === 'trashed'
+            ? 'Moved a used sign-in code email to Trash'
+            : 'Archived a used sign-in code email',
+        reason: 'The code was filled in, and your settings clear code emails after use.',
+        target: { kind: 'message', id: used.providerMessageId, accountId: used.accountId },
+        inverse: {
+          kind: MAIL_UNDO.messageFolders,
+          payload: {
+            account: used.accountId,
+            messageId: used.providerMessageId,
+            before: change.before,
+            after: change.after,
+          },
+        },
+      }).catch(() => undefined);
+    }
     await dependencies
       .mutate(oneTimeCodesApi.recordCleanup, {
         userId: input.userId,

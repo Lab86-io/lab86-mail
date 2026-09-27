@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { createMobileMailThreadGet } from '../app/api/mobile/v1/mail/threads/[threadID]/route';
 import { createMobileMailThreadsGet } from '../app/api/mobile/v1/mail/threads/route';
 import { AuthRequiredError } from '../lib/auth/current-user';
-import { MailSendCommandSchema, MobileCommandSchema } from '../lib/mobile/v1/contract';
 import { mailThreadSummaryFromCorpus } from '../lib/mobile/v1/mail-reads';
 
 const user = {
@@ -28,14 +26,6 @@ const corpusItem = {
 
 function listRequest(query = '') {
   return new Request(`https://mail.lab86.io/api/mobile/v1/mail/threads${query}`);
-}
-
-function detailRequest(threadID: string, query = '') {
-  return new Request(`https://mail.lab86.io/api/mobile/v1/mail/threads/${threadID}${query}`);
-}
-
-function detailContext(threadID: string) {
-  return { params: Promise.resolve({ threadID }) };
 }
 
 describe('mailThreadSummaryFromCorpus', () => {
@@ -189,130 +179,5 @@ describe('GET /api/mobile/v1/mail/threads', () => {
 
     const response = await handler(listRequest());
     expect(response.status).toBe(401);
-  });
-});
-
-describe('GET /api/mobile/v1/mail/threads/{threadID}', () => {
-  const toolThread = {
-    subject: 'Quarterly invoice',
-    summary: 'Vendor sent the Q3 invoice.',
-    messages: [
-      {
-        _id: 'message-1',
-        from: 'Billing <billing@vendor.com>',
-        to: 'you@lab86.io',
-        cc: '',
-        bcc: '',
-        date: 1_755_000_000_000,
-        snippet: 'Your invoice is attached.',
-        textBody: 'Invoice attached.',
-        htmlBody: '<p>Invoice attached.</p>',
-        labels: ['INBOX'],
-        unread: true,
-        starred: false,
-        attachments: [
-          { id: 'att-1', filename: 'invoice.pdf', contentType: 'application/pdf', size: 1024 },
-          { filename: 'no-id-dropped.bin' },
-        ],
-      },
-    ],
-  };
-
-  test('returns the typed thread detail with normalized attachments', async () => {
-    const calls: any[] = [];
-    const handler = createMobileMailThreadGet({
-      requireCurrentUser: async () => user,
-      readThread: async (args) => {
-        calls.push(args);
-        return toolThread;
-      },
-    });
-
-    const response = await handler(
-      detailRequest('thread-1', '?accountID=account-1'),
-      detailContext('thread-1'),
-    );
-    expect(response.status).toBe(200);
-    const body: any = await response.json();
-    expect(calls).toEqual([{ account: 'account-1', threadId: 'thread-1' }]);
-    expect(body.threadID).toBe('thread-1');
-    expect(body.accountID).toBe('account-1');
-    expect(body.summary).toBe('Vendor sent the Q3 invoice.');
-    expect(body.messages).toHaveLength(1);
-    expect(body.messages[0]).toMatchObject({
-      id: 'message-1',
-      fromEmail: 'billing@vendor.com',
-      bodyHTML: '<p>Invoice attached.</p>',
-      attachments: [{ id: 'att-1', name: 'invoice.pdf', contentType: 'application/pdf', size: 1024 }],
-    });
-  });
-
-  test('requires accountID', async () => {
-    const handler = createMobileMailThreadGet({
-      requireCurrentUser: async () => user,
-      readThread: async () => toolThread,
-    });
-
-    const response = await handler(detailRequest('thread-1'), detailContext('thread-1'));
-    expect(response.status).toBe(400);
-  });
-
-  test('surfaces a tool failure as a retryable server error envelope', async () => {
-    const handler = createMobileMailThreadGet({
-      requireCurrentUser: async () => user,
-      readThread: async () => {
-        throw new Error('provider unavailable');
-      },
-    });
-
-    const response = await handler(
-      detailRequest('thread-1', '?accountID=account-1'),
-      detailContext('thread-1'),
-    );
-    expect(response.status).toBe(500);
-    const body: any = await response.json();
-    expect(body.error.retryable).toBe(true);
-  });
-});
-
-describe('mail.send payload validation', () => {
-  const base = { idempotencyKey: 'send-1', kind: 'mail.send', clientCreatedAt: '2026-08-19T09:00:00.000Z' };
-
-  test('a new send requires recipients and a subject', () => {
-    expect(() =>
-      MailSendCommandSchema.parse({
-        ...base,
-        payload: { accountID: 'account-1', mode: 'new', bodyText: 'hi' },
-      }),
-    ).toThrow();
-    expect(() =>
-      MailSendCommandSchema.parse({
-        ...base,
-        payload: { accountID: 'account-1', mode: 'new', to: 'sam@example.com', bodyText: 'hi' },
-      }),
-    ).toThrow(/subject/);
-  });
-
-  test('reply modes require the anchor message', () => {
-    expect(() =>
-      MailSendCommandSchema.parse({
-        ...base,
-        payload: { accountID: 'account-1', mode: 'reply', bodyText: 'hi' },
-      }),
-    ).toThrow(/messageID/);
-  });
-
-  test('a complete send parses through the discriminated command union', () => {
-    const parsed = MobileCommandSchema.parse({
-      ...base,
-      payload: {
-        accountID: 'account-1',
-        mode: 'new',
-        to: 'sam@example.com',
-        subject: 'Hello',
-        bodyText: 'Body',
-      },
-    });
-    expect(parsed.kind).toBe('mail.send');
   });
 });

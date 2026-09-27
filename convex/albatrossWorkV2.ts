@@ -31,6 +31,7 @@ import {
   stepVerification,
 } from '../lib/albatross/step-verification';
 import { assertWorkOpen, isTerminalWork, workLifecycle } from '../lib/albatross/work-lifecycle';
+import { truncateText } from '../lib/shared/text';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -44,7 +45,12 @@ import {
   albatrossMetricValidator,
   albatrossWorkShapeValidator as workShapeValidator,
 } from './schema';
-import { completeWorkInMutation, restoreWorkArtifacts } from './workCompletion';
+import {
+  closeWorkArtifacts,
+  completeWorkInMutation,
+  restoreWorkArtifacts,
+  TERMINAL_WORK_FLAG_CLEAR,
+} from './workCompletion';
 
 const callerArgs = {
   internalSecret: v.optional(v.string()),
@@ -90,7 +96,7 @@ async function requireArea(ctx: QueryCtx | MutationCtx, areaId: Id<'areas'>, use
 
 function bounded(value: string | undefined | null, max: number) {
   const clean = String(value || '').trim();
-  return clean ? clean.slice(0, max) : undefined;
+  return clean ? truncateText(clean, max) : undefined;
 }
 
 /** The patch every user-driven mutation adds. The conductor never writes it. */
@@ -122,9 +128,7 @@ function keyedPlanActions(plan: Doc<'albatrossIntentPlans'>) {
 }
 
 function preserveRaw(value: string, max = 20_000) {
-  return String(value || '')
-    .replace(/^\s+|\s+$/g, '')
-    .slice(0, max);
+  return truncateText(String(value || '').replace(/^\s+|\s+$/g, ''), max);
 }
 
 export const beginCapture = mutation({
@@ -177,20 +181,26 @@ export const updateWorkState = mutation({
     const ts = now();
     if (args.state === 'done') return completeWorkInMutation(ctx, work, ts);
     if (args.state !== 'archived' && isTerminalWork(work)) await restoreWorkArtifacts(ctx, work, ts);
+    const nextReplyWatch = args.state === 'waiting' ? work.replyWatch : undefined;
+    // Resume re-arms the mail watch that pause or a close cleared (WRK-10).
+    const rearm =
+      ['active', 'waiting', 'blocked'].includes(args.state) &&
+      !work.mailWatchAt &&
+      (await mailWatchShouldRun(ctx, { ...work, workState: args.state, replyWatch: nextReplyWatch }));
     await ctx.db.patch(args.workId, {
       workState: args.state,
       ...(args.state !== 'waiting' ? { replyWatch: undefined } : {}),
-      ...(['paused', 'archived'].includes(args.state)
-        ? { mailWatchAt: undefined, mailWatchClaimedAt: undefined }
-        : {}),
+      ...(args.state === 'paused' ? { mailWatchAt: undefined, mailWatchClaimedAt: undefined } : {}),
+      ...(args.state === 'archived' ? TERMINAL_WORK_FLAG_CLEAR : {}),
+      ...(rearm ? { mailWatchAt: ts } : {}),
       status:
         args.state === 'archived'
           ? 'archived'
           : work.status === 'done' || work.status === 'archived'
             ? 'ready'
             : work.status,
-      // Picking released work back up clears the release, exactly like
-      // reopenWork — a revived albatross must not keep a release reason.
+      // Picking released work back up clears the release: a revived
+      // albatross must not keep a release reason.
       ...(args.state !== 'archived' && isTerminalWork(work)
         ? {
             releaseReason: undefined,
@@ -202,6 +212,7 @@ export const updateWorkState = mutation({
         : {}),
       ...userTouch(ts),
     });
+    if (args.state === 'archived') await closeWorkArtifacts(ctx, work, ts);
     await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(work._id));
     return { previousState: work.workState || 'active', state: args.state };
   },
@@ -313,13 +324,11 @@ export const releaseWork = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    await requireWork(ctx, args.workId, userId);
+    const work = await requireWork(ctx, args.workId, userId);
     const ts = now();
     await ctx.db.patch(args.workId, {
       workState: 'released',
-      replyWatch: undefined,
-      mailWatchAt: undefined,
-      mailWatchClaimedAt: undefined,
+      ...TERMINAL_WORK_FLAG_CLEAR,
       status: 'archived',
       releaseReason: bounded(args.reason, 400),
       releaseProposedBy: args.proposedBy ?? 'user',
@@ -327,6 +336,7 @@ export const releaseWork = mutation({
       reviewAt: args.reviewAt,
       ...((args.proposedBy ?? 'user') === 'user' ? userTouch(ts) : { updatedAt: ts }),
     });
+    await closeWorkArtifacts(ctx, work, ts);
     return { releasedAt: ts };
   },
 });
@@ -350,35 +360,15 @@ export const releaseUnstartedWork = mutation({
     const ts = now();
     await ctx.db.patch(args.workId, {
       workState: 'released',
+      ...TERMINAL_WORK_FLAG_CLEAR,
       status: 'archived',
       releaseReason: bounded(args.reason, 400) || 'Superseded by a newer plan.',
       releaseProposedBy: 'system',
       releasedAt: ts,
       updatedAt: ts,
     });
+    await closeWorkArtifacts(ctx, work, ts);
     return { released: true };
-  },
-});
-
-/** Picking something back up is always allowed, and costs nothing to say. */
-export const reopenWork = mutation({
-  args: { ...callerArgs, workId: v.id('albatrossIntents') },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const work = await requireWork(ctx, args.workId, userId);
-    const ts = now();
-    await ctx.db.patch(args.workId, {
-      workState: 'active',
-      replyWatch: undefined,
-      status: 'ready',
-      releaseReason: undefined,
-      releaseProposedBy: undefined,
-      releasedAt: undefined,
-      reviewAt: undefined,
-      ...userTouch(ts),
-    });
-    await restoreWorkArtifacts(ctx, work, ts);
-    return { reopenedAt: ts };
   },
 });
 
@@ -795,18 +785,6 @@ export const recordLapse = mutation({
   },
 });
 
-/** Did the smaller step actually happen? This is what makes the record teach. */
-export const resolveLapse = mutation({
-  args: { ...callerArgs, lapseId: v.id('albatrossLapses'), held: v.boolean() },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const lapse = await ctx.db.get(args.lapseId);
-    if (!lapse || lapse.userId !== userId) throw new Error('Lapse not found.');
-    const ts = now();
-    await ctx.db.patch(args.lapseId, { revisionHeld: args.held, resolvedAt: ts, updatedAt: ts });
-  },
-});
-
 /** Mark the plan step itself complete; creating its artifact never counts as finishing it. */
 export const completeStep = mutation({
   args: {
@@ -842,7 +820,7 @@ export const completeStep = mutation({
             identity: selected.identity,
             actionKey: selected.actionKey,
             kind: selected.kind === 'physical' ? 'physical' : selected.action.kind || 'task',
-            title: selected.action.title!.trim().slice(0, 240),
+            title: truncateText(selected.action.title!.trim(), 240),
             cardId: selected.cardId,
             completedAt: ts,
             source,
@@ -891,9 +869,9 @@ export const completeStep = mutation({
         sourceKind: 'manual' as const,
         sourceId: dedupeKey,
         stepIdentity: bounded(selected.identity, 420),
-        title: `Noted on: ${selected.action.title!.trim()}`.slice(0, 300),
-        claim: note.slice(0, 400),
-        summary: note.slice(0, 600),
+        title: truncateText(`Noted on: ${selected.action.title!.trim()}`, 300),
+        claim: truncateText(note, 400),
+        summary: truncateText(note, 600),
         // The user's own words about their own step. That is honest evidence
         // of the step, but it is not an external receipt, so it must not read
         // as one when the contract weighs closure.
@@ -903,7 +881,7 @@ export const completeStep = mutation({
         confidence: 0.95,
         trust: 'observed' as const,
         dedupeKey,
-        searchText: [note, selected.action.title].filter(Boolean).join(' ').slice(0, 4000),
+        searchText: truncateText([note, selected.action.title].filter(Boolean).join(' '), 4000),
         updatedAt: ts,
       };
       if (existingNote) await ctx.db.patch(existingNote._id, noteRow);
@@ -935,10 +913,13 @@ export const completeStep = mutation({
         !completedIdentities.has(step.identity) &&
         !(step.cardId && completedCardIds.has(step.cardId)),
     );
-    if (Boolean(work.mailWatchAt) !== outstandingMailStep) {
+    // An armed reply watch keeps the watcher on even when no mail step is
+    // left (WRK-10).
+    const watching = outstandingMailStep || Boolean(work.replyWatch && work.workState === 'waiting');
+    if (Boolean(work.mailWatchAt) !== watching) {
       await ctx.db.patch(args.workId, {
-        mailWatchAt: outstandingMailStep ? ts : undefined,
-        ...(outstandingMailStep ? {} : { mailWatchClaimedAt: undefined }),
+        mailWatchAt: watching ? ts : undefined,
+        ...(watching ? {} : { mailWatchClaimedAt: undefined }),
         updatedAt: ts,
       });
     }
@@ -957,7 +938,7 @@ export const completeStep = mutation({
         pendingStepEvidence: {
           planId: String(plan._id),
           stepIdentity: selected.identity,
-          stepTitle: selected.action.title!.trim().slice(0, 240),
+          stepTitle: truncateText(selected.action.title!.trim(), 240),
           cardId: applied?.cardId,
           requestedAt,
         },
@@ -978,54 +959,6 @@ export const completeStep = mutation({
       workState: work.workState || 'active',
       transitioned,
     };
-  },
-});
-
-/** Write or correct what would settle an outcome. */
-export const saveContract = mutation({
-  args: {
-    ...callerArgs,
-    workId: v.id('albatrossIntents'),
-    outcome: v.string(),
-    proofs: v.array(
-      v.object({
-        id: v.string(),
-        what: v.string(),
-        satisfiedBy: v.optional(v.string()),
-        satisfiedAt: v.optional(v.number()),
-      }),
-    ),
-    closeWhen: v.union(
-      v.literal('action_succeeded'),
-      v.literal('outcome_likely'),
-      v.literal('outcome_confirmed'),
-      v.literal('never_automatically'),
-    ),
-    contradictions: v.optional(v.array(v.string())),
-  },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    await requireWork(ctx, args.workId, userId);
-    const ts = now();
-    await ctx.db.patch(args.workId, {
-      contract: {
-        outcome: args.outcome.slice(0, 600),
-        // The contract lives inside the work document. Capping the array
-        // lengths alone still lets twelve unbounded conditions grow the row
-        // until a later patch of the same work fails, so every string inside
-        // is bounded the way the rest of this file bounds free text.
-        proofs: args.proofs.slice(0, 12).map((proof) => ({
-          ...proof,
-          id: proof.id.slice(0, 120),
-          what: proof.what.slice(0, 300),
-          satisfiedBy: bounded(proof.satisfiedBy, 300),
-        })),
-        closeWhen: args.closeWhen,
-        contradictions: args.contradictions?.slice(0, 12).map((row) => row.slice(0, 300)),
-        updatedAt: ts,
-      },
-      updatedAt: ts,
-    });
   },
 });
 
@@ -1093,7 +1026,10 @@ export const attachProof = mutation({
       .filter(Boolean)
       .map((value) => encodeURIComponent(value as string))
       .join(':');
-    const dedupeKey = `proof:${String(args.workId)}:${args.sourceKind}:${sourceScope ? `${sourceScope}:` : ''}${args.sourceId}`;
+    // One source can prove several steps. The step identity is part of the
+    // key, so a second step never overwrites the first step's link (WRK-16).
+    const stepIdentity = bounded(args.stepIdentity, 420);
+    const dedupeKey = `proof:${String(args.workId)}:${args.sourceKind}:${sourceScope ? `${sourceScope}:` : ''}${args.sourceId}${stepIdentity ? `:step:${encodeURIComponent(stepIdentity)}` : ''}`;
     const existing = await ctx.db
       .query('albatrossEvidence')
       .withIndex('by_user_dedupe', (q) => q.eq('userId', userId).eq('dedupeKey', dedupeKey))
@@ -1106,7 +1042,7 @@ export const attachProof = mutation({
       sourceId: args.sourceId,
       connectionId: bounded(args.connectionId, 180),
       accountId: bounded(args.accountId, 320),
-      stepIdentity: bounded(args.stepIdentity, 420),
+      stepIdentity,
       title: bounded(args.title, 300) || 'Untitled',
       summary: bounded(args.summary, 600),
       claim: bounded(args.claim, 400),
@@ -1119,7 +1055,7 @@ export const attachProof = mutation({
       confidence: 0.95,
       trust,
       dedupeKey,
-      searchText: [args.claim, args.title, args.summary].filter(Boolean).join(' ').slice(0, 4000),
+      searchText: truncateText([args.claim, args.title, args.summary].filter(Boolean).join(' '), 4000),
       updatedAt: ts,
     };
     let evidenceId: Id<'albatrossEvidence'>;
@@ -1260,22 +1196,9 @@ export const openWorkForProof = query({
     }
     return rows.slice(0, wanted).map((row) => ({
       _id: String(row._id),
-      title: row.title || row.rawText.slice(0, 90),
+      title: row.title || truncateText(row.rawText, 90),
       contract: row.contract ? { outcome: row.contract.outcome, proofs: row.contract.proofs } : null,
     }));
-  },
-});
-
-export const lapsesForWork = query({
-  args: { ...callerArgs, workId: v.id('albatrossIntents'), limit: v.optional(v.number()) },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    await requireWork(ctx, args.workId, userId);
-    return ctx.db
-      .query('albatrossLapses')
-      .withIndex('by_work', (q) => q.eq('workId', args.workId))
-      .order('desc')
-      .take(Math.min(Math.max(args.limit ?? 20, 1), 100));
   },
 });
 
@@ -1351,7 +1274,9 @@ export const finishCapture = mutation({
           status: 'candidate',
           confidence: areaId === item.primaryAreaId ? 0.8 : 0.65,
           reason: 'Inferred from the user capture; awaiting correction if needed.',
-          sourceRefs: [{ kind: 'capture', id: String(args.captureId), label: capture.rawText.slice(0, 140) }],
+          sourceRefs: [
+            { kind: 'capture', id: String(args.captureId), label: truncateText(capture.rawText, 140) },
+          ],
           confirmationRefs: [],
           createdAt: ts,
           updatedAt: ts,
@@ -1372,7 +1297,7 @@ export const failCapture = mutation({
     if (!capture || capture.userId !== userId) return;
     await ctx.db.patch(args.captureId, {
       status: 'error',
-      error: args.error.slice(0, 500),
+      error: truncateText(args.error, 500),
       updatedAt: now(),
     });
   },
@@ -1458,11 +1383,11 @@ export const upsertQuestion = mutation({
       const ts = now();
       const refreshed = {
         legacyQuestionId: bounded(args.legacyQuestionId, 80),
-        prompt: args.prompt.slice(0, 500),
+        prompt: truncateText(args.prompt, 500),
         reason: bounded(args.reason, 500),
         options: args.options?.slice(0, 6).map((option) => ({
           id: option.id.slice(0, 80),
-          label: option.label.slice(0, 180),
+          label: truncateText(option.label, 180),
           description: bounded(option.description, 400),
         })),
         sourceRefs: args.sourceRefs || duplicate.sourceRefs,
@@ -1536,11 +1461,11 @@ export const upsertQuestion = mutation({
       dedupeKey,
       legacyQuestionId: bounded(args.legacyQuestionId, 80),
       kind: args.kind,
-      prompt: args.prompt.slice(0, 500),
+      prompt: truncateText(args.prompt, 500),
       reason: bounded(args.reason, 500),
       options: args.options?.slice(0, 6).map((option) => ({
         id: option.id.slice(0, 80),
-        label: option.label.slice(0, 180),
+        label: truncateText(option.label, 180),
         description: bounded(option.description, 400),
       })),
       status: 'pending',
@@ -1588,8 +1513,19 @@ export const answerQuestion = mutation({
       updatedAt: ts,
     });
     let shouldAdvance = false;
-    if (question.workId) {
-      const work = await requireWork(ctx, question.workId, userId);
+    const questionWork = question.workId ? await requireWork(ctx, question.workId, userId) : null;
+    if (questionWork && isTerminalWork(questionWork)) {
+      // Closed Work keeps its state. The answer stays on the question only,
+      // and nothing advances (WRK-11).
+      return {
+        workId: String(questionWork._id),
+        projectId: question.projectId ? String(question.projectId) : undefined,
+        routineId: question.routineId ? String(question.routineId) : undefined,
+        shouldAdvance: false,
+      };
+    }
+    if (question.workId && questionWork) {
+      const work = questionWork;
       const legacyQuestions = (work.questions || []).map((entry) =>
         question.legacyQuestionId && entry.id === question.legacyQuestionId
           ? {
@@ -1648,14 +1584,14 @@ export const answerQuestion = mutation({
       targetId: targetId ? String(targetId) : undefined,
       sourceKind: 'question_answer' as const,
       sourceId: String(question._id),
-      title: question.prompt.slice(0, 500),
+      title: truncateText(question.prompt, 500),
       summary: answer,
       occurredAt: ts,
       weight: 1,
       confidence: 1,
       trust: 'confirmed' as const,
       dedupeKey: evidenceKey,
-      searchText: `${question.prompt} ${answer}`.slice(0, 4_000),
+      searchText: truncateText(`${question.prompt} ${answer}`, 4_000),
       metadata: { answeredOptionId: bounded(args.answeredOptionId, 80), kind: question.kind },
       updatedAt: ts,
     };
@@ -1696,19 +1632,23 @@ export const livePendingQuestions = query({
       reflection: 2,
       clarification: 1,
     };
-    return rows
-      .filter((row) => !(row.work?.workState === 'waiting' && row.work.replyWatch))
-      .filter(
-        (row) =>
-          row.work?.userId === userId || row.project?.userId === userId || row.routine?.userId === userId,
-      )
-      .sort(
-        (a, b) =>
-          (kindRank[b.question.kind] || 0) - (kindRank[a.question.kind] || 0) ||
-          (a.work?.priority || 3) - (b.work?.priority || 3) ||
-          a.question.createdAt - b.question.createdAt,
-      )
-      .slice(0, limit);
+    return (
+      rows
+        .filter((row) => !(row.work?.workState === 'waiting' && row.work.replyWatch))
+        // A question for closed Work cannot move anything (WRK-11).
+        .filter((row) => !(row.work && isTerminalWork(row.work)))
+        .filter(
+          (row) =>
+            row.work?.userId === userId || row.project?.userId === userId || row.routine?.userId === userId,
+        )
+        .sort(
+          (a, b) =>
+            (kindRank[b.question.kind] || 0) - (kindRank[a.question.kind] || 0) ||
+            (a.work?.priority || 3) - (b.work?.priority || 3) ||
+            a.question.createdAt - b.question.createdAt,
+        )
+        .slice(0, limit)
+    );
   },
 });
 
@@ -1744,7 +1684,7 @@ export const areaWork = query({
     );
     return [...deduped.values()]
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .filter((row) => args.includeDone || !['done', 'archived'].includes(row.workState || 'active'));
+      .filter((row) => args.includeDone || !isTerminalWork(row));
   },
 });
 
@@ -2069,7 +2009,7 @@ export const stalenessReviewCandidates = internalQuery({
         .map((row) => ({
           userId: row.userId,
           workId: String(row._id),
-          workTitle: row.title || row.rawText.slice(0, 180),
+          workTitle: row.title || truncateText(row.rawText, 180),
           updatedAt: row.updatedAt,
         }))
         .slice(0, 100)
@@ -2153,6 +2093,14 @@ async function openMailStepRemains(ctx: QueryCtx, work: Doc<'albatrossIntents'>)
   return steps.some((step) => step.evidenceKind === 'mail_confirmation' && stepNeedsCheck(step));
 }
 
+/** The watcher runs for an armed reply watch or an open mail-confirmation step. */
+async function mailWatchShouldRun(ctx: QueryCtx, work: Doc<'albatrossIntents'>) {
+  if (!['active', 'waiting', 'blocked'].includes(workLifecycle(work))) return false;
+  if (work.replyWatch && work.workState === 'waiting') return true;
+  if (!shapeAllows(work.shape, 'mailWatch')) return false;
+  return openMailStepRemains(ctx, work);
+}
+
 /** Works whose applied plan still expects a mail confirmation for a step. */
 export const mailWatchCandidates = internalQuery({
   args: {},
@@ -2161,7 +2109,7 @@ export const mailWatchCandidates = internalQuery({
     const rows = await ctx.db
       .query('albatrossIntents')
       .withIndex('by_mail_watch', (q) => q.gt('mailWatchAt', 0))
-      .take(25);
+      .take(100);
     const open = rows.filter(
       (row) =>
         ['active', 'waiting', 'blocked'].includes(row.workState || 'active') &&
@@ -2178,6 +2126,56 @@ export const mailWatchCandidates = internalQuery({
       candidates.push({ userId: row.userId, workId: String(row._id) });
     }
     return candidates;
+  },
+});
+
+const STALE_FLAG_SWEEP_LIMIT = 100;
+
+/**
+ * The conductor candidate reads take a bounded page from a flag index and
+ * filter afterwards. A row that keeps a flag it can never use takes a slot
+ * forever, and enough of them stop the cron for every user (WRK-9). This
+ * sweep clears those flags. It is idempotent and bounded, and each tick runs
+ * it before it reads candidates.
+ */
+export const sweepStaleConductorFlags = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const ts = now();
+    let mailWatch = 0;
+    let horizonWake = 0;
+    let pendingEvidence = 0;
+    const watched = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_mail_watch', (q) => q.gt('mailWatchAt', 0))
+      .take(STALE_FLAG_SWEEP_LIMIT);
+    for (const row of watched) {
+      if (row.mailWatchClaimedAt && ts - row.mailWatchClaimedAt < MAIL_WATCH_LEASE_MS) continue;
+      // Dormant Work keeps its flag: it can watch again when it wakes.
+      if (!isTerminalWork(row) && workLifecycle(row) !== 'paused' && isDormant(row, ts)) continue;
+      if (await mailWatchShouldRun(ctx, row)) continue;
+      await ctx.db.patch(row._id, { mailWatchAt: undefined, mailWatchClaimedAt: undefined });
+      mailWatch += 1;
+    }
+    const waking = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_horizon_wake', (q) => q.gt('horizonWakeAt', 0).lte('horizonWakeAt', ts))
+      .take(STALE_FLAG_SWEEP_LIMIT);
+    for (const row of waking) {
+      if (!isTerminalWork(row) && wakeIsDue(row, ts)) continue;
+      await ctx.db.patch(row._id, { horizonWakeAt: undefined });
+      horizonWake += 1;
+    }
+    const pending = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_pending_step_evidence', (q) => q.gt('pendingStepEvidenceAt', 0))
+      .take(STALE_FLAG_SWEEP_LIMIT);
+    for (const row of pending) {
+      if (!isTerminalWork(row) && row.pendingStepEvidence) continue;
+      await ctx.db.patch(row._id, { pendingStepEvidenceAt: undefined, pendingStepEvidence: undefined });
+      pendingEvidence += 1;
+    }
+    return { mailWatch, horizonWake, pendingEvidence };
   },
 });
 
@@ -2234,11 +2232,13 @@ export const mailWatchTick = internalAction({
       console.error('[mail watch cron] missing LAB86_MAIL_PUBLIC_URL');
       return;
     }
-    const refs = (internal as any).albatrossWorkV2;
+    const refs = internal.albatrossWorkV2;
+    await ctx.runMutation(refs.sweepStaleConductorFlags, {});
     const candidates = await ctx.runQuery(refs.mailWatchCandidates, {});
     let completed = 0;
     for (const candidate of candidates) {
-      const claim = await ctx.runMutation(refs.beginMailWatch, { workId: candidate.workId });
+      const workId = candidate.workId as Id<'albatrossIntents'>;
+      const claim = await ctx.runMutation(refs.beginMailWatch, { workId });
       if (!claim) continue;
       let ok = false;
       try {
@@ -2250,7 +2250,7 @@ export const mailWatchTick = internalAction({
           })) === 1;
         if (ok) completed += 1;
       } finally {
-        if (!ok) await ctx.runMutation(refs.releaseMailWatch, { workId: candidate.workId });
+        if (!ok) await ctx.runMutation(refs.releaseMailWatch, { workId });
       }
     }
     if (candidates.length) {
@@ -2259,11 +2259,15 @@ export const mailWatchTick = internalAction({
   },
 });
 
-async function materializePendingStepEvidence(ctx: ActionCtx, secret: string, refs: any) {
+async function materializePendingStepEvidence(
+  ctx: ActionCtx,
+  secret: string,
+  refs: typeof internal.albatrossWorkV2,
+) {
   const pending = await ctx.runQuery(refs.pendingStepEvidenceCandidates, {});
   for (const entry of pending) {
     try {
-      await ctx.runMutation((api as any).albatrossWorkV2.attachProof, {
+      await ctx.runMutation(api.albatrossWorkV2.attachProof, {
         internalSecret: secret,
         userId: entry.userId,
         workId: entry.workId,
@@ -2299,7 +2303,7 @@ export const stepEvidenceMaterializeTick = internalAction({
       console.error('[step evidence materializer] missing internal secret');
       return;
     }
-    await materializePendingStepEvidence(ctx, secret, (internal as any).albatrossWorkV2);
+    await materializePendingStepEvidence(ctx, secret, internal.albatrossWorkV2);
   },
 });
 
@@ -2311,7 +2315,8 @@ export const evidenceReconcileTick = internalAction({
       console.error('[evidence reconcile cron] missing internal secret');
       return;
     }
-    const refs = (internal as any).albatrossWorkV2;
+    const refs = internal.albatrossWorkV2;
+    await ctx.runMutation(refs.sweepStaleConductorFlags, {});
     await materializePendingStepEvidence(ctx, secret, refs);
 
     const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
@@ -2359,7 +2364,7 @@ export const horizonWakeCandidates = internalQuery({
       .map((row) => ({
         userId: row.userId,
         workId: String(row._id),
-        title: row.title || row.rawText.slice(0, 180),
+        title: row.title || truncateText(row.rawText, 180),
         notBefore: row.horizon?.notBefore ?? 0,
       }));
   },
@@ -2378,7 +2383,7 @@ export const wakeHorizon = internalMutation({
     return {
       userId: work.userId,
       workId: String(args.workId),
-      title: work.title || work.rawText.slice(0, 180),
+      title: work.title || truncateText(work.rawText, 180),
       notBefore: horizon.notBefore ?? 0,
     };
   },
@@ -2388,14 +2393,17 @@ export const wakeHorizon = internalMutation({
 export const horizonWakeTick = internalAction({
   args: {},
   handler: async (ctx: ActionCtx) => {
-    const refs = (internal as any).albatrossWorkV2;
+    const refs = internal.albatrossWorkV2;
+    await ctx.runMutation(refs.sweepStaleConductorFlags, {});
     const candidates = await ctx.runQuery(refs.horizonWakeCandidates, {});
     let woken = 0;
     for (const candidate of candidates) {
-      const wake = await ctx.runMutation(refs.wakeHorizon, { workId: candidate.workId });
+      const wake = await ctx.runMutation(refs.wakeHorizon, {
+        workId: candidate.workId as Id<'albatrossIntents'>,
+      });
       if (!wake) continue;
       woken += 1;
-      await ctx.runMutation((internal as any).albatrossNotifications.queueHorizonWake, {
+      await ctx.runMutation(internal.albatrossNotifications.queueHorizonWake, {
         userId: wake.userId,
         workId: wake.workId,
         title: wake.title,
@@ -2535,8 +2543,8 @@ export const saveAreaBrief = mutation({
       userId,
       areaId: args.areaId,
       status: args.status,
-      lede: args.lede.slice(0, 600),
-      summary: args.summary.slice(0, 2_000),
+      lede: truncateText(args.lede, 600),
+      summary: truncateText(args.summary, 2_000),
       artifactHtml,
       document: args.document ?? existing?.document,
       artifactSource: args.artifactSource ?? existing?.artifactSource,
@@ -2558,154 +2566,73 @@ export const saveAreaBrief = mutation({
   },
 });
 
-export const migrateLegacyBatch = internalMutation({
-  args: { cursor: v.optional(v.string()), limit: v.optional(v.number()) },
+/**
+ * One-time repair for plan cards written while the task tool removed
+ * `source.intentId` (WRK-1). A plan card carries its Work id in
+ * `source.externalId`. This pass copies it to `source.intentId` when that id
+ * names Work of the same user, and it retires open cards of closed Work, as
+ * the completion path would have done.
+ *
+ * Idempotent: a card that already has the link, or is already retired or
+ * complete, is not changed. Paginated: each page schedules the next one.
+ * Run once after deploy:
+ *   npx convex run albatrossWorkV2:backfillPlanCardIntentLinks '{}'
+ * Pass `{"dryRun": true}` to count without writes.
+ */
+export const backfillPlanCardIntentLinks = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    dryRun: v.optional(v.boolean()),
+    linked: v.optional(v.number()),
+    retired: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     const page = await ctx.db
-      .query('albatrossIntents')
-      .paginate({ cursor: args.cursor ?? null, numItems: Math.min(Math.max(args.limit ?? 25, 1), 25) });
+      .query('cards')
+      .paginate({ cursor: args.cursor ?? null, numItems: Math.min(Math.max(args.limit ?? 100, 1), 200) });
     const ts = now();
-    for (const work of page.page) {
+    let linked = args.linked ?? 0;
+    let retired = args.retired ?? 0;
+    const works = new Map<string, Doc<'albatrossIntents'> | null>();
+    for (const card of page.page) {
+      const source = card.source && typeof card.source === 'object' ? card.source : null;
+      if (!source) continue;
+      const existingIntentId = typeof source.intentId === 'string' ? source.intentId : undefined;
+      const candidate =
+        existingIntentId ??
+        (source.kind === 'chat' && typeof source.externalId === 'string' ? source.externalId : undefined);
+      if (!candidate) continue;
+      if (!works.has(candidate)) {
+        const workId = ctx.db.normalizeId('albatrossIntents', candidate);
+        works.set(candidate, workId ? await ctx.db.get(workId) : null);
+      }
+      const work = works.get(candidate);
+      if (!work || work.userId !== card.userId) continue;
       const patch: Record<string, unknown> = {};
-      if (!work.stepProgressMigratedAt) {
-        const historicalPlans = await ctx.db
-          .query('albatrossIntentPlans')
-          .withIndex('by_user_intent', (q) => q.eq('userId', work.userId).eq('intentId', work._id))
-          .order('desc')
-          .take(20);
-        let migratedProgress = mergeStepProgress(
-          work.stepProgress as StepProgressEntry[] | undefined,
-          historicalPlans.flatMap((plan) => progressFromPlanCompletions(plan)),
-        );
-        const currentPlan = historicalPlans.find((plan) => plan._id === work.latestPlanId);
-        if (currentPlan) {
-          const boundSteps = planStepsForProgress(currentPlan).filter((step) => step.cardId);
-          const completedCards = (
-            await Promise.all(
-              boundSteps.map(async (step): Promise<StepProgressEntry[]> => {
-                const cardId = ctx.db.normalizeId('cards', step.cardId!);
-                const card = cardId ? await ctx.db.get(cardId) : null;
-                if (!card?.completedAt || card.userId !== work.userId) return [];
-                return [
-                  {
-                    identity: step.identity,
-                    actionKey: step.actionKey,
-                    kind: step.action.kind || 'task',
-                    title: step.action.title!.trim().slice(0, 240),
-                    cardId: step.cardId,
-                    completedAt: card.completedAt,
-                    source: 'task',
-                  },
-                ];
-              }),
-            )
-          ).flat();
-          migratedProgress = mergeStepProgress(migratedProgress, completedCards);
-        }
-        patch.stepProgress = migratedProgress;
-        patch.stepProgressMigratedAt = ts;
+      if (!existingIntentId) {
+        patch.source = { ...source, intentId: String(work._id) };
+        linked += 1;
       }
-      if (!work.captureId) {
-        const captureId = await ctx.db.insert('albatrossCaptures', {
-          userId: work.userId,
-          rawText: work.rawText,
-          transcript: work.transcript,
-          source: work.source,
-          status: 'split',
-          workIds: [work._id],
-          createdAt: work.createdAt,
-          updatedAt: ts,
-        });
-        patch.captureId = captureId;
+      if (isTerminalWork(work) && !card.completedAt && !card.retiredAt) {
+        patch.retiredByWorkId = String(work._id);
+        patch.retiredAt = ts;
+        retired += 1;
       }
-      if (!work.workState)
-        patch.workState =
-          work.status === 'done' ? 'done' : work.status === 'archived' ? 'archived' : 'active';
-      if (!work.agentState) {
-        patch.agentState =
-          work.status === 'planning'
-            ? 'researching'
-            : work.status === 'needs_answers'
-              ? 'needs_input'
-              : 'idle';
-      }
-      if (!work.conversationId) patch.conversationId = `work_${String(work._id)}`;
-      if (!work.primaryAreaId && work.areaId) {
-        const areaId = ctx.db.normalizeId('areas', work.areaId);
-        if (areaId) {
-          patch.primaryAreaId = areaId;
-          const existingLinks = await ctx.db
-            .query('areaArtifactLinks')
-            .withIndex('by_user_artifact', (q) =>
-              q.eq('userId', work.userId).eq('artifactKind', 'intent').eq('artifactId', String(work._id)),
-            )
-            .collect();
-          if (!existingLinks.some((link) => link.areaId === areaId)) {
-            await ctx.db.insert('areaArtifactLinks', {
-              userId: work.userId,
-              areaId,
-              artifactKind: 'intent',
-              artifactId: String(work._id),
-              role: 'primary',
-              status: 'candidate',
-              confidence: 0.95,
-              reason: 'Migrated from the Work item primary Area.',
-              sourceRefs: [{ kind: 'intent', id: String(work._id), label: work.title }],
-              confirmationRefs: [],
-              createdAt: work.createdAt,
-              updatedAt: ts,
-            });
-          }
-        }
-      }
-      if (!work.primaryProjectId) {
-        const project = await ctx.db
-          .query('albatrossProjects')
-          .withIndex('by_user_source_intent', (q) =>
-            q.eq('userId', work.userId).eq('sourceIntentId', String(work._id)),
-          )
-          .first();
-        if (project) patch.primaryProjectId = project._id;
-      }
-      const existingQuestions = await ctx.db
-        .query('albatrossWorkQuestions')
-        .withIndex('by_work', (q) => q.eq('workId', work._id))
-        .collect();
-      const knownLegacyIds = new Set(
-        existingQuestions.map((question) => question.legacyQuestionId).filter(Boolean),
-      );
-      for (const question of work.questions || []) {
-        if (question.answer || knownLegacyIds.has(question.id)) continue;
-        await ctx.db.insert('albatrossWorkQuestions', {
-          userId: work.userId,
-          workId: work._id,
-          dedupeKey: questionDedupeKey({
-            workId: String(work._id),
-            kind: 'clarification',
-            prompt: question.prompt,
-          }),
-          legacyQuestionId: question.id,
-          kind: 'clarification',
-          prompt: question.prompt,
-          reason: 'Migrated from the current plan question.',
-          options: question.options?.map((option) => ({
-            id: option.id,
-            label: option.title,
-            description: option.detail,
-          })),
-          status: 'pending',
-          sourceRefs: [],
-          createdAt: work.updatedAt,
-          updatedAt: ts,
-        });
-      }
-      if (Object.keys(patch).length) await ctx.db.patch(work._id, { ...patch, updatedAt: ts });
+      if (!args.dryRun && Object.keys(patch).length) await ctx.db.patch(card._id, patch);
     }
     if (!page.isDone)
-      await ctx.scheduler.runAfter(0, internal.albatrossWorkV2.migrateLegacyBatch, {
+      await ctx.scheduler.runAfter(0, internal.albatrossWorkV2.backfillPlanCardIntentLinks, {
         cursor: page.continueCursor,
         limit: args.limit,
+        dryRun: args.dryRun,
+        linked,
+        retired,
       });
-    return { migrated: page.page.length, done: page.isDone, cursor: page.continueCursor };
+    else
+      console.log(
+        `[plan card backfill] linked ${linked}, retired ${retired}${args.dryRun ? ' (dry run)' : ''}`,
+      );
+    return { scanned: page.page.length, linked, retired, done: page.isDone };
   },
 });

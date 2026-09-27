@@ -11,9 +11,9 @@ import {
 } from '../albatross/daily-report';
 import { checkWaitingReplies } from '../albatross/reply-watch-runtime';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
+import { mapConcurrent } from '../classifier/client';
 import { api, convexQuery } from '../hosted/convex';
 import { briefAttention } from '../jev/brief';
-import { mapConcurrent } from '../jev/client';
 import {
   correctionForMail,
   DEFAULT_JEV_PREFERENCES,
@@ -24,10 +24,13 @@ import {
 } from '../jev/contract';
 import { explicitReplyRequested } from '../jev/fallback';
 import { loadJevPolicy } from '../jev/service';
+import { labelsHaveRole } from '../mail/search/folders';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
-import { getNylasThread, listNylasAccounts, searchNylasThreads } from '../nylas/provider';
+import { listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
+import { truncateText } from '../shared/text';
 import type {
+  BriefEditionKind,
   DailyReport,
   DailyReportCalendarItem,
   DailyReportItem,
@@ -49,13 +52,14 @@ import {
 } from '../store/daily-report-dismissals';
 import { saveDailyReport } from '../store/daily-reports';
 import { listMemories } from '../store/memories';
-import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
+import { resolveThreadMessages } from '../store/messages';
 import { listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
 import { insightId, upsertThreadInsight } from '../store/thread-insights';
 import { getThread, upsertThread } from '../store/threads';
 import { listTrackedThreads, updateTrackedThread, upsertTrackedThread } from '../store/tracked-threads';
 import { resolveBriefPlanTier } from './brief-plan';
+import { capCalendarPerDay } from './brief-prose';
 import {
   assignBriefLane,
   type BriefItemCandidate,
@@ -137,7 +141,20 @@ const LANE_PRIORITY: Record<ReportLane, number> = {
 // How wide to cast the candidate net. 'week' is the fast first pass (just the
 // last several days, fewer candidates, less enrichment) so a brief appears
 // quickly; 'full' is the broader month sweep run afterward in the background.
-function scopeProfile(scope: 'week' | 'full' = 'full') {
+// 'first' is the first edition after the first mailbox connects (FEATURES
+// item 4): the last 48 hours only, a small candidate set, and no model call.
+function scopeProfile(scope: 'first' | 'week' | 'full' = 'full') {
+  if (scope === 'first') {
+    return {
+      queries: [
+        { q: 'in:inbox newer_than:2d -in:trash -in:spam', max: 60, human: true },
+        { q: 'is:starred newer_than:2d -in:trash -in:spam', max: 20, human: true },
+      ] as typeof RECENT_QUERIES,
+      sentMax: 40,
+      candidateLimit: 40,
+      enrichCap: 0,
+    };
+  }
   if (scope === 'week') {
     return {
       queries: [
@@ -164,14 +181,16 @@ function scopeProfile(scope: 'week' | 'full' = 'full') {
 }
 
 export async function generateDailyReport(input: {
-  kind: DailyReport['kind'];
+  kind: BriefEditionKind;
   accounts?: string[];
   userId?: string | null;
   now?: number;
   maxRecentPerAccount?: number;
   includeCalendar?: boolean;
   // 'week' = fast first pass; 'full' = broad month sweep (default).
-  scope?: 'week' | 'full';
+  scope?: 'first' | 'week' | 'full';
+  // Write the edition with no model call at all (the first edition).
+  noModel?: boolean;
   // Reuse an edition id so a later pass overwrites the same report in place.
   reportId?: string;
   // Skip the progressive partial saves (used by the silent background pass so
@@ -259,7 +278,7 @@ export async function generateDailyReport(input: {
 
   const attentionKeys = new Set<string>();
   if (input.userId) {
-    const attention = await convexQuery<Thread[]>((api as any).jev.attentionCandidates, {
+    const attention = await convexQuery<Thread[]>(api.jev.attentionCandidates, {
       userId: input.userId,
       accountIds: accounts,
     }).catch(() => []);
@@ -286,7 +305,7 @@ export async function generateDailyReport(input: {
     }
   }
 
-  if (input.userId) {
+  if (input.userId && !input.noModel) {
     try {
       const replies = await checkWaitingReplies({ userId: input.userId });
       if (replies.unavailable)
@@ -348,7 +367,7 @@ export async function generateDailyReport(input: {
 
   // ---- Tier 1: batched smart classification (local-first) ------------------
   const storedThreads = input.userId
-    ? await convexQuery<Thread[]>((api as any).jev.threadAssessments, {
+    ? await convexQuery<Thread[]>(api.jev.threadAssessments, {
         userId: input.userId,
         threads: bounded.slice(0, 600).map((thread) => ({ accountId: thread.account, threadId: thread._id })),
       }).catch(() => [])
@@ -416,12 +435,25 @@ export async function generateDailyReport(input: {
     scores.set(key, floor.briefEligible ? Math.max(1, scoreBriefCandidate(signals)) : -100);
   }
 
+  // Thread facts the live edition compares against later (FEATURES item 8):
+  // unread and in the inbox when written, and the counterparty's address.
+  const threadFacts = new Map<string, BriefThreadFacts>();
+  for (const thread of bounded) {
+    const key = `${thread.account}:${thread._id}`;
+    const counterparty = floors.get(key)?.counterparty || '';
+    threadFacts.set(key, {
+      unread: Boolean(thread.unread),
+      inInbox: labelsHaveRole(thread.labels || [], 'INBOX'),
+      ...(counterparty && !self.has(counterparty) ? { senderEmail: counterparty } : {}),
+    });
+  }
+
   // ---- Stage 2: pick the threads worth an LLM narrative (promote-only) -----
   const enrichCap = Math.min(
     Number(process.env.LAB86_MAIL_REPORT_MAX_ENRICH || ENRICH_CAP),
     profile.enrichCap,
   );
-  const aiAvailable = await hasAiForCurrentUser();
+  const aiAvailable = !input.noModel && (await hasAiForCurrentUser());
   const enrichKeys = new Set<string>(
     bounded
       .filter((thread) => {
@@ -488,6 +520,7 @@ export async function generateDailyReport(input: {
         scores,
         signals: signalsByKey,
         tier,
+        threadFacts,
       });
       await saveDailyReport(partial);
     } catch {
@@ -584,11 +617,25 @@ export async function generateDailyReport(input: {
     scores,
     signals: signalsByKey,
     tier,
+    threadFacts,
   });
   // Silent callers persist the composed artifact themselves; saving the bare
   // structured doc here would wipe the rendered edition mid-pass.
   if (!input.silent) await saveDailyReport(report);
   return report;
+}
+
+export interface BriefThreadFacts {
+  unread: boolean;
+  inInbox: boolean;
+  senderEmail?: string;
+}
+
+function validEmail(value: string | undefined | null): string | undefined {
+  const email = String(value || '')
+    .trim()
+    .toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : undefined;
 }
 
 async function searchAccountThreads(account: string, query: string, max: number, userId?: string | null) {
@@ -617,14 +664,7 @@ function collectSentRecipientsFromRaw(thread: Thread, self: Set<string>, out: Se
 }
 
 async function loadThreadMessages(account: string, threadId: string, userId?: string | null) {
-  const cached = await getThreadMessages(account, threadId);
-  if (cached.length) return cached.sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
-  const thread = await getNylasThread({ userId, account, threadId }).catch(() => null);
-  const messages = (thread?.messages || [])
-    .filter((message) => message._id)
-    .sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
-  for (const message of messages) await upsertMessageRecord(message).catch(() => undefined);
-  return messages;
+  return await resolveThreadMessages(account, threadId, { userId });
 }
 
 // Collapse duplicate automated notifications (same sender domain + subject,
@@ -994,8 +1034,8 @@ async function buildThreadInsight(
       });
       const parsed = parseJson(aiText);
       if (parsed) {
-        summary = stripEmoji(String(parsed.summary || summary)).slice(0, 500);
-        reason = stripEmoji(String(parsed.reason || reason)).slice(0, 280);
+        summary = truncateText(stripEmoji(String(parsed.summary || summary)), 500);
+        reason = truncateText(stripEmoji(String(parsed.reason || reason)), 280);
         if (Array.isArray(parsed.openLoops) && parsed.openLoops.length) {
           openLoops = parsed.openLoops
             .map((v: unknown) => stripEmoji(String(v)))
@@ -1069,7 +1109,7 @@ async function buildThreadInsight(
 // Exported for tests: the handoff-index merge below must stay on the
 // composition path that returns and persists DailyReport.handoffs.
 export async function composeReport(input: {
-  kind: DailyReport['kind'];
+  kind: BriefEditionKind;
   now: number;
   accounts: string[];
   services?: string[];
@@ -1093,6 +1133,7 @@ export async function composeReport(input: {
   scores?: Map<string, number>;
   signals?: Map<string, BriefScoreSignals>;
   tier?: BriefPlanTier;
+  threadFacts?: Map<string, BriefThreadFacts>;
 }) {
   const trackedKeys = new Map(input.tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
   const threadDismissals = new Map(
@@ -1101,7 +1142,9 @@ export async function composeReport(input: {
     ),
   );
   const reportTasks = input.taskContext.slice(0, 24);
-  const reportCalendar = input.calendarContext.slice(0, 24);
+  // Cap each local day, not the whole window: the week ahead must not call a
+  // busy late day open because earlier days used up a shared limit.
+  const reportCalendar = capCalendarPerDay(input.calendarContext, getAiRequestContext().userTimezone);
   const hiddenByUser = (item: DailyReportItem) => {
     const dismissal = threadDismissals.get(dailyReportThreadKey(item.account, item.threadId));
     if (!dismissal) return false;
@@ -1112,6 +1155,8 @@ export async function composeReport(input: {
   };
   const toItem = (insight: ThreadInsight): DailyReportItem => {
     const tracked = trackedKeys.get(`${insight.account}:${insight.threadId}`);
+    const facts = input.threadFacts?.get(`${insight.account}:${insight.threadId}`);
+    const senderEmail = facts?.senderEmail || validEmail(insight.jev?.sender);
     return {
       account: insight.account,
       threadId: insight.threadId,
@@ -1127,7 +1172,9 @@ export async function composeReport(input: {
         insight.lane === 'bulk'
           ? null
           : insight.commitments.find((c) => c.dueAt)?.dueAt || tracked?.dueAt || null,
-      unread: false,
+      unread: facts?.unread ?? false,
+      ...(facts?.inInbox ? { inInbox: true } : {}),
+      ...(senderEmail ? { senderEmail } : {}),
       trackedThreadId: tracked?._id,
       surfacedBecause: insight.surfacedBecause,
       demotionReason: insight.demotionReason ?? null,
@@ -1285,9 +1332,7 @@ export async function composeReport(input: {
     albatrossQuestions: input.albatrossContext.askBeforeCentering.length,
   };
   const reportId = input.reportId ?? randomUUID();
-  const title = `${
-    input.kind === 'evening' ? 'Evening' : input.kind === 'morning' ? 'Morning' : 'Manual'
-  } Daily Report`;
+  const title = `${input.kind === 'morning' ? 'Morning' : 'Manual'} Daily Report`;
   // Merge duplicate task handoffs before the index is persisted, so the
   // stored report and the narrative carry one handoff per outcome — not just
   // the artifact prompt downstream.
@@ -1347,15 +1392,10 @@ function signalsFromInsight(insight: ThreadInsight, now: number): BriefScoreSign
 }
 
 function localHandoffNarrative(
-  kind: DailyReport['kind'],
+  kind: BriefEditionKind,
   handoffs: NonNullable<DailyReport['handoffs']>,
 ): string {
-  const opener =
-    kind === 'evening'
-      ? "Tonight's wrap-up:"
-      : kind === 'morning'
-        ? "This morning's brief:"
-        : "Here's where things stand:";
+  const opener = kind === 'morning' ? "This morning's brief:" : "Here's where things stand:";
   if (!handoffs.length) return `${opener} a quiet day — no open handoff needs your attention.`;
   const protectedCount = handoffs.filter((handoff) => handoff.protected).length;
   const lead = handoffs[0];
@@ -1384,7 +1424,7 @@ function calendarContextLine(event: DailyReportCalendarItem) {
 async function loadMcpContext(userId: string | null | undefined): Promise<DailyReportMcpItem[]> {
   if (!userId) return [];
   try {
-    const rows = await convexQuery<any[]>((api as any).mcp.listItemsForBrief, { userId, limit: 25 });
+    const rows = await convexQuery<any[]>(api.mcp.listItemsForBrief, { userId, limit: 25 });
     return (rows || []).map((row) => ({
       server: row.server,
       externalId: row.externalId ? String(row.externalId) : undefined,
@@ -1396,7 +1436,7 @@ async function loadMcpContext(userId: string | null | undefined): Promise<DailyR
       updatedAt: row.updatedAtSource ?? null,
       assignedToUser: Boolean(row.assignedToUser),
       repository: row.repository ?? null,
-      summary: row.summary ? String(row.summary).slice(0, 400) : null,
+      summary: row.summary ? truncateText(String(row.summary), 400) : null,
     }));
   } catch {
     return [];
@@ -1429,14 +1469,14 @@ export function dedupeSimilarTasks(tasks: DailyReportTaskItem[]): DailyReportTas
   return result;
 }
 
-async function loadTaskContext(
+export async function loadTaskContext(
   userId: string | null | undefined,
   now: number,
 ): Promise<DailyReportTaskItem[]> {
   if (!userId) return [];
   try {
     const dismissedTaskIds = await listDismissedDailyReportTaskIds().catch(() => new Set<string>());
-    const rows = await convexQuery<any[]>((api as any).boards.listReportCards, {
+    const rows = await convexQuery<any[]>(api.boards.listReportCards, {
       userId,
       since: now - MONTH_CONTEXT_WINDOW,
       endAt: now + FUTURE_CONTEXT_WINDOW,
@@ -1458,7 +1498,9 @@ async function loadTaskContext(
             boardTitle: card.boardTitle,
             columnName: card.columnName,
             title: stripEmoji(String(card.title || 'Untitled task')),
-            description: card.description ? stripEmoji(String(card.description)).slice(0, 500) : undefined,
+            description: card.description
+              ? truncateText(stripEmoji(String(card.description)), 500)
+              : undefined,
             dueAt: card.dueAt ?? null,
             completedAt: card.completedAt ?? null,
             priority: card.priority,
@@ -1521,7 +1563,7 @@ function startOfLocalDay(at: number, tz: string): number {
   }
 }
 
-async function loadCalendarContext(
+export async function loadCalendarContext(
   userId: string | null | undefined,
   now: number,
 ): Promise<DailyReportCalendarItem[]> {
@@ -1532,7 +1574,7 @@ async function loadCalendarContext(
     // midnight (not UTC) so the window isn't shifted for non-UTC users.
     const tz = getAiRequestContext().userTimezone || 'UTC';
     const startOfToday = startOfLocalDay(now, tz);
-    const rows = await convexQuery<any[]>((api as any).calendarData.listEvents, {
+    const rows = await convexQuery<any[]>(api.calendarData.listEvents, {
       userId,
       startAt: startOfToday,
       endAt: startOfToday + 8 * 86_400_000,
@@ -1550,7 +1592,7 @@ async function loadCalendarContext(
         allDay: Boolean(event.allDay),
         location: event.location ? stripEmoji(String(event.location)) : undefined,
         htmlLink: event.htmlLink,
-        description: event.description ? stripEmoji(String(event.description)).slice(0, 500) : undefined,
+        description: event.description ? truncateText(stripEmoji(String(event.description)), 500) : undefined,
         scope: contextScope(Number(event.startAt), now),
       }))
       .sort((a, b) => {
@@ -1565,7 +1607,9 @@ async function loadCalendarContext(
 
 async function loadMemoryContext() {
   const memories = await listMemories().catch(() => []);
-  return memories.slice(0, 80).map((memory) => `${memory.email}: ${stripEmoji(memory.notes).slice(0, 600)}`);
+  return memories
+    .slice(0, 80)
+    .map((memory) => `${memory.email}: ${truncateText(stripEmoji(memory.notes), 600)}`);
 }
 
 function threadText(thread: Thread, messages: Message[], maxChars: number) {
@@ -1576,9 +1620,12 @@ function threadText(thread: Thread, messages: Message[], maxChars: number) {
         `Message ${index + 1}\nFrom: ${m.from}\nTo: ${m.to}\nDate: ${new Date(Number(m.date || 0)).toString()}\nSubject: ${m.subject}\n\n${m.textBody || m.snippet || ''}`,
     )
     .join('\n\n');
-  return [`Thread: ${thread.subject}`, `From: ${thread.fromAddress}`, `Snippet: ${thread.snippet}`, msgText]
-    .join('\n\n')
-    .slice(0, maxChars);
+  return truncateText(
+    [`Thread: ${thread.subject}`, `From: ${thread.fromAddress}`, `Snippet: ${thread.snippet}`, msgText].join(
+      '\n\n',
+    ),
+    maxChars,
+  );
 }
 
 function extractPeople(thread: Thread, messages: Message[], self: Set<string>) {
@@ -1617,11 +1664,12 @@ function personName(raw: string): string {
 }
 
 function subjectClause(subject: string): string {
-  return stripEmoji(String(subject || ''))
-    .replace(/^(re|fwd|fw):\s*/i, '')
-    .trim()
-    .slice(0, 80)
-    .replace(/[\s,;:.-]+$/, '');
+  return truncateText(
+    stripEmoji(String(subject || ''))
+      .replace(/^(re|fwd|fw):\s*/i, '')
+      .trim(),
+    80,
+  ).replace(/[\s,;:.-]+$/, '');
 }
 
 function relativeDue(dueAt: number, now: number): string {
@@ -1686,7 +1734,7 @@ function localReason(input: {
         else line = 'Active conversation worth tracking.';
     }
   }
-  return stripEmoji(line).slice(0, 280);
+  return truncateText(stripEmoji(line), 280);
 }
 
 // Generic reasons we'd rather replace with a composed line for tracked items.
@@ -1695,26 +1743,32 @@ const GENERIC_REASON =
 
 function trackedReason(item: TrackedThread, now: number): string {
   const reason = stripEmoji(item.reason || '');
-  if (reason && !GENERIC_REASON.test(reason)) return reason.slice(0, 280);
+  if (reason && !GENERIC_REASON.test(reason)) return truncateText(reason, 280);
   const who = personName(item.participants[0] || '');
   const about = subjectClause(item.subject);
   if (item.dueAt && item.dueAt >= now) {
     const when = relativeDue(item.dueAt, now);
-    return stripEmoji(`${who ? `${who}: ` : ''}due ${when}${about ? ` — ${about}` : ''}.`).slice(0, 280);
+    return truncateText(stripEmoji(`${who ? `${who}: ` : ''}due ${when}${about ? ` — ${about}` : ''}.`), 280);
   }
   if (item.nextAction) {
-    return stripEmoji(`Next: ${item.nextAction}${who ? ` (with ${who})` : ''}.`).slice(0, 280);
+    return truncateText(stripEmoji(`Next: ${item.nextAction}${who ? ` (with ${who})` : ''}.`), 280);
   }
   if (item.status === 'waiting') {
-    return stripEmoji(
-      who
-        ? `Waiting on ${who}${about ? ` about ${about}` : ''}.`
-        : `Waiting on a reply${about ? ` about ${about}` : ''}.`,
-    ).slice(0, 280);
+    return truncateText(
+      stripEmoji(
+        who
+          ? `Waiting on ${who}${about ? ` about ${about}` : ''}.`
+          : `Waiting on a reply${about ? ` about ${about}` : ''}.`,
+      ),
+      280,
+    );
   }
-  return stripEmoji(
-    who ? `Tracking ${who}${about ? ` — ${about}` : ''}.` : `Tracking: ${about || 'open thread'}.`,
-  ).slice(0, 280);
+  return truncateText(
+    stripEmoji(
+      who ? `Tracking ${who}${about ? ` — ${about}` : ''}.` : `Tracking: ${about || 'open thread'}.`,
+    ),
+    280,
+  );
 }
 
 function extractCommitments(text: string, now: number) {
@@ -1728,7 +1782,7 @@ function extractCommitments(text: string, now: number) {
     );
   for (const line of lines.slice(0, 8)) {
     commitments.push({
-      text: line.trim().slice(0, 220),
+      text: truncateText(line.trim(), 220),
       dueAt: inferDueAt(line, now),
       confidence: 0.58,
     });

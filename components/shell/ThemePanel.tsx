@@ -59,7 +59,6 @@ export function useApplyThemeExtras() {
   const bgHue = useClientStore((s) => s.bgHue);
   const surfaceTint = useClientStore((s) => s.surfaceTint);
   const depthSpread = useClientStore((s) => s.depthSpread);
-  const washOpacity = useClientStore((s) => s.washOpacity);
   const bgWashOpacity = useClientStore((s) => s.bgWashOpacity);
   const grainOpacity = useClientStore((s) => s.grainOpacity);
   const grainScale = useClientStore((s) => s.grainScale);
@@ -85,7 +84,6 @@ export function useApplyThemeExtras() {
     setOrClear('--bg-hue', bgHue == null ? null : String(bgHue));
     setOrClear('--surface-tint', surfaceTint > 0 ? String(surfaceTint) : null);
     setOrClear('--depth-spread', depthSpread !== 1 ? String(depthSpread) : null);
-    setOrClear('--wash-opacity', washOpacity > 0 ? String(washOpacity) : null);
     setOrClear('--bg-wash-opacity', bgWashOpacity > 0 ? String(bgWashOpacity) : null);
     setOrClear('--grain-opacity', grainOpacity > 0 ? String(grainOpacity) : null);
     setOrClear('--grain-scale', grainScale ? `${grainScale}px` : null);
@@ -101,7 +99,6 @@ export function useApplyThemeExtras() {
     bgHue,
     surfaceTint,
     depthSpread,
-    washOpacity,
     bgWashOpacity,
     grainOpacity,
     grainScale,
@@ -376,8 +373,6 @@ export function ThemePanel({ className, inline = false }: { className?: string; 
   const setSurfaceTint = useClientStore((s) => s.setSurfaceTint);
   const depthSpread = useClientStore((s) => s.depthSpread);
   const setDepthSpread = useClientStore((s) => s.setDepthSpread);
-  const washOpacity = useClientStore((s) => s.washOpacity);
-  const setWashOpacity = useClientStore((s) => s.setWashOpacity);
   const bgWashOpacity = useClientStore((s) => s.bgWashOpacity);
   const setBgWashOpacity = useClientStore((s) => s.setBgWashOpacity);
   const grainOpacity = useClientStore((s) => s.grainOpacity);
@@ -515,15 +510,6 @@ export function ThemePanel({ className, inline = false }: { className?: string; 
 
         <Section title="Effects">
           <div className="space-y-2">
-            <Slider
-              label="Rail wash"
-              min={0}
-              max={1}
-              step={0.05}
-              value={washOpacity}
-              readout={washOpacity ? `${Math.round(washOpacity * 100)}%` : 'Off'}
-              onChange={setWashOpacity}
-            />
             <Slider
               label="Background wash"
               min={0}

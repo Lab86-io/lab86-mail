@@ -16,7 +16,7 @@ const ids = source.endsWith('.json')
 for (const userId of ids) {
   if (!userId.startsWith('office-verification-'))
     throw new Error(`Refusing to delete non-synthetic owner ${userId}`);
-  const counts = await convexMutation<Record<string, number>>((api as any).accounts.deleteUserCascade, {
+  const counts = await convexMutation<Record<string, number>>(api.accounts.deleteUserCascade, {
     userId,
   });
   console.log(userId, JSON.stringify(counts));

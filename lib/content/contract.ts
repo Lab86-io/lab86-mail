@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { safeSlice, truncateText } from '../shared/text';
 
 export const CONTENT_VERSION = 1;
 export const MAX_CONTENT_CHARS = 120_000;
@@ -61,7 +62,7 @@ export type PreparedDraft = z.infer<typeof preparedDraftSchema>;
 export function contentChunks(text: string): string[] {
   const result: string[] = [];
   for (let offset = 0; offset < Math.min(text.length, MAX_CONTENT_CHARS); offset += 3600) {
-    result.push(text.slice(offset, offset + 4000));
+    result.push(safeSlice(text, offset, offset + 4000));
   }
   return result;
 }
@@ -76,17 +77,18 @@ export function contentExcerpt(text: string, query: string, limit = 1800) {
     .map((word) => lower.indexOf(word))
     .filter((position) => position >= 0);
   const start = Math.max(0, (positions.length ? Math.min(...positions) : 0) - 160);
-  return `${start ? '…' : ''}${text.slice(start, start + limit)}${start + limit < text.length ? '…' : ''}`;
+  return `${start ? '…' : ''}${safeSlice(text, start, start + limit)}${start + limit < text.length ? '…' : ''}`;
 }
 export function researchExcerpt(text: string, queries: string[]) {
   if (text.length <= 12_000) return text;
-  return [
-    text.slice(0, 3000),
-    ...queries.slice(0, 3).map((query) => contentExcerpt(text, query, 2200)),
-    text.slice(-2000),
-  ]
-    .join('\n\n[Excerpt]\n\n')
-    .slice(0, 12_000);
+  return truncateText(
+    [
+      truncateText(text, 3000),
+      ...queries.slice(0, 3).map((query) => contentExcerpt(text, query, 2200)),
+      safeSlice(text, -2000),
+    ].join('\n\n[Excerpt]\n\n'),
+    12_000,
+  );
 }
 export function sourceLink(item: Pick<ContentItem, 'source' | 'connectionId' | 'externalId' | 'url'>) {
   if (item.source === 'attachment') {

@@ -451,7 +451,7 @@ struct NewTaskSheet: View {
                     TextField("What needs doing?", text: $title, axis: .vertical)
                         .lineLimit(1...3)
                         .focused($titleFocused)
-                    Button(isAutofilling ? "Autofilling…" : "Autofill with Albatross", systemImage: "sparkles") {
+                    Button(isAutofilling ? "Autofilling…" : "Autofill with Albatross", systemImage: "square.and.pencil") {
                         Task { await autofill() }
                     }
                     .disabled(

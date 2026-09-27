@@ -68,7 +68,7 @@ test('engine loading retries failed styles and templates and reuses successfully
   Object.defineProperty(globalThis, 'document', { configurable: true, value: dom.window.document });
   let templatesFail = true;
   globalThis.fetch = (async () =>
-    new Response('<templates/>', { status: templatesFail ? 503 : 200 })) as typeof fetch;
+    new Response('<templates/>', { status: templatesFail ? 503 : 200 })) as unknown as typeof fetch;
   const head = dom.window.document.head;
   const append = head.appendChild.bind(head);
   let failStyle = true;

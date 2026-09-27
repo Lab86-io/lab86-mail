@@ -111,7 +111,7 @@ describe('daily report tools', () => {
     await withToolContext(() =>
       saveDailyReport({
         _id: 'report_active_generation',
-        kind: 'evening',
+        kind: 'morning',
         generatedAt: Date.now(),
         status: 'partial',
         artifactStatus: 'composing',
@@ -134,7 +134,7 @@ describe('daily report tools', () => {
       } as any),
     );
 
-    const active = await runTool(generateDailyReportTool.handler, { kind: 'evening', wait: false });
+    const active = await runTool(generateDailyReportTool.handler, { kind: 'morning', wait: false });
     expect(active.started).toBe(false);
     expect(active.report?._id).toBe('report_active_generation');
   });
@@ -344,7 +344,7 @@ describe('daily report tools', () => {
       const storedHtml = '<!doctype html><html><body><main><section>Body</section></main></body></html>';
       await saveDailyReport({
         _id: 'report_no_area_context',
-        kind: 'evening',
+        kind: 'morning',
         generatedAt: Date.parse('2030-02-01T00:00:00.000Z'),
         status: 'ready',
         accounts: ['jakob@example.test'],
@@ -365,7 +365,7 @@ describe('daily report tools', () => {
         stats: {},
       } as any);
 
-      const result = await runTool(getLatestDailyReportTool.handler, { kind: 'evening' });
+      const result = await runTool(getLatestDailyReportTool.handler, { kind: 'morning' });
       expect(result.report?.html).toBe(storedHtml);
       expect(result.report?.html).not.toContain('data-lab86-area-brief-host');
     });

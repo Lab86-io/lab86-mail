@@ -3,14 +3,16 @@ import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { parseIcsEvents } from '@/lib/calendar/ics';
 import { createCalendarEvent } from '@/lib/calendar/mutate';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { isUsableTimezone } from '@/lib/mail/brief-timezone';
 import { requireNylas } from '@/lib/nylas/client';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const suggestionsApi = (api as any).suggestions;
-const accountsApi = (api as any).accounts;
+const suggestionsApi = api.suggestions;
+const accountsApi = api.accounts;
 
 interface SuggestionActDependencies {
   requireCurrentUser: typeof requireCurrentUser;
@@ -39,6 +41,7 @@ interface SafeSuggestedEvent {
   allDay: boolean;
   description?: string;
   location?: string;
+  timezone?: string;
 }
 
 export function safeSuggestedEvent(
@@ -60,12 +63,13 @@ export function safeSuggestedEvent(
   const description = String(event.description || '').trim();
   const location = String(event.location || '').trim();
   return {
-    title: title.slice(0, 300),
+    title: truncateText(title, 300),
     startAt,
     endAt,
     allDay: event.allDay === true,
-    description: description.slice(0, 10_000) || undefined,
+    description: truncateText(description, 10_000) || undefined,
     location: location.slice(0, 500) || undefined,
+    ...(typeof event.timezone === 'string' && event.timezone ? { timezone: event.timezone } : {}),
   };
 }
 
@@ -83,6 +87,10 @@ export function createSuggestionActPost(deps: SuggestionActDependencies = defaul
         windowMs: 10 * 60_000,
       });
       const body = await req.json().catch(() => ({}));
+      // The web and native clients send the device zone. A write without a zone
+      // lands in UTC, and a series then moves by an hour at DST.
+      const headerTimezone = req.headers.get('x-user-timezone') || undefined;
+      const userTimezone = isUsableTimezone(headerTimezone) ? headerTimezone : undefined;
       const suggestionId = String(body.suggestionId || '');
       const action = body.action === 'accept' ? 'accept' : body.action === 'dismiss' ? 'dismiss' : null;
       if (!suggestionId || !action) {
@@ -123,7 +131,7 @@ export function createSuggestionActPost(deps: SuggestionActDependencies = defaul
             queryParams: { messageId } as any,
           });
           const ics = await new Response(stream as any).text();
-          const [parsed] = parseIcsEvents(ics);
+          const [parsed] = parseIcsEvents(ics, { timezone: userTimezone });
           eventInput = safeSuggestedEvent(parsed as unknown as Record<string, unknown>);
         } else if (event) {
           eventInput = safeSuggestedEvent({
@@ -146,6 +154,7 @@ export function createSuggestionActPost(deps: SuggestionActDependencies = defaul
           allDay: eventInput.allDay,
           description: eventInput.description,
           location: eventInput.location,
+          timezone: eventInput.timezone || userTimezone,
           notifyParticipants: false,
         });
         await deps.convexMutation(suggestionsApi.resolve, {

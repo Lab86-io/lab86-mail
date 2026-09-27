@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { truncateText } from '../lib/shared/text';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
@@ -39,7 +40,7 @@ function summary(work: {
 }) {
   return {
     id: String(work._id),
-    title: work.title || work.rawText.slice(0, 180),
+    title: work.title || truncateText(work.rawText, 180),
     shape: work.shape ?? 'quick',
     horizon: work.horizon ?? null,
     captureId: work.captureId ? String(work.captureId) : undefined,

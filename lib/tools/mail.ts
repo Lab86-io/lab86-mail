@@ -9,25 +9,22 @@ import {
   includeInSmartCategory,
   SMART_CATEGORY_IDS,
 } from '../mail/smart-categories';
+import { normalizeNylasAccount } from '../nylas/normalize';
 import {
   getNylasAccount,
   getNylasMessage,
   getNylasThread,
-  listNylasAccounts,
   listNylasLabels,
+  type NylasAccountRow,
   searchNylasThreads,
 } from '../nylas/provider';
 import { emailFromHeader } from '../shared/format';
+import { truncateText } from '../shared/text';
 import type { Thread } from '../shared/types';
 import { upsertMessage as upsertMessageRecord } from '../store/messages';
 import { getSmartLabel, listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
-import {
-  getThread as getThreadRecord,
-  listRecentThreads,
-  listThreadsForAccount,
-  upsertThread,
-} from '../store/threads';
+import { getThread as getThreadRecord, listThreadsForAccount, upsertThread } from '../store/threads';
 import { defineTool } from './registry';
 
 const LOCAL_CURSOR_PREFIX = 'local:';
@@ -66,6 +63,8 @@ export const listAccounts = defineTool({
         primary: z.boolean().optional(),
         displayName: z.string().optional(),
         services: z.array(z.string()).optional(),
+        // Set when the grant is gone and the user must sign in again.
+        reconnectReason: z.string().optional(),
         sync: z
           .object({
             status: z.string(),
@@ -79,9 +78,19 @@ export const listAccounts = defineTool({
     ),
   }),
   async handler(_args, ctx) {
-    const accounts = await listNylasAccounts(ctx.userId);
+    // Connected mailboxes, plus mailboxes whose grant died (status `error`):
+    // those come back with authed:false so the Rail can show Reconnect.
+    const rows = ctx.userId
+      ? await convexQuery<NylasAccountRow[]>(api.accounts.listConnectedAccounts, { userId: ctx.userId })
+      : [];
+    const accounts = (rows || [])
+      .filter((row) => row.status === 'connected' || row.status === 'error')
+      .map((row) => ({
+        ...normalizeNylasAccount(row),
+        ...(row.status === 'error' ? { reconnectReason: row.error || 'Reconnect needed' } : {}),
+      }));
     const syncStates = ctx.userId
-      ? await convexQuery<any[]>((api as any).mailCorpus.listSyncTargets, {
+      ? await convexQuery<any[]>(api.mailCorpus.listSyncTargets, {
           userId: ctx.userId,
           limit: 500,
         }).catch(() => [])
@@ -217,7 +226,7 @@ export const listSmartCategory = defineTool({
     {
       const before = localCursorPayload !== undefined ? Number(localCursorPayload) : undefined;
       const result = await convexQuery<{ items: any[]; nextBefore?: number; nextCursor?: string }>(
-        (api as any).mailCorpus.listSmartCategoryThreads,
+        api.mailCorpus.listSmartCategoryThreads,
         {
           userId: ctx.userId,
           accountId: account,
@@ -292,7 +301,7 @@ export const listSmartCategory = defineTool({
 });
 
 async function accountHasCorpusRows(userId: string, accountId: string) {
-  const state = await convexQuery<any | null>((api as any).mailCorpus.getSyncState, {
+  const state = await convexQuery<any | null>(api.mailCorpus.getSyncState, {
     userId,
     accountId,
   });
@@ -350,7 +359,7 @@ export const readThread = defineTool({
         from: message.from || '',
         to: message.to || undefined,
         date: message.date,
-        body: text.length > maxCharsPerMessage ? `${text.slice(0, maxCharsPerMessage)}…` : text,
+        body: text.length > maxCharsPerMessage ? `${truncateText(text, maxCharsPerMessage)}…` : text,
         attachments: (message.attachments || []).map((a: any) => ({
           id: a.id || a.attachmentId,
           name: a.filename || a.name,
@@ -419,7 +428,7 @@ export const getThread = defineTool({
     // Fast path: the corpus already holds every message body — pure local
     // read, no provider round-trip.
     if (!refresh && ctx.userId && isConvexConfigured()) {
-      const bundle = await convexQuery<any | null>((api as any).mailCorpus.getCorpusThreadBundle, {
+      const bundle = await convexQuery<any | null>(api.mailCorpus.getCorpusThreadBundle, {
         userId: ctx.userId,
         accountId: account,
         providerThreadId: threadId,
@@ -458,7 +467,7 @@ export const getThread = defineTool({
             subject: newest.subject || nylas.messages[0]?.subject || '(no subject)',
             fromAddress: newest.from,
             lastDate: newest.date,
-            snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
+            snippet: newest.snippet || truncateText(newest.textBody, 240) || '',
             labels: newest.labels || [],
             unread: nylas.messages.some(
               (message) => Boolean(message.unread) || message.labels?.includes('UNREAD'),
@@ -523,25 +532,6 @@ export const listAttachments = defineTool({
   },
 });
 
-export const recentThreadsCached = defineTool({
-  name: 'recent_threads',
-  description: 'Return up to N recent synced threads used to seed the command palette.',
-  category: 'mail',
-  mutating: false,
-  input: z.object({ limit: z.number().int().min(1).max(200).default(80) }),
-  output: z.object({ threads: z.array(z.any()) }),
-  async handler({ limit }, ctx) {
-    if (ctx.userId && isConvexConfigured()) {
-      const rows = await convexQuery<any[]>((api as any).mailCorpus.listRecentCorpusThreads, {
-        userId: ctx.userId,
-        limit,
-      }).catch(() => null);
-      if (rows?.length) return { threads: rows };
-    }
-    return { threads: await listRecentThreads(limit) };
-  },
-});
-
 export const listAccountThreads = defineTool({
   name: 'list_account_threads',
   description: 'List synced threads for a specific account.',
@@ -551,7 +541,7 @@ export const listAccountThreads = defineTool({
   output: z.object({ threads: z.array(z.any()) }),
   async handler({ account, limit }, ctx) {
     if (ctx.userId && isConvexConfigured()) {
-      const rows = await convexQuery<any[]>((api as any).mailCorpus.listRecentCorpusThreads, {
+      const rows = await convexQuery<any[]>(api.mailCorpus.listRecentCorpusThreads, {
         userId: ctx.userId,
         accountId: account,
         limit,
@@ -562,25 +552,48 @@ export const listAccountThreads = defineTool({
   },
 });
 
-export const getSmartCategoryStats = defineTool({
-  name: 'get_smart_category_stats',
+const SnoozedThread = z.object({
+  id: z.string(),
+  account: z.string(),
+  accountEmail: z.string().nullable(),
+  threadId: z.string(),
+  messageId: z.string().nullable(),
+  untilTs: z.number(),
+  untilIso: z.string(),
+  snoozedAt: z.number(),
+  subject: z.string(),
+  fromAddress: z.string(),
+  snippet: z.string(),
+  lastDate: z.number().nullable(),
+});
+
+/** Active snoozes for one user, newest first, with the return time as ISO. */
+export async function listSnoozedForUser(
+  userId: string,
+  limit?: number,
+  query: typeof convexQuery = convexQuery,
+): Promise<Array<z.infer<typeof SnoozedThread>>> {
+  const result = await query<{ items: Array<Omit<z.infer<typeof SnoozedThread>, 'untilIso'>> }>(
+    api.mailCorpus.listSnoozedThreadsInternal,
+    { userId, limit },
+  );
+  return (result?.items || []).map((item) => ({ ...item, untilIso: new Date(item.untilTs).toISOString() }));
+}
+
+// The snoozed threads of every connected mailbox, newest snooze first, with
+// the time each one comes back. Native clients call this through
+// POST /api/tools/list_snoozed and cancel with unsnooze_thread.
+export const listSnoozed = defineTool({
+  name: 'list_snoozed',
   description:
-    'Return unread counts per smart category (capped at 100) with a needs-attention flag. Indexed corpus read — instant.',
+    'List snoozed mail threads, newest snooze first: subject, sender, snippet, mailbox, and the time each thread comes back to the inbox. Use unsnooze_thread to bring one back now.',
   category: 'mail',
   mutating: false,
-  input: z.object({
-    account: z.string().optional(),
-  }),
-  output: z.object({
-    categories: z.record(z.string(), z.object({ unread: z.number(), attention: z.boolean() })),
-  }),
-  async handler({ account }, ctx) {
-    if (!ctx.userId || !isConvexConfigured()) return { categories: {} };
-    const result = await convexQuery<{ counts: Record<string, { unread: number; attention: boolean }> }>(
-      (api as any).mailCorpus.categoryCountsInternal,
-      { userId: ctx.userId, accountIds: account ? [account] : undefined },
-    );
-    return { categories: result.counts };
+  input: z.object({ limit: z.number().int().min(1).max(200).optional() }).optional(),
+  output: z.object({ snoozed: z.array(SnoozedThread) }),
+  async handler(args, ctx) {
+    if (!ctx.userId || !isConvexConfigured()) return { snoozed: [] };
+    return { snoozed: await listSnoozedForUser(ctx.userId, args?.limit) };
   },
 });
 

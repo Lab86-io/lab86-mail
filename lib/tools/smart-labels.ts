@@ -1,7 +1,13 @@
 import { z } from 'zod';
 import { api, convexMutation } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
-import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
+import { MAIL_UNDO, mailOperationReason, quotedSubject, recordMailOperation } from '../mail/mail-operations';
+import {
+  classifyThreadWithContext,
+  SMART_CATEGORY_IDS,
+  SMART_CATEGORY_LABELS,
+  SMART_GMAIL_LABEL_PREFIX,
+} from '../mail/smart-categories';
 import { emailFromHeader } from '../shared/format';
 import type { SmartRule } from '../shared/types';
 import { requireStoreUserId } from '../store/kv';
@@ -11,7 +17,7 @@ import {
 } from '../store/smart-corrections';
 import {
   createSmartLabel as createSmartLabelRecord,
-  disableSmartLabel,
+  deleteSmartLabel as deleteSmartLabelRecord,
   listSmartLabels as listSmartLabelRecords,
   updateSmartLabel as updateSmartLabelRecord,
 } from '../store/smart-labels';
@@ -20,7 +26,7 @@ import {
   listSmartRules as listSmartRuleRecords,
   setSmartRuleEnabled,
 } from '../store/smart-rules';
-import { listRecentThreads, resolveThread, setThreadSmartCategory } from '../store/threads';
+import { listRecentThreads, resolveThread } from '../store/threads';
 import { defineTool } from './registry';
 
 // Synchronously flip every recent corpus thread the new rule matches before
@@ -30,7 +36,7 @@ import { defineTool } from './registry';
 async function reclassifyRuleMatches(rule: Pick<SmartRule, 'scope' | 'match'>) {
   if (!isConvexConfigured()) return;
   try {
-    await convexMutation((api as any).smart.reclassifyMatchingThreads, {
+    await convexMutation(api.smart.reclassifyMatchingThreads, {
       userId: requireStoreUserId(),
       scope: rule.scope,
       match: rule.match,
@@ -38,6 +44,59 @@ async function reclassifyRuleMatches(rule: Pick<SmartRule, 'scope' | 'match'>) {
   } catch {
     // Best-effort: the scheduled reclassify sweep converges regardless.
   }
+}
+
+/** "mail from ann@example.com goes to Noise": what a new rule does, in words. */
+export function describeSmartRule(
+  rule: Pick<SmartRule, 'scope' | 'match' | 'effect' | 'category'>,
+  labelName?: string | null,
+) {
+  const match = rule.match.trim();
+  const who =
+    rule.scope === 'sender'
+      ? `mail from ${match}`
+      : rule.scope === 'domain'
+        ? `mail from ${match.startsWith('@') ? match : `@${match}`}`
+        : rule.scope === 'thread'
+          ? 'this thread'
+          : rule.scope === 'subject_pattern'
+            ? `mail with "${match.slice(0, 60)}" in the subject`
+            : `mail with the header ${match.slice(0, 60)}`;
+  const label = labelName ? `"${labelName}"` : 'a custom label';
+  const what =
+    rule.effect === 'never_main'
+      ? 'stays out of Main'
+      : rule.effect === 'always_noise'
+        ? 'goes to Noise'
+        : rule.effect === 'always_category'
+          ? `goes to ${rule.category ? SMART_CATEGORY_LABELS[rule.category] : 'a category'}`
+          : rule.effect === 'always_custom_label'
+            ? `gets the label ${label}`
+            : `never gets the label ${label}`;
+  return `${who} ${what}`;
+}
+
+/** One undoable Activity entry for a new smart rule. Undo turns the rule off. */
+async function recordSmartRuleOperation(
+  ctx: { userId?: string | null; agent?: 'user' | 'ai' | 'codex'; operationBatchId?: string },
+  input: { tool: string; rule: SmartRule; labelName?: string | null; reason?: string; threadId?: string },
+) {
+  return recordMailOperation({
+    userId: ctx.userId,
+    tool: input.tool,
+    summary: `New rule: ${describeSmartRule(input.rule, input.labelName)}`,
+    reason: mailOperationReason(ctx, input.reason),
+    target: {
+      kind: 'smartRule',
+      id: input.rule._id,
+      ...(input.threadId ? { threadId: input.threadId } : {}),
+    },
+    inverse: {
+      kind: MAIL_UNDO.disableRule,
+      payload: { ruleId: input.rule._id, scope: input.rule.scope, match: input.rule.match },
+    },
+    batchId: ctx.operationBatchId,
+  });
 }
 
 const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
@@ -88,8 +147,9 @@ export const listSmartLabels = defineTool({
 export const createSmartLabel = defineTool({
   name: 'create_smart_label',
   description:
-    'Create a local AI-only smart label. Requires a description plus positive and negative examples. Does not create Gmail labels.',
+    'Create a local custom label. It matches by keywords: a thread gets the label when every word of the label name or of one positive example is a whole word in its sender, subject, preview, or body, and no negative example matches the same way. The description is not matched. Does not create Gmail labels.',
   category: 'mail',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     name: z.string(),
@@ -130,7 +190,7 @@ export const previewSmartLabel = defineTool({
       description: args.description,
       enabled: true,
       sidebarVisible: false,
-      gmailLabelName: `MailOS/${args.name}`,
+      gmailLabelName: `${SMART_GMAIL_LABEL_PREFIX}${args.name}`,
       aiMode: 'metadata_snippet' as const,
       positiveExamples: args.positiveExamples,
       negativeExamples: args.negativeExamples,
@@ -158,6 +218,7 @@ export const updateSmartLabel = defineTool({
   name: 'update_smart_label',
   description: 'Update a local custom smart label.',
   category: 'mail',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     id: z.string(),
@@ -177,14 +238,15 @@ export const updateSmartLabel = defineTool({
 
 export const deleteSmartLabel = defineTool({
   name: 'delete_smart_label',
-  description: 'Disable a local custom smart label.',
+  description:
+    'Delete a local custom smart label and turn off the rules that file mail under it. To keep the label but hide it, use update_smart_label with enabled false.',
   category: 'mail',
+  risk: 'destructive',
   mutating: true,
   input: z.object({ id: z.string() }),
-  output: z.object({ label: z.any() }),
+  output: z.object({ label: z.any(), disabledRuleIds: z.array(z.string()) }),
   async handler({ id }) {
-    const label = await disableSmartLabel(id);
-    return { label };
+    return await deleteSmartLabelRecord(id);
   },
 });
 
@@ -210,6 +272,7 @@ export const createSmartRule = defineTool({
   name: 'create_smart_rule',
   description: 'Create a local smart classification rule. User rules override built-ins and AI labels.',
   category: 'mail',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     name: z.string(),
@@ -221,13 +284,19 @@ export const createSmartRule = defineTool({
     reason: z.string().optional(),
     source: z.enum(['quick_fix', 'agent', 'settings']).optional(),
   }),
-  output: z.object({ rule: z.any() }),
+  output: z.object({ rule: z.any(), operationId: z.string().optional() }),
   async handler(args, ctx) {
     const rule = await createSmartRuleRecord({
       ...args,
       source: args.source || (ctx.agent === 'ai' ? 'agent' : 'settings'),
     });
-    return { rule };
+    await reclassifyRuleMatches(rule);
+    const operationId = await recordSmartRuleOperation(ctx, {
+      tool: 'create_smart_rule',
+      rule,
+      reason: args.reason,
+    });
+    return { rule, operationId };
   },
 });
 
@@ -235,6 +304,7 @@ export const setSmartRuleEnabledTool = defineTool({
   name: 'set_smart_rule_enabled',
   description: 'Enable or disable a smart rule.',
   category: 'mail',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ id: z.string(), enabled: z.boolean() }),
   output: z.object({ rule: z.any() }),
@@ -249,6 +319,7 @@ export const applySmartCorrection = defineTool({
   description:
     'Apply a quick local correction such as Never Main, Always Noise, Move to category, or Create label from this. Does not mutate Gmail.',
   category: 'mail',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     account: z.string(),
@@ -266,7 +337,12 @@ export const applySmartCorrection = defineTool({
       })
       .optional(),
   }),
-  output: z.object({ ok: z.boolean(), rule: z.any().optional(), label: z.any().optional() }),
+  output: z.object({
+    ok: z.boolean(),
+    rule: z.any().optional(),
+    label: z.any().optional(),
+    operationId: z.string().optional(),
+  }),
   async handler({ account, threadId, action, scope = 'sender', category, customLabelId, newLabel }, ctx) {
     const thread = await resolveThread(account, threadId);
     if (!thread) throw new Error('Thread not found');
@@ -305,8 +381,9 @@ export const applySmartCorrection = defineTool({
 
     const rules = await listSmartRuleRecords();
     const labels = await listSmartLabelRecords();
+    // The stored verdict is the corpus row, which reclassifyRuleMatches
+    // updates. This local verdict only records the new category.
     const smartCategory = classifyThreadWithContext(thread, { rules, customLabels: labels });
-    await setThreadSmartCategory(account, threadId, smartCategory).catch(() => undefined);
     await reclassifyRuleMatches(rule);
     await writeSmartCorrection({
       account,
@@ -320,48 +397,16 @@ export const applySmartCorrection = defineTool({
       ruleId: rule._id,
       action,
     });
-    return { ok: true, rule, label: label || undefined };
-  },
-});
-
-export const markSenderHuman = defineTool({
-  name: 'mark_sender_human',
-  description:
-    'Teach the classifier that a sender is a real person: always route their mail to Main. Reuses the smart-rule store; does not mutate Gmail. Used by the daily report "This is a person" control so a missed human self-corrects next run.',
-  category: 'mail',
-  mutating: true,
-  input: z.object({ account: z.string(), threadId: z.string() }),
-  output: z.object({ ok: z.boolean(), rule: z.any() }),
-  async handler({ account, threadId }) {
-    const thread = await resolveThread(account, threadId);
-    if (!thread) throw new Error('Thread not found');
-    const email = threadEmail(thread);
-    if (!email) throw new Error('No sender email to mark as human');
-    const previousCategory = thread.smartCategory?.primary;
-    const rule = await createSmartRuleRecord({
-      name: 'mark sender human',
-      scope: 'sender',
-      match: email,
-      effect: 'always_category',
-      category: 'main',
-      reason: 'Marked as a real person from the daily report',
-      source: 'quick_fix',
-    });
-    const [rules, labels] = await Promise.all([listSmartRuleRecords(), listSmartLabelRecords()]);
-    const smartCategory = classifyThreadWithContext(thread, { rules, customLabels: labels });
-    await setThreadSmartCategory(account, threadId, smartCategory).catch(() => undefined);
-    await reclassifyRuleMatches(rule);
-    await writeSmartCorrection({
-      account,
+    const labelName =
+      label?.name || (targetCustomLabelId ? labels.find((l) => l._id === targetCustomLabelId)?.name : null);
+    const operationId = await recordSmartRuleOperation(ctx, {
+      tool: 'apply_smart_correction',
+      rule,
+      labelName,
       threadId,
-      fromEmail: email,
-      fromDomain: threadDomain(thread),
-      subject: thread.subject,
-      previousCategory,
-      newCategory: smartCategory.primary,
-      ruleId: rule._id,
-      action: 'move_to',
+      reason:
+        ctx.agent === 'ai' ? undefined : `You corrected where ${quotedSubject(thread.subject)} belongs.`,
     });
-    return { ok: true, rule };
+    return { ok: true, rule, label: label || undefined, operationId };
   },
 });

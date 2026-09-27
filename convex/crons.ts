@@ -2,9 +2,9 @@ import { cronJobs } from 'convex/server';
 import { internal } from './_generated/api';
 
 const crons = cronJobs();
-crons.interval('recover brief jobs', { minutes: 1 }, (internal as any).briefJobs.recover, {});
+crons.interval('recover brief jobs', { minutes: 1 }, internal.briefJobs.recover, {});
 // Durable cursors/leases make interrupted narrative runs resumable. No opted-in users = no work.
-crons.interval('shared narrative memory', { hours: 1 }, (internal as any).narrative.tick, {});
+crons.interval('shared narrative memory', { hours: 1 }, internal.narrative.tick, {});
 
 export const CONTINUOUS_EXECUTION_CRON_NAMES = {
   scheduling: 'Work scheduling conductor',
@@ -22,8 +22,8 @@ export const CONTINUOUS_EXECUTION_CRON_NAMES = {
 // coming back, so this cron is just the ignition; once the backlog is empty it
 // is a single cheap indexed read per run.
 crons.interval('classify unclassified corpus threads', { minutes: 10 }, internal.smart.classifyBacklog, {});
-crons.interval('queue Jev corpus assessments', { minutes: 10 }, (internal as any).jev.queueUnassessed, {});
-crons.interval('Jev mail classification', { minutes: 5 }, (internal as any).jev.tick, {});
+crons.interval('queue Jev corpus assessments', { minutes: 10 }, internal.jev.queueUnassessed, {});
+crons.interval('Jev mail classification', { minutes: 5 }, internal.jev.tick, {});
 
 // File the morning Daily Brief. Runs at the top of every hour and fires
 // per-user when their local clock hits 07:00 — the action reads each user's
@@ -31,9 +31,8 @@ crons.interval('Jev mail classification', { minutes: 5 }, (internal as any).jev.
 // manual generation covers the rest.)
 crons.hourly('daily report editions', { minuteUTC: 0 }, internal.dailyReports.tick, {});
 // Area living briefs refresh every 3 hours without force; unchanged areas are
-// skipped by the source-revision check. Cast: the generated `internal` type
-// only gains `areaRefreshTick` after codegen on deploy.
-crons.interval('area brief refresh', { hours: 3 }, (internal as any).dailyReports.areaRefreshTick, {});
+// skipped by the source-revision check.
+crons.interval('area brief refresh', { hours: 3 }, internal.dailyReports.areaRefreshTick, {});
 
 // Poll each connected user's calendars for changes every 15 minutes — a
 // safety net over the webhook-driven event deltas.
@@ -129,28 +128,40 @@ crons.daily(
 // deploys, and DST transitions.
 crons.interval('albatross routines', { minutes: 5 }, internal.albatrossRoutines.tick, {});
 
-// Additive Work-v2 migration is idempotent and paginates through legacy
-// intents. Re-igniting it twice daily also catches rows written by an older
-// client during the compatibility window.
-crons.interval('albatross Work v2 migration', { hours: 12 }, internal.albatrossWorkV2.migrateLegacyBatch, {
-  limit: 100,
-});
-
 // Poll each user's connected tool servers/APIs every 20 minutes
-// so brief/search items stay current. Cast: the generated `internal` type only
-// gains `mcpSync` after codegen on deploy.
-crons.interval('mcp sync', { minutes: 20 }, (internal as any).mcpSync.tick, {});
-crons.interval('connected content and Brief preparation', { minutes: 2 }, (internal as any).content.tick, {});
+// so brief/search items stay current.
+crons.interval('mcp sync', { minutes: 20 }, internal.mcpSync.tick, {});
+crons.interval('connected content and Brief preparation', { minutes: 2 }, internal.content.tick, {});
 
 // Disconnect normally schedules its own bounded cleanup chain. This sweep is
 // the recovery path if a deploy interrupts that chain between batches.
-crons.interval(
-  'mcp disconnect cleanup',
-  { minutes: 30 },
-  (internal as any).mcp.sweepDisconnectedConnections,
-  {},
-);
+crons.interval('mcp disconnect cleanup', { minutes: 30 }, internal.mcp.sweepDisconnectedConnections, {});
+
+// Mail repair (SYNC-3): retry failed Nylas webhook events with backoff, and
+// sweep each connected mailbox's recent mail for changes a lost event missed.
+crons.interval('mail corpus repair', { minutes: 30 }, internal.mailCorpus.repairTick, {});
+// Snoozed threads come back to the inbox when due (MUT-1).
+crons.interval('mail snooze wake', { minutes: 5 }, internal.mailCorpus.snoozeTick, {});
+
+// Held mail pushes (quiet hours, priority-only mode) go out as one digest
+// when their hold ends. It posts to the app only when a hold is due.
+crons.interval('mail push digest', { minutes: 15 }, internal.albatrossNotifications.mailDigestTick, {});
 
 crons.interval('mcp oauth state cleanup', { minutes: 30 }, internal.mcp.sweepExpiredOAuthStates, {});
+
+// Retention for tables that otherwise grow with no limit: expired one-time
+// codes, processed webhook payloads older than 14 days, lapsed rate-limit
+// windows, and expired OAuth states. The sweep reschedules itself while a
+// batch comes back full.
+crons.hourly('retention sweep', { minuteUTC: 41 }, internal.retention.sweep, {});
+
+// Shared browser sessions use keepAlive. End the stale ones at Browserbase and
+// in the ledger, so no pane shows a dead live view.
+crons.interval(
+  'albatross browser session sweep',
+  { minutes: 30 },
+  internal.albatrossBrowserSessions.sweepStaleSessionsTick,
+  {},
+);
 
 export default crons;

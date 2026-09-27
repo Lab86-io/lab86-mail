@@ -1,8 +1,10 @@
 import { v } from 'convex/values';
 import { assertWorkOpen } from '../lib/albatross/work-lifecycle';
+import { truncateText } from '../lib/shared/text';
+import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { mutation, query } from './_generated/server';
+import { internalMutation, mutation, query } from './_generated/server';
 import { recordCompletionEvent } from './albatrossWork';
 import { now, requireInternalSecret } from './lib';
 
@@ -147,7 +149,7 @@ async function appendActivity(ctx: MutationCtx, card: any, userId: string, actio
     actorUserId: userId,
     actorEmail: await actorEmail(ctx, userId),
     action,
-    detail: detail?.slice(0, 300),
+    detail: truncateText(detail, 300),
     createdAt: now(),
   };
   const activity = [...(card.activity || []), entry].slice(-ACTIVITY_CAP);
@@ -253,7 +255,10 @@ export const ensureDefaultBoard = mutation({
       .query('boards')
       .withIndex('by_owner', (q) => q.eq('ownerUserId', userId))
       .collect();
-    if (owned.length) return owned[0]._id;
+    // Only an owned board marked default is the default. An Area board or a
+    // user-made board is not, so a user without one gets a new Personal board.
+    const ownedDefault = owned.find((board) => board.isDefault === true);
+    if (ownedDefault) return ownedDefault._id;
     return insertBoardWithColumns(ctx, userId, 'Personal', { isDefault: true });
   },
 });
@@ -296,6 +301,10 @@ export const deleteBoard = mutation({
     ]);
     for (const row of [...cards, ...columns, ...members]) await ctx.db.delete(row._id);
     await ctx.db.delete(args.boardId);
+    await deleteStoredBlobs(
+      ctx,
+      cards.flatMap((card) => storageIdsOf(card.attachments)),
+    );
   },
 });
 
@@ -422,6 +431,11 @@ export const deleteColumn = mutation({
       .collect();
     for (const card of cards) await ctx.db.delete(card._id);
     await ctx.db.delete(args.columnId);
+    await deleteUnreferencedBlobs(
+      ctx,
+      column.boardId,
+      cards.flatMap((card) => storageIdsOf(card.attachments)),
+    );
   },
 });
 
@@ -507,7 +521,7 @@ export const createCard = mutation({
       weight: args.weight,
       assignees,
       dueAt: args.dueAt,
-      attachments: args.attachments,
+      attachments: await verifiedAttachments(ctx, args.attachments),
       order: nextOrder(siblings.map((card) => card.order)),
       source: args.source,
       ...sourceIndexFields(args.source),
@@ -535,7 +549,19 @@ export const updateCard = mutation({
     if (args.weight !== undefined) patch.weight = args.weight === null ? undefined : args.weight;
     if (args.assignees !== undefined)
       patch.assignees = await normalizeAssignees(ctx, card.boardId, args.assignees);
-    if (args.attachments !== undefined) patch.attachments = args.attachments;
+    if (args.attachments !== undefined) {
+      patch.attachments = await verifiedAttachments(ctx, args.attachments);
+      const kept = new Set(storageIdsOf(args.attachments).map(String));
+      const removed = storageIdsOf(card.attachments).filter((id) => !kept.has(String(id)));
+      // Undo of this edit puts the old list back, so a removed file is kept
+      // for a grace period and deleted only if the card still omits it.
+      if (removed.length) {
+        await ctx.scheduler.runAfter(DETACHED_BLOB_GRACE_MS, internal.boards.deleteDetachedAttachments, {
+          cardId: args.cardId,
+          storageIds: removed,
+        });
+      }
+    }
     if (args.source !== undefined) {
       patch.source = args.source;
       Object.assign(patch, sourceIndexFields(args.source));
@@ -669,32 +695,6 @@ export const getCardState = query({
   },
 });
 
-// Batch completion snapshot for the plan dossier's task cards: the artifact
-// iframe strikes steps off from this live query, so a card completed on the
-// board crosses off in the dossier too. Lenient by design — deleted cards,
-// malformed ids, and lost board access are skipped, never thrown, so one
-// stale mapping can't break the whole plan view.
-export const getCardStates = query({
-  args: { ...callerArgs, cardIds: v.array(v.string()) },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const states: Array<{ cardId: string; completedAt: number | null }> = [];
-    for (const raw of args.cardIds.slice(0, 60)) {
-      const cardId = ctx.db.normalizeId('cards', raw);
-      if (!cardId) continue;
-      const card = await ctx.db.get(cardId);
-      if (!card) continue;
-      try {
-        await requireBoard(ctx, card.boardId, userId, 'viewer');
-      } catch {
-        continue;
-      }
-      states.push({ cardId: String(cardId), completedAt: card.completedAt ?? null });
-    }
-    return states;
-  },
-});
-
 export const deleteCard = mutation({
   args: { ...callerArgs, cardId: v.id('cards') },
   handler: async (ctx, args) => {
@@ -703,6 +703,8 @@ export const deleteCard = mutation({
     if (!card) throw new Error('Card not found.');
     await requireBoard(ctx, card.boardId, userId, 'member');
     await ctx.db.delete(args.cardId);
+    // Undo recreates the card without its files, so they can go now.
+    await deleteUnreferencedBlobs(ctx, card.boardId, storageIdsOf(card.attachments));
     return { previous: snapshotCard(card) };
   },
 });
@@ -721,7 +723,7 @@ export const addComment = mutation({
       id: `c_${now()}_${Math.floor(Math.random() * 1e6)}`,
       authorUserId: userId,
       authorEmail: await actorEmail(ctx, userId),
-      body: body.slice(0, 4000),
+      body: truncateText(body, 4000),
       createdAt: now(),
     };
     await ctx.db.patch(args.cardId, {
@@ -749,17 +751,17 @@ export const attachToCard = mutation({
     if (!card) throw new Error('Card not found.');
     await requireBoard(ctx, card.boardId, userId, 'member');
     if (!args.url && !args.storageId) throw new Error('url or storageId required.');
+    const [attachment] = (await verifiedAttachments(ctx, [
+      {
+        name: args.name.trim() || args.url || 'attachment',
+        url: args.url,
+        storageId: args.storageId,
+        contentType: args.contentType,
+        size: args.size,
+      },
+    ])) as AttachmentInput[];
     await ctx.db.patch(args.cardId, {
-      attachments: [
-        ...(card.attachments || []),
-        {
-          name: args.name.trim() || args.url || 'attachment',
-          url: args.url,
-          storageId: args.storageId,
-          contentType: args.contentType,
-          size: args.size,
-        },
-      ],
+      attachments: [...(card.attachments || []), attachment],
       updatedAt: now(),
     });
     await appendActivity(ctx, { ...card, _id: args.cardId }, userId, 'attached', args.name);
@@ -787,6 +789,125 @@ export const generateAttachmentUploadUrl = mutation({
     if (!boardId) throw new Error('cardId or boardId required.');
     await requireBoard(ctx, boardId, userId, 'member');
     return await ctx.storage.generateUploadUrl();
+  },
+});
+
+// --- attachment storage (TSK-2) ---------------------------------------------
+
+export const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+// Active content that a browser would run or render as a page.
+const BLOCKED_ATTACHMENT_TYPES = new Set([
+  'text/html',
+  'application/xhtml+xml',
+  'image/svg+xml',
+  'text/javascript',
+  'application/javascript',
+  'application/x-msdownload',
+  'application/x-sh',
+]);
+const DETACHED_BLOB_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
+type AttachmentInput = {
+  name: string;
+  url?: string;
+  storageId?: Id<'_storage'>;
+  contentType?: string;
+  size?: number;
+};
+
+function storageIdsOf(attachments: AttachmentInput[] | undefined): Id<'_storage'>[] {
+  return (attachments || []).map((attachment) => attachment.storageId).filter(Boolean) as Id<'_storage'>[];
+}
+
+// The upload URL cannot carry a limit, so a stored file is checked on the
+// server. Size and type come from storage metadata when it has them, never
+// from the client's claim alone.
+async function checkStoredFile(
+  ctx: MutationCtx,
+  storageId: Id<'_storage'>,
+  claimedType: string | undefined,
+): Promise<{ ok: true; size: number; contentType?: string } | { ok: false; error: string }> {
+  const meta = await ctx.db.system.get(storageId);
+  if (!meta) return { ok: false, error: 'The uploaded file was not found. Upload it again.' };
+  const contentType = String(meta.contentType || claimedType || '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+  if (meta.size > ATTACHMENT_MAX_BYTES) return { ok: false, error: 'Attachments can be at most 25 MB.' };
+  if (BLOCKED_ATTACHMENT_TYPES.has(contentType)) {
+    return { ok: false, error: 'This file type cannot be attached. Upload a PDF, image, or document.' };
+  }
+  return { ok: true, size: meta.size, contentType: contentType || undefined };
+}
+
+// Card writes refuse a file that fails the check. (A throw rolls the whole
+// mutation back, so the delete happens in verifyAttachmentUpload.)
+async function verifiedAttachments(
+  ctx: MutationCtx,
+  attachments: AttachmentInput[] | undefined,
+): Promise<AttachmentInput[] | undefined> {
+  if (!attachments) return attachments;
+  return Promise.all(
+    attachments.map(async (attachment) => {
+      if (!attachment.storageId) return attachment;
+      const checked = await checkStoredFile(ctx, attachment.storageId, attachment.contentType);
+      if (!checked.ok) throw new Error(checked.error);
+      return { ...attachment, size: checked.size, contentType: checked.contentType };
+    }),
+  );
+}
+
+// Clients call this right after an upload. A file that fails the check is
+// deleted at once and the error is returned, not thrown, so the delete stays.
+export const verifyAttachmentUpload = mutation({
+  args: {
+    ...callerArgs,
+    storageId: v.id('_storage'),
+    cardId: v.optional(v.id('cards')),
+    boardId: v.optional(v.id('boards')),
+    contentType: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    let boardId = args.boardId;
+    if (!boardId && args.cardId) boardId = (await ctx.db.get(args.cardId))?.boardId;
+    if (!boardId) throw new Error('cardId or boardId required.');
+    await requireBoard(ctx, boardId, userId, 'member');
+    const checked = await checkStoredFile(ctx, args.storageId, args.contentType);
+    if (!checked.ok) await deleteStoredBlobs(ctx, [args.storageId]);
+    return checked;
+  },
+});
+
+async function deleteStoredBlobs(ctx: MutationCtx, ids: Id<'_storage'>[]) {
+  for (const id of new Set(ids)) {
+    const meta = await ctx.db.system.get(id);
+    if (meta) await ctx.storage.delete(id);
+  }
+}
+
+// Deletes files that no other card on the board still refers to.
+async function deleteUnreferencedBlobs(ctx: MutationCtx, boardId: Id<'boards'>, ids: Id<'_storage'>[]) {
+  if (!ids.length) return;
+  const remaining = await ctx.db
+    .query('cards')
+    .withIndex('by_board', (q) => q.eq('boardId', boardId))
+    .collect();
+  const referenced = new Set(remaining.flatMap((card) => storageIdsOf(card.attachments)).map(String));
+  await deleteStoredBlobs(
+    ctx,
+    ids.filter((id) => !referenced.has(String(id))),
+  );
+}
+
+export const deleteDetachedAttachments = internalMutation({
+  args: { cardId: v.id('cards'), storageIds: v.array(v.id('_storage')) },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.cardId);
+    const stillAttached = new Set(storageIdsOf(card?.attachments).map(String));
+    const detached = args.storageIds.filter((id) => !stillAttached.has(String(id)));
+    if (card) await deleteUnreferencedBlobs(ctx, card.boardId, detached);
+    else await deleteStoredBlobs(ctx, detached);
   },
 });
 
@@ -829,7 +950,9 @@ export const listMyBoards = query({
     return boards.map((board) => ({
       boardId: board._id,
       title: board.title,
-      isDefault: board.isDefault,
+      // `isDefault` means "this caller's default". A shared board that is the
+      // owner's default is not the member's default.
+      isDefault: board.ownerUserId === userId ? board.isDefault : undefined,
       owned: board.ownerUserId === userId,
       hasPublicLink: Boolean(board.publicToken),
       updatedAt: board.updatedAt,
@@ -983,18 +1106,35 @@ export const listReportCards = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const cap = Math.min(Math.max(args.limit ?? 400, 1), 1000);
-    const rows = await ctx.db
-      .query('cards')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .take(cap);
-    const filtered = rows
-      .filter((card) => {
-        return !card.completedAt && !card.retiredAt;
-      })
+    // Every board the user can see, so cards other members made on a shared
+    // board are included (TSK-3). Each board reads two bounded index ranges:
+    // cards due in the window, and undated cards changed since `since`.
+    const boardIds = await accessibleBoardIds(ctx, userId);
+    const open = (q: any) =>
+      q.and(q.eq(q.field('completedAt'), undefined), q.eq(q.field('retiredAt'), undefined));
+    const perBoard = await Promise.all(
+      boardIds.map(async (boardId) => {
+        const [due, undated] = await Promise.all([
+          ctx.db
+            .query('cards')
+            .withIndex('by_board_due', (q) =>
+              q.eq('boardId', boardId).gte('dueAt', args.since).lt('dueAt', args.endAt),
+            )
+            .filter(open)
+            .take(cap),
+          ctx.db
+            .query('cards')
+            .withIndex('by_board_updatedAt', (q) => q.eq('boardId', boardId).gte('updatedAt', args.since))
+            .order('desc')
+            .filter((q) => q.and(open(q), q.eq(q.field('dueAt'), undefined)))
+            .take(cap),
+        ]);
+        return [...due, ...undated];
+      }),
+    );
+    const filtered = perBoard
+      .flat()
       .sort((a, b) => {
-        const aDone = a.completedAt ? 1 : 0;
-        const bDone = b.completedAt ? 1 : 0;
-        if (aDone !== bDone) return aDone - bDone;
         const aDue = a.dueAt ?? Number.POSITIVE_INFINITY;
         const bDue = b.dueAt ?? Number.POSITIVE_INFINITY;
         if (aDue !== bDue) return aDue - bDue;
@@ -1002,7 +1142,6 @@ export const listReportCards = query({
       })
       .slice(0, cap);
 
-    const boardIds = [...new Set(filtered.map((card) => card.boardId))];
     const columnIds = [...new Set(filtered.map((card) => card.columnId))];
     const [boards, columns] = await Promise.all([
       Promise.all(boardIds.map((id) => ctx.db.get(id))),
@@ -1019,6 +1158,33 @@ export const listReportCards = query({
     }));
   },
 });
+
+async function accessibleBoardIds(ctx: QueryCtx, userId: string): Promise<Id<'boards'>[]> {
+  const me = await ctx.db
+    .query('users')
+    .withIndex('by_clerk_user_id', (q) => q.eq('clerkUserId', userId))
+    .first();
+  const [owned, byUser, byEmail] = await Promise.all([
+    ctx.db
+      .query('boards')
+      .withIndex('by_owner', (q) => q.eq('ownerUserId', userId))
+      .collect(),
+    ctx.db
+      .query('boardMembers')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect(),
+    me?.email
+      ? ctx.db
+          .query('boardMembers')
+          .withIndex('by_email', (q) => q.eq('email', me.email.toLowerCase()))
+          .collect()
+      : Promise.resolve([]),
+  ]);
+  const ids = new Map<string, Id<'boards'>>();
+  for (const board of owned) ids.set(String(board._id), board._id);
+  for (const member of [...byUser, ...byEmail]) ids.set(String(member.boardId), member.boardId);
+  return [...ids.values()];
+}
 
 async function boardPayload(ctx: QueryCtx | MutationCtx, board: any, role: Role) {
   const [columns, cards, members] = await Promise.all([

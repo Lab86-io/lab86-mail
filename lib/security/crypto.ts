@@ -3,7 +3,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 const VERSION = 'v1';
 
 function keyMaterial() {
-  const raw = process.env.LAB86_MAIL_ENCRYPTION_KEY || process.env.MAIL_OS_ENCRYPTION_KEY || '';
+  const raw = process.env.LAB86_MAIL_ENCRYPTION_KEY || '';
   if (!raw) {
     throw new Error('LAB86_MAIL_ENCRYPTION_KEY is required for encrypted hosted secrets.');
   }

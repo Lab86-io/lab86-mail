@@ -51,11 +51,14 @@ describe('Appearance and rail integration', () => {
       grainScale: 160,
       appFont: 'news' as const,
     };
-    useClientStore.setState({ ...preferences, capacity: 'low', query: 'from:alex' });
+    useClientStore.setState({ ...preferences, query: 'from:alex' });
     useClientStore.getState().setPrimaryView('notifications');
     const persisted = persistedClientState(useClientStore.getState());
     expect(persisted).toMatchObject(preferences);
     expect(persisted.query).toBe('from:alex');
-    expect(persisted.capacity).toBe('low');
+    // Retired fields with no reader do not survive a reload.
+    expect(persisted).not.toHaveProperty('capacity');
+    expect(persisted).not.toHaveProperty('lastSeenAt');
+    expect(persisted).not.toHaveProperty('rightRailOpen');
   });
 });

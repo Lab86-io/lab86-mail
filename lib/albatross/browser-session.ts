@@ -16,6 +16,8 @@
  * version is vetted; nothing here pretends to do it.
  */
 
+import { truncateText } from '../shared/text';
+
 const BROWSERBASE_API_BASE = 'https://api.browserbase.com/v1';
 const BROWSERBASE_TIMEOUT_MS = 30_000;
 /** A guided session outlives one step but never a workday. */
@@ -59,7 +61,7 @@ async function browserbaseRequest<T>(
     });
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(`Browserbase ${path} failed (${response.status}): ${text.slice(0, 200)}`);
+      throw new Error(`Browserbase ${path} failed (${response.status}): ${truncateText(text, 200)}`);
     }
     return (await response.json()) as T;
   } finally {
@@ -191,8 +193,8 @@ export async function readSessionPage(
     const [title, text] = await Promise.all([page.title(), page.innerText()]);
     return {
       url: page.url(),
-      title: title.slice(0, 300),
-      text: text.replace(/\s+/g, ' ').trim().slice(0, PAGE_TEXT_MAX),
+      title: truncateText(title, 300),
+      text: truncateText(text.replace(/\s+/g, ' ').trim(), PAGE_TEXT_MAX),
     };
   } finally {
     await connection.close().catch(() => undefined);

@@ -194,9 +194,6 @@ func generatedSwiftTypesDecodeSharedGoldenFixtures() throws {
     let receiptURL = try #require(
         Bundle.module.url(forResource: "command-receipt-v1", withExtension: "json")
     )
-    let syncURL = try #require(
-        Bundle.module.url(forResource: "sync-v1", withExtension: "json")
-    )
 
     let bootstrap = try decoder.decode(
         Components.Schemas.MobileBootstrap.self,
@@ -206,10 +203,6 @@ func generatedSwiftTypesDecodeSharedGoldenFixtures() throws {
         Components.Schemas.CommandReceipt.self,
         from: Data(contentsOf: receiptURL)
     )
-    let sync = try decoder.decode(
-        Components.Schemas.SyncEnvelope.self,
-        from: Data(contentsOf: syncURL)
-    )
 
     #expect(bootstrap.user.id == "user-fixture-1")
     #expect(bootstrap.accounts.first?.provider == .google)
@@ -217,49 +210,12 @@ func generatedSwiftTypesDecodeSharedGoldenFixtures() throws {
     #expect(bootstrap.cursors.mail == "12")
     #expect(receipt.status == .failed)
     #expect(receipt.recoverableError?.retryable == true)
-    #expect(sync.cursor == "2")
-    switch try #require(sync.items.first) {
-    case .task(let change):
-        #expect(change.payload.cardID == "card-1")
-        #expect(change.payload.completed == true)
-    default:
-        Issue.record("The typed sync fixture did not decode as a task change.")
-    }
 }
 
 @Test
-func generatedTypesCarryTheWorkHorizonContract() throws {
+func generatedTypesCarryTheWorkHorizonCommand() throws {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-
-    let change = try decoder.decode(
-        Components.Schemas.SyncChange.self,
-        from: Data(
-            #"{"domain":"work","entityKind":"workHorizon","entityID":"work-1","revision":4,"operation":"upsert","payload":{"workID":"work-1","horizon":{"kind":"later","notBefore":1793509200000,"label":"not before November"}}}"#.utf8
-        )
-    )
-    switch change {
-    case .workHorizon(let horizon):
-        #expect(horizon.payload.workID == "work-1")
-        #expect(horizon.payload.horizon?.kind == .later)
-        #expect(horizon.payload.horizon?.notBefore == 1_793_509_200_000)
-        #expect(horizon.payload.horizonCleared == nil)
-    default:
-        Issue.record("The workHorizon change did not decode as a workHorizon case.")
-    }
-
-    let cleared = try decoder.decode(
-        Components.Schemas.SyncChange.self,
-        from: Data(
-            #"{"domain":"work","entityKind":"workHorizon","entityID":"work-2","revision":5,"operation":"upsert","payload":{"workID":"work-2","horizonCleared":true}}"#.utf8
-        )
-    )
-    if case .workHorizon(let horizon) = cleared {
-        #expect(horizon.payload.horizon == nil)
-        #expect(horizon.payload.horizonCleared == true)
-    } else {
-        Issue.record("The cleared change did not decode as a workHorizon case.")
-    }
 
     let command = try decoder.decode(
         Components.Schemas.MobileCommand.self,
@@ -330,4 +286,35 @@ private actor RequestRecorder {
         requestCount += 1
         headers = request.headerFields
     }
+}
+
+@Test
+func theClientReadsServerDatesWithOrWithoutFractionalSeconds() throws {
+    let transcoder = LenientISO8601DateTranscoder()
+    let withMilliseconds = try transcoder.decode("2026-09-26T12:30:00.000Z")
+    let plain = try transcoder.decode("2026-09-26T12:30:00Z")
+    #expect(withMilliseconds == plain)
+    #expect(withMilliseconds.timeIntervalSince1970 == 1_790_425_800)
+    #expect(try transcoder.encode(plain) == "2026-09-26T12:30:00Z")
+    #expect(throws: DecodingError.self) { try transcoder.decode("yesterday") }
+}
+
+@Test
+func theTodaySummaryDecodesWithServerDates() throws {
+    let transcoder = LenientISO8601DateTranscoder()
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .custom { decoder in
+        try transcoder.decode(try decoder.singleValueContainer().decode(String.self))
+    }
+    let summary = try decoder.decode(
+        Components.Schemas.TodaySummary.self,
+        from: Data(
+            #"{"version":1,"reportID":"r1","kind":"weekly","generatedAt":"2026-09-26T11:00:00.000Z","leadLine":"Two replies are owed.","nextMove":{"title":"Venue count","detail":"She asked by Friday.","refKind":"thread","refID":"t1","accountID":"a1"},"nextMeeting":{"eventID":"e1","title":"Standup","startAt":"2026-09-26T13:00:00.000Z","endAt":"2026-09-26T13:30:00.000Z"},"sourcesNeedingAttention":1,"serverTime":"2026-09-26T12:00:00.000Z"}"#.utf8
+        )
+    )
+    #expect(summary.reportID == "r1")
+    #expect(summary.kind?.rawValue == "weekly")
+    #expect(summary.nextMove?.refKind.rawValue == "thread")
+    #expect(summary.nextMeeting?.title == "Standup")
+    #expect(summary.sourcesNeedingAttention == 1)
 }

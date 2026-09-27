@@ -3,6 +3,7 @@ import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
 import { parseHorizonHint, type WorkHorizon } from '@/lib/albatross/horizon';
 import { parseListHint, parseMetricHint } from '@/lib/albatross/shape-hints';
 import { WORK_SHAPE_GUIDE, WORK_SHAPES, type WorkShape } from '@/lib/albatross/work-shape';
+import { truncateText } from '@/lib/shared/text';
 
 // Work captured before shapes existed carries no shape, so it reads as
 // `quick`: planned, watched, and reviewed. Most of it never was. The backfill
@@ -63,7 +64,7 @@ export function backfillPrompt(rows: UnshapedWorkRow[]): string {
   return rows
     .map((row) => {
       const title = row.title?.trim();
-      const text = row.rawText.trim().slice(0, 600);
+      const text = truncateText(row.rawText.trim(), 600);
       return `workId: ${row.workId}\n${title ? `title: ${title}\n` : ''}text: ${text}`;
     })
     .join('\n\n---\n\n');

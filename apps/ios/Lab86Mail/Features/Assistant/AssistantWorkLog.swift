@@ -11,6 +11,25 @@ struct AssistantToolRow: Identifiable, Equatable, Sendable {
         case running
         case done
         case failed
+        /// The tool asks a question instead of acting (for example several
+        /// events match a title). It is not done and not failed.
+        case needsInput
+        /// The user paused this kind of action in Settings, Standing orders
+        /// (round 2, FEATURES item 14). Nothing ran; it is not a failure.
+        case paused
+    }
+
+    /// The line a paused call shows. The server's message is written for
+    /// the model, so the user reads this sentence instead.
+    static let pausedSentence = "Paused in Standing orders. Nothing changed."
+
+    /// The state a finished call's output means.
+    static func outcomeState(output: JSONValue) -> State {
+        switch output["status"]?.stringValue {
+        case "needs_input": return .needsInput
+        case "paused_by_user": return .paused
+        default: return output["ok"]?.boolValue == false ? .failed : .done
+        }
     }
 
     let callID: String
@@ -76,6 +95,10 @@ struct AssistantToolRow: Identifiable, Equatable, Sendable {
             return activity.running + "…"
         case .done:
             return activity.done
+        case .needsInput:
+            return shape?.activity?.done ?? "Several matches. Waiting for your choice"
+        case .paused:
+            return Self.pausedSentence
         case .failed:
             let detail = errorText?.nilIfBlank
                 ?? output?["error"]?.stringValue?.nilIfBlank
@@ -195,8 +218,10 @@ enum AssistantWorkLog {
 
     enum HeaderState: Equatable, Sendable {
         case working
+        case waiting
         case done(count: Int, seconds: Int?)
         case failed(count: Int)
+        case paused(count: Int)
     }
 
     /// The header state for one block. `turnFinished` adds the duration.
@@ -204,6 +229,9 @@ enum AssistantWorkLog {
         let failed = rows.filter { $0.state == .failed }.count
         if failed > 0 { return .failed(count: failed) }
         if rows.contains(where: { $0.state == .running }) { return .working }
+        if rows.contains(where: { $0.state == .needsInput }) { return .waiting }
+        let paused = rows.filter { $0.state == .paused }.count
+        if paused > 0 { return .paused(count: paused) }
         return .done(count: rows.count, seconds: turnFinished ? duration(rows: rows) : nil)
     }
 
@@ -211,12 +239,16 @@ enum AssistantWorkLog {
         switch state {
         case .working:
             return "Working"
+        case .waiting:
+            return "Waiting for your choice"
         case .done(let count, let seconds):
             let base = "Did \(count) thing\(count == 1 ? "" : "s")"
             guard let seconds else { return base }
             return "\(base) · \(seconds)s"
         case .failed(let count):
             return "\(count) step\(count == 1 ? "" : "s") failed"
+        case .paused(let count):
+            return count == 1 ? "Paused by you" : "\(count) steps paused by you"
         }
     }
 
@@ -224,7 +256,7 @@ enum AssistantWorkLog {
     /// header. Any failure, or one or two rows, stays open.
     static func collapsesByDefault(rows: [AssistantToolRow], turnFinished: Bool) -> Bool {
         guard turnFinished, rows.count >= 3 else { return false }
-        return !rows.contains { $0.state == .failed }
+        return !rows.contains { $0.state == .failed || $0.state == .needsInput || $0.state == .paused }
     }
 
     /// Whole seconds from the first start to the last end, at least one.

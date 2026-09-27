@@ -2,11 +2,12 @@
 
 // Adapted from Odyssey UI's model-selector registry component:
 // https://www.odysseyui.com/r/components-ai-model-selector.json
-// The provider rail, animated rows, capability badges and session stars come
+// The provider rail, animated rows, capability badges and pins come
 // from that component. Its modal/trigger are replaced with a permanent panel;
-// selection is controlled, and star buttons are siblings of selection buttons.
+// selection is controlled, and pin buttons are siblings of selection buttons.
+// Pins are saved for the user on the server (lib/shell/pinned-models).
 
-import { Brain, Check, Eye, LayoutGrid, Search, Star, Wrench, X } from 'lucide-react';
+import { Brain, Check, Eye, LayoutGrid, Pin, Search, Wrench, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import {
   createContext,
@@ -16,8 +17,10 @@ import {
   type SetStateAction,
   useContext,
   useId,
+  useMemo,
   useState,
 } from 'react';
+import { usePinnedModels } from '@/lib/shell/pinned-models';
 import { cn } from '@/lib/utils';
 
 export interface Provider {
@@ -95,16 +98,15 @@ export function ModelSelector({
   // Switching API providers can remove the active provider from this catalog.
   const activeProvider = providers.some((p) => p.id === providerFilter) ? providerFilter : null;
   const [starredOnly, setStarredOnly] = useState(false);
-  const [starred, setStarred] = useState(() => new Set(models.filter((m) => m.starred).map((m) => m.id)));
+  const { pins, toggle } = usePinnedModels();
+  const starred = useMemo(
+    () => new Set([...models.filter((m) => m.starred).map((m) => m.id), ...pins]),
+    [models, pins],
+  );
 
   const toggleStar = (id: string) => {
     if (disabled) return;
-    setStarred((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    void toggle(id);
   };
 
   const filtered = models.filter((model) => {
@@ -225,8 +227,8 @@ function ModelSelectorProviderSidebar() {
       >
         <LayoutGrid className="size-4" aria-hidden />
       </SidebarBtn>
-      <SidebarBtn active={starredOnly} onClick={() => setStarredOnly((prev) => !prev)} title="Starred models">
-        <Star className="size-4" aria-hidden />
+      <SidebarBtn active={starredOnly} onClick={() => setStarredOnly((prev) => !prev)} title="Pinned models">
+        <Pin className="size-4" aria-hidden />
       </SidebarBtn>
       <div className="my-1 border-t border-[var(--color-border)]" />
       {providers.map((provider) => (
@@ -274,7 +276,7 @@ function SidebarBtn({
     >
       {active && (
         <motion.span
-          layoutId={`${instanceId}-${title === 'Starred models' ? 'stars' : 'provider'}-indicator`}
+          layoutId={`${instanceId}-${title === 'Pinned models' ? 'stars' : 'provider'}-indicator`}
           className="absolute inset-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-muted)]"
           transition={reducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 350, damping: 30 }}
         />
@@ -389,17 +391,14 @@ function ModelSelectorModelRow({ model, index }: { model: Model; index: number }
       <motion.button
         type="button"
         disabled={disabled}
-        aria-label={`${isStarred ? 'Unstar' : 'Star'} ${model.name}`}
+        aria-label={`${isStarred ? 'Unpin' : 'Pin'} ${model.name}`}
         aria-pressed={isStarred}
         onClick={() => toggleStar(model.id)}
         whileHover={reducedMotion || disabled ? undefined : { scale: 1.2 }}
         whileTap={reducedMotion || disabled ? undefined : { scale: 0.85 }}
         className="mr-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-not-allowed"
       >
-        <Star
-          className={cn('size-3.5', isStarred && 'fill-current text-[var(--color-accent)]')}
-          aria-hidden
-        />
+        <Pin className={cn('size-3.5', isStarred && 'fill-current text-[var(--color-accent)]')} aria-hidden />
       </motion.button>
     </motion.li>
   );

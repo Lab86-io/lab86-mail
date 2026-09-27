@@ -261,6 +261,22 @@ describe('useCalendarResync', () => {
     expect(latest?.line).toBe('Could not sync. Try again.');
   });
 
+  test('a slow sync that ends well after the cap clears the failure (CAL-9)', async () => {
+    const host = fakeHost();
+    host.responses.push({ status: 200, body: { ok: true, started: true, lastSyncedAt: T0 - 10 * MIN } });
+    const { update } = await mount(host, [ready('a', T0 - 10 * MIN)]);
+    const cap = [...host.timers.entries()].find(([, t]) => t.delayMs === SYNC_SETTLE_CAP_MS);
+    await act(async () => host.fire(cap![0]));
+    expect(latest?.error).toEqual({ kind: 'failed' });
+    // Still running: the sync line hides the failure.
+    await update([{ ...ready('a', T0 - 10 * MIN), status: 'syncing' }], T0 + 30_000);
+    expect(latest?.line).toBe('Syncing');
+    // It ends as ready: the failure must not come back.
+    await update([ready('a', T0 + 40_000)], T0 + 41_000);
+    expect(latest?.error).toBeNull();
+    expect(latest?.line).toBe('Synced just now');
+  });
+
   test('a server-started sync shows the line without a client kick', async () => {
     const host = fakeHost();
     const { update } = await mount(host, [ready('a', T0 - MIN)]);

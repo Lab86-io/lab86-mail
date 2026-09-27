@@ -2,18 +2,27 @@ import { z } from 'zod';
 import { describeProvider } from '../ai/client';
 import { contextFirstName } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
-import { api, convexQuery } from '../hosted/convex';
-import { isConvexConfigured } from '../hosted/env';
+import {
+  MAIL_UNDO,
+  mailOperationReason,
+  pluralThreads,
+  recordMailOperation,
+  type TriageChange,
+} from '../mail/mail-operations';
 import { applyNaturalLanguageAccountHint } from '../mail/search/account-scope';
 import { parseMailSearchQuery } from '../mail/search/parser';
-import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
-import { getNylasThread } from '../nylas/provider';
-import type { SmartCategory, SmartCategoryId, SmartLabelDefinition, SmartRule } from '../shared/types';
-import { requireStoreUserId } from '../store/kv';
+import { signatureForAccountRef, signatureIsActive } from '../mail/signature';
+import {
+  getVoiceProfile,
+  greetingFor,
+  learnVoiceProfile,
+  nextLearnAt,
+  type VoiceProfile,
+  voicePromptLines,
+} from '../mail/voice-profile';
+import { truncateText } from '../shared/text';
 import { recallSender } from '../store/memories';
-import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
-import { listSmartLabels } from '../store/smart-labels';
-import { listSmartRules } from '../store/smart-rules';
+import { resolveThreadMessages } from '../store/messages';
 import {
   getThread as getThreadRecord,
   setThreadSummary,
@@ -30,38 +39,37 @@ const SUMMARY_PROMPT_INSTRUCTIONS = [
   'Never invent facts. If timing, ownership, or outcome is unclear, say so plainly.',
 ].join('\n');
 
+// The full thread from the corpus, then the provider (KV-1). A partial cache
+// never stands in for the full thread.
 async function loadThread(account: string, threadId: string, userId?: string | null) {
-  const cached = await getThreadMessages(account, threadId);
-  if (cached.length) return cached.sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
-
-  const thread = await getNylasThread({ userId, account, threadId }).catch(() => null);
-  const messages = (thread?.messages || [])
-    .filter((message) => message._id)
-    .sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
-  for (const message of messages) await upsertMessageRecord(message).catch(() => undefined);
+  const messages = await resolveThreadMessages(account, threadId, { userId });
   const newest = messages[messages.length - 1];
-  if (newest) {
+  // The KV thread row only carries the summary and triage overlay; it must
+  // exist before setThreadSummary or setThreadTriage can patch it.
+  if (newest && !(await getThreadRecord(account, threadId).catch(() => null))) {
     await upsertThread(account, {
       _id: threadId,
       subject: newest.subject || messages[0]?.subject || '(no subject)',
       fromAddress: newest.from,
       lastDate: newest.date,
-      snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
+      snippet: newest.snippet || truncateText(newest.textBody, 240) || '',
       labels: newest.labels || [],
-      unread: messages.some((message) => message.labels?.includes('UNREAD')),
+      unread: messages.some((message) => Boolean(message.unread) || message.labels?.includes('UNREAD')),
     }).catch(() => undefined);
   }
   return messages;
 }
 
 function concatThread(messages: any[], maxChars = 24_000): string {
-  return messages
-    .map(
-      (m, i) =>
-        `--- Message ${i + 1}/${messages.length} ---\nFrom: ${m.from}\nTo: ${m.to}\nDate: ${new Date(m.date).toISOString()}\nSubject: ${m.subject}\n\n${(m.textBody || m.snippet || '').slice(0, 4000)}`,
-    )
-    .join('\n\n')
-    .slice(0, maxChars);
+  return truncateText(
+    messages
+      .map(
+        (m, i) =>
+          `--- Message ${i + 1}/${messages.length} ---\nFrom: ${m.from}\nTo: ${m.to}\nDate: ${new Date(m.date).toISOString()}\nSubject: ${m.subject}\n\n${truncateText(m.textBody || m.snippet || '', 4000)}`,
+      )
+      .join('\n\n'),
+    maxChars,
+  );
 }
 
 export const summarizeThread = defineTool({
@@ -180,7 +188,7 @@ export const triageThread = defineTool({
       parsed.priority === 1 || parsed.priority === 2 || parsed.priority === 3 ? parsed.priority : 2
     ) as 1 | 2 | 3;
     const action = String(parsed.action || 'read');
-    const reason = String(parsed.reason || '').slice(0, 240);
+    const reason = truncateText(String(parsed.reason || ''), 240);
     await setThreadTriage(account, threadId, { priority, action, reason, at: Date.now() }).catch(
       () => undefined,
     );
@@ -205,21 +213,45 @@ export const draftReply = defineTool({
     if (!messages.length) return { draft: '', model: 'none' };
     const last = messages[messages.length - 1];
     const memory = await recallSender(last.from);
-    if (!(await hasAiForCurrentUser())) {
+    // The user's voice (FEATURES item 16) and whether the mailbox signature
+    // will close the message when it is sent.
+    const [voice, signature] = await Promise.all([
+      getVoiceProfile().catch(() => null),
+      signatureForAccountRef(account).catch(() => null),
+    ]);
+    const signatureOn = signatureIsActive(signature);
+    const aiAvailable = await hasAiForCurrentUser();
+    if (aiAvailable && ctx.userId) kickVoiceLearning(ctx.userId, voice);
+    if (!aiAvailable) {
       const sender = String(last.from).replace(/<.*?>/g, '').trim().split(/\s+/)[0] || 'there';
       const firstName = contextFirstName();
-      const signoff = firstName ? `\n\nBest,\n${firstName}` : '';
+      const greeting = greetingFor(voice, sender) || `Hi ${sender},`;
+      const signoff = signatureOn
+        ? ''
+        : voice?.signOff
+          ? `\n\n${voice.signOff}`
+          : firstName
+            ? `\n\nBest,\n${firstName}`
+            : '';
       return {
-        draft: `Hi ${sender},\n\nThanks for reaching out. ${instructions || 'I will take a look.'}${signoff}`,
+        draft: `${greeting}\n\nThanks for reaching out. ${instructions || 'I will take a look.'}${signoff}`,
         model: 'local',
       };
     }
+    const voiceLines = voicePromptLines(voice, { signatureOn });
     const prompt = [
       `Draft a reply for the user to the last message in this thread.`,
       tone ? `Tone: ${tone}.` : '',
       instructions ? `The user's instruction: ${instructions}` : '',
       memory ? `Memory about ${memory.email}: ${memory.notes}` : '',
-      "Return only the body text — no greeting/signature scaffolding unless the situation needs it. Match the user's style: concise, warm, lower-case openers ok.",
+      ...(voiceLines.length
+        ? ['Return only the message text.', ...voiceLines]
+        : [
+            "Return only the body text — no greeting/signature scaffolding unless the situation needs it. Match the user's style: concise, warm, lower-case openers ok.",
+            signatureOn
+              ? 'Do not add a signature; the mailbox signature is added when the message is sent.'
+              : '',
+          ]),
       '',
       'Thread:',
       concatThread(messages),
@@ -236,22 +268,48 @@ export const draftReply = defineTool({
   },
 });
 
+/**
+ * Learns the voice in the background when the card is missing or a week old,
+ * so the next draft is in the user's voice. An edited card is left alone.
+ */
+const voiceLearning = new Set<string>();
+export function kickVoiceLearning(
+  userId: string,
+  voice: VoiceProfile | null,
+  learn: typeof learnVoiceProfile = learnVoiceProfile,
+) {
+  if (voice?.editedAt || voiceLearning.has(userId)) return false;
+  if (voice && nextLearnAt(voice, Date.now()) !== null) return false;
+  voiceLearning.add(userId);
+  void learn({ userId })
+    .catch(() => undefined)
+    .finally(() => voiceLearning.delete(userId));
+  return true;
+}
+
+/** The most threads one `bulk_triage` call takes. Callers split larger selections. */
+export const BULK_TRIAGE_LIMIT = 40;
+
 export const bulkTriage = defineTool({
   name: 'bulk_triage',
-  description: 'Triage many threads in a single AI call. Returns verdicts keyed by thread id.',
+  description:
+    'Triage many threads in a single call and save each verdict on its thread. Returns verdicts keyed by thread id. The saved verdicts show in Activity with Undo.',
   category: 'ai',
-  mutating: false,
+  mutating: true,
+  risk: 'write_self',
   input: z.object({
     items: z
       .array(
         z.object({
           id: z.string(),
+          /** The mailbox of the thread. With it, the verdict is saved on the thread. */
+          account: z.string().optional(),
           from: z.string().optional(),
           subject: z.string().optional(),
           snippet: z.string().optional(),
         }),
       )
-      .max(40),
+      .max(BULK_TRIAGE_LIMIT),
   }),
   output: z.object({
     verdicts: z.array(
@@ -263,8 +321,11 @@ export const bulkTriage = defineTool({
       }),
     ),
     model: z.string(),
+    /** How many verdicts were saved on their threads. */
+    saved: z.number().optional(),
+    operationId: z.string().optional(),
   }),
-  async handler({ items }) {
+  async handler({ items }, ctx) {
     if (!items.length) return { verdicts: [], model: 'none' };
     if (!(await hasAiForCurrentUser())) {
       return {
@@ -280,7 +341,7 @@ export const bulkTriage = defineTool({
     const lines = items
       .map(
         (it, i) =>
-          `${i + 1}. id=${it.id} from=${it.from || ''} subject=${(it.subject || '').slice(0, 100)} snippet=${(it.snippet || '').slice(0, 160)}`,
+          `${i + 1}. id=${it.id} from=${it.from || ''} subject=${truncateText(it.subject || '', 100)} snippet=${truncateText(it.snippet || '', 160)}`,
       )
       .join('\n');
     const prompt = [
@@ -311,211 +372,64 @@ export const bulkTriage = defineTool({
           });
       } catch {}
     }
+    const changes: TriageChange[] = [];
+    const saved = await saveBulkTriageVerdicts(items, verdicts, changes);
+    const operationId = changes.length
+      ? await recordMailOperation({
+          userId: ctx?.userId,
+          tool: 'bulk_triage',
+          summary: `Triaged ${pluralThreads(changes.length)}`,
+          reason: mailOperationReason(ctx ?? {}, 'Each thread got a priority and a suggested next step.'),
+          target: { kind: 'threads', count: changes.length },
+          inverse: { kind: MAIL_UNDO.restoreTriage, payload: { items: changes } },
+          batchId: ctx?.operationBatchId,
+        })
+      : undefined;
     // Fill in missing ids with defaults so the UI never has gaps.
     for (const it of items) {
       if (!verdicts.find((v) => v.id === it.id)) {
         verdicts.push({ id: it.id, priority: 2 as const, action: 'read', reason: 'no verdict returned' });
       }
     }
-    return { verdicts, model: 'fast' };
+    return { verdicts, model: 'fast', saved, operationId };
   },
 });
-
-const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
-const SuggestedActionSchema = z.enum(['reply', 'read', 'archive', 'label', 'snooze', 'wait', 'none']);
-
-export interface ClassifyInputThread {
-  id: string;
-  account?: string;
-  from?: string;
-  fromAddress?: string;
-  subject?: string;
-  snippet?: string;
-  labels?: string[];
-  unread?: boolean;
-  date?: string | number;
-  bodyText?: string;
-}
-
-const CLASSIFY_SYSTEM =
-  'You classify email threads for the user. Output only JSON lines. Categories: main, needs_reply, codes, orders, finance_admin, noise, review. Main is personal human conversations only, except unread urgent codes/security/account-access/payment/delivery/refund problems. A Gmail CATEGORY_PERSONAL or IMPORTANT label means a real person — never classify those as noise. CATEGORY_PROMOTIONS, CATEGORY_UPDATES, and CATEGORY_SOCIAL are automated. LinkedIn, publishers, rewards programs, newsletters, bulk/list mail, and marketplace promos are noise. When a body excerpt is provided, ground the verdict in what the message actually says — boilerplate footers (unsubscribe links, "sign in" prompts, order-history links) signal automation, not codes or orders.';
-
-const CLASSIFY_INSTRUCTIONS = [
-  'For each input line, return exactly one JSON object:',
-  '{"id":"...","primary":"main|needs_reply|codes|orders|finance_admin|noise|review","secondary":["..."],"confidence":0.0-1.0,"reason":"short display reason","needsAttention":true|false,"suggestedAction":"reply|read|archive|label|snooze|wait|none","isHumanLike":true|false,"isAutomated":true|false,"allowNoReplyInMain":true|false,"signals":["short"]}',
-  'No prose. One JSON object per line.',
-].join('\n');
-
-function classifyLine(thread: ClassifyInputThread, idx: number) {
-  const body = String(thread.bodyText || '')
-    .replace(/\s+/g, ' ')
-    .slice(0, 600);
-  return `${idx + 1}. id=${thread.id} from=${thread.fromAddress || thread.from || ''} unread=${thread.unread ? 'yes' : 'no'} labels=${(thread.labels || []).join(',')} subject=${(thread.subject || '').slice(0, 120)} snippet=${(thread.snippet || '').slice(0, 240)}${body ? ` body=${body}` : ''}`;
-}
-
-// Pull latest-message body excerpts from the Convex corpus for threads that
-// arrived without one (the KV thread cache stores only snippets). Best-effort:
-// classification still works header-only when the corpus has no row yet.
-async function hydrateBodyExcerpts(threads: ClassifyInputThread[]) {
-  if (!isConvexConfigured()) return;
-  let userId: string;
-  try {
-    userId = requireStoreUserId();
-  } catch {
-    return;
-  }
-  const missing = threads.filter((thread) => !thread.bodyText && thread.account && thread.id);
-  for (let i = 0; i < missing.length; i += 50) {
-    const chunk = missing.slice(i, i + 50);
-    try {
-      const excerpts = await convexQuery<Record<string, string>>((api as any).mailCorpus.threadBodyExcerpts, {
-        userId,
-        items: chunk.map((thread) => ({
-          accountId: thread.account as string,
-          providerThreadId: thread.id,
-        })),
-      });
-      for (const thread of chunk) {
-        const body = excerpts[`${thread.account}:${thread.id}`];
-        if (body) thread.bodyText = body;
-      }
-    } catch {
-      return;
-    }
-  }
-}
 
 /**
- * Local-first batched smart classification. Every thread is classified
- * deterministically; only the ones the deterministic pass is unsure about
- * (review or confidence < 0.68, or `force`) are sent to the fast model, in
- * chunks of 40. Gmail CATEGORY_x and IMPORTANT labels flow through both the
- * deterministic classifier and the model prompt. Shared by the
- * `classify_threads` tool and the daily report's Tier-1 breadth pass.
+ * Save model verdicts on their threads through the same store as
+ * `triage_thread`. Only verdicts for requested ids with a known account are
+ * saved; placeholder verdicts are never saved.
  */
-export async function classifyThreadsBatched(
-  threads: ClassifyInputThread[],
-  context: {
-    rules: SmartRule[];
-    customLabels: SmartLabelDefinition[];
-    force?: boolean;
-    speed?: 'fast' | 'nano';
-  },
-): Promise<Array<{ id: string; model: string } & SmartCategory>> {
-  if (!threads.length) return [];
-  const { rules, customLabels, force, speed = 'fast' } = context;
-  await hydrateBodyExcerpts(threads);
-  const local = threads.map((thread) => ({
-    thread,
-    verdict: classifyThreadWithContext(
-      {
-        _id: thread.id,
-        account: thread.account || '',
-        fromAddress: thread.fromAddress || thread.from || '',
-        subject: thread.subject || '',
-        snippet: thread.snippet || '',
-        labels: thread.labels || [],
-        unread: thread.unread ?? false,
-        lastDate: Number(thread.date || 0),
-        bodyText: thread.bodyText,
-      },
-      { rules, customLabels },
-    ),
-  }));
-
-  const uncertain = local.filter(
-    ({ verdict }) => force || verdict.primary === 'review' || verdict.confidence < 0.68,
-  );
-  const aiById = new Map<string, SmartCategory>();
-  if (uncertain.length && (await hasAiForCurrentUser())) {
-    for (let i = 0; i < uncertain.length; i += 40) {
-      const chunk = uncertain.slice(i, i + 40);
-      try {
-        const { text } = await generateTextForCurrentUser({
-          feature: 'classify_threads',
-          speed,
-          system: CLASSIFY_SYSTEM,
-          prompt: [
-            CLASSIFY_INSTRUCTIONS,
-            '',
-            chunk.map(({ thread }, idx) => classifyLine(thread, idx)).join('\n'),
-          ].join('\n'),
-        });
-        for (const line of text.split('\n')) {
-          const match = line.match(/\{[\s\S]*\}/);
-          if (!match) continue;
-          try {
-            const parsed = JSON.parse(match[0]);
-            if (parsed?.id) aiById.set(String(parsed.id), normalizeAiVerdict(parsed) as SmartCategory);
-          } catch {}
-        }
-      } catch {}
-    }
-  }
-
-  return local.map(({ thread, verdict }) => {
-    const ai = aiById.get(thread.id);
-    const merged = (ai || verdict) as SmartCategory;
-    return { id: thread.id, ...merged, model: ai ? speed : verdict.model || 'deterministic' };
-  });
+export async function saveBulkTriageVerdicts(
+  items: Array<{ id: string; account?: string }>,
+  verdicts: Array<{ id: string; priority: 1 | 2 | 3; action: string; reason: string }>,
+  /** Filled with the verdict each saved thread had before, for Undo. */
+  changes?: TriageChange[],
+): Promise<number> {
+  const accounts = new Map(items.filter((it) => it.account).map((it) => [it.id, it.account as string]));
+  const at = Date.now();
+  const writes = verdicts
+    .filter((verdict) => accounts.has(verdict.id))
+    .map(async (verdict) => {
+      const account = accounts.get(verdict.id) as string;
+      const previous = changes
+        ? ((await getThreadRecord(account, verdict.id).catch(() => null))?.triage ?? null)
+        : null;
+      return setThreadTriage(account, verdict.id, {
+        priority: verdict.priority,
+        action: verdict.action,
+        reason: truncateText(verdict.reason, 240),
+        at,
+      }).then(
+        () => {
+          changes?.push({ account, threadId: verdict.id, previous });
+          return true;
+        },
+        () => false,
+      );
+    });
+  return (await Promise.all(writes)).filter(Boolean).length;
 }
-
-export const classifyThreads = defineTool({
-  name: 'classify_threads',
-  description:
-    'Classify visible threads into smart MailOS categories: main, needs_reply, codes, orders, finance_admin, noise, or review.',
-  category: 'ai',
-  mutating: false,
-  input: z.object({
-    account: z.string().optional(),
-    force: z.boolean().optional(),
-    threads: z
-      .array(
-        z.object({
-          id: z.string(),
-          account: z.string().optional(),
-          from: z.string().optional(),
-          fromAddress: z.string().optional(),
-          subject: z.string().optional(),
-          snippet: z.string().optional(),
-          labels: z.array(z.string()).optional(),
-          unread: z.boolean().optional(),
-          date: z.union([z.string(), z.number()]).optional(),
-        }),
-      )
-      .max(40),
-  }),
-  output: z.object({
-    verdicts: z.array(
-      z.object({
-        id: z.string(),
-        primary: SmartCategorySchema,
-        secondary: z.array(SmartCategorySchema),
-        confidence: z.number(),
-        reason: z.string(),
-        needsAttention: z.boolean(),
-        suggestedAction: SuggestedActionSchema,
-        isHumanLike: z.boolean(),
-        isAutomated: z.boolean(),
-        allowNoReplyInMain: z.boolean(),
-        customLabels: z.array(z.string()).optional(),
-        bulkSignals: z.array(z.string()).optional(),
-        ruleHits: z.array(z.string()).optional(),
-        signals: z.array(z.string()),
-        model: z.string(),
-      }),
-    ),
-    model: z.string(),
-  }),
-  async handler({ threads, force }) {
-    if (!threads.length) return { verdicts: [], model: 'none' };
-    const [rules, customLabels] = await Promise.all([listSmartRules(), listSmartLabels()]);
-    const verdicts = await classifyThreadsBatched(threads, { rules, customLabels, force });
-    const usedAi = verdicts.some((v) => v.model === 'fast');
-    const aiAvailable = usedAi || (await hasAiForCurrentUser());
-    return { verdicts, model: usedAi ? 'fast' : aiAvailable ? 'deterministic' : 'local' };
-  },
-});
 
 export const extractActionItems = defineTool({
   name: 'extract_action_items',
@@ -704,41 +618,4 @@ export function parseNlTaskResult(
   const description =
     typeof parsed.description === 'string' && parsed.description.trim() ? parsed.description.trim() : null;
   return { title, dueAt, priority, labels, description };
-}
-
-function normalizeAiVerdict(parsed: any) {
-  const rawSecondary: SmartCategoryId[] = Array.isArray(parsed.secondary)
-    ? parsed.secondary.filter((id: string) => SMART_CATEGORY_IDS.includes(id as SmartCategoryId)).slice(0, 3)
-    : [];
-  const rawPrimary = SMART_CATEGORY_IDS.includes(parsed.primary as SmartCategoryId)
-    ? (parsed.primary as SmartCategoryId)
-    : 'review';
-  // needs_reply exists only as a secondary tag of Main in this system (the
-  // category query derives it from the unread-Main window). A model that
-  // returns it as the primary would otherwise be invisible everywhere; fold
-  // it into Main + secondary so it lands in both Main and Needs Reply.
-  const primary = rawPrimary === 'needs_reply' ? 'main' : rawPrimary;
-  const secondary =
-    rawPrimary === 'needs_reply' && !rawSecondary.includes('needs_reply')
-      ? (['needs_reply', ...rawSecondary].slice(0, 3) as SmartCategoryId[])
-      : rawSecondary;
-  const action = ['reply', 'read', 'archive', 'label', 'snooze', 'wait', 'none'].includes(
-    parsed.suggestedAction,
-  )
-    ? parsed.suggestedAction
-    : 'read';
-  return {
-    primary,
-    secondary,
-    confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0.5)),
-    reason: String(parsed.reason || 'AI classification').slice(0, 220),
-    needsAttention: Boolean(parsed.needsAttention),
-    suggestedAction: action,
-    isHumanLike: Boolean(parsed.isHumanLike),
-    isAutomated: Boolean(parsed.isAutomated),
-    allowNoReplyInMain: Boolean(parsed.allowNoReplyInMain),
-    signals: Array.isArray(parsed.signals) ? parsed.signals.map(String).slice(0, 5) : [],
-    classifiedAt: Date.now(),
-    model: 'fast',
-  };
 }

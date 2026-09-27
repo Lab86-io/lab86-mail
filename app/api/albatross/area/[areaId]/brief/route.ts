@@ -73,18 +73,18 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
 export const POST = createAreaBriefPost({
   currentUser: requireCurrentUser,
   areaExists: async (userId, areaId) => {
-    const area = await convexQuery((api as any).albatross.areaBriefTarget, { userId, areaId });
+    const area = await convexQuery(api.albatross.areaBriefTarget, { userId, areaId });
     return area !== null;
   },
   reindex: (userId, areaId) =>
-    convexMutation((api as any).albatross.reindexMyAreas, {
+    convexMutation(api.albatross.reindexMyAreas, {
       userId,
       areaId,
     }),
   generate: async ({ userId, areaId, force }, signal) => {
     const job = await enqueueBriefJob({ userId, kind: 'area', areaId, force });
     await waitForBriefJob(userId, job.jobId, signal);
-    const home = await convexQuery<any>((api as any).albatross.areaHome, { userId, areaId }, signal);
+    const home = await convexQuery<any>(api.albatross.areaHome, { userId, areaId }, signal);
     return home.livingBrief;
   },
   warn: console.warn,

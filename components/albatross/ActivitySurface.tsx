@@ -15,6 +15,8 @@ interface OperationRow {
   tool: string;
   surface: string;
   summary: string;
+  /** Why it happened, when the change recorded a reason. */
+  reason?: string;
   target?: { kind?: string; id?: string; accountId?: string } | null;
   inverse?: { kind: string } | null;
   status: 'applied' | 'undoing' | 'undone' | 'undo_failed';
@@ -167,6 +169,9 @@ export function ActivitySurface() {
                         />
                         <div className="min-w-0 flex-1">
                           <p className="text-[13.5px] font-medium">{row.summary}</p>
+                          {row.reason ? (
+                            <p className="mt-0.5 text-[12.5px] text-[var(--color-text)]/80">{row.reason}</p>
+                          ) : null}
                           <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
                             {whoActed(row)} · {SURFACE_LABEL[row.surface] || row.surface} ·{' '}
                             <span className="font-mono tabular-nums">{whenActed(row.createdAt)}</span>

@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
+import type { FunctionReference } from 'convex/server';
 import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
+import { BriefBudgetExhaustedError, currentBriefMeter } from '../brief/budget';
 import { api, convexQuery } from '../hosted/convex';
 import { prepareBriefContext } from '../narrative/service';
 import { compositionFromReport } from '../shared/brief-composition';
 import type { BriefDocumentV2 } from '../shared/brief-document';
 import { normalizeBriefTimezone } from '../shared/brief-edition';
+import { truncateText } from '../shared/text';
 import {
+  type BriefEditionKind,
   type DailyReport,
   type DailyReportArtifactError,
   type DailyReportArtifactErrorStage,
@@ -110,13 +114,14 @@ export function carriedDaysFor(item: Pick<DailyReportItem, 'firstSurfacedAt'>, g
 export async function loadSinceLastEditionFromConvex(
   userId: string,
   since: number,
-  query: <T>(fn: unknown, args: Record<string, unknown>) => Promise<T> = convexQuery,
+  query: <T>(
+    fn: FunctionReference<'query', 'public'>,
+    args: Record<string, unknown>,
+  ) => Promise<T> = convexQuery,
 ): Promise<DailyReportSinceLastEdition> {
   const [completions, operations] = await Promise.all([
-    query<any[]>((api as any).albatrossWork.completionsSince, { userId, since, limit: 12 }).catch(
-      () => [] as any[],
-    ),
-    query<any[]>((api as any).operations.listRecent, { userId, limit: 60 }).catch(() => [] as any[]),
+    query<any[]>(api.albatrossWork.completionsSince, { userId, since, limit: 12 }).catch(() => [] as any[]),
+    query<any[]>(api.operations.listRecent, { userId, limit: 60 }).catch(() => [] as any[]),
   ]);
   return {
     previousGeneratedAt: since,
@@ -127,6 +132,8 @@ export async function loadSinceLastEditionFromConvex(
       areaId: row.areaId ? String(row.areaId) : undefined,
       completedAt: Number(row.completedAt || 0),
     })),
+    // What Albatross did, newest first, each with the log row id so the
+    // brief can offer Undo (FEATURES item 7).
     agentActions: (operations || [])
       .filter(
         (row) =>
@@ -139,8 +146,14 @@ export async function loadSinceLastEditionFromConvex(
       .map((row) => ({
         tool: String(row.tool || ''),
         surface: String(row.surface || ''),
-        summary: String(row.summary || '').slice(0, 200),
+        summary: truncateText(String(row.summary || ''), 200),
         createdAt: Number(row.createdAt || 0),
+        ...(row._id ? { operationId: String(row._id) } : {}),
+        undoable: Boolean(row.inverse),
+        ...(typeof row.reason === 'string' && row.reason.trim()
+          ? { reason: row.reason.trim().slice(0, 200) }
+          : {}),
+        status: String(row.status),
       })),
   };
 }
@@ -181,7 +194,7 @@ function artifactError(stage: DailyReportArtifactErrorStage, err: unknown): Dail
 }
 
 function artifactErrorText(err: unknown): string {
-  const limit = (text: string) => text.slice(0, MAX_ARTIFACT_ERROR_MESSAGE_CHARS);
+  const limit = (text: string) => truncateText(text, MAX_ARTIFACT_ERROR_MESSAGE_CHARS);
   const anyErr = err as any;
   if (Array.isArray(anyErr?.issues)) {
     const issues = anyErr.issues
@@ -212,12 +225,25 @@ export function withArtifactError(report: DailyReport, error: DailyReportArtifac
   };
 }
 
-export async function generateAgentReport(input: {
-  kind: DailyReport['kind'];
+export interface AgentReportInput {
+  kind: BriefEditionKind;
   userId?: string | null;
   now?: number;
   reportId?: string;
-}): Promise<DailyReport> {
+  /** A retry over a published edition: skip the progress saves so the edition stays ready. */
+  quiet?: boolean;
+  /** A weekend edition without the know, waiting, task, and tool sections. */
+  light?: boolean;
+  /** The first edition after the first mailbox connects (FEATURES item 4). */
+  first?: boolean;
+  /**
+   * Publish from the last 48 hours of mail and the next 7 days of calendar
+   * with no model call. The writer upgrades the same edition in place later.
+   */
+  deterministic?: boolean;
+}
+
+export async function generateAgentReport(input: AgentReportInput): Promise<DailyReport> {
   // The dateline, the weather, and the week-ahead weekday names all read the
   // context timezone. A usable context value stands; when it is missing or
   // UTC-filler, resolve one from the user's synced calendars.
@@ -226,20 +252,18 @@ export async function generateAgentReport(input: {
   return runWithAiRequestContext({ ...context, userTimezone }, () => runAgentReport(input));
 }
 
-async function runAgentReport(input: {
-  kind: DailyReport['kind'];
-  userId?: string | null;
-  now?: number;
-  reportId?: string;
-}): Promise<DailyReport> {
+async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
   const reportId = input.reportId ?? randomUUID();
   // Fresh source observations precede selection; the editorial writer then
   // chooses a focused account from this refreshed evidence.
-  const sourceChecks = input.userId
-    ? await prepareBriefContext(input.userId).catch(() => [
-        { source: 'source discovery', status: 'unavailable' as const },
-      ])
-    : [];
+  // The deterministic first edition reads what the first sync stored; it
+  // does not wait for a source refresh.
+  const sourceChecks =
+    input.userId && !input.deterministic
+      ? await prepareBriefContext(input.userId).catch(() => [
+          { source: 'source discovery', status: 'unavailable' as const },
+        ])
+      : [];
   const tier = await resolveBriefPlanTier(input.userId);
 
   let structured: DailyReport;
@@ -249,12 +273,17 @@ async function runAgentReport(input: {
       includeCalendar: true,
       userId: input.userId,
       now: input.now,
-      scope: 'week',
+      scope: input.deterministic ? 'first' : 'week',
+      ...(input.deterministic ? { noModel: true } : {}),
       reportId,
       tier,
+      silent: input.quiet === true,
     });
     if (sourceChecks.some((check) => check.status === 'unavailable'))
       structured.errors = [...(structured.errors || []), briefSourceCoverage(sourceChecks)];
+    if (input.light) structured.light = true;
+    if (input.first) structured.first = true;
+    if (sourceChecks.length) structured.sourceChecks = sourceChecks.slice(0, 24);
   } catch (err) {
     // The pass persists a 'partial' edition before the work that can throw.
     // Settle it so the UI does not stay stuck on a dead run.
@@ -275,46 +304,68 @@ async function runAgentReport(input: {
 
   const composition = compositionFromReport(structured);
   const html = buildNativeDailyReportArtifact(structured, composition);
-  await saveDailyReport({
-    ...structured,
-    composition,
-    html,
-    artifactStatus: 'composing',
-    artifactSource: 'deterministic',
-  }).catch(() => undefined);
+  if (!input.quiet)
+    await saveDailyReport({
+      ...structured,
+      composition,
+      html,
+      artifactStatus: 'composing',
+      artifactSource: 'deterministic',
+    }).catch(() => undefined);
 
   // No model: the document still composes deterministically. The exact
   // availability error is recorded so the UI can explain the plain letter.
   let availability: DailyReportArtifactError | undefined;
   let generate: typeof generateTextForCurrentUser | null = generateTextForCurrentUser;
-  try {
-    await resolveAiRuntime({ userId: input.userId, speed: 'primary', feature: 'daily_brief_prose' });
-  } catch (err) {
-    availability = artifactError('ai_availability', err);
-    generate = null;
-  }
+  if (input.deterministic) generate = null;
+  else
+    try {
+      await resolveAiRuntime({ userId: input.userId, speed: 'primary', feature: 'daily_brief_prose' });
+    } catch (err) {
+      availability = artifactError('ai_availability', err);
+      generate = null;
+    }
 
   try {
     const composed = await composeDailyBrief(structured, input.userId, { generate, previous });
     const report = finalizeBudgetReport(structured, composed);
-    const settled = availability ? withArtifactError(report, availability) : report;
+    // A writer with no plan, key, or credits is recorded as an availability
+    // error: the brief job reads it and publishes this edition as final.
+    availability ??= composed.writerTerminalError
+      ? artifactError('ai_availability', composed.writerTerminalError)
+      : undefined;
+    const settled = withEditionBudget(availability ? withArtifactError(report, availability) : report);
     await saveDailyReport(settled);
     return settled;
   } catch (err) {
     console.error('[agent-report] budget composition failed:', err);
-    const fallback = withArtifactError(
-      {
-        ...structured,
-        composition,
-        html,
-        artifactStatus: 'rendered',
-        artifactSource: 'deterministic',
-      },
-      artifactError('document_v2', err),
+    const fallback = withEditionBudget(
+      withArtifactError(
+        {
+          ...structured,
+          composition,
+          html,
+          artifactStatus: 'rendered',
+          artifactSource: 'deterministic',
+        },
+        artifactError('document_v2', err),
+      ),
     );
     await saveDailyReport(fallback);
     return fallback;
   }
+}
+
+// The edition budget record (FEATURES item 5): the meter of the running
+// brief job, with the budget that ran out noted in the artifact errors.
+export function withEditionBudget(report: DailyReport): DailyReport {
+  const meter = currentBriefMeter();
+  if (!meter) return report;
+  const budget = meter.record(report.editorial?.mode !== 'generated');
+  const next = { ...report, budget };
+  return budget.exhausted
+    ? withArtifactError(next, artifactError('document_v2', new BriefBudgetExhaustedError(budget.exhausted)))
+    : next;
 }
 
 // ---- Budget composition ----------------------------------------------------
@@ -326,6 +377,8 @@ export interface ComposedBudgetBrief {
   since?: DailyReportSinceLastEdition;
   editorial?: DailyReport['editorial'];
   layoutFailed?: boolean;
+  /** The writer failed in a way another attempt cannot fix. Never persisted. */
+  writerTerminalError?: Error;
   /** Ephemeral writer context; never persisted into the edition. */
   editorialEvidence?: Record<string, unknown>;
 }
@@ -340,23 +393,25 @@ export interface ComposeBudgetBriefDeps {
   now?: number;
 }
 
+// The items the prose describes. A light edition shows no know or waiting rows,
+// so the writer does not spend a line on them.
 function selectedItems(report: DailyReport): Array<{ item: DailyReportItem; lane: BriefLane | 'waiting' }> {
   const s = report.sections;
   return [
     ...(s.answer ?? []).map((item) => ({ item, lane: 'answer' as const })),
     ...(s.today ?? []).map((item) => ({ item, lane: 'today' as const })),
-    ...(s.know ?? []).map((item) => ({ item, lane: 'know' as const })),
-    ...(s.waiting ?? []).map((item) => ({ item, lane: 'waiting' as const })),
+    ...(report.light ? [] : (s.know ?? []).map((item) => ({ item, lane: 'know' as const }))),
+    ...(report.light ? [] : (s.waiting ?? []).map((item) => ({ item, lane: 'waiting' as const }))),
   ];
 }
 
 function cleanBody(message: Message): string {
   const raw = message.textBody || message.snippet || '';
-  return raw.replace(/\s+/g, ' ').trim().slice(0, MAX_BODY_CHARS);
+  return truncateText(raw.replace(/\s+/g, ' ').trim(), MAX_BODY_CHARS);
 }
 
 async function loadAreaPulsesFromConvex(userId: string): Promise<AreaPulseRecord[]> {
-  const rows = await convexQuery<any[]>((api as any).albatrossAreaPulse.listAreaPulses, {
+  const rows = await convexQuery<any[]>(api.albatrossAreaPulse.listAreaPulses, {
     userId,
     limit: 12,
   });
@@ -435,7 +490,7 @@ export async function composeBudgetBrief(
   const prose = await writeBriefProse(
     {
       firstName: contextFirstName() || null,
-      kind: report.kind,
+      kind: report.kind === 'morning' ? 'morning' : 'manual',
       now,
       timezone,
       items,
@@ -457,7 +512,13 @@ export async function composeBudgetBrief(
     { generate: deps.generate, userId },
   );
 
-  const document = composeBudgetBriefDocument({ report, prose, areas, timezone });
+  // The look back is part of the letter: "What Albatross did" follows the lede.
+  const document = composeBudgetBriefDocument({
+    report: { ...report, sections: { ...report.sections, since } },
+    prose,
+    areas,
+    timezone,
+  });
   return {
     document,
     prose,
@@ -486,10 +547,16 @@ export async function composeDailyBrief(
   });
   layout.editorial.plan.areas = composed.areas.map((area) => ({
     areaId: area.areaId.slice(0, 240),
-    name: area.name.slice(0, 500),
-    line: area.line.slice(0, 4000),
+    name: truncateText(area.name, 500),
+    line: truncateText(area.line, 4000),
   }));
-  return { ...composed, document: layout.document, editorial: layout.editorial, layoutFailed: layout.failed };
+  return {
+    ...composed,
+    document: layout.document,
+    editorial: layout.editorial,
+    layoutFailed: layout.failed,
+    ...(layout.terminalError ? { writerTerminalError: layout.terminalError } : {}),
+  };
 }
 
 // Writes the prose back into the stored edition: the lede becomes the

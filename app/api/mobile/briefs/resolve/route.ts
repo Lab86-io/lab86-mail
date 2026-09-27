@@ -20,7 +20,7 @@ interface BriefResolveDependencies {
 
 const dependencies: BriefResolveDependencies = {
   currentUser: requireCurrentUser,
-  resolve: (args) => convexQuery((api as any).mobile.resolveBriefRefs, args),
+  resolve: (args) => convexQuery(api.mobile.resolveBriefRefs, args),
 };
 
 export function createBriefResolvePost(deps: BriefResolveDependencies = dependencies) {

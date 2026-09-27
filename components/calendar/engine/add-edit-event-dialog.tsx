@@ -32,10 +32,20 @@ interface IProps {
   event?: IEvent;
 }
 
+// The Repeats choice that matches a stored rule. A rule the menu cannot show
+// reads as "none", and "none" in edit mode keeps the rule as it is.
+function repeatFromRule(rule: string[] | undefined): TEventFormData['repeat'] {
+  const frequency = /FREQ=(DAILY|WEEKLY|MONTHLY)/i.exec((rule || []).join(' '))?.[1]?.toLowerCase();
+  return frequency === 'daily' || frequency === 'weekly' || frequency === 'monthly' ? frequency : 'none';
+}
+
 export function AddEditEventDialog({ children, startDate, startTime, event }: IProps) {
   const { isOpen, onClose, onToggle } = useDisclosure();
   const { addEvent, updateEvent, writableCalendars } = useCalendar();
   const isEditing = !!event;
+  // One occurrence of a series cannot carry its own rule, so Repeats shows
+  // only for a single event.
+  const showRepeats = !event?.masterEventId;
 
   const initialDates = useMemo(() => {
     if (!isEditing && !event) {
@@ -68,7 +78,7 @@ export function AddEditEventDialog({ children, startDate, startTime, event }: IP
       startDate: initialDates.startDate,
       endDate: initialDates.endDate,
       calendarId: event?.calendarId ?? writableCalendars[0]?.id ?? '',
-      repeat: 'none' as const,
+      repeat: repeatFromRule(event?.recurrence),
       attendees: '',
     },
   });
@@ -80,7 +90,7 @@ export function AddEditEventDialog({ children, startDate, startTime, event }: IP
       startDate: initialDates.startDate,
       endDate: initialDates.endDate,
       calendarId: event?.calendarId ?? writableCalendars[0]?.id ?? '',
-      repeat: 'none' as const,
+      repeat: repeatFromRule(event?.recurrence),
       attendees: '',
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -94,7 +104,14 @@ export function AddEditEventDialog({ children, startDate, startTime, event }: IP
         .map((email) => email.trim())
         .filter((email) => email.includes('@'));
       const repeatRule =
-        values.repeat && values.repeat !== 'none' ? [`RRULE:FREQ=${values.repeat.toUpperCase()}`] : undefined;
+        values.repeat && values.repeat !== 'none' && values.repeat !== repeatFromRule(event?.recurrence)
+          ? [`RRULE:FREQ=${values.repeat.toUpperCase()}`]
+          : undefined;
+      // In edit mode Invite adds people; it never removes the current guests.
+      const known = new Set((event?.participants || []).map((p) => p.email?.toLowerCase()).filter(Boolean));
+      const invited = attendees
+        .filter((email) => !known.has(email.toLowerCase()))
+        .map((email) => ({ email }));
       const formattedEvent: IEvent = {
         title: values.title,
         description: values.description || '',
@@ -107,11 +124,12 @@ export function AddEditEventDialog({ children, startDate, startTime, event }: IP
         calendarId: isEditing ? event.calendarId : chosen?.id,
         accountId: isEditing ? event.accountId : chosen?.accountId,
         recurrence: repeatRule ?? (isEditing ? event.recurrence : undefined),
-        participants: attendees.length
-          ? attendees.map((email) => ({ email }))
-          : isEditing
-            ? event.participants
+        participants: isEditing
+          ? [...(event.participants || []), ...invited]
+          : invited.length
+            ? invited
             : undefined,
+        ...(isEditing ? { allDay: event.allDay, masterEventId: event.masterEventId } : {}),
       };
 
       if (isEditing) {
@@ -205,29 +223,31 @@ export function AddEditEventDialog({ children, startDate, startTime, event }: IP
                 )}
               />
             ) : null}
-            <div className="grid grid-cols-2 gap-3">
-              <FormField
-                control={form.control}
-                name="repeat"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Repeats</FormLabel>
-                    <FormControl>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Never</SelectItem>
-                          <SelectItem value="daily">Daily</SelectItem>
-                          <SelectItem value="weekly">Weekly</SelectItem>
-                          <SelectItem value="monthly">Monthly</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
+            <div className={showRepeats ? 'grid grid-cols-2 gap-3' : 'grid gap-3'}>
+              {showRepeats ? (
+                <FormField
+                  control={form.control}
+                  name="repeat"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Repeats</FormLabel>
+                      <FormControl>
+                        <Select value={field.value} onValueChange={field.onChange}>
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Never</SelectItem>
+                            <SelectItem value="daily">Daily</SelectItem>
+                            <SelectItem value="weekly">Weekly</SelectItem>
+                            <SelectItem value="monthly">Monthly</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              ) : null}
               <FormField
                 control={form.control}
                 name="attendees"

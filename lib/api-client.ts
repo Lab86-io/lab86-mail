@@ -1,14 +1,29 @@
 'use client';
 
+export type CallToolOptions = {
+  /**
+   * Return a result that reports `ok: false` instead of throwing. Only for
+   * callers that read the failure fields themselves (for example a calendar
+   * result that asks the user to choose between events).
+   */
+  acceptFailedResult?: boolean;
+};
+
 /**
  * Type-light RPC client over `/api/tools/[name]`. Used by client components
  * via TanStack Query. The same registry that the AI agent and Codex see.
+ *
+ * A tool can succeed at the transport level and still report `ok: false` in
+ * its result (a provider rejected the change, a partial delete, a revision
+ * conflict). That is a failure, so this throws unless the caller opts out
+ * with `acceptFailedResult`.
  */
 export async function callTool<T = any>(
   name: string,
   args: any = {},
   headers: HeadersInit = {},
   signal?: AbortSignal,
+  options: CallToolOptions = {},
 ): Promise<T> {
   // Tools that parse naive date/times (e.g. calendar_create_event) need the
   // user's timezone. The agent passes it explicitly, but direct UI calls didn't
@@ -50,7 +65,35 @@ export async function callTool<T = any>(
         : `${name} failed: empty or unreadable server response`,
     );
   }
-  return data.result as T;
+  const result = data.result;
+  if (!options.acceptFailedResult && isFailedResult(result)) {
+    throw new Error(failedResultMessage(name, result));
+  }
+  return result as T;
+}
+
+function isFailedResult(result: unknown): result is Record<string, unknown> {
+  return Boolean(result) && typeof result === 'object' && (result as { ok?: unknown }).ok === false;
+}
+
+/** A readable message from the failure fields a tool result can carry. */
+export function failedResultMessage(name: string, result: Record<string, unknown>): string {
+  for (const key of ['error', 'message', 'summary', 'reason'] as const) {
+    const value = result[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  if (result.needsDisambiguation) return 'More than one item matches. Open it and try again.';
+  if (Array.isArray(result.errors) && result.errors.length) {
+    const first = result.errors[0];
+    const detail =
+      typeof first === 'string'
+        ? first
+        : first && typeof first === 'object' && typeof (first as any).error === 'string'
+          ? (first as any).error
+          : '';
+    if (detail) return detail;
+  }
+  return `${name} did not complete`;
 }
 
 export async function health(): Promise<any> {

@@ -76,7 +76,7 @@ export function createCheckinAnswerPost(deps: CheckinAnswerDependencies = defaul
       let reflectionResult: any = null;
       let tomorrowResult: any = null;
       if (savesReflection) {
-        reflectionResult = await deps.convexMutation<any>((api as any).albatrossNotifications.answerCheckin, {
+        reflectionResult = await deps.convexMutation<any>(api.albatrossNotifications.answerCheckin, {
           ...caller,
           checkinId,
           promptKind: 'reflection',
@@ -85,7 +85,7 @@ export function createCheckinAnswerPost(deps: CheckinAnswerDependencies = defaul
         });
       }
       if (savesTomorrow) {
-        tomorrowResult = await deps.convexMutation<any>((api as any).albatrossNotifications.answerCheckin, {
+        tomorrowResult = await deps.convexMutation<any>(api.albatrossNotifications.answerCheckin, {
           ...caller,
           checkinId,
           promptKind: 'tomorrow',

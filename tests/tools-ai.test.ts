@@ -3,8 +3,6 @@ import './tools/harness';
 import { setThreadSummary } from '../lib/store/threads';
 import {
   bulkTriage,
-  classifyThreads,
-  classifyThreadsBatched,
   draftReply,
   extractActionItems,
   nlSearch,
@@ -107,44 +105,6 @@ describe('AI model tools — local fallbacks', () => {
     expect(batch.model).toBe('local');
     expect(batch.verdicts).toHaveLength(2);
     expect(batch.verdicts.every((verdict) => verdict.priority === 2)).toBe(true);
-  });
-
-  test('classify_threads deterministically labels noreply mail', async () => {
-    const classified = await runTool(classifyThreads.handler, {
-      threads: [
-        {
-          id: 'thread_noreply',
-          account: 'jakob@example.test',
-          from: 'noreply@example.test',
-          subject: 'Automated account notice',
-          snippet: 'No response needed.',
-          labels: ['CATEGORY_UPDATES'],
-          unread: true,
-        },
-      ],
-    });
-    expect(classified.model).toMatch(/local|deterministic/);
-    expect(classified.verdicts[0]?.id).toBe('thread_noreply');
-    expect(classified.verdicts[0]?.isAutomated).toBe(true);
-  });
-
-  test('classifyThreadsBatched folds needs_reply into main', async () => {
-    const verdicts = await withToolContext(() =>
-      classifyThreadsBatched(
-        [
-          {
-            id: 'human',
-            from: 'Alex <alex@example.test>',
-            subject: 'Can we meet tomorrow?',
-            snippet: 'Are you free at 2pm?',
-            labels: ['INBOX', 'UNREAD', 'CATEGORY_PERSONAL'],
-            unread: true,
-          },
-        ],
-        { rules: [], customLabels: [] },
-      ),
-    );
-    expect(verdicts[0]?.primary).toBe('main');
   });
 
   test('extract_action_items returns empty without AI', async () => {

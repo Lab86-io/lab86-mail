@@ -156,6 +156,61 @@ describe('MCP tools', () => {
     ]);
   });
 
+  test('reports a sync problem apart from a needed reconnect (AI-7)', async () => {
+    __setMcpToolDepsForTest({
+      convexQuery: (async () => [
+        {
+          server: 'granola',
+          status: 'connected',
+          syncStatus: 'error',
+          itemCount: 8,
+          syncError: 'account check: rate limited',
+          lastSyncError: 'account check: rate limited',
+          lastSyncErrorAt: 50,
+          lastSyncOkAt: 50,
+        },
+        {
+          server: 'github',
+          status: 'error',
+          syncStatus: 'error',
+          error: 'auth rejected — reconnect with a valid token',
+          lastSyncError: 'auth rejected — reconnect with a valid token',
+          lastSyncErrorAt: 60,
+        },
+        { server: 'jira', status: 'connected', syncStatus: 'ready', itemCount: 2 },
+      ]) as any,
+    });
+
+    const result = await runTool(mcpConnectionStatus.handler, {});
+
+    expect(result.connections).toEqual([
+      expect.objectContaining({
+        server: 'granola',
+        status: 'connected',
+        needsReconnect: false,
+        reconnectReason: null,
+        lastSyncProblem: 'account check: rate limited',
+        lastSyncProblemAt: 50,
+        lastSyncPartial: true,
+      }),
+      expect.objectContaining({
+        server: 'github',
+        status: 'reconnect_needed',
+        needsReconnect: true,
+        reconnectReason: 'auth rejected — reconnect with a valid token',
+        lastSyncProblem: null,
+      }),
+      expect.objectContaining({
+        server: 'jira',
+        status: 'connected',
+        needsReconnect: false,
+        lastSyncProblem: null,
+        lastSyncPartial: null,
+      }),
+    ]);
+    expect(mcpConnectionStatus.description).toContain('reconnect_needed');
+  });
+
   test('still requires authentication for the GitHub-specific search', async () => {
     await expect(
       runTool(githubSearch.handler, { query: 'anything', limit: 1 }, { userId: null }),

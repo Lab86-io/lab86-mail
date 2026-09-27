@@ -195,11 +195,13 @@ struct MailPagingTests {
     }
 
     @Test
-    func theLoadMoreRowOnlyPagesTheUnfilteredUnifiedList() {
+    func theLoadMoreRowPagesServerScopesButNotLocalFilters() {
         #expect(MailView.showsLoadMoreRow(hasMore: true, accountScope: [], query: ""))
         #expect(!MailView.showsLoadMoreRow(hasMore: false, accountScope: [], query: ""))
-        // A single-account filter narrows locally; unified pages may add nothing visible.
-        #expect(!MailView.showsLoadMoreRow(hasMore: true, accountScope: ["account-1"], query: ""))
+        // One account pages from the server with its own cursor (NAT-2).
+        #expect(MailView.showsLoadMoreRow(hasMore: true, accountScope: ["account-1"], query: ""))
+        // Several accounts narrow the unified list locally; a page may add nothing visible.
+        #expect(!MailView.showsLoadMoreRow(hasMore: true, accountScope: ["account-1", "account-2"], query: ""))
         // Mailbox scopes (Unread, Starred) and search ride the query, not just the search field.
         #expect(!MailView.showsLoadMoreRow(hasMore: true, accountScope: [], query: "is:unread"))
     }

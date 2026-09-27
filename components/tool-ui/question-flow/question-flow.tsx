@@ -17,7 +17,7 @@ import type {
   QuestionFlowOption,
 } from "./schema";
 import { cn, Button, Separator } from "./_adapter";
-import { Check, ChevronLeft } from "lucide-react";
+import { Check } from "lucide-react";
 
 interface SelectionIndicatorProps {
   mode: "single" | "multi";
@@ -549,7 +549,6 @@ function StepContent({
               disabled={isTransitioning}
               className="gap-1 rounded-ui text-muted-foreground"
             >
-              <ChevronLeft className="size-4" />
               Back
             </Button>
           ) : (

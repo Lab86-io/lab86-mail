@@ -1,11 +1,14 @@
+import type { FunctionReference } from 'convex/server';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
+import { isGrantGoneError, markGrantNeedsReconnect } from '@/lib/nylas/grant-health';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import { nylasErrorStatus, withNylasRetry } from '@/lib/nylas/retry';
+import { stripLoneSurrogatesDeep } from '@/lib/shared/text';
 import { buildCalendarEventSearchText, calendarYearMonthFromTimestamp } from './corpus';
 
-const calendarApi = (api as any).calendarData;
-const accountsApi = (api as any).accounts;
+const calendarApi = api.calendarData;
+const accountsApi = api.accounts;
 
 // Rolling sync window: recurring events arrive pre-expanded inside it via
 // expand_recurring, so no client-side RRULE math on the read path. A daily
@@ -66,7 +69,10 @@ export interface EventInputRow {
   providerUpdatedAt?: number;
 }
 
-type ReconcileMutation = (fn: any, args: Record<string, unknown>) => Promise<any>;
+type ReconcileMutation = (
+  fn: FunctionReference<'mutation', 'public'>,
+  args: Record<string, unknown>,
+) => Promise<any>;
 
 export async function reconcileCalendarWindowBatched(
   args: Record<string, unknown>,
@@ -196,7 +202,8 @@ export async function syncCalendarAccount({
     if (isGrantGoneError(err)) {
       // The provider grant no longer exists (e.g. a partially-failed account
       // removal). Terminal: stop retrying until the account is removed or
-      // reconnected.
+      // reconnected. The shared account state shows Reconnect (CAL-8).
+      await markGrantNeedsReconnect(row.grantId, 'the calendar connection no longer works');
       await markSync(row, {
         status: 'unauthorized',
         error: 'This account’s connection no longer exists. Remove the account or reconnect it.',
@@ -216,10 +223,6 @@ export async function syncCalendarAccount({
     }).catch(() => undefined);
     throw err;
   }
-}
-
-function isGrantGoneError(err: any): boolean {
-  return /no grant found/i.test(String(err?.message || ''));
 }
 
 export async function syncAllCalendarAccounts(
@@ -650,7 +653,7 @@ async function listCalendarEventsInWindow(
 }
 
 function toCalendarInput(raw: any): CalendarInputRow {
-  return {
+  return stripLoneSurrogatesDeep({
     providerCalendarId: str(raw.id) || '',
     name: str(raw.name) || '(unnamed calendar)',
     description: str(raw.description),
@@ -658,7 +661,7 @@ function toCalendarInput(raw: any): CalendarInputRow {
     isPrimary: bool(raw.isPrimary ?? raw.is_primary),
     readOnly: bool(raw.readOnly ?? raw.read_only),
     hexColor: str(raw.hexColor ?? raw.hex_color),
-  };
+  });
 }
 
 // Accepts both SDK responses (camelCase) and raw webhook objects (snake_case).
@@ -683,7 +686,9 @@ export function toEventInput(
   const status = str(raw.status);
   const icalUid = str(raw.icalUid ?? raw.ical_uid);
   const htmlLink = str(raw.htmlLink ?? raw.html_link);
-  return {
+  // Provider text enters the system here; a lone surrogate would make Convex
+  // reject the whole event batch.
+  return stripLoneSurrogatesDeep({
     providerEventId,
     providerCalendarId,
     title,
@@ -715,7 +720,7 @@ export function toEventInput(
       icalUid,
       htmlLink,
     }),
-  };
+  });
 }
 
 function whenToTimes(when: any): {

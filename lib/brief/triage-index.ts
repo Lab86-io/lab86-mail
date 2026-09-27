@@ -1,5 +1,6 @@
 import { recommendationFor } from '../mail/thread-handoff';
 import type { BriefActionV2, BriefSourceRefV2 } from '../shared/brief-document';
+import { truncateText } from '../shared/text';
 import { parseTriageHandoffs, type TriageHandoffV1 } from '../shared/triage-handoff';
 import type {
   DailyReport,
@@ -81,10 +82,8 @@ export function withDocumentSuggestion(record: TriageHandoffV1): TriageHandoffV1
       ? 'sheet'
       : 'doc';
   const kindLabel = kind === 'deck' ? 'presentation' : kind === 'sheet' ? 'spreadsheet' : 'document';
-  const titleBase = clean(record.situation)
-    .replace(/[.!?]+$/u, '')
-    .slice(0, 120);
-  const title = `${titleBase || 'Untitled'} ${kindLabel}`.slice(0, 160);
+  const titleBase = truncateText(clean(record.situation).replace(/[.!?]+$/u, ''), 120);
+  const title = truncateText(`${titleBase || 'Untitled'} ${kindLabel}`, 160);
   const sourceRefs = uniqueRefs([record.primaryRef, ...record.relatedRefs]);
   const replyRef = sourceRefs.find((ref) => ref.kind === 'thread' && ref.account);
   const replyContext = replyRef?.account
@@ -700,10 +699,8 @@ function mergeGroup(group: AtomicHandoff[]): TriageHandoffV1 {
       ...items.filter((item) => item.sourceKey !== primary.sourceKey).map((item) => item.situation),
       ...ordered.flatMap((record) => record.background),
     ]).slice(0, 3),
-    assessment: uniqueStrings(ordered.map((record) => record.assessment))
-      .join(' ')
-      .slice(0, 500),
-    recommendation: recommendations.slice(0, 2).join(' Then ').slice(0, 500),
+    assessment: truncateText(uniqueStrings(ordered.map((record) => record.assessment)).join(' '), 500),
+    recommendation: truncateText(recommendations.slice(0, 2).join(' Then '), 500),
     evidence: uniqueEvidence(ordered.flatMap((record) => record.evidence)).slice(0, 4),
     primaryRef,
     relatedRefs,
@@ -870,9 +867,11 @@ function capitalize(value: string): string {
 }
 
 function clean(value: unknown): string {
-  return String(value ?? '')
-    .replace(/\p{Extended_Pictographic}/gu, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 500);
+  return truncateText(
+    String(value ?? '')
+      .replace(/\p{Extended_Pictographic}/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    500,
+  );
 }

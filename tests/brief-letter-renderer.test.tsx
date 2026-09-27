@@ -485,7 +485,7 @@ describe('the daily letter, brief round 2026-09-22', () => {
 
   test('yesterday reads like the week ahead, directly under the lede', () => {
     const html = render(roundDocument());
-    expect(html).toContain('>Yesterday</span>');
+    expect(html).toContain('>Since yesterday</span>');
     const yesterday = html.slice(
       html.indexOf('data-brief-region="yesterday"'),
       html.indexOf('data-brief-region="answer"'),
@@ -682,7 +682,7 @@ describe('the daily letter, brief round 2026-09-22', () => {
     const html = render(document);
     expect(html).toContain('data-brief-letter="daily"');
     expect(html).toContain('Generic yesterday.');
-    expect(html).not.toContain('>Yesterday</span>');
+    expect(html).not.toContain('>Since yesterday</span>');
   });
 });
 

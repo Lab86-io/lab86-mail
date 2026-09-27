@@ -70,7 +70,7 @@ describe('canonical rich document validation', () => {
   });
 
   test('empty runs and empty run text are invalid while unformatted empty paragraphs remain valid', () => {
-    const block = { id: 'p', type: 'paragraph', text: '' };
+    const block = { id: 'p', type: 'paragraph' as const, text: '' };
     for (const runs of [[], [{ text: '' }]]) {
       expect(() => parseDocumentModel({ kind: 'doc', version: 1, blocks: [{ ...block, runs }] })).toThrow();
     }
@@ -85,8 +85,8 @@ describe('canonical rich document validation', () => {
 describe('suggestion payload kind boundaries', () => {
   test('accepts valid sheet change sets only for spreadsheet documents', () => {
     const changes = {
-      kind: 'sheet-changes',
-      version: 1,
+      kind: 'sheet-changes' as const,
+      version: 1 as const,
       changes: [{ sheet: 'forecast', cell: 'B2', content: '=SUM(A2:A3)' }],
       newSheets: ['Summary'],
     };
@@ -119,7 +119,7 @@ describe('document projections and metadata', () => {
     expect(sheetGridModel(createDefaultDocumentModel('doc'))).toBeNull();
     expect(sheetGridModel(createDefaultDocumentModel('deck'))).toBeNull();
     const legacy = createDefaultDocumentModel('sheet', 'legacy');
-    expect(sheetGridModel(legacy)).toBe(legacy);
+    expect(sheetGridModel(legacy)).toBe<unknown>(legacy);
   });
 
   test('engine sheets project into bounded native grids without mutating their full canonical snapshot', () => {

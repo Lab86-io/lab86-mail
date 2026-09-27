@@ -2,22 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Download,
-  ExternalLink,
-  Mail,
-  Search,
-  UserRound,
-  X,
-} from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Mail, MoreHorizontal, X } from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
+import { toastWithUndo } from '@/components/inbox/mail-undo-toast';
+import { MAIL_PUSH_QUERY_KEY, saveMailPushSettings } from '@/components/settings/MailAlertsSettings';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { ProofOffer } from '@/components/thread/ProofOffer';
 import { ArchiveIcon } from '@/components/ui/archive';
@@ -27,6 +19,12 @@ import { CornerUpLeftIcon } from '@/components/ui/corner-up-left';
 import { CornerUpRightIcon } from '@/components/ui/corner-up-right';
 import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { MaximizeIcon } from '@/components/ui/maximize';
 import { MinimizeIcon } from '@/components/ui/minimize';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -40,6 +38,7 @@ import type { JevAssessment } from '@/lib/jev/contract';
 import { emailNeedsIsolatedFrame, sanitizeEmailFrameHtml, sanitizeEmailHtml } from '@/lib/sanitize';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
+import { unreadMessageIds } from '@/lib/shell/reader-read-state';
 import { cn } from '@/lib/utils';
 import { AttachmentIcon } from './attachment-chip';
 import {
@@ -49,6 +48,7 @@ import {
 } from './attachment-preview';
 import { InlineComposer } from './InlineComposer';
 import { JevMailDetails } from './JevMailDetails';
+import { blockSenderWithUndo, UnsubscribeDialog } from './UnsubscribeDialog';
 
 // One vocabulary for header icon groups: a segmented control strip. The ring
 // offset matches the reader card the header now sits on.
@@ -109,7 +109,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
   // is not in the corpus yet (brand-new account mid-backfill); the HTTP
   // fallback hydrates it once and the live query takes over.
   const liveThread = useConvexQuery({
-    query: (api as any).liveMail.getThread,
+    query: api.liveMail.getThread,
     args: account && threadId ? { account, threadId } : 'skip',
   });
   const liveData = liveThread.status === 'success' ? liveThread.data : undefined;
@@ -192,22 +192,72 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
     });
   }, [account, threadId, liveData]);
 
+  const refetchSearch = () => queryClient.invalidateQueries({ queryKey: ['search'] });
   const archive = useMutation({
-    mutationFn: async () => callTool('archive_thread', { account, threadId }),
-    onSuccess: () => {
-      toast.success('Archived');
+    mutationFn: async () => callTool<{ operationId?: string }>('archive_thread', { account, threadId }),
+    onSuccess: (result) => {
+      toastWithUndo('Archived', result?.operationId, { onUndone: refetchSearch });
       setSelectedThread(null);
-      queryClient.invalidateQueries({ queryKey: ['search'] });
+      refetchSearch();
     },
+    onError: () => toast.error('Could not archive this thread. Try again.'),
   });
 
   const trash = useMutation({
-    mutationFn: async () => callTool('trash_thread', { account, threadId }),
+    mutationFn: async () => callTool<{ operationId?: string }>('trash_thread', { account, threadId }),
+    onSuccess: (result) => {
+      toastWithUndo('Moved to Trash', result?.operationId, { onUndone: refetchSearch });
+      setSelectedThread(null);
+      refetchSearch();
+    },
+    onError: () => toast.error('Could not move this thread to Trash. Try again.'),
+  });
+
+  // Unsubscribe asks first (it cannot be undone); block acts and offers Undo.
+  const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
+  const accountsQuery = useQuery({
+    queryKey: ['accounts'],
+    queryFn: async () => callTool<{ accounts: Array<{ accountId: string; email: string }> }>('list_accounts'),
+    staleTime: 60_000,
+  });
+  const mailboxEmail =
+    accountsQuery.data?.accounts?.find((row) => row.accountId === account)?.email || account || null;
+  const block = useMutation({
+    mutationFn: async () =>
+      blockSenderWithUndo(
+        { account, threadId: threadId || '' },
+        { onUndone: () => queryClient.invalidateQueries({ queryKey: ['search'] }) },
+      ),
     onSuccess: () => {
-      toast.success('Moved to Trash');
       setSelectedThread(null);
       queryClient.invalidateQueries({ queryKey: ['search'] });
     },
+    onError: (error: Error) => toast.error(error.message || 'Could not block this sender.'),
+  });
+
+  // VIP: this sender's mail always pushes, in quiet hours too (item 12).
+  const markVip = useMutation({
+    mutationFn: async (sender: string) => {
+      const settings = await saveMailPushSettings({ addVipSenders: [sender] });
+      queryClient.setQueryData(MAIL_PUSH_QUERY_KEY, settings);
+      return sender;
+    },
+    onSuccess: (sender) =>
+      toast.success(`Mail from ${sender} always pushes now`, {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            void saveMailPushSettings({ removeVipSenders: [sender] }).then(
+              (settings) => {
+                queryClient.setQueryData(MAIL_PUSH_QUERY_KEY, settings);
+                toast.success('Undone');
+              },
+              (error: Error) => toast.error(error.message || 'Could not undo this change.'),
+            );
+          },
+        },
+      }),
+    onError: (error: Error) => toast.error(error.message || 'Could not mark this sender as VIP.'),
   });
 
   // Collect every sender visible in this thread up front so we can resolve
@@ -262,10 +312,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
     if (!account || !threadId || !messages.length) return;
     const key = `${account}:${threadId}`;
     if (markedReadRef.current.has(key)) return;
-    const unreadIds = messages
-      .filter((m) => m.labels?.includes('UNREAD'))
-      .map((m) => m._id)
-      .filter(Boolean);
+    const unreadIds = unreadMessageIds(messages);
     if (!unreadIds.length) return;
     markedReadRef.current.add(key);
     markThreadRead.mutate({ ids: unreadIds });
@@ -292,6 +339,16 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
     refetchOnWindowFocus: false,
     retry: 0,
   });
+  // The `s` shortcut asks for a summary; run it the same way the button does.
+  const summaryRequestThreadId = useClientStore((s) => s.summaryRequestThreadId);
+  const refetchSummary = summary.refetch;
+  useEffect(() => {
+    if (!threadId || summaryRequestThreadId !== threadId) return;
+    if (!useClientStore.getState().claimThreadSummaryRequest(threadId)) return;
+    if (!canSummarizeThread) return;
+    setSummaryEnabled(true);
+    void refetchSummary();
+  }, [threadId, summaryRequestThreadId, canSummarizeThread, refetchSummary]);
   const ordered = useMemo(() => [...messages].reverse(), [messages]);
 
   const photoAccount =
@@ -493,7 +550,51 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
             <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
               <RowIcon icon={DeleteIcon} size={14} />
             </IconBtn>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  title="More actions"
+                  aria-label="More actions"
+                  className="text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem
+                  className="text-[12.5px]"
+                  onSelectAfterClose={() => setUnsubscribeOpen(true)}
+                >
+                  Unsubscribe…
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-[12.5px]"
+                  disabled={block.isPending}
+                  onSelect={() => block.mutate()}
+                >
+                  Block sender
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-[12.5px]"
+                  disabled={markVip.isPending || !emailFromHeader(newest?.from)}
+                  onSelect={() => {
+                    const sender = emailFromHeader(newest?.from);
+                    if (sender) markVip.mutate(sender);
+                  }}
+                >
+                  Always push this sender
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
+          <UnsubscribeDialog
+            target={threadId ? { account, threadId, mailbox: mailboxEmail } : null}
+            open={unsubscribeOpen}
+            onOpenChange={setUnsubscribeOpen}
+          />
           <div className={SEGMENT_GROUP}>
             <IconBtn
               title={threadFullscreen ? 'Exit full screen' : 'Full screen'}
@@ -549,7 +650,11 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
           {canSummarizeThread ? (
             <SummaryCard
               data={summary.data?.summary || cachedSummary}
-              model={summary.data?.model || data?.summaryModel || (cachedSummary ? 'cached' : '')}
+              model={
+                summary.data?.model ||
+                (data && 'summaryModel' in data ? data.summaryModel : null) ||
+                (cachedSummary ? 'cached' : '')
+              }
               loading={!cachedSummary && summaryEnabled && summary.isLoading}
               error={summary.error ? (summary.error as Error).message : null}
               onRetry={() => {
@@ -610,9 +715,13 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                 onClick={() => startReply('reply')}
                 disabled={!replyAnchor}
                 title="Reply (r)"
+                aria-label="Reply"
                 className={BAR_BUTTON}
               >
-                <RowIcon icon={CornerUpLeftIcon} size={14} />
+                {/* Icon when narrow, the word when wide: never an icon before text. */}
+                <span className="inline-flex @[520px]:hidden">
+                  <RowIcon icon={CornerUpLeftIcon} size={14} />
+                </span>
                 <span className="hidden @[520px]:inline">Reply</span>
               </button>
               <button
@@ -620,9 +729,13 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                 onClick={() => startReply('reply_all')}
                 disabled={!replyAnchor}
                 title="Reply all"
+                aria-label="Reply all"
                 className={BAR_BUTTON}
               >
-                <RowIcon icon={ReplyAllIcon} size={14} />
+                {/* Icon when narrow, the word when wide: never an icon before text. */}
+                <span className="inline-flex @[520px]:hidden">
+                  <RowIcon icon={ReplyAllIcon} size={14} />
+                </span>
                 <span className="hidden @[520px]:inline">Reply all</span>
               </button>
               <button
@@ -630,9 +743,13 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                 onClick={() => startReply('forward')}
                 disabled={!replyAnchor}
                 title="Forward"
+                aria-label="Forward"
                 className={BAR_BUTTON}
               >
-                <RowIcon icon={CornerUpRightIcon} size={14} />
+                {/* Icon when narrow, the word when wide: never an icon before text. */}
+                <span className="inline-flex @[520px]:hidden">
+                  <RowIcon icon={CornerUpRightIcon} size={14} />
+                </span>
                 <span className="hidden @[520px]:inline">Forward</span>
               </button>
               <span className="mx-1 h-4 w-px shrink-0 bg-[var(--color-border)]" aria-hidden />
@@ -706,7 +823,7 @@ function SummaryCard({
             className="text-[10px] text-[var(--color-text-faint)]"
             title="Model that generated this summary"
           >
-            {model || 'AI'}
+            {model || 'Model'}
           </span>
           <button
             type="button"
@@ -890,14 +1007,12 @@ function ContactButton({
             onClick={() => onShowEmails(contact.email!)}
             className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[12px] text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)]"
           >
-            <Search className="size-3.5 text-[var(--color-text-muted)]" />
             Show emails with them
           </button>
           <a
             href={`mailto:${contact.email}`}
             className="flex h-8 items-center gap-2 rounded-md px-2 text-[12px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
           >
-            <UserRound className="size-3.5" />
             New email
           </a>
         </div>
@@ -1156,7 +1271,6 @@ function Attachments({
                     download={preview.filename}
                     className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-[12px] text-[var(--color-text)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)]"
                   >
-                    <Download className="size-3.5" />
                     Download
                   </a>
                   <a
@@ -1165,7 +1279,6 @@ function Attachments({
                     rel="noreferrer"
                     className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-[12px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
                   >
-                    <ExternalLink className="size-3.5" />
                     Open
                   </a>
                 </div>
@@ -1294,7 +1407,7 @@ function IconBtn({
 function LinkedTaskChips({ threadId }: { threadId: string }) {
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const live = useConvexQuery({
-    query: (api as any).boards.liveCardsForThread,
+    query: api.boards.liveCardsForThread,
     args: { threadId },
   });
   const cards: Array<{ cardId: string; title: string; completedAt?: number }> =
@@ -1310,8 +1423,8 @@ function LinkedTaskChips({ threadId }: { threadId: string }) {
           className="inline-flex max-w-56 items-center gap-1 truncate rounded-ui border border-[var(--color-border)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           title="Open the Tasks board"
         >
-          <CheckCircle2 className={card.completedAt ? 'size-3 text-emerald-500' : 'size-3'} />
           <span className={card.completedAt ? 'truncate line-through opacity-70' : 'truncate'}>
+            {card.completedAt ? <span className="sr-only">Done: </span> : null}
             {card.title}
           </span>
         </button>

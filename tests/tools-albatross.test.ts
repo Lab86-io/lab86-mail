@@ -67,6 +67,7 @@ const undoCalls: any[] = [];
 const approvalOrder: string[] = [];
 const toolInvocations: Array<{ tool: string; args: any }> = [];
 const queryFailures = new Set<string>();
+const failingCardTitles = new Set<string>();
 let approvalFixture: any = null;
 let connectedAccountsFixture: any[] = [];
 let areaFixture: any = null;
@@ -165,6 +166,8 @@ async function convexQueryMock(fn: string, args: any) {
   if (fn === apiMock.albatrossWork.listProjects) return [{ projectId: 'project_live', status: args.status }];
   if (fn === apiMock.albatrossWork.getProjectPane) return { project: { projectId: args.projectId } };
   if (fn === apiMock.albatrossWork.listSprints) return [{ sprintId: 'sprint_live', status: args.status }];
+  if (fn === apiMock.albatrossRoutines.listForProject)
+    return [{ routineId: 'routine_1', projectId: args.projectId }];
   if (fn === apiMock.albatrossWorkV2.workDetail) return workDetailFixture;
   if (fn === apiMock.albatrossWork.listPlanApplications) return [];
   return null;
@@ -183,6 +186,7 @@ async function invokeToolMock(tool: any, args: any, ctx?: any) {
     return tool.handler(args, ctx);
   }
   if (tool.name === 'tasks_create_card') {
+    if (failingCardTitles.has(args.title)) throw new Error('Board write failed');
     return { ok: true, cardId: `card_${sequence}`, operationId: `operation_card_${sequence}` };
   }
   if (tool.name === 'calendar_create_event') {
@@ -235,6 +239,7 @@ beforeEach(() => {
   approvalOrder.length = 0;
   toolInvocations.length = 0;
   queryFailures.clear();
+  failingCardTitles.clear();
   approvalFixture = null;
   connectedAccountsFixture = [];
   areaFixture = null;
@@ -291,6 +296,70 @@ beforeEach(() => {
 
 afterAll(() => {
   albatross.__setAlbatrossToolDepsForTest();
+});
+
+describe('Albatross plan apply failures (WRK-4, WRK-1)', () => {
+  const plan = {
+    id: 'plan_partial',
+    outcome: 'Moved in',
+    digitalActions: [
+      { kind: 'task', key: 'step-1', actionKey: 'a1', title: 'Book the truck' },
+      { kind: 'task', key: 'step-2', actionKey: 'a2', title: 'Pack the kitchen' },
+      {
+        kind: 'document',
+        key: 'step-3',
+        actionKey: 'a3',
+        title: 'Moving checklist',
+        documentKind: 'doc',
+        instructions: 'List',
+      },
+    ],
+  };
+
+  test('a failed step keeps the created artifacts recorded and reports the failure', async () => {
+    failingCardTitles.add('Pack the kitchen');
+    await expect(
+      runTool(albatross.albatrossApplyIntentPlan.handler, {
+        intentId: 'intent_move',
+        projectMode: 'task_only',
+        plan,
+      }),
+    ).rejects.toThrow('1 failed: Pack the kitchen (Board write failed)');
+    const recorded = mutationCalls.find((call) => call.fn === apiMock.albatrossWork.recordPlanApplication);
+    expect(recorded?.args.status).toBe('partially_applied');
+    expect(recorded?.args.artifacts.map((artifact: any) => artifact.actionKey)).toEqual(['a1', 'a3']);
+    expect(recorded?.args.unresolvedArtifacts).toContainEqual(
+      expect.objectContaining({ actionKey: 'a2', reason: 'failed' }),
+    );
+    // The recorded document keeps its id, so the plan binds it (WRK-5).
+    expect(recorded?.args.artifacts[1]).toMatchObject({ kind: 'document', stepKey: 'step-3' });
+  });
+
+  test('nothing is recorded when no step could be created', async () => {
+    failingCardTitles.add('Book the truck');
+    await expect(
+      runTool(albatross.albatrossApplyIntentPlan.handler, {
+        intentId: 'intent_move',
+        projectMode: 'task_only',
+        plan: { ...plan, digitalActions: [plan.digitalActions[0]] },
+      }),
+    ).rejects.toThrow('Could not apply the plan: Board write failed');
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWork.recordPlanApplication)).toBe(false);
+  });
+
+  test('a plan task carries its Work id as source.intentId', async () => {
+    await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_move',
+      projectMode: 'task_only',
+      plan: { ...plan, digitalActions: [plan.digitalActions[0]] },
+    });
+    const card = toolInvocations.find((call) => call.tool === 'tasks_create_card');
+    expect(card?.args.source).toMatchObject({
+      kind: 'chat',
+      externalId: 'intent_move',
+      intentId: 'intent_move',
+    });
+  });
 });
 
 describe('Albatross tools', () => {
@@ -722,6 +791,16 @@ describe('Albatross tools', () => {
     expect(operationCalls.at(-1)?.batchId).toBe('batch_mocked');
   });
 
+  test('routine tools list a project routines and run one now as the user', async () => {
+    const listed = await runTool(albatross.albatrossListRoutines.handler, { projectId: 'project_live' });
+    expect(listed.routines).toEqual([{ routineId: 'routine_1', projectId: 'project_live' }]);
+    const ran = await runTool(albatross.albatrossRunRoutineNow.handler, { routineId: 'routine_1' });
+    expect(ran).toEqual({ ok: true });
+    expect(mutationCalls.find((call) => call.fn === apiMock.albatrossRoutines.runNow)?.args).toMatchObject({
+      routineId: 'routine_1',
+    });
+  });
+
   test('approval queue tools claim before execution, reject, undo provider operations, and protect unsupported approvals', async () => {
     const listed = await runTool(albatross.albatrossListApprovalQueue.handler, {
       status: 'pending',
@@ -764,10 +843,6 @@ describe('Albatross tools', () => {
     expect(approvalOrder.indexOf('claimApproval')).toBeLessThan(approvalOrder.indexOf('tool:send_message'));
     expect(mutationCalls.at(-1)?.args.undoExpiresAt).toBeUndefined();
 
-    await expect(
-      runTool(albatross.albatrossUndoApproval.handler, { approvalId: 'approval_pending' }),
-    ).rejects.toThrow(/did not record an undoable/);
-
     approvalFixture = {
       approvalId: 'approval_reject',
       status: 'pending',
@@ -798,37 +873,6 @@ describe('Albatross tools', () => {
     });
     expect(approvedRsvp.result.operationId).toMatch(/^operation_rsvp_/);
     expect(mutationCalls.at(-1)?.args.undoExpiresAt).toBeGreaterThan(Date.now());
-    const undone = await runTool(albatross.albatrossUndoApproval.handler, { approvalId: 'approval_rsvp' });
-    expect(undone.ok).toBe(true);
-    expect(undoCalls).toEqual([{ userId: 'test_user_tools', operationId: approvedRsvp.result.operationId }]);
-    expect(mutationCalls.at(-1)?.args.status).toBe('undone');
-
-    approvalFixture = {
-      approvalId: 'approval_old',
-      status: 'approved',
-      toolName: 'send_message',
-      undoExpiresAt: Date.now() - 1,
-    };
-    await expect(
-      runTool(albatross.albatrossUndoApproval.handler, { approvalId: 'approval_old' }),
-    ).rejects.toThrow(/Undo window expired/);
-  });
-
-  test('preview undo unresolved returns artifacts whose operations were undone', async () => {
-    const result = await runTool(albatross.albatrossPreviewUndoUnresolved.handler, {
-      application: {
-        artifacts: [
-          { kind: 'project', id: 'project_1', title: 'Project' },
-          { kind: 'task', id: 'task_1', title: 'Task' },
-        ],
-      },
-      operations: [
-        { status: 'undone', target: { kind: 'project', id: 'project_1' } },
-        { status: 'applied', target: { kind: 'task', id: 'task_1' } },
-      ],
-    });
-
-    expect(result.unresolved).toEqual([{ kind: 'project', id: 'project_1', title: 'Project' }]);
   });
 
   test('records user-confirmed progress with source evidence, then versions the same Work plan', async () => {
@@ -1130,7 +1174,7 @@ test('a failed optional attachment returns saved progress and an attachment warn
       return convexMutationMock(fn, args);
     }) as any,
   });
-  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+  const result: any = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
     workId: 'monro',
     claim: 'Appointment booked',
     evidence: [{ sourceKind: 'mail_thread', sourceId: 'mail:account:thread', title: 'Booking' }],
@@ -1147,7 +1191,7 @@ test('a reply watch is saved through chat and waiting Work cannot be replanned',
     threadId: 'jolie-thread',
     requirement: 'Advice about the LLC',
   };
-  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+  const result: any = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
     workId: 'llc',
     claim: 'I sent Jolie an email; waiting on her reply.',
     waitingForReply,
@@ -1166,7 +1210,7 @@ test('a reply watch is saved through chat and waiting Work cannot be replanned',
 
 test('a missing mail account cannot prevent saving the authoritative progress report', async () => {
   workDetailFixture = { work: { _id: 'llc', workState: 'active' } };
-  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+  const result: any = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
     workId: 'llc',
     claim: 'Email sent',
     evidence: [{ sourceKind: 'mail_thread', sourceId: 'thread-with-no-account', title: 'Sent email' }],
@@ -1188,7 +1232,7 @@ test('a failed question or post-save refresh returns saved progress without a mi
       throw new Error('Refresh unavailable');
     }) as any,
   });
-  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+  const result: any = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
     workId: 'llc',
     claim: 'Email sent',
     questionAnswers: [{ questionId: 'stale', answer: 'Yes' }],

@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpRight, CornerDownLeft, Loader2, Mail, Moon, Pencil, Sun, X } from 'lucide-react';
+import { ArrowUpRight, CornerDownLeft, Loader2, X } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
@@ -505,7 +505,6 @@ function SearchContent({
                   })
                 }
               >
-                <Pencil className="size-4" />
                 Compose new message
               </CommandItem>
             ) : null}
@@ -517,7 +516,6 @@ function SearchContent({
                   onClose();
                 }}
               >
-                <Moon className="size-4" />
                 Dark theme
               </CommandItem>
             ) : null}
@@ -529,7 +527,6 @@ function SearchContent({
                   onClose();
                 }}
               >
-                <Sun className="size-4" />
                 Light theme
               </CommandItem>
             ) : null}
@@ -540,7 +537,6 @@ function SearchContent({
             {Object.entries({
               Inbox: DEFAULT_MAIL_QUERY,
               ...QUICK_SEARCH_QUERIES,
-              Snoozed: 'label:MailOS/Snoozed',
             })
               .filter(([label]) => matchesSearch(`mail ${label}`, trimmed))
               .map(([label, value]) => (
@@ -554,28 +550,23 @@ function SearchContent({
                     })
                   }
                 >
-                  <Mail className="size-4" />
                   <span className="capitalize">{label}</span>
                 </CommandItem>
               ))}
           </CommandGroup>
         ) : null}
         {scope === 'all' && pathname === '/' && trimmed ? (
-          <CommandGroup heading="AI commands">
+          <CommandGroup heading="Ask Albatross">
             {[
               ['Triage newest 25', 'Triage my newest 25 inbox threads'],
               ['Summarize today', 'Summarize my unread from today and propose 3 replies'],
             ]
-              .filter(([label]) => matchesSearch(`ai ${label}`, trimmed))
+              .filter(([label]) => matchesSearch(`ask ${label}`, trimmed))
               .map(([label, request]) => (
                 <CommandItem
                   key={label}
-                  value={`ai:${label}`}
-                  onSelect={() =>
-                    onNavigate(() =>
-                      document.dispatchEvent(new CustomEvent('lab86-mail:ask', { detail: request })),
-                    )
-                  }
+                  value={`ask:${label}`}
+                  onSelect={() => onNavigate(() => useClientStore.getState().askAssistant(request))}
                 >
                   {label}
                 </CommandItem>

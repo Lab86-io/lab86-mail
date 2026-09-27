@@ -16,9 +16,15 @@ try {
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(origin);
-    await page.getByRole('heading', { name: 'Jev', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Classification', exact: true }).waitFor();
     assert.equal(await page.getByRole('switch').count(), 6);
-    assert.equal(await page.getByRole('combobox', { name: /model/i }).count(), 0);
+    const picker = page.getByRole('combobox', { name: /Classifier model/ });
+    assert.equal(await picker.inputValue(), 'jev-1.13');
+    await picker.selectOption('tev1-4b');
+    await page.getByText('Classifier changed. Recent mail is queued for a recheck.').waitFor();
+    await page.waitForFunction(() => document.querySelector('#classifier-model')?.value === 'tev1-4b');
+    const selectCall = (await (await fetch(`${origin}/__preview/state`)).json()).calls.at(-1);
+    assert.deepEqual(selectCall, { action: 'selectClassifier', classifierId: 'tev1-4b', revision: 0 });
     assert.equal(
       await page
         .getByRole('switch', { name: 'Promotions in the Brief', exact: true })
@@ -98,7 +104,7 @@ try {
       recheck: true,
       evidence: true,
       backlogNavigation: true,
-      modelPicker: false,
+      modelPicker: true,
       horizontalOverflow: false,
     });
     await page.close();

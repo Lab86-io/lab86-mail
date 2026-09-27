@@ -32,7 +32,7 @@ class DurableOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      client_name: 'Lab86 Mail',
+      client_name: 'Albatross',
       client_uri: hostedPublicUrl(),
       redirect_uris: [this.redirect.toString()],
       grant_types: ['authorization_code', 'refresh_token'],

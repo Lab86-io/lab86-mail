@@ -157,7 +157,7 @@ test('revision history is bounded and restoration forwards the optimistic revisi
     args.expectedRevision === 4 ? { ok: true } : { ok: false, code: 'REVISION_CONFLICT' },
   );
   __setDocumentServiceDepsForTest({ convexMutation: mutation as any, convexQuery: query as any });
-  expect(await listDocumentRevisions('owner', 'reserved-id')).toEqual([revision]);
+  expect(await listDocumentRevisions('owner', 'reserved-id')).toEqual<unknown>([revision]);
   expect(getFunctionName(query.mock.calls[0][0])).toBe('documents:listRevisions');
   expect(query.mock.calls[0][1]).toEqual({ userId: 'owner', documentId: 'reserved-id', limit: 100 });
   const restore = { userId: 'owner', documentId: 'reserved-id', revision: 1, expectedRevision: 4 };

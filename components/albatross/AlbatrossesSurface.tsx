@@ -179,7 +179,7 @@ export function AlbatrossesSurface() {
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-16 pt-5">
+      <div className="assistant-launcher-clearance min-h-0 flex-1 overflow-y-auto px-5 pt-5">
         <div className="mx-auto max-w-3xl">
           {stale.length ? (
             <div className="mb-8">

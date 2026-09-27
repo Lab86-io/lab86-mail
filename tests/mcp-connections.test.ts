@@ -41,7 +41,7 @@ beforeEach(() => {
     },
     secretFingerprint: () => 'fingerprint1234',
     maskFingerprint: () => '...1234',
-    refreshMcpOAuth: async ({ persisted }) => ({
+    refreshMcpOAuth: async ({ persisted }: any) => ({
       ...persisted,
       clientInformation: persisted.clientInformation,
       tokens: {
@@ -106,6 +106,49 @@ describe('MCP connection persistence', () => {
       saveTokenConnection({ userId: 'user_1', server: 'granola', token: 'token' }),
     ).rejects.toThrow('browser authorization');
   });
+
+  test('a new sign-in replaces the connection that needs a reconnect, in place (AI-7)', async () => {
+    queryResult = [
+      { ...granolaRow, connectionId: 'granola_broken', status: 'error', displayName: 'Work meetings' },
+      { ...granolaRow, connectionId: 'github_ok', server: 'github', authKind: 'token', status: 'connected' },
+      {
+        ...granolaRow,
+        connectionId: 'github_broken',
+        server: 'github',
+        authKind: 'token',
+        status: 'error',
+        displayName: 'Work GitHub',
+      },
+    ];
+    const oauth = await saveOAuthConnection({
+      userId: 'user_1',
+      server: 'granola',
+      displayName: 'Granola',
+      persisted: {
+        state: 'state_2',
+        clientInformation: { client_id: 'client_1' },
+        tokens: { access_token: 'access_2', token_type: 'Bearer' },
+      },
+    });
+    expect(oauth.connectionId).toBe('granola_broken');
+    expect(mutations.at(-1)?.args).toMatchObject({
+      connectionId: 'granola_broken',
+      displayName: 'Work meetings',
+    });
+
+    const token = await saveTokenConnection({ userId: 'user_1', server: 'github', token: 'ghp_new' });
+    expect(token.connectionId).toBe('github_broken');
+    expect(mutations.at(-1)?.args).toMatchObject({
+      connectionId: 'github_broken',
+      displayName: 'Work GitHub',
+    });
+
+    // A server with only working connections gets a new connection.
+    queryResult = [{ ...granolaRow, connectionId: 'github_ok', server: 'github', status: 'connected' }];
+    const fresh = await saveTokenConnection({ userId: 'user_1', server: 'github', token: 'ghp_other' });
+    expect(fresh.connectionId).toStartWith('github_');
+    expect(fresh.connectionId).not.toBe('github_ok');
+  });
 });
 
 describe('MCP OAuth token reads', () => {
@@ -115,7 +158,7 @@ describe('MCP OAuth token reads', () => {
       credentials: { accessTokenEncrypted: 'encrypted:access_1', expiresAt: NOW + 120_000 },
     };
 
-    expect(await getConnectionToken('user_1', 'granola_conn')).toEqual({
+    expect(await getConnectionToken('user_1', 'granola_conn')).toEqual<unknown>({
       row: granolaRow,
       token: 'access_1',
     });
@@ -133,7 +176,7 @@ describe('MCP OAuth token reads', () => {
       },
     };
 
-    expect(await getConnectionToken('user_1', 'granola_conn')).toEqual({
+    expect(await getConnectionToken('user_1', 'granola_conn')).toEqual<unknown>({
       row: granolaRow,
       token: 'access_refreshed',
     });
@@ -170,7 +213,7 @@ describe('MCP OAuth token reads', () => {
       }) as any,
       encryptSecret: (value: string) => `encrypted:${value}`,
       decryptSecret: (value: string) => value.slice('encrypted:'.length),
-      refreshMcpOAuth: async ({ persisted }) => {
+      refreshMcpOAuth: async ({ persisted }: any) => {
         refreshCalls += 1;
         await gate;
         return {
@@ -253,7 +296,7 @@ describe('MCP OAuth token reads', () => {
       }) as any,
       encryptSecret: (value: string) => `encrypted:${value}`,
       decryptSecret: (value: string) => value.slice('encrypted:'.length),
-      refreshMcpOAuth: async ({ persisted }) => ({
+      refreshMcpOAuth: async ({ persisted }: any) => ({
         ...persisted,
         clientInformation: persisted.clientInformation,
         tokens: {
@@ -271,7 +314,7 @@ describe('MCP OAuth token reads', () => {
 
 test('lists, disconnects, and updates connection toggles through Convex', async () => {
   queryResult = [granolaRow];
-  expect(await listUserConnections('user_1')).toEqual([granolaRow]);
+  expect(await listUserConnections('user_1')).toEqual<unknown>([granolaRow]);
   await disconnectConnection('user_1', 'granola_conn');
   await setConnectionToggles('user_1', 'granola_conn', { includeInBrief: false });
 

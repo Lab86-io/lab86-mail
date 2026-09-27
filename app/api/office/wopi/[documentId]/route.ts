@@ -46,17 +46,14 @@ export async function POST(request: Request, context: Context) {
     const value = request.headers.get('x-wopi-lock') || '';
     if ((operation !== 'GET_LOCK' && !value) || value.length > 1024)
       return new Response(null, { status: 400 });
-    const result = await convexMutation<{ ok: boolean; value: string }>(
-      (api as any).officeDocuments.wopiLock,
-      {
-        userId,
-        documentId,
-        sessionId,
-        operation,
-        value,
-        oldValue: request.headers.get('x-wopi-oldlock') || undefined,
-      },
-    );
+    const result = await convexMutation<{ ok: boolean; value: string }>(api.officeDocuments.wopiLock, {
+      userId,
+      documentId,
+      sessionId,
+      operation,
+      value,
+      oldValue: request.headers.get('x-wopi-oldlock') || undefined,
+    });
     return new Response(null, { status: result.ok ? 200 : 409, headers: { 'X-WOPI-Lock': result.value } });
   } catch (error) {
     return officeFailure(error);

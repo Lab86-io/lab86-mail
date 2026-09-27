@@ -20,9 +20,7 @@ import {
   HardDrive,
   List,
   MoreHorizontal,
-  Plus,
   Search,
-  Settings2,
   Upload,
 } from 'lucide-react';
 import {
@@ -867,18 +865,13 @@ export function FilesSurface() {
           size="sm"
           onClick={() => setConnectionsOpen(true)}
         >
-          <Cloud className="size-3.5" />
+          <Cloud className="size-3.5 @min-[480px]/files:hidden" />
           <span className="hidden @min-[480px]/files:inline">Drives</span>
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button type="button" size="sm" disabled={createDocumentMutation.isPending}>
-              {createDocumentMutation.isPending ? (
-                <Ring className="size-3.5" />
-              ) : (
-                <Plus className="size-3.5" />
-              )}
-              New
+              {createDocumentMutation.isPending ? 'Creating…' : 'New'}
               <ChevronDown className="size-3" />
             </Button>
           </DropdownMenuTrigger>
@@ -888,7 +881,7 @@ export function FilesSurface() {
                 disabled={importOfficeMutation.isPending}
                 onSelect={() => officeInputRef.current?.click()}
               >
-                <Upload className="size-3.5" /> Import Office working copy
+                Import Office working copy
               </DropdownMenuItem>
             ) : null}
             {officeQuery.data?.enabled ? (
@@ -896,27 +889,25 @@ export function FilesSurface() {
                 disabled={createWordMutation.isPending}
                 onSelect={() => createWordMutation.mutate()}
               >
-                <FileText className="size-3.5" /> Document
+                Document
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('doc')}>
-              <FileText className="size-3.5" /> {officeQuery.data?.enabled ? 'Simple document' : 'Document'}
+              {officeQuery.data?.enabled ? 'Simple document' : 'Document'}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('sheet')}>
-              <FileSpreadsheet className="size-3.5" /> Spreadsheet
+              Spreadsheet
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={importXlsxMutation.isPending}
               onSelect={() => xlsxInputRef.current?.click()}
             >
-              <Upload className="size-3.5" /> Import Excel workbook
+              Import Excel workbook
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('deck')}>
-              <FilePresentation className="size-3.5" /> Presentation
+              Presentation
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
-              <Upload className="size-3.5" /> Upload files
-            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>Upload files</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </header>
@@ -1414,7 +1405,6 @@ function EmptyFiles({
             explicitly add a file.
           </p>
           <Button className="mt-4" size="sm" onClick={onChooseICloud}>
-            <FolderOpen className="size-3.5" />
             Choose folder
           </Button>
         </div>
@@ -1443,12 +1433,10 @@ function EmptyFiles({
         </p>
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           <Button size="sm" onClick={onUpload}>
-            <Upload className="size-3.5" />
             Upload to Albatross
           </Button>
           {location.kind !== 'albatross' ? (
             <Button variant="outline" size="sm" onClick={onConnect}>
-              <Cloud className="size-3.5" />
               Connect a drive
             </Button>
           ) : null}
@@ -1529,8 +1517,7 @@ function DriveConnectionsDialog({
                 disabled={icloudBusy}
                 onClick={onChooseICloud}
               >
-                {icloudBusy ? <Ring className="size-3.5" /> : <FolderOpen className="size-3.5" />}
-                Choose
+                {icloudBusy ? 'Choosing…' : 'Choose'}
               </Button>
             </div>
           </div>
@@ -1616,7 +1603,6 @@ function ProviderConnectionRow({
             <a
               href={`/api/files/oauth/start?provider=${provider.id}&redirectTo=${encodeURIComponent('/?view=files')}`}
             >
-              <Plus className="size-3.5" />
               {connections.some((connection) => connection.status === 'error')
                 ? 'Reconnect'
                 : connections.length
@@ -1624,10 +1610,7 @@ function ProviderConnectionRow({
                   : 'Connect'}
             </a>
           ) : (
-            <>
-              <Settings2 className="size-3.5" />
-              Setup needed
-            </>
+            <>Setup needed</>
           )}
         </Button>
       </div>

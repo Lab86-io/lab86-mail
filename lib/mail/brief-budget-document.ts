@@ -1,3 +1,4 @@
+import { sinceRegion } from '../brief/since';
 import {
   type BriefDocumentV2,
   type BriefNode,
@@ -21,6 +22,7 @@ import type { BriefLane } from './brief-score';
 //
 //   regions[0] "lede"        hero { text role:lede }
 //   regions[n] "yesterday"   text role:body                             when prose
+//   regions[n] "since"       entity_list (derived operation refs, Undo) when Albatross acted
 //   regions[n] "answer"      entity_list (thread refs, lane answer)     when items
 //   regions[n] "today"       entity_list (event refs, then thread refs) when items or events
 //   regions[n] "know"        entity_list (thread refs, lane know)       when items
@@ -29,6 +31,9 @@ import type { BriefLane } from './brief-score';
 //   regions[n] "connected"   entity_list (mcp refs, ranked)             when items, max 4
 //   regions[n] "week-ahead"  text role:body
 //   regions[n] "areas"       entity_list variant:compact (area refs)    when areas, max 3
+//
+// A light (weekend) edition keeps lede, yesterday, answer, today, and
+// week-ahead only (lib/brief/schedule.ts).
 //
 // Nothing else. Every entity item carries the real ref, `framing.lane`,
 // `framing.reason` (the model's one line, may be absent), `framing.sender`,
@@ -61,7 +66,7 @@ export interface BudgetAreaLine {
 }
 
 export interface BudgetBriefDocumentInput {
-  report: Pick<DailyReport, 'generatedAt' | 'sections' | 'narrative'>;
+  report: Pick<DailyReport, 'generatedAt' | 'sections' | 'narrative'> & Pick<Partial<DailyReport>, 'light'>;
   prose: { lede: string; weekAhead: string; lines: Record<string, string>; yesterday?: string };
   areas?: BudgetAreaLine[];
   timezone?: string | null;
@@ -97,15 +102,45 @@ function threadPayload(item: DailyReportItem) {
   };
 }
 
+// The three steering actions of a lane item (FEATURES item 8). They share one
+// action name; `payload.mode` picks the choice. Clients put them in the
+// item's overflow menu and run `steer_brief_item`.
+export const BRIEF_STEERING_ACTIONS = [
+  { mode: 'not_for_me', label: 'Not for me' },
+  { mode: 'less_from_sender', label: 'Less from this sender' },
+  { mode: 'keep_showing', label: 'Keep showing' },
+] as const;
+
+export function steeringActions(item: DailyReportItem): ItemAction[] {
+  const payload = threadPayload(item);
+  return BRIEF_STEERING_ACTIONS.filter((entry) => entry.mode !== 'less_from_sender' || item.senderEmail).map(
+    (entry) => ({
+      action: 'steer_item',
+      label: entry.label,
+      payload: {
+        ...payload,
+        mode: entry.mode,
+        ...(entry.mode === 'less_from_sender' && item.senderEmail ? { senderEmail: item.senderEmail } : {}),
+      },
+      style: 'quiet' as const,
+    }),
+  );
+}
+
 // The actions for one thread row. Open comes first; clients treat the first
 // known action as the row tap. The rest are the review and immediate actions
-// both clients already run.
+// both clients already run, then the steering actions.
 export function threadActions(item: DailyReportItem, region: ThreadRegion): ItemAction[] {
   const payload = threadPayload(item);
   const open: ItemAction = { action: 'open_thread', label: 'Open', payload, style: 'quiet' };
   const dismiss: ItemAction = { action: 'dismiss_thread', label: 'Not needed', payload, style: 'quiet' };
   if (region === 'answer') {
-    return [open, { action: 'draft_reply', label: 'Reply', payload, style: 'secondary' }, dismiss];
+    return [
+      open,
+      { action: 'draft_reply', label: 'Reply', payload, style: 'secondary' },
+      dismiss,
+      ...steeringActions(item),
+    ];
   }
   if (region === 'today') {
     const actions: ItemAction[] = [open];
@@ -117,7 +152,7 @@ export function threadActions(item: DailyReportItem, region: ThreadRegion): Item
         style: 'secondary',
       });
     }
-    actions.push(dismiss);
+    actions.push(dismiss, ...steeringActions(item));
     return actions;
   }
   if (region === 'waiting') {
@@ -131,7 +166,7 @@ export function threadActions(item: DailyReportItem, region: ThreadRegion): Item
       },
     ];
   }
-  return [open, dismiss];
+  return [open, dismiss, ...steeringActions(item)];
 }
 
 function laneItem(item: DailyReportItem, lane: ThreadRegion, line: string | undefined, generatedAt: number) {
@@ -281,6 +316,7 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
   const lede = input.prose.lede.trim() || input.report.narrative || 'Your brief is ready.';
   const weekAhead = input.prose.weekAhead.trim();
   const yesterday = (input.prose.yesterday || '').trim();
+  const light = input.report.light === true;
   const regions: BriefRegion[] = [];
 
   regions.push({
@@ -303,13 +339,17 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
     });
   }
 
+  // What Albatross did since the last edition, each with Undo (FEATURES item 7).
+  const since = sinceRegion(sections.since, timezone);
+  if (since) regions.push(since);
+
   const days = briefWeekDays(generatedAt, timezone, 1);
   const todayEvents = (eventsByDay(sections.calendar ?? [], days, timezone).get(days[0].dayKey) || []).slice(
     0,
     BUDGET_TODAY_EVENT_LIMIT,
   );
 
-  for (const lane of ['answer', 'today', 'know'] as const) {
+  for (const lane of light ? (['answer', 'today'] as const) : (['answer', 'today', 'know'] as const)) {
     const items = sections[lane] ?? [];
     const events = lane === 'today' ? todayEvents : [];
     if (!items.length && !events.length) continue;
@@ -331,7 +371,7 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
     });
   }
 
-  const waiting = (sections.waiting ?? []).slice(0, BUDGET_WAITING_LIMIT);
+  const waiting = light ? [] : (sections.waiting ?? []).slice(0, BUDGET_WAITING_LIMIT);
   if (waiting.length) {
     regions.push({
       id: 'waiting',
@@ -349,7 +389,7 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
     });
   }
 
-  const tasks = tasksForBrief(sections.tasks, generatedAt, BUDGET_TASK_LIMIT, timezone);
+  const tasks = light ? [] : tasksForBrief(sections.tasks, generatedAt, BUDGET_TASK_LIMIT, timezone);
   if (tasks.length) {
     regions.push({
       id: 'tasks',
@@ -365,7 +405,7 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
     });
   }
 
-  const connected = rankConnectedItems(sections.mcp ?? [], generatedAt);
+  const connected = light ? [] : rankConnectedItems(sections.mcp ?? [], generatedAt);
   if (connected.length) {
     regions.push({
       id: 'connected',
@@ -389,7 +429,9 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
     });
   }
 
-  const areas = (input.areas ?? []).filter((area) => area.areaId && area.name).slice(0, BUDGET_AREA_LIMIT);
+  const areas = light
+    ? []
+    : (input.areas ?? []).filter((area) => area.areaId && area.name).slice(0, BUDGET_AREA_LIMIT);
   if (areas.length) {
     regions.push({
       id: 'areas',

@@ -23,11 +23,12 @@ export function isClerkBillingConfigured() {
 }
 
 export function hostedPublicUrl() {
+  // Both Railway environments set LAB86_MAIL_PUBLIC_URL. The last fallback is
+  // a local `next dev` server on this machine.
   return (
     process.env.LAB86_MAIL_PUBLIC_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.MAIL_OS_PUBLIC_URL ||
-    'http://127.0.0.1:18837'
+    `http://localhost:${process.env.PORT || '3000'}`
   ).replace(/\/$/, '');
 }
 

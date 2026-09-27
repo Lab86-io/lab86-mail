@@ -208,8 +208,29 @@ const MONTHS = [
   'december',
 ];
 
+// Contractions the rules read as two words. "what's" must count as the
+// interrogative "what" (WRK-6).
+const CONTRACTIONS: Array<[RegExp, string]> = [
+  [/\b(what|who|where|when|how|why|which|that|there|it|here)'s\b/g, '$1 is'],
+  [/\bcan't\b/g, 'can not'],
+  [/\bwon't\b/g, 'will not'],
+  [/\b(\w+)n't\b/g, '$1 not'],
+  [/\bi'm\b/g, 'i am'],
+  [/\b(\w+)'re\b/g, '$1 are'],
+  [/\b(\w+)'ll\b/g, '$1 will'],
+  [/\b(\w+)'ve\b/g, '$1 have'],
+  [/\b(i|you|we|they|he|she)'d\b/g, '$1 would'],
+];
+
 function normalize(text: string) {
-  return text.trim().toLowerCase().replace(/\s+/g, ' ');
+  let normalized = text
+    .trim()
+    .toLowerCase()
+    // Curly and modifier apostrophes from phone keyboards.
+    .replace(/[\u2018\u2019\u02bc\u2032]/g, "'")
+    .replace(/\s+/g, ' ');
+  for (const [pattern, replacement] of CONTRACTIONS) normalized = normalized.replace(pattern, replacement);
+  return normalized;
 }
 
 function startsWithAny(text: string, phrases: string[]) {
@@ -242,8 +263,15 @@ export function looksEnumerated(text: string) {
   return false;
 }
 
+// "May" is also a modal verb ("may i see the invoice"). It counts as a
+// month only next to a date word or a day number (WRK-6).
+const MAY_AS_MONTH =
+  /\b(in|by|before|after|until|since|from|of|early|mid|late|next|this|last) may\b|\bmay \d{1,2}(st|nd|rd|th)?\b|\b\d{1,2}(st|nd|rd|th)? (of )?may\b/;
+
 function mentionsMonth(text: string) {
-  return MONTHS.some((month) => new RegExp(`\\b${month}\\b`).test(text));
+  return MONTHS.some((month) =>
+    month === 'may' ? MAY_AS_MONTH.test(text) : new RegExp(`\\b${month}\\b`).test(text),
+  );
 }
 
 /**
@@ -258,7 +286,9 @@ export function routeHeuristic(text: string): RouteVerdict | null {
   if (includesAny(normalized, HOLD_EXPLICIT))
     return { route: 'hold', confidence: 0.95, reason: 'explicit hold' };
 
-  const interrogative = INTERROGATIVES.includes(firstWord(normalized));
+  const opener = firstWord(normalized);
+  const interrogative =
+    INTERROGATIVES.includes(opener) || (opener === 'may' && /^may (i|we|you)\b/.test(normalized));
   const askOpener = startsWithAny(normalized, ASK_OPENERS);
   const askPhrase = includesAny(normalized, ASK_PHRASES);
   const commitment = includesAny(normalized, HOLD_COMMITMENT);

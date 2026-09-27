@@ -18,6 +18,7 @@ const file = {
   kind: 'doc' as const,
   model,
   providerVersion: '7',
+  webUrl: undefined,
   editability: { editable: true },
 };
 afterEach(() => __setGoogleDocumentToolDepsForTest());

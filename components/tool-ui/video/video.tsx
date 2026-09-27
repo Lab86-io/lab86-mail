@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { ExternalLink, Play } from "lucide-react";
 import { cn, Button } from "./_adapter";
 
 import {
@@ -217,10 +216,6 @@ function VideoInner(props: Omit<VideoProps, "defaultMuted">) {
                       onClick={handleOpen}
                       className="bg-black/55 text-white hover:bg-black/70"
                     >
-                      <ExternalLink
-                        className="mr-1 h-4 w-4"
-                        aria-hidden="true"
-                      />
                       Open
                     </Button>
                   )}
@@ -230,7 +225,6 @@ function VideoInner(props: Omit<VideoProps, "defaultMuted">) {
                     onClick={handleWatch}
                     className="shadow-sm"
                   >
-                    <Play className="mr-1 h-4 w-4" aria-hidden="true" />
                     Watch
                   </Button>
                 </div>

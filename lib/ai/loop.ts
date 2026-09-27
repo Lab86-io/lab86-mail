@@ -7,12 +7,14 @@ import {
   streamText,
 } from 'ai';
 import { z } from 'zod';
+import { pausedAssistantRisks } from '../hosted/standing-orders';
 import { narrativePrompt } from '../narrative/service';
 import { withDeadline } from '../shared/deadline';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { documentCreate } from '../tools/documents';
-import { invokeTool } from '../tools/registry';
+import { invokeTool, toolRisk } from '../tools/registry';
+import { APPROVAL_RISKS, approvalConditionMet, approvalSummary, type ToolRisk } from './approval';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { executeCheckpointedTool, toolExecutionKey } from './execution';
 import {
@@ -24,7 +26,12 @@ import {
   resolveAgentRuntimes,
 } from './gateway';
 import { newOperationBatchId } from './operations';
-import { buildSystemPrompt } from './system-prompt';
+import {
+  buildSystemPrompt,
+  type ClientPlatform,
+  isWebOnlyTool,
+  toolGroupsForPlatform,
+} from './system-prompt';
 import {
   activeToolNames,
   ENABLE_TOOLS_NAME,
@@ -38,14 +45,15 @@ import { agentToolTimeoutMs, withToolTimeout } from './tool-timeout';
 
 /** Search text only, never attachment bytes or opaque tool/image payloads. */
 export function narrativeQueryFromContent(content: ModelMessage['content'] | undefined): string {
-  return (
+  return truncateText(
     typeof content === 'string'
       ? content
       : (content || [])
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
-          .join(' ')
-  ).slice(0, 240);
+          .join(' '),
+    240,
+  );
 }
 
 export async function boundedAgentNarrativeContext(
@@ -63,14 +71,16 @@ export async function boundedAgentNarrativeContext(
 
 /** Short follow-ups retain their recent subject without admitting attachment bytes. */
 export function narrativeQueryFromMessages(messages: ModelMessage[]): string {
-  return messages
-    .filter((message) => message.role === 'user')
-    .slice(-3)
-    .reverse()
-    .map((message) => narrativeQueryFromContent(message.content))
-    .filter(Boolean)
-    .join(' ')
-    .slice(0, 240);
+  return truncateText(
+    messages
+      .filter((message) => message.role === 'user')
+      .slice(-3)
+      .reverse()
+      .map((message) => narrativeQueryFromContent(message.content))
+      .filter(Boolean)
+      .join(' '),
+    240,
+  );
 }
 
 export const AGENT_TOOL_NAMES = new Set([
@@ -98,6 +108,10 @@ export const AGENT_TOOL_NAMES = new Set([
   'list_attachments',
   'archive_thread',
   'trash_thread',
+  'bulk_move_threads',
+  'get_unsubscribe_options',
+  'unsubscribe_sender',
+  'block_sender',
   'mark_read',
   'mark_unread',
   'star',
@@ -108,6 +122,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'mute_thread',
   'snooze_thread',
   'unsnooze_thread',
+  'list_snoozed',
   'save_draft',
   'update_draft',
   'delete_draft',
@@ -116,6 +131,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'cancel_scheduled',
   'list_scheduled',
   'undo_send',
+  'list_saved_replies',
   'summarize_thread',
   'triage_thread',
   'draft_reply',
@@ -168,16 +184,17 @@ export const AGENT_TOOL_NAMES = new Set([
   'albatross_get_project_pane',
   'albatross_create_sprint',
   'albatross_list_sprints',
-  'albatross_preview_undo_unresolved',
   'albatross_get_work_context',
   'albatross_complete_work',
   'albatross_record_progress',
   'albatross_replan_work',
   'albatross_split_work',
+  'work_list',
   'albatross_list_add',
   'albatross_metric_log',
   'albatross_capture_work',
   'area_list',
+  'area_home',
   'area_create',
   'area_update_identity',
   'area_archive',
@@ -297,17 +314,51 @@ export function stripPatterns<T>(value: T): T {
   return out as T;
 }
 
+export interface AgentToolOptions {
+  /** Tool groups the chat scope turns on. They are never unloaded. */
+  scopeGroups?: readonly string[];
+  /** The client that renders this chat. Native clients get no web-only UI tools. */
+  clientPlatform?: ClientPlatform;
+  /** Risk classes the user paused in Settings, Standing orders. Those calls change nothing. */
+  pausedRisks?: ReadonlySet<ToolRisk>;
+}
+
+/** What a call in a paused risk class returns. The model reads it; nothing ran. */
+export function pausedToolResult(name: string, risk: ToolRisk) {
+  return {
+    ok: false,
+    status: 'paused_by_user',
+    risk,
+    message: `The user paused this kind of action in Settings, Standing orders, so ${name} did not run and nothing changed. Tell the user what you would have done, and do not try another tool to do the same thing.`,
+  };
+}
+
 export function liftToolsForAgent(
   operationBatchId?: string,
   userTimezone?: string,
   presentationSession?: PresentationSession,
+  options: AgentToolOptions = {},
 ): Record<string, any> {
   const lifted: Record<string, any> = {};
   const rejectedInputs = new Set<string>();
+  const clientPlatform = options.clientPlatform ?? 'web';
   for (const [name, t] of Object.entries(TOOLS)) {
     if (!AGENT_TOOL_NAMES.has(name)) continue;
+    if (clientPlatform !== 'web' && isWebOnlyTool(name)) continue;
+    const risk = toolRisk(t);
+    const paused = options.pausedRisks?.has(risk) ?? false;
     lifted[name] = aiTool({
       description: t.description,
+      // Calls that reach another person or cannot be undone wait for the
+      // user's approval. The SDK runs execute only after an approved response
+      // for this exact call. Malformed input skips the gate so the model gets
+      // the field errors first. A paused class never asks: it runs nothing.
+      ...(APPROVAL_RISKS.has(risk) && !paused
+        ? {
+            needsApproval: (input: unknown) =>
+              t.input.safeParse(input ?? {}).success && approvalConditionMet(name, input),
+          }
+        : {}),
       // Keep legacy briefs readable by the registry, but offer the agent one
       // creation contract with native charts/tables, including during recovery.
       inputSchema: modelInputSchema(
@@ -316,6 +367,7 @@ export function liftToolsForAgent(
           : t.input,
       ),
       execute: async (args: unknown, options?: { abortSignal?: AbortSignal }) => {
+        if (paused) return pausedToolResult(name, risk);
         const context = getAiRequestContext();
         if (presentationSession && name === 'document_create' && (args as any)?.kind === 'deck') {
           const stage = nextPresentationCheckpoint(presentationSession);
@@ -590,10 +642,19 @@ export function liftToolsForAgent(
   // On-demand tool groups (lib/ai/tool-groups.ts). The call itself is the
   // signal: prepareStep reads enable_tools calls from earlier steps and widens
   // the active set for the next one.
+  const requestedGroups: string[] = [];
   lifted[ENABLE_TOOLS_NAME] = aiTool({
-    description: enableToolsDescription(),
+    description: enableToolsDescription(toolGroupsForPlatform(clientPlatform)),
     inputSchema: enableToolsInputSchema,
-    execute: async ({ groups }: { groups: string[] }) => enableToolsResult(groups),
+    execute: async ({ groups }: { groups: string[] }) => {
+      const result = enableToolsResult(groups, {
+        allToolNames: Object.keys(lifted),
+        scopeGroups: options.scopeGroups ?? [],
+        earlier: [...requestedGroups],
+      });
+      requestedGroups.push(...groups);
+      return result;
+    },
   });
   return lifted;
 }
@@ -653,7 +714,7 @@ export function isAuthError(error: any): boolean {
 
 function authFailureResult(error: any) {
   const text =
-    'Your AI provider rejected the API key (auth error). Open Settings → AI and re-enter a valid OpenRouter, OpenAI, or Anthropic key — then continue.';
+    'Your model provider rejected the API key. Open Settings, then Intelligence, and enter a valid OpenRouter, OpenAI, or Anthropic key. Then continue.';
   console.error(`[ai] auth failure: ${safeAuthErrorText(error)}`);
   return {
     text,
@@ -664,8 +725,8 @@ function authFailureResult(error: any) {
 
 function providerFailureResult(error: any) {
   const text = /invalid json response/i.test(String(error?.message || ''))
-    ? 'The AI provider returned a malformed response after the request started, so I could not produce a reliable final answer. The agent stayed connected; please check whether the requested change is already reflected, then retry only if it is missing.'
-    : 'The AI provider failed while finishing that request. The agent stayed connected; please retry the last step if the requested change is not visible.';
+    ? 'The model provider sent a malformed response after the request started, so I could not give a reliable final answer. Check whether the requested change is already in place, and retry only if it is missing.'
+    : 'The model provider failed before it finished that request. Retry the last step if the requested change is not visible.';
   // Keep raw provider diagnostics out of the user-facing text; log for triage.
   console.error(`[ai] provider failure while finishing request: ${errorText(error)}`);
   return {
@@ -692,6 +753,7 @@ const CONTENT_CHUNK_TYPES = new Set([
   'tool-input-error',
   'tool-output-available',
   'tool-output-error',
+  'tool-output-denied',
   'tool-approval-request',
   'source-url',
   'source-document',
@@ -718,6 +780,7 @@ export async function forwardAgentStream(
   chunks: AsyncIterable<UiChunk>,
   readError: () => unknown = () => undefined,
   resolveShape: ShapeResolver = resolveToolShape,
+  timeZone?: string,
 ): Promise<ForwardAgentStreamResult> {
   const pending: UiChunk[] = [];
   const calls = new Map<string, { toolName: string; input?: unknown }>();
@@ -745,6 +808,21 @@ export async function forwardAgentStream(
       calls.set(chunk.toolCallId, { toolName: chunk.toolName, input: chunk.input });
     }
     emit(chunk);
+    // An approval stop carries the card text beside it, so native clients can
+    // say what the call will do. The web chat derives the same summary.
+    if (chunk.type === 'tool-approval-request' && chunk.toolCallId) {
+      const call = calls.get(chunk.toolCallId);
+      if (call)
+        emit({
+          type: 'data-tool-approval',
+          id: chunk.toolCallId,
+          data: {
+            approvalId: chunk.approvalId,
+            toolName: call.toolName,
+            ...approvalSummary(call.toolName, call.input, timeZone),
+          },
+        });
+    }
     // Every tool result carries a display shape beside it, so web and native
     // render the same card from the same data without re-deriving it.
     if (chunk.type === 'tool-output-available' && chunk.toolCallId) {
@@ -783,6 +861,7 @@ interface AgentStreamOptions {
   /** Tool groups active from the first step (from the chat scope). */
   toolGroups?: string[];
   presentationSession?: PresentationSession;
+  timezone?: string;
   signal?: AbortSignal;
 }
 
@@ -797,7 +876,7 @@ export function activeToolsForStep(
   presentationSession?: PresentationSession,
 ): string[] {
   const next = presentationSession ? nextPresentationCheckpoint(presentationSession) : 'brief';
-  return activeToolNames(toolNames, [...initialGroups, ...enabledGroupsFromSteps(steps)]).filter(
+  return activeToolNames(toolNames, enabledGroupsFromSteps(steps), initialGroups).filter(
     (name) =>
       name !== PRESENTATION_CHOICE_TOOL ||
       (!!next && next !== 'cancelled' && !hasPendingPresentationQuestion(steps)),
@@ -878,7 +957,13 @@ async function streamAgentTurn(
       // This formatter also runs for recoverable tool errors. Only streamText.onError owns fatal state.
       onError: (error) => safeAuthErrorText(error),
     });
-    const outcome = await forwardAgentStream(writer, uiStream as AsyncIterable<UiChunk>, () => streamError);
+    const outcome = await forwardAgentStream(
+      writer,
+      uiStream as AsyncIterable<UiChunk>,
+      () => streamError,
+      resolveToolShape,
+      options.timezone,
+    );
     const steps = await Promise.resolve(result.steps).catch(() => [] as any[]);
     const usage = await Promise.resolve(result.totalUsage).catch(() => undefined);
     const finishReason = await Promise.resolve(result.finishReason).catch(() => 'error');
@@ -935,6 +1020,8 @@ export interface AgentRunOpts {
   narrativeTopics?: string[];
   /** Tool groups active from the first step (lib/ai/tool-groups.ts). */
   toolGroups?: string[];
+  /** The client that renders this chat (default web). */
+  clientPlatform?: ClientPlatform;
   signal?: AbortSignal;
 }
 
@@ -966,11 +1053,12 @@ export async function runAgent({
   userTimezone,
   narrativeTopics,
   toolGroups,
+  clientPlatform = 'web',
   signal,
 }: AgentRunOpts): Promise<AgentRun> {
   if (!hasPlatformAi() && !userId) {
     throw new Error(
-      'AI not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
+      'Models are not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
     );
   }
   const requestContext = { userId, userEmail, userName, runId, agent: 'ai' as const };
@@ -982,7 +1070,13 @@ export async function runAgent({
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = runId;
   const timezone = userTimezone || 'UTC';
-  const tools = liftToolsForAgent(operationBatchId, timezone, presentationSession);
+  // The user's standing orders decide which risk classes the assistant may use.
+  const pausedRisks = userId ? await pausedAssistantRisks(userId) : undefined;
+  const tools = liftToolsForAgent(operationBatchId, timezone, presentationSession, {
+    scopeGroups: toolGroups,
+    clientPlatform,
+    pausedRisks,
+  });
 
   let resolveSteps: (steps: any[]) => void = () => undefined;
   const steps = new Promise<any[]>((resolve) => {
@@ -1018,7 +1112,10 @@ export async function runAgent({
                 boundedAgentNarrativeContext(userId, memoryQuery, narrativePrompt, narrativeTopics, signal),
               ]);
               signal?.throwIfAborted();
-              const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
+              const base = buildSystemPrompt(
+                { name: userName, email: userEmail },
+                { memories, clientPlatform },
+              );
               // Static instructions first, per-turn context last: providers cache the
               // shared prefix, so the parts that change every turn sit at the end.
               const choiceContext = presentationSession
@@ -1037,6 +1134,7 @@ export async function runAgent({
                   tools,
                   toolGroups,
                   presentationSession,
+                  timezone,
                   signal,
                 }),
               );
@@ -1095,3 +1193,4 @@ import {
   presentationChoiceSchemaForSession,
 } from '@/lib/documents/presentation-choices';
 import { presentationAuthoringV2Schema } from '@/lib/documents/presentation-design';
+import { truncateText } from '../shared/text';

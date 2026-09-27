@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import { getAiRequestContext } from '../ai/context';
 import {
   type AlbatrossDocumentModel,
@@ -14,7 +15,7 @@ import {
 } from './model';
 import { assertModelWithinLimit } from './sheet-workbook';
 
-const documentsApi = (api as any).documents;
+const documentsApi = api.documents;
 function documentExecution() {
   const context = getAiRequestContext();
   return context.runId && context.toolExecutionKey
@@ -67,10 +68,7 @@ export async function createDocument(input: {
     userId: input.userId,
     documentId,
     kind: input.kind,
-    title:
-      String(input.title || '')
-        .trim()
-        .slice(0, 500) || 'Untitled',
+    title: truncateText(String(input.title || '').trim(), 500) || 'Untitled',
     model,
     sourceRefs: input.sourceRefs || [],
     reason: input.reason,
@@ -82,6 +80,14 @@ export async function createDocument(input: {
 export async function listDocuments(input: { userId: string; kind?: DocumentKind; limit?: number }) {
   const rows = await dependencies.convexQuery<AlbatrossDocumentRecord[]>(documentsApi.list, input);
   return rows.map((row) => ({ ...row, model: parseDocumentModel(row.model, row.kind) }));
+}
+
+/** Names, kinds, and revisions only: the models never leave Convex. */
+export async function listDocumentSummaries(input: { userId: string; kind?: DocumentKind; limit?: number }) {
+  return dependencies.convexQuery<Array<Omit<AlbatrossDocumentRecord, 'model'>>>(documentsApi.list, {
+    ...input,
+    metadataOnly: true,
+  });
 }
 
 export async function getDocument(userId: string, documentId: string) {
@@ -217,7 +223,7 @@ export async function updateDocument(input: {
     userId: input.userId,
     documentId: input.documentId,
     expectedRevision: input.expectedRevision,
-    title: input.title === undefined ? undefined : input.title.trim().slice(0, 500) || 'Untitled',
+    title: input.title === undefined ? undefined : truncateText(input.title.trim(), 500) || 'Untitled',
     model,
     sourceRefs: input.sourceRefs,
     reason: input.reason,
@@ -231,10 +237,10 @@ export async function archiveDocument(userId: string, documentId: string) {
   return dependencies.convexMutation<{ ok: boolean }>(documentsApi.archive, { userId, documentId });
 }
 
+/** Version history rows: metadata only; the models stay in Convex. */
 export interface DocumentRevision {
   revision: number;
   title: string;
-  model: AlbatrossDocumentModel;
   reason: string;
   actor: 'user' | 'ai' | 'system';
   createdAt: number;

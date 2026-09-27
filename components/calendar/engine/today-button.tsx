@@ -12,7 +12,7 @@ export function TodayButton() {
       className="flex size-10 shrink-0 flex-col gap-0 border-0 p-0 text-center"
       onClick={() => setSelectedDate(new Date())}
     >
-      <span className="text-[9px] font-normal uppercase leading-3 text-[var(--color-accent)]">
+      <span className="text-[10px] font-normal leading-3 text-[var(--color-accent)]">
         {formatDate(today, 'MMM')}
       </span>
       <span className="text-[17px] font-medium leading-5">{today.getDate()}</span>

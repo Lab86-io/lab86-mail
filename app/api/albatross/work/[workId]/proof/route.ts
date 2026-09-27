@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { api, type ConvexCallArgs, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -30,7 +30,7 @@ type Trust = (typeof TRUST_LEVELS)[number];
 interface WorkProofDependencies {
   requireCurrentUser: typeof requireCurrentUser;
   enforceUserRateLimit: typeof enforceUserRateLimit;
-  attachProof: (args: Record<string, unknown>) => Promise<string>;
+  attachProof: (args: ConvexCallArgs<typeof api.albatrossWorkV2.attachProof>) => Promise<string>;
   workDetail: (args: { userId: string; workId: string }) => Promise<any>;
   mailThread: (args: { userId: string; accountId: string; providerThreadId: string }) => Promise<any>;
 }
@@ -38,9 +38,9 @@ interface WorkProofDependencies {
 const defaults: WorkProofDependencies = {
   requireCurrentUser,
   enforceUserRateLimit,
-  attachProof: (args) => convexMutation<string>((api as any).albatrossWorkV2.attachProof, args),
-  workDetail: (args) => convexQuery<any>((api as any).albatrossWorkV2.workDetail, args),
-  mailThread: (args) => convexQuery<any>((api as any).mailCorpus.getCorpusThread, args),
+  attachProof: (args) => convexMutation<string>(api.albatrossWorkV2.attachProof, args),
+  workDetail: (args) => convexQuery<any>(api.albatrossWorkV2.workDetail, args),
+  mailThread: (args) => convexQuery<any>(api.mailCorpus.getCorpusThread, args),
 };
 
 function isSourceKind(value: unknown): value is SourceKind {

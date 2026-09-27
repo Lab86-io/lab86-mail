@@ -396,7 +396,7 @@ describe('designed generation through the document proposal', () => {
   test('a new deck hangs planned paintings; a resolver failure or an empty result degrades to typography', async () => {
     const artworks = poolArtworks(4);
     const resolve = mock(
-      async (plan: DeckImageryPlan): Promise<ResolvedDeckImagery> => ({
+      async (plan: DeckImageryPlan, _context?: unknown): Promise<ResolvedDeckImagery> => ({
         assets: artworks,
         bySlot: Object.fromEntries(plan.slots.map((slot, index) => [slot.slotId, artworks[index]])),
         notes: [],

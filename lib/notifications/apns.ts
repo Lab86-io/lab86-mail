@@ -1,5 +1,6 @@
 import { createPrivateKey, sign } from 'node:crypto';
 import { type ClientHttp2Stream, connect, constants, type IncomingHttpHeaders } from 'node:http2';
+import { truncateText } from '../shared/text';
 import type { NotificationEnvelope } from './delivery';
 import { isAPNsDeviceToken, type MobilePushEnvironment } from './mobile-device';
 
@@ -130,8 +131,8 @@ export function buildAPNsPayload(envelope: NotificationEnvelope): APNsPayload {
   return {
     aps: {
       alert: {
-        title: envelope.title.trim().slice(0, 180),
-        body: envelope.body.trim().slice(0, 1_000),
+        title: truncateText(envelope.title.trim(), 180),
+        body: truncateText(envelope.body.trim(), 1_000),
       },
       sound: 'default',
       category,

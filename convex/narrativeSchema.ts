@@ -33,8 +33,7 @@ export const narrativeTables = {
     refreshScheduledAt: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
-    .index('by_enabled_dispatched', ['enabled', 'lastDispatchedAt'])
-    .index('by_enabled', ['enabled']),
+    .index('by_enabled_dispatched', ['enabled', 'lastDispatchedAt']),
   narrativeEntries: defineTable({
     userId: v.string(),
     key: v.string(),
@@ -76,7 +75,6 @@ export const narrativeTables = {
     .index('by_user_updated', ['userId', 'updatedAt'])
     .index('by_user_source', ['userId', 'source'])
     .index('by_user_current_time', ['userId', 'current', 'occurredAt'])
-    .index('by_user_pinned', ['userId', 'pinned', 'occurredAt'])
     .index('by_user_level_pinned', ['userId', 'level', 'pinned', 'occurredAt'])
     .searchIndex('by_text', { searchField: 'text', filterFields: ['userId', 'current', 'level'] })
     .searchIndex('by_topics', { searchField: 'topicText', filterFields: ['userId'] }),

@@ -287,7 +287,10 @@ export async function browseCloudFiles(input: {
       reason: typed?.providerReason,
     });
     await dependencies
-      .markCloudFileConnectionAccess(input.userId, connection.connectionId, message)
+      // Only a reconnect error marks the connection broken (DOC-2).
+      .markCloudFileConnectionAccess(input.userId, connection.connectionId, message, {
+        reconnect: typed?.code === 'RECONNECT_REQUIRED',
+      })
       .catch(() => undefined);
     throw error;
   }

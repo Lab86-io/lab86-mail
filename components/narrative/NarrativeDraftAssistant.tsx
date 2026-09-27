@@ -1,6 +1,5 @@
 'use client';
 
-import { PenLine } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { NarrativeContextPacket } from '@/lib/narrative/context';
@@ -145,7 +144,7 @@ function DraftPanel({ to, subject, body, topic, recipientsKey, disabled, onApply
           }
         }}
       >
-        <PenLine className="size-3.5" aria-hidden="true" /> Draft with context
+        Draft with context
       </Button>
       {open && (
         <div id={id} className="space-y-3 py-2">

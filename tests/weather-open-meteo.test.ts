@@ -114,6 +114,25 @@ describe('timezone heuristics', () => {
     expect(defaultUnitForTimezone('Europe/Paris')).toBe('celsius');
     expect(defaultUnitForTimezone('America/Sao_Paulo')).toBe('celsius');
     expect(defaultUnitForTimezone(undefined)).toBe('celsius');
+    // WX-1: the unit follows the country of the zone, not the continent.
+    for (const zone of [
+      'America/Toronto',
+      'America/Vancouver',
+      'America/Mexico_City',
+      'America/Havana',
+      'America/Halifax',
+    ])
+      expect(defaultUnitForTimezone(zone)).toBe('celsius');
+    for (const zone of [
+      'America/Chicago',
+      'America/Indiana/Knox',
+      'America/Kentucky/Louisville',
+      'US/Pacific',
+      'America/Puerto_Rico',
+      'Africa/Monrovia',
+      'America/Nassau',
+    ])
+      expect(defaultUnitForTimezone(zone)).toBe('fahrenheit');
   });
   test('cityFromTimezone extracts a geocodable city', () => {
     expect(cityFromTimezone('America/New_York')).toBe('New York');

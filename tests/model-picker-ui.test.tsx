@@ -5,6 +5,14 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { ModelPicker, type ModelPickerProps } from '../components/settings/ModelPicker';
 import { ProviderGlyph } from '../components/settings/ProviderGlyph';
 import { buildModelCatalog } from '../lib/ai/model-catalog';
+import {
+  loadPinnedModels,
+  PINNED_MODELS_KEY,
+  readDevicePinnedModels,
+  resetPinnedModels,
+  savePinnedModels,
+  togglePinnedModel,
+} from '../lib/shell/pinned-models';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let view: ReactTestRenderer;
@@ -38,6 +46,7 @@ test('each provider logo resolves gradients within its own SVG instance', () => 
 });
 afterEach(async () => {
   if (view) await act(async () => view.unmount());
+  resetPinnedModels();
 });
 const buttons = () => view.root.findAllByType('button');
 const button = (name: string) => buttons().find((node) => node.props['aria-label'] === name)!;
@@ -100,14 +109,14 @@ test('provider filters toggle and combine with search; text-only models stay exc
   expect(text(view.root)).toContain('No vision models match');
 });
 
-test('starring is separate from selecting, and favorites can be filtered and removed', async () => {
+test('pinning is separate from selecting, and pins can be filtered and removed', async () => {
   const change = await mount();
-  await click('Star GLM-5.3 Flash');
+  await click('Pin GLM-5.3 Flash');
   expect(change).not.toHaveBeenCalled();
-  expect(button('Unstar GLM-5.3 Flash').props['aria-pressed']).toBe(true);
-  await click('Starred models');
+  expect(button('Unpin GLM-5.3 Flash').props['aria-pressed']).toBe(true);
+  await click('Pinned models');
   expect(rows().map((row) => row.props['data-model-id'])).toEqual([glm]);
-  await click('Unstar GLM-5.3 Flash');
+  await click('Unpin GLM-5.3 Flash');
   expect(rows()).toHaveLength(0);
   await click('All providers');
   expect(rows().length).toBeGreaterThan(1);
@@ -144,9 +153,9 @@ test('disabled panels disable search, filters, favorites, rows and tier controls
   expect(view.root.findByType('input').props.disabled).toBe(true);
   expect(buttons().every((node) => node.props.disabled)).toBe(true);
   await click('Select GLM-5.3 Flash');
-  await click('Star GLM-5.3 Flash');
+  await click('Pin GLM-5.3 Flash');
   expect(change).not.toHaveBeenCalled();
-  expect(button('Star GLM-5.3 Flash')).toBeDefined();
+  expect(button('Pin GLM-5.3 Flash')).toBeDefined();
 });
 
 test('a changed provider catalog and externally changed value update the persistent panel', async () => {
@@ -197,4 +206,127 @@ test('unknown, retired and empty saved choices render safely with an available l
   }
   const html = renderToStaticMarkup(<ModelPicker {...base} catalog={[]} />);
   expect(html).toContain('No vision models match');
+});
+
+/** A fake /api/prefs that keeps the pinned models for one user. */
+function prefsServer(initial: string[] = [], options: { failSaves?: boolean } = {}) {
+  let saved = [...initial];
+  const posts: string[][] = [];
+  const fetcher = mock(async (url: string, init?: RequestInit) => {
+    expect(url).toBe('/api/prefs');
+    if (init?.method !== 'POST')
+      return Response.json({ ok: true, prefs: { undoSendSeconds: 10, pinnedModels: saved } });
+    const body = JSON.parse(String(init.body));
+    posts.push(body.pinnedModels);
+    if (options.failSaves) return Response.json({ ok: false, error: 'down' }, { status: 500 });
+    saved = body.pinnedModels;
+    return Response.json({ ok: true, prefs: { pinnedModels: saved } });
+  });
+  return { fetcher, posts, saved: () => saved };
+}
+
+function deviceStore(value?: string) {
+  const saved = new Map<string, string>(value === undefined ? [] : [[PINNED_MODELS_KEY, value]]);
+  return {
+    saved,
+    getItem: (key: string) => saved.get(key) ?? null,
+    setItem: (key: string, next: string) => void saved.set(key, next),
+    removeItem: (key: string) => void saved.delete(key),
+  };
+}
+
+async function withFetch<T>(fetcher: typeof fetch | ((...args: any[]) => any), run: () => Promise<T>) {
+  const previous = globalThis.fetch;
+  globalThis.fetch = fetcher as typeof fetch;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = previous;
+  }
+}
+
+const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+
+test('pins are saved for the user on the server and survive a reload', async () => {
+  const server = prefsServer();
+  await withFetch(server.fetcher, async () => {
+    await mount();
+    await settle();
+    await click('Pin GLM-5.3 Flash');
+    await settle();
+    expect(server.saved()).toEqual([glm]);
+    await act(async () => view.unmount());
+    // A reload starts with no shared copy and reads the server list.
+    resetPinnedModels();
+    await mount();
+    await settle();
+    expect(button('Unpin GLM-5.3 Flash').props['aria-pressed']).toBe(true);
+  });
+});
+
+test('a pin made before the server list loads is added to that list', async () => {
+  const server = prefsServer(['openai/gpt-5.5']);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const slow = async (url: string, init?: RequestInit) => {
+    if (init?.method !== 'POST') await gate;
+    return server.fetcher(url, init);
+  };
+  await withFetch(slow, async () => {
+    await mount();
+    await click('Pin GLM-5.3 Flash');
+    expect(server.posts).toEqual([]);
+    release();
+    await settle();
+    await settle();
+    expect(server.saved()).toEqual(['openai/gpt-5.5', glm]);
+    expect(button('Unpin GLM-5.3 Flash').props['aria-pressed']).toBe(true);
+    expect(button('Unpin GPT-5.5').props['aria-pressed']).toBe(true);
+  });
+});
+
+test('a failed save puts the earlier pins back', async () => {
+  const server = prefsServer([], { failSaves: true });
+  await withFetch(server.fetcher, async () => {
+    await mount();
+    await settle();
+    await click('Pin GLM-5.3 Flash');
+    await settle();
+    expect(server.posts).toEqual([[glm]]);
+    expect(button('Pin GLM-5.3 Flash').props['aria-pressed']).toBe(false);
+  });
+});
+
+test('device pins from an earlier version move to the server once, then leave the device', async () => {
+  const server = prefsServer(['b/model']);
+  const store = deviceStore(JSON.stringify(['a/model', 'b/model']));
+  expect(await loadPinnedModels(server.fetcher, store)).toEqual(new Set(['a/model', 'b/model']));
+  expect(server.posts).toEqual([['a/model', 'b/model']]);
+  expect(store.saved.has(PINNED_MODELS_KEY)).toBe(false);
+  expect(await loadPinnedModels(server.fetcher, store)).toEqual(new Set(['a/model', 'b/model']));
+  expect(server.posts).toHaveLength(1);
+
+  // Device pins the server already has need no save, and still leave the device.
+  const known = deviceStore(JSON.stringify(['b/model']));
+  await loadPinnedModels(prefsServer(['b/model']).fetcher, known);
+  expect(known.saved.has(PINNED_MODELS_KEY)).toBe(false);
+});
+
+test('device pins stay on the device when the server cannot take them', async () => {
+  const server = prefsServer([], { failSaves: true });
+  const store = deviceStore(JSON.stringify(['a/model']));
+  await expect(loadPinnedModels(server.fetcher, store)).rejects.toThrow('down');
+  expect(store.saved.get(PINNED_MODELS_KEY)).toBe(JSON.stringify(['a/model']));
+  const offline = mock(async () => Response.json({ ok: false }, { status: 401 }));
+  await expect(loadPinnedModels(offline, store)).rejects.toThrow('could not be loaded');
+  await expect(savePinnedModels(new Set(['a']), offline)).rejects.toThrow('could not be saved');
+});
+
+test('device pin storage ignores bad values and a blocked store', () => {
+  expect(readDevicePinnedModels(deviceStore('{bad'))).toEqual([]);
+  expect(readDevicePinnedModels(deviceStore('[1,"a"]'))).toEqual(['a']);
+  expect(readDevicePinnedModels(null)).toEqual([]);
+  expect(togglePinnedModel(new Set(['a']), 'a').size).toBe(0);
 });

@@ -29,6 +29,7 @@ import {
   findDocumentByGoogleFile,
   getDocument,
   linkGoogleDocument,
+  listDocumentSummaries,
   listDocuments,
   resolveDocumentSuggestion,
   updateDocument,
@@ -86,7 +87,8 @@ describe('document AI proposal service', () => {
     });
     expect(result.model.kind).toBe('deck');
     if (result.model.kind === 'deck') expect(result.model.slides[0].background).toBe('#182C40');
-    if (current.model.kind === 'deck') current.model.slides[0].elements[0].text = 'Existing content';
+    if (current.model.kind === 'deck')
+      (current.model.slides[0].elements[0] as { text: string }).text = 'Existing content';
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
       designPresentationLayouts: passingLayoutDesign,
@@ -106,7 +108,8 @@ describe('document AI proposal service', () => {
 
   test('a generated summary cannot claim an unchanged model was edited', async () => {
     const current = documentRecord('deck');
-    if (current.model.kind === 'deck') current.model.slides[0].elements[0].text = 'Existing slide content';
+    if (current.model.kind === 'deck')
+      (current.model.slides[0].elements[0] as { text: string }).text = 'Existing slide content';
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
       designPresentationLayouts: passingLayoutDesign,
@@ -261,6 +264,8 @@ describe('document persistence service', () => {
     await expect(listDocuments({ userId: 'user-1', kind: 'doc', limit: 5 })).resolves.toEqual([
       documentRecord('doc'),
     ]);
+    await listDocumentSummaries({ userId: 'user-1', limit: 5 });
+    expect((query.mock.calls.at(-1) as any[])[1]).toEqual({ userId: 'user-1', limit: 5, metadataOnly: true });
   });
 
   test('reads suggestions, provider links, updates, archives, and resolves suggestions', async () => {
@@ -730,6 +735,7 @@ describe('Google native import', () => {
         userId: 'user-1',
         connectionId: 'google-1',
         fileId: 'file',
+        // @ts-expect-error The import must refuse a file that is not a Google Doc, Sheet, or Slides.
         mimeType: 'application/pdf',
       }),
     ).rejects.toThrow('Only Google Docs, Sheets, and Slides');
@@ -823,7 +829,7 @@ describe('Google native import', () => {
       mimeType: 'application/vnd.google-apps.spreadsheet',
     });
     expect(sheet.model.kind).toBe('sheet');
-    if (sheet.model.kind !== 'sheet') throw new Error('Expected a sheet.');
+    if (sheet.model.kind !== 'sheet' || sheet.model.version !== 1) throw new Error('Expected a sheet.');
     expect(sheet.model.sheets[0]).toMatchObject({ rowCount: 10_000, columnCount: 500 });
     expect(Object.keys(sheet.model.sheets[0].cells)).toHaveLength(50_000);
     expect(sheet.model.sheets[0].cells.SG1).toBeUndefined();
@@ -894,7 +900,7 @@ describe('Google native import', () => {
       mimeType: 'application/vnd.google-apps.spreadsheet',
     });
     expect(imported.model.kind).toBe('sheet');
-    if (imported.model.kind !== 'sheet') throw new Error('Expected a sheet.');
+    if (imported.model.kind !== 'sheet' || imported.model.version !== 1) throw new Error('Expected a sheet.');
     expect(imported.model.sheets[0].cells).toEqual({});
     expect(imported.model.sheets[1].cells.A1).toEqual({ value: 'Second tab value' });
   });

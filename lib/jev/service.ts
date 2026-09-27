@@ -1,32 +1,38 @@
-import { recordJevUsage, resolveJevRuntime } from '../ai/gateway';
+import { recordClassifierUsage, resolveClassifierRuntime } from '../ai/gateway';
+import { evaluateClassifier, mapConcurrent } from '../classifier/client';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import type { DailyReport } from '../shared/types';
-import { evaluateJev, mapConcurrent } from './client';
 import type { JevCorrection, JevPreferences } from './contract';
 import { assessmentFromResponse, buildMailQuestions, type JevMailInput } from './mail';
 
 export function loadJevPolicy(userId: string) {
   return convexQuery<{ preferences: JevPreferences; corrections: JevCorrection[]; revision: number }>(
-    (api as any).jev.policy,
+    api.jev.policy,
     { userId },
   );
 }
 
 const sweepDefaults = {
   loadJevPolicy,
-  resolveJevRuntime,
+  resolveClassifierRuntime,
   convexMutation,
-  evaluateJev,
-  recordJevUsage,
+  evaluateClassifier,
+  recordClassifierUsage,
   afterClassified: (userId: string) => {
     void import('../content/sync').then((module) => module.kickContentCycle(userId)).catch(() => undefined);
   },
 };
 export async function runJevSweep(userId: string, dependencies = sweepDefaults) {
-  const { loadJevPolicy, resolveJevRuntime, convexMutation, evaluateJev, recordJevUsage } = dependencies;
+  const {
+    loadJevPolicy,
+    resolveClassifierRuntime,
+    convexMutation,
+    evaluateClassifier,
+    recordClassifierUsage,
+  } = dependencies;
   const policy = await loadJevPolicy(userId);
   if (!policy.preferences.enabled) return { classified: 0 };
-  const runtime = await resolveJevRuntime(userId);
+  const runtime = await resolveClassifierRuntime(userId);
   let classified = 0;
   let moreRemaining = false;
   const deadline = Date.now() + 40_000;
@@ -34,7 +40,7 @@ export async function runJevSweep(userId: string, dependencies = sweepDefaults) 
     const page = await convexMutation<{
       items: Array<JevMailInput & { leaseId: string }>;
       moreRemaining: boolean;
-    }>((api as any).jev.claimPending, { userId, limit: 12 });
+    }>(api.jev.claimPending, { userId, limit: 12 });
     if (!page.items.length) {
       moreRemaining = false;
       break;
@@ -48,24 +54,27 @@ export async function runJevSweep(userId: string, dependencies = sweepDefaults) 
         leaseId: input.leaseId,
       };
       try {
-        const result = await evaluateJev({
+        const result = await evaluateClassifier({
           apiKey: runtime.apiKey,
+          model: runtime.model,
           state: {
             mailboxOwnerAddresses: input.selfAddresses,
             messagesOldestToNewest: input.messages,
             contextComplete: input.contextComplete,
           },
-          questions: buildMailQuestions(input),
+          questions: buildMailQuestions(input, runtime.model),
+          // Choice-only models answer one question per request.
+          timeoutMs: runtime.model.protocol === 'systemone' ? 5_000 : 10_000,
         });
-        const assessment = assessmentFromResponse(input, result);
-        await recordJevUsage(runtime, 'jev_mail', result);
+        const assessment = assessmentFromResponse(input, result, Date.now(), runtime.model);
+        await recordClassifierUsage(runtime, 'jev_mail', result);
         return { ...target, assessment };
       } catch {
-        await recordJevUsage(runtime, 'jev_mail');
+        await recordClassifierUsage(runtime, 'jev_mail');
         return { ...target, error: 'unavailable' };
       }
     });
-    const result = await convexMutation<{ stored: number }>((api as any).jev.storeAssessments, {
+    const result = await convexMutation<{ stored: number }>(api.jev.storeAssessments, {
       userId,
       items,
     });
@@ -92,5 +101,5 @@ export async function markJevBriefItems(report: DailyReport, userId: string, mut
       sourceRevision: item.jev!.sourceRevision,
     }));
   if (!items.length) return;
-  await mutate((api as any).jev.markBriefItems, { userId, items });
+  await mutate(api.jev.markBriefItems, { userId, items });
 }

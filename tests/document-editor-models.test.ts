@@ -130,9 +130,9 @@ describe('presentation edit identity and recovery', () => {
     expect(copy.slides[1].elements.map((element) => element.id)).not.toEqual(
       base.slides[0].elements.map((element) => element.id),
     );
-    expect(copy.slides[1].elements.map((element) => element.text)).toEqual(
-      base.slides[0].elements.map((element) => element.text),
-    );
+    const texts = (elements: readonly object[]) =>
+      elements.map((element) => (element as { text?: string }).text);
+    expect(texts(copy.slides[1].elements)).toEqual(texts(base.slides[0].elements));
     const moved = moveSlide(copy, copy.activeSlideId, -1);
     expect(moved.slides[0].id).toBe(copy.activeSlideId);
     const removed = deleteSlide(moved, moved.activeSlideId);

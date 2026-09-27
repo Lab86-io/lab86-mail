@@ -25,6 +25,7 @@ import {
   requestedPresentationSlideConstraints,
   requestedPresentationSlideCount,
 } from '../lib/documents/presentation-design';
+import { testEnv } from './tools/env';
 
 afterEach(() => {
   __setChatUploadDepsForTest();
@@ -169,7 +170,7 @@ describe('dogfood regressions', () => {
   test('file hydration reads the owning record, ignores spoofed metadata, and reuses storage once', async () => {
     const calls: any[] = [];
     __setChatUploadDepsForTest({
-      convexQuery: (async (_ref, args) => {
+      convexQuery: (async (_ref: unknown, args: any) => {
         calls.push(args);
         return { url: 'https://storage.test/file', name: 'owned.txt', contentType: 'text/plain', size: 7 };
       }) as any,
@@ -228,13 +229,15 @@ describe('dogfood regressions', () => {
   });
   test('Collabora is enabled without an ONLYOFFICE commercial flag', () => {
     expect(
-      officeConfiguration({
-        OFFICE_EDITOR_PROVIDER: 'collabora',
-        OFFICE_EDITOR_ENABLED: 'true',
-        OFFICE_JWT_SECRET: 'x'.repeat(32),
-        OFFICE_DOCUMENT_SERVER_URL: 'https://documents.test',
-        OFFICE_APP_ORIGIN: 'https://app.test',
-      })?.provider,
+      officeConfiguration(
+        testEnv({
+          OFFICE_EDITOR_PROVIDER: 'collabora',
+          OFFICE_EDITOR_ENABLED: 'true',
+          OFFICE_JWT_SECRET: 'x'.repeat(32),
+          OFFICE_DOCUMENT_SERVER_URL: 'https://documents.test',
+          OFFICE_APP_ORIGIN: 'https://app.test',
+        }),
+      )?.provider,
     ).toBe('collabora');
   });
 });
@@ -427,7 +430,7 @@ test('XLSX inline rich runs are preserved alongside plain inline strings', async
       name: 'report.xlsx',
       contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     })) as any,
-    fetch: async () => new Response(bytes),
+    fetch: async () => new Response(bytes as Uint8Array<ArrayBuffer>),
   });
   const result = await hydrateChatAttachments('owner', [
     { id: '1', role: 'user', parts: [{ type: 'file', url: '/api/agent/uploads/rich' }] },

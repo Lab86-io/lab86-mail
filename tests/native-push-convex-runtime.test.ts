@@ -40,7 +40,7 @@ describe('native push Convex receipts', () => {
       const reflection = await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'alignment_user',
-        checkinId: first.checkin._id,
+        checkinId: first.checkin!._id,
         promptKind: 'reflection',
         responseText: 'Shipped the notification flow.',
         completed: [],
@@ -49,7 +49,7 @@ describe('native push Convex receipts', () => {
       const tomorrow = await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'alignment_user',
-        checkinId: first.checkin._id,
+        checkinId: first.checkin!._id,
         promptKind: 'tomorrow',
         responseText: 'Test APNs on the production phone.',
         completed: [],
@@ -187,7 +187,7 @@ describe('native push Convex receipts', () => {
       await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'reflection_user',
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
         promptKind: 'reflection',
         responseText: 'I shipped the first pass.',
         completed: [{ kind: 'work', id: String(workIds[0]) }],
@@ -211,7 +211,7 @@ describe('native push Convex receipts', () => {
       await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'reflection_user',
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
         promptKind: 'reflection',
         responseText: '',
         completed: [{ kind: 'work', id: String(workIds[1]) }],
@@ -219,7 +219,7 @@ describe('native push Convex receipts', () => {
       await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'reflection_user',
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
         promptKind: 'tomorrow',
         responseText: 'I will validate the production build.',
         completed: [],
@@ -227,14 +227,14 @@ describe('native push Convex receipts', () => {
       await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'reflection_user',
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
         promptKind: 'tomorrow',
         responseText: '',
         completed: [{ kind: 'work', id: 'ignored_for_tomorrow' }],
       });
 
       const state = await t.run(async (ctx) => {
-        const row = await ctx.db.get(created.checkin._id);
+        const row = await ctx.db.get(created.checkin!._id);
         const notification = await ctx.db
           .query('albatrossNotifications')
           .withIndex('by_user_dedupe', (q) =>
@@ -285,7 +285,7 @@ describe('native push Convex receipts', () => {
       const result = await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'freeform_reflection_user',
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
         promptKind: 'reflection',
         responseText: 'I shipped the notification flow today.',
         completed: [],
@@ -294,7 +294,7 @@ describe('native push Convex receipts', () => {
 
       const state = await t.run(async (ctx) => ({
         work: await ctx.db.get(workId),
-        checkin: await ctx.db.get(created.checkin._id),
+        checkin: await ctx.db.get(created.checkin!._id),
       }));
       expect(state.work?.workState).toBe('done');
       expect(state.work?.status).toBe('done');
@@ -355,7 +355,7 @@ describe('native push Convex receipts', () => {
         localDate: '2026-07-25',
         timezone: 'UTC',
       });
-      expect(created.checkin.candidateItems).toContainEqual(
+      expect(created.checkin!.candidateItems).toContainEqual(
         expect.objectContaining({ kind: 'task', id: String(targetCardId) }),
       );
     } finally {
@@ -714,13 +714,13 @@ describe('native push Convex receipts', () => {
       await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'background_checkin_user',
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
         promptKind: 'reflection',
         responseText: 'I finished the application.',
         completed: [],
       });
       await t.run((ctx) =>
-        ctx.db.patch(created.checkin._id, {
+        ctx.db.patch(created.checkin!._id, {
           reconciledChanges: Array.from({ length: 125 }, (_, index) => ({
             kind: 'work',
             id: `history-${index}`,
@@ -730,18 +730,18 @@ describe('native push Convex receipts', () => {
       await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'background_checkin_user',
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
         promptKind: 'reflection',
         responseText: 'I finished the application.',
         completed: [],
       });
-      const boundedHistory = await t.run((ctx) => ctx.db.get(created.checkin._id));
+      const boundedHistory = await t.run((ctx) => ctx.db.get(created.checkin!._id));
       expect(boundedHistory?.reconciledChanges).toHaveLength(120);
       expect(boundedHistory?.reconciledChanges?.[0]?.id).toBe('history-5');
       await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'background_checkin_user',
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
         promptKind: 'tomorrow',
         responseText: 'Call the DMV.',
         completed: [],
@@ -752,37 +752,37 @@ describe('native push Convex receipts', () => {
         {},
       );
       const tomorrowCandidates = await t.query(internal.albatrossNotifications.tomorrowPlanCandidates, {});
-      expect(reflectionCandidates.map((row) => row._id)).toContain(created.checkin._id);
-      expect(tomorrowCandidates.map((row) => row._id)).toContain(created.checkin._id);
+      expect(reflectionCandidates.map((row) => row._id)).toContain(created.checkin!._id);
+      expect(tomorrowCandidates.map((row) => row._id)).toContain(created.checkin!._id);
 
       const reflectionClaim = await t.mutation(internal.albatrossNotifications.beginReflectionReconcile, {
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
       });
       const tomorrowClaim = await t.mutation(internal.albatrossNotifications.beginTomorrowPlan, {
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
       });
       expect(reflectionClaim?.responseText).toBe('I finished the application.');
       expect(tomorrowClaim?.tomorrowIntentText).toBe('Call the DMV.');
       expect(
         await t.mutation(internal.albatrossNotifications.beginReflectionReconcile, {
-          checkinId: created.checkin._id,
+          checkinId: created.checkin!._id,
         }),
       ).toBeNull();
 
       await t.mutation(api.albatrossNotifications.completeReflectionReconcile, {
         internalSecret: 'native-push-secret',
         userId: 'background_checkin_user',
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
         completed: [],
       });
       const failed = await t.mutation(api.albatrossNotifications.failTomorrowPlan, {
         internalSecret: 'native-push-secret',
         userId: 'background_checkin_user',
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
         error: 'Planner unavailable.',
       });
       expect(failed.retrying).toBe(true);
-      const failedTomorrow = await t.run((ctx) => ctx.db.get(created.checkin._id));
+      const failedTomorrow = await t.run((ctx) => ctx.db.get(created.checkin!._id));
       expect(Number(failedTomorrow?.tomorrowPlanNextAt) - Number(failedTomorrow?.updatedAt)).toBe(120_000);
 
       const workId = await t.run((ctx) =>
@@ -798,16 +798,16 @@ describe('native push Convex receipts', () => {
           updatedAt: Date.now(),
         }),
       );
-      await t.run((ctx) => ctx.db.patch(created.checkin._id, { tomorrowPlanNextAt: 0 }));
+      await t.run((ctx) => ctx.db.patch(created.checkin!._id, { tomorrowPlanNextAt: 0 }));
       expect(
         await t.mutation(internal.albatrossNotifications.beginTomorrowPlan, {
-          checkinId: created.checkin._id,
+          checkinId: created.checkin!._id,
         }),
       ).not.toBeNull();
       await t.mutation(api.albatrossNotifications.completeTomorrowPlan, {
         internalSecret: 'native-push-secret',
         userId: 'background_checkin_user',
-        checkinId: created.checkin._id,
+        checkinId: created.checkin!._id,
         workId,
         status: 'ready',
       });
@@ -825,25 +825,25 @@ describe('native push Convex receipts', () => {
         await t.mutation(api.albatrossNotifications.answerCheckin, {
           internalSecret: 'native-push-secret',
           userId: 'background_checkin_user',
-          checkinId: releasable.checkin._id,
+          checkinId: releasable.checkin!._id,
           promptKind,
           responseText,
           completed: [],
         });
       }
       await t.mutation(internal.albatrossNotifications.beginReflectionReconcile, {
-        checkinId: releasable.checkin._id,
+        checkinId: releasable.checkin!._id,
       });
       await t.mutation(internal.albatrossNotifications.beginTomorrowPlan, {
-        checkinId: releasable.checkin._id,
+        checkinId: releasable.checkin!._id,
       });
       await t.mutation(internal.albatrossNotifications.releaseReflectionReconcile, {
-        checkinId: releasable.checkin._id,
+        checkinId: releasable.checkin!._id,
       });
       await t.mutation(internal.albatrossNotifications.releaseTomorrowPlan, {
-        checkinId: releasable.checkin._id,
+        checkinId: releasable.checkin!._id,
       });
-      const released = await t.run((ctx) => ctx.db.get(releasable.checkin._id));
+      const released = await t.run((ctx) => ctx.db.get(releasable.checkin!._id));
       expect(released?.reflectionReconcileStatus).toBe('failed');
       expect(released?.tomorrowPlanStatus).toBe('failed');
     } finally {

@@ -24,7 +24,7 @@
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
-import { ArrowUp, Check, ImagePlus, Square } from 'lucide-react';
+import { ArrowUp, Check, Square } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -702,7 +702,6 @@ function AreaManagementList() {
                   />
                   <div className="flex items-center gap-2 sm:col-span-3">
                     <label className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 text-[11.5px] font-medium hover:bg-[var(--color-bg-muted)]">
-                      <ImagePlus className="size-3.5" />
                       Upload image
                       <input
                         type="file"

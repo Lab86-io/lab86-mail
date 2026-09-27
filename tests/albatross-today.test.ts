@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   briefFreshness,
   briefIsStale,
+  briefStaleNote,
   type Capacity,
   dayShapeLine,
   dayWindow,
@@ -275,6 +276,14 @@ describe('brief freshness', () => {
     // The audit found one presenting a 24-day-old day under a "Live" label.
     expect(briefIsStale(now - 24 * 24 * 3_600_000, now)).toBe(true);
     expect(briefIsStale(now - 6 * 3_600_000, now)).toBe(false);
+  });
+
+  test('a stale edition says how old it is and that it describes an older day', () => {
+    expect(briefStaleNote(now - 80 * 24 * 3_600_000, now)).toBe(
+      'Written 80 days ago — it describes an older day.',
+    );
+    expect(briefStaleNote(now - 6 * 3_600_000, now)).toBeNull();
+    expect(briefStaleNote(null, now)).toBeNull();
   });
 });
 

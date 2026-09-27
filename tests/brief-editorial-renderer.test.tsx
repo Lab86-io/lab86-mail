@@ -38,7 +38,7 @@ test('failed live sections preserve neighboring stories and can recover locally'
         view = create(
           <>
             <p>Source story remains</p>
-            <BriefNodeView node={node} context={emptyContext} />
+            <BriefNodeView node={node} context={emptyContext} regionSummary="" />
           </>,
         );
       });
@@ -138,7 +138,7 @@ test('email and hydrated event times use the edition timezone consistently', () 
     { kind: 'entity_list', items: [{ ref, framing: {}, actions: [] }] },
   ]) {
     const node = BriefNodeSchema.parse(input);
-    const html = renderToStaticMarkup(<BriefNodeView node={node} context={context} />);
+    const html = renderToStaticMarkup(<BriefNodeView node={node} context={context} regionSummary="" />);
     expect(html).toContain('Tue 8:00 AM');
     expect(html).not.toContain('3:00 PM');
   }
@@ -167,7 +167,7 @@ test('an edition without a timezone uses the reader local zone', () => {
       onAction: () => {},
       onCanvasAction: () => {},
     };
-    const html = renderToStaticMarkup(<BriefNodeView node={node} context={context} />);
+    const html = renderToStaticMarkup(<BriefNodeView node={node} context={context} regionSummary="" />);
     expect(html).toContain('Tue 9:00 AM');
     expect(html).not.toContain('1:00 PM');
   } finally {

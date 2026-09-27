@@ -148,7 +148,7 @@ describe('compose tools', () => {
     expect(deleted).toEqual(['draft_rollback']);
   });
 
-  test('reply and reply_all require cached anchor messages', async () => {
+  test('reply and reply_all require a resolvable anchor message', async () => {
     const { account, messageId, threadId } = await seedThreadMessage({
       from: 'Alex <alex@example.test>',
       to: 'Jakob <jakob@example.test>',
@@ -157,7 +157,7 @@ describe('compose tools', () => {
 
     await expect(
       runTool(replyMessage.handler, { account, messageId: 'missing', body: 'Hi' }),
-    ).rejects.toThrow(/local cache/);
+    ).rejects.toThrow(/Cannot find the original message/);
 
     await expect(
       runTool(replyMessage.handler, { account, messageId, threadId, body: 'Thanks' }),

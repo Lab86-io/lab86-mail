@@ -7,6 +7,8 @@
 // and anything it is unsure about is handed to a nano model for confirmation
 // rather than being pushed on the strength of a keyword.
 
+import { truncateText } from '../shared/text';
+
 export interface UrgencyMessage {
   subject: string;
   from: string;
@@ -175,9 +177,7 @@ export function parseUrgencyConfirmation(raw: string): { urgent: boolean; reason
   }
   if (value?.urgent !== true) return { urgent: false, reason: '' };
   if (!(Number(value?.confidence) >= 0.75)) return { urgent: false, reason: '' };
-  const reason = String(value?.reason || '')
-    .trim()
-    .slice(0, 120);
+  const reason = truncateText(String(value?.reason || '').trim(), 120);
   return reason ? { urgent: true, reason } : { urgent: false, reason: '' };
 }
 

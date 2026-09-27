@@ -262,7 +262,14 @@ final class NotificationCoordinator {
         lastRegisteredAt = nil
     }
 
-    static func configureCategories() {
+    // Each write replaces the whole set, so a platform passes its own
+    // categories here instead of a second write that could race this one.
+    static func configureCategories(adding extra: Set<UNNotificationCategory> = []) {
+        UNUserNotificationCenter.current().setNotificationCategories(categories(adding: extra))
+    }
+
+    // Every category the app answers, plus the platform's own.
+    static func categories(adding extra: Set<UNNotificationCategory> = []) -> Set<UNNotificationCategory> {
         let add = UNNotificationAction(
             identifier: NotificationActionID.addToCalendar,
             title: "Add to Calendar",
@@ -332,8 +339,7 @@ final class NotificationCoordinator {
             actions: [reply, markRead, archive],
             intentIdentifiers: []
         )
-        UNUserNotificationCenter.current()
-            .setNotificationCategories([commitment, checkIn, mail, brief, urgent])
+        return Set([commitment, checkIn, mail, brief, urgent]).union(extra)
     }
 
     private static var pushEnvironment: String {

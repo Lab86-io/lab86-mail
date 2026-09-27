@@ -320,7 +320,7 @@ describe('guided presentation preferences', () => {
     const dynamic: any = part('brief');
     dynamic.type = 'dynamic-tool';
     dynamic.toolName = 'ask_presentation_choices';
-    expect(presentationSessionFromMessages(messages([dynamic])).brief).toEqual(brief);
+    expect(presentationSessionFromMessages(messages([dynamic])).brief).toEqual<unknown>(brief);
     for (const invalid of [
       part('design'),
       part('brief', { stage: 'design' }),
@@ -459,7 +459,7 @@ describe('guided presentation preferences', () => {
       ['Revise the storyboard', 'storyboard'],
     ]) {
       const session = presentationSessionFromMessages([...messages(), user(text)]);
-      expect(nextPresentationCheckpoint(session)).toBe(stage);
+      expect(nextPresentationCheckpoint(session)).toBe<unknown>(stage);
       expect(session.guidance).toBe(text);
       expect(session.storyboard).toBeUndefined();
     }
@@ -574,7 +574,7 @@ describe('guided presentation preferences', () => {
       sourceGuidance: 'S'.repeat(2000),
     };
     const saved = compactMessage(messages([part('brief', { brief: long })])[0]);
-    expect(presentationSessionFromMessages([saved]).brief).toEqual(long);
+    expect(presentationSessionFromMessages([saved]).brief).toEqual<unknown>(long);
     const pending = { ...part('brief'), state: 'input-available', output: undefined };
     expect(compactMessage(messages([pending])[0]).parts[0].state).toBe('input-available');
     expect(isHitlToolName('ask_presentation_choices')).toBe(true);

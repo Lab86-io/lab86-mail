@@ -442,7 +442,7 @@ describe('completion writes the record', () => {
     let work = await t.run((ctx) => ctx.db.get(workId));
     expect(work?.workState).toBe('released');
     expect(work?.releaseReason).toBe('This matters less now.');
-    await t.mutation(api.albatrossWorkV2.reopenWork, { ...caller, workId });
+    await t.mutation(api.albatrossWorkV2.updateWorkState, { ...caller, workId, state: 'active' });
     work = await t.run((ctx) => ctx.db.get(workId));
     expect(work?.workState).toBe('active');
     expect(work?.releaseReason).toBeUndefined();

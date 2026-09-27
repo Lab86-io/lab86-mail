@@ -54,8 +54,12 @@ describe('MCP syncConnection state transitions', () => {
       }),
     );
 
-    expect(missing).toEqual({ ok: false, count: 0, error: 'missing credentials' });
-    expect(mutations[0]).toMatchObject({ status: 'error', error: 'missing or unreadable credentials' });
+    expect(missing).toEqual({ ok: false, count: 0, error: 'missing or unreadable credentials' });
+    expect(mutations[0]).toMatchObject({
+      status: 'error',
+      error: 'missing or unreadable credentials',
+      outcome: 'reconnect',
+    });
     expect(unknown).toEqual({ ok: false, count: 0, error: 'unknown server' });
   });
 
@@ -95,6 +99,7 @@ describe('MCP syncConnection state transitions', () => {
       connectionId: bitbucketRow.connectionId,
       server: 'bitbucket',
       status: 'ready',
+      outcome: 'ok',
       itemCount: 1,
     });
   });
@@ -128,6 +133,7 @@ describe('MCP syncConnection state transitions', () => {
       server: 'bitbucket',
       status: 'error',
       error: 'auth rejected — reconnect with a valid token',
+      outcome: 'reconnect',
     });
   });
 
@@ -356,6 +362,74 @@ describe('MCP syncConnection state transitions', () => {
     expect(closedRejected).toBe(true);
   });
 
+  test('an MCP tool result with isError is a query error, not an empty good sync', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const jiraRow = {
+      ...bitbucketRow,
+      connectionId: 'jira_conn',
+      server: 'jira',
+      serverUrl: 'https://mcp.atlassian.com/v1/mcp',
+    } as any;
+    const result = await syncConnection(
+      'user_1',
+      jiraRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: jiraRow, token: 'token' }),
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+        connectMcp: async () =>
+          ({ toolNames: new Set(['searchJiraIssuesUsingJql']), close: async () => undefined }) as any,
+        callMcpTool: async () => ({ isError: true, content: [{ type: 'text', text: 'JQL is invalid' }] }),
+      }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('searchJiraIssuesUsingJql failed: JQL is invalid');
+    expect(mutations.at(-1)).toMatchObject({
+      status: 'error',
+      error: 'searchJiraIssuesUsingJql failed: JQL is invalid',
+    });
+    expect(mutations.some((args) => args.status === 'ready')).toBe(false);
+  });
+
+  test('an expired OAuth sign-in asks the user to reconnect that source', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const granolaRow = {
+      ...bitbucketRow,
+      connectionId: 'granola_conn',
+      server: 'granola',
+      authKind: 'oauth',
+      serverUrl: 'https://mcp.granola.ai/mcp',
+    } as any;
+    const result = await syncConnection(
+      'user_1',
+      'granola_conn',
+      depsFor({
+        getConnectionToken: async () => null,
+        listUserConnections: async () => [granolaRow, { ...bitbucketRow }] as any,
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+      }),
+    );
+    expect(result).toEqual({ ok: false, count: 0, error: 'Reconnect Granola: its sign-in expired.' });
+    expect(mutations[0]).toMatchObject({
+      server: 'granola',
+      status: 'error',
+      error: 'Reconnect Granola: its sign-in expired.',
+    });
+    const tokenRow = await syncConnection(
+      'user_1',
+      'bitbucket_conn',
+      depsFor({ listUserConnections: async () => [bitbucketRow as any] }),
+    );
+    expect(tokenRow.error).toBe('Reconnect Bitbucket: its saved credentials cannot be read.');
+  });
+
   test('normalizes, deduplicates, persists, and closes successful hosted MCP results', async () => {
     const mutations: Array<Record<string, any>> = [];
     let closed = false;
@@ -530,6 +604,8 @@ describe('MCP syncConnection state transitions', () => {
     expect(result).toMatchObject({ ok: false, count: 0, error: 'account check: account unavailable' });
     expect(closed).toBe(true);
     expect(mutations.at(-1)).toMatchObject({ status: 'error' });
+    // Nothing here says the sign-in failed, so the connection state stays.
+    expect(mutations.at(-1)).not.toHaveProperty('outcome');
   });
 
   test('keeps a successful Granola listing when optional detail enrichment fails', async () => {
@@ -571,7 +647,13 @@ describe('MCP syncConnection state transitions', () => {
     );
 
     expect(result).toEqual({ ok: false, count: 1, error: 'details unavailable' });
-    expect(mutations.at(-1)).toMatchObject({ status: 'error', itemCount: 1, error: 'details unavailable' });
+    // A partial failure: the source answered, so the connection stays connected.
+    expect(mutations.at(-1)).toMatchObject({
+      status: 'error',
+      outcome: 'ok',
+      itemCount: 1,
+      error: 'details unavailable',
+    });
   });
 
   test('syncAllMcpConnections retries errored rows, skips disconnected rows, and totals item counts', async () => {
@@ -623,5 +705,127 @@ describe('MCP syncConnection state transitions', () => {
     );
 
     expect(result).toEqual({ connections: 1, items: 0 });
+  });
+});
+
+describe('MCP sync connection outcome (AI-7)', () => {
+  const jiraRow = {
+    ...bitbucketRow,
+    connectionId: 'jira_conn',
+    server: 'jira',
+    serverUrl: 'https://mcp.atlassian.com/v1/mcp',
+  } as any;
+
+  test('tells a rejected sign-in from other failures', async () => {
+    const { isMcpAuthFailure } = await import('../lib/mcp/sync');
+    expect(isMcpAuthFailure(Object.assign(new Error('x'), { code: 401 }))).toBe(true);
+    expect(isMcpAuthFailure(Object.assign(new Error('x'), { statusCode: 403 }))).toBe(true);
+    expect(isMcpAuthFailure(Object.assign(new Error('Unauthorized'), { name: 'UnauthorizedError' }))).toBe(
+      true,
+    );
+    expect(
+      isMcpAuthFailure(Object.assign(new Error('GitHub 403: API rate limit exceeded'), { statusCode: 403 })),
+    ).toBe(false);
+    expect(isMcpAuthFailure(Object.assign(new Error('x'), { statusCode: 500 }))).toBe(false);
+    expect(isMcpAuthFailure(new Error('socket hang up'))).toBe(false);
+    expect(isMcpAuthFailure(undefined)).toBe(false);
+  });
+
+  test('a rate-limited connect is a sync problem, not a reconnect', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const result = await syncConnection(
+      'user_1',
+      jiraRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: jiraRow, token: 'token' }),
+        connectMcp: async () => {
+          throw Object.assign(new Error('secondary rate limit'), { statusCode: 403 });
+        },
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+      }),
+    );
+    expect(result.error).toBe('secondary rate limit');
+    expect(mutations.at(-1)).toMatchObject({ status: 'error', error: 'secondary rate limit' });
+    expect(mutations.at(-1)).not.toHaveProperty('outcome');
+  });
+
+  test('a connect that the source rejects asks for a reconnect', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    const { syncConnection } = await import('../lib/mcp/sync');
+    await syncConnection(
+      'user_1',
+      jiraRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: jiraRow, token: 'token' }),
+        connectMcp: async () => {
+          throw Object.assign(new Error('Streamable HTTP error: Unauthorized'), { code: 401 });
+        },
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+      }),
+    );
+    expect(mutations.at(-1)).toMatchObject({ status: 'error', outcome: 'reconnect' });
+  });
+
+  test('every query rejected for auth asks for a reconnect; other total failures do not', async () => {
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const run = async (failure: Error) => {
+      const mutations: Array<Record<string, any>> = [];
+      await syncConnection(
+        'user_1',
+        jiraRow.connectionId,
+        depsFor({
+          getConnectionToken: async () => ({ row: jiraRow, token: 'token' }),
+          connectMcp: async () =>
+            ({ toolNames: new Set(['searchJiraIssuesUsingJql']), close: async () => undefined }) as any,
+          callMcpTool: async () => {
+            throw failure;
+          },
+          convexMutation: async (_fn, args) => {
+            mutations.push(args);
+            return undefined as any;
+          },
+        }),
+      );
+      return mutations.at(-1);
+    };
+    expect(await run(Object.assign(new Error('401'), { statusCode: 401 }))).toMatchObject({
+      status: 'error',
+      outcome: 'reconnect',
+    });
+    expect(await run(new Error('query rejected'))).not.toHaveProperty('outcome');
+  });
+
+  test('Bitbucket marks only a rejected sign-in probe with its status code', async () => {
+    const { loadBitbucketItems } = await import('../lib/mcp/bitbucket');
+    const original = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () => new Response('bad credentials', { status: 401 })) as any;
+      const probe = await loadBitbucketItems(
+        'https://api.bitbucket.org/2.0',
+        'person@example.com:api-token',
+      ).catch((err) => err);
+      expect(probe).toMatchObject({ statusCode: 401 });
+      expect(probe.message).toContain('auth probe failed with HTTP 401');
+
+      globalThis.fetch = (async (url: string | URL) =>
+        String(url).includes('/user/workspaces')
+          ? new Response('no access', { status: 403 })
+          : Response.json({ account_id: 'acct_1', display_name: 'Ann' })) as any;
+      const workspace = await loadBitbucketItems(
+        'https://api.bitbucket.org/2.0',
+        'person@example.com:api-token',
+      ).catch((err) => err);
+      expect(workspace.message).toContain('list workspaces failed with HTTP 403');
+      expect(workspace).not.toHaveProperty('statusCode');
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });

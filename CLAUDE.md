@@ -4,8 +4,9 @@ Claude owns the native Apple platform (iOS and macOS) product: research, design,
 integration, and review of `apps/ios`, the `MobileAPI` package, the mobile v1 contract
 (`lib/mobile/v1`), and the native release pipeline. Decided by Jakob on 2026-08-19.
 
-Codex owns the web Albatross UI (`components/albatross` and the browser product surfaces). Claude
-must not author or gate web Albatross UI work.
+Claude may also author web UI, including Albatross and Settings surfaces (Jakob, 2026-09-26).
+Preserve the existing design system and app density, and inspect the surrounding product flow
+before editing.
 
 For every behavioral, state, data, routing, or contract change, add or update focused tests. The
 mobile contract must stay aligned across web, iOS, and macOS: any change to

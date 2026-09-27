@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { runWithAiRequestContext } from '@/lib/ai/context';
 import { evidenceSatisfies } from '@/lib/albatross/evidence-gate';
 import {
   proofCandidatesForMail,
@@ -8,6 +9,8 @@ import {
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { truncateText } from '@/lib/shared/text';
+import { dismissedProofWorkIds } from '@/lib/store/proof-dismissals';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +33,8 @@ interface ProofMatchesDependencies {
   enforceUserRateLimit: typeof enforceUserRateLimit;
   convexQuery: typeof convexQuery;
   evidenceSatisfies: typeof evidenceSatisfies;
+  /** Work ids the user marked "Not related" for this thread. */
+  dismissedWorkIds: (userId: string, accountId: string, threadId: string) => Promise<Set<string>>;
 }
 
 const defaults: ProofMatchesDependencies = {
@@ -37,6 +42,8 @@ const defaults: ProofMatchesDependencies = {
   enforceUserRateLimit,
   convexQuery,
   evidenceSatisfies,
+  dismissedWorkIds: (userId, accountId, threadId) =>
+    runWithAiRequestContext({ userId, agent: 'user' }, () => dismissedProofWorkIds(accountId, threadId)),
 };
 
 export function createProofMatchesPost(overrides: Partial<ProofMatchesDependencies> = {}) {
@@ -51,8 +58,8 @@ export function createProofMatchesPost(overrides: Partial<ProofMatchesDependenci
         windowMs: 60_000,
       });
       const body = await req.json().catch(() => ({}));
-      const subject = typeof body.subject === 'string' ? body.subject.slice(0, 500) : '';
-      const snippet = typeof body.snippet === 'string' ? body.snippet.slice(0, 2_000) : '';
+      const subject = typeof body.subject === 'string' ? truncateText(body.subject, 500) : '';
+      const snippet = typeof body.snippet === 'string' ? truncateText(body.snippet, 2_000) : '';
       const accountId = typeof body.accountId === 'string' ? body.accountId.slice(0, 200) : '';
       const providerThreadId =
         typeof body.providerThreadId === 'string' ? body.providerThreadId.slice(0, 300) : '';
@@ -66,7 +73,7 @@ export function createProofMatchesPost(overrides: Partial<ProofMatchesDependenci
       if (accountId && providerThreadId) {
         let thread: unknown;
         try {
-          thread = await deps.convexQuery<any>((api as any).mailCorpus.getCorpusThread, {
+          thread = await deps.convexQuery<any>(api.mailCorpus.getCorpusThread, {
             userId: user.userId,
             accountId,
             providerThreadId,
@@ -79,11 +86,18 @@ export function createProofMatchesPost(overrides: Partial<ProofMatchesDependenci
         }
       }
 
-      const open = await deps.convexQuery<OpenWork[]>((api as any).albatrossWorkV2.openWorkForProof, {
+      const open = await deps.convexQuery<OpenWork[]>(api.albatrossWorkV2.openWorkForProof, {
         userId: user.userId,
         limit: 12,
       });
       const mailText = `${subject} ${snippet}`.trim();
+      // A dismissed pair never reaches the gate, so it costs no model call.
+      const dismissed =
+        accountId && providerThreadId
+          ? await deps
+              .dismissedWorkIds(user.userId, accountId, providerThreadId)
+              .catch(() => new Set<string>())
+          : new Set<string>();
       const ranked = proofCandidatesForMail(
         (open || []).map((work) => ({
           ...work,
@@ -91,7 +105,7 @@ export function createProofMatchesPost(overrides: Partial<ProofMatchesDependenci
           proofs: work.contract?.proofs,
         })),
         mailText,
-      );
+      ).filter((match) => !dismissed.has(match.work._id));
 
       const candidates: Array<{
         workId: string;

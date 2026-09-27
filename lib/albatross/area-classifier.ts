@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import { AREA_CLASSIFIER_VERSION, areaFactIdentity, isSharedConsumerDomain } from './area-home';
 
 // Areas are a sparse overlay. Every pending thread receives either a grounded
@@ -147,16 +148,16 @@ const ROUTING_FACT_KINDS = new Set([
 function areaProfiles(areas: any[], factsByArea: Map<string, AreaFactLite[]>) {
   return areas.map((area) => ({
     id: String(area._id),
-    name: String(area.name || '').slice(0, 120),
-    kind: String(area.kind || '').slice(0, 80),
-    description: String(area.description || '').slice(0, 500) || undefined,
-    primaryDomain: String(area.primaryDomain || '').slice(0, 200) || undefined,
+    name: truncateText(String(area.name || ''), 120),
+    kind: truncateText(String(area.kind || ''), 80),
+    description: truncateText(String(area.description || ''), 500) || undefined,
+    primaryDomain: truncateText(String(area.primaryDomain || ''), 200) || undefined,
     facts: (factsByArea.get(String(area._id)) || [])
       .filter((fact) => ROUTING_FACT_KINDS.has(String(fact.kind).toLowerCase()))
       .map((fact) => ({
         id: String(fact._id),
         kind: fact.kind,
-        value: String(fact.value).slice(0, 300),
+        value: truncateText(String(fact.value), 300),
         status: fact.status,
       })),
   }));
@@ -276,7 +277,7 @@ async function classifyOne(input: {
   activeAreaIds: Set<string>;
   factsById: Map<string, AreaFactLite>;
 }) {
-  const boundedText = (value: string | undefined, cap: number) => String(value || '').slice(0, cap);
+  const boundedText = (value: string | undefined, cap: number) => truncateText(String(value || ''), cap);
   const email = {
     id: boundedText(input.thread.providerThreadId, 200),
     messageId: boundedText(input.thread.messageId, 200),
@@ -431,8 +432,8 @@ export async function classifyThreads({ userId }: { userId: string }): Promise<C
         ...assignment.factIds.map((factId) => ({
           kind: 'areaFact',
           id: factId,
-          label: `${factsById.get(factId)?.kind || 'fact'}: ${factsById.get(factId)?.value || ''}`.slice(
-            0,
+          label: truncateText(
+            `${factsById.get(factId)?.kind || 'fact'}: ${factsById.get(factId)?.value || ''}`,
             200,
           ),
         })),

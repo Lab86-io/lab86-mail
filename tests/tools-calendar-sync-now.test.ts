@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'bun:test';
+import { UndoOperationInProgressError, undoOperation } from '../lib/ai/operations';
+import { startCalendarResync } from '../lib/calendar/resync';
 import { executeMobileCommand } from '../lib/mobile/v1/command-executor';
 import { MobileCommandSchema } from '../lib/mobile/v1/contract';
-import { calendarSyncNow } from '../lib/tools/calendar';
+import { calendarListEvents, calendarSyncNow } from '../lib/tools/calendar';
 
-// The `calendar_sync_now` tool and the default mobile executor both reach the
-// shared resync helper without an injection seam, so one Convex fetch stub
-// covers them. The sync claim is refused, so no provider call happens.
+// The `calendar_sync_now` tool, the shared resync helper, the default mobile
+// executor dependencies, and the undo claim reach Convex without an
+// injection seam, so one Convex fetch stub covers them. The sync claim is
+// refused, so no provider call happens.
 
 const account = {
   userId: 'user_sync_now',
@@ -115,24 +118,56 @@ describe('calendar_sync_now', () => {
   });
 });
 
-describe('calendar.resync with the default executor dependencies', () => {
+describe('calendar_list_events', () => {
+  test('reads the window page and reports truncation (CAL-1)', async () => {
+    const row = {
+      providerEventId: 'evt_1',
+      accountId: 'acct_1',
+      providerCalendarId: 'cal_1',
+      title: 'Standup',
+      startAt: Date.parse('2026-09-04T13:00:00.000Z'),
+      endAt: Date.parse('2026-09-04T13:30:00.000Z'),
+    };
+    await withConvexStub(
+      {
+        'calendarData:listEventsPage': () => ({
+          events: [row, { ...row, providerEventId: 'evt_2', accountId: 'acct_2' }],
+          truncated: true,
+        }),
+      },
+      async (calls) => {
+        const result = await calendarListEvents.handler(
+          {
+            fromIso: '2026-09-04T00:00:00Z',
+            toIso: '2026-09-05T00:00:00Z',
+            accountIds: ['acct_1'],
+            limit: 2,
+          },
+          { agent: 'user', userId: 'user_sync_now' },
+        );
+        expect(result.truncated).toBe(true);
+        expect(result.events).toHaveLength(1);
+        expect(calls[0]?.args).toMatchObject({ userId: 'user_sync_now', limit: 2 });
+      },
+    );
+  });
+});
+
+describe('the shared resync helper and the default executor dependencies', () => {
   test('view_open on a fresh account reads sync state and starts nothing', async () => {
+    const fresh = Date.now() - 5_000;
     await withConvexStub(
       {
         ...handlers,
-        'calendarData:getSyncStates': () => [
-          { accountId: 'acct_1', status: 'ready', lastSyncedAt: Date.now() - 5_000 },
-        ],
+        'calendarData:getSyncStates': () => [{ accountId: 'acct_1', status: 'ready', lastSyncedAt: fresh }],
       },
       async (calls) => {
-        const command = MobileCommandSchema.parse({
-          idempotencyKey: 'calendar-resync-default-1',
-          kind: 'calendar.resync',
-          payload: { accountID: 'acct_1', reason: 'view_open' },
-          clientCreatedAt: '2026-09-03T09:00:00.000Z',
+        const result = await startCalendarResync({
+          userId: user.userId,
+          accountId: 'acct_1',
+          reason: 'view_open',
         });
-        const result = await executeMobileCommand(command, user);
-        expect(result).toEqual({ status: 'applied', syncDomain: 'calendar' });
+        expect(result).toEqual({ started: false, lastSyncedAt: fresh, skippedReason: 'fresh' });
         expect(calls.map((call) => call.path)).toEqual(['calendarData:getSyncStates']);
       },
     );
@@ -162,6 +197,42 @@ describe('calendar.resync with the default executor dependencies', () => {
     );
   });
 
+  test('the default Work mutations reach the Work module', async () => {
+    await withConvexStub(
+      {
+        'albatrossWorkV2:setHorizon': () => ({ horizon: null, dormant: false }),
+        'albatrossWorkV2:setShape': () => ({ shape: 'list', previous: 'quick' }),
+      },
+      async (calls) => {
+        const horizon = await executeMobileCommand(
+          MobileCommandSchema.parse({
+            idempotencyKey: 'horizon-default-1',
+            kind: 'work.setHorizon',
+            payload: { workID: 'work-1', horizonCleared: true },
+            clientCreatedAt: '2026-09-03T09:00:00.000Z',
+          }),
+          user,
+        );
+        expect(horizon).toMatchObject({ entityKind: 'workHorizon', syncPayload: { horizonCleared: true } });
+        const shape = await executeMobileCommand(
+          MobileCommandSchema.parse({
+            idempotencyKey: 'shape-default-1',
+            kind: 'work.setShape',
+            payload: { workID: 'work-1', shape: 'list' },
+            clientCreatedAt: '2026-09-03T09:00:00.000Z',
+          }),
+          user,
+        );
+        expect(shape).toMatchObject({ entityKind: 'workShape', syncPayload: { shape: 'list' } });
+        expect(calls.map((call) => call.path)).toEqual([
+          'albatrossWorkV2:setHorizon',
+          'albatrossWorkV2:setShape',
+        ]);
+        expect(calls[0]?.args).toMatchObject({ userId: 'user_sync_now', workId: 'work-1', horizon: null });
+      },
+    );
+  });
+
   test('the default enqueueApproval writes the approval row', async () => {
     await withConvexStub({ 'albatrossWork:enqueueApproval': () => 'approval-default-1' }, async (calls) => {
       const command = MobileCommandSchema.parse({
@@ -182,5 +253,28 @@ describe('calendar.resync with the default executor dependencies', () => {
       expect(result).toMatchObject({ status: 'needsApproval', approvalID: 'approval-default-1' });
       expect(calls.map((call) => call.path)).toEqual(['albatrossWork:enqueueApproval']);
     });
+  });
+});
+
+// The mobile undo route is gone; the in-progress guard still protects the
+// undo_operation tool from running one inverse twice.
+describe('undo operations', () => {
+  test('an undo another request is running reports in progress', async () => {
+    await withConvexStub(
+      {
+        'operations:claimUndo': () => ({
+          state: 'in_progress',
+          tool: 'archive_thread',
+          surface: 'mail',
+          summary: 'Archived a thread',
+        }),
+      },
+      async (calls) => {
+        const failure = await undoOperation('user_sync_now', 'op_busy').catch((error) => error);
+        expect(failure).toBeInstanceOf(UndoOperationInProgressError);
+        expect(failure.message).toBe('This operation is already being undone.');
+        expect(calls.map((call) => call.path)).toEqual(['operations:claimUndo']);
+      },
+    );
   });
 });

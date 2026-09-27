@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { completeWorkStep, StepExecutionError } from '@/lib/albatross/step-execution';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,7 +39,7 @@ export function createWorkStepPost(deps: WorkStepDependencies = defaults) {
         workId,
         stepKey: typeof body.stepKey === 'string' ? body.stepKey : undefined,
         timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
-        note: typeof body.note === 'string' ? body.note.slice(0, 2_000) : undefined,
+        note: typeof body.note === 'string' ? truncateText(body.note, 2_000) : undefined,
       });
       return Response.json({ ok: true, ...result });
     } catch (error) {

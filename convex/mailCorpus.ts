@@ -1,16 +1,23 @@
 import { v } from 'convex/values';
 import { buildCorpusSearchText } from '../lib/mail/corpus';
+import { pageEndsInTie, pageThroughTies } from '../lib/mail/search/page-ties';
 import { matchingMailExcerpt } from '../lib/mail/search/ranking';
-import { mutation, query } from './_generated/server';
-import { now, requireInternalSecret } from './lib';
+import { keptMessageHeaders, rankSendersForCleanup } from '../lib/mail/sender-cleanup';
+import { emailFromHeader } from '../lib/shared/format';
+import { truncateText } from '../lib/shared/text';
+import { internal } from './_generated/api';
+import { internalAction, internalQuery, mutation, query } from './_generated/server';
+import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 import {
   classificationFreshnessPatch,
+  classifierContent,
   classifyCorpusThread,
-  computeCategoryUnreadCounts,
-  latestThreadBody,
+  deleteLabelMembership,
+  latestThreadContent,
   loadSmartContext,
   normalizeCorpusThread,
   queryCategoryThreads,
+  syncLabelMembership,
 } from './smart';
 
 const providerValidator = v.union(
@@ -243,7 +250,7 @@ export const upsertCorpusBatch = mutation({
         bcc: message.bcc,
         receivedAt: message.receivedAt,
         snippet: message.snippet,
-        textBody: String(message.textBody ?? '').slice(0, 32_000),
+        textBody: truncateText(String(message.textBody ?? ''), 32_000),
         searchText: trimCorpusText(message.searchText),
         labels: message.labels,
         unread: message.unread,
@@ -303,7 +310,7 @@ export const upsertCorpusBatch = mutation({
       if (!stored.length) continue;
       const windowCapped = stored.length >= AGGREGATE_WINDOW;
       const latest = stored.reduce(latestCorpusMessage);
-      let classifyBody = String(latest.textBody || latest.searchText || '').slice(0, 4000);
+      let classifyBody = classifierContent(latest);
       const labels = [...new Set(stored.flatMap((message) => message.labels || []))];
       const patch = {
         userId: args.userId,
@@ -341,8 +348,8 @@ export const upsertCorpusBatch = mutation({
         patch.fromAddress = fullLatest.from || patch.fromAddress;
         patch.snippet = fullLatest.snippet || patch.snippet;
         patch.yearMonth = yearMonth(fullLatest.receivedAt);
-        classifyBody =
-          String(fullLatest.textBody || fullLatest.searchText || '').slice(0, 4000) || classifyBody;
+        const fullContent = classifierContent(fullLatest);
+        classifyBody = fullContent.bodyText ? fullContent : classifyBody;
       }
       const existing = await ctx.db
         .query('mailCorpusThreads')
@@ -378,6 +385,7 @@ export const upsertCorpusBatch = mutation({
           ...classified,
           createdAt: ts,
         });
+      await syncLabelMembership(ctx, existing, { ...classifyRow, ...classified });
       if (existing?.latestMessageId !== patch.latestMessageId || patch.lastDate > existing.lastDate) {
         const areaLinks = await ctx.db
           .query('areaArtifactLinks')
@@ -477,6 +485,15 @@ export const recordWebhookEvent = mutation({
   },
 });
 
+/** A failed webhook event is retried this many times, then abandoned. */
+export const WEBHOOK_MAX_ATTEMPTS = 6;
+const WEBHOOK_RETRY_BASE_MS = 2 * 60_000;
+const WEBHOOK_RETRY_MAX_MS = 6 * 60 * 60_000;
+
+export function nextWebhookAttemptAt(attempts: number, at: number) {
+  return at + Math.min(WEBHOOK_RETRY_MAX_MS, WEBHOOK_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1));
+}
+
 export const markWebhookEventProcessed = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -491,12 +508,88 @@ export const markWebhookEventProcessed = mutation({
       .withIndex('by_event', (q) => q.eq('eventId', args.eventId))
       .unique();
     if (!row) return { ok: false, missing: true };
+    const ts = now();
+    if (args.status === 'processed') {
+      await ctx.db.patch(row._id, {
+        status: 'processed',
+        error: undefined,
+        processedAt: ts,
+        nextAttemptAt: undefined,
+      });
+      return { ok: true };
+    }
+    const attempts = (row.attempts ?? 0) + 1;
+    const abandoned = attempts >= WEBHOOK_MAX_ATTEMPTS;
     await ctx.db.patch(row._id, {
-      status: args.status,
+      status: 'error',
       error: args.error,
-      processedAt: now(),
+      processedAt: ts,
+      attempts,
+      // Abandoned rows sort past every retry window, out of the index range.
+      nextAttemptAt: abandoned ? Number.MAX_SAFE_INTEGER : nextWebhookAttemptAt(attempts, ts),
+      retryAbandoned: abandoned || undefined,
     });
-    return { ok: true };
+    return { ok: true, attempts, abandoned };
+  },
+});
+
+// Failed events whose backoff has passed, plus events stuck in `received`
+// (the process that took them restarted before it finished). Oldest first.
+export const listRetryableWebhookEvents = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    stuckAfterMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = clampLimit(args.limit, 25, 100);
+    const ts = now();
+    const failed = await ctx.db
+      .query('mailWebhookEvents')
+      .withIndex('by_status_next_attempt', (q) => q.eq('status', 'error').lte('nextAttemptAt', ts))
+      .take(limit * 3);
+    const stuckBefore = ts - Math.max(60_000, args.stuckAfterMs ?? 15 * 60_000);
+    const stuck = await ctx.db
+      .query('mailWebhookEvents')
+      .withIndex('by_status_next_attempt', (q) => q.eq('status', 'received'))
+      .take(limit * 3);
+    return [
+      ...failed.filter((row) => !row.retryAbandoned),
+      ...stuck.filter((row) => row.receivedAt < stuckBefore),
+    ]
+      .slice(0, limit)
+      .map((row) => ({
+        eventId: row.eventId,
+        type: row.type,
+        grantId: row.grantId,
+        attempts: row.attempts ?? 0,
+        payload: row.payload,
+      }));
+  },
+});
+
+// Convex half of the repair cron (SYNC-3). The app owns Nylas, so this only
+// asks it to (1) retry failed webhook events and (2) run the bounded per-user
+// repair sweep. The app route ACKs at once and works in the background.
+export const repairTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[mail-repair cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    const targets = await ctx.runQuery(internal.dailyReports.reportTargets, {});
+    const bodies = [
+      { kind: 'webhooks' },
+      ...targets.map((target: { userId: string }) => ({ kind: 'sweep', userId: target.userId })),
+    ];
+    const ok = await fanOutInternalPost(`${appUrl}/api/cron/mail-repair`, secret, bodies, {
+      label: 'mail-repair cron',
+    });
+    console.log(`[mail-repair cron] requested ${ok}/${bodies.length} repair runs`);
   },
 });
 
@@ -545,6 +638,7 @@ export const deleteCorpusThread = mutation({
       )
       .unique();
     if (thread && thread.userId === args.userId) await ctx.db.delete(thread._id);
+    await deleteLabelMembership(ctx, args.userId, args.accountId, args.providerThreadId);
     const messages = await ctx.db
       .query('mailCorpusMessages')
       .withIndex('by_account_thread', (q) =>
@@ -831,26 +925,7 @@ export const getCorpusThreadBundle = query({
       )
       .order('asc')
       .collect();
-    const messages = rows.map((row) => ({
-      _id: row.providerMessageId,
-      threadId: row.providerThreadId,
-      account: row.accountId,
-      subject: row.subject || '(no subject)',
-      from: row.from || '',
-      to: row.to || '',
-      cc: row.cc || '',
-      bcc: row.bcc || '',
-      date: row.receivedAt || 0,
-      snippet: row.snippet || '',
-      textBody: row.textBody || '',
-      htmlBody: row.htmlBody ?? null,
-      labels: row.labels || [],
-      unread: Boolean(row.unread),
-      starred: Boolean(row.starred),
-      attachments: row.attachments || [],
-      headers: row.headers || {},
-      cachedAt: row.updatedAt || row.receivedAt || 0,
-    }));
+    const messages = rows.map(projectCorpusMessage);
     return {
       threadId: args.providerThreadId,
       subject: thread.subject || messages[0]?.subject || '(no subject)',
@@ -860,152 +935,50 @@ export const getCorpusThreadBundle = query({
   },
 });
 
-// Recent threads with stored verdicts, projected small. Feeds the category
-// stat counters and the command-palette seeds without scanning message rows.
-// Server-tool variant of liveMail.categoryCounts (internal secret instead of
-// Clerk identity) — backs the agent-facing get_smart_category_stats tool.
-export const categoryCountsInternal = query({
+// One message by provider id, for reply and forward anchors when the caller
+// has no thread id. The index has no userId column; tenancy is a filter.
+export const getCorpusMessage = query({
   args: {
     internalSecret: v.optional(v.string()),
     userId: v.string(),
-    accountIds: v.optional(v.array(v.string())),
+    accountId: v.string(),
+    providerMessageId: v.string(),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const counts = await computeCategoryUnreadCounts(ctx, args.userId, args.accountIds);
-    return { counts };
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_account_message', (q) =>
+        q.eq('accountId', args.accountId).eq('providerMessageId', args.providerMessageId),
+      )
+      .take(5);
+    const row = rows.find((candidate) => candidate.userId === args.userId);
+    return row ? projectCorpusMessage(row) : null;
   },
 });
 
-// LLM-once classification queue. Rows the write-time deterministic pass
-// flagged uncertain, newest first, with the body excerpt the model needs —
-// the Next server runs the sweep (it owns the AI gateway and billing).
-export const listLlmPending = mutation({
-  args: {
-    internalSecret: v.optional(v.string()),
-    userId: v.string(),
-    limit: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const limit = Math.min(Math.max(Math.floor(args.limit ?? 40), 1), 60);
-    const maxScanned = Math.max(limit * 5, 120);
-    const pending: any[] = [];
-    const orphanIds: any[] = [];
-    const sourceRows = await ctx.db
-      .query('mailCorpusThreads')
-      .withIndex('by_user_llm_pending', (q) => q.eq('userId', args.userId).eq('llmPending', true))
-      .order('desc')
-      .take(maxScanned + 1);
-    let processedRows = 0;
-    for (const row of sourceRows.slice(0, maxScanned)) {
-      processedRows += 1;
-      const latest = await ctx.db
-        .query('mailCorpusMessages')
-        .withIndex('by_user_account_thread_received', (q) =>
-          q
-            .eq('userId', row.userId)
-            .eq('accountId', row.accountId)
-            .eq('providerThreadId', row.providerThreadId),
-        )
-        .order('desc')
-        .first();
-      const messageId = latest?.providerMessageId;
-      if (!messageId) {
-        // A legacy aggregate with no message row cannot be grounded. Close it
-        // out until a future sync supplies a concrete message identity, which
-        // will reopen both classifiers through classificationFreshnessPatch.
-        orphanIds.push(row._id);
-        continue;
-      }
-      if (row.latestMessageId !== messageId) {
-        await ctx.db.patch(row._id, {
-          latestMessageId: messageId,
-          ...classificationFreshnessPatch(row.latestMessageId, messageId),
-          llmPending: true,
-          updatedAt: now(),
-        });
-      }
-      pending.push({
-        accountId: row.accountId,
-        providerThreadId: row.providerThreadId,
-        messageId,
-        subject: latest.subject,
-        fromAddress: latest.from,
-        snippet: latest.snippet,
-        labels: latest.labels || [],
-        unread: Boolean(latest.unread),
-        lastDate: latest.receivedAt,
-        bodyText: String(latest.textBody || latest.searchText || '').slice(0, 4000),
-      });
-      if (pending.length >= limit) {
-        break;
-      }
-    }
-    for (const id of orphanIds) {
-      await ctx.db.patch(id, { llmPending: undefined, updatedAt: now() });
-    }
-    return {
-      items: pending,
-      moreRemaining: processedRows < sourceRows.length || sourceRows.length > maxScanned,
-    };
-  },
-});
-
-// Persist one model verdict per thread and recompute the merged write-time
-// classification. Rows listed without a verdict (model returned garbage) are
-// closed out too — LLM-once means one attempt, not a retry loop; they keep
-// their deterministic verdict.
-export const storeLlmVerdicts = mutation({
-  args: {
-    internalSecret: v.optional(v.string()),
-    userId: v.string(),
-    items: v.array(
-      v.object({
-        accountId: v.string(),
-        providerThreadId: v.string(),
-        messageId: v.string(),
-        verdict: v.optional(v.any()),
-      }),
-    ),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const context = await loadSmartContext(ctx, args.userId);
-    const ts = now();
-    let stored = 0;
-    for (const item of args.items.slice(0, 60)) {
-      const row = await ctx.db
-        .query('mailCorpusThreads')
-        .withIndex('by_user_account_thread', (q) =>
-          q
-            .eq('userId', args.userId)
-            .eq('accountId', item.accountId)
-            .eq('providerThreadId', item.providerThreadId),
-        )
-        .unique();
-      if (!row || !item.messageId || row.latestMessageId !== item.messageId) continue;
-      const llmCategory = item.verdict ?? undefined;
-      const merged = classifyCorpusThread(
-        {
-          ...row,
-          llmCategory,
-          llmClassifiedMessageId: item.messageId,
-        },
-        context,
-        await latestThreadBody(ctx, row),
-      );
-      await ctx.db.patch(row._id, {
-        llmCategory,
-        llmClassifiedAt: ts,
-        llmClassifiedMessageId: item.messageId,
-        ...merged,
-      });
-      if (llmCategory) stored += 1;
-    }
-    return { stored };
-  },
-});
+function projectCorpusMessage(row: any) {
+  return {
+    _id: row.providerMessageId,
+    threadId: row.providerThreadId,
+    account: row.accountId,
+    subject: row.subject || '(no subject)',
+    from: row.from || '',
+    to: row.to || '',
+    cc: row.cc || '',
+    bcc: row.bcc || '',
+    date: row.receivedAt || 0,
+    snippet: row.snippet || '',
+    textBody: row.textBody || '',
+    htmlBody: row.htmlBody ?? null,
+    labels: row.labels || [],
+    unread: Boolean(row.unread),
+    starred: Boolean(row.starred),
+    attachments: row.attachments || [],
+    headers: row.headers || {},
+    cachedAt: row.updatedAt || row.receivedAt || 0,
+  };
+}
 
 // One thread row in client shape. Light corpus-first identity lookup for
 // tools that act on a thread the UI is showing (quick-fix corrections etc.);
@@ -1033,38 +1006,8 @@ export const getCorpusThread = query({
   },
 });
 
-// Batched latest-message body excerpts, keyed `${accountId}:${providerThreadId}`.
-// Feeds body-grounded classification in the Next tool layer (deterministic +
-// LLM passes) without shipping full message docs over the wire.
-export const threadBodyExcerpts = query({
-  args: {
-    internalSecret: v.optional(v.string()),
-    userId: v.string(),
-    items: v.array(v.object({ accountId: v.string(), providerThreadId: v.string() })),
-    maxChars: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const cap = Math.min(Math.max(Math.floor(args.maxChars ?? 2500), 200), 4000);
-    const out: Record<string, string> = {};
-    for (const item of args.items.slice(0, 100)) {
-      const latest = await ctx.db
-        .query('mailCorpusMessages')
-        .withIndex('by_user_account_thread_received', (q) =>
-          q
-            .eq('userId', args.userId)
-            .eq('accountId', item.accountId)
-            .eq('providerThreadId', item.providerThreadId),
-        )
-        .order('desc')
-        .take(1);
-      const body = String(latest[0]?.textBody || latest[0]?.searchText || '').slice(0, cap);
-      if (body) out[`${item.accountId}:${item.providerThreadId}`] = body;
-    }
-    return out;
-  },
-});
-
+// Recent threads with stored verdicts, projected small, read without
+// scanning message rows.
 export const listRecentCorpusThreads = query({
   args: {
     internalSecret: v.optional(v.string()),
@@ -1094,7 +1037,7 @@ export const listRecentCorpusThreads = query({
       subject: row.subject || '(no subject)',
       fromAddress: row.fromAddress || '',
       lastDate: row.lastDate || 0,
-      snippet: (row.snippet || '').slice(0, 200),
+      snippet: truncateText(row.snippet || '', 200),
       labels: row.labels || [],
       unread: Boolean(row.unread),
       starred: Boolean(row.starred),
@@ -1137,27 +1080,51 @@ export const pageRecentCorpusThreads = query({
           })
           .order('desc')
           .take(limit + 1);
-    const page = rows.slice(0, limit);
-    // A row without a usable lastDate cannot anchor a `lt` watermark; report
-    // the page as the last one rather than hand out a cursor that matches nothing.
-    const lastDate = page.length ? Number(page[page.length - 1].lastDate ?? 0) : 0;
-    const nextBefore = rows.length > page.length && lastDate > 0 ? lastDate : undefined;
+    const dateOf = (row: any) => Number(row.lastDate ?? 0);
+    // PAGE-1: a page that ends inside a group of same-second threads takes
+    // the whole group, so the `lt` watermark on the next page skips nothing.
+    let candidates = rows;
+    if (pageEndsInTie(rows, limit, dateOf)) {
+      const boundary = dateOf(rows[limit - 1]);
+      const byTime = (range: (q: any) => any, take: number) =>
+        (args.accountId
+          ? ctx.db
+              .query('mailCorpusThreads')
+              .withIndex('by_user_account_updated', (q) =>
+                range(q.eq('userId', args.userId).eq('accountId', args.accountId as string)),
+              )
+          : ctx.db
+              .query('mailCorpusThreads')
+              .withIndex('by_user_lastDate', (q) => range(q.eq('userId', args.userId)))
+        )
+          .order('desc')
+          .take(take);
+      const group = await byTime((q) => q.eq('lastDate', boundary), 200);
+      // One older row tells the helper whether another page exists.
+      const older = await byTime((q) => q.lt('lastDate', boundary), 1);
+      candidates = [...rows.filter((row) => dateOf(row) > boundary), ...group, ...older];
+    }
+    // A row without a usable lastDate cannot anchor a `lt` watermark; the
+    // helper reports that page as the last one.
+    const { page, nextBefore } = pageThroughTies(candidates, limit, dateOf);
     return { items: page.map(normalizeCorpusThread), nextBefore };
   },
 });
 
 function trimCorpusText(value: unknown) {
-  return String(value ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 32_000);
+  return truncateText(
+    String(value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    32_000,
+  );
 }
 
 // HTML keeps its whitespace (markup-significant) and gets a larger budget
 // than search text; 200KB covers effectively all real emails while staying
 // far under the Convex document limit.
 function trimCorpusHtml(value: unknown) {
-  return String(value ?? '').slice(0, 200_000);
+  return truncateText(String(value ?? ''), 200_000);
 }
 
 function yearMonth(ts: unknown) {
@@ -1184,3 +1151,340 @@ function withinReceivedAtBounds(row: any, args: any) {
   if (Number.isFinite(args.before) && row.receivedAt > args.before) return false;
   return true;
 }
+
+// ---- Snooze (MUT-1) -------------------------------------------------------
+// The app moves the thread at the provider; these rows only remember when to
+// move it back. One active row per thread: a new snooze replaces the old.
+
+const SNOOZE_MAX_ATTEMPTS = 5;
+
+async function activeSnoozes(ctx: any, userId: string, accountId: string, threadId: string) {
+  const rows = await ctx.db
+    .query('mailSnoozes')
+    .withIndex('by_user_account_thread', (q: any) =>
+      q.eq('userId', userId).eq('accountId', accountId).eq('threadId', threadId),
+    )
+    .collect();
+  return rows.filter((row: any) => row.status === 'active');
+}
+
+export const createSnooze = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    threadId: v.string(),
+    messageId: v.optional(v.string()),
+    untilTs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const ts = now();
+    for (const row of await activeSnoozes(ctx, args.userId, args.accountId, args.threadId)) {
+      await ctx.db.patch(row._id, { status: 'cancelled', updatedAt: ts });
+    }
+    const id = await ctx.db.insert('mailSnoozes', {
+      userId: args.userId,
+      accountId: args.accountId,
+      threadId: args.threadId,
+      messageId: args.messageId,
+      untilTs: args.untilTs,
+      status: 'active',
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    return { id };
+  },
+});
+
+// Cancels the active snooze for a thread, or for the thread that holds the
+// given message. Returns the thread ids it cancelled.
+export const cancelSnooze = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    threadId: v.optional(v.string()),
+    messageId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    let rows: any[] = [];
+    if (args.threadId) {
+      rows = await activeSnoozes(ctx, args.userId, args.accountId, args.threadId);
+    } else if (args.messageId) {
+      const active = await ctx.db
+        .query('mailSnoozes')
+        .withIndex('by_status_until', (q) => q.eq('status', 'active'))
+        .take(1000);
+      rows = active.filter(
+        (row) =>
+          row.userId === args.userId && row.accountId === args.accountId && row.messageId === args.messageId,
+      );
+    }
+    const ts = now();
+    for (const row of rows) await ctx.db.patch(row._id, { status: 'cancelled', updatedAt: ts });
+    return { threadIds: rows.map((row) => row.threadId) };
+  },
+});
+
+// One user's active snoozes, newest first, each with its thread summary and
+// mailbox address. A thread that is not in the corpus yet still shows, so the
+// user can always see and cancel a snooze.
+async function snoozedThreads(ctx: any, userId: string, limit: number) {
+  const rows = await ctx.db
+    .query('mailSnoozes')
+    .withIndex('by_user_status_created', (q: any) => q.eq('userId', userId).eq('status', 'active'))
+    .order('desc')
+    .take(limit);
+  const accounts = await ctx.db
+    .query('connectedAccounts')
+    .withIndex('by_user', (q: any) => q.eq('userId', userId))
+    .collect();
+  const emails = new Map(accounts.map((account: any) => [account.accountId, account.email]));
+  return await Promise.all(
+    rows.map(async (row: any) => {
+      const thread = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_account_thread', (q: any) =>
+          q.eq('userId', userId).eq('accountId', row.accountId).eq('providerThreadId', row.threadId),
+        )
+        .first();
+      return {
+        id: String(row._id),
+        account: row.accountId,
+        accountEmail: emails.get(row.accountId) || null,
+        threadId: row.threadId,
+        messageId: row.messageId || null,
+        untilTs: row.untilTs,
+        snoozedAt: row.createdAt,
+        subject: thread?.subject || '(no subject)',
+        fromAddress: thread?.fromAddress || '',
+        snippet: truncateText(String(thread?.snippet || ''), 200),
+        lastDate: thread?.lastDate ?? null,
+      };
+    }),
+  );
+}
+
+/** The web Snoozed list: a live query for the signed-in user. */
+export const listSnoozedThreads = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.subject) throw new Error('Not authenticated');
+    return { items: await snoozedThreads(ctx, identity.subject, clampLimit(args.limit, 100, 200)) };
+  },
+});
+
+/** The same list for the server tool layer (list_snoozed). */
+export const listSnoozedThreadsInternal = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return { items: await snoozedThreads(ctx, args.userId, clampLimit(args.limit, 100, 200)) };
+  },
+});
+
+export const listDueSnoozes = query({
+  args: { internalSecret: v.optional(v.string()), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('mailSnoozes')
+      .withIndex('by_status_until', (q) => q.eq('status', 'active').lte('untilTs', now()))
+      .take(clampLimit(args.limit, 50, 200));
+    return rows.map((row) => ({
+      id: row._id,
+      userId: row.userId,
+      accountId: row.accountId,
+      threadId: row.threadId,
+      untilTs: row.untilTs,
+      attempts: row.attempts ?? 0,
+    }));
+  },
+});
+
+export const settleSnooze = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    id: v.id('mailSnoozes'),
+    ok: v.boolean(),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db.get(args.id);
+    if (!row || row.status !== 'active') return { ok: false };
+    const ts = now();
+    if (args.ok) {
+      await ctx.db.patch(row._id, { status: 'restored', error: undefined, updatedAt: ts });
+      return { ok: true, status: 'restored' };
+    }
+    const attempts = (row.attempts ?? 0) + 1;
+    const status = attempts >= SNOOZE_MAX_ATTEMPTS ? 'failed' : 'active';
+    await ctx.db.patch(row._id, { status, attempts, error: truncateText(args.error, 300), updatedAt: ts });
+    return { ok: true, status };
+  },
+});
+
+export const hasDueSnoozes = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db
+      .query('mailSnoozes')
+      .withIndex('by_status_until', (q) => q.eq('status', 'active').lte('untilTs', now()))
+      .first();
+    return Boolean(row);
+  },
+});
+
+// Wakes due snoozes. The app owns Nylas, so this asks it to move the threads
+// back; it posts only when a snooze is due.
+export const snoozeTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const due = await ctx.runQuery(internal.mailCorpus.hasDueSnoozes, {});
+    if (!due) return;
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[mail-snooze cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    await fanOutInternalPost(`${appUrl}/api/cron/mail-snooze`, secret, [{}], { label: 'mail-snooze cron' });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Unsubscribe and sender cleanup (FEATURES item 13), voice profile (item 16).
+// ---------------------------------------------------------------------------
+
+/**
+ * Stores the list headers of one message after the app fetched them from the
+ * provider for an unsubscribe. Webhook payloads carry no headers, so the
+ * first unsubscribe for a sender reads them once and keeps them.
+ */
+export const setMessageListHeaders = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    providerMessageId: v.string(),
+    headers: v.record(v.string(), v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_account_message', (q) =>
+        q.eq('accountId', args.accountId).eq('providerMessageId', args.providerMessageId),
+      )
+      .take(5);
+    const row = rows.find((candidate) => candidate.userId === args.userId);
+    if (!row) return { stored: false };
+    const headers = keptMessageHeaders({ ...(row.headers || {}), ...args.headers }) || {};
+    await ctx.db.patch(row._id, { headers, updatedAt: now() });
+    return { stored: true };
+  },
+});
+
+// Recency window for sender cleanup and block. Matches the reclassify window
+// in convex/smart.ts: it covers everything a paged inbox shows.
+const SENDER_SCAN_LIMIT = 1500;
+
+async function selfEmails(ctx: any, userId: string) {
+  const accounts = await ctx.db
+    .query('connectedAccounts')
+    .withIndex('by_user', (q: any) => q.eq('userId', userId))
+    .collect();
+  return accounts.map((account: any) => String(account.email || '').toLowerCase()).filter(Boolean);
+}
+
+/** The low-value senders of the recent mailbox, ranked (see lib/mail/sender-cleanup). */
+export const senderCleanupCandidates = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId))
+      .order('desc')
+      .take(SENDER_SCAN_LIMIT);
+    const senders = rankSendersForCleanup(
+      rows.map((row) => ({
+        accountId: row.accountId,
+        providerThreadId: row.providerThreadId,
+        fromAddress: row.fromAddress,
+        subject: row.subject,
+        lastDate: row.lastDate,
+        unread: row.unread,
+        labels: row.labels,
+        smartPrimary: row.smartPrimary,
+        jev: row.jev ? { purpose: row.jev.purpose } : null,
+      })),
+      { selfEmails: await selfEmails(ctx, args.userId), limit: clampLimit(args.limit, 40, 100) },
+    );
+    return { senders, scanned: rows.length };
+  },
+});
+
+/** Recent inbox threads from one sender address, for block sender. */
+export const inboxThreadsFromSender = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    sender: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const sender = args.sender.trim().toLowerCase();
+    const limit = clampLimit(args.limit, 100, 200);
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId))
+      .order('desc')
+      .take(SENDER_SCAN_LIMIT);
+    const out: Array<{ accountId: string; threadId: string; subject: string }> = [];
+    for (const row of rows) {
+      if (out.length >= limit) break;
+      if (!(row.labels || []).includes('INBOX')) continue;
+      if (emailFromHeader(row.fromAddress) !== sender) continue;
+      out.push({ accountId: row.accountId, threadId: row.providerThreadId, subject: row.subject });
+    }
+    return { threads: out };
+  },
+});
+
+/**
+ * The user's recent sent messages, newest first, for the voice profile. A
+ * sent message is one from a connected mailbox address, which works for every
+ * provider (Gmail SENT labels and Outlook folder ids differ).
+ */
+export const recentSentMessages = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const own = new Set(await selfEmails(ctx, args.userId));
+    const limit = clampLimit(args.limit, 50, 50);
+    if (!own.size) return { messages: [] };
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_user_received', (q) => q.eq('userId', args.userId))
+      .order('desc')
+      .take(800);
+    const messages = [];
+    for (const row of rows) {
+      if (messages.length >= limit) break;
+      if (!own.has(emailFromHeader(row.from) || '')) continue;
+      messages.push({
+        subject: row.subject,
+        to: row.to,
+        receivedAt: row.receivedAt,
+        textBody: String(row.textBody || row.snippet || '').slice(0, 4000),
+      });
+    }
+    return { messages };
+  },
+});

@@ -4,6 +4,8 @@ import { HORIZON_KINDS, parseHorizonHint, type WorkHorizon } from '@/lib/albatro
 import type { MetricLike } from '@/lib/albatross/practice-review';
 import { parseListHint, parseMetricHint } from '@/lib/albatross/shape-hints';
 import { WORK_SHAPES, type WorkShape } from '@/lib/albatross/work-shape';
+import { truncateText } from '@/lib/shared/text';
+import { parseIsoInTimezone } from '@/lib/shared/timezones';
 
 // The splitter's read of the horizon. Dates arrive as ISO strings because a
 // model writes those more reliably than epoch numbers.
@@ -43,8 +45,16 @@ export const splitMetricSchema = z
 
 export type SplitMetric = z.infer<typeof splitMetricSchema>;
 
-function isoToMs(value: string | null | undefined): number | undefined {
+function isoToMs(value: string | null | undefined, timezone?: string | null): number | undefined {
   if (!value) return undefined;
+  if (timezone) {
+    // A naive ISO date from the splitter is the user's local midnight (WRK-19).
+    try {
+      return parseIsoInTimezone(value, timezone, 'horizon');
+    } catch {
+      return undefined;
+    }
+  }
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? ms : undefined;
 }
@@ -58,10 +68,11 @@ export function horizonForSplitItem(
   horizon: SplitHorizon,
   rawText: string,
   nowMs: number,
+  timezone?: string | null,
 ): WorkHorizon | undefined {
   if (horizon) {
-    const notBefore = isoToMs(horizon.notBeforeIso);
-    const by = isoToMs(horizon.byIso);
+    const notBefore = isoToMs(horizon.notBeforeIso, timezone);
+    const by = isoToMs(horizon.byIso, timezone);
     const label = horizon.label?.trim() || undefined;
     if (horizon.kind !== 'now' || notBefore !== undefined || by !== undefined) {
       return {
@@ -72,7 +83,7 @@ export function horizonForSplitItem(
       };
     }
   }
-  return parseHorizonHint(rawText, nowMs) ?? undefined;
+  return parseHorizonHint(rawText, nowMs, timezone) ?? undefined;
 }
 
 export const workSplitSchema = z.object({
@@ -120,7 +131,12 @@ export interface ShapeRead {
  * item a list with its items, a metric phrase makes it a practice with its
  * metric. An item the model called something else keeps that shape.
  */
-export function shapeForSplitItem(read: ShapeReadInput, rawText: string, nowMs: number): ShapeRead {
+export function shapeForSplitItem(
+  read: ShapeReadInput,
+  rawText: string,
+  nowMs: number,
+  timezone?: string | null,
+): ShapeRead {
   const modelItems = (read.listItems || []).map((item) => item.trim()).filter(Boolean);
   const modelMetric = read.metric
     ? {
@@ -132,7 +148,7 @@ export function shapeForSplitItem(read: ShapeReadInput, rawText: string, nowMs: 
     : undefined;
   const listHint = read.shape === undefined || read.shape === 'list' ? parseListHint(rawText) : null;
   const metricHint =
-    read.shape === undefined || read.shape === 'practice' ? parseMetricHint(rawText, nowMs) : null;
+    read.shape === undefined || read.shape === 'practice' ? parseMetricHint(rawText, nowMs, timezone) : null;
 
   if (read.shape === 'list' || (read.shape === undefined && listHint)) {
     const listItems = modelItems.length ? modelItems : listHint?.items || [];
@@ -176,9 +192,7 @@ export interface CheckinPreferenceLike {
 }
 
 export function preserveCaptureText(value: string, max = 20_000) {
-  return String(value || '')
-    .replace(/^\s+|\s+$/g, '')
-    .slice(0, max);
+  return truncateText(String(value || '').replace(/^\s+|\s+$/g, ''), max);
 }
 
 export function parseWorkSplit(raw: string, original: string): WorkSplit {
@@ -222,7 +236,7 @@ export function titleFromWorkText(text: string) {
     preserveCaptureText(text)
       .split(/\n|[.!?](?:\s|$)/)[0]
       ?.trim() || 'Untitled work';
-  return line.length > 96 ? `${line.slice(0, 95).trimEnd()}…` : line;
+  return line.length > 96 ? `${truncateText(line, 95).trimEnd()}…` : line;
 }
 
 function normalizedActionIdentity(action: PlannedActionLike) {
@@ -342,11 +356,16 @@ export function parseClockMinutes(value: string, fallback = 19 * 60) {
   return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 ? hour * 60 + minute : fallback;
 }
 
-export function checkinIsDue(preference: CheckinPreferenceLike, at = new Date(), windowMinutes = 15) {
+/**
+ * Due from the check-in time to the end of the local day. A missed cron run
+ * no longer loses the day's check-in; ensureCheckin is safe to run more than
+ * once each day (WRK-15).
+ */
+export function checkinIsDue(preference: CheckinPreferenceLike, at = new Date()) {
   if (!preference.eveningCheckinEnabled) return false;
   const now = localMinuteOfDay(preference.timezone, at);
   const target = parseClockMinutes(preference.eveningCheckinLocalTime);
-  return now >= target && now < target + windowMinutes;
+  return now >= target;
 }
 
 export function fallbackEmailIsDue(input: {
@@ -362,7 +381,7 @@ export function fallbackEmailIsDue(input: {
 export function captureFallbackItem(rawText: string, areaId?: string) {
   const primaryAreaId = String(areaId || '').trim() || undefined;
   return {
-    title: rawText.slice(0, 180),
+    title: truncateText(rawText, 180),
     rawText,
     relatedAreaIds: [],
     ...(primaryAreaId ? { primaryAreaId } : {}),

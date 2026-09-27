@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { contentChunks, contentLabelsSchema, MAX_CONTENT_CHARS } from '../lib/content/contract';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import {
   action,
@@ -9,6 +10,7 @@ import {
   mutation,
   query,
 } from './_generated/server';
+import { documentModel } from './documents';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 
 const caller = { internalSecret: v.optional(v.string()), userId: v.string() };
@@ -42,7 +44,10 @@ export async function contentAccess(ctx: any, userId: string, item: any, purpose
       q.eq('userId', userId).eq(account ? 'accountId' : 'connectionId', item.connectionId),
     )
     .unique();
-  if (!connection || connection.status !== 'connected') return false;
+  // A connector sync error keeps its indexed items readable; only a disconnect hides them.
+  const readable =
+    table === 'mcpConnections' ? connection?.status !== 'disconnected' : connection?.status === 'connected';
+  if (!connection || !readable) return false;
   if (
     table === 'mcpConnections' &&
     !(purpose === 'brief' ? connection.includeInBrief : connection.includeInSearch)
@@ -240,8 +245,8 @@ export const upsert = mutation({
         source: String(input.source),
         connectionId: String(input.connectionId),
         externalId: String(input.externalId),
-        title: String(input.title).slice(0, 500),
-        text: input.deleted ? '' : String(input.text ?? '').slice(0, MAX_CONTENT_CHARS),
+        title: truncateText(String(input.title), 500),
+        text: input.deleted ? '' : truncateText(String(input.text ?? ''), MAX_CONTENT_CHARS),
         url: input.url,
         version: String(input.version),
         modifiedAt: Number(input.modifiedAt),
@@ -389,7 +394,7 @@ export const localPage = query({
                 size: file.size || 0,
                 modifiedAt: message.receivedAt,
               });
-      } else if (args.source === 'document') text = documentText(row.model);
+      } else if (args.source === 'document') text = documentText(await documentModel(ctx, row));
       else {
         text = [
           row.searchText,
@@ -578,7 +583,10 @@ export const search = query({
     const rows = await ctx.db
       .query('contentItems')
       .withSearchIndex('by_text', (q) => {
-        const s = q.search('text', args.query.slice(0, 200)).eq('userId', args.userId).eq('deleted', false);
+        const s = q
+          .search('text', truncateText(args.query, 200))
+          .eq('userId', args.userId)
+          .eq('deleted', false);
         return args.source ? s.eq('source', args.source) : s;
       })
       .take(100);
@@ -615,7 +623,7 @@ export const semanticSearch = action({
       limit: 80,
       filter: (q) => q.eq('userId', args.userId),
     });
-    return ctx.runQuery((internal as any).content.vectorRows, {
+    return ctx.runQuery(internal.content.vectorRows, {
       userId: args.userId,
       ids: matches.filter((r) => r._score > 0.3).map((r) => r._id),
     });
@@ -638,7 +646,12 @@ export const workCandidates = query({
       ...rows
         .filter((r) => !['done', 'archived', 'released'].includes(r.workState || r.status))
         .slice(0, 60)
-        .map((r) => ({ id: String(r._id), title: r.title, text: r.rawText.slice(0, 1500), shape: r.shape })),
+        .map((r) => ({
+          id: String(r._id),
+          title: r.title,
+          text: truncateText(r.rawText, 1500),
+          shape: r.shape,
+        })),
       ...proposals
         .filter((p) => p.draft && !p.workId)
         .map((p) => ({
@@ -691,8 +704,8 @@ export const tick = internalAction({
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     if (!url || !secret) return;
     const pages = await Promise.all(
-      ['connectedAccounts', 'mcpConnections', 'cloudFileConnections'].map((source) =>
-        ctx.runMutation((internal as any).content.users, { source }),
+      (['connectedAccounts', 'mcpConnections', 'cloudFileConnections'] as const).map((source) =>
+        ctx.runMutation(internal.content.users, { source }),
       ),
     );
     const users = [...new Set(pages.flat())];

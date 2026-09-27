@@ -311,11 +311,19 @@ describe('syncCalendarAccount', () => {
         .filter((call) => call.path === 'calendarData:markSyncState')
         .find((call) => call.args.status === 'unauthorized');
       expect(goneMark?.args.error).toContain('no longer exists');
+      // CAL-8: the shared account state goes to reconnect-needed.
+      const reconnect = h.convexCalls.find((call) => call.path === 'accounts:markGrantReconnectNeeded');
+      expect(reconnect?.args).toMatchObject({ grantId: 'grant_1' });
+      expect(reconnect?.args.reason).toStartWith('Reconnect needed');
 
       message = 'Forbidden';
       status = 403;
       const forbidden = await syncCalendarAccount({ userId: 'user_1', accountId: 'acct_1' });
       expect(forbidden.unauthorized).toBe(true);
+      // A missing calendar scope must not take the whole mailbox offline.
+      expect(h.convexCalls.filter((call) => call.path === 'accounts:markGrantReconnectNeeded')).toHaveLength(
+        1,
+      );
       const scopeMark = h.convexCalls
         .filter((call) => call.path === 'calendarData:markSyncState')
         .filter((call) => call.args.status === 'unauthorized')

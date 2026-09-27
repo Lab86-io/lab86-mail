@@ -1,11 +1,20 @@
 export function requireInternalSecret(secret?: string) {
   const expected = process.env.LAB86_CONVEX_INTERNAL_SECRET;
-  if (!expected) {
-    throw new Error('Missing Convex internal secret.');
-  }
-  if (secret !== expected) {
+  // One message for a missing configuration and a wrong secret, so the
+  // caller cannot tell them apart.
+  if (!expected || !constantTimeEqual(String(secret ?? ''), expected)) {
     throw new Error('Invalid Convex internal secret.');
   }
+}
+
+/** Compares two strings in time that does not depend on where they differ. */
+export function constantTimeEqual(provided: string, expected: string) {
+  const length = Math.max(provided.length, expected.length);
+  let diff = provided.length ^ expected.length;
+  for (let i = 0; i < length; i++) {
+    diff |= (provided.charCodeAt(i) | 0) ^ (expected.charCodeAt(i) | 0);
+  }
+  return diff === 0;
 }
 
 export function now() {

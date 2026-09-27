@@ -34,7 +34,7 @@ test('full workbook parsing retains styles, formats, figures, validation, and un
     },
   };
   const parsed = parseDocumentModel(model, 'sheet');
-  expect(parsed).toEqual(model);
+  expect(parsed).toEqual<unknown>(model);
   expect(modelByteLength(parsed)).toBe(new TextEncoder().encode(JSON.stringify(model)).byteLength);
   expect(() => assertModelWithinLimit({ ...model, padding: 'é'.repeat(500_000) })).toThrow('limit');
 });

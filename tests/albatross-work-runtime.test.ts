@@ -516,48 +516,6 @@ describe('reporting and progress queries', () => {
     });
   });
 
-  test('projectProgressSummary splits periods and only rates events with due dates', async () => {
-    const t = newHarness();
-    const ts = Date.now();
-    const day = 86_400_000;
-    await t.run(async (ctx) => {
-      const base = { userId: caller.userId, artifactKind: 'task' as const, createdAt: ts };
-      // This period: one on time, one late, one with no due date.
-      await ctx.db.insert('completionEvents', {
-        ...base,
-        artifactId: 'on_time',
-        completedAt: ts - day,
-        dueAt: ts,
-      });
-      await ctx.db.insert('completionEvents', {
-        ...base,
-        artifactId: 'late',
-        completedAt: ts - day,
-        dueAt: ts - 2 * day,
-      });
-      await ctx.db.insert('completionEvents', { ...base, artifactId: 'no_due', completedAt: ts - 2 * day });
-      // Prior period.
-      await ctx.db.insert('completionEvents', { ...base, artifactId: 'prior', completedAt: ts - 10 * day });
-    });
-    const summary = await t.query(api.albatrossWork.projectProgressSummary, { ...caller, sinceDays: 7 });
-    expect(summary).toEqual({ completedThisPeriod: 3, completedPriorPeriod: 1, onTimeRate: 0.5 });
-
-    // A window with no due-dated completions reports no rate at all.
-    const t2 = newHarness();
-    await t2.run(async (ctx) => {
-      await ctx.db.insert('completionEvents', {
-        userId: caller.userId,
-        artifactKind: 'intent',
-        artifactId: 'only',
-        completedAt: Date.now(),
-        createdAt: Date.now(),
-      });
-    });
-    const bare = await t2.query(api.albatrossWork.projectProgressSummary, { ...caller });
-    expect(bare.completedThisPeriod).toBe(1);
-    expect(bare.onTimeRate).toBeUndefined();
-  });
-
   test('getProjectPane aggregates links, sprints, approvals, and applications', async () => {
     const t = newHarness();
     const projectId = await t.mutation(api.albatrossWork.createProject, { ...caller, title: 'Pane' });

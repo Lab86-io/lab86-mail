@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { assertWorkOpen, isTerminalWork } from '../lib/albatross/work-lifecycle';
+import { truncateText } from '../lib/shared/text';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
@@ -79,7 +80,7 @@ async function resolveUserId(
 
 function bounded(value: string | undefined, max: number, fallback = '') {
   if (value === undefined) return undefined;
-  return normalizeText(value, fallback).slice(0, max);
+  return truncateText(normalizeText(value, fallback), max);
 }
 
 // --- completion events (issue #87/#18) ---------------------------------------
@@ -1023,36 +1024,6 @@ export const projectTasks = query({
   },
 });
 
-// Contract FROZEN for issue #18 reporting:
-// { completedThisPeriod, completedPriorPeriod, onTimeRate? }.
-// Simple, honest math over completionEvents: this period vs the period of the
-// same length before it; onTimeRate only over this period's events that had a
-// due date (undefined when none did — no fabricated rates).
-export const projectProgressSummary = query({
-  args: { ...callerArgs, sinceDays: v.optional(v.number()) },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const days = Math.min(Math.max(Math.round(args.sinceDays ?? 7), 1), 90);
-    const ts = now();
-    const periodMs = days * 86_400_000;
-    const since = ts - periodMs;
-    const priorSince = ts - 2 * periodMs;
-    const events = await ctx.db
-      .query('completionEvents')
-      .withIndex('by_user_completedAt', (q) => q.eq('userId', userId).gte('completedAt', priorSince))
-      .collect();
-    const thisPeriod = events.filter((event) => event.completedAt >= since);
-    const priorPeriod = events.filter((event) => event.completedAt < since);
-    const withDue = thisPeriod.filter((event) => typeof event.dueAt === 'number');
-    const onTime = withDue.filter((event) => event.completedAt <= (event.dueAt as number));
-    return {
-      completedThisPeriod: thisPeriod.length,
-      completedPriorPeriod: priorPeriod.length,
-      onTimeRate: withDue.length ? onTime.length / withDue.length : undefined,
-    };
-  },
-});
-
 // Completed work since an instant, with titles (brief round 2026-09-22). The
 // morning brief reads this to say what moved since the previous edition.
 export const completionsSince = query({
@@ -1092,7 +1063,7 @@ export const completionsSince = query({
       rows.push({
         artifactKind: event.artifactKind,
         artifactId: event.artifactId,
-        title: String(title).slice(0, 240),
+        title: truncateText(String(title), 240),
         areaId: event.areaId,
         completedAt: event.completedAt,
         shape: event.shape,

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
-import { recordJevUsage, resolveJevRuntime } from '@/lib/ai/gateway';
+import { recordClassifierUsage, resolveClassifierRuntime } from '@/lib/ai/gateway';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { type ClassifierResponse, evaluateClassifier } from '@/lib/classifier/client';
 import { OfficeError, readOfficeRequest } from '@/lib/documents/office-security';
-import { evaluateJev, type JevResponse } from '@/lib/jev/client';
 import { demoMailInput, demoResult, jevDemoInputSchema } from '@/lib/jev/demo';
 import { buildMailQuestions } from '@/lib/jev/mail';
 import { loadJevPolicy } from '@/lib/jev/service';
@@ -14,9 +14,9 @@ export const dynamic = 'force-dynamic';
 const defaults = {
   requireCurrentUser,
   runWithAiRequestContext,
-  resolveJevRuntime,
-  recordJevUsage,
-  evaluateJev,
+  resolveClassifierRuntime,
+  recordClassifierUsage,
+  evaluateClassifier,
   loadJevPolicy,
   enforceUserRateLimit,
 };
@@ -49,29 +49,34 @@ export function createJevDemoRoute(deps = defaults) {
         );
       return await deps.runWithAiRequestContext({ userId: user.userId, agent: 'ai' }, async () => {
         const policy = await deps.loadJevPolicy(user.userId);
-        const resolved = await deps.resolveJevRuntime(user.userId);
+        const resolved = await deps.resolveClassifierRuntime(user.userId);
         const input = demoMailInput(parsed.data, Date.now());
         const start = performance.now();
-        let response: JevResponse;
+        let response: ClassifierResponse;
         try {
-          response = await deps.evaluateJev({
+          response = await deps.evaluateClassifier({
             apiKey: resolved.apiKey,
+            model: resolved.model,
             state: {
               mailboxOwnerAddresses: input.selfAddresses,
               messagesOldestToNewest: input.messages,
               contextComplete: true,
             },
-            questions: buildMailQuestions(input),
+            questions: buildMailQuestions(input, resolved.model),
+            timeoutMs: resolved.model?.protocol === 'together-choice' ? 10_000 : undefined,
             signal: request.signal,
           });
         } catch (error) {
-          await deps.recordJevUsage(resolved, 'jev_demo');
+          await deps.recordClassifierUsage(resolved, 'jev_demo');
           throw error;
         }
         const inferenceMs = Math.round(performance.now() - start);
-        await deps.recordJevUsage(resolved, 'jev_demo', response);
+        await deps.recordClassifierUsage(resolved, 'jev_demo', response);
         return NextResponse.json(
-          { ok: true, ...demoResult(input, response, policy.preferences, inferenceMs, Date.now()) },
+          {
+            ok: true,
+            ...demoResult(input, response, policy.preferences, inferenceMs, Date.now(), resolved.model),
+          },
           { headers: { 'Cache-Control': 'no-store' } },
         );
       });
@@ -82,7 +87,7 @@ export function createJevDemoRoute(deps = defaults) {
         error instanceof Error ? error.name : 'unknown',
       );
       return NextResponse.json(
-        { error: 'Jev could not classify this example. Check your connection and try again.' },
+        { error: 'The classifier could not classify this example. Check your connection and try again.' },
         { status: 503 },
       );
     }

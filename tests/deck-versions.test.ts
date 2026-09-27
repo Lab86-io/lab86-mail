@@ -26,7 +26,7 @@ const v1 = () => {
     height: 20,
     fill: '#AABBCC',
     color: '#112233',
-  });
+  } as never);
   return model;
 };
 

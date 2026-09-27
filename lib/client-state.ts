@@ -3,7 +3,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { BriefResponseRequest } from '@/lib/brief/response';
-import type { Capacity } from './albatross/today';
 import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
 import type { CalendarSearchTarget } from './search/global-search';
 import { migratePrimaryView, type PrimaryView } from './shared/types';
@@ -81,19 +80,15 @@ export interface ClientState {
   // The column board is an optional lens, off by default. It used to be a
   // top-level surface, which made it a second system to maintain.
   boardSurfaceEnabled: boolean;
-  // The user's own statement about the day. It changes how much Today puts in
-  // front of them; it never changes what they are allowed to see.
-  capacity: Capacity;
-  // When the user last opened Albatross. Coming back after a while gets a
-  // different first screen — never a wall of accumulated overdue work.
-  lastSeenAt: number | null;
+  // Files in the rail. The server owns the choice (/api/account/surfaces);
+  // this copy lets the rail draw it before that answer arrives.
+  filesSurfaceEnabled: boolean;
   compose: ComposeState;
   // Exact attachment blobs staged for the next composer (Undo Send or a
   // brief-generated deliverable). Transient by design; the composer persists
   // them with the draft as soon as it opens.
   composeRecoveredFiles: File[];
   shortcutsOpen: boolean;
-  rightRailOpen: boolean;
   railOpen: boolean;
   railWidth: number;
   aiBarOpen: boolean;
@@ -104,6 +99,17 @@ export interface ClientState {
   queueBriefResponse: (request: BriefResponseRequest) => boolean;
   claimBriefResponse: (id: string) => BriefResponseRequest | null;
   clearBriefResponse: () => void;
+  /**
+   * A request another surface (the command palette) hands to the assistant.
+   * The assistant opens and sends it once. Transient; never persisted.
+   */
+  assistantPrompt: string | null;
+  /** A summary asked for from the keyboard (`s`). The open reader claims it. */
+  summaryRequestThreadId: string | null;
+  requestThreadSummary: (threadId: string) => void;
+  claimThreadSummaryRequest: (threadId: string) => boolean;
+  askAssistant: (prompt: string) => boolean;
+  claimAssistantPrompt: () => string | null;
   assistantInvitation: string | null;
   setAssistantInvitation: (phrase: string | null) => void;
   setAssistantDocument: (document: AssistantDocumentContext | null) => void;
@@ -181,8 +187,7 @@ export interface ClientState {
   setCaptureOpen: (open: boolean) => void;
   openCaptureWith: (seed: string) => void;
   setBoardSurfaceEnabled: (enabled: boolean) => void;
-  setCapacity: (capacity: Capacity) => void;
-  markSeen: () => void;
+  setFilesSurfaceEnabled: (enabled: boolean) => void;
   openComposeNew: (prefill?: ComposePrefill) => void;
   openComposeReply: (input: {
     mode: 'reply' | 'reply_all' | 'forward';
@@ -194,7 +199,6 @@ export interface ClientState {
   closeCompose: () => void;
   setComposeRecoveredFiles: (files: File[]) => void;
   setShortcutsOpen: (open: boolean) => void;
-  setRightRailOpen: (open: boolean) => void;
   setRailOpen: (open: boolean) => void;
   setRailWidth: (width: number) => void;
   setAiBarOpen: (open: boolean) => void;
@@ -303,13 +307,11 @@ export function persistedClientState(s: ClientState) {
     account: s.account,
     primaryView: s.primaryView,
     boardSurfaceEnabled: s.boardSurfaceEnabled,
-    capacity: s.capacity,
-    lastSeenAt: s.lastSeenAt,
+    filesSurfaceEnabled: s.filesSurfaceEnabled,
     query: s.query,
     smartCategory: s.smartCategory,
     selectedAreaId: s.selectedAreaId,
     selectedWorkId: s.selectedWorkId,
-    rightRailOpen: s.rightRailOpen,
     railOpen: s.railOpen,
     railWidth: s.railWidth,
     lastChatId: s.lastChatId,
@@ -360,12 +362,10 @@ export const useClientStore = create<ClientState>()(
       captureOpen: false,
       captureSeed: null,
       boardSurfaceEnabled: false,
-      capacity: 'normal',
-      lastSeenAt: null,
+      filesSurfaceEnabled: false,
       compose: initialCompose,
       composeRecoveredFiles: [],
       shortcutsOpen: false,
-      rightRailOpen: true,
       railOpen: true,
       railWidth: 240,
       aiBarOpen: false,
@@ -388,6 +388,25 @@ export const useClientStore = create<ClientState>()(
         return request;
       },
       clearBriefResponse: () => set({ assistantBriefRequest: null, assistantBriefContext: null }),
+      assistantPrompt: null,
+      summaryRequestThreadId: null,
+      requestThreadSummary: (summaryRequestThreadId) => set({ summaryRequestThreadId }),
+      claimThreadSummaryRequest: (threadId) => {
+        if (get().summaryRequestThreadId !== threadId) return false;
+        set({ summaryRequestThreadId: null });
+        return true;
+      },
+      askAssistant: (prompt) => {
+        const text = prompt.trim();
+        if (!text) return false;
+        set({ assistantPrompt: text, aiBarOpen: true });
+        return true;
+      },
+      claimAssistantPrompt: () => {
+        const prompt = get().assistantPrompt;
+        if (prompt) set({ assistantPrompt: null });
+        return prompt;
+      },
       assistantInvitation: null,
       setAssistantInvitation: (assistantInvitation) => set({ assistantInvitation }),
       setAssistantDocument: (assistantDocument) => set({ assistantDocument }),
@@ -485,8 +504,7 @@ export const useClientStore = create<ClientState>()(
       setCaptureOpen: (captureOpen) => set({ captureOpen, ...(captureOpen ? {} : { captureSeed: null }) }),
       openCaptureWith: (captureSeed) => set({ captureSeed, captureOpen: true }),
       setBoardSurfaceEnabled: (boardSurfaceEnabled) => set({ boardSurfaceEnabled }),
-      setCapacity: (capacity) => set({ capacity }),
-      markSeen: () => set({ lastSeenAt: Date.now() }),
+      setFilesSurfaceEnabled: (filesSurfaceEnabled) => set({ filesSurfaceEnabled }),
       openComposeNew: (prefill) =>
         set((s) => ({
           compose: {
@@ -512,7 +530,6 @@ export const useClientStore = create<ClientState>()(
       closeCompose: () => set({ compose: { ...initialCompose } }),
       setComposeRecoveredFiles: (composeRecoveredFiles) => set({ composeRecoveredFiles }),
       setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
-      setRightRailOpen: (rightRailOpen) => set({ rightRailOpen }),
       setRailOpen: (railOpen) => set({ railOpen }),
       setRailWidth: (railWidth) => set({ railWidth }),
       setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
@@ -546,9 +563,7 @@ export const useClientStore = create<ClientState>()(
       // A previous build mapped an empty/cleared search to All Mail
       // (-in:trash …), which got persisted; reset that stale value so the
       // default view is the unified inbox again.
-      migrate: (persisted: any) => {
-        return migratePersistedClientState(persisted);
-      },
+      migrate: (persisted: any) => migratePersistedClientState(persisted),
       partialize: persistedClientState,
     },
   ),

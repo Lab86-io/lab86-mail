@@ -73,8 +73,11 @@ dashboard sessions:
 - Clerk OAuth: configure production Apple, Google, and Microsoft OAuth credentials during `clerk deploy`.
 - Clerk Billing: enable Clerk Billing, create the Free/default and Pro plans, connect the production Lab86 Stripe
   account, and set the resulting billing URLs in Railway.
-- Clerk webhooks: create the Svix/Clerk webhook endpoint for `/api/clerk/webhook`, subscribe to user and billing
-  lifecycle events, then set `CLERK_WEBHOOK_SIGNING_SECRET` in Railway.
+- Clerk webhooks: create the Svix/Clerk webhook endpoint for `/api/clerk/webhook`. Subscribe to `user.created`,
+  `user.updated`, and `user.deleted`, then set `CLERK_WEBHOOK_SIGNING_SECRET` in both Railway environments.
+  `user.created` and `user.updated` update the Convex user row. `user.deleted` runs the same deletion as
+  `DELETE /api/account`. The handler writes other events, such as billing events, to the audit log only.
+  Without the signing secret, the endpoint rejects every event.
 - Nylas: refresh `nylas dashboard login`, create separate development and production apps/API keys, and set the
   production Nylas values in Railway. The existing sandbox app has callbacks for
   `https://mail-staging.lab86.io/api/nylas/callback` and
@@ -186,53 +189,95 @@ This keeps you at the 5-grant cap and is for testing only.
 
 ## Railway Variables
 
-Set these in both Railway environments with environment-specific values:
+Set these in both Railway environments (service `web`) with environment-specific values. Check the names with
+`railway variables --kv --environment <env> --service web | grep -E '^[A-Z_][A-Z0-9_]*=' | cut -d= -f1`. Do not
+print the values.
+
+Core:
 
 - `LAB86_MAIL_PUBLIC_URL`
 - `NEXT_PUBLIC_APP_URL`
+- `LAB86_MAIL_ENCRYPTION_KEY`
+- `LAB86_CONVEX_INTERNAL_SECRET` (the same value as in the Convex deployment, see below)
+- `NEXT_PUBLIC_CONVEX_URL`
+- `CONVEX_DEPLOYMENT`
+
+Clerk:
+
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
 - `CLERK_SECRET_KEY`
-- `NEXT_PUBLIC_CLERK_PROXY_URL`
+- `CLERK_WEBHOOK_SIGNING_SECRET`
 - `NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in`
 - `NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up`
 - `NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/`
 - `NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/`
-- `NEXT_PUBLIC_CONVEX_URL`
-- `CONVEX_DEPLOYMENT`
-- `NEXT_PUBLIC_CONVEX_SITE_URL`
-- `LAB86_CONVEX_INTERNAL_SECRET`
-- `LAB86_NOTIFICATION_LINK_SECRET`
-- `NEXT_PUBLIC_VAPID_PUBLIC_KEY`
-- `VAPID_PRIVATE_KEY`
-- `VAPID_SUBJECT`
-- `RESEND_API_KEY`
-- `LAB86_NOTIFICATION_FROM`
-- `CLERK_WEBHOOK_SIGNING_SECRET`
 - `CLERK_BILLING_CHECKOUT_URL`
 - `CLERK_BILLING_PORTAL_URL`
+- `CLERK_PRO_PLAN_SLUG=mail_pro`
+- `CLERK_PRO_AI_FEATURE_SLUG=b2c_mail`
+
+Nylas:
+
 - `NYLAS_API_KEY`
 - `NYLAS_CLIENT_ID`
 - `NYLAS_CLIENT_SECRET`
 - `NYLAS_API_URI`
 - `NYLAS_REDIRECT_URI`
-- `NYLAS_SCOPES`
+- `NYLAS_WEBHOOK_SECRET`
 - `LAB86_MAIL_ICLOUD_MODE=hidden`
 - `LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY=0`
-- `LAB86_MAIL_CORPUS_RECONCILE_ENABLED=1`
-- `LAB86_MAIL_LOCAL_SEARCH_PROVIDERS=icloud,microsoft`
-- `LAB86_MAIL_ENCRYPTION_KEY`
-- `OPENROUTER_API_KEY` or another supported platform AI key
+
+Models and credits:
+
+- `OPENROUTER_API_KEY` or another supported platform key
 - `LAB86_MAIL_OPENAI_MODEL`
 - `LAB86_MAIL_OPENAI_FAST_MODEL`
-- `CLERK_PRO_PLAN_SLUG=mail_pro`
-- `CLERK_PRO_AI_FEATURE_SLUG=b2c_mail`
+- `LAB86_MAIL_OPENAI_NANO_MODEL`
+- `LAB86_MAIL_AGENT_FALLBACK_MODEL`
 - `LAB86_AI_FREE_MONTHLY_CREDITS=0`
 - `LAB86_AI_PRO_MONTHLY_CREDITS=500`
+- `LAB86_REQUIRE_USER_OPENROUTER_KEY`
+- `LAB86_DISABLE_SUBSCRIPTIONS`
+
+Documents, files, and the shared browser:
+
+- `OFFICE_EDITOR_ENABLED`, `OFFICE_EDITOR_PROVIDER`, `OFFICE_DOCUMENT_SERVER_URL`, `OFFICE_APP_ORIGIN`,
+  `OFFICE_JWT_SECRET`
+- `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`
+- `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`
+
+Native push:
+
+- `APNS_BUNDLE_ID`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY`
+
+Narrative memory:
+
+- `LAB86_NARRATIVE_ENABLED`
+- `LAB86_NARRATIVE_USER_IDS` (optional allow list)
+
+Email and web push notifications. Production does not set these yet, so email and web push do not send:
+
+- `LAB86_NOTIFICATION_LINK_SECRET`
+- `RESEND_API_KEY`
+- `LAB86_NOTIFICATION_FROM`
+- `NEXT_PUBLIC_VAPID_PUBLIC_KEY`
+- `VAPID_PRIVATE_KEY`
+- `VAPID_SUBJECT`
+
+Optional:
+
+- `NYLAS_SCOPES` (the connect route has a default)
+- `LAB86_MAIL_CORPUS_RECONCILE_ENABLED` (the reconcile route is on unless this is `0`)
+- `LAB86_MAIL_LOCAL_SEARCH_PROVIDERS` (see the corpus section)
+
+No code reads these. You can remove them from Railway: `LAB86_MAIL_ENABLE_GOG`, `LAB86_ENABLE_ALBATROSS`,
+`BRIEF_DOCUMENT_V2`, `NEXT_PUBLIC_CONVEX_SITE_URL`, `DECK_RENDER_CHECK`, and any `MAIL_OS_*` name.
 
 Development-only:
 
 - `STAGING_BASIC_AUTH_USER`
 - `STAGING_BASIC_AUTH_PASSWORD`
+- `NEXT_PUBLIC_CLERK_PROXY_URL` (staging only; the build fails if it does not match the app origin)
 
 Emergency switches:
 
@@ -241,6 +286,26 @@ Emergency switches:
 - `LAB86_DISABLE_PUBLIC_SIGNUP=1`
 - `LAB86_MAIL_CORPUS_RECONCILE_ENABLED=0`
 - `LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS=icloud,microsoft,google`
+
+## Convex Environment Variables
+
+Convex functions read their own environment. Railway variables do not reach Convex. A missing Convex variable
+caused the July 2026 outage, so check this list on each new deployment. Set the values in the Convex dashboard, or
+with `npx convex env set <NAME> <value>` for the target deployment. List the names with `npx convex env list`.
+
+Required in the development and production deployments:
+
+- `LAB86_CONVEX_INTERNAL_SECRET`: the same value as the Railway variable. Every internal mutation and every cron
+  call to the app uses it.
+- `LAB86_MAIL_PUBLIC_URL`: the app origin that Convex crons call, for example `https://mail.lab86.io`. Without it,
+  the crons skip their work.
+- `CLERK_JWT_ISSUER_DOMAIN`: the Clerk issuer for `convex/auth.config.ts`. Without it, all client queries that
+  need a signed-in user fail.
+
+Optional:
+
+- `RAILWAY_ENVIRONMENT_NAME`, `LAB86_MAIL_ENV`, or `LAB86_ENV`: set to `development` or `staging` to mark a
+  staging deployment for the Daily Brief cron. Without them, the cron uses the host of `LAB86_MAIL_PUBLIC_URL`.
 
 ## DNS Cutover
 
@@ -286,6 +351,9 @@ curl --fail https://mail-staging.lab86.io/api/healthz
 curl --fail https://mail.lab86.io/api/healthz
 ```
 
+The public health check returns only `{"ok":true}`. To see the deployment, model, and flag details, send the
+internal secret in the `x-lab86-internal-secret` header.
+
 ## Rollback
 
 Production rollback priority:
@@ -324,6 +392,9 @@ sanitized.
 Convex is the durable local mail corpus. Nylas is the interim transport used to fetch mail and receive webhook
 wake signals.
 
+These routes check the internal secret in the handler, so Clerk does not redirect them. On staging, send the
+secret as a bearer token: staging basic auth lets bearer requests to `/api/` through.
+
 Manual backfill for one grant-backed account:
 
 ```bash
@@ -335,7 +406,7 @@ curl --fail -X POST https://mail-staging.lab86.io/api/mail/corpus/backfill \
 
 If the response includes `nextPageToken`, call the endpoint again with that token until `corpusReady` is true.
 
-Reconciliation cron:
+Manual reconcile (there is no scheduled reconcile; webhooks and the manual call are the only paths):
 
 ```bash
 curl --fail -X POST https://mail-staging.lab86.io/api/mail/corpus/reconcile \
@@ -349,8 +420,8 @@ to run repeatedly; Convex upserts by `(accountId, providerMessageId)` and `(acco
 
 Local-first search rollout is controlled by provider list:
 
-- `LAB86_MAIL_LOCAL_SEARCH_PROVIDERS=icloud,microsoft` is the default rollout state.
-- Set `LAB86_MAIL_LOCAL_SEARCH_PROVIDERS=all` to include Google once parity is validated.
+- With no variable set, local search is on for all four providers (Google, Microsoft, iCloud, IMAP).
+- Set `LAB86_MAIL_LOCAL_SEARCH_PROVIDERS=<provider,...>` to limit local search to those providers.
 - Set `LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS=<provider>` for instant provider rollback to Nylas structured
   search. Use `all` to force structured search for every provider.
 

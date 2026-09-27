@@ -91,8 +91,12 @@ struct ShellStatusOverlay: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(environment.theme.accentColor)
+                        #if os(macOS)
+                        // Edit > Undo holds the same change (MacUndoBridge).
+                        .help("Undo (Command-Z)")
+                        #endif
                         Button("Dismiss") {
-                            environment.store.undoNotice = nil
+                            environment.store.dismissUndoNotice()
                         }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.plain)
@@ -269,19 +273,16 @@ struct ShellToolbarModifier: ViewModifier {
         Button {
             environment.navigation.sheet = .activity
         } label: {
-            Label(
-                "Activity",
-                systemImage: environment.store.approvals.isEmpty
-                    && environment.store.suggestions.isEmpty
-                    && environment.store.pendingQuestions.isEmpty
-                    ? "bell" : "bell.badge"
-            )
+            Label("Activity", systemImage: activityNeedsAttention ? "bell.badge" : "bell")
         }
-        .accessibilityLabel(
-            environment.store.approvals.isEmpty
-                && environment.store.suggestions.isEmpty
-                && environment.store.pendingQuestions.isEmpty
-                ? "Activity" : "Activity, decisions waiting"
+        .accessibilityLabel(activityNeedsAttention ? "Activity, decisions waiting" : "Activity")
+    }
+
+    private var activityNeedsAttention: Bool {
+        ActivityInbox.needsAttention(
+            approvals: environment.store.approvals.count,
+            suggestions: environment.store.suggestions.count,
+            questions: environment.store.pendingQuestions.count
         )
     }
 }

@@ -12,13 +12,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Checkbox } from '@/components/ui/checkbox';
 import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 import { callTool } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 
-// Cast like `boardsApi` in TasksSurface: the albatrossWork functions are being
-// landed server-side; the UI builds against the frozen contract shapes below.
-const workApi = (api as any).albatrossWork;
-const boardsApi = (api as any).boards;
+const workApi = api.albatrossWork;
+const boardsApi = api.boards;
 
 export type ProjectStatus = 'active' | 'paused' | 'done' | 'archived';
 
@@ -442,14 +441,16 @@ function ProjectDetail({
   onBack: () => void;
   onOpenTask: (boardId: string, cardId: string) => void;
 }) {
-  const tasks = useQuery(workApi.projectTasks, { projectId: project._id }) as ProjectTaskRow[] | undefined;
+  // The summary carries the Convex project id as a plain string.
+  const projectRef = project._id as Id<'albatrossProjects'>;
+  const tasks = useQuery(workApi.projectTasks, { projectId: projectRef }) as ProjectTaskRow[] | undefined;
   const updateProject = useMutation(workApi.updateProject);
   const updateCard = useMutation(boardsApi.updateCard);
   const progress = projectProgress(project);
   const ordered = useMemo(() => orderProjectTasks(tasks || []), [tasks]);
 
   const setStatus = (status: ProjectStatus) => {
-    void updateProject({ projectId: project._id, status }).catch((err: any) =>
+    void updateProject({ projectId: projectRef, status }).catch((err: any) =>
       toast.error(err?.message || 'Could not update project'),
     );
   };
@@ -520,7 +521,7 @@ function ProjectDetail({
                   aria-label={done ? `Mark ${task.title} not done` : `Mark ${task.title} done`}
                   onCheckedChange={(checked) => {
                     void updateCard({
-                      cardId: task.cardId,
+                      cardId: task.cardId as Id<'cards'>,
                       completedAt: checked ? Date.now() : null,
                     }).catch((err: any) => toast.error(err?.message || 'Could not update task'));
                   }}

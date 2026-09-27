@@ -64,7 +64,7 @@ export async function resolveThread(account: string, id: string): Promise<Thread
   if (!isConvexConfigured()) return kv;
   let corpus: any = null;
   try {
-    corpus = await convexQuery((api as any).mailCorpus.getCorpusThread, {
+    corpus = await convexQuery(api.mailCorpus.getCorpusThread, {
       userId: requireStoreUserId(),
       accountId: account,
       providerThreadId: id,
@@ -125,6 +125,21 @@ export async function setThreadSummary(account: string, id: string, summary: str
 
 export async function setThreadTriage(account: string, id: string, triage: Thread['triage']) {
   await patchThread(account, id, { triage });
+}
+
+/**
+ * Sets or clears the triage overlay. Undo of a bulk triage needs to clear a
+ * verdict, and upsertThread keeps the old value when it gets null.
+ */
+export async function replaceThreadTriage(account: string, id: string, triage: Thread['triage'] | null) {
+  const existing = await getThread(account, id);
+  if (!existing) return;
+  await kvUpsert(
+    'thread',
+    threadKey(account, id),
+    { ...existing, triage: triage ?? null, cachedAt: Date.now() },
+    account,
+  );
 }
 
 export async function setThreadSmartCategory(

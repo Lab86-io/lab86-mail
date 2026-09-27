@@ -9,6 +9,7 @@ import {
 } from '@/lib/albatross/work-v2';
 import type { CurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 
 export interface CaptureWorkInput {
   rawText: string;
@@ -30,6 +31,8 @@ interface CaptureWorkDependencies {
   mutate: typeof convexMutation;
   query: typeof convexQuery;
   now: () => number;
+  /** The user's zone, so "not before Monday" is the user's Monday (WRK-19). */
+  timezone?: (userId: string) => Promise<string | undefined>;
 }
 
 const defaultDependencies: CaptureWorkDependencies = {
@@ -37,6 +40,10 @@ const defaultDependencies: CaptureWorkDependencies = {
   mutate: convexMutation,
   query: convexQuery,
   now: () => Date.now(),
+  timezone: async (userId) => {
+    const zone = await convexQuery<string>(api.albatrossNotifications.deliveryTimezone, { userId });
+    return typeof zone === 'string' && zone ? zone : undefined;
+  },
 };
 
 function normalizedName(value: unknown) {
@@ -53,7 +60,10 @@ export async function captureWork(
 ): Promise<CaptureWorkResult> {
   const rawText = input.rawText.trim();
   if (!rawText) throw new Error('rawText required');
-  const captureId = await dependencies.mutate<string>((api as any).albatrossWorkV2.beginCapture, {
+  const timezone = dependencies.timezone
+    ? await dependencies.timezone(user.userId).catch(() => undefined)
+    : undefined;
+  const captureId = await dependencies.mutate<string>(api.albatrossWorkV2.beginCapture, {
     userId: user.userId,
     rawText,
     transcript: input.transcript,
@@ -62,20 +72,15 @@ export async function captureWork(
   try {
     if (input.reviewedItems?.length) {
       const items = input.reviewedItems.slice(0, 20).map((item) => ({
-        title:
-          String(item.title || '')
-            .trim()
-            .slice(0, 180) || 'Work',
-        rawText: String(item.rawText || '')
-          .trim()
-          .slice(0, 20_000),
+        title: truncateText(String(item.title || '').trim(), 180) || 'Work',
+        rawText: truncateText(String(item.rawText || '').trim(), 20_000),
         primaryAreaId: input.areaId || undefined,
         relatedAreaIds: [],
-        horizon: parseHorizonHint(item.rawText, dependencies.now()) ?? undefined,
-        ...shapeForSplitItem({}, item.rawText, dependencies.now()),
+        horizon: parseHorizonHint(item.rawText, dependencies.now(), timezone) ?? undefined,
+        ...shapeForSplitItem({}, item.rawText, dependencies.now(), timezone),
       }));
       if (items.some((item) => !item.rawText)) throw new Error('Reviewed Work cannot be empty.');
-      const workIds = await dependencies.mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {
+      const workIds = await dependencies.mutate<string[]>(api.albatrossWorkV2.finishCapture, {
         userId: user.userId,
         captureId,
         items,
@@ -84,11 +89,9 @@ export async function captureWork(
     }
     const [areas, facts] = await Promise.all([
       dependencies
-        .query<any[]>((api as any).albatross.listAreas, { userId: user.userId, status: 'active' })
+        .query<any[]>(api.albatross.listAreas, { userId: user.userId, status: 'active' })
         .catch(() => []),
-      dependencies
-        .query<any[]>((api as any).albatross.listVerifiedFacts, { userId: user.userId })
-        .catch(() => []),
+      dependencies.query<any[]>(api.albatross.listVerifiedFacts, { userId: user.userId }).catch(() => []),
     ]);
     const areaContext = areas.map((area) => ({
       name: area.name,
@@ -141,19 +144,20 @@ Return one JSON object only:
       const related = item.relatedAreaNames
         .map((name) => areaByName.get(normalizedName(name)))
         .filter((area): area is any => Boolean(area) && String(area._id) !== String(primary?._id));
-      const read = shapeForSplitItem(item, item.rawText, dependencies.now());
+      const read = shapeForSplitItem(item, item.rawText, dependencies.now(), timezone);
       return {
         title: item.title,
         rawText: item.rawText,
         primaryAreaId: primary?._id,
         relatedAreaIds: [...new Set(related.map((area) => area._id))],
         shape: read.shape,
-        horizon: horizonForSplitItem(item.horizon, item.rawText, dependencies.now()) ?? read.horizon,
+        horizon:
+          horizonForSplitItem(item.horizon, item.rawText, dependencies.now(), timezone) ?? read.horizon,
         ...(read.listItems ? { listItems: read.listItems } : {}),
         ...(read.metric ? { metric: read.metric } : {}),
       };
     });
-    const workIds = await dependencies.mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {
+    const workIds = await dependencies.mutate<string[]>(api.albatrossWorkV2.finishCapture, {
       userId: user.userId,
       captureId,
       items,
@@ -163,19 +167,19 @@ Return one JSON object only:
     // Raw input is never lost. A model or Area lookup failure commits one
     // verbatim Work item and lets the normal advancement path continue.
     const workIds = await dependencies
-      .mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {
+      .mutate<string[]>(api.albatrossWorkV2.finishCapture, {
         userId: user.userId,
         captureId,
         items: [
           {
             ...captureFallbackItem(rawText, input.areaId),
-            horizon: parseHorizonHint(rawText, dependencies.now()) ?? undefined,
-            ...shapeForSplitItem({}, rawText, dependencies.now()),
+            horizon: parseHorizonHint(rawText, dependencies.now(), timezone) ?? undefined,
+            ...shapeForSplitItem({}, rawText, dependencies.now(), timezone),
           },
         ],
       })
       .catch(async () => {
-        await dependencies.mutate((api as any).albatrossWorkV2.failCapture, {
+        await dependencies.mutate(api.albatrossWorkV2.failCapture, {
           userId: user.userId,
           captureId,
           error: error instanceof Error ? error.message : String(error),

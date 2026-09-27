@@ -133,6 +133,19 @@ describe('a label move files mail out of its category for good', () => {
         .smartCategory,
     ).toBe('orders');
   });
+
+  test('the mobile summary carries secondary categories and label ids', () => {
+    const summary = mailThreadSummaryFromCorpus({
+      _id: 't',
+      account: 'a',
+      smartCategory: { primary: 'main', secondary: ['orders', 7, ''], customLabels: [DEVOPS_LABEL_ID] },
+    });
+    expect(summary.smartSecondary).toEqual(['orders']);
+    expect(summary.smartLabels).toEqual([DEVOPS_LABEL_ID]);
+    const bare = mailThreadSummaryFromCorpus({ _id: 't', account: 'a', smartCategory: { primary: 'main' } });
+    expect(bare.smartSecondary).toBeUndefined();
+    expect(bare.smartLabels).toBeUndefined();
+  });
 });
 
 describe('never_main holds over model verdicts', () => {

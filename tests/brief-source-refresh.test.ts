@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { resolveAiBudgetPolicy } from '../lib/ai/budget';
-import { generateTextForCurrentUser, maxOutputTokensForFeature } from '../lib/ai/gateway';
+import {
+  BRIEF_MAX_OUTPUT_TOKENS,
+  generateTextForCurrentUser,
+  maxOutputTokensForFeature,
+} from '../lib/ai/gateway';
 import { briefSourceCoverage, createBriefSourceRefresher } from '../lib/mail/brief-source-refresh';
 
 function harness(overrides: Record<string, any> = {}) {
@@ -110,7 +114,9 @@ describe('brief source preflight', () => {
   });
 });
 
-test('every brief writer is uncapped while unrelated gateway budgets remain intact', () => {
+test('every brief writer gets one high explicit cap while unrelated gateway budgets remain intact', () => {
+  // An uncapped call lets OpenRouter reserve credits for the model maximum and answer 402.
+  expect(BRIEF_MAX_OUTPUT_TOKENS).toBe(32_000);
   for (const feature of [
     'daily_report_insight',
     'daily_report_narrative',
@@ -125,8 +131,8 @@ test('every brief writer is uncapped while unrelated gateway budgets remain inta
     'narrative_write',
     'narrative_meeting_prep',
   ]) {
-    expect(maxOutputTokensForFeature(feature)).toBeUndefined();
-    expect(maxOutputTokensForFeature(feature, 1800)).toBeUndefined();
+    expect(maxOutputTokensForFeature(feature)).toBe(BRIEF_MAX_OUTPUT_TOKENS);
+    expect(maxOutputTokensForFeature(feature, 1800)).toBe(BRIEF_MAX_OUTPUT_TOKENS);
     expect(resolveAiBudgetPolicy({ feature, monthlyCredits: 10, creditsUsed: 20 }).forceFastModel).toBe(
       false,
     );
@@ -170,6 +176,6 @@ test('brief writers recover from provider rate limits and exhausted provider out
     );
     expect(result.text).toBe('Finished editorial');
     expect(requests.map((request) => request.model)).toEqual(['glm', 'glm', 'fallback']);
-    expect(requests.every((request) => request.maxOutputTokens === undefined)).toBe(true);
+    expect(requests.every((request) => request.maxOutputTokens === BRIEF_MAX_OUTPUT_TOKENS)).toBe(true);
   }
 });

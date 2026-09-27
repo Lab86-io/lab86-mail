@@ -314,7 +314,8 @@ export async function executeShapeAction(
       case 'remember_sender': {
         const notes = (options.note || '').trim();
         if (!notes) return { kind: 'error', message: 'Write the note first.' };
-        await deps.callTool('remember', { email: action.email, notes });
+        // The field starts with the saved note, so the edited text is the whole note.
+        await deps.callTool('remember', { email: action.email, notes, mode: 'replace' });
         return { kind: 'done', label: 'Remembered' };
       }
     }

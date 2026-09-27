@@ -59,7 +59,7 @@ export async function advanceWork(input: AdvanceWorkInput) {
   const trigger = input.trigger ?? 'user';
   if (trigger !== 'user') {
     const current = await workOrchestratorDependencies.convexQuery<any>(
-      (api as any).albatrossIntents.getIntentWorkbench,
+      api.albatrossIntents.getIntentWorkbench,
       { userId: input.userId, intentId: input.workId },
     );
     const row = current?.intent;
@@ -68,7 +68,7 @@ export async function advanceWork(input: AdvanceWorkInput) {
       if (verdict !== 'move') return { status: verdict, workId: input.workId };
     }
   }
-  await workOrchestratorDependencies.convexMutation((api as any).albatrossWorkV2.setAgentState, {
+  await workOrchestratorDependencies.convexMutation(api.albatrossWorkV2.setAgentState, {
     userId: input.userId,
     workId: input.workId,
     agentState: 'researching',
@@ -86,7 +86,7 @@ export async function advanceWork(input: AdvanceWorkInput) {
     // agent state to idle; there is no plan to apply and nothing to schedule.
     if (generated?.skipped) return { status: 'ready' as const, workId: input.workId, planId: undefined };
     const workbench = await workOrchestratorDependencies.convexQuery<any>(
-      (api as any).albatrossIntents.getIntentWorkbench,
+      api.albatrossIntents.getIntentWorkbench,
       {
         userId: input.userId,
         intentId: input.workId,
@@ -97,7 +97,7 @@ export async function advanceWork(input: AdvanceWorkInput) {
     const firstOpen = (work.questions || []).find((question: any) => !question.answer);
     if (firstOpen) {
       const questionId = await workOrchestratorDependencies.convexMutation<string>(
-        (api as any).albatrossWorkV2.upsertQuestion,
+        api.albatrossWorkV2.upsertQuestion,
         {
           userId: input.userId,
           workId: input.workId,
@@ -117,7 +117,7 @@ export async function advanceWork(input: AdvanceWorkInput) {
     }
     if (!plan) throw new Error('Planning returned no plan.');
     if (plan.status === 'applied') {
-      await workOrchestratorDependencies.convexMutation((api as any).albatrossWorkV2.setAgentState, {
+      await workOrchestratorDependencies.convexMutation(api.albatrossWorkV2.setAgentState, {
         userId: input.userId,
         workId: input.workId,
         agentState: 'idle',
@@ -127,7 +127,7 @@ export async function advanceWork(input: AdvanceWorkInput) {
     }
 
     const applications = await workOrchestratorDependencies
-      .convexQuery<any[]>((api as any).albatrossWork.listPlanApplications, {
+      .convexQuery<any[]>(api.albatrossWork.listPlanApplications, {
         userId: input.userId,
         intentId: input.workId,
         limit: 100,
@@ -135,12 +135,12 @@ export async function advanceWork(input: AdvanceWorkInput) {
       .catch(() => []);
     const pendingActions = unappliedActions(plan.digitalActions || [], applications);
     if (!pendingActions.length && (plan.digitalActions || []).length) {
-      await workOrchestratorDependencies.convexMutation((api as any).albatrossIntents.markPlanApplied, {
+      await workOrchestratorDependencies.convexMutation(api.albatrossIntents.markPlanApplied, {
         userId: input.userId,
         planId: String(plan._id),
         appliedSteps: [],
       });
-      await workOrchestratorDependencies.convexMutation((api as any).albatrossWorkV2.setAgentState, {
+      await workOrchestratorDependencies.convexMutation(api.albatrossWorkV2.setAgentState, {
         userId: input.userId,
         workId: input.workId,
         agentState: 'idle',
@@ -149,7 +149,7 @@ export async function advanceWork(input: AdvanceWorkInput) {
       return { status: 'ready' as const, workId: input.workId, planId: plan._id };
     }
 
-    await workOrchestratorDependencies.convexMutation((api as any).albatrossWorkV2.setAgentState, {
+    await workOrchestratorDependencies.convexMutation(api.albatrossWorkV2.setAgentState, {
       userId: input.userId,
       workId: input.workId,
       agentState: 'applying',
@@ -184,13 +184,13 @@ export async function advanceWork(input: AdvanceWorkInput) {
       },
     );
     const appliedSteps = appliedStepsFromApplyResult(result);
-    await workOrchestratorDependencies.convexMutation((api as any).albatrossIntents.markPlanApplied, {
+    await workOrchestratorDependencies.convexMutation(api.albatrossIntents.markPlanApplied, {
       userId: input.userId,
       planId: String(plan._id),
       applicationId: result.applicationId,
       appliedSteps,
     });
-    await workOrchestratorDependencies.convexMutation((api as any).albatrossWorkV2.setAgentState, {
+    await workOrchestratorDependencies.convexMutation(api.albatrossWorkV2.setAgentState, {
       userId: input.userId,
       workId: input.workId,
       agentState: 'idle',
@@ -219,7 +219,7 @@ export async function advanceWork(input: AdvanceWorkInput) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await workOrchestratorDependencies
-      .convexMutation((api as any).albatrossWorkV2.setAgentState, {
+      .convexMutation(api.albatrossWorkV2.setAgentState, {
         userId: input.userId,
         workId: input.workId,
         agentState: 'error',

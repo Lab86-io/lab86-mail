@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { isLocalBasicAuthBypassHost, isOfficeServerRoute, shouldRequireBasicAuth } from '../proxy';
+import { setProcessEnv } from './tools/env';
 
 const ENV_KEYS = [
   'LAB86_MAIL_DISABLE_BASIC_AUTH',
@@ -23,8 +24,7 @@ function bearerReq(host: string, token = 'clerk-session-token') {
 function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
   for (const key of ENV_KEYS) {
     const value = values[key];
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
+    setProcessEnv(key, value);
   }
 }
 
@@ -58,8 +58,7 @@ describe('proxy basic-auth bypass guard', () => {
   afterEach(() => {
     for (const key of ENV_KEYS) {
       const value = previousEnv.get(key);
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+      setProcessEnv(key, value);
     }
   });
 

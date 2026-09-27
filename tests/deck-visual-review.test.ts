@@ -181,7 +181,7 @@ describe('image-based slide review', () => {
       height: 20,
       decorative: true,
       overlapAllowed: true,
-    });
+    } as never);
     __setDeckVisualReviewDepsForTest({
       renderDeckSlides: async (deck) => render(deck),
       generateObjectForCurrentUser: (async (options: any) => {
@@ -355,7 +355,7 @@ describe('image-based slide review', () => {
     };
     expect(applyVisualRepairs(model, review, rejected)).toBe(model);
     expect(rejected.mock.calls[0][0]).toContain('palette');
-    review.fixes[0].fill = model.theme.colors.accent;
+    (review.fixes[0] as { fill: string | null }).fill = model.theme.colors.accent;
     expect(applyVisualRepairs(model, review).slides[1].elements[1]).toMatchObject({
       y: 50,
       fill: model.theme.colors.accent,

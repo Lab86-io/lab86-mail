@@ -11,11 +11,12 @@ import { startCalendarResync } from '@/lib/calendar/resync';
 import { maybeKickCalendarSync } from '@/lib/calendar/sync';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { requireConnectedAccount } from '@/lib/nylas/provider';
+import { safeSlice } from '@/lib/shared/text';
 import { parseIsoInTimezone, wallClockInTimezone } from '@/lib/shared/timezones';
 import { defineTool } from './registry';
 
-const calendarApi = (api as any).calendarData;
-const accountsApi = (api as any).accounts;
+const calendarApi = api.calendarData;
+const accountsApi = api.accounts;
 
 function requireUserId(userId: string | null | undefined): string {
   if (!userId) throw new Error('Not authenticated.');
@@ -100,11 +101,11 @@ export const calendarListEvents = defineTool({
         'Maximum event summaries to return (default 50 — keep result payloads small so the agent stays reliable). Use calendar_event_detail for full descriptions/attendees, or calendar_search_events to target by name.',
       ),
   }),
-  output: z.object({ events: z.array(z.any()) }),
+  output: z.object({ events: z.array(z.any()), truncated: z.boolean() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
     const parseIso = makeParseIso(ctx.userTimezone);
-    const rows = await convexQuery<any[]>(calendarApi.listEvents, {
+    const page = await convexQuery<{ events: any[]; truncated: boolean }>(calendarApi.listEventsPage, {
       userId,
       startAt: parseIso(args.fromIso, 'fromIso'),
       endAt: parseIso(args.toIso, 'toIso'),
@@ -113,10 +114,12 @@ export const calendarListEvents = defineTool({
     const accountFilter = args.accountIds?.length ? new Set(args.accountIds) : null;
     const calendarFilter = args.calendarIds?.length ? new Set(args.calendarIds) : null;
     return {
-      events: (rows || [])
+      events: (page?.events || [])
         .filter((row) => !accountFilter || accountFilter.has(row.accountId))
         .filter((row) => !calendarFilter || calendarFilter.has(row.providerCalendarId))
         .map((row) => toToolEvent(row)),
+      // True when the limit cut events off: narrow the window or raise the limit.
+      truncated: Boolean(page?.truncated),
     };
   },
 });
@@ -216,6 +219,7 @@ export const calendarSyncNow = defineTool({
   description:
     'Force a full calendar resync from the providers, for one account or all of them. Use when events seem stale or after connecting an account.',
   category: 'calendar',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ account: z.string().optional() }),
   output: z.object({ results: z.array(z.any()) }),
@@ -309,8 +313,9 @@ export const calendarSuggestTimes = defineTool({
 export const calendarCreateEvent = defineTool({
   name: 'calendar_create_event',
   description:
-    'Create a calendar event. Times are ISO timestamps; allDay uses date granularity. Use conferencing: google_meet to create a real Google Meet link on a connected Google calendar. Adding attendees emails real invitations and requires user authorization; an explicit request to invite them supplies it. A pending conference means the event exists but its video link is not yet available; never create a duplicate event to obtain the link. The operation is recorded and undoable via undo_operation.',
+    'Create a calendar event. Times are ISO timestamps; for allDay pass date-only startIso/endIso ("2026-09-26") with an exclusive end. Use conferencing: google_meet to create a real Google Meet link on a connected Google calendar. Adding attendees emails real invitations and requires user authorization; an explicit request to invite them supplies it. A pending conference means the event exists but its video link is not yet available; never create a duplicate event to obtain the link. The operation is recorded and undoable via undo_operation.',
   category: 'calendar',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     account: z.string(),
@@ -493,11 +498,22 @@ async function resolveSingleTarget(
   return { kind: 'target', resolvedBy: 'title', target: matches[0] };
 }
 
+/** Several events match a title: ask the user, and do not report a failure. */
+export function needsEventChoice(candidates: unknown[]) {
+  return {
+    status: 'needs_input' as const,
+    needsDisambiguation: true,
+    question: 'Several events match. Ask the user which one they mean, then call again with its eventId.',
+    candidates,
+  };
+}
+
 export const calendarUpdateEvent = defineTool({
   name: 'calendar_update_event',
   description:
-    'Update fields of an existing event (title, times, location, description, attendees, recurrence). Identify the event by exact eventId (with account + calendarId), OR by title to have the tool find it — when a title matches several events it returns candidates to disambiguate instead of guessing. For a recurring series pass the master event id to change every occurrence, or an instance id to change just that one. Undoable. notifyParticipants emails attendees about the change — confirm with the user first.',
+    'Update fields of an existing event (title, times, location, description, attendees, recurrence). Send only the fields that change. For an all-day event, pass date-only startIso/endIso ("2026-09-26") with an exclusive end. An empty recurrence array is ignored; pass clearRecurrence: true to stop a series from repeating. Identify the event by exact eventId (with account + calendarId), OR by title to have the tool find it — when a title matches several events it returns candidates to disambiguate instead of guessing. For a recurring series pass the master event id to change every occurrence, or an instance id to change just that one. Undoable. notifyParticipants emails attendees about the change — confirm with the user first.',
   category: 'calendar',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     account: z.string().optional(),
@@ -515,11 +531,15 @@ export const calendarUpdateEvent = defineTool({
     location: z.string().optional(),
     attendees: z.array(participantSchema).optional(),
     recurrence: z.array(z.string()).optional(),
+    clearRecurrence: z.boolean().optional().describe('True stops a repeating series ("Never").'),
     busy: z.boolean().optional(),
     notifyParticipants: z.boolean().default(false),
   }),
   output: z.object({
-    ok: z.boolean(),
+    // Absent when the tool needs input: a question is not a failure.
+    ok: z.boolean().optional(),
+    status: z.literal('needs_input').optional(),
+    question: z.string().optional(),
     operationId: z.string().optional(),
     resolvedBy: z.enum(['id', 'title']).optional(),
     needsDisambiguation: z.boolean().optional(),
@@ -539,7 +559,7 @@ export const calendarUpdateEvent = defineTool({
       false,
     );
     if (resolved.kind === 'disambiguate') {
-      return { ok: false, needsDisambiguation: true, candidates: resolved.candidates };
+      return needsEventChoice(resolved.candidates);
     }
     const result = await updateCalendarEvent({
       userId,
@@ -547,6 +567,7 @@ export const calendarUpdateEvent = defineTool({
       calendarId: resolved.target.calendarId,
       eventId: resolved.target.eventId,
       notifyParticipants: args.notifyParticipants,
+      timezone: ctx.userTimezone,
       patch: {
         title: args.title,
         startAt: args.startIso ? parseIso(args.startIso, 'startIso') : undefined,
@@ -556,6 +577,7 @@ export const calendarUpdateEvent = defineTool({
         location: args.location,
         participants: args.attendees,
         recurrence: args.recurrence,
+        clearRecurrence: args.clearRecurrence,
         busy: args.busy,
       },
     });
@@ -568,6 +590,7 @@ export const calendarDeleteEvent = defineTool({
   description:
     'Delete an event. Identify it by exact eventId (with account + calendarId), OR by matchTitle to have the tool find the closest match — when a title matches several events it returns candidates to disambiguate instead of guessing. If deleteSeries is true and the resolved event is a recurring instance, the whole series is deleted. Undoable — undo recreates the event. notifyParticipants emails attendees a cancellation — confirm with the user first.',
   category: 'calendar',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     account: z.string().optional(),
@@ -581,7 +604,10 @@ export const calendarDeleteEvent = defineTool({
     deleteSeries: z.boolean().default(false),
   }),
   output: z.object({
-    ok: z.boolean(),
+    // Absent when the tool needs input: a question is not a failure.
+    ok: z.boolean().optional(),
+    status: z.literal('needs_input').optional(),
+    question: z.string().optional(),
     operationId: z.string().optional(),
     resolvedBy: z.enum(['id', 'title']).optional(),
     deletedTitle: z.string().optional(),
@@ -601,7 +627,7 @@ export const calendarDeleteEvent = defineTool({
       args.deleteSeries,
     );
     if (resolved.kind === 'disambiguate') {
-      return { ok: false, needsDisambiguation: true, candidates: resolved.candidates };
+      return needsEventChoice(resolved.candidates);
     }
     const result = await deleteCalendarEvent({
       userId,
@@ -625,6 +651,7 @@ export const calendarDeleteRecurringSeries = defineTool({
   description:
     'Delete one or more recurring calendar series. Use eventId when available; otherwise pass a title and optional account/calendar/window filters. This resolves expanded recurring instances to their master series id before deleting.',
   category: 'calendar',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     account: z.string().optional(),
@@ -718,6 +745,7 @@ export const calendarUnsubscribeCalendar = defineTool({
   description:
     'Unsubscribe from or remove a synced provider calendar. Pass either calendarId or an exact calendar name. If the provider refuses deletion, fallbackToHide hides it locally and stops it from appearing in the merged calendar view.',
   category: 'calendar',
+  risk: 'destructive',
   mutating: true,
   input: z.object({
     account: z.string(),
@@ -775,6 +803,7 @@ export const calendarRsvpEvent = defineTool({
   description:
     'RSVP to an event invitation (yes/no/maybe). This notifies the organizer — confirm with the user before responding on their behalf. Not undoable (the organizer already saw it), but it can be re-sent with a different status.',
   category: 'calendar',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     account: z.string(),
@@ -868,5 +897,5 @@ function toToolEvent(row: any, options?: { detail?: boolean }) {
 function truncateText(value: unknown, max: number) {
   const text = typeof value === 'string' ? value.trim() : '';
   if (!text || text.length <= max) return text || undefined;
-  return `${text.slice(0, max)}...`;
+  return `${safeSlice(text, 0, max)}...`;
 }

@@ -29,6 +29,7 @@ export const listRecentOperationsTool = defineTool({
         tool: row.tool,
         surface: row.surface,
         summary: row.summary,
+        reason: row.reason,
         agent: row.agent,
         batchId: row.batchId,
         target: row.target,
@@ -45,6 +46,7 @@ export const undoOperationTool = defineTool({
   description:
     'Undo a previously applied operation by operationId (from list_recent_operations). Only operations whose undoable flag is true can be undone.',
   category: 'audit',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ operationId: z.string() }),
   output: z.object({ ok: z.boolean(), undone: z.string() }),

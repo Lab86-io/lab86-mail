@@ -1,6 +1,7 @@
 import { envFlag } from '@/lib/hosted/controls';
 import { pickAccent } from '@/lib/mail/art-palette';
 import { ART_STYLES, type ArtStyle } from '@/lib/mail/art-style';
+import { truncateText } from '@/lib/shared/text';
 import {
   type ArtworkCandidate,
   type ArtworkQuery,
@@ -324,7 +325,7 @@ export function imageryTheme(plan: DeckImageryPlan): NonNullable<DeckTheme['imag
   return {
     mode: 'paintings',
     styles: plan.styles.slice(0, 6),
-    ...(plan.subject ? { subject: plan.subject.slice(0, 200) } : {}),
+    ...(plan.subject ? { subject: truncateText(plan.subject, 200) } : {}),
   };
 }
 

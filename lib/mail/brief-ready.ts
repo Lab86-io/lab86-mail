@@ -1,5 +1,6 @@
 import { api, convexMutation } from '../hosted/convex';
 import { dispatchNativeNotification } from '../notifications/native-delivery';
+import { truncateText } from '../shared/text';
 
 export function localDateForTimezone(generatedAt: number, timezone?: string) {
   const dateParts = new Intl.DateTimeFormat('en-US', {
@@ -26,17 +27,23 @@ export function briefNotificationBody(report: { prose?: { lede?: string }; narra
     .trim();
   if (!text) return '';
   if (text.length <= BRIEF_NOTIFICATION_BODY_MAX) return text;
-  const head = text.slice(0, BRIEF_NOTIFICATION_BODY_MAX);
+  const head = truncateText(text, BRIEF_NOTIFICATION_BODY_MAX);
   const end = Math.max(head.lastIndexOf('. '), head.lastIndexOf('? '), head.lastIndexOf('! '));
   if (end > 40) return head.slice(0, end + 1);
-  return `${head.slice(0, BRIEF_NOTIFICATION_BODY_MAX - 1).trimEnd()}…`;
+  return `${truncateText(head, BRIEF_NOTIFICATION_BODY_MAX - 1).trimEnd()}…`;
 }
 
 const defaults = {
-  queueBriefReady: (input: { userId: string; reportId: string; localDate: string; body?: string }) =>
-    convexMutation<any>((api as any).albatrossNotifications.queueBriefReady, input),
+  queueBriefReady: (input: {
+    userId: string;
+    reportId: string;
+    localDate: string;
+    body?: string;
+    title?: string;
+  }) => convexMutation<any>(api.albatrossNotifications.queueBriefReady, input),
   dispatchNativeNotification,
 };
+export const WEEKLY_REVIEW_READY_TITLE = 'Your weekly review is ready';
 export async function notifyBriefReady(
   userId: string,
   kind: string,
@@ -44,13 +51,15 @@ export async function notifyBriefReady(
   timezone?: string,
   deps = defaults,
 ) {
-  if (kind !== 'morning') return;
+  // The scheduled editions push: the morning edition and the Sunday review.
+  if (kind !== 'morning' && kind !== 'weekly') return;
   try {
     const queued = await deps.queueBriefReady({
       userId,
       reportId: report._id,
       localDate: localDateForTimezone(report.generatedAt, timezone),
       body: briefNotificationBody(report) || undefined,
+      ...(kind === 'weekly' ? { title: WEEKLY_REVIEW_READY_TITLE } : {}),
     });
     return queued?.notificationId
       ? await deps.dispatchNativeNotification(userId, String(queued.notificationId))

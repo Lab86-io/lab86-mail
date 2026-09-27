@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
+import { truncateText } from '@/lib/shared/text';
 
 /**
  * One question, asked everywhere evidence meets a requirement: does this
@@ -69,15 +70,15 @@ export async function evidenceSatisfies(
       schema: evidenceGateVerdictSchema,
       system: GATE_SYSTEM,
       prompt: JSON.stringify({
-        work: input.workTitle.slice(0, 300),
-        outcome: (input.outcome || '').slice(0, 600) || undefined,
-        requirement: requirement.slice(0, 600),
-        evidence: evidenceText.slice(0, 4_000),
+        work: truncateText(input.workTitle, 300),
+        outcome: truncateText(input.outcome || '', 600) || undefined,
+        requirement: truncateText(requirement, 600),
+        evidence: truncateText(evidenceText, 4_000),
       }),
     });
     return {
       satisfies: object?.satisfies === true,
-      reason: String(object?.reason || '').slice(0, 300),
+      reason: truncateText(String(object?.reason || ''), 300),
     };
   } catch {
     // The gate being down never becomes a claim in either direction.

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { convexTest } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
+import type { Id } from '../convex/_generated/dataModel';
 import schema from '../convex/schema';
 
 const modules = {
@@ -40,7 +41,12 @@ async function capture(
   text = 'Tomorrow I want to ship the launch',
   messageId = 'm1',
 ) {
-  return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
+  return (await t.mutation(f.captureTurn, {
+    ...args,
+    messageId,
+    text,
+    topics: ['work:launch'],
+  })) as Id<'narrativeEntries'>;
 }
 describe('shared narrative runtime', () => {
   test('cloud file changes are opt-in, source-linked, and revoked on deletion or disconnection', async () => {
@@ -432,7 +438,19 @@ describe('shared narrative runtime', () => {
     expect((await t.mutation(f.compact, args)).scanned).toBe(0);
     expect((await t.query(f.search, { ...args, topic: 'repo:needle' })).entries).toEqual([]);
   });
-  test('Work creation, plan generation, and user answers enqueue owned narrative changes with no completion inflation', async () => {
+  // Answers on the intent document feed the narrative. Write them directly:
+  // the capture reads the stored question, not the mutation that set it.
+  async function answerDay(t: ReturnType<typeof harness>, id: unknown, answer: string) {
+    await t.run(async (ctx) => {
+      const intent: any = await ctx.db.get(id as any);
+      await ctx.db.patch(id as any, {
+        questions: intent.questions.map((question: any) =>
+          question.id === 'day' ? { ...question, answer, answeredAt: Date.now() } : question,
+        ),
+      });
+    });
+  }
+  test('Work creation, plan generation, and user answers feed owned narrative changes with no completion inflation', async () => {
     const t = harness();
     await enable(t, ['work']);
     const id = await t.mutation(api.albatrossIntents.createIntent, {
@@ -455,31 +473,14 @@ describe('shared narrative runtime', () => {
       assumptions: [],
       sourceRefs: [],
     });
-    await t.mutation(api.albatrossIntents.answerQuestions, {
-      ...args,
-      intentId: id as any,
-      answers: [{ id: 'day', answer: 'Friday' }],
-    });
+    await answerDay(t, id, 'Friday');
     await t.mutation(internal.narrative.captureSource, { userId, table: 'albatrossIntents', id: String(id) });
     const found = (await t.query(f.search, { ...args, topic: `work:${id}` })).entries;
     expect(found.some((entry: any) => entry.text.includes('Your answer: Friday'))).toBe(true);
     expect(found.some((entry: any) => entry.text.includes('Generated steps are proposals'))).toBe(true);
     const decision = found.find((entry: any) => entry.key.endsWith(':answer:day'));
-    const beforeJobs = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
-    await t.mutation(api.albatrossIntents.answerQuestions, {
-      ...args,
-      intentId: id as any,
-      answers: [{ id: 'day', answer: '' }],
-    });
-    const afterJobs = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
-    expect(
-      afterJobs.some(
-        (job) =>
-          !beforeJobs.some((previous) => previous._id === job._id) &&
-          job.name === 'narrative:captureSource' &&
-          job.args[0].id === String(id),
-      ),
-    ).toBe(true);
+    await answerDay(t, id, '');
+    await t.mutation(internal.narrative.captureSource, { userId, table: 'albatrossIntents', id: String(id) });
     expect(await t.query(f.read, { ...args, id: decision._id })).toBeNull();
     const prefs = await t.run(async (ctx) => (await ctx.db.query('narrativeSettings').collect())[0]);
     expect(prefs.refreshToken).toBeTruthy();
@@ -1033,6 +1034,24 @@ describe('shared narrative runtime', () => {
     expect(await t.mutation(f.claim, { ...args, runId: 'third', kind: 'test' })).toBeNull();
     await t.mutation(f.finish, { ...args, runId: 'first' });
     expect(await t.mutation(f.claim, { ...args, runId: 'second', kind: 'test' })).not.toBeNull();
+  });
+  test('a run whose worker stopped is closed when the next run claims the expired lease', async () => {
+    const t = harness();
+    await enable(t);
+    expect(await t.mutation(f.claim, { ...args, runId: 'lost', kind: 'test' })).not.toBeNull();
+    // The worker stopped without finish; the lease expires.
+    await t.run(async (ctx) => {
+      const prefs = await ctx.db
+        .query('narrativeSettings')
+        .withIndex('by_user', (q: any) => q.eq('userId', userId))
+        .unique();
+      await ctx.db.patch(prefs!._id, { leaseUntil: Date.now() - 1 });
+    });
+    expect(await t.mutation(f.claim, { ...args, runId: 'next', kind: 'test' })).not.toBeNull();
+    const runs = await t.run((ctx) => ctx.db.query('narrativeRuns').collect());
+    expect(runs.find((run) => run.runId === 'lost')).toMatchObject({ status: 'partial' });
+    expect(runs.find((run) => run.runId === 'lost')?.endedAt).toBeNumber();
+    expect(runs.find((run) => run.runId === 'next')).toMatchObject({ status: 'running' });
   });
   test('requested brief refreshes have no daily generation quota', async () => {
     const t = harness();

@@ -523,3 +523,28 @@
     transform: none;
   }
 }
+
+/* ======================================================================
+   Touch screens. A phone or tablet has no keys to press, so the key hints
+   ("Ctrl K", "Ctrl F") go, and the launcher closes the gap they leave.
+   ====================================================================== */
+
+@media (pointer: coarse) {
+  .shell-key-hint {
+    display: none;
+  }
+  .assistant-launcher {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The launcher floats over the bottom of each page: 44px tall, 24px up from
+   the edge. A page's scroll area ends with this much room, so its last rows
+   can scroll clear of the launcher. */
+:root {
+  --assistant-launcher-clearance: 88px;
+}
+
+.assistant-launcher-clearance {
+  padding-bottom: var(--assistant-launcher-clearance);
+}

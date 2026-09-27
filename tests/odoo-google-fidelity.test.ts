@@ -61,6 +61,7 @@ test('full Odoo workbooks cannot be silently published or synced as a values-onl
       mimeType: 'application/vnd.google-apps.spreadsheet',
       syncedRevision: 2,
       providerVersion: '2',
+      lastSyncedAt: 2,
     },
   ]) {
     await expect(

@@ -458,3 +458,22 @@ describe('captureWork and shapes', () => {
     });
   });
 });
+
+describe('captureWork timezone (WRK-19)', () => {
+  test('the fallback horizon uses the user timezone', async () => {
+    const { deps, mutations } = makeDependencies({ generateError: new Error('model down') });
+    deps.timezone = async () => 'America/New_York';
+    await captureWork({ rawText: 'Call the bank, not before Monday', source: 'text' }, user, deps);
+    const finish = mutations.find((entry) => entry.name === 'finishCapture');
+    expect(finish?.args.items[0].horizon.notBefore).toBeGreaterThan(NOW);
+    // Midnight in New York, never the server's midnight.
+    const hourInNewYork = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: '2-digit',
+      hour12: false,
+      weekday: 'short',
+    }).formatToParts(new Date(finish?.args.items[0].horizon.notBefore));
+    expect(hourInNewYork.find((part) => part.type === 'hour')?.value).toMatch(/^(00|24)$/);
+    expect(hourInNewYork.find((part) => part.type === 'weekday')?.value).toBe('Mon');
+  });
+});

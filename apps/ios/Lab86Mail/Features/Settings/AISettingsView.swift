@@ -42,14 +42,14 @@ struct AISettingsView: View {
                     Section {
                         HStack(spacing: 10) {
                             ProgressView().controlSize(.small)
-                            Text("Loading AI settings…").foregroundStyle(.secondary)
+                            Text("Loading Intelligence settings…").foregroundStyle(.secondary)
                         }
                     }
                 }
             } else {
                 Section {
                     Picker("Mode", selection: $mode) {
-                        Text("Lab86 AI").tag("lab86")
+                        Text("Albatross models").tag("lab86")
                         Text("My own key").tag("byok")
                     }
                     .pickerStyle(.segmented)
@@ -123,7 +123,7 @@ struct AISettingsView: View {
                 }
             }
         }
-        .navigationTitle("AI")
+        .navigationTitle("Intelligence")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
     }

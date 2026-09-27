@@ -499,7 +499,9 @@ describe('taskRowMeta', () => {
 // Area Brief helpers
 // ---------------------------------------------------------------------------
 
-const planRow = (over: Partial<Parameters<typeof areaNeedsYouRows>[0]['plans'][number]> = {}) => ({
+const planRow = (
+  over: Partial<NonNullable<Parameters<typeof areaNeedsYouRows>[0]['plans']>[number]> = {},
+) => ({
   intentId: 'i1',
   title: 'Plan a trip',
   status: 'planning',

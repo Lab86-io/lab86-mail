@@ -42,6 +42,21 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
     // outcomes live under Albatrosses. Tasks remains routable for old links but
     // is no longer a competing primary board.
     static let sourceList: [PrimaryTab] = [.today, .mail, .work, .calendar, .files]
+
+    /// The sidebar rows. Files shows only when Settings, Advanced turns it on
+    /// (round 2, FEATURES item 17); a link to a document still opens it.
+    static func sourceList(showsFiles: Bool) -> [PrimaryTab] {
+        showsFiles ? sourceList : sourceList.filter { $0 != .files }
+    }
+
+    /// Command-1 to Command-9 in the Albatross menu, in sidebar order, so the
+    /// numbers match the rows the user sees.
+    static func commandShortcuts(showsFiles: Bool) -> [(tab: PrimaryTab, key: Character)] {
+        sourceList(showsFiles: showsFiles)
+            .prefix(9)
+            .enumerated()
+            .map { index, tab in (tab: tab, key: Character(String(index + 1))) }
+    }
 }
 
 struct ThreadRoute: Identifiable, Hashable, Sendable {
@@ -195,6 +210,14 @@ final class NavigationModel {
     var requestsSourceList = false
     // Raw MailCategoryScope value chosen from the sidebar's smart filters.
     var pendingMailCategory: String?
+    // The custom label the mail list shows, or nil for a built-in scope. The
+    // Mac source list highlights that label's row.
+    var mailLabelID: String?
+    // A mailbox a source-list row asks the mail list to show (Snoozed).
+    var pendingMailbox: MailboxScope?
+    // The mailbox the mail list shows. The Mac source list highlights the
+    // Snoozed row while it is up.
+    var mailbox: MailboxScope = .inbox
     var pendingCompose: ComposePrefill?
     // macOS presents Albatross chat as a floating corner panel (with a
     // tear-out window), never as a tab. Unused on iOS.

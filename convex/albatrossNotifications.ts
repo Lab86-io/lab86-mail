@@ -2,11 +2,15 @@ import { v } from 'convex/values';
 import { matchReflectionCandidates } from '../lib/albatross/daily-intent';
 import { wakeLine } from '../lib/albatross/horizon';
 import { checkinRetryDelayMs } from '../lib/albatross/retry';
+import { briefReadyFallbackBody } from '../lib/notifications/brief-ready-copy';
+import { digestCopy, mailPushSettingsFromRow, normalizeVipSenders } from '../lib/notifications/mail-push';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
+import { completeWorkInMutation } from './workCompletion';
 
 const DEFAULT_TZ = 'UTC';
 const DEFAULT_CHECKIN_TIME = '19:00';
@@ -158,6 +162,7 @@ async function ensureDailyAlignmentNotifications(
     },
   ];
   const notificationIds = [];
+  const openNotificationIds = [];
   for (const prompt of prompts) {
     const dedupeKey = `daily-checkin:${input.localDate}:${prompt.kind}`;
     let notification = await ctx.db
@@ -199,9 +204,14 @@ async function ensureDailyAlignmentNotifications(
         timestamp: ts,
       });
       notificationIds.push(notification._id);
+      // The check-in stays due all evening (WRK-15). A prompt the user already
+      // read or answered is not pushed again.
+      const current = await ctx.db.get(notification._id);
+      if (current && (current.status === 'queued' || current.status === 'delivered'))
+        openNotificationIds.push(notification._id);
     }
   }
-  return notificationIds;
+  return { notificationIds, openNotificationIds };
 }
 
 async function applyCompletedCandidates(
@@ -218,12 +228,9 @@ async function applyCompletedCandidates(
       if (workId) {
         const work = await ctx.db.get(workId);
         if (work?.userId === row.userId && work.workState !== 'done') {
-          await ctx.db.patch(workId, {
-            workState: 'done',
-            status: 'done',
-            agentState: 'idle',
-            updatedAt: ts,
-          });
+          // The shared terminal transition retires cards, clears conductor
+          // flags, and records the completion (WRK-1, WRK-9).
+          await completeWorkInMutation(ctx, work, ts);
           changes.push({
             kind: 'work',
             id: item.id,
@@ -584,16 +591,55 @@ export const revokeMobileDevice = mutation({
   },
 });
 
+const notificationTypeValidator = v.union(
+  v.literal('daily_checkin'),
+  v.literal('work_question'),
+  v.literal('work_wake'),
+  v.literal('approval'),
+  v.literal('completion_suggestion'),
+  v.literal('event_suggestion'),
+  v.literal('mail_message'),
+  v.literal('urgent_mail'),
+  v.literal('brief_ready'),
+  v.literal('agent_error'),
+);
+
 export const liveCenter = query({
-  args: { limit: v.optional(v.number()) },
+  args: {
+    limit: v.optional(v.number()),
+    // Read only these types, each from the type index. Mail rows exist for
+    // push delivery and must not take the bell's slots (WRK-3).
+    types: v.optional(v.array(notificationTypeValidator)),
+  },
   handler: async (ctx, args) => {
     const userId = await authenticatedUserId(ctx);
     const limit = Math.min(Math.max(args.limit ?? 50, 1), 100);
-    const rows = await ctx.db
-      .query('albatrossNotifications')
+    const preference = await ctx.db
+      .query('albatrossNotificationPreferences')
       .withIndex('by_user', (q) => q.eq('userId', userId))
-      .order('desc')
-      .take(limit);
+      .unique();
+    // The in-app center switch hides and stops counting every row (UI-5).
+    if (preference?.inAppEnabled === false) return { unread: 0, notifications: [] };
+    const rows = args.types
+      ? (
+          await Promise.all(
+            [...new Set(args.types)].map((type) =>
+              ctx.db
+                .query('albatrossNotifications')
+                .withIndex('by_user_type_created', (q) => q.eq('userId', userId).eq('type', type))
+                .order('desc')
+                .take(limit),
+            ),
+          )
+        )
+          .flat()
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .slice(0, limit)
+      : await ctx.db
+          .query('albatrossNotifications')
+          .withIndex('by_user', (q) => q.eq('userId', userId))
+          .order('desc')
+          .take(limit);
     return {
       unread: rows.filter((row) => row.status === 'queued' || row.status === 'delivered').length,
       notifications: rows,
@@ -632,8 +678,8 @@ export const queueSuggestionNotification = mutation({
       notificationPayload({
         userId: args.userId,
         type: 'event_suggestion',
-        title: args.title.slice(0, 180),
-        body: args.body.slice(0, 1_000),
+        title: truncateText(args.title, 180),
+        body: truncateText(args.body, 1_000),
         entityKind: 'suggestion',
         entityId: String(args.suggestionId),
         deepLink: `/mail/thread?${query.toString()}`,
@@ -687,8 +733,8 @@ export const queueMailNotification = mutation({
       notificationPayload({
         userId: args.userId,
         type: 'mail_message',
-        title: (args.sender.trim() || 'New email').slice(0, 180),
-        body: (args.subject.trim() || args.snippet.trim() || 'New message').slice(0, 1_000),
+        title: truncateText(args.sender.trim() || 'New email', 180),
+        body: truncateText(args.subject.trim() || args.snippet.trim() || 'New message', 1_000),
         entityKind: 'thread',
         entityId: args.threadId,
         deepLink: `/mail/thread?${query.toString()}`,
@@ -749,10 +795,10 @@ export const queueUrgentMailNotification = mutation({
       notificationPayload({
         userId: args.userId,
         type: 'urgent_mail',
-        title: (args.sender.trim() || 'Urgent email').slice(0, 180),
+        title: truncateText(args.sender.trim() || 'Urgent email', 180),
         // The reason is why this one interrupted, so it earns its place in the
         // body rather than being hidden behind a tap.
-        body: [subject, reason].filter(Boolean).join(' — ').slice(0, 1_000) || 'Needs your attention',
+        body: truncateText([subject, reason].filter(Boolean).join(' — '), 1_000) || 'Needs your attention',
         entityKind: 'thread',
         entityId: args.threadId,
         deepLink: `/mail/thread?${query.toString()}`,
@@ -786,6 +832,15 @@ export const queueBriefReady = mutation({
     // The first sentences of the lede (brief round 2026-09-22). Falls back to
     // the fixed line when the edition has no prose.
     body: v.optional(v.string()),
+    // The parts the edition holds. The fallback line names only these.
+    parts: v.optional(
+      v.object({
+        weather: v.optional(v.boolean()),
+        events: v.optional(v.number()),
+        tasks: v.optional(v.number()),
+        intent: v.optional(v.boolean()),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -817,13 +872,8 @@ export const queueBriefReady = mutation({
       notificationPayload({
         userId: args.userId,
         type: 'brief_ready',
-        title: String(args.title || 'Your Daily Brief is ready')
-          .trim()
-          .slice(0, 180),
-        body:
-          String(args.body || '')
-            .trim()
-            .slice(0, 180) || 'Weather, today’s pressure, and your stated intent for tomorrow are assembled.',
+        title: truncateText(String(args.title || 'Your Daily Brief is ready').trim(), 180),
+        body: truncateText(String(args.body || '').trim(), 180) || briefReadyFallbackBody(args.parts),
         deepLink: `/brief?id=${encodeURIComponent(args.reportId)}`,
         dedupeKey,
         scheduledFor: ts,
@@ -886,7 +936,7 @@ export const answerCheckin = mutation({
     const row = await ctx.db.get(args.checkinId);
     if (!row || row.userId !== userId) throw new Error('Check-in not found.');
     const promptKind = args.promptKind ?? 'reflection';
-    const responseText = args.responseText.trim().slice(0, 10_000);
+    const responseText = truncateText(args.responseText.trim(), 10_000);
     if (!responseText && !args.completed?.length) throw new Error('Tell Albatross what happened.');
     const inferredCompleted =
       promptKind === 'reflection' ? matchReflectionCandidates(responseText, row.candidateItems) : [];
@@ -1143,7 +1193,7 @@ export const failReflectionReconcile = mutation({
       reflectionReconcileStatus: 'failed',
       reflectionReconcileClaimedAt: undefined,
       reflectionReconcileNextAt: retrying ? ts + checkinRetryDelayMs(attempts) : undefined,
-      reflectionReconcileError: args.error.trim().slice(0, 500),
+      reflectionReconcileError: truncateText(args.error.trim(), 500),
       updatedAt: ts,
     });
     return { retrying, stale: false };
@@ -1208,7 +1258,7 @@ export const failTomorrowPlan = mutation({
       tomorrowPlanStatus: 'failed',
       tomorrowPlanClaimedAt: undefined,
       tomorrowPlanNextAt: retrying ? ts + checkinRetryDelayMs(attempts) : undefined,
-      tomorrowPlanError: args.error.trim().slice(0, 500),
+      tomorrowPlanError: truncateText(args.error.trim(), 500),
       updatedAt: ts,
     });
     return { retrying, stale: false };
@@ -1258,7 +1308,7 @@ async function runCheckinBackgroundTick(ctx: ActionCtx, kind: 'reflection' | 'to
     console.error(`[checkin-${kind} cron] missing LAB86_MAIL_PUBLIC_URL or internal secret`);
     return;
   }
-  const refs = internal.albatrossNotifications as any;
+  const refs = internal.albatrossNotifications;
   const candidates = await ctx.runQuery(
     kind === 'reflection' ? refs.reflectionReconcileCandidates : refs.tomorrowPlanCandidates,
     {},
@@ -1323,8 +1373,8 @@ export const queueWorkConductorNotice = internalMutation({
       notificationPayload({
         userId: args.userId,
         type: 'work_question',
-        title: args.title.slice(0, 180),
-        body: args.body.slice(0, 1_000),
+        title: truncateText(args.title, 180),
+        body: truncateText(args.body, 1_000),
         entityKind: 'work',
         entityId: args.workId,
         deepLink: `/?view=albatrosses&work=${encodeURIComponent(args.workId)}`,
@@ -1367,7 +1417,7 @@ export const queueHorizonWake = internalMutation({
       notificationPayload({
         userId: args.userId,
         type: 'work_wake',
-        title: wakeLine(args.title).slice(0, 180),
+        title: truncateText(wakeLine(args.title), 180),
         body: 'Open it when you have time. Albatross did not move it.',
         entityKind: 'work',
         entityId: args.workId,
@@ -1389,9 +1439,9 @@ export const queueHorizonWake = internalMutation({
 export const missedMoveTick = internalAction({
   args: {},
   handler: async (ctx) => {
-    const candidates = await ctx.runQuery((internal as any).albatrossWorkV2.missedRecoveryCandidates, {});
+    const candidates = await ctx.runQuery(internal.albatrossWorkV2.missedRecoveryCandidates, {});
     for (const candidate of candidates) {
-      await ctx.runMutation((internal as any).albatrossNotifications.queueWorkConductorNotice, {
+      await ctx.runMutation(internal.albatrossNotifications.queueWorkConductorNotice, {
         userId: candidate.userId,
         workId: candidate.workId,
         title: 'That block passed',
@@ -1405,9 +1455,9 @@ export const missedMoveTick = internalAction({
 export const stalenessReviewTick = internalAction({
   args: {},
   handler: async (ctx) => {
-    const candidates = await ctx.runQuery((internal as any).albatrossWorkV2.stalenessReviewCandidates, {});
+    const candidates = await ctx.runQuery(internal.albatrossWorkV2.stalenessReviewCandidates, {});
     for (const candidate of candidates) {
-      await ctx.runMutation((internal as any).albatrossNotifications.queueWorkConductorNotice, {
+      await ctx.runMutation(internal.albatrossNotifications.queueWorkConductorNotice, {
         userId: candidate.userId,
         workId: candidate.workId,
         title: 'Still carrying this?',
@@ -1428,28 +1478,6 @@ export const currentCheckin = query({
       .order('desc')
       .take(2);
     return rows.find((row) => row.status === 'scheduled' || row.status === 'open') || null;
-  },
-});
-
-export const mobileCurrentCheckin = query({
-  args: { internalSecret: v.optional(v.string()), userId: v.string() },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const rows = await ctx.db
-      .query('albatrossDailyCheckins')
-      .withIndex('by_user', (q) => q.eq('userId', args.userId))
-      .order('desc')
-      .take(2);
-    return rows.find((row) => row.status === 'scheduled' || row.status === 'open') || null;
-  },
-});
-
-export const getCheckin = query({
-  args: { ...notificationCallerArgs, checkinId: v.id('albatrossDailyCheckins') },
-  handler: async (ctx, args) => {
-    const userId = await notificationCallerUserId(ctx, args);
-    const row = await ctx.db.get(args.checkinId);
-    return row?.userId === userId ? row : null;
   },
 });
 
@@ -1528,7 +1556,7 @@ export const ensureCheckin = mutation({
       .withIndex('by_user_date', (q) => q.eq('userId', args.userId).eq('localDate', args.localDate))
       .unique();
     if (existing) {
-      const notificationIds = await ensureDailyAlignmentNotifications(ctx, {
+      const { notificationIds, openNotificationIds } = await ensureDailyAlignmentNotifications(ctx, {
         userId: args.userId,
         checkinId: existing._id,
         localDate: existing.localDate,
@@ -1541,6 +1569,7 @@ export const ensureCheckin = mutation({
         checkin: await ctx.db.get(existing._id),
         notificationId: notificationIds[0],
         notificationIds,
+        openNotificationIds,
         created: false,
       };
     }
@@ -1585,7 +1614,7 @@ export const ensureCheckin = mutation({
       candidates.push({
         kind: 'work',
         id: String(work._id),
-        title: work.title || work.rawText.slice(0, 120),
+        title: work.title || truncateText(work.rawText, 120),
         suggestedState: 'moved',
         evidence: [{ kind: 'work', id: String(work._id), label: work.title }],
       });
@@ -1625,7 +1654,7 @@ export const ensureCheckin = mutation({
       createdAt: ts,
       updatedAt: ts,
     });
-    const notificationIds = await ensureDailyAlignmentNotifications(ctx, {
+    const { notificationIds, openNotificationIds } = await ensureDailyAlignmentNotifications(ctx, {
       userId: args.userId,
       checkinId,
       localDate: args.localDate,
@@ -1635,6 +1664,7 @@ export const ensureCheckin = mutation({
       checkin: await ctx.db.get(checkinId),
       notificationId: notificationIds[0],
       notificationIds,
+      openNotificationIds,
       created: true,
     };
   },
@@ -1650,18 +1680,20 @@ export const deliveryContext = query({
     requireInternalSecret(args.internalSecret);
     const checkin = await ctx.db.get(args.checkinId);
     if (!checkin || checkin.userId !== args.userId) return null;
-    let notification = await ctx.db
-      .query('albatrossNotifications')
-      .withIndex('by_user_dedupe', (q) =>
-        q.eq('userId', args.userId).eq('dedupeKey', `daily-checkin:${checkin.localDate}:reflection`),
-      )
-      .unique();
-    notification ??= await ctx.db
-      .query('albatrossNotifications')
-      .withIndex('by_user_dedupe', (q) =>
-        q.eq('userId', args.userId).eq('dedupeKey', `daily-checkin:${checkin.localDate}`),
-      )
-      .unique();
+    const byKey = (dedupeKey: string) =>
+      ctx.db
+        .query('albatrossNotifications')
+        .withIndex('by_user_dedupe', (q) => q.eq('userId', args.userId).eq('dedupeKey', dedupeKey))
+        .unique();
+    const reflection =
+      (await byKey(`daily-checkin:${checkin.localDate}:reflection`)) ??
+      (await byKey(`daily-checkin:${checkin.localDate}`));
+    const tomorrow = await byKey(`daily-checkin:${checkin.localDate}:tomorrow`);
+    // Deliver only the prompt that is still open. An answered reflection
+    // must not come back in the fallback email (WRK-14).
+    const reflectionOpen = !checkin.responseText?.trim();
+    const tomorrowOpen = !checkin.tomorrowIntentText?.trim();
+    const notification = reflectionOpen ? reflection : tomorrowOpen ? tomorrow : null;
     const subscriptions = await ctx.db
       .query('webPushSubscriptions')
       .withIndex('by_user_status', (q) => q.eq('userId', args.userId).eq('status', 'active'))
@@ -1670,12 +1702,19 @@ export const deliveryContext = query({
       .query('mobilePushDevices')
       .withIndex('by_user_status', (q) => q.eq('userId', args.userId).eq('status', 'active'))
       .collect();
-    const deliveries = notification
-      ? await ctx.db
-          .query('notificationDeliveries')
-          .withIndex('by_notification', (q) => q.eq('notificationId', notification._id))
-          .collect()
-      : [];
+    // One check-in sends each channel once, whichever prompt it carried.
+    const deliveries = (
+      await Promise.all(
+        [reflection, tomorrow]
+          .filter((row): row is NonNullable<typeof row> => Boolean(row))
+          .map((row) =>
+            ctx.db
+              .query('notificationDeliveries')
+              .withIndex('by_notification', (q) => q.eq('notificationId', row._id))
+              .collect(),
+          ),
+      )
+    ).flat();
     const preference = await ctx.db
       .query('albatrossNotificationPreferences')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
@@ -1766,7 +1805,7 @@ export const recordDelivery = mutation({
         status: args.status,
         attemptCount: existing.attemptCount + 1,
         providerId: args.providerId,
-        error: args.error?.slice(0, 500),
+        error: truncateText(args.error, 500),
         sentAt: args.status === 'sent' ? ts : existing.sentAt,
         updatedAt: ts,
       });
@@ -1779,7 +1818,7 @@ export const recordDelivery = mutation({
       status: args.status,
       attemptCount: 1,
       providerId: args.providerId,
-      error: args.error?.slice(0, 500),
+      error: truncateText(args.error, 500),
       scheduledFor: ts,
       sentAt: args.status === 'sent' ? ts : undefined,
       createdAt: ts,
@@ -1797,27 +1836,6 @@ export const expireSubscription = mutation({
       .withIndex('by_endpoint', (q) => q.eq('endpoint', args.endpoint))
       .unique();
     if (row) await ctx.db.patch(row._id, { status: 'expired', updatedAt: now() });
-  },
-});
-
-export const updateMobileDeviceDelivery = mutation({
-  args: {
-    internalSecret: v.optional(v.string()),
-    token: v.string(),
-    status: v.union(v.literal('delivered'), v.literal('expired')),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const row = await ctx.db
-      .query('mobilePushDevices')
-      .withIndex('by_token', (q) => q.eq('token', args.token))
-      .unique();
-    if (!row) return;
-    const ts = now();
-    await ctx.db.patch(row._id, {
-      ...(args.status === 'delivered' ? { lastDeliveredAt: ts } : { status: 'expired' as const }),
-      updatedAt: ts,
-    });
   },
 });
 
@@ -1854,7 +1872,7 @@ export const recordNativeDeviceDelivery = mutation({
       status: args.status,
       attemptCount: (existing?.attemptCount ?? 0) + 1,
       providerId: args.providerId,
-      error: args.error?.slice(0, 500),
+      error: truncateText(args.error, 500),
       updatedAt: ts,
     };
     if (existing) await ctx.db.patch(existing._id, receipt);
@@ -1887,5 +1905,277 @@ export const tick = internalAction({
       concurrency: 4,
       timeoutMs: 60_000,
     });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Quiet hours, VIP senders, and priority-only mail push (FEATURES item 12).
+// The ingest scan decides push-or-hold (lib/notifications/mail-push.ts); a
+// held mail notification keeps its in-app row and waits here for the digest.
+// ---------------------------------------------------------------------------
+
+async function preferenceRow(ctx: QueryCtx | MutationCtx, userId: string) {
+  return await ctx.db
+    .query('albatrossNotificationPreferences')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .unique();
+}
+
+export const mailPushSettings = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return mailPushSettingsFromRow(await preferenceRow(ctx, args.userId));
+  },
+});
+
+const hourValidator = v.number();
+
+export const saveMailPushSettings = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    mode: v.optional(v.union(v.literal('all'), v.literal('priority'))),
+    quietHoursEnabled: v.optional(v.boolean()),
+    quietHoursStart: v.optional(hourValidator),
+    quietHoursEnd: v.optional(hourValidator),
+    vipSenders: v.optional(v.array(v.string())),
+    addVipSenders: v.optional(v.array(v.string())),
+    removeVipSenders: v.optional(v.array(v.string())),
+    // Used only when the user has no preference row yet.
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    for (const hour of [args.quietHoursStart, args.quietHoursEnd]) {
+      if (hour !== undefined && !(Number.isInteger(hour) && hour >= 0 && hour <= 23)) {
+        throw new Error('Quiet hours must be whole hours from 0 to 23.');
+      }
+    }
+    const existing = await preferenceRow(ctx, args.userId);
+    const current = mailPushSettingsFromRow(existing);
+    let vip = args.vipSenders !== undefined ? normalizeVipSenders(args.vipSenders) : current.vipSenders;
+    if (args.addVipSenders?.length) {
+      const added = normalizeVipSenders(args.addVipSenders);
+      if (!added.length) throw new Error('Enter an email address or a domain.');
+      vip = normalizeVipSenders([...vip, ...added]);
+    }
+    if (args.removeVipSenders?.length) {
+      const removed = new Set(normalizeVipSenders(args.removeVipSenders));
+      vip = vip.filter((entry) => !removed.has(entry));
+    }
+    const ts = now();
+    const patch = {
+      mailPushMode: args.mode ?? current.mode,
+      quietHoursEnabled: args.quietHoursEnabled ?? current.quietHours.enabled,
+      quietHoursStart: args.quietHoursStart ?? current.quietHours.start,
+      quietHoursEnd: args.quietHoursEnd ?? current.quietHours.end,
+      vipSenders: vip,
+      updatedAt: ts,
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+      return mailPushSettingsFromRow({ ...existing, ...patch });
+    }
+    const timezone = args.timezone?.trim() || DEFAULT_TZ;
+    const doc = {
+      userId: args.userId,
+      timezone,
+      eveningCheckinEnabled: true,
+      eveningCheckinLocalTime: DEFAULT_CHECKIN_TIME,
+      inAppEnabled: true,
+      webPushEnabled: false,
+      emailFallbackEnabled: true,
+      emailFallbackDelayMinutes: DEFAULT_EMAIL_DELAY,
+      ...patch,
+      createdAt: ts,
+    };
+    await ctx.db.insert('albatrossNotificationPreferences', doc);
+    return mailPushSettingsFromRow(doc);
+  },
+});
+
+/** Holds the push of one mail notification until `until`. The in-app row stays. */
+export const holdMailPush = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    notificationId: v.id('albatrossNotifications'),
+    until: v.number(),
+    reason: v.union(v.literal('quiet_hours'), v.literal('priority_only')),
+    accountId: v.string(),
+    threadId: v.string(),
+    messageId: v.optional(v.string()),
+    sender: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db.get(args.notificationId);
+    if (!row || row.userId !== args.userId) throw new Error('Notification not found.');
+    const ts = now();
+    await ctx.db.patch(args.notificationId, {
+      pushHeldUntil: Math.max(args.until, ts),
+      pushHold: {
+        reason: args.reason,
+        accountId: args.accountId,
+        threadId: args.threadId,
+        messageId: args.messageId,
+        sender: truncateText(args.sender, 180),
+        heldAt: ts,
+      },
+      updatedAt: ts,
+    });
+    return { held: true };
+  },
+});
+
+async function heldRows(ctx: QueryCtx | MutationCtx, userId: string, limit = 200) {
+  return await ctx.db
+    .query('albatrossNotifications')
+    .withIndex('by_user_push_held', (q) => q.eq('userId', userId).gt('pushHeldUntil', 0))
+    .take(limit);
+}
+
+/**
+ * Priority-only holds whose thread now needs a reply or an action. Jev
+ * classifies after ingest, so mail held as ordinary can turn out to matter.
+ */
+export const priorityHeldMail = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const out: string[] = [];
+    for (const row of await heldRows(ctx, args.userId, 50)) {
+      if (row.pushHold?.reason !== 'priority_only') continue;
+      const thread = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_account_thread', (q) =>
+          q
+            .eq('userId', args.userId)
+            .eq('accountId', row.pushHold!.accountId)
+            .eq('providerThreadId', row.pushHold!.threadId),
+        )
+        .first();
+      if (thread?.jevNeedsReply || thread?.jevNeedsAction) out.push(String(row._id));
+    }
+    return { notificationIds: out };
+  },
+});
+
+/** Ends the hold of one notification so its own push can go out now. */
+export const releaseHeldMailPush = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    notificationId: v.id('albatrossNotifications'),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db.get(args.notificationId);
+    if (!row || row.userId !== args.userId || !row.pushHeldUntil || !row.pushHold) return { released: false };
+    const ts = now();
+    await ctx.db.patch(args.notificationId, {
+      pushHeldUntil: undefined,
+      pushHold: { ...row.pushHold, releasedAt: ts },
+      updatedAt: ts,
+    });
+    return { released: true };
+  },
+});
+
+async function dueDigestUserIds(ctx: QueryCtx, at: number, limit: number) {
+  const rows = await ctx.db
+    .query('albatrossNotifications')
+    .withIndex('by_push_held', (q) => q.gt('pushHeldUntil', 0).lte('pushHeldUntil', at))
+    .take(limit);
+  return [...new Set(rows.map((row) => row.userId))];
+}
+
+/** Users with at least one held mail push that is due. */
+export const dueMailDigestUsers = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    now: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = Math.min(Math.max(Math.floor(args.limit ?? 500), 1), 2000);
+    return { userIds: await dueDigestUserIds(ctx, args.now ?? now(), limit) };
+  },
+});
+
+export const hasDueMailDigests = internalQuery({
+  args: {},
+  handler: async (ctx) => (await dueDigestUserIds(ctx, now(), 1)).length > 0,
+});
+
+/**
+ * Sends the held mail of one user as one push. A single held message pushes
+ * as itself; two or more become one digest notification. Every hold clears.
+ */
+export const claimMailDigest = mutation({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const ts = args.now ?? now();
+    const held = await heldRows(ctx, args.userId);
+    if (!held.some((row) => (row.pushHeldUntil ?? 0) <= ts)) return { kind: 'none' as const, count: 0 };
+    if (held.length === 1) {
+      const [row] = held;
+      await ctx.db.patch(row._id, {
+        pushHeldUntil: undefined,
+        pushHold: row.pushHold ? { ...row.pushHold, releasedAt: ts } : undefined,
+        updatedAt: ts,
+      });
+      return { kind: 'single' as const, count: 1, notificationId: String(row._id) };
+    }
+    const copy = digestCopy(
+      held.map((row) => row.pushHold?.sender || row.title),
+      held.length,
+    );
+    const digestId = await ctx.db.insert(
+      'albatrossNotifications',
+      notificationPayload({
+        userId: args.userId,
+        type: 'mail_message',
+        title: copy.title,
+        body: copy.body,
+        deepLink: '/mail',
+        dedupeKey: `mail-digest:${args.userId}:${ts}`,
+        scheduledFor: ts,
+      }),
+    );
+    await ensureInAppDelivery(ctx, {
+      userId: args.userId,
+      notificationId: digestId,
+      enabled: true,
+      timestamp: ts,
+    });
+    for (const row of held) {
+      await ctx.db.patch(row._id, {
+        pushHeldUntil: undefined,
+        pushHold: row.pushHold ? { ...row.pushHold, releasedAt: ts, digestId } : undefined,
+        updatedAt: ts,
+      });
+    }
+    return { kind: 'digest' as const, count: held.length, notificationId: String(digestId) };
+  },
+});
+
+// Every 15 minutes: when a held mail push is due, ask the app to send the
+// digests. The app owns APNs and the quiet-hours check in the user's zone.
+export const mailDigestTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const due = await ctx.runQuery(internal.albatrossNotifications.hasDueMailDigests, {});
+    if (!due) return;
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[mail-digest cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    await fanOutInternalPost(`${appUrl}/api/cron/mail-digest`, secret, [{}], { label: 'mail-digest cron' });
   },
 });

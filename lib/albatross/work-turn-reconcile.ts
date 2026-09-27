@@ -1,5 +1,6 @@
 import { generateTextForCurrentUser } from '../ai/gateway';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
+import { safeSlice, truncateText } from '../shared/text';
 import { advanceWork } from './work-orchestrator';
 
 // The chat agent satisfies the user directly; the Work document holds the
@@ -94,7 +95,7 @@ export function harvestTurnArtifacts(calls: TurnToolCall[]): TurnArtifact[] {
   const artifacts: TurnArtifact[] = [];
   for (const call of calls) {
     if (!call.ok || !call.output) continue;
-    const title = String(call.input?.title || '').slice(0, 300);
+    const title = truncateText(String(call.input?.title || ''), 300);
     if (call.toolName === 'calendar_create_event' && call.output.eventId) {
       artifacts.push({
         kind: 'calendarEvent',
@@ -122,7 +123,7 @@ export function harvestTurnArtifacts(calls: TurnToolCall[]): TurnArtifact[] {
       artifacts.push({
         kind: 'listItem',
         id: String(call.output.item.id),
-        title: String(call.output.item.text || call.input?.text || 'Item').slice(0, 300),
+        title: truncateText(String(call.output.item.text || call.input?.text || 'Item'), 300),
         sourceKind: 'chat',
         workId: call.output.workId ? String(call.output.workId) : undefined,
       });
@@ -130,7 +131,7 @@ export function harvestTurnArtifacts(calls: TurnToolCall[]): TurnArtifact[] {
       artifacts.push({
         kind: 'metricEntry',
         id: String(call.output.entry.id),
-        title: String(call.output.summary || 'Metric entry').slice(0, 300),
+        title: truncateText(String(call.output.summary || 'Metric entry'), 300),
         sourceKind: 'chat',
         workId: call.output.workId ? String(call.output.workId) : undefined,
       });
@@ -141,7 +142,7 @@ export function harvestTurnArtifacts(calls: TurnToolCall[]): TurnArtifact[] {
         artifacts.push({
           kind: 'workCaptured',
           id: String(work.id),
-          title: String(work.title || title || 'Work').slice(0, 300),
+          title: truncateText(String(work.title || title || 'Work'), 300),
           sourceKind: 'chat',
         });
       }
@@ -170,7 +171,7 @@ export function turnSignals(calls: TurnToolCall[]): TurnSignals {
     if (call.toolName === 'albatross_record_progress') {
       signals.recordedProgress = true;
       const claim = String(call.input?.claim || '').trim();
-      if (claim) signals.progressClaims.push(claim.slice(0, 600));
+      if (claim) signals.progressClaims.push(truncateText(claim, 600));
       signals.answersViaTool += Array.isArray(call.input?.questionAnswers)
         ? call.input.questionAnswers.length
         : 0;
@@ -226,7 +227,7 @@ export function conversationExcerpt(messages: any[], maxMessages = 12, maxChars 
     }
   }
   let excerpt = lines.join('\n');
-  if (excerpt.length > maxChars) excerpt = excerpt.slice(excerpt.length - maxChars);
+  if (excerpt.length > maxChars) excerpt = safeSlice(excerpt, excerpt.length - maxChars);
   return excerpt;
 }
 
@@ -268,7 +269,7 @@ async function classifyAnsweredQuestions(input: {
     userEmail: input.userEmail,
     userName: input.userName,
     system: CLASSIFIER_SYSTEM,
-    prompt: prompt.slice(0, 20_000),
+    prompt: truncateText(prompt, 20_000),
     // A stalled provider must not leave the reconcile pending forever.
     abortSignal: AbortSignal.timeout(45_000),
   });
@@ -289,7 +290,7 @@ async function classifyAnsweredQuestions(input: {
     const answer = String(entry?.answer || '').trim();
     if (!validIds.has(questionId) || seen.has(questionId) || !answer) continue;
     seen.add(questionId);
-    answers.push({ questionId, answer: answer.slice(0, 2_000) });
+    answers.push({ questionId, answer: truncateText(answer, 2_000) });
   }
   return answers;
 }
@@ -327,7 +328,7 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
     // Shape writes are already on the Work. They are counted, never replanned.
     const shapeWrites = harvested.filter(isShapeWrite);
     const artifacts = harvested.filter((artifact) => !isShapeWrite(artifact));
-    const detail = await dependencies.convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
+    const detail = await dependencies.convexQuery<any>(api.albatrossWorkV2.workDetail, {
       userId: input.userId,
       workId: input.workId,
     });
@@ -339,7 +340,7 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
     // question resolution and replan this module exists to guarantee.
     if (artifacts.length) {
       await dependencies
-        .convexMutation((api as any).albatrossWork.appendPlanApplicationArtifacts, {
+        .convexMutation(api.albatrossWork.appendPlanApplicationArtifacts, {
           userId: input.userId,
           intentId: input.workId,
           artifacts: artifacts.map(({ sourceKind: _sourceKind, ...artifact }) => artifact),
@@ -352,7 +353,7 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
         // settleContract: false — a chat-created hold is context for the
         // planner, never proof that the outcome itself happened.
         await dependencies
-          .convexMutation((api as any).albatrossWorkV2.attachProof, {
+          .convexMutation(api.albatrossWorkV2.attachProof, {
             userId: input.userId,
             workId: input.workId,
             claim: `Created in chat for this Work: "${artifact.title}".`,
@@ -394,7 +395,7 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
         });
         for (const answer of resolved) {
           const answered = await dependencies
-            .convexMutation<{ shouldAdvance?: boolean }>((api as any).albatrossWorkV2.answerQuestion, {
+            .convexMutation<{ shouldAdvance?: boolean }>(api.albatrossWorkV2.answerQuestion, {
               userId: input.userId,
               questionId: answer.questionId,
               answer: answer.answer,
@@ -415,7 +416,7 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
     // clarification-style answer (shouldAdvance) forces the replan.
     const advanced = answersWantAdvance || (evidenceTouched && !signals.replanSucceeded);
     if (advanced) {
-      const fresh = await dependencies.convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
+      const fresh = await dependencies.convexQuery<any>(api.albatrossWorkV2.workDetail, {
         userId: input.userId,
         workId: input.workId,
       });
@@ -440,7 +441,7 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
       // Mark the evidence as reconciled so the cron does not replan again.
       if (typeof evidenceAt === 'number') {
         await dependencies
-          .convexMutation((api as any).albatrossWorkV2.completeEvidenceReconcile, {
+          .convexMutation(api.albatrossWorkV2.completeEvidenceReconcile, {
             userId: input.userId,
             workId: input.workId,
             evidenceAt,

@@ -1,6 +1,7 @@
 import { type ContentItem, sourceLink } from '../content/contract';
 import { readFilePage } from '../files/library-client';
 import { compareMailRelevance } from '../mail/search/ranking';
+import { truncateText } from '../shared/text';
 import type { PrimaryView } from '../shared/types';
 
 export type SearchScope = 'all' | 'mail' | 'files' | 'calendar';
@@ -70,7 +71,7 @@ export async function searchIndexedContent(
             : `content:${item._id}`,
         contentSource: item.source,
         title: item.title,
-        detail: `${item.source.replaceAll('_', ' ')} · ${item.text.slice(0, 200)}${item.partial ? ' · Partial content' : ''}`,
+        detail: `${item.source.replaceAll('_', ' ')} · ${truncateText(item.text, 200)}${item.partial ? ' · Partial content' : ''}`,
         timestamp: item.modifiedAt,
         target,
       },

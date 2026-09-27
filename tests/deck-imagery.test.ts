@@ -163,7 +163,7 @@ describe('resolving the plan', () => {
   });
 
   test('imports one painting per slot without repeats, within the budget, pool first', async () => {
-    const search = mock(async () => pool);
+    const search = mock(async (..._args: unknown[]) => pool);
     const importOne = mock(async (_userId: string, candidate: ArtworkCandidate) =>
       importedFrom(candidate, pool.indexOf(candidate)),
     );
@@ -188,7 +188,7 @@ describe('resolving the plan', () => {
   test('a failed search or import is a note, the next candidate is tried once, and live follows the flag', async () => {
     process.env.DECK_ART_LIVE = 'true';
     let calls = 0;
-    const search = mock(async () => {
+    const search = mock(async (..._args: unknown[]) => {
       calls += 1;
       if (calls === 1) throw new Error('museum down');
       return pool;
@@ -235,7 +235,7 @@ describe('resolving the plan', () => {
   });
 
   test('artworks for a deck upgrade the model and skip the search when nothing can take a painting', async () => {
-    const search = mock(async () => pool);
+    const search = mock(async (..._args: unknown[]) => pool);
     const importOne = mock(async (_userId: string, candidate: ArtworkCandidate) =>
       importedFrom(candidate, 0),
     );

@@ -9,7 +9,8 @@ import UserNotifications
 final class MacAppDelegate: NSObject, NSApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
-        NotificationCoordinator.configureCategories()
+        // The shared categories and the Mac wake category, in one write.
+        MacWakeNotifier.registerCategories()
         NSApplication.shared.registerForRemoteNotifications()
         // SwiftUI's scene windows were coming up without fullScreenPrimary, so
         // the green button zoomed instead of entering full screen. Every

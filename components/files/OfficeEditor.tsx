@@ -92,7 +92,9 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
     ready: ready && !saving,
     save: async () => {
       if (!collaboraRef.current) throw new Error('The word processor is not ready.');
-      return collaboraRef.current.save();
+      // An AI edit needs the latest bytes on the server, but an unchanged
+      // document must not become a new revision (OFF-1).
+      return collaboraRef.current.save({ skipIfUnmodified: true });
     },
     pause: () => {
       setPaused(true);
@@ -294,7 +296,6 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
           </div>
           {collabora ? (
             <Button size="sm" disabled={!ready || saving || aiBusy} onClick={() => void save()}>
-              {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
               {saving ? 'Saving…' : file.data?.google ? 'Save to Google' : 'Save'}
             </Button>
           ) : null}

@@ -15,7 +15,7 @@ final class AppEnvironment {
     let store: ProductStore
     let documents: DocumentStore
     let mailIdentity: MailIdentityStore
-    let sessionStore = SessionStore()
+    let sessionStore: SessionStore
     let navigation = NavigationModel()
     let theme = ThemeStore()
     let notifications: NotificationCoordinator
@@ -26,7 +26,10 @@ final class AppEnvironment {
     let mobileContainer: ModelContainer
     let commandOutbox: CommandOutbox
     let notificationResponseOutbox: NotificationResponseOutbox
-    let syncCoordinator = SyncCoordinator()
+    let syncCoordinator: SyncCoordinator
+    // The mail list actions go through the command outbox (NAT-10).
+    let mailCommands: OutboxMailCommandQueue
+    private let drainCommandOutbox: @MainActor (String) async -> Bool
     let pendingSends: PendingSendCoordinator
     // Editable email drafts the agent produced inside conversations. Owned
     // here, not by a conversation, so they survive new chats and relaunch.
@@ -35,8 +38,9 @@ final class AppEnvironment {
     let briefHydration: BriefHydrationClient?
     // "Prepared for you" under the Brief: GET/POST /api/content?view=brief.
     let preparedWork: PreparedWorkClient?
-    let outboxProcessor: CommandOutboxProcessor?
     let accountStore: AccountStore
+    // The plan, the trial note, and the optional Files surface (round 2).
+    let trust: AccountTrustStore
     // The current Albatross conversation. Held here so switching destinations
     // does not discard an in-flight exchange; the sidebar plus starts a fresh
     // one. Distinct from intent capture, which stays a form.
@@ -44,6 +48,10 @@ final class AppEnvironment {
 
     init(configuration: AppConfiguration) {
         self.configuration = configuration
+        let sessionStore = SessionStore()
+        self.sessionStore = sessionStore
+        let syncCoordinator = SyncCoordinator()
+        self.syncCoordinator = syncCoordinator
         let tokenProvider: @Sendable () async throws -> String = {
             try await ClerkSessionAccess.activeToken()
         }
@@ -64,6 +72,7 @@ final class AppEnvironment {
         }
         self.backend = backend
         self.tools = tools
+        trust = AccountTrustStore(backend: backend)
         documents = DocumentStore(backend: backend)
         webAuthentication = WebAuthenticationCoordinator(backend: backend)
         pendingSends = PendingSendCoordinator(backend: backend, tools: tools)
@@ -73,6 +82,7 @@ final class AppEnvironment {
         let notificationResponseOutbox = NotificationResponseOutbox(modelContainer: mobileContainer)
         self.notificationResponseOutbox = notificationResponseOutbox
         let bootstrapSource: any MobileBootstrapFetching
+        let processor: CommandOutboxProcessor?
         if let apiBaseURL = configuration.apiBaseURL {
             let mobileClient = MobileV1Client(
                 baseURL: apiBaseURL,
@@ -88,7 +98,7 @@ final class AppEnvironment {
                 tokenProvider: tokenProvider
             )
             bootstrapSource = mobileClient
-            outboxProcessor = CommandOutboxProcessor(
+            processor = CommandOutboxProcessor(
                 outbox: commandOutbox,
                 submitter: mobileClient
             )
@@ -96,9 +106,24 @@ final class AppEnvironment {
             mobileClient = nil
             briefHydration = nil
             preparedWork = nil
-            outboxProcessor = nil
+            processor = nil
             bootstrapSource = UnavailableMobileBootstrapSource()
         }
+        // One drain at a time for each owner, whoever asks for it.
+        let drainCommandOutbox: @MainActor (String) async -> Bool = { ownerID in
+            guard let processor else { return false }
+            return await syncCoordinator.run(ownerID: ownerID, domain: "command-outbox") {
+                let result = await processor.drain(ownerID: ownerID)
+                return result.deferred == 0 && result.permanentlyFailed == 0
+            }
+        }
+        self.drainCommandOutbox = drainCommandOutbox
+        let mailCommands = OutboxMailCommandQueue(
+            outbox: commandOutbox,
+            ownerID: { sessionStore.ownerID },
+            drain: drainCommandOutbox
+        )
+        self.mailCommands = mailCommands
         accountStore = AccountStore(
             repository: AccountRepository(
                 cache: AccountCache(modelContainer: mobileContainer),
@@ -111,7 +136,8 @@ final class AppEnvironment {
             tools: tools,
             backend: backend,
             convex: convexClient,
-            mailPages: mobileClient
+            mailPages: mobileClient,
+            mailCommands: mailCommands
         )
         self.store = store
         assistantDrafts = AssistantDraftStore(transport: store)
@@ -150,6 +176,11 @@ final class AppEnvironment {
             } catch {
                 return false
             }
+        }
+        // A mail action that waits for the network is tried again when due.
+        mailCommands.onRetryDue = { [weak self] in
+            guard let self else { return }
+            _ = await self.flushCommandOutbox(ownerID: self.sessionStore.ownerID)
         }
     }
 
@@ -214,11 +245,21 @@ final class AppEnvironment {
 
     func flushCommandOutbox(ownerID: String?) async -> Bool {
         guard let ownerID else { return true }
-        guard let outboxProcessor else { return false }
-        return await syncCoordinator.run(ownerID: ownerID, domain: "command-outbox") {
-            let result = await outboxProcessor.drain(ownerID: ownerID)
-            return result.deferred == 0 && result.permanentlyFailed == 0
-        }
+        let drained = await drainCommandOutbox(ownerID)
+        // A drain settles mail list actions sent earlier, also before a
+        // relaunch; the lists keep or roll back their changes (NAT-10).
+        await store.reconcileMailCommands(await mailCommands.listCommands(ownerID: ownerID))
+        return drained
+    }
+
+    /// Reads the Today summary and hands it to the widget (round 2, FEATURES
+    /// item 19). A failed read keeps the widget's last good snapshot.
+    func refreshTodayWidget() async {
+        #if os(iOS)
+        guard sessionStore.ownerID != nil, let mobileClient else { return }
+        guard let snapshot = try? await mobileClient.fetchTodaySummary() else { return }
+        TodayWidgetBridge.publish(snapshot)
+        #endif
     }
 
     func refreshAccounts(ownerID: String) async -> Bool {

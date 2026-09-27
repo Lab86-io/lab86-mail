@@ -5,7 +5,6 @@ import path from 'node:path';
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'lab86-mail-test-'));
 process.env.LAB86_MAIL_DATA_DIR = dataDir;
-process.env.MAIL_OS_DATA_DIR = dataDir;
 process.env.OPENROUTER_API_KEY = '';
 process.env.OPENAI_API_KEY = '';
 process.env.ANTHROPIC_API_KEY = '';
@@ -582,8 +581,9 @@ describe('compliance readiness', () => {
     const cleanupSource = accounts.slice(accounts.indexOf('ACCOUNT_BULK_TABLES'));
     const tables = [...schema.matchAll(/^\s{2}([a-zA-Z0-9]+): defineTable/gm)].map((match) => match[1]);
     // Global deployment bookkeeping is not user-owned and must survive an
-    // individual account deletion.
-    const exempt = new Set<string>(['dataMigrations']);
+    // individual account deletion. deploymentSettings holds operator choices
+    // such as the mail classifier, shared by every account.
+    const exempt = new Set<string>(['dataMigrations', 'deploymentSettings']);
 
     expect(tables.length).toBeGreaterThan(10);
     for (const table of tables) {
@@ -693,7 +693,6 @@ describe('AI tools on fake noreply mail with no provider configured', () => {
         const { upsertMessage } = await import('../lib/store/messages');
         const {
           bulkTriage,
-          classifyThreads,
           draftReply,
           extractActionItems,
           nlSearch,
@@ -758,25 +757,6 @@ describe('AI tools on fake noreply mail with no provider configured', () => {
         );
         expect(batch.model).toBe('local');
         expect(batch.verdicts[0].id).toBe(threadId);
-
-        const classified = await classifyThreads.handler(
-          {
-            threads: [
-              {
-                id: threadId,
-                account,
-                from: 'noreply@example.test',
-                subject: 'Automated account notice',
-                snippet: 'No response is needed.',
-                labels: ['CATEGORY_UPDATES'],
-                unread: true,
-              },
-            ],
-          },
-          { agent: 'codex' },
-        );
-        expect(classified.model).toBe('local');
-        expect(classified.verdicts[0].id).toBe(threadId);
 
         const actions = await extractActionItems.handler({ account, threadId }, { agent: 'codex' });
         expect(actions.model).toBe('local');

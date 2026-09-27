@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { generateTextForCurrentUser, resolveAiRuntime } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { briefSourceCoverage, refreshBriefSources } from '@/lib/mail/brief-source-refresh';
+import { truncateText } from '@/lib/shared/text';
 import { narrativeWritingLimit, writerEvidenceRows } from './compaction';
 import {
   emptyNarrativeContext,
@@ -13,7 +14,7 @@ import {
 } from './context';
 import { NARRATIVE_SKILL, type NarrativeEntry, narrativeContext } from './core';
 
-const functions = (api as any).narrative;
+const functions = api.narrative;
 const queryExpansionSchema = z.object({ terms: z.array(z.string().min(3).max(60)).max(4) });
 const defaults = {
   query: convexQuery,
@@ -551,7 +552,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       /^(Narrative (cited evidence|changed during|context budget|returned a progress|asserted inactivity|did not inspect))/.test(
         message,
       )
-        ? message.slice(0, 300)
+        ? truncateText(message, 300)
         : signal.aborted
           ? 'Narrative run was superseded; indexed evidence remains available.'
           : `Narrative ${stage} could not complete (${cause instanceof Error && /^(TimeoutError|AI_NoOutputGeneratedError|AI_NoObjectGeneratedError|ZodError)$/.test(cause.name) ? cause.name : 'unavailable'}). Indexed evidence remains available; retry the brief.`;

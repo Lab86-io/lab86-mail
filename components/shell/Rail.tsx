@@ -10,8 +10,8 @@ import {
 import { History, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
+import { useFilesSurface } from '@/components/settings/surfaces';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -49,25 +49,23 @@ import { useClientStore } from '@/lib/client-state';
 import { mailSearchShortcutLabel } from '@/lib/mail/search/focus-contract';
 import { categoricalColor } from '@/lib/shared/format';
 import { normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
+import { type RailSurfaceView, railSurfaces } from '@/lib/shell/rail-surfaces';
 import { NotificationCenter } from './NotificationCenter';
 import { RAIL_SURFACE_ICONS } from './navigation-icons';
 import { RailPrimaryActions } from './ShellActions';
 import { useApplyThemeExtras } from './ThemePanel';
 
-// Top-level surfaces of the product, in the order a person meets them: the
-// day, the things being carried, then the systems those things run on.
-const SURFACES: Array<{
-  view: 'today' | 'albatrosses' | 'mail' | 'calendar' | 'files' | 'chat';
-  label: string;
-  Icon: any;
-}> = [
-  { view: 'today', label: 'Today', Icon: rowIcon(RAIL_SURFACE_ICONS.today) },
-  { view: 'albatrosses', label: 'Albatrosses', Icon: rowIcon(RAIL_SURFACE_ICONS.albatrosses) },
-  { view: 'chat', label: 'Chat', Icon: rowIcon(RAIL_SURFACE_ICONS.chat) },
-  { view: 'mail', label: 'Mail', Icon: rowIcon(RAIL_SURFACE_ICONS.mail) },
-  { view: 'calendar', label: 'Calendar', Icon: rowIcon(RAIL_SURFACE_ICONS.calendar) },
-  { view: 'files', label: 'Files', Icon: rowIcon(RAIL_SURFACE_ICONS.files) },
-];
+// Top-level surfaces of the product, with their rail glyphs. The order and
+// the optional board live in lib/shell/rail-surfaces.
+const SURFACE_ICONS: Record<RailSurfaceView, any> = {
+  today: rowIcon(RAIL_SURFACE_ICONS.today),
+  albatrosses: rowIcon(RAIL_SURFACE_ICONS.albatrosses),
+  chat: rowIcon(RAIL_SURFACE_ICONS.chat),
+  mail: rowIcon(RAIL_SURFACE_ICONS.mail),
+  calendar: rowIcon(RAIL_SURFACE_ICONS.calendar),
+  files: rowIcon(RAIL_SURFACE_ICONS.files),
+  tasks: rowIcon(RAIL_SURFACE_ICONS.tasks),
+};
 
 export const ALL_ACCOUNTS = '__all__';
 
@@ -134,6 +132,12 @@ export function Rail({
   const primaryView = useClientStore((s) => s.primaryView);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const visiblePrimaryView = normalizePrimaryView(activeViewOverride ?? primaryView);
+  const boardEnabled = useClientStore((s) => s.boardSurfaceEnabled);
+  const filesEnabled = useFilesSurface();
+  const SURFACES = railSurfaces({ boardEnabled, filesEnabled }).map((surface) => ({
+    ...surface,
+    Icon: SURFACE_ICONS[surface.view],
+  }));
   const selectedAreaId = useClientStore((s) => s.selectedAreaId);
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
@@ -185,6 +189,7 @@ export function Rail({
           authed: boolean;
           primary?: boolean;
           displayName?: string;
+          reconnectReason?: string;
           sync?: {
             status: string;
             corpusReady: boolean;
@@ -204,12 +209,15 @@ export function Rail({
   });
   const accounts = accountsData?.accounts || [];
   const authedAccounts = accounts.filter((a) => a.authed);
+  // Mailboxes whose sign-in expired or was removed (SYNC-2). Sync stops for
+  // them until the user reconnects in Settings.
+  const reconnectAccounts = accounts.filter((a) => !a.authed);
   // Live areas — one rail row per active area, so areas behave like first-class
   // places instead of hiding behind one door. Auth-gated: a first-paint query
   // before the Clerk token lands would error.
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const areasResult = useConvexQuery({
-    query: (api as any).albatross.listAreasOverview,
+    query: api.albatross.listAreasOverview,
     args: convexAuthed ? { status: 'active' } : 'skip',
   });
   const railAreas =
@@ -228,7 +236,7 @@ export function Rail({
 
   // The Albatrosses badge. Words, never a count of everything being carried.
   const workResult = useConvexQuery({
-    query: (api as any).albatrossWorkV2.allWork,
+    query: api.albatrossWorkV2.allWork,
     args: convexAuthed ? {} : 'skip',
   });
   const workBadge = workResult.status === 'success' ? railWorkBadge((workResult.data as any[]) || []) : null;
@@ -454,6 +462,21 @@ export function Rail({
       </SidebarContent>
 
       <SidebarFooter>
+        {reconnectAccounts.length ? (
+          <div className="flex flex-col gap-0.5 px-2 group-data-[collapsible=icon]:hidden">
+            {reconnectAccounts.map((mailbox) => (
+              <Link
+                key={mailbox.accountId}
+                href="/settings"
+                onClick={closeMobileSidebar}
+                title={mailbox.reconnectReason || 'Reconnect needed'}
+                className="truncate text-[11.5px] font-medium text-[var(--color-danger)] hover:underline"
+              >
+                Reconnect needed: {mailbox.displayName || mailbox.email}
+              </Link>
+            ))}
+          </div>
+        ) : null}
         <nav
           aria-label="Account controls"
           className="flex items-center justify-between gap-2 border-t border-[var(--color-list-divider)] px-1 pt-3 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0"
@@ -560,7 +583,10 @@ export function AccountScopePopover({
           aria-label={`Choose mailboxes: ${label}`}
           className="corner-smooth relative flex h-9 shrink-0 items-center gap-2 rounded-[var(--radius-control)] border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-xs text-[var(--color-text-muted)] outline-none transition-colors hover:bg-[var(--color-control-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
         >
-          <RowIcon icon={UsersIcon} size={15} />
+          {/* Icon when narrow, the word when wide: never an icon before text. */}
+          <span className="inline-flex lg:hidden">
+            <RowIcon icon={UsersIcon} size={15} />
+          </span>
           <span className="hidden lg:inline">{label}</span>
           {!allSelected ? (
             <span className="absolute right-0.5 top-0.5 grid size-3 place-items-center rounded-full bg-[var(--color-accent)] text-[7px] font-semibold leading-none text-[var(--color-accent-foreground)]">
@@ -585,7 +611,6 @@ export function AccountScopePopover({
           }}
           className="gap-2 text-[12.5px]"
         >
-          <RowIcon icon={UsersIcon} size={14} />
           All accounts
           {allSelected ? <span className="ml-auto text-[var(--color-accent)]">✓</span> : null}
         </DropdownMenuItem>
@@ -598,7 +623,6 @@ export function AccountScopePopover({
             onSelect={(event) => event.preventDefault()}
             className="gap-2 text-[12.5px]"
           >
-            <ProviderLogo provider={mailbox.provider} className="size-3.5 shrink-0" />
             <span className="min-w-0 flex-1">
               <span className="block truncate">{mailbox.displayName || mailbox.email}</span>
               <span className="block truncate text-[10.5px] leading-tight text-[var(--color-text-faint)]">

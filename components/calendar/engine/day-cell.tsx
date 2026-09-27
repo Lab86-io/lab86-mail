@@ -117,10 +117,12 @@ export function DayCell({ cell, events, eventPositions }: IProps) {
                 <AddEditEventDialog startDate={date}>
                   <Button
                     variant="ghost"
+                    aria-label="Add event"
                     className="border opacity-0 group-hover:opacity-100 transition-opacity duration-200"
                   >
-                    <Plus className="h-4 w-4" />
-                    <span className="max-sm:hidden">Add Event</span>
+                    {/* Icon when narrow, the word when wide: never an icon before text. */}
+                    <Plus className="h-4 w-4 sm:hidden" />
+                    <span className="hidden sm:inline">Add event</span>
                   </Button>
                 </AddEditEventDialog>
               </div>

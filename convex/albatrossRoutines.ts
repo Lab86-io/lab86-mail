@@ -1,10 +1,11 @@
 import { v } from 'convex/values';
 import { localDateKey } from '../lib/albatross/local-time';
 import { nextRoutineRunAt, routineIsInQuietHours, routineRunKey } from '../lib/albatross/routines';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { internalMutation, mutation, query } from './_generated/server';
+import { internalAction, internalMutation, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 const callerArgs = {
@@ -17,12 +18,6 @@ const kindValidator = v.union(
   v.literal('checkin'),
   v.literal('task_and_checkin'),
   v.literal('review'),
-);
-const statusValidator = v.union(
-  v.literal('proposed'),
-  v.literal('active'),
-  v.literal('paused'),
-  v.literal('archived'),
 );
 const consentValidator = v.union(v.literal('proposed'), v.literal('enabled'), v.literal('declined'));
 const cadenceValidator = v.union(
@@ -92,7 +87,7 @@ async function requireRoutine(
 
 function clean(value: string | undefined | null, max: number) {
   const next = String(value || '').trim();
-  return next ? next.slice(0, max) : undefined;
+  return next ? truncateText(next, max) : undefined;
 }
 
 function validateTimezone(timezone: string) {
@@ -326,98 +321,15 @@ export const setConsent = mutation({
   },
 });
 
-export const updateSchedule = mutation({
-  args: {
-    ...callerArgs,
-    routineId: v.id('albatrossRoutines'),
-    title: v.optional(v.string()),
-    purpose: v.optional(v.string()),
-    cadence: v.optional(cadenceValidator),
-    daysOfWeek: v.optional(v.array(v.number())),
-    localTime: v.optional(v.string()),
-    timezone: v.optional(v.string()),
-    status: v.optional(statusValidator),
-  },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const routine = await requireRoutine(ctx, args.routineId, userId);
-    if (args.status === 'active') {
-      if (routine.consent !== 'enabled') throw new Error('Enable the routine before activating it.');
-      const project = await ctx.db.get(routine.projectId);
-      if (!project || project.userId !== userId || project.status === 'archived') {
-        throw new Error('The routine project is unavailable.');
-      }
-    }
-    const next = {
-      ...routine,
-      cadence: args.cadence ?? routine.cadence,
-      daysOfWeek: args.daysOfWeek
-        ? normalizedDays(args.daysOfWeek, args.cadence ?? routine.cadence)
-        : routine.daysOfWeek,
-      localTime: args.localTime ? validateClock(args.localTime) : routine.localTime,
-      timezone: args.timezone ? validateTimezone(args.timezone) : routine.timezone,
-    };
-    const ts = now();
-    await ctx.db.patch(args.routineId, {
-      ...(args.title !== undefined ? { title: clean(args.title, 180) || routine.title } : {}),
-      ...(args.purpose !== undefined ? { purpose: clean(args.purpose, 800) } : {}),
-      ...(args.cadence !== undefined ? { cadence: next.cadence } : {}),
-      ...(args.daysOfWeek !== undefined ? { daysOfWeek: next.daysOfWeek } : {}),
-      ...(args.localTime !== undefined ? { localTime: next.localTime } : {}),
-      ...(args.timezone !== undefined ? { timezone: next.timezone } : {}),
-      ...(args.status !== undefined ? { status: args.status } : {}),
-      nextRunAt: requireNextRoutineRunAt(next, ts),
-      updatedAt: ts,
-      ...(args.status === 'archived' ? { archivedAt: ts } : {}),
-    });
-    return { ok: true };
-  },
-});
-
 export const runNow = mutation({
   args: { ...callerArgs, routineId: v.id('albatrossRoutines') },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const routine = await requireRoutine(ctx, args.routineId, userId);
     if (routine.consent !== 'enabled') throw new Error('Enable the routine before running it.');
-    await ctx.scheduler.runAfter(0, internal.albatrossRoutines.materializeOne, {
+    await ctx.scheduler.runAfter(0, internal.albatrossRoutines.runOne, {
       routineId: args.routineId,
       force: true,
-    });
-    return { ok: true };
-  },
-});
-
-export const skipNext = mutation({
-  args: { ...callerArgs, routineId: v.id('albatrossRoutines') },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const routine = await requireRoutine(ctx, args.routineId, userId);
-    const scheduled = new Date(routine.nextRunAt);
-    const key = routineRunKey(String(routine._id), routine.timezone, scheduled);
-    const existing = await ctx.db
-      .query('albatrossRoutineRuns')
-      .withIndex('by_routine_runKey', (q) => q.eq('routineId', routine._id).eq('runKey', key))
-      .unique();
-    const ts = now();
-    if (!existing) {
-      await ctx.db.insert('albatrossRoutineRuns', {
-        userId,
-        routineId: routine._id,
-        projectId: routine.projectId,
-        areaId: routine.areaId,
-        runKey: key,
-        localDate: localDateKey(routine.timezone, scheduled),
-        scheduledFor: routine.nextRunAt,
-        status: 'skipped',
-        completedAt: ts,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-    }
-    await ctx.db.patch(routine._id, {
-      nextRunAt: requireNextRoutineRunAt(routine, routine.nextRunAt + 60_000),
-      updatedAt: ts,
     });
     return { ok: true };
   },
@@ -449,40 +361,6 @@ export const listForProject = query({
             .order('desc')
             .take(10),
         })),
-    );
-  },
-});
-
-// The practices a person is keeping. Today shows at most a couple of these,
-// and never as a streak — the point is consistency over time, not a perfect
-// week the user can break.
-export const activePractices = query({
-  args: { ...callerArgs, limit: v.optional(v.number()) },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const rows = await ctx.db
-      .query('albatrossRoutines')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .take(60);
-    const areas = await ctx.db
-      .query('areas')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect();
-    const areaNames = new Map(areas.map((area) => [String(area._id), area.name]));
-    return (
-      rows
-        .filter((row) => row.status === 'active')
-        // A practice with no next run is not the most urgent thing today; `|| 0`
-        // sorted every unscheduled one to the front of the list.
-        .sort((a, b) => (a.nextRunAt ?? Number.POSITIVE_INFINITY) - (b.nextRunAt ?? Number.POSITIVE_INFINITY))
-        .slice(0, Math.min(Math.max(args.limit ?? 2, 1), 10))
-        .map((row) => ({
-          _id: String(row._id),
-          title: row.title,
-          cadence: row.cadence,
-          nextRunAt: row.nextRunAt ?? null,
-          areaName: row.areaId ? (areaNames.get(String(row.areaId)) ?? null) : null,
-        }))
     );
   },
 });
@@ -582,220 +460,274 @@ async function materialize(ctx: MutationCtx, routine: Doc<'albatrossRoutines'>, 
     createdAt: ts,
     updatedAt: ts,
   });
-  try {
-    let taskCardId: Id<'cards'> | undefined;
-    let questionId: Id<'albatrossWorkQuestions'> | undefined;
-    let notificationId: Id<'albatrossNotifications'> | undefined;
-    if (routine.taskTemplate) {
-      let area = routine.areaId ? await ctx.db.get(routine.areaId) : null;
-      if (!area && project.areaId) {
-        const areaId = ctx.db.normalizeId('areas', project.areaId);
-        area = areaId ? await ctx.db.get(areaId) : null;
-      }
-      if (area?.userId === routine.userId && area.boardId) {
-        const boardId = area.boardId;
-        const columns = await ctx.db
-          .query('boardColumns')
-          .withIndex('by_board', (q) => q.eq('boardId', boardId))
+  // Convex mutations are atomic. An error rolls back the partial card,
+  // question, link, and run together. `runOne` then records the error and the
+  // next run time in a separate transaction (WRK-13).
+  let taskCardId: Id<'cards'> | undefined;
+  let questionId: Id<'albatrossWorkQuestions'> | undefined;
+  let notificationId: Id<'albatrossNotifications'> | undefined;
+  if (routine.taskTemplate) {
+    let area = routine.areaId ? await ctx.db.get(routine.areaId) : null;
+    if (!area && project.areaId) {
+      const areaId = ctx.db.normalizeId('areas', project.areaId);
+      area = areaId ? await ctx.db.get(areaId) : null;
+    }
+    if (area?.userId === routine.userId && area.boardId) {
+      const boardId = area.boardId;
+      const columns = await ctx.db
+        .query('boardColumns')
+        .withIndex('by_board', (q) => q.eq('boardId', boardId))
+        .collect();
+      const column =
+        columns.find((entry) => entry.name.toLowerCase() === 'today') ||
+        columns.sort((a, b) => a.order - b.order)[0];
+      if (column) {
+        const siblings = await ctx.db
+          .query('cards')
+          .withIndex('by_column_order', (q) => q.eq('columnId', column._id))
           .collect();
-        const column =
-          columns.find((entry) => entry.name.toLowerCase() === 'today') ||
-          columns.sort((a, b) => a.order - b.order)[0];
-        if (column) {
-          const siblings = await ctx.db
-            .query('cards')
-            .withIndex('by_column_order', (q) => q.eq('columnId', column._id))
-            .collect();
-          const order = Math.max(0, ...siblings.map((card) => card.order)) + 1_024;
-          taskCardId = await ctx.db.insert('cards', {
-            boardId,
-            columnId: column._id,
-            userId: routine.userId,
-            title: templateText(routine.taskTemplate.title, project, localDate) || routine.title,
-            description: templateText(routine.taskTemplate.description, project, localDate) || undefined,
-            priority: routine.taskTemplate.priority,
-            dueAt: scheduledFor,
-            order,
-            source: {
-              kind: 'albatrossRoutine',
-              routineId: String(routine._id),
-              routineRunId: String(runId),
-              projectId: String(project._id),
-            },
-            createdAt: ts,
-            updatedAt: ts,
-          });
-          await ctx.db.insert('albatrossProjectLinks', {
-            userId: routine.userId,
-            projectId: project._id,
-            artifactKind: 'task',
-            artifactId: String(taskCardId),
-            areaId: routine.areaId ? String(routine.areaId) : project.areaId,
-            role: 'primary',
-            title: templateText(routine.taskTemplate.title, project, localDate) || routine.title,
-            createdAt: ts,
-            updatedAt: ts,
-          });
-        }
-      }
-    }
-    if (routine.taskTemplate && !taskCardId) {
-      throw new Error('Routine task could not be created because its Area task board is unavailable.');
-    }
-    if (routine.questionTemplate) {
-      const dedupeKey = `routine-question:${String(routine._id)}:${localDate}`;
-      const existingQuestion = await ctx.db
-        .query('albatrossWorkQuestions')
-        .withIndex('by_user_dedupe', (q) => q.eq('userId', routine.userId).eq('dedupeKey', dedupeKey))
-        .unique();
-      questionId = existingQuestion?._id;
-      if (!questionId) {
-        questionId = await ctx.db.insert('albatrossWorkQuestions', {
+        const order = Math.max(0, ...siblings.map((card) => card.order)) + 1_024;
+        taskCardId = await ctx.db.insert('cards', {
+          boardId,
+          columnId: column._id,
+          userId: routine.userId,
+          title: templateText(routine.taskTemplate.title, project, localDate) || routine.title,
+          description: templateText(routine.taskTemplate.description, project, localDate) || undefined,
+          priority: routine.taskTemplate.priority,
+          dueAt: scheduledFor,
+          order,
+          source: {
+            kind: 'albatrossRoutine',
+            routineId: String(routine._id),
+            routineRunId: String(runId),
+            projectId: String(project._id),
+          },
+          createdAt: ts,
+          updatedAt: ts,
+        });
+        await ctx.db.insert('albatrossProjectLinks', {
           userId: routine.userId,
           projectId: project._id,
-          routineId: routine._id,
-          dedupeKey,
-          kind: routine.kind === 'review' ? 'reflection' : 'checkin',
-          responseKind: routine.questionTemplate.responseKind ?? 'text',
-          prompt: templateText(routine.questionTemplate.prompt, project, localDate),
-          reason: templateText(routine.questionTemplate.reason, project, localDate) || undefined,
-          options: routine.questionTemplate.options,
-          status: 'pending',
-          sourceRefs: [
-            { kind: 'routine', id: String(routine._id), label: routine.title },
-            { kind: 'project', id: String(project._id), label: project.title },
-          ],
-          metadata: { localDate, runId: String(runId) },
+          artifactKind: 'task',
+          artifactId: String(taskCardId),
+          areaId: routine.areaId ? String(routine.areaId) : project.areaId,
+          role: 'primary',
+          title: templateText(routine.taskTemplate.title, project, localDate) || routine.title,
           createdAt: ts,
           updatedAt: ts,
         });
       }
     }
-    if (!routine.notification.enabled && routine.questionTemplate) {
-      const consentKey = `routine-notification-consent:${String(routine._id)}`;
-      const existingConsent = await ctx.db
-        .query('albatrossWorkQuestions')
-        .withIndex('by_user_dedupe', (q) => q.eq('userId', routine.userId).eq('dedupeKey', consentKey))
-        .unique();
-      if (!existingConsent) {
-        await ctx.db.insert('albatrossWorkQuestions', {
-          userId: routine.userId,
-          projectId: project._id,
-          routineId: routine._id,
-          dedupeKey: consentKey,
-          kind: 'consent',
-          responseKind: 'boolean',
-          prompt: `Would you like a notification at ${routine.localTime} when it is time for “${routine.questionTemplate.prompt}”?`,
-          reason:
-            'The routine follows its own schedule and can keep creating a private check-in without sending a notification.',
-          options: [
-            { id: 'enable', label: 'Yes, notify me' },
-            { id: 'decline', label: 'Not now' },
-          ],
-          status: 'pending',
-          sourceRefs: [
-            { kind: 'routine', id: String(routine._id), label: routine.title },
-            { kind: 'project', id: String(project._id), label: project.title },
-          ],
-          metadata: { action: 'routine_notification_consent' },
-          createdAt: ts,
-          updatedAt: ts,
-        });
-      }
-    }
-    const notificationSuppressedByQuietHours = routineIsInQuietHours(routine, scheduledFor);
-    if (routine.notification.enabled && !notificationSuppressedByQuietHours && (questionId || taskCardId)) {
-      const dedupeKey = `routine-notification:${String(routine._id)}:${localDate}`;
-      const existingNotification = await ctx.db
-        .query('albatrossNotifications')
-        .withIndex('by_user_dedupe', (q) => q.eq('userId', routine.userId).eq('dedupeKey', dedupeKey))
-        .unique();
-      notificationId = existingNotification?._id;
-      if (!notificationId) {
-        notificationId = await ctx.db.insert('albatrossNotifications', {
-          userId: routine.userId,
-          type: questionId ? 'work_question' : 'brief_ready',
-          title: routine.title,
-          body:
-            questionId && routine.questionTemplate
-              ? routine.questionTemplate.prompt
-              : templateText(routine.taskTemplate?.title, project, localDate) ||
-                routine.purpose ||
-                project.title,
-          entityKind: 'project',
-          entityId: String(project._id),
-          deepLink: routine.areaId
-            ? `/?area=${String(routine.areaId)}&project=${String(project._id)}`
-            : `/?project=${String(project._id)}`,
-          dedupeKey,
-          status: 'delivered',
-          scheduledFor,
-          createdAt: ts,
-          updatedAt: ts,
-        });
-        await ctx.db.insert('notificationDeliveries', {
-          userId: routine.userId,
-          notificationId,
-          channel: 'in_app',
-          status: 'sent',
-          attemptCount: 1,
-          scheduledFor,
-          sentAt: ts,
-          createdAt: ts,
-          updatedAt: ts,
-        });
-      }
-    }
-    await insertEvidence(ctx, {
-      userId: routine.userId,
-      targetKind: 'project',
-      targetId: String(project._id),
-      sourceKind: taskCardId ? 'task' : 'manual',
-      sourceId: `routine-run:${String(runId)}`,
-      title: `${routine.title} materialized`,
-      summary: taskCardId ? 'The agreed routine generated a task.' : 'The agreed routine opened a check-in.',
-      occurredAt: scheduledFor,
-      weight: 0.42,
-      confidence: 1,
-      trust: 'observed',
-      dedupeKey: `routine-run:${String(runId)}`,
-      searchText: `${routine.title} ${project.title} routine ${localDate}`,
-      metadata: {
-        routineId: String(routine._id),
-        runId: String(runId),
-        taskCardId: taskCardId && String(taskCardId),
-        notificationSuppressedByQuietHours,
-      },
-    });
-    await ctx.db.patch(runId, {
-      status: 'completed',
-      taskCardId,
-      questionId,
-      notificationId,
-      completedAt: now(),
-      updatedAt: now(),
-    });
-    await ctx.db.patch(routine._id, {
-      lastRunAt: scheduledFor,
-      nextRunAt: requireNextRoutineRunAt(routine, Math.max(now(), scheduledFor) + 60_000),
-      updatedAt: now(),
-    });
-    return { runId, taskCardId, questionId, notificationId };
-  } catch (error) {
-    await ctx.db.patch(runId, {
-      status: 'error',
-      error: error instanceof Error ? error.message.slice(0, 500) : 'Routine run failed.',
-      updatedAt: now(),
-    });
-    await ctx.db.patch(routine._id, {
-      nextRunAt: requireNextRoutineRunAt(routine, Math.max(now(), routine.nextRunAt) + 60_000),
-      updatedAt: now(),
-    });
-    // Convex mutations are atomic. Rethrowing rolls back the partial card,
-    // question, link, and run together so the same runKey can retry safely.
-    throw error;
   }
+  if (routine.taskTemplate && !taskCardId) {
+    throw new Error('Routine task could not be created because its Area task board is unavailable.');
+  }
+  if (routine.questionTemplate) {
+    const dedupeKey = `routine-question:${String(routine._id)}:${localDate}`;
+    const existingQuestion = await ctx.db
+      .query('albatrossWorkQuestions')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', routine.userId).eq('dedupeKey', dedupeKey))
+      .unique();
+    questionId = existingQuestion?._id;
+    if (!questionId) {
+      questionId = await ctx.db.insert('albatrossWorkQuestions', {
+        userId: routine.userId,
+        projectId: project._id,
+        routineId: routine._id,
+        dedupeKey,
+        kind: routine.kind === 'review' ? 'reflection' : 'checkin',
+        responseKind: routine.questionTemplate.responseKind ?? 'text',
+        prompt: templateText(routine.questionTemplate.prompt, project, localDate),
+        reason: templateText(routine.questionTemplate.reason, project, localDate) || undefined,
+        options: routine.questionTemplate.options,
+        status: 'pending',
+        sourceRefs: [
+          { kind: 'routine', id: String(routine._id), label: routine.title },
+          { kind: 'project', id: String(project._id), label: project.title },
+        ],
+        metadata: { localDate, runId: String(runId) },
+        createdAt: ts,
+        updatedAt: ts,
+      });
+    }
+  }
+  if (!routine.notification.enabled && routine.questionTemplate) {
+    const consentKey = `routine-notification-consent:${String(routine._id)}`;
+    const existingConsent = await ctx.db
+      .query('albatrossWorkQuestions')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', routine.userId).eq('dedupeKey', consentKey))
+      .unique();
+    if (!existingConsent) {
+      await ctx.db.insert('albatrossWorkQuestions', {
+        userId: routine.userId,
+        projectId: project._id,
+        routineId: routine._id,
+        dedupeKey: consentKey,
+        kind: 'consent',
+        responseKind: 'boolean',
+        prompt: `Would you like a notification at ${routine.localTime} when it is time for “${routine.questionTemplate.prompt}”?`,
+        reason:
+          'The routine follows its own schedule and can keep creating a private check-in without sending a notification.',
+        options: [
+          { id: 'enable', label: 'Yes, notify me' },
+          { id: 'decline', label: 'Not now' },
+        ],
+        status: 'pending',
+        sourceRefs: [
+          { kind: 'routine', id: String(routine._id), label: routine.title },
+          { kind: 'project', id: String(project._id), label: project.title },
+        ],
+        metadata: { action: 'routine_notification_consent' },
+        createdAt: ts,
+        updatedAt: ts,
+      });
+    }
+  }
+  const notificationSuppressedByQuietHours = routineIsInQuietHours(routine, scheduledFor);
+  if (routine.notification.enabled && !notificationSuppressedByQuietHours && (questionId || taskCardId)) {
+    const dedupeKey = `routine-notification:${String(routine._id)}:${localDate}`;
+    const existingNotification = await ctx.db
+      .query('albatrossNotifications')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', routine.userId).eq('dedupeKey', dedupeKey))
+      .unique();
+    notificationId = existingNotification?._id;
+    if (!notificationId) {
+      notificationId = await ctx.db.insert('albatrossNotifications', {
+        userId: routine.userId,
+        type: questionId ? 'work_question' : 'brief_ready',
+        title: routine.title,
+        body:
+          questionId && routine.questionTemplate
+            ? routine.questionTemplate.prompt
+            : templateText(routine.taskTemplate?.title, project, localDate) ||
+              routine.purpose ||
+              project.title,
+        entityKind: 'project',
+        entityId: String(project._id),
+        deepLink: routine.areaId
+          ? `/?area=${String(routine.areaId)}&project=${String(project._id)}`
+          : `/?project=${String(project._id)}`,
+        dedupeKey,
+        status: 'delivered',
+        scheduledFor,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await ctx.db.insert('notificationDeliveries', {
+        userId: routine.userId,
+        notificationId,
+        channel: 'in_app',
+        status: 'sent',
+        attemptCount: 1,
+        scheduledFor,
+        sentAt: ts,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+    }
+  }
+  await insertEvidence(ctx, {
+    userId: routine.userId,
+    targetKind: 'project',
+    targetId: String(project._id),
+    sourceKind: taskCardId ? 'task' : 'manual',
+    sourceId: `routine-run:${String(runId)}`,
+    title: `${routine.title} materialized`,
+    summary: taskCardId ? 'The agreed routine generated a task.' : 'The agreed routine opened a check-in.',
+    occurredAt: scheduledFor,
+    weight: 0.42,
+    confidence: 1,
+    trust: 'observed',
+    dedupeKey: `routine-run:${String(runId)}`,
+    searchText: `${routine.title} ${project.title} routine ${localDate}`,
+    metadata: {
+      routineId: String(routine._id),
+      runId: String(runId),
+      taskCardId: taskCardId && String(taskCardId),
+      notificationSuppressedByQuietHours,
+    },
+  });
+  await ctx.db.patch(runId, {
+    status: 'completed',
+    taskCardId,
+    questionId,
+    notificationId,
+    completedAt: now(),
+    updatedAt: now(),
+  });
+  await ctx.db.patch(routine._id, {
+    lastRunAt: scheduledFor,
+    nextRunAt: requireNextRoutineRunAt(routine, Math.max(now(), scheduledFor) + 60_000),
+    updatedAt: now(),
+  });
+  return { runId, taskCardId, questionId, notificationId };
 }
+
+/**
+ * Record one failed occurrence without a rethrow, so the error and the next
+ * run time stay. The error run holds the occurrence's runKey, so the same
+ * occurrence is not tried again; the next occurrence runs normally.
+ */
+export const recordRunFailure = internalMutation({
+  args: { routineId: v.id('albatrossRoutines'), force: v.optional(v.boolean()), error: v.string() },
+  handler: async (ctx, args) => {
+    const routine = await ctx.db.get(args.routineId);
+    if (!routine) return null;
+    const ts = now();
+    const scheduledFor = args.force ? ts : routine.nextRunAt;
+    const scheduledDate = new Date(scheduledFor);
+    const runKey = routineRunKey(String(routine._id), routine.timezone, scheduledDate);
+    const existing = await ctx.db
+      .query('albatrossRoutineRuns')
+      .withIndex('by_routine_runKey', (q) => q.eq('routineId', routine._id).eq('runKey', runKey))
+      .unique();
+    const error = truncateText(args.error, 500) || 'Routine run failed.';
+    let runId = existing?._id;
+    if (existing && existing.status !== 'completed') {
+      await ctx.db.patch(existing._id, { status: 'error', error, updatedAt: ts });
+    } else if (!existing) {
+      runId = await ctx.db.insert('albatrossRoutineRuns', {
+        userId: routine.userId,
+        routineId: routine._id,
+        projectId: routine.projectId,
+        areaId: routine.areaId,
+        runKey,
+        localDate: localDateKey(routine.timezone, scheduledDate),
+        scheduledFor,
+        status: 'error',
+        error,
+        startedAt: ts,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+    }
+    if (!args.force) {
+      await ctx.db.patch(routine._id, {
+        nextRunAt: requireNextRoutineRunAt(routine, Math.max(ts, routine.nextRunAt) + 60_000),
+        updatedAt: ts,
+      });
+    }
+    return runId ?? null;
+  },
+});
+
+/** One routine in its own job. A failure never blocks another routine. */
+export const runOne = internalAction({
+  args: { routineId: v.id('albatrossRoutines'), force: v.optional(v.boolean()) },
+  handler: async (ctx, args): Promise<{ failed: boolean }> => {
+    try {
+      await ctx.runMutation(internal.albatrossRoutines.materializeOne, args);
+      return { failed: false };
+    } catch (error) {
+      await ctx.runMutation(internal.albatrossRoutines.recordRunFailure, {
+        routineId: args.routineId,
+        force: args.force,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { failed: true };
+    }
+  },
+});
 
 export const materializeOne = internalMutation({
   args: { routineId: v.id('albatrossRoutines'), force: v.optional(v.boolean()) },
@@ -812,8 +744,11 @@ export const tick = internalMutation({
       .query('albatrossRoutines')
       .withIndex('by_status_nextRunAt', (q) => q.eq('status', 'active').lte('nextRunAt', now()))
       .take(100);
-    const results = [];
-    for (const routine of due) results.push(await materialize(ctx, routine));
-    return { due: due.length, results };
+    // Each routine runs in its own scheduled job, so one failing routine
+    // cannot roll back or block the others (WRK-13). A job that has not run
+    // yet is safe to schedule again: the runKey dedupes the occurrence.
+    for (const routine of due)
+      await ctx.scheduler.runAfter(0, internal.albatrossRoutines.runOne, { routineId: routine._id });
+    return { due: due.length, scheduled: due.length };
   },
 });

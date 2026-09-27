@@ -31,8 +31,9 @@ import {
   normalizeNylasMessage,
   normalizeNylasThread,
 } from './normalize';
+import { RATE_LIMIT_MAX_DELAY_MS, retryAfterMs } from './retry';
 
-const mailCorpusApi = (api as any).mailCorpus;
+const mailCorpusApi = api.mailCorpus;
 
 export interface NylasAccountRow {
   userId: string;
@@ -43,6 +44,8 @@ export interface NylasAccountRow {
   displayName?: string;
   grantId: string;
   scopes: string[];
+  // The reconnect reason when status is `error` (see grant-health.ts).
+  error?: string;
 }
 
 interface UpdateNylasMessageFoldersArgs {
@@ -297,7 +300,7 @@ async function searchLocalCorpusThreads({
       ...thread,
       searchRank: (thread.searchRank || 0) + rankOffset,
     }));
-    const stored = await convexQuery<any[]>((api as any).jev.threadAssessments, {
+    const stored = await convexQuery<any[]>(api.jev.threadAssessments, {
       userId: row.userId,
       threads: grouped.slice(0, 300).map((thread) => ({ accountId: row.accountId, threadId: thread._id })),
     }).catch(() => []);
@@ -536,6 +539,36 @@ export async function getNylasMessage({
   return normalizeNylasMessage(result.data, row.accountId);
 }
 
+/**
+ * The headers of one message, lowercased. Webhook payloads and list pages do
+ * not carry headers, so unsubscribe reads them once for the message it needs.
+ */
+export async function getNylasMessageHeaders({
+  userId,
+  account,
+  messageId,
+}: {
+  userId?: string | null;
+  account: string;
+  messageId: string;
+}): Promise<Record<string, string> | null> {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const result = await withNylasRetry(() =>
+    requireNylas().messages.find({
+      identifier: row.grantId,
+      messageId,
+      queryParams: { fields: 'include_headers' as any },
+    }),
+  );
+  const headers: Record<string, string> = {};
+  for (const header of (result.data as any)?.headers || []) {
+    if (header?.name && typeof header.value === 'string')
+      headers[String(header.name).toLowerCase()] = header.value;
+  }
+  return headers;
+}
+
 export async function listNylasLabels(userId: string | null | undefined, account: string) {
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
@@ -597,6 +630,187 @@ export async function updateNylasThread({
   return { ok: true };
 }
 
+export type MailboxMove = 'archive' | 'trash' | 'inbox';
+
+type FolderResolver = (canonicalFolder: string) => Promise<string | null>;
+
+/**
+ * Folder ids after a move (MUT-2). Gmail folders are labels, so a move edits
+ * only INBOX and TRASH and keeps every other label and category. Microsoft,
+ * iCloud, and IMAP keep a message in exactly one folder, with opaque ids, so a
+ * move sets the one resolved folder: Archive, Trash (Deleted Items), or Inbox.
+ */
+export async function folderIdsAfterMove(
+  provider: NylasAccountRow['provider'],
+  current: string[],
+  to: MailboxMove,
+  resolve: FolderResolver,
+): Promise<string[]> {
+  if (provider === 'google') {
+    const inbox = (await resolve('INBOX')) || 'INBOX';
+    const trash = (await resolve('TRASH')) || 'TRASH';
+    const kept = [...new Set(current.filter(Boolean))].filter((id) => id !== inbox && id !== trash);
+    if (to === 'archive') return kept;
+    if (to === 'trash') return [...kept, trash];
+    return [...kept, inbox];
+  }
+  const canonical = to === 'archive' ? 'ARCHIVE' : to === 'trash' ? 'TRASH' : 'INBOX';
+  const target = await resolve(canonical);
+  if (!target) {
+    const name = to === 'archive' ? 'Archive' : to === 'trash' ? 'Trash' : 'Inbox';
+    throw new Error(`This mailbox has no ${name} folder, so the message was not moved.`);
+  }
+  return [target];
+}
+
+/**
+ * The folder ids before and after one change. Undo (lib/mail/mail-operations)
+ * keeps both, so it can take back exactly this change later.
+ */
+export interface FolderChange {
+  ok: true;
+  before: string[];
+  after: string[];
+}
+
+function folderChange(before: string[], after: string[]): FolderChange {
+  return { ok: true, before: [...before], after: [...after] };
+}
+
+/**
+ * The folders after one recorded change is taken back. Gmail labels stack, so
+ * undo removes only what the change added and adds back only what it removed;
+ * labels the user changed later stay. Other providers keep a message in one
+ * folder, so undo puts it back in the folder it left (the Inbox first).
+ */
+export function revertedFolderIds(
+  provider: NylasAccountRow['provider'],
+  current: string[],
+  change: { before: string[]; after: string[] },
+  inboxId?: string | null,
+): string[] {
+  const added = change.after.filter((id) => !change.before.includes(id));
+  const removed = change.before.filter((id) => !change.after.includes(id));
+  if (provider === 'google') {
+    const next = [...new Set(current.filter(Boolean))].filter((id) => !added.includes(id));
+    for (const id of removed) if (!next.includes(id)) next.push(id);
+    return next;
+  }
+  if (!removed.length) return current.filter((id) => !added.includes(id));
+  const target = (inboxId && removed.includes(inboxId) ? inboxId : removed[0]) as string;
+  return [target];
+}
+
+/** Take back one recorded thread folder change (archive, trash, label, mute). */
+export async function revertNylasThreadFolders({
+  userId,
+  account,
+  threadId,
+  before,
+  after,
+}: {
+  userId?: string | null;
+  account: string;
+  threadId: string;
+  before: string[];
+  after: string[];
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const current = await withNylasRetry(() =>
+    requireNylas().threads.find({ identifier: row.grantId, threadId }),
+  );
+  const now = current.data.folders || [];
+  const inboxId = row.provider === 'google' ? 'INBOX' : await resolveProviderFolderId(row, 'INBOX');
+  const folders = revertedFolderIds(row.provider, now, { before, after }, inboxId);
+  await withNylasRetry(() =>
+    requireNylas().threads.update({ identifier: row.grantId, threadId, requestBody: { folders } }),
+  );
+  return folderChange(now, folders);
+}
+
+/** Take back one recorded message folder change (a label added or removed). */
+export async function revertNylasMessageFolders({
+  userId,
+  account,
+  messageId,
+  before,
+  after,
+}: {
+  userId?: string | null;
+  account: string;
+  messageId: string;
+  before: string[];
+  after: string[];
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const current = await withNylasRetry(() =>
+    requireNylas().messages.find({ identifier: row.grantId, messageId }),
+  );
+  const now = current.data.folders || [];
+  const inboxId = row.provider === 'google' ? 'INBOX' : await resolveProviderFolderId(row, 'INBOX');
+  const folders = revertedFolderIds(row.provider, now, { before, after }, inboxId);
+  await withNylasRetry(() =>
+    requireNylas().messages.update({ identifier: row.grantId, messageId, requestBody: { folders } }),
+  );
+  return folderChange(now, folders);
+}
+
+/** Move a whole thread to Archive, Trash, or the Inbox for any provider. */
+export async function moveNylasThread({
+  userId,
+  account,
+  threadId,
+  to,
+}: {
+  userId?: string | null;
+  account: string;
+  threadId: string;
+  to: MailboxMove;
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const current = await withNylasRetry(() =>
+    requireNylas().threads.find({ identifier: row.grantId, threadId }),
+  );
+  const before = current.data.folders || [];
+  const folders = await folderIdsAfterMove(row.provider, before, to, (folder) =>
+    resolveProviderFolderId(row, folder),
+  );
+  await withNylasRetry(() =>
+    requireNylas().threads.update({ identifier: row.grantId, threadId, requestBody: { folders } }),
+  );
+  return folderChange(before, folders);
+}
+
+/** Move one message to Archive, Trash, or the Inbox for any provider. */
+export async function moveNylasMessage({
+  userId,
+  account,
+  messageId,
+  to,
+}: {
+  userId?: string | null;
+  account: string;
+  messageId: string;
+  to: MailboxMove;
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const current = await withNylasRetry(() =>
+    requireNylas().messages.find({ identifier: row.grantId, messageId }),
+  );
+  const before = current.data.folders || [];
+  const folders = await folderIdsAfterMove(row.provider, before, to, (folder) =>
+    resolveProviderFolderId(row, folder),
+  );
+  await withNylasRetry(() =>
+    requireNylas().messages.update({ identifier: row.grantId, messageId, requestBody: { folders } }),
+  );
+  return folderChange(before, folders);
+}
+
 export async function updateNylasMessage({
   userId,
   account,
@@ -656,7 +870,8 @@ async function updateNylasMessageFoldersInternal({
     () => requireNylas().messages.find({ identifier: row.grantId, messageId }),
     retryRequests,
   );
-  const folders = await applyFolderDelta(row.grantId, current.data.folders || [], {
+  const before = current.data.folders || [];
+  const folders = await applyFolderDelta(row.grantId, before, {
     add,
     remove,
     createMissing,
@@ -670,7 +885,7 @@ async function updateNylasMessageFoldersInternal({
       }),
     retryRequests,
   );
-  return { ok: true };
+  return folderChange(before, folders);
 }
 
 export async function updateNylasMessageFoldersWithRetry({
@@ -755,7 +970,8 @@ async function updateNylasThreadFoldersInternal({
     () => requireNylas().threads.find({ identifier: row.grantId, threadId }),
     retryRequests,
   );
-  const folders = await applyFolderDelta(row.grantId, current.data.folders || [], {
+  const before = current.data.folders || [];
+  const folders = await applyFolderDelta(row.grantId, before, {
     add,
     remove,
     createMissing,
@@ -769,7 +985,7 @@ async function updateNylasThreadFoldersInternal({
       }),
     retryRequests,
   );
-  return { ok: true };
+  return folderChange(before, folders);
 }
 
 export async function sendNylasMessage({
@@ -1001,7 +1217,7 @@ async function withNylasRetry<T>(
     } catch (err) {
       lastError = err;
       if (!shouldRetry(err) || attempt === retries) break;
-      await sleep(baseDelayMs * 2 ** attempt);
+      await sleep(Math.min(RATE_LIMIT_MAX_DELAY_MS, retryAfterMs(err) ?? baseDelayMs * 2 ** attempt));
     }
   }
   throw lastError;

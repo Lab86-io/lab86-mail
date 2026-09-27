@@ -5,6 +5,7 @@ import {
   type BriefNode,
   lintBriefDocument,
 } from '../shared/brief-document';
+import { truncateText } from '../shared/text';
 import type { DailyReport } from '../shared/types';
 import { type BriefComponentName, briefComponentNameSchema, parseBriefComponent } from './component-catalog';
 import { briefRefKey } from './hydration';
@@ -156,6 +157,18 @@ export function editorialModules(report: DailyReport, letter: BriefDocumentV2): 
       });
       continue;
     }
+    // "What Albatross did" stays one module, so the writer places the whole
+    // look back with its Undo actions in one piece (FEATURES item 7).
+    if (region.id === 'since') {
+      modules.push({
+        id: 'since',
+        section: region.id,
+        title: tree.title || 'What Albatross did',
+        summary: region.summary,
+        presentations: { story: tree, compact: { ...tree, variant: 'compact' } },
+      });
+      continue;
+    }
     // Calendar and task modules can take a temporal/completion form without
     // losing the real actions that their source rows already supply.
     const events = tree.items.filter((item) => item.ref.kind === 'event');
@@ -261,10 +274,7 @@ export function defaultEditorialPlan(modules: EditorialModule[]): EditorialPlan 
     version: 1,
     regions: [...sections].map(([section, entries]) => ({
       id: section.replaceAll('_', '-'),
-      summary: entries
-        .map((entry) => entry.summary)
-        .join(' ')
-        .slice(0, 1000),
+      summary: truncateText(entries.map((entry) => entry.summary).join(' '), 1000),
       tree:
         entries.length === 1 && entries[0].presentations.story.kind === 'live_section'
           ? { kind: 'module', id: entries[0].id, footprint: 'feature' }

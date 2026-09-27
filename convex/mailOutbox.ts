@@ -4,7 +4,7 @@ import { internalAction, internalMutation, mutation, type QueryCtx, query } from
 import { requireInternalSecret } from './lib';
 
 const identity = { internalSecret: v.string(), userId: v.string(), key: v.string() };
-const internalApi = (internal as any).mailOutbox;
+const internalApi = internal.mailOutbox;
 const find = (ctx: QueryCtx, args: { userId: string; key: string }) =>
   ctx.db
     .query('mailOutbox')

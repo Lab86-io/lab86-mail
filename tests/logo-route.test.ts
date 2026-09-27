@@ -8,7 +8,7 @@ describe('/api/logos/[domain]', () => {
       new Response('png', {
         status: 200,
         headers: { 'content-type': 'image/png; charset=utf-8' },
-      })) as typeof fetch;
+      })) as unknown as typeof fetch;
 
     try {
       const response = await GET(new Request('https://example.test/api/logos/microsoft.com'), {
@@ -25,7 +25,10 @@ describe('/api/logos/[domain]', () => {
   test('rejects upstream svg logos instead of rehosting them', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
-      new Response('<svg />', { status: 200, headers: { 'content-type': 'image/svg+xml' } })) as typeof fetch;
+      new Response('<svg />', {
+        status: 200,
+        headers: { 'content-type': 'image/svg+xml' },
+      })) as unknown as typeof fetch;
 
     try {
       const response = await GET(new Request('https://example.test/api/logos/microsoft.com'), {
@@ -44,7 +47,7 @@ describe('/api/logos/[domain]', () => {
       calls += 1;
       if (calls === 1) return new Response(null, { status: 500 });
       return new Response(null, { status: 404 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     try {
       const response = await GET(new Request('https://example.test/api/logos/microsoft.com'), {
@@ -60,7 +63,7 @@ describe('/api/logos/[domain]', () => {
 
   test('negative-caches clean logo misses', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => new Response(null, { status: 404 })) as typeof fetch;
+    globalThis.fetch = (async () => new Response(null, { status: 404 })) as unknown as typeof fetch;
 
     try {
       const response = await GET(new Request('https://example.test/api/logos/example.invalid'), {

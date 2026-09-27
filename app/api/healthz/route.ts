@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 import { describeProvider, hasAi } from '@/lib/ai/client';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { getCurrentUser } from '@/lib/auth/current-user';
+import { isInternalCronRequest } from '@/lib/cron-auth';
 import {
   isLab86AiDisabled,
   isSubscriptionServiceDisabled,
@@ -20,7 +21,15 @@ import { APP_VERSION } from '@/lib/version';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+// Railway's health check and the deploy smoke tests read only the status
+// code. Configuration details (deployment, models, flags) go only to callers
+// with the internal secret.
+export async function GET(req: NextRequest) {
+  if (!isInternalCronRequest(req)) return NextResponse.json({ ok: true });
+  return NextResponse.json(await healthDetails());
+}
+
+async function healthDetails() {
   let accounts: any = { accounts: [] };
   const user = await getCurrentUser().catch(() => null);
   try {
@@ -33,7 +42,7 @@ export async function GET() {
         ),
     );
   } catch {}
-  return NextResponse.json({
+  return {
     ok: true,
     service: 'lab86-mail',
     version: APP_VERSION,
@@ -59,5 +68,5 @@ export async function GET() {
       nylas: isNylasConfigured(),
       subscriptionsDisabled: isSubscriptionServiceDisabled(),
     },
-  });
+  };
 }

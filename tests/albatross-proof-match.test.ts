@@ -93,9 +93,9 @@ describe('proof matching', () => {
 });
 
 describe('thread class helpers', () => {
-  test('classification precedence: llm verdict, then flattened primary, then smart verdict', () => {
-    expect(threadPrimaryCategory({ llmCategory: { primary: 'orders' }, smartPrimary: 'noise' })).toBe(
-      'orders',
+  test('classification precedence: flattened primary, then smart verdict', () => {
+    expect(threadPrimaryCategory({ smartPrimary: 'noise', smartCategory: { primary: 'main' } })).toBe(
+      'noise',
     );
     expect(threadPrimaryCategory({ smartPrimary: 'finance_admin' })).toBe('finance_admin');
     expect(threadPrimaryCategory({ smartCategory: { primary: 'main' } })).toBe('main');
@@ -112,13 +112,28 @@ describe('thread class helpers', () => {
   });
 });
 
+test('a stale legacy model verdict never outranks the current verdict', () => {
+  // 1258 of 3000 sampled production rows still carry llmCategory. Proof
+  // matching must read the current verdict, so this marketing thread stays
+  // blocked even though its old one-time verdict said orders.
+  const row = { llmCategory: { primary: 'orders' }, smartPrimary: 'noise' } as Parameters<
+    typeof threadPrimaryCategory
+  >[0];
+  expect(threadPrimaryCategory(row)).toBe('noise');
+  expect(proofOfferAllowed(threadPrimaryCategory(row))).toBe(false);
+  expect(threadPrimaryCategory({ llmCategory: { primary: 'orders' } } as any)).toBeNull();
+});
+
+// Older corpus rows still carry the retired classifier field; it must not count.
+const legacyCategory = (primary: string) => ({ llmCategory: { primary } });
+
 test('shared Jev and explicit user rules outrank legacy proof categories', () => {
   expect(
     threadPrimaryCategory({
       latestMessageId: 'm1',
       jev: assessment(),
       smartCategory: { primary: 'main' },
-      llmCategory: { primary: 'noise' },
+      ...legacyCategory('noise'),
     }),
   ).toBe('main');
   expect(
@@ -126,13 +141,13 @@ test('shared Jev and explicit user rules outrank legacy proof categories', () =>
       latestMessageId: 'm1',
       jev: assessment({ purpose: 'promotion', obligations: [] }),
       smartCategory: { primary: 'noise' },
-      llmCategory: { primary: 'main' },
+      ...legacyCategory('main'),
     }),
   ).toBe('noise');
   expect(
     threadPrimaryCategory({
       smartCategory: { model: 'user_rule', primary: 'noise' },
-      llmCategory: { primary: 'main' },
+      ...legacyCategory('main'),
     }),
   ).toBe('noise');
 });

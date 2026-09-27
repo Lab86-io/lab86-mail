@@ -115,6 +115,14 @@ export default defineSchema({
     .index('by_user_run_key', ['userId', 'runId', 'key'])
     .index('by_user_run_created', ['userId', 'runId', 'createdAt'])
     .index('by_user', ['userId']),
+  // Deployment-wide operator settings (not per user), e.g. the selected mail classifier.
+  deploymentSettings: defineTable({
+    key: v.string(),
+    value: v.any(),
+    updatedAt: v.number(),
+    updatedBy: v.optional(v.string()),
+  }).index('by_key', ['key']),
+
   users: defineTable({
     clerkUserId: v.string(),
     email: v.string(),
@@ -202,7 +210,7 @@ export default defineSchema({
 
   aiEntitlements: defineTable({
     userId: v.string(),
-    plan: v.union(v.literal('free'), v.literal('pro'), v.literal('admin')),
+    plan: v.union(v.literal('free'), v.literal('byok'), v.literal('pro'), v.literal('admin')),
     status: v.union(
       v.literal('inactive'),
       v.literal('active'),
@@ -210,17 +218,15 @@ export default defineSchema({
       v.literal('past_due'),
       v.literal('canceled'),
     ),
-    source: v.union(v.literal('manual'), v.literal('stripe'), v.literal('clerk')),
+    source: v.union(v.literal('manual'), v.literal('clerk')),
     monthlyCredits: v.number(),
-    stripeCustomerId: v.optional(v.string()),
-    stripeSubscriptionId: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
+    // The one app-level Pro trial (no card). Set once by ai.grantTrial.
+    trialStartedAt: v.optional(v.number()),
+    trialEndsAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_stripe_customer', ['stripeCustomerId'])
-    .index('by_stripe_subscription', ['stripeSubscriptionId']),
+  }).index('by_user', ['userId']),
 
   aiUsagePeriods: defineTable({
     userId: v.string(),
@@ -250,47 +256,6 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_created', ['userId', 'createdAt']),
 
-  threads: defineTable({
-    userId: v.string(),
-    accountId: v.string(),
-    providerThreadId: v.string(),
-    subject: v.string(),
-    fromAddress: v.string(),
-    lastDate: v.number(),
-    snippet: v.string(),
-    labels: v.array(v.string()),
-    unread: v.boolean(),
-    starred: v.optional(v.boolean()),
-    cachedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_user_account', ['userId', 'accountId'])
-    .index('by_account_thread', ['accountId', 'providerThreadId']),
-
-  messages: defineTable({
-    userId: v.string(),
-    accountId: v.string(),
-    providerMessageId: v.string(),
-    providerThreadId: v.string(),
-    subject: v.string(),
-    from: v.string(),
-    to: v.string(),
-    cc: v.optional(v.string()),
-    bcc: v.optional(v.string()),
-    date: v.number(),
-    snippet: v.string(),
-    textBodyEncrypted: v.optional(v.string()),
-    htmlBodyEncrypted: v.optional(v.string()),
-    labels: v.array(v.string()),
-    attachments: v.array(v.any()),
-    headers: v.any(),
-    cachedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_user_account', ['userId', 'accountId'])
-    .index('by_account_thread', ['accountId', 'providerThreadId'])
-    .index('by_account_message', ['accountId', 'providerMessageId']),
-
   mailCorpusThreads: defineTable({
     userId: v.string(),
     accountId: v.string(),
@@ -310,6 +275,9 @@ export default defineSchema({
     smartCategory: v.optional(v.any()),
     smartPrimary: v.optional(v.string()),
     smartCustomKeys: v.optional(v.array(v.string())),
+    // SMART_CLASSIFIER_VERSION of the code that wrote the verdict. The backlog
+    // cron sorts rows with an older number again.
+    smartClassifierVersion: v.optional(v.number()),
     classifiedAt: v.optional(v.number()),
     // Every latest message gets one lightweight Smart Category model verdict.
     // A changed latestMessageId clears the old verdict and reopens llmPending;
@@ -354,7 +322,6 @@ export default defineSchema({
     .index('by_user_lastDate', ['userId', 'lastDate'])
     .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_grant', ['grantId'])
-    .index('by_account', ['accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
     .index('by_user_account_thread', ['userId', 'accountId', 'providerThreadId'])
     .index('by_user_account_updated', ['userId', 'accountId', 'lastDate'])
@@ -372,7 +339,28 @@ export default defineSchema({
     .index('by_user_area_version', ['userId', 'areaClassifierVersion', 'lastDate'])
     .index('by_user_area_pending', ['userId', 'areaRoutingPending', 'lastDate'])
     // Backlog sweep: rows without smartPrimary sort first under undefined.
-    .index('by_smart_primary', ['smartPrimary']),
+    .index('by_smart_classifier_version', ['smartClassifierVersion']),
+
+  // Custom smart-label membership (CLS-13). A thread row keeps its label hits
+  // in the smartCustomKeys array, and an index cannot key on array members.
+  // This table holds one row for each thread and label hit, so a label view
+  // and its unread badge are indexed reads over the whole mailbox. Every write
+  // of smartCustomKeys calls syncLabelMembership (convex/smart.ts).
+  mailLabelMembership: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    providerThreadId: v.string(),
+    labelKey: v.string(),
+    lastDate: v.number(),
+    unread: v.boolean(),
+    needsAttention: v.optional(v.boolean()),
+  })
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_account_thread', ['userId', 'accountId', 'providerThreadId'])
+    .index('by_user_label_lastDate', ['userId', 'labelKey', 'lastDate'])
+    .index('by_user_label_unread', ['userId', 'labelKey', 'unread', 'lastDate'])
+    .index('by_user_account_label_lastDate', ['userId', 'accountId', 'labelKey', 'lastDate'])
+    .index('by_user_account_label_unread', ['userId', 'accountId', 'labelKey', 'unread', 'lastDate']),
 
   mailCorpusMessages: defineTable({
     userId: v.string(),
@@ -507,7 +495,6 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_area', ['areaId'])
-    .index('by_area_status', ['areaId', 'status'])
     .index('by_user_area_status', ['userId', 'areaId', 'status'])
     .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_user_status', ['userId', 'status'])
@@ -583,8 +570,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_status', ['userId', 'status'])
-    .index('by_user_updatedAt', ['userId', 'updatedAt'])
-    .index('by_user_area_updatedAt', ['userId', 'areaId', 'updatedAt']),
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
 
   albatrossProjects: defineTable({
     userId: v.string(),
@@ -759,8 +745,7 @@ export default defineSchema({
     .index('by_project', ['projectId'])
     .index('by_area', ['areaId'])
     .index('by_user_status', ['userId', 'status'])
-    .index('by_status_nextRunAt', ['status', 'nextRunAt'])
-    .index('by_user_project_status', ['userId', 'projectId', 'status']),
+    .index('by_status_nextRunAt', ['status', 'nextRunAt']),
 
   albatrossRoutineRuns: defineTable({
     userId: v.string(),
@@ -789,8 +774,7 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_routine', ['routineId'])
     .index('by_project', ['projectId'])
-    .index('by_routine_runKey', ['routineId', 'runKey'])
-    .index('by_user_status_scheduled', ['userId', 'status', 'scheduledFor']),
+    .index('by_routine_runKey', ['routineId', 'runKey']),
 
   // Source-normalized evidence is the substrate for the personal index. The
   // target is optional: unassigned evidence remains searchable until the user
@@ -820,7 +804,8 @@ export default defineSchema({
     endedAt: v.optional(v.number()),
   })
     .index('by_user', ['userId', 'workId'])
-    .index('by_user_session', ['userId', 'sessionId']),
+    .index('by_user_session', ['userId', 'sessionId'])
+    .index('by_status_created', ['status', 'createdAt']),
 
   albatrossEvidence: defineTable({
     userId: v.string(),
@@ -1307,6 +1292,10 @@ export default defineSchema({
     // state, horizon). The conductor stays quiet on Work the user has not
     // touched. `updatedAt` cannot carry this, because the conductor bumps it.
     lastUserTouchAt: v.optional(v.number()),
+    // A timed-out plan generation is retried with a backoff. The plan
+    // reconcile cron reads `by_plan_retry` and clears the field on each try.
+    planRetryAt: v.optional(v.number()),
+    planTimeoutRetries: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1315,7 +1304,6 @@ export default defineSchema({
     .index('by_user_external', ['userId', 'externalId'])
     .index('by_updatedAt', ['updatedAt'])
     .index('by_user_updatedAt', ['userId', 'updatedAt'])
-    .index('by_user_autoassigned', ['userId', 'areaAutoAssigned'])
     .index('by_user_primary_area', ['userId', 'primaryAreaId'])
     .index('by_user_work_state', ['userId', 'workState'])
     .index('by_work_state_conductor', ['workState', 'lastConductorAt'])
@@ -1324,7 +1312,7 @@ export default defineSchema({
     .index('by_mail_watch', ['mailWatchAt'])
     .index('by_user_reply_received', ['userId', 'replyReceivedAt'])
     .index('by_horizon_wake', ['horizonWakeAt'])
-    .index('by_capture', ['captureId']),
+    .index('by_plan_retry', ['planRetryAt']),
 
   // One logged value for a practice-shaped Work. The trend, the streak of
   // weeks with a log, and the weekly review line are all computed from these
@@ -1397,8 +1385,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_created', ['userId', 'createdAt'])
-    .index('by_work', ['workId'])
-    .index('by_user_unresolved', ['userId', 'resolvedAt']),
+    .index('by_work', ['workId']),
 
   albatrossIntentPlans: defineTable({
     userId: v.string(),
@@ -1488,6 +1475,7 @@ export default defineSchema({
           cardId: v.optional(v.string()),
           eventId: v.optional(v.string()),
           draftId: v.optional(v.string()),
+          documentId: v.optional(v.string()),
         }),
       ),
     ),
@@ -1539,8 +1527,27 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId'])
-    .index('by_account', ['accountId'])
     .index('by_status', ['status']),
+
+  // Snoozed mail threads (MUT-1). Snooze moves the thread out of the inbox
+  // at the provider; the mail snooze cron moves it back when `untilTs` passes.
+  mailSnoozes: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    threadId: v.string(),
+    messageId: v.optional(v.string()),
+    untilTs: v.number(),
+    status: v.union(v.literal('active'), v.literal('restored'), v.literal('cancelled'), v.literal('failed')),
+    attempts: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_status_until', ['status', 'untilTs'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_account_thread', ['userId', 'accountId', 'threadId'])
+    // The Snoozed list: one user's active snoozes, newest first.
+    .index('by_user_status_created', ['userId', 'status', 'createdAt']),
 
   mailWebhookEvents: defineTable({
     eventId: v.string(),
@@ -1556,13 +1563,17 @@ export default defineSchema({
     error: v.optional(v.string()),
     receivedAt: v.number(),
     processedAt: v.optional(v.number()),
+    // Durable retry (SYNC-3): failed events are retried with backoff until
+    // `attempts` reaches the cap; then `retryAbandoned` parks them.
+    attempts: v.optional(v.number()),
+    nextAttemptAt: v.optional(v.number()),
+    retryAbandoned: v.optional(v.boolean()),
   })
     .index('by_event', ['eventId'])
+    .index('by_status_next_attempt', ['status', 'nextAttemptAt'])
     .index('by_user_account', ['userId', 'accountId'])
-    .index('by_account', ['accountId'])
     .index('by_grant', ['grantId'])
-    .index('by_status', ['status'])
-    .index('by_received', ['receivedAt']),
+    .index('by_status', ['status']),
 
   // One-time codes lifted out of incoming mail so the phone can offer them to
   // AutoFill. These are live authentication secrets with a very short useful
@@ -1604,11 +1615,16 @@ export default defineSchema({
     userId: v.string(),
     scope: v.string(),
     kind: v.union(v.literal('daily'), v.literal('area'), v.literal('narrative')),
-    edition: v.optional(v.union(v.literal('morning'), v.literal('evening'), v.literal('manual'))),
+    edition: v.optional(v.union(v.literal('morning'), v.literal('manual'), v.literal('weekly'))),
     areaId: v.optional(v.id('areas')),
     timezone: v.optional(v.string()),
     force: v.optional(v.boolean()),
     reportId: v.optional(v.string()),
+    // A weekend edition without the know, waiting, task, and tool sections.
+    light: v.optional(v.boolean()),
+    // The first edition after the first mailbox connects: publish a
+    // deterministic edition first, then let the writer upgrade it in place.
+    first: v.optional(v.boolean()),
     state: v.union(v.literal('queued'), v.literal('running'), v.literal('completed'), v.literal('cancelled')),
     active: v.boolean(),
     availableAt: v.number(),
@@ -1622,31 +1638,6 @@ export default defineSchema({
     .index('by_user_active', ['userId', 'active'])
     .index('by_user_scope_active', ['userId', 'scope', 'active'])
     .index('by_active_available', ['active', 'availableAt']),
-
-  dailyReports: defineTable({
-    userId: v.string(),
-    accountIds: v.array(v.string()),
-    kind: v.string(),
-    title: v.string(),
-    generatedAt: v.number(),
-    payload: v.any(),
-    // Additive v2 projection for consumers that read the typed document
-    // directly. The canonical report payload continues to dual-write it.
-    document: v.optional(v.any()),
-  })
-    .index('by_user', ['userId'])
-    .index('by_user_generated', ['userId', 'generatedAt']),
-
-  memories: defineTable({
-    userId: v.string(),
-    email: v.string(),
-    notes: v.string(),
-    sourceAccountIds: v.array(v.string()),
-    userPinned: v.boolean(),
-    updatedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_user_email', ['userId', 'email']),
 
   // Calendar corpus: two-way Nylas sync mirroring the mail-corpus pattern.
   // Calendars are listed per grant; events are synced inside a rolling window
@@ -1722,49 +1713,6 @@ export default defineSchema({
     .index('by_account_master', ['accountId', 'masterEventId'])
     .index('by_user_account_calendar_start', ['userId', 'accountId', 'providerCalendarId', 'startAt'])
     .index('by_user_account_calendar_end', ['userId', 'accountId', 'providerCalendarId', 'endAt'])
-    .index('by_grant', ['grantId'])
-    .searchIndex('by_search_text', {
-      searchField: 'searchText',
-      filterFields: ['userId', 'accountId', 'providerCalendarId', 'provider', 'yearMonth'],
-    }),
-
-  calendarEventCorpus: defineTable({
-    userId: v.string(),
-    accountId: v.string(),
-    grantId: v.string(),
-    provider: v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
-    providerEventId: v.string(),
-    providerCalendarId: v.string(),
-    title: v.string(),
-    description: v.optional(v.string()),
-    location: v.optional(v.string()),
-    status: v.optional(v.string()),
-    busy: v.optional(v.boolean()),
-    readOnly: v.optional(v.boolean()),
-    startAt: v.number(),
-    endAt: v.number(),
-    allDay: v.optional(v.boolean()),
-    startTimezone: v.optional(v.string()),
-    endTimezone: v.optional(v.string()),
-    masterEventId: v.optional(v.string()),
-    recurrence: v.optional(v.array(v.string())),
-    participants: v.optional(v.array(v.any())),
-    organizer: v.optional(v.any()),
-    conferencing: v.optional(v.any()),
-    icalUid: v.optional(v.string()),
-    htmlLink: v.optional(v.string()),
-    searchText: v.string(),
-    yearMonth: v.string(),
-    providerUpdatedAt: v.optional(v.number()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_user_start', ['userId', 'startAt'])
-    .index('by_user_account', ['userId', 'accountId'])
-    .index('by_account_event', ['accountId', 'providerEventId'])
-    .index('by_account_calendar_event', ['accountId', 'providerCalendarId', 'providerEventId'])
-    .index('by_user_account_calendar_start', ['userId', 'accountId', 'providerCalendarId', 'startAt'])
     .index('by_grant', ['grantId'])
     .searchIndex('by_search_text', {
       searchField: 'searchText',
@@ -1875,6 +1823,9 @@ export default defineSchema({
     scopes: v.array(v.string()),
     lastAccessedAt: v.optional(v.number()),
     error: v.optional(v.string()),
+    // The last provider error that does not need a reconnect (a missing
+    // folder, a rate limit). It never changes `status`.
+    lastError: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1997,7 +1948,10 @@ export default defineSchema({
     documentId: v.string(),
     kind: v.union(v.literal('doc'), v.literal('sheet'), v.literal('deck')),
     title: v.string(),
-    model: v.any(),
+    // Inline only on rows written before models moved to documentModels.
+    model: v.optional(v.any()),
+    modelId: v.optional(v.id('documentModels')),
+    modelBytes: v.optional(v.number()),
     currentRevision: v.number(),
     sourceRefs: v.array(v.any()),
     google: v.optional(
@@ -2055,13 +2009,30 @@ export default defineSchema({
     documentId: v.string(),
     revision: v.number(),
     title: v.string(),
-    model: v.any(),
+    // Inline only on rows written before models moved to documentModels.
+    model: v.optional(v.any()),
+    modelId: v.optional(v.id('documentModels')),
     reason: v.string(),
     actor: v.union(v.literal('user'), v.literal('ai'), v.literal('system')),
     createdAt: v.number(),
+    // Autosave rows are merged per time window; this is the first save in it.
+    windowStartedAt: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
     .index('by_user_document_revision', ['userId', 'documentId', 'revision']),
+
+  // Document and revision models, apart from their rows so that lists and
+  // history read metadata only. A document row shares the model row of its
+  // current revision; every other revision has its own.
+  documentModels: defineTable({
+    userId: v.string(),
+    documentId: v.string(),
+    model: v.any(),
+    bytes: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_document', ['userId', 'documentId']),
 
   documentSuggestions: defineTable({
     userId: v.string(),
@@ -2188,6 +2159,7 @@ export default defineSchema({
     .index('by_user_source_intent', ['userId', 'source.intentId'])
     .index('by_board', ['boardId'])
     .index('by_board_updatedAt', ['boardId', 'updatedAt'])
+    .index('by_board_due', ['boardId', 'dueAt'])
     .index('by_column_order', ['columnId', 'order'])
     .index('by_user', ['userId'])
     .index('by_user_updatedAt', ['userId', 'updatedAt'])
@@ -2314,6 +2286,9 @@ export default defineSchema({
     tool: v.string(),
     surface: v.union(v.literal('mail'), v.literal('calendar'), v.literal('tasks'), v.literal('albatross')),
     summary: v.string(),
+    // Why it happened, in one plain sentence ("Blocked sender", "Snoozed
+    // until Fri 9:00"). Activity shows it under the summary.
+    reason: v.optional(v.string()),
     batchId: v.optional(v.string()),
     chatId: v.optional(v.string()),
     // What was touched: { kind, id, accountId?, ... } — shape owned by the
@@ -2418,11 +2393,29 @@ export default defineSchema({
     updatedAt: v.number(),
     readAt: v.optional(v.number()),
     actedAt: v.optional(v.number()),
+    // A mail push held by quiet hours or priority-only mode (FEATURES item
+    // 12). The row is in the app already; only the push waits. The digest
+    // cron clears pushHeldUntil when it sends the digest or the push.
+    pushHeldUntil: v.optional(v.number()),
+    pushHold: v.optional(
+      v.object({
+        reason: v.union(v.literal('quiet_hours'), v.literal('priority_only')),
+        accountId: v.string(),
+        threadId: v.string(),
+        messageId: v.optional(v.string()),
+        sender: v.optional(v.string()),
+        heldAt: v.number(),
+        releasedAt: v.optional(v.number()),
+        digestId: v.optional(v.id('albatrossNotifications')),
+      }),
+    ),
   })
     .index('by_user', ['userId'])
     .index('by_user_status_created', ['userId', 'status', 'createdAt'])
+    .index('by_user_type_created', ['userId', 'type', 'createdAt'])
     .index('by_user_dedupe', ['userId', 'dedupeKey'])
-    .index('by_scheduled', ['scheduledFor']),
+    .index('by_push_held', ['pushHeldUntil'])
+    .index('by_user_push_held', ['userId', 'pushHeldUntil']),
 
   albatrossNotificationPreferences: defineTable({
     userId: v.string(),
@@ -2436,11 +2429,25 @@ export default defineSchema({
     urgentMailPushEnabled: v.optional(v.boolean()),
     eventSuggestionPushEnabled: v.optional(v.boolean()),
     morningBriefEnabled: v.optional(v.boolean()),
+    // Brief delivery (FEATURES items 3, 6, 9): the local hour 5-11 (default 7),
+    // the weekend edition (full, light, or off; default light), the Sunday
+    // weekly review (default on), and the edition by email (default off).
+    briefDeliveryHour: v.optional(v.number()),
+    briefWeekendMode: v.optional(v.union(v.literal('full'), v.literal('light'), v.literal('off'))),
+    weeklyReviewEnabled: v.optional(v.boolean()),
+    briefEmailEnabled: v.optional(v.boolean()),
     // One-time code AutoFill. Offering codes above the keyboard and deleting
     // the mail that carried them are separate consents: the first is a
     // convenience, the second destroys mail, so it is opted into on its own.
     oneTimeCodeAutofillEnabled: v.optional(v.boolean()),
     oneTimeCodeCleanupEnabled: v.optional(v.boolean()),
+    // Mail push (FEATURES item 12): priority-only mode, quiet hours in the
+    // row's timezone (whole hours 0-23), and VIP senders that always push.
+    mailPushMode: v.optional(v.union(v.literal('all'), v.literal('priority'))),
+    quietHoursEnabled: v.optional(v.boolean()),
+    quietHoursStart: v.optional(v.number()),
+    quietHoursEnd: v.optional(v.number()),
+    vipSenders: v.optional(v.array(v.string())),
     emailFallbackEnabled: v.boolean(),
     emailFallbackDelayMinutes: v.number(),
     // Explicitly opted-in approximate iPhone location for morning weather.
@@ -2509,8 +2516,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_notification', ['notificationId'])
-    .index('by_user', ['userId'])
-    .index('by_status_scheduled', ['status', 'scheduledFor']),
+    .index('by_user', ['userId']),
 
   // One durable receipt per notification/device prevents a transient failure
   // on one install from causing an already-delivered install to receive a
@@ -2600,34 +2606,8 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_date', ['userId', 'localDate'])
     .index('by_narrative_updated', ['userId', 'updatedAt'])
-    .index('by_user_status_date', ['userId', 'status', 'localDate'])
     .index('by_reflection_reconcile', ['reflectionReconcileStatus', 'reflectionReconcileNextAt'])
     .index('by_tomorrow_plan', ['tomorrowPlanStatus', 'tomorrowPlanNextAt']),
-
-  auditEvents: defineTable({
-    userId: v.optional(v.string()),
-    accountId: v.optional(v.string()),
-    tool: v.string(),
-    args: v.any(),
-    result: v.string(),
-    detail: v.optional(v.string()),
-    agent: v.string(),
-    ts: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_ts', ['ts']),
-
-  syncJobs: defineTable({
-    userId: v.string(),
-    accountId: v.string(),
-    kind: v.string(),
-    status: v.union(v.literal('queued'), v.literal('running'), v.literal('ok'), v.literal('error')),
-    error: v.optional(v.string()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_account', ['accountId']),
 
   rateLimits: defineTable({
     userId: v.string(),
@@ -2657,6 +2637,8 @@ export default defineSchema({
     ),
     serverUrl: v.string(),
     authKind: v.union(v.literal('token'), v.literal('oauth')),
+    // The connection state only (AI-7). `error` means the user must
+    // reconnect; a failed or partial sync never sets it.
     status: v.union(v.literal('connected'), v.literal('disconnected'), v.literal('error')),
     displayName: v.optional(v.string()),
     scopes: v.array(v.string()),
@@ -2664,14 +2646,20 @@ export default defineSchema({
     includeInBrief: v.boolean(),
     includeInSearch: v.boolean(),
     lastSyncedAt: v.optional(v.number()),
+    // The reconnect reason, when `status` is `error`.
     error: v.optional(v.string()),
+    // The problem from the last sync, cleared by a clean sync. `lastSyncOkAt`
+    // is when a sync last reached the source and saved items (a partial sync
+    // counts), so `lastSyncOkAt >= lastSyncErrorAt` means a partial sync.
+    lastSyncError: v.optional(v.string()),
+    lastSyncErrorAt: v.optional(v.number()),
+    lastSyncOkAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
-    .index('by_status', ['status'])
-    .index('by_server', ['server']),
+    .index('by_status', ['status']),
 
   mcpCredentials: defineTable({
     userId: v.string(),
@@ -2776,8 +2764,30 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
-    .index('by_connection_external', ['connectionId', 'externalId'])
-    .index('by_card', ['cardId']),
+    .index('by_connection_external', ['connectionId', 'externalId']),
+
+  // One row per Daily Brief edition (FEATURES item 5): writer time, model
+  // cost, tokens, and whether the edition fell back or ran out of budget.
+  // Updated on each attempt with the edition's running totals. An admin-only
+  // summary reads it (dailyReports.editionTelemetrySummary).
+  briefEditionTelemetry: defineTable({
+    userId: v.string(),
+    reportId: v.string(),
+    kind: v.string(),
+    timeMs: v.number(),
+    costUsd: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    calls: v.number(),
+    fallback: v.boolean(),
+    exhausted: v.optional(v.union(v.literal('time'), v.literal('cost'))),
+    attempts: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_report', ['userId', 'reportId'])
+    .index('by_updated', ['updatedAt']),
 
   // One row per user action on a brief item (brief round 2026-09-22). The
   // generator reads nothing from here yet; the rows measure which regions and
@@ -2795,6 +2805,5 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_user', ['userId'])
-    .index('by_user_created', ['userId', 'createdAt'])
-    .index('by_user_report', ['userId', 'reportId']),
+    .index('by_user_created', ['userId', 'createdAt']),
 });

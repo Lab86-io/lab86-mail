@@ -213,9 +213,10 @@ export function WakeNudge({
  */
 export function WakeNudgeHost() {
   const { isAuthenticated } = useConvexAuth();
-  const center = useQuery(api.albatrossNotifications.liveCenter, isAuthenticated ? { limit: 50 } : 'skip') as
-    | { notifications: WakeNotification[] }
-    | undefined;
+  const center = useQuery(
+    api.albatrossNotifications.liveCenter,
+    isAuthenticated ? { limit: 50, types: ['work_wake'] } : 'skip',
+  ) as { notifications: WakeNotification[] } | undefined;
   const mark = useMutation(api.albatrossNotifications.markNotification);
   const setHorizon = useMutation(api.albatrossWorkV2.setHorizon);
   const setPrimaryView = useClientStore((state) => state.setPrimaryView);

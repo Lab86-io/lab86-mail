@@ -111,6 +111,16 @@ describe('hostedPublicUrl + nylasRedirectUri', () => {
     expect(nylasRedirectUri()).toBe('https://mail.example.test/api/nylas/callback');
   });
 
+  test('falls back to a local dev server and ignores the old tailnet variable', () => {
+    setEnv('LAB86_MAIL_PUBLIC_URL', undefined);
+    setEnv('NEXT_PUBLIC_APP_URL', undefined);
+    setEnv('MAIL_OS_PUBLIC_URL', 'http://127.0.0.1:18837');
+    setEnv('PORT', '18838');
+    expect(hostedPublicUrl()).toBe('http://localhost:18838');
+    setEnv('PORT', undefined);
+    expect(hostedPublicUrl()).toBe('http://localhost:3000');
+  });
+
   test('an explicit redirect uri wins', () => {
     setEnv('NYLAS_REDIRECT_URI', 'https://custom.example.test/cb');
     expect(nylasRedirectUri()).toBe('https://custom.example.test/cb');

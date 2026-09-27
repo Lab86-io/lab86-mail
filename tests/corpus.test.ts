@@ -11,6 +11,15 @@ describe('normalizeCorpusText', () => {
     expect(normalizeCorpusText('  hello   world  ', 10)).toBe('hello worl');
     expect(normalizeCorpusText(null)).toBe('');
   });
+
+  test('never cuts an emoji in half at the cap', () => {
+    const emoji = '\u{1F600}';
+    expect(normalizeCorpusText(`hello${emoji}`, 6)).toBe('hello');
+    const body = `${'x'.repeat(CORPUS_SEARCH_TEXT_MAX_CHARS - 1)}${emoji}`;
+    const text = buildCorpusSearchText({ textBody: body });
+    expect(text).toBe('x'.repeat(CORPUS_SEARCH_TEXT_MAX_CHARS - 1));
+    expect(JSON.stringify(text)).not.toMatch(/\\ud[89a-f][0-9a-f]{2}/i);
+  });
 });
 
 describe('buildCorpusSearchText', () => {

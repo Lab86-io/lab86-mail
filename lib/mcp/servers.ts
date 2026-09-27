@@ -3,6 +3,8 @@
 // the documented defaults for each vendor's hosted MCP server; sync is
 // best-effort and skips any tool a server doesn't actually expose, so a vendor
 // renaming a tool degrades gracefully instead of crashing the run.
+
+import { truncateText } from '../shared/text';
 import type { McpAuthMode } from './auth';
 import { granolaMeetingsFromText } from './granola';
 
@@ -176,11 +178,11 @@ function firstString(...vals: unknown[]): string | undefined {
 }
 
 function compactText(value: unknown): string | undefined {
-  if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 12_000);
+  if (typeof value === 'string' && value.trim()) return truncateText(value.trim(), 12_000);
   if (!value || typeof value !== 'object') return undefined;
   try {
     const text = JSON.stringify(value);
-    return text === '{}' || text === '[]' ? undefined : text.slice(0, 12_000);
+    return text === '{}' || text === '[]' ? undefined : truncateText(text, 12_000);
   } catch {
     return undefined;
   }

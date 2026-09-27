@@ -46,6 +46,6 @@ test('formatting, order and slide notes count as newer edits, not just projected
   const slides = { title: 'Deck', model: createDefaultDocumentModel('deck', 'deck') };
   const edited = structuredClone(slides);
   if (edited.model.kind !== 'deck') throw new Error('Expected slides');
-  edited.model.slides[0].notes = 'Newer notes';
+  (edited.model.slides[0] as { notes?: string }).notes = 'Newer notes';
   expect(documentSuggestionMatchesDraft(edited, slides)).toBe(false);
 });

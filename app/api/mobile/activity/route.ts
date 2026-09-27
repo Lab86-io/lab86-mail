@@ -21,8 +21,7 @@ const activityDependencies: ActivityDependencies = {
   listPendingSuggestions: (args) => convexQuery<PendingSuggestions>(api.suggestions.listPending, args),
   latestUnansweredCheckin: (args) =>
     convexQuery<LatestUnansweredCheckin>(api.albatrossNotifications.latestUnansweredCheckin, args),
-  listPendingQuestions: (args) =>
-    convexQuery<unknown[]>((api as any).albatrossWorkV2.livePendingQuestions, args),
+  listPendingQuestions: (args) => convexQuery<unknown[]>(api.albatrossWorkV2.livePendingQuestions, args),
 };
 
 export function createActivityPost(deps: ActivityDependencies = activityDependencies) {

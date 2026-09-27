@@ -36,7 +36,7 @@ interface MobileBootstrapDependencies {
 
 const defaultDependencies: MobileBootstrapDependencies = {
   requireCurrentUser,
-  bootstrapState: (args) => convexQuery<any>((api as any).mobile.bootstrapState, args),
+  bootstrapState: (args) => convexQuery<any>(api.mobile.bootstrapState, args),
   now: () => new Date(),
 };
 

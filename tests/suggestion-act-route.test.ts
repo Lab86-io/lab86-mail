@@ -14,9 +14,10 @@ const VALID_ICS = [
   'END:VCALENDAR',
 ].join('\r\n');
 
-function request() {
+function request(headers: Record<string, string> = {}) {
   return new NextRequest('http://localhost/api/suggestions/act', {
     method: 'POST',
+    headers,
     body: JSON.stringify({ suggestionId: 'suggestion_1', action: 'accept' }),
   });
 }
@@ -193,5 +194,43 @@ describe('suggestion event acceptance', () => {
       error: 'Could not read a safe event from this email.',
     });
     expect(created).toEqual([]);
+  });
+
+  test('writes the event in the user zone, or the invitation zone (CAL-5)', async () => {
+    const embedded = routeDependencies({
+      accountId: 'account_1',
+      event: { title: 'Embedded planning', startAt: 100, endAt: 200 },
+    });
+    await createSuggestionActPost(embedded.deps as any)(request({ 'x-user-timezone': 'America/Chicago' }));
+    expect(embedded.created[0]?.timezone).toBe('America/Chicago');
+
+    const invited = routeDependencies({
+      accountId: 'account_1',
+      messageId: 'message_1',
+      attachmentId: 'attachment_1',
+    });
+    invited.deps.requireNylas = () =>
+      ({
+        attachments: {
+          download: async () =>
+            VALID_ICS.replace(
+              'DTSTART:20260724T140000Z',
+              'DTSTART;TZID=Europe/Berlin:20260724T140000',
+            ).replace('DTEND:20260724T150000Z', 'DTEND;TZID=Europe/Berlin:20260724T150000'),
+        },
+      }) as any;
+    await createSuggestionActPost(invited.deps as any)(request({ 'x-user-timezone': 'America/Chicago' }));
+    expect(invited.created[0]).toMatchObject({
+      startAt: Date.parse('2026-07-24T12:00:00Z'),
+      timezone: 'Europe/Berlin',
+    });
+
+    // A filler zone from the header is not a real place.
+    const filler = routeDependencies({
+      accountId: 'account_1',
+      event: { title: 'Embedded planning', startAt: 100, endAt: 200 },
+    });
+    await createSuggestionActPost(filler.deps as any)(request({ 'x-user-timezone': 'UTC' }));
+    expect(filler.created[0]?.timezone).toBeUndefined();
   });
 });

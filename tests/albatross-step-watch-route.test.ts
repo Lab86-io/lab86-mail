@@ -26,20 +26,22 @@ const detail = {
   execution: { guideSteps: [sheetsStep] },
 };
 
+// The real listRecentCorpusThreads row shape: `_id` is the provider thread
+// id, and `account` is the account id.
 const confirmationThread = {
-  providerThreadId: 'thread-1',
-  accountId: 'personal',
+  _id: 'thread-1',
+  account: 'personal',
   subject: 'Your order confirmation: linen sheets',
   snippet: 'Order 4417 confirmed. New sheets ship Tuesday.',
-  llmCategory: { primary: 'orders' },
+  smartCategory: { primary: 'orders' },
 };
 
 const marketingThread = {
-  providerThreadId: 'thread-2',
-  accountId: 'personal',
+  _id: 'thread-2',
+  account: 'personal',
   subject: 'Fresh linen sheets for summer — order today',
   snippet: 'New sheets, big confirmation of style',
-  llmCategory: { primary: 'noise' },
+  smartCategory: { primary: 'noise' },
 };
 
 describe('step watch conductor route', () => {
@@ -126,6 +128,7 @@ describe('step watch conductor route', () => {
     expect(proof).toMatchObject({
       stepIdentity: 'step:physical:order new sheets',
       sourceId: 'thread-1',
+      accountId: 'personal',
       trust: 'observed',
     });
     expect(completeWorkStep).toHaveBeenCalledWith({

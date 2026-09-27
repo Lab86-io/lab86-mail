@@ -44,7 +44,7 @@ export function createNotificationResponsePost(
         windowMs: 60_000,
       });
       const notification = await dependencies.query<any>(
-        (api as any).albatrossNotifications.notificationResponseContext,
+        api.albatrossNotifications.notificationResponseContext,
         {
           userId: user.userId,
           notificationId: parsed.data.notificationId,
@@ -64,7 +64,7 @@ export function createNotificationResponsePost(
       const promptKind = /[?&]prompt=tomorrow\b/.test(String(notification.deepLink || ''))
         ? 'tomorrow'
         : 'reflection';
-      const result = await dependencies.mutate<any>((api as any).albatrossNotifications.answerCheckin, {
+      const result = await dependencies.mutate<any>(api.albatrossNotifications.answerCheckin, {
         ...checkinCallerArgs(user.userId),
         checkinId: String(notification.entityId),
         promptKind,

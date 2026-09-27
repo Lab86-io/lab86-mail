@@ -1,4 +1,5 @@
 import { api, convexMutation } from '@/lib/hosted/convex';
+import { stripLoneSurrogatesDeep, truncateText } from '@/lib/shared/text';
 import { loadBitbucketItems } from './bitbucket';
 import { callMcpTool, connectMcp, type McpClientHandle } from './client';
 import { getConnectionToken, listUserConnections, type McpConnectionRow } from './connections';
@@ -11,7 +12,7 @@ import {
 } from './granola';
 import { getServerDef, type NormalizedMcpItem, normalizeItems, resolveMcpConnectionConfig } from './servers';
 
-const mcpApi = (api as any).mcp;
+const mcpApi = api.mcp;
 const UPSERT_BATCH_SIZE = 100;
 
 export interface SyncConnectionDeps {
@@ -34,10 +35,78 @@ const defaultDeps: SyncConnectionDeps = {
   callMcpTool,
 };
 
-function classifyError(err: unknown): string {
+/**
+ * True when the source rejected the saved sign-in (AI-7). A 403 that names a
+ * rate limit is a sync problem, not a reason to reconnect.
+ */
+export function isMcpAuthFailure(err: unknown): boolean {
   const code = Number((err as { statusCode?: number; code?: number })?.statusCode ?? (err as any)?.code);
-  if (code === 401 || code === 403) return 'auth rejected — reconnect with a valid token';
-  return String((err as { message?: string })?.message || 'sync failed').slice(0, 200);
+  if ((err as { name?: string })?.name === 'UnauthorizedError') return true;
+  if (code === 401) return true;
+  if (code !== 403) return false;
+  const message = String((err as { message?: string })?.message || '');
+  return !/rate limit|secondary rate|abuse detection/i.test(message);
+}
+
+function classifyError(err: unknown): string {
+  if (isMcpAuthFailure(err)) return 'auth rejected — reconnect with a valid token';
+  return truncateText(String((err as { message?: string })?.message || 'sync failed'), 200);
+}
+
+/** What a failed step says about the connection: reconnect, or nothing known. */
+function failureOutcome(err: unknown) {
+  return isMcpAuthFailure(err) ? { outcome: 'reconnect' as const } : {};
+}
+
+/** An MCP tool result that reports a failure in-band (isError) instead of throwing. */
+export class McpToolResultError extends Error {
+  constructor(tool: string, result: unknown) {
+    const content = Array.isArray((result as { content?: unknown })?.content)
+      ? ((result as { content: Array<{ type?: string; text?: string }> }).content ?? [])
+      : [];
+    const text = content
+      .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+      .map((part) => part.text)
+      .join(' ')
+      .trim();
+    super(`${tool} failed${text ? `: ${text}` : ''}`);
+    this.name = 'McpToolResultError';
+  }
+}
+
+async function callSyncTool(
+  deps: SyncConnectionDeps,
+  handle: McpClientHandle,
+  tool: string,
+  args: Record<string, unknown>,
+) {
+  const result = await deps.callMcpTool(handle, tool, args);
+  if ((result as { isError?: unknown })?.isError === true) throw new McpToolResultError(tool, result);
+  return result;
+}
+
+/**
+ * Why no token came back. An OAuth connection whose refresh failed needs the
+ * user to sign in again, so say that instead of a credential-storage error.
+ */
+async function missingTokenState(
+  deps: SyncConnectionDeps,
+  userId: string,
+  connectionId: string,
+): Promise<{ server: string; error: string }> {
+  const row = await deps
+    .listUserConnections(userId)
+    .then((rows) => rows.find((entry) => entry.connectionId === connectionId))
+    .catch(() => undefined);
+  if (!row) return { server: 'unknown', error: 'missing or unreadable credentials' };
+  const label = getServerDef(row.server)?.label || row.server;
+  return {
+    server: row.server,
+    error:
+      row.authKind === 'oauth'
+        ? `Reconnect ${label}: its sign-in expired.`
+        : `Reconnect ${label}: its saved credentials cannot be read.`,
+  };
 }
 
 async function upsertItemsInBatches(
@@ -48,7 +117,9 @@ async function upsertItemsInBatches(
   for (let start = 0; start < items.length; start += UPSERT_BATCH_SIZE) {
     await deps.convexMutation(mcpApi.upsertItems, {
       ...args,
-      items: items.slice(start, start + UPSERT_BATCH_SIZE),
+      // Every MCP and REST connector item passes here before Convex; a lone
+      // surrogate from provider JSON would reject the whole batch.
+      items: stripLoneSurrogatesDeep(items.slice(start, start + UPSERT_BATCH_SIZE)),
     });
   }
 }
@@ -60,14 +131,16 @@ export async function syncConnection(
 ): Promise<{ ok: boolean; count: number; error?: string }> {
   const resolved = await deps.getConnectionToken(userId, connectionId);
   if (!resolved) {
+    const missing = await missingTokenState(deps, userId, connectionId);
     await deps.convexMutation(mcpApi.setSyncState, {
       userId,
       connectionId,
-      server: 'unknown',
+      server: missing.server,
       status: 'error',
-      error: 'missing or unreadable credentials',
+      error: missing.error,
+      outcome: 'reconnect',
     });
-    return { ok: false, count: 0, error: 'missing credentials' };
+    return { ok: false, count: 0, error: missing.error };
   }
   const { row, token } = resolved;
   const def = getServerDef(row.server);
@@ -118,6 +191,7 @@ export async function syncConnection(
         connectionId,
         server: row.server,
         status: 'ready',
+        outcome: 'ok',
         lastSyncedAt: Date.now(),
         itemCount: result.items.length,
       });
@@ -130,6 +204,7 @@ export async function syncConnection(
         server: row.server,
         status: 'error',
         error,
+        ...failureOutcome(err),
       });
       return { ok: false, count: 0, error };
     }
@@ -146,6 +221,7 @@ export async function syncConnection(
       server: row.server,
       status: 'error',
       error,
+      ...failureOutcome(err),
     });
     return { ok: false, count: 0, error };
   }
@@ -155,13 +231,18 @@ export async function syncConnection(
   let supportedQueries = 0;
   let successfulQueries = 0;
   const queryErrors: string[] = [];
+  let authFailures = 0;
+  const noteQueryError = (err: unknown, prefix = '') => {
+    if (isMcpAuthFailure(err)) authFailures += 1;
+    queryErrors.push(`${prefix}${classifyError(err)}`);
+  };
   let accountInfo: { email?: string; workspaceName?: string } = {};
   try {
     if (row.server === 'granola' && handle.toolNames.has('get_account_info')) {
       try {
-        accountInfo = granolaAccountInfo(await deps.callMcpTool(handle, 'get_account_info', {}));
+        accountInfo = granolaAccountInfo(await callSyncTool(deps, handle, 'get_account_info', {}));
       } catch (err) {
-        queryErrors.push(`account check: ${classifyError(err)}`);
+        noteQueryError(err, 'account check: ');
       }
     }
     for (const query of def.syncQueries) {
@@ -169,7 +250,7 @@ export async function syncConnection(
       if (handle.toolNames.size && !handle.toolNames.has(query.tool)) continue;
       supportedQueries += 1;
       try {
-        const result = await deps.callMcpTool(handle, query.tool, query.args);
+        const result = await callSyncTool(deps, handle, query.tool, query.args);
         const normalized = normalizeItems(query, result);
         const advertisedCount = row.server === 'granola' ? granolaMeetingCountHint(result) : null;
         if (advertisedCount && normalized.length === 0) {
@@ -183,7 +264,7 @@ export async function syncConnection(
           items.push(item);
         }
       } catch (err) {
-        queryErrors.push(classifyError(err));
+        noteQueryError(err);
       }
     }
     if (row.server === 'granola' && handle.toolNames.has('get_meetings')) {
@@ -194,14 +275,14 @@ export async function syncConnection(
       const detailArgs = granolaMeetingDetailArgs(handle.toolSchemas?.get('get_meetings'), ids);
       if (detailArgs) {
         try {
-          const result = await deps.callMcpTool(handle, 'get_meetings', detailArgs);
+          const result = await callSyncTool(deps, handle, 'get_meetings', detailArgs);
           const detailed = normalizeItems(
             { tool: 'get_meetings', args: detailArgs, kind: 'meeting' },
             result,
           );
           items = mergeGranolaMeetingDetails(items, detailed);
         } catch (err) {
-          queryErrors.push(classifyError(err));
+          noteQueryError(err);
         }
       }
     }
@@ -228,6 +309,7 @@ export async function syncConnection(
       server: row.server,
       status: 'error',
       error,
+      ...(authFailures ? { outcome: 'reconnect' as const } : {}),
     });
     return { ok: false, count: 0, error };
   }
@@ -241,6 +323,9 @@ export async function syncConnection(
     server: row.server,
     status: queryErrors.length ? 'error' : 'ready',
     ...(queryErrors.length ? { error: queryErrors[0] } : {}),
+    // The source answered at least one query, so the connection works even
+    // when part of the sync failed (AI-7).
+    outcome: 'ok',
     lastSyncedAt: Date.now(),
     itemCount: items.length,
     accountEmail: accountInfo.email,
@@ -257,6 +342,7 @@ export async function syncAllMcpConnections(
   userId: string,
   deps: SyncConnectionDeps = defaultDeps,
 ): Promise<{ connections: number; items: number }> {
+  // A reconnect-needed (`error`) row is still tried: a good sync heals it.
   const connections = (await deps.listUserConnections(userId)).filter(
     (c): c is McpConnectionRow => c.status === 'connected' || c.status === 'error',
   );

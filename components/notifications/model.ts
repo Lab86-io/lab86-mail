@@ -62,6 +62,21 @@ export interface NotificationProjection {
   unreadUpdates: number;
 }
 
+/**
+ * The row types the notification center shows. Mail rows exist for push
+ * delivery, and wake rows become shell nudges. The server reads only these
+ * types, so mail cannot push real items out of the bell (WRK-3).
+ */
+export const CENTER_NOTIFICATION_TYPES = [
+  'daily_checkin',
+  'work_question',
+  'approval',
+  'completion_suggestion',
+  'event_suggestion',
+  'brief_ready',
+  'agent_error',
+] as const;
+
 export function visibleExecutionNotifications<T extends Pick<NotificationRow, 'type'>>(rows: T[]): T[] {
   return rows.filter(
     (row) => row.type !== 'mail_message' && row.type !== 'urgent_mail' && row.type !== 'work_wake',

@@ -81,9 +81,9 @@ export function contentRoutes(deps = defaults) {
           data =
             view === 'brief'
               ? {
-                  items: await deps.convexQuery((api as any).briefPreparations.list, { userId: user.userId }),
+                  items: await deps.convexQuery(api.briefPreparations.list, { userId: user.userId }),
                 }
-              : await deps.convexQuery((api as any).content.settings, { userId: user.userId });
+              : await deps.convexQuery(api.content.settings, { userId: user.userId });
         return Response.json(data, { headers: { 'Cache-Control': 'private, no-store' } });
       } catch (error) {
         return failure(error);
@@ -103,13 +103,13 @@ export function contentRoutes(deps = defaults) {
         );
         let result: unknown = { queued: true };
         if (input.operation === 'preferences')
-          result = await deps.convexMutation((api as any).content.savePreferences, {
+          result = await deps.convexMutation(api.content.savePreferences, {
             userId: user.userId,
             enabled: input.enabled,
             prepare: input.prepare,
           });
         else if (input.operation !== 'sync')
-          result = await deps.convexMutation((api as any).briefPreparations.update, {
+          result = await deps.convexMutation(api.briefPreparations.update, {
             ...input,
             userId: user.userId,
           });

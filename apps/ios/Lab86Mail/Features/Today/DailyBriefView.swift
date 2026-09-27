@@ -112,6 +112,15 @@ struct BriefActionPayload: Hashable, Sendable {
     var sourceContext: String?
     var documentID: String?
     var attachToReply: Bool?
+    // Round 2 brief actions: `steer_item` carries the steering mode and the
+    // sender, `undo_operation` the operation, `defer_thread` the time the
+    // thread comes back, and `defer_task` the due date it replaces.
+    var mode: String? = nil
+    var senderEmail: String? = nil
+    var operationID: String? = nil
+    var until: Double? = nil
+    var previousDueAt: Double? = nil
+    var summary: String? = nil
 
     init(
         account: String? = nil,
@@ -227,6 +236,12 @@ struct BriefActionPayload: Hashable, Sendable {
         sourceContext = string("sourceContext")
         documentID = string("documentId")
         attachToReply = boolean("attachToReply")
+        mode = string("mode")
+        senderEmail = string("senderEmail")
+        operationID = string("operationId")
+        until = number("until")
+        previousDueAt = number("previousDueAt")
+        summary = string("summary")
     }
 }
 

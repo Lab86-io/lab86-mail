@@ -727,7 +727,7 @@ final class DocumentStore {
         instruction: String
     ) async throws -> AlbatrossDocumentSuggestion {
         guard !document.model.requiresWebEditor else {
-            throw BackendError.server(status: 400, message: "Open the full web editor to review AI edits to this workbook.")
+            throw BackendError.server(status: 400, message: "Open the full web editor to review Albatross edits to this workbook.")
         }
         let result = try await backend.post(
             path: "/api/files/google/editor",
@@ -785,7 +785,7 @@ final class DocumentStore {
 
     func suggest(documentID: String, instruction: String) async throws -> AlbatrossDocumentSuggestion {
         if documents.first(where: { $0.id == documentID })?.model.requiresWebEditor == true {
-            throw BackendError.server(status: 400, message: "Open the full web editor to review AI edits to this workbook.")
+            throw BackendError.server(status: 400, message: "Open the full web editor to review Albatross edits to this workbook.")
         }
         let result = try await backend.post(
             path: "/api/documents/\(documentID.pathEncoded)/ai",

@@ -2,9 +2,12 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/react';
-import { ChevronDown, Settings2, SquarePen } from 'lucide-react';
+import { ChevronDown, SquarePen } from 'lucide-react';
 import { useState } from 'react';
+import { ScheduledSends } from '@/components/inbox/ScheduledSends';
+import { SenderCleanup } from '@/components/inbox/SenderCleanup';
 import { SmartLabelsSettings } from '@/components/inbox/SmartLabelsSettings';
+import { SnoozedThreads } from '@/components/inbox/SnoozedThreads';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -18,7 +21,9 @@ import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import {
+  MAIL_LISTS,
   MAILBOXES,
+  type MailListId,
   MORE_MAIL_VIEWS,
   mailNavigationSelection,
   PRIMARY_MAIL_VIEWS,
@@ -33,14 +38,18 @@ export function MailNav() {
   const setSmartCategory = useClientStore((s) => s.setSmartCategory);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const accountFilter = useClientStore((s) => s.accountFilter);
+  const setThreadAccount = useClientStore((s) => s.setThreadAccount);
+  const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [openList, setOpenList] = useState<MailListId | null>(null);
+  const listOpenChange = (id: MailListId) => (open: boolean) => setOpenList(open ? id : null);
   const queryClient = useQueryClient();
 
   // categoryCounts requires an identity and throws without one. Before Convex
   // has authenticated, asking is an error, not an empty result.
   const { isAuthenticated } = useConvexAuth();
   const liveCounts = useConvexQuery({
-    query: (api as any).liveMail.categoryCounts,
+    query: api.liveMail.categoryCounts,
     args: isAuthenticated
       ? { accountIds: accountFilter.length ? accountFilter : undefined }
       : ('skip' as never),
@@ -50,12 +59,15 @@ export function MailNav() {
       ? (liveCounts.data?.counts as Record<string, { unread: number; attention: boolean }> | undefined)
       : undefined;
 
+  // The settings dialog lists every label, disabled or hidden ones too, so a
+  // disabled label can be enabled again. The rail shows enabled, visible ones.
   const { data: smartLabels } = useQuery({
-    queryKey: ['smart-labels'],
-    queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', {}),
+    queryKey: ['smart-labels', 'all'],
+    queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', { includeDisabled: true }),
     staleTime: 60_000,
   });
-  const customLabels = (smartLabels?.custom || []).filter((label: any) => label.sidebarVisible);
+  const allLabels = smartLabels?.custom || [];
+  const customLabels = railSmartLabels(allLabels);
   return (
     <>
       <MailNavView
@@ -67,17 +79,32 @@ export function MailNav() {
         onFolder={setQuery}
         onCompose={openComposeNew}
         onSettings={() => setSettingsOpen(true)}
+        onList={setOpenList}
       />
+      <ScheduledSends open={openList === 'scheduled'} onOpenChange={listOpenChange('scheduled')} />
+      <SnoozedThreads
+        open={openList === 'snoozed'}
+        onOpenChange={listOpenChange('snoozed')}
+        onOpenThread={(row) => {
+          setThreadAccount(row.account);
+          setSelectedThread(row.threadId);
+        }}
+      />
+      <SenderCleanup open={openList === 'senders'} onOpenChange={listOpenChange('senders')} />
       <SmartLabelsSettings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        labels={customLabels}
+        labels={allLabels}
         onChanged={() => {
           queryClient.invalidateQueries({ queryKey: ['smart-labels'] });
         }}
       />
     </>
   );
+}
+
+export function railSmartLabels<T extends { enabled?: boolean; sidebarVisible?: boolean }>(labels: T[]) {
+  return labels.filter((label) => label.enabled !== false && label.sidebarVisible);
 }
 
 export function MailNavView({
@@ -89,6 +116,7 @@ export function MailNavView({
   onFolder,
   onCompose,
   onSettings,
+  onList,
 }: {
   query: string;
   smartCategory: string | null;
@@ -98,6 +126,7 @@ export function MailNavView({
   onFolder: (query: string) => void;
   onCompose: () => void;
   onSettings: () => void;
+  onList?: (id: MailListId) => void;
 }) {
   const selection = mailNavigationSelection(smartCategory, query, customLabels);
   const extras = [
@@ -164,7 +193,10 @@ export function MailNavView({
             <ChevronDown className="size-3 shrink-0" aria-hidden />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="max-h-[70vh] w-56 overflow-y-auto">
+        {/* The menu takes the height the window has below the trigger and
+            scrolls past that, so the last item is always reachable. A fixed
+            share of the window cut off Category settings at 900px. */}
+        <DropdownMenuContent align="end" collisionPadding={8} className="w-56">
           <DropdownMenuLabel>Views</DropdownMenuLabel>
           {extras.map((category) => (
             <DropdownMenuItem
@@ -198,9 +230,19 @@ export function MailNavView({
               ) : null}
             </DropdownMenuItem>
           ))}
+          {onList
+            ? MAIL_LISTS.map((list) => (
+                <DropdownMenuItem
+                  key={list.id}
+                  onSelectAfterClose={() => onList(list.id)}
+                  className="text-[12.5px]"
+                >
+                  {list.label}
+                </DropdownMenuItem>
+              ))
+            : null}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={onSettings} className="gap-2 text-[12.5px]">
-            <Settings2 className="size-3.5" aria-hidden />
+          <DropdownMenuItem onSelectAfterClose={onSettings} className="text-[12.5px]">
             Category settings
           </DropdownMenuItem>
         </DropdownMenuContent>

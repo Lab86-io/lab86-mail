@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     if (!isAllowedPushEndpoint(endpoint) || !p256dh || !auth) {
       return Response.json({ ok: false, error: 'complete push subscription required' }, { status: 400 });
     }
-    const subscriptionId = await convexMutation((api as any).albatrossNotifications.upsertPushSubscription, {
+    const subscriptionId = await convexMutation(api.albatrossNotifications.upsertPushSubscription, {
       endpoint,
       p256dh,
       auth,
@@ -38,7 +38,7 @@ export async function DELETE(req: NextRequest) {
     const body = await req.json();
     const endpoint = String(body.endpoint || '');
     if (endpoint) {
-      await convexMutation((api as any).albatrossNotifications.revokePushSubscription, { endpoint });
+      await convexMutation(api.albatrossNotifications.revokePushSubscription, { endpoint });
     }
     return Response.json({ ok: true });
   } catch (error) {

@@ -9,31 +9,36 @@
 import { UserButton, useClerk, useUser } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useMutation as useConvexMutation, useQuery as useConvexQuery } from 'convex/react';
-import {
-  ArrowLeft,
-  CalendarDays,
-  Check,
-  KeyRound,
-  Loader2,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Search,
-  ShieldCheck,
-  Trash2,
-} from 'lucide-react';
+import { Check, Loader2, MoreHorizontal, Pencil, Plus, Search, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { type ReactNode, Suspense, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  type ReactNode,
+  Suspense,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 import { TeachAreas } from '@/components/albatross/TeachAreas';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
-import { Ring } from '@/components/loading-ui/ring';
 import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
+import { EXPORT_DESCRIPTION, ExportBeforeDelete, ExportDataButton } from '@/components/settings/AccountData';
+import { AccountPlanRow } from '@/components/settings/AccountPlan';
 import { AiSection } from '@/components/settings/AiSection';
+import { BriefSection } from '@/components/settings/BriefSection';
 import { JevSection } from '@/components/settings/JevSection';
+import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
+import { McpReconnectNote, McpSyncProblemNote } from '@/components/settings/McpConnectionNotes';
+import { SavedRepliesSettings } from '@/components/settings/SavedRepliesSettings';
+import { SignatureSettings } from '@/components/settings/SignatureSettings';
+import { StandingOrdersSection } from '@/components/settings/StandingOrdersSection';
+import { useFilesSurface, useSetFilesSurface } from '@/components/settings/surfaces';
+import { VoiceProfileSettings } from '@/components/settings/VoiceProfileSettings';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import {
@@ -62,10 +67,15 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/convex/_generated/api';
-import { settingsNavGroups } from '@/lib/albatross/settings-nav';
+import { settingsNavGroups, settingsTabScrollLeft } from '@/lib/albatross/settings-nav';
 import { type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
 import { useClientStore } from '@/lib/client-state';
-import { type NotificationPreferences, notificationPreferenceInput } from '@/lib/notifications/preferences';
+import {
+  initialNotificationForm,
+  type NotificationPreferences,
+  notificationPreferenceInput,
+  timeZoneLabel,
+} from '@/lib/notifications/preferences';
 import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
 import { cn } from '@/lib/utils';
 
@@ -92,14 +102,24 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   mailboxes: () => <MailboxesSection />,
   connections: () => <ConnectionsSection />,
   areas: () => <TeachAreas />,
-  sending: () => <SendingSection />,
+  sending: () => (
+    <>
+      <SendingSection />
+      <SignatureSettings />
+      <SavedRepliesSettings />
+      <VoiceProfileSettings />
+    </>
+  ),
+  // Mail alerts render inside the section, so quiet hours read its saved zone.
   notifications: () => <NotificationsSection />,
+  orders: () => <StandingOrdersSection />,
+  brief: () => <BriefSection />,
   ai: () => (
     <AiSection
       heading={
         <SectionHeading
-          title="AI"
-          blurb="Summaries, triage, drafts, and the daily brief. Use Lab86's hosted models or bring your own key."
+          title="Intelligence"
+          blurb="Summaries, triage, drafts, and the daily brief. Use the hosted models in Pro, or bring your own key."
         />
       }
     />
@@ -116,14 +136,30 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
 function AdvancedSection() {
   const boardEnabled = useClientStore((s) => s.boardSurfaceEnabled);
   const setBoardEnabled = useClientStore((s) => s.setBoardSurfaceEnabled);
+  const filesEnabled = useFilesSurface();
+  const setFiles = useSetFilesSurface();
+  const extras = [filesEnabled ? 'Files' : null, boardEnabled ? 'Board' : null].filter(Boolean);
   return (
     <section>
       <SectionHeading
         title="Advanced"
         blurb="Optional surfaces. Albatross does not need any of these to work."
-        aside={boardEnabled ? 'Board on' : 'Nothing extra on'}
+        aside={extras.length ? `${extras.join(' and ')} on` : 'Nothing extra on'}
       />
       <SettingsCard>
+        <SettingsRow
+          id="files-surface"
+          label="Show Files"
+          description="Files and the document editors in the rail. Documents made for an Albatross stay on its Work page either way, and links to a document still open it."
+          control={
+            <Switch
+              id="files-surface"
+              checked={filesEnabled}
+              disabled={setFiles.isPending}
+              onCheckedChange={(on) => setFiles.mutate(on)}
+            />
+          }
+        />
         <SettingsRow
           id="board-surface"
           label="Show the board"
@@ -135,6 +171,9 @@ function AdvancedSection() {
     </section>
   );
 }
+
+/** Opens another settings tab from inside a section, the way the rail does. */
+const OpenSettingsTab = createContext<(tab: SettingsTabId) => void>(() => {});
 
 function SettingsPageBody() {
   useApplyThemeExtras();
@@ -156,6 +195,28 @@ function SettingsPageBody() {
     setTab(next);
     window.history.replaceState(null, '', `/settings?tab=${next}`);
   };
+  // On a phone the tabs are one horizontal bar. Bring the active tab into view
+  // on load (a deep link can name the last tab) and each time it changes.
+  const navRef = useRef<HTMLElement>(null);
+  const tabScrolled = useRef(false);
+  useEffect(() => {
+    const nav = navRef.current;
+    const active = nav?.querySelector<HTMLElement>(`[data-settings-tab="${tab}"]`);
+    if (!nav || !active) return;
+    const strip = nav.getBoundingClientRect();
+    const item = active.getBoundingClientRect();
+    const left = settingsTabScrollLeft({
+      scrollLeft: nav.scrollLeft,
+      clientWidth: nav.clientWidth,
+      scrollWidth: nav.scrollWidth,
+      stripLeft: strip.left,
+      tabLeft: item.left,
+      tabWidth: item.width,
+    });
+    const smooth = tabScrolled.current && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    tabScrolled.current = true;
+    if (left !== null) nav.scrollTo({ left, behavior: smooth ? 'smooth' : 'auto' });
+  }, [tab]);
 
   return (
     <main className="app-paper relative min-h-dvh text-[var(--color-text)]">
@@ -170,14 +231,12 @@ function SettingsPageBody() {
             title="Search everything (⌘/Ctrl F or /)"
             className="absolute right-0 top-0 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
-            <Search className="size-4" />
             Search
           </button>
           <Link
             href="/"
             className="mb-5 inline-flex items-center gap-1.5 text-[12.5px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
           >
-            <ArrowLeft className="size-3.5" />
             Back to Albatross
           </Link>
           <h1 className="text-[26px] font-semibold tracking-tight">Settings</h1>
@@ -190,6 +249,7 @@ function SettingsPageBody() {
               rail in three groups, each tab with its one-line purpose. Text
               only, per the Albatross rail contract. */}
           <nav
+            ref={navRef}
             aria-label="Settings sections"
             className="-mx-5 flex gap-1 overflow-x-auto px-5 md:sticky md:top-8 md:mx-0 md:flex-col md:gap-5 md:self-start md:overflow-visible md:px-0"
           >
@@ -204,6 +264,7 @@ function SettingsPageBody() {
                     <button
                       key={item.id}
                       type="button"
+                      data-settings-tab={item.id}
                       onClick={() => selectTab(item.id)}
                       aria-current={active ? 'page' : undefined}
                       className={cn(
@@ -228,7 +289,9 @@ function SettingsPageBody() {
               </div>
             ))}
           </nav>
-          <div className="min-w-0">{TAB_SECTIONS[tab]()}</div>
+          <div className="min-w-0">
+            <OpenSettingsTab.Provider value={selectTab}>{TAB_SECTIONS[tab]()}</OpenSettingsTab.Provider>
+          </div>
         </div>
       </div>
     </main>
@@ -470,7 +533,8 @@ function SendingSection() {
         />
       </SettingsCard>
       <SettingsNote>
-        The window applies to every mailbox. Scheduled sends and replies from the brief use the same hold.
+        The window applies to every mailbox and to replies from the brief. Scheduled sends do not use it;
+        cancel them from Mail, More, Scheduled.
       </SettingsNote>
     </section>
   );
@@ -513,13 +577,22 @@ function NotificationsSection() {
     }
   }, []);
 
+  // With nothing saved yet, the device zone is saved at once. The check-in,
+  // the brief, and quiet hours then read one saved zone, and "Everything here
+  // is saved" stays true.
+  const seeding = useRef(false);
   useEffect(() => {
-    if (remote && !prefs) {
-      const loaded = { ...remote, timezone: remote._id ? remote.timezone : deviceTimezone };
-      setPrefs(loaded);
-      setBaseline(loaded);
-    }
-  }, [deviceTimezone, prefs, remote]);
+    if (!remote || prefs) return;
+    const { form, seed } = initialNotificationForm(remote, deviceTimezone);
+    setPrefs(form);
+    setBaseline(form);
+    if (!seed || seeding.current) return;
+    seeding.current = true;
+    savePreferences(seed).catch(() => {
+      // Not saved: the zone shows as an unsaved change, with Save.
+      setBaseline({ ...form, timezone: remote.timezone });
+    });
+  }, [deviceTimezone, prefs, remote, savePreferences]);
 
   const update = <K extends keyof NotificationPreferences>(key: K, value: NotificationPreferences[K]) => {
     setPrefs((current) => (current ? { ...current, [key]: value } : current));
@@ -597,7 +670,7 @@ function NotificationsSection() {
         <SettingsRow
           id="checkin-enabled"
           label="Evening check-in"
-          description="Ask what actually moved today and carry an unanswered check-in into tomorrow’s brief."
+          description="Ask what actually moved today. Your answers shape tomorrow’s brief."
           control={
             <Switch
               id="checkin-enabled"
@@ -609,12 +682,12 @@ function NotificationsSection() {
         <SettingsRow
           id="checkin-time"
           label="Check-in time"
-          description={`Arrives at ${clockLabel(prefs.eveningCheckinLocalTime)} in ${prefs.timezone.replaceAll('_', ' ')}.`}
+          description={`Arrives at ${clockLabel(prefs.eveningCheckinLocalTime)} in ${timeZoneLabel(prefs.timezone)}.`}
           disabled={!prefs.eveningCheckinEnabled}
           control={
             <Input
               id="checkin-time"
-              className="w-32"
+              className="w-36"
               type="time"
               value={prefs.eveningCheckinLocalTime}
               onChange={(event) => update('eveningCheckinLocalTime', event.target.value)}
@@ -743,6 +816,7 @@ function NotificationsSection() {
           {dirty ? 'Changes apply after you save.' : 'Everything here is saved.'}
         </span>
       </div>
+      <MailAlertsSettings timezone={baseline?.timezone ?? prefs.timezone} />
     </section>
   );
 }
@@ -865,15 +939,11 @@ function MailboxesSection() {
           >
             {capability.connectable ? (
               <a href={`/api/nylas/connect?provider=${capability.provider}`}>
-                <ProviderLogo provider={capability.provider} className="size-3.5" />
                 Connect {capability.label}
                 <Plus className="size-3 text-[var(--color-text-faint)]" />
               </a>
             ) : (
-              <span>
-                <ProviderLogo provider={capability.provider} className="size-3.5 opacity-50" />
-                {capability.label}
-              </span>
+              <span>{capability.label}</span>
             )}
           </Button>
         ))}
@@ -956,7 +1026,11 @@ function MailboxCard({
         <div className="truncate text-[11.5px] text-[var(--color-text-muted)]">
           {account.email} · {providerDisplayName(account.provider)}
         </div>
-        <SyncStatusLine sync={sync} connected={connected} />
+        <SyncStatusLine
+          sync={sync}
+          connected={connected}
+          reconnectHref={account.status === 'error' ? reconnectHref : undefined}
+        />
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -972,26 +1046,20 @@ function MailboxCard({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuItem onSelect={() => onResyncMail()} className="gap-2 text-[12.5px]">
-            <RefreshCw className="size-3.5" />
+          <DropdownMenuItem onSelect={() => onResyncMail()} className="text-[12.5px]">
             Re-index mail
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onResyncCalendar()} className="gap-2 text-[12.5px]">
-            <CalendarDays className="size-3.5" />
+          <DropdownMenuItem onSelect={() => onResyncCalendar()} className="text-[12.5px]">
             Resync calendar
           </DropdownMenuItem>
-          <DropdownMenuItem asChild className="gap-2 text-[12.5px]">
-            <a href={reconnectHref}>
-              <KeyRound className="size-3.5" />
-              Reconnect / update permissions
-            </a>
+          <DropdownMenuItem asChild className="text-[12.5px]">
+            <a href={reconnectHref}>Reconnect / update permissions</a>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={() => onDisconnect()}
-            className="gap-2 text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
+            className="text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
           >
-            <Trash2 className="size-3.5" />
             Remove account & data
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -1000,7 +1068,25 @@ function MailboxCard({
   );
 }
 
-function SyncStatusLine({ sync, connected }: { sync?: SyncState; connected: boolean }) {
+function SyncStatusLine({
+  sync,
+  connected,
+  reconnectHref,
+}: {
+  sync?: SyncState;
+  connected: boolean;
+  reconnectHref?: string;
+}) {
+  if (reconnectHref) {
+    return (
+      <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">
+        Reconnect needed. Sync is paused until you sign in again.{' '}
+        <a href={reconnectHref} className="underline">
+          Reconnect
+        </a>
+      </div>
+    );
+  }
   if (!connected) {
     return <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">Disconnected</div>;
   }
@@ -1041,6 +1127,8 @@ interface McpConnectionRow {
   connectionId: string;
   server: McpServer;
   serverUrl: string;
+  authKind?: 'token' | 'oauth';
+  // `error` means the saved sign-in failed and the user must reconnect.
   status: 'connected' | 'disconnected' | 'error';
   displayName?: string;
   scopes: string[];
@@ -1048,6 +1136,9 @@ interface McpConnectionRow {
   includeInSearch: boolean;
   lastSyncedAt?: number;
   error?: string;
+  lastSyncError?: string;
+  lastSyncErrorAt?: number;
+  lastSyncOkAt?: number;
   syncStatus?: 'idle' | 'syncing' | 'ready' | 'error';
   itemCount?: number;
   accountEmail?: string;
@@ -1138,7 +1229,9 @@ function ConnectionsSection() {
 
   const connections: McpConnectionRow[] = data?.connections || [];
   const servers: McpServerInfo[] = data?.servers || [];
-  const connectedServers = new Set(connections.map((c) => c.server));
+  // A server whose only connection needs a reconnect stays available, so its
+  // new sign-in or token replaces the broken connection in place.
+  const connectedServers = new Set(connections.filter((c) => c.status !== 'error').map((c) => c.server));
   const availableServers = servers.filter((s) => !connectedServers.has(s.id));
 
   return (
@@ -1173,18 +1266,19 @@ function ConnectionsSection() {
                   ) : null}
                 </div>
                 {connection.status === 'error' ? (
-                  <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">
-                    Connection error — {connection.error || 'will retry automatically'}
-                  </div>
+                  <McpReconnectNote connection={connection} />
                 ) : connection.status === 'connected' ? (
-                  <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
-                    <ShieldCheck className="size-3" />
-                    Connected
-                    {connection.lastSyncedAt ? ` · synced ${relativeTime(connection.lastSyncedAt)}` : ''}
-                    {connection.itemCount !== undefined
-                      ? ` · ${connection.itemCount.toLocaleString()} item${connection.itemCount === 1 ? '' : 's'}`
-                      : ''}
-                  </div>
+                  <>
+                    <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                      <ShieldCheck className="size-3" />
+                      Connected
+                      {connection.lastSyncedAt ? ` · synced ${relativeTime(connection.lastSyncedAt)}` : ''}
+                      {connection.itemCount !== undefined
+                        ? ` · ${connection.itemCount.toLocaleString()} item${connection.itemCount === 1 ? '' : 's'}`
+                        : ''}
+                    </div>
+                    <McpSyncProblemNote connection={connection} />
+                  </>
                 ) : (
                   <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">Disconnected</div>
                 )}
@@ -1203,7 +1297,6 @@ function ConnectionsSection() {
                   disabled={resync.isPending}
                   className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 >
-                  <RefreshCw className="size-3.5" />
                   Resync
                 </Button>
                 <Button
@@ -1218,7 +1311,6 @@ function ConnectionsSection() {
                   disabled={disconnect.isPending}
                   className="border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)]/60 text-[var(--color-danger)] hover:border-[var(--color-danger)]/45 hover:bg-[var(--color-danger-soft)] hover:text-[var(--color-danger)]"
                 >
-                  <Trash2 className="size-3.5" />
                   Disconnect
                 </Button>
               </div>
@@ -1283,10 +1375,7 @@ function ConnectionsSection() {
                       </p>
                     </div>
                     <Button asChild size="sm" variant="outline">
-                      <a href={`/api/mcp/oauth/start?server=${encodeURIComponent(server.id)}`}>
-                        <Plus className="size-3.5" />
-                        Connect
-                      </a>
+                      <a href={`/api/mcp/oauth/start?server=${encodeURIComponent(server.id)}`}>Connect</a>
                     </Button>
                   </div>
                 </div>
@@ -1346,8 +1435,7 @@ function ConnectionsSection() {
                     variant="outline"
                     disabled={!token.trim() || connect.isPending}
                   >
-                    {connect.isPending ? <Ring className="size-3" /> : <Plus className="size-3.5" />}
-                    Connect
+                    {connect.isPending ? 'Connecting…' : 'Connect'}
                   </Button>
                 </div>
               </form>
@@ -1371,6 +1459,7 @@ function ConnectionsSection() {
 
 function AccountSection() {
   const qc = useQueryClient();
+  const openTab = useContext(OpenSettingsTab);
   const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
   const { user } = useUser();
   const clerk = useClerk();
@@ -1408,6 +1497,12 @@ function AccountSection() {
           description={name && email ? email : 'Signed in with Clerk.'}
           control={<UserButton appearance={{ elements: { avatarBox: 'size-8' } }} />}
         />
+        <AccountPlanRow
+          onOpenBilling={() => {
+            openTab('ai');
+            window.scrollTo({ top: 0 });
+          }}
+        />
         <SettingsRow
           label="Profile and security"
           description="Name, email addresses, passkeys, and the devices signed in right now."
@@ -1433,11 +1528,16 @@ function AccountSection() {
         />
       </SettingsCard>
 
+      <SettingsGroupTitle>Your data</SettingsGroupTitle>
+      <SettingsCard>
+        <SettingsRow label="Export my data" description={EXPORT_DESCRIPTION} control={<ExportDataButton />} />
+      </SettingsCard>
+
       <SettingsGroupTitle>Delete</SettingsGroupTitle>
       <SettingsCard tone="danger">
         <SettingsRow
           label="Delete everything"
-          description="Mail grants, the search index, AI settings, usage records, and your Lab86 account. Gone for good, with no export first."
+          description="Mail grants, the search index, model settings, usage records, and your Albatross account. Gone for good. Export your data first if you want a copy."
           control={
             <AlertDialog
               onOpenChange={(open) => {
@@ -1452,8 +1552,7 @@ function AccountSection() {
                   disabled={deleteAccount.isPending}
                   className="shrink-0 border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)]/60 text-[var(--color-danger)] hover:border-[var(--color-danger)]/45 hover:bg-[var(--color-danger-soft)] hover:text-[var(--color-danger)]"
                 >
-                  {deleteAccount.isPending ? <Ring className="size-3" /> : null}
-                  Delete account
+                  {deleteAccount.isPending ? 'Deleting…' : 'Delete account'}
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
@@ -1461,10 +1560,11 @@ function AccountSection() {
                   <AlertDialogTitle>Delete your Albatross account?</AlertDialogTitle>
                   <AlertDialogDescription>
                     This removes every mailbox grant, the search index, your settings, and usage records from
-                    Lab86. It cannot be undone. Type{' '}
+                    Albatross. It cannot be undone. Type{' '}
                     <span className="font-mono font-medium text-[var(--color-text)]">delete</span> to confirm.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
+                <ExportBeforeDelete />
                 <Input
                   value={confirmText}
                   onChange={(event) => setConfirmText(event.target.value)}

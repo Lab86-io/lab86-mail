@@ -1,6 +1,5 @@
 'use client';
 
-import { Eye } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { type Model, ModelSelector, ModelSelectorPanel } from '@/components/odysseyui/model-selector';
 import { ProviderGlyph } from '@/components/settings/ProviderGlyph';
@@ -128,10 +127,7 @@ export function ModelPicker({ slot, value, onChange, catalog, disabled = false, 
               'Choose a model above.'
             )}
           </p>
-          <p className="flex items-center gap-1.5">
-            <Eye className="size-3.5 shrink-0" aria-hidden />
-            All models support images and slide review
-          </p>
+          <p>All models support images and slide review</p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="mr-auto">Prices: USD / 1M tokens, input / output</span>
             {slot === 'fast' && (

@@ -28,8 +28,10 @@ export const SETTINGS_TAB_META: Record<SettingsTabId, SettingsTabMeta> = {
   mailboxes: { group: 'workspace', description: 'Accounts, sync, and the search index.' },
   connections: { group: 'workspace', description: 'Tools that feed the brief and search.' },
   areas: { group: 'workspace', description: 'Where your mail and work belong.' },
-  sending: { group: 'behavior', description: 'The undo window after Send.' },
-  notifications: { group: 'behavior', description: 'Check-ins, push, and email fallback.' },
+  sending: { group: 'behavior', description: 'Undo window, signatures, replies, and your voice.' },
+  notifications: { group: 'behavior', description: 'Check-ins, mail alerts, and quiet hours.' },
+  orders: { group: 'behavior', description: 'What runs on its own, with a pause for each.' },
+  brief: { group: 'behavior', description: 'When the brief arrives, and weekends.' },
   ai: { group: 'behavior', description: 'Models, keys, and your plan.' },
   narrative: { group: 'behavior', description: 'How the brief reads.' },
   appearance: { group: 'you', description: 'Palette, type, and corners.' },
@@ -42,6 +44,32 @@ export interface SettingsNavItem {
   id: SettingsTabId;
   label: string;
   description: string;
+}
+
+/** Where the tab bar sits and where the active tab sits in it, in pixels. */
+export interface TabStripGeometry {
+  scrollLeft: number;
+  /** The strip's visible width (clientWidth) and its full width (scrollWidth). */
+  clientWidth: number;
+  scrollWidth: number;
+  /** Left edges on screen (getBoundingClientRect), and the tab's width. */
+  stripLeft: number;
+  tabLeft: number;
+  tabWidth: number;
+}
+
+/**
+ * The scroll position that puts the active tab in the middle of the phone's
+ * horizontal tab bar, clamped to the ends. Null when the bar does not scroll
+ * (the vertical rail from md up) or the tab is already in the middle.
+ */
+export function settingsTabScrollLeft(geometry: TabStripGeometry): number | null {
+  const max = geometry.scrollWidth - geometry.clientWidth;
+  if (max <= 0) return null;
+  const tabStart = geometry.scrollLeft + (geometry.tabLeft - geometry.stripLeft);
+  const centered = tabStart - (geometry.clientWidth - geometry.tabWidth) / 2;
+  const target = Math.round(Math.min(max, Math.max(0, centered)));
+  return target === Math.round(geometry.scrollLeft) ? null : target;
 }
 
 /** The rail, in group order, each group in SETTINGS_TABS order. */

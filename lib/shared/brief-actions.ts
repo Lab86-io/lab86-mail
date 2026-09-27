@@ -1,5 +1,19 @@
 export const BRIEF_ACTION_TIERS = {
-  immediate: ['toggle_task', 'dismiss_task', 'resolve_thread', 'dismiss_thread', 'archive_thread'],
+  // `steer_item` (FEATURES item 8) carries payload.mode: not_for_me,
+  // less_from_sender, or keep_showing. `undo_operation` (item 7) reverses one
+  // logged operation by payload.operationId.
+  immediate: [
+    'toggle_task',
+    'dismiss_task',
+    'resolve_thread',
+    'dismiss_thread',
+    'archive_thread',
+    'steer_item',
+    'undo_operation',
+    // The weekly review's Defer (FEATURES item 9): a task due date or a snooze.
+    'defer_task',
+    'defer_thread',
+  ],
   review: [
     'rsvp_event',
     'create_task',
@@ -39,4 +53,9 @@ export function briefActionTier(action: string): BriefActionTier {
 
 export function isKnownBriefAction(action: string): action is KnownBriefAction {
   return briefActionTier(action) !== 'unknown';
+}
+
+/** Steering actions sit in an item's overflow menu, not in its action row. */
+export function isBriefSteeringAction(action: string): boolean {
+  return action === 'steer_item';
 }

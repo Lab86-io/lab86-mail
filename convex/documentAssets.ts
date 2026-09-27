@@ -94,17 +94,3 @@ export const get = query({
     };
   },
 });
-
-export const remove = mutation({
-  args: { ...owner, assetId: v.string() },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const id = ctx.db.normalizeId('documentAssets', args.assetId);
-    if (!id) return false;
-    const row = await ctx.db.get(id);
-    if (!row || row.userId !== args.userId) return false;
-    await ctx.storage.delete(row.storageId);
-    await ctx.db.delete(id);
-    return true;
-  },
-});

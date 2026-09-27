@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { recordOperation } from '@/lib/ai/operations';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { mcpNeedsReconnect, mcpSyncProblem } from '@/lib/mcp/connection-health';
 import { defineTool } from './registry';
 import { resolveBoardAndColumn } from './tasks';
 
-const mcpApi = (api as any).mcp;
-const boardsApi = (api as any).boards;
+const mcpApi = api.mcp;
+const boardsApi = api.boards;
 
 const defaultDeps = {
   convexQuery,
@@ -107,7 +108,7 @@ export const mcpListItems = defineTool({
 export const mcpConnectionStatus = defineTool({
   name: 'mcp_connection_status',
   description:
-    'Inspect whether connected sources actually synced, including indexed item counts and Granola account/workspace identity. Use after an empty source-specific search instead of guessing that the source is disconnected.',
+    'Inspect whether connected sources actually synced, including indexed item counts and Granola account/workspace identity. Use after an empty source-specific search instead of guessing that the source is disconnected. status is "connected" or "reconnect_needed". Only needsReconnect=true means the user must sign in again; lastSyncProblem on a connected source is a sync problem that retries by itself, so do not tell the user to reconnect for it.',
   category: 'mcp',
   mutating: false,
   input: z.object({ server: serverEnum.optional().describe('Restrict to one source.') }),
@@ -119,18 +120,26 @@ export const mcpConnectionStatus = defineTool({
     return {
       connections: (rows || [])
         .filter((row) => !args.server || row.server === args.server)
-        .map((row) => ({
-          server: row.server,
-          displayName: row.displayName,
-          status: row.status,
-          syncStatus: row.syncStatus,
-          itemCount: row.itemCount ?? 0,
-          lastSyncedAt: row.lastSyncedAt,
-          includeInSearch: row.includeInSearch,
-          accountEmail: row.accountEmail,
-          workspaceName: row.workspaceName,
-          error: row.syncError || row.error,
-        })),
+        .map((row) => {
+          const needsReconnect = mcpNeedsReconnect(row);
+          const problem = mcpSyncProblem(row);
+          return {
+            server: row.server,
+            displayName: row.displayName,
+            status: needsReconnect ? 'reconnect_needed' : row.status,
+            needsReconnect,
+            syncStatus: row.syncStatus,
+            itemCount: row.itemCount ?? 0,
+            lastSyncedAt: row.lastSyncedAt,
+            includeInSearch: row.includeInSearch,
+            accountEmail: row.accountEmail,
+            workspaceName: row.workspaceName,
+            reconnectReason: needsReconnect ? row.error || row.syncError || null : null,
+            lastSyncProblem: problem?.message ?? null,
+            lastSyncProblemAt: problem?.at ?? null,
+            lastSyncPartial: problem ? problem.partial : null,
+          };
+        }),
     };
   },
 });
@@ -140,6 +149,7 @@ export const mcpCreateTask = defineTool({
   description:
     'Create a Lab86 task from a connected-tool item (a GitHub issue/PR, Bitbucket PR, Jira ticket, or Slack message). Pass the item identifiers from mcp_search/mcp_list_items. The card carries a provenance link back to the source, and when the source later closes/merges/resolves the task auto-completes. Defaults to the user’s default board, first column.',
   category: 'mcp',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     connectionId: z.string(),

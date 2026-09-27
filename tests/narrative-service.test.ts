@@ -102,7 +102,7 @@ function setup(
       writes.push({ name: 'refreshSources', args: { sources } });
       return [];
     },
-    generate: (async (request) => {
+    generate: (async (request: any) => {
       requests.push(request);
       if (request.toolChoice !== 'none' && !overrides.skipResearchTools)
         await request.tools.narrative_start.execute({}, { toolCallId: 'test-start', messages: [] });

@@ -16,11 +16,25 @@ export interface JevSettingsState {
   configured: boolean;
   configurationMessage: string | null;
   model: string;
+  classifier: ClassifierSettings;
   revision: number;
   counts: { accepted: number; uncertain: number; pending: number; unavailable: number };
   sampledThreads: number;
   sampleLimit: number;
   lastEvaluatedAt: number | null;
+}
+export interface ClassifierSettings {
+  selectedId: string;
+  revision: number;
+  canChange: boolean;
+  options: Array<{
+    id: string;
+    label: string;
+    vendor: string;
+    description: string;
+    status: 'evaluated' | 'experimental';
+    configured: boolean;
+  }>;
 }
 export async function settingsRequest(body?: unknown) {
   const response = await fetch(
@@ -30,7 +44,7 @@ export async function settingsRequest(body?: unknown) {
       : { cache: 'no-store' },
   );
   const result = await response.json().catch(() => null);
-  if (!response.ok || !result) throw new Error(result?.error || 'Jev settings could not load.');
+  if (!response.ok || !result) throw new Error(result?.error || 'Classification settings could not load.');
   return result;
 }
 const controls: Array<{
@@ -76,12 +90,14 @@ export function JevSettingsPanel({
   error,
   onSave,
   onReprocess,
+  onSelectClassifier,
 }: {
   state: JevSettingsState;
   busy: boolean;
   error?: string;
   onSave: (preferences: JevPreferences, corrections: JevCorrection[], onSuccess?: () => void) => void;
   onReprocess: () => void;
+  onSelectClassifier: (classifierId: string) => void;
 }) {
   const [scope, setScope] = useState<JevCorrection['scope']>('sender');
   const [match, setMatch] = useState('');
@@ -97,7 +113,7 @@ export function JevSettingsPanel({
       <header>
         <div className="flex items-center justify-between gap-3">
           <h2 id="jev-heading" className="text-[17px] font-semibold">
-            Jev
+            Classification
           </h2>
           <span className="text-xs text-[var(--color-text-muted)]">
             {!state.preferences.enabled ? 'Paused' : state.configured ? 'Connected' : 'Setup needed'}
@@ -107,6 +123,12 @@ export function JevSettingsPanel({
           How Albatross organizes your mail, finds open requests, and chooses what belongs in your Brief.
         </p>
       </header>
+      <ClassifierPicker
+        classifier={state.classifier}
+        busy={busy}
+        selectClass={selectClass}
+        onSelect={onSelectClassifier}
+      />
       {!state.configured && (
         <p
           role="status"
@@ -332,11 +354,71 @@ export function JevSettingsPanel({
         </form>
       </section>
       <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-        Jev classifies messages and keeps evidence for its results. It does not send replies, archive
+        The classifier labels messages and keeps evidence for its results. It does not send replies, archive
         messages, or complete work. Your corrections take precedence. Mail needing more context remains
         available for review.
       </p>
     </section>
+  );
+}
+
+function ClassifierPicker({
+  classifier,
+  busy,
+  selectClass,
+  onSelect,
+}: {
+  classifier: ClassifierSettings;
+  busy: boolean;
+  selectClass: string;
+  onSelect: (classifierId: string) => void;
+}) {
+  const selected = classifier.options.find((option) => option.id === classifier.selectedId);
+  return (
+    <div className="space-y-2 rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4">
+      <div className="flex items-center justify-between gap-5">
+        <label htmlFor="classifier-model" className="min-w-0">
+          <span className="block text-sm font-medium">Classifier model</span>
+          <span className="mt-1 block text-xs text-[var(--color-text-muted)]">
+            {classifier.canChange
+              ? 'Applies to every account on this deployment.'
+              : 'Chosen by the deployment operator.'}
+          </span>
+        </label>
+        {classifier.canChange ? (
+          <select
+            id="classifier-model"
+            className={selectClass}
+            value={classifier.selectedId}
+            disabled={busy}
+            onChange={(event) => onSelect(event.target.value)}
+          >
+            {classifier.options.map((option) => (
+              <option key={option.id} value={option.id} disabled={!option.configured}>
+                {option.label}
+                {option.configured ? '' : ' (not configured)'}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span id="classifier-model" className="text-sm">
+            {selected?.label || classifier.selectedId}
+          </span>
+        )}
+      </div>
+      {selected && (
+        <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
+          {selected.vendor}. {selected.description}
+          {selected.status === 'experimental' ? ' Not yet validated against the mail evaluation set.' : ''}
+        </p>
+      )}
+      {classifier.canChange && (
+        <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
+          Switching rechecks the last 30 days and open requests. Current results stay visible until the new
+          model replaces them.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -354,7 +436,9 @@ export function JevSection() {
       setNotice(
         variables.action === 'reprocess'
           ? 'Existing mail is queued for a background recheck.'
-          : 'Settings saved.',
+          : variables.action === 'selectClassifier'
+            ? 'Classifier changed. Recent mail is queued for a recheck.'
+            : 'Settings saved.',
       );
       await client.invalidateQueries({ queryKey: ['jev-settings'] });
       await Promise.all(
@@ -367,13 +451,13 @@ export function JevSection() {
   if (query.isPending)
     return (
       <p role="status" className="text-sm text-[var(--color-text-muted)]">
-        Loading Jev settings…
+        Loading classification settings…
       </p>
     );
   if (query.isError || !query.data)
     return (
       <div role="alert">
-        <p>Jev settings could not load.</p>
+        <p>Classification settings could not load.</p>
         <Button variant="outline" onClick={() => query.refetch()}>
           Try again
         </Button>
@@ -392,6 +476,13 @@ export function JevSection() {
           )
         }
         onReprocess={() => save.mutate({ action: 'reprocess' })}
+        onSelectClassifier={(classifierId) =>
+          save.mutate({
+            action: 'selectClassifier',
+            classifierId,
+            revision: query.data.classifier.revision,
+          })
+        }
       />
       <p role="status" aria-live="polite" className="mt-3 text-xs text-[var(--color-text-muted)]">
         {notice}

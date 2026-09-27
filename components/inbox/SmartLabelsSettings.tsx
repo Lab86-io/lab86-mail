@@ -79,6 +79,10 @@ export function SmartLabelsSettings({
         <div className="grid gap-6 md:grid-cols-2">
           <section className="space-y-2">
             <h3 className="text-[13px] font-semibold">Create custom label</h3>
+            <p className="text-[12px] text-[var(--color-text-muted)]">
+              A label matches mail that contains whole words from its name or its words to match, and skips
+              mail with its words to exclude. The note is for you and is not matched.
+            </p>
             <div className="grid gap-2">
               <label htmlFor="smart-label-name" className="sr-only">
                 Name
@@ -97,27 +101,27 @@ export function SmartLabelsSettings({
                 id="smart-label-description"
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
-                placeholder="What should this label match?"
+                placeholder="A short note about this label (not used for matching)"
                 className="min-h-20 rounded-md border bg-background px-2 py-2 text-[13px]"
               />
               <label htmlFor="smart-label-positive" className="sr-only">
-                Positive example
+                Words to match
               </label>
               <input
                 id="smart-label-positive"
                 value={positive}
                 onChange={(event) => setPositive(event.target.value)}
-                placeholder="Positive example"
+                placeholder="Words to match"
                 className="h-9 rounded-md border bg-background px-2 text-[13px]"
               />
               <label htmlFor="smart-label-negative" className="sr-only">
-                Negative example
+                Words to exclude
               </label>
               <input
                 id="smart-label-negative"
                 value={negative}
                 onChange={(event) => setNegative(event.target.value)}
-                placeholder="Negative example"
+                placeholder="Words to exclude"
                 className="h-9 rounded-md border bg-background px-2 text-[13px]"
               />
               <div className="flex gap-2">

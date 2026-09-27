@@ -22,7 +22,7 @@ const deps = () => ({
   requireCurrentUser: async () => user,
   enforceUserRateLimit: async () => undefined,
   getPref: async () => '10',
-  writeAudit: async () => undefined,
+  writeAudit: async (): Promise<any> => undefined,
   enqueueOutbox: mock(async () => ({
     id: key,
     fireAt: Date.now() + 10000,
@@ -69,7 +69,7 @@ describe('authenticated outbox dispatch', () => {
     });
   const dependencies = () => ({
     isInternalCronRequest: () => true,
-    writeAudit: mock(async () => undefined),
+    writeAudit: mock(async (): Promise<any> => undefined),
     claimOutbox: mock(
       async (): Promise<{ url: string } | null> => ({ url: 'https://storage.example.test/payload' }),
     ),
@@ -78,8 +78,8 @@ describe('authenticated outbox dispatch', () => {
     ) as unknown as typeof fetch,
     sendNylasMessage: mock(async (): Promise<any> => ({ _id: 'sent', account: user.email })),
     completeOutbox: mock(async () => undefined),
-    upsertMessage: async () => undefined,
-    upsertThread: async () => undefined,
+    upsertMessage: async (): Promise<any> => undefined,
+    upsertThread: async (): Promise<any> => undefined,
   });
   test('rejects public requests and skips cancelled/claimed sends', async () => {
     const d = dependencies();

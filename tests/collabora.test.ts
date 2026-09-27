@@ -48,7 +48,7 @@ describe('Collabora integration boundaries', () => {
   test('discovers the editor and creates an expiring, owner/document-bound session', async () => {
     let sessionArgs: any;
     setup({
-      convexMutation: (async (_reference, args) => {
+      convexMutation: (async (_reference: unknown, args: any) => {
         sessionArgs = args;
         return { ok: true, expiresAt };
       }) as any,

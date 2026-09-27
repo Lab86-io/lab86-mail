@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
 import schema from '../convex/schema';
@@ -398,17 +398,6 @@ describe('Area facts lifecycle', () => {
         supersedesFactId: verifiedId,
       });
 
-      const all = await t.query(api.albatross.listAreaFacts, { ...caller(userId), areaId });
-      expect(all).toHaveLength(4);
-      const verifiedOnly = await t.query(api.albatross.listAreaFacts, {
-        ...caller(userId),
-        areaId,
-        status: 'verified',
-      });
-      expect(verifiedOnly.map((fact) => fact.value).sort()).toEqual([
-        'Weekly sync on Fridays',
-        'newops@acme.com',
-      ]);
       const scopedVerified = await t.query(api.albatross.listVerifiedFacts, { ...caller(userId), areaId });
       expect(scopedVerified).toHaveLength(2);
       const globalVerified = await t.query(api.albatross.listVerifiedFacts, { ...caller(userId) });
@@ -423,84 +412,39 @@ describe('Area facts lifecycle', () => {
 });
 
 describe('Artifact links', () => {
-  test('linkArtifactToArea upserts by identity and lists in both scopes', () =>
-    withSecret(async () => {
-      const t = convexTest(schema, convexModules);
-      const userId = 'links_user';
-      const areaId = await t.mutation(api.albatross.createArea, { ...caller(userId), name: 'Ops' });
-      const linkId = await t.mutation(api.albatross.linkArtifactToArea, {
-        ...caller(userId),
-        areaId,
-        artifactKind: 'mailThread',
-        artifactId: '  thread_1 ',
-        accountId: 'account_1',
-        confidence: 0.5,
-        reason: 'Looks related',
-      });
-      const again = await t.mutation(api.albatross.linkArtifactToArea, {
-        ...caller(userId),
-        areaId,
-        artifactKind: 'mailThread',
-        artifactId: 'thread_1',
-        accountId: 'account_1',
-        confidence: 0.8,
-      });
-      expect(again).toBe(linkId);
-      expect(await t.run((ctx) => ctx.db.get(linkId))).toMatchObject({
-        artifactId: 'thread_1',
-        accountId: 'account_1',
-        status: 'candidate',
-        confidence: 0.8,
+  // Candidate links come from the classifier and the reindex in production.
+  // Seed one directly so the status test starts from that state.
+  async function insertCandidateLink(
+    t: TestConvex<typeof schema>,
+    link: {
+      userId: string;
+      areaId: any;
+      artifactKind: 'mailThread' | 'mcpItem';
+      artifactId: string;
+      accountId: string;
+      reason?: string;
+    },
+  ) {
+    return t.run((ctx) =>
+      ctx.db.insert('areaArtifactLinks', {
+        ...link,
         role: 'primary',
-      });
-
-      await t.mutation(api.albatross.linkArtifactToArea, {
-        ...caller(userId),
-        areaId,
-        artifactKind: 'manual',
-        artifactId: 'manual_note_1',
-      });
-      await expect(
-        t.mutation(api.albatross.linkArtifactToArea, {
-          ...caller(userId),
-          areaId,
-          artifactKind: 'manual',
-          artifactId: 'manual_note_2',
-          status: 'verified',
-        }),
-      ).rejects.toThrow(/require explicit user confirmation/);
-
-      const accountScoped = await t.query(api.albatross.listArtifactLinks, {
-        ...caller(userId),
-        artifactKind: 'mailThread',
-        artifactId: 'thread_1',
-        accountId: 'account_1',
-      });
-      expect(accountScoped).toHaveLength(1);
-      const accountless = await t.query(api.albatross.listArtifactLinks, {
-        ...caller(userId),
-        artifactKind: 'manual',
-        artifactId: 'manual_note_1',
-      });
-      expect(accountless).toHaveLength(1);
-      expect(accountless[0].accountId).toBeUndefined();
-      const areaLinks = await t.query(api.albatross.listAreaArtifactLinks, { ...caller(userId), areaId });
-      expect(areaLinks).toHaveLength(2);
-      const candidates = await t.query(api.albatross.listAreaArtifactLinks, {
-        ...caller(userId),
-        areaId,
         status: 'candidate',
-      });
-      expect(candidates).toHaveLength(2);
-    }));
+        sourceRefs: [],
+        confirmationRefs: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+  }
 
   test('setAreaArtifactLinkStatus verifies, rejects, and detaches mcp evidence', () =>
     withSecret(async () => {
       const t = convexTest(schema, convexModules);
       const userId = 'link_status_user';
       const areaId = await t.mutation(api.albatross.createArea, { ...caller(userId), name: 'Repo' });
-      const mailLinkId = await t.mutation(api.albatross.linkArtifactToArea, {
-        ...caller(userId),
+      const mailLinkId = await insertCandidateLink(t, {
+        userId,
         areaId,
         artifactKind: 'mailThread',
         artifactId: 'thread_verify',
@@ -526,8 +470,8 @@ describe('Artifact links', () => {
       expect(verifiedRow).toMatchObject({ status: 'verified', confidence: 1 });
       expect(verifiedRow?.reason).toBe('classifier guess; user response: Yes, this is the client thread');
 
-      const mcpLinkId = await t.mutation(api.albatross.linkArtifactToArea, {
-        ...caller(userId),
+      const mcpLinkId = await insertCandidateLink(t, {
+        userId,
         areaId,
         artifactKind: 'mcpItem',
         artifactId: 'conn_1:ext_9',
@@ -2117,125 +2061,25 @@ describe('area reindex runtime', () => {
       expect(scanBudget.error).toContain('50000 threads');
     }));
 
-  test('queueUserAreaReindex coalesces queued runs and marks running runs for rerun', () =>
+  test('reindex requests coalesce queued runs and mark running runs for rerun', () =>
     withSecret(async () => {
       const t = convexTest(schema, convexModules);
       const userId = 'queue_reindex_user';
-      const first = await t.mutation(internal.albatross.queueUserAreaReindex, {
-        userId,
-        reason: 'First request',
-        delayMs: 60_000,
-      });
-      const second = await t.mutation(internal.albatross.queueUserAreaReindex, {
-        userId,
-        reason: 'Second request',
-        delayMs: 60_000,
-      });
-      expect(String(second.runId)).toBe(String(first.runId));
+      const areaId = await t.mutation(api.albatross.createArea, { ...caller(userId), name: 'Queue' });
+      const [created] = await t.run((ctx) => ctx.db.query('areaReindexRuns').collect());
+      const first = await t.mutation(api.albatross.reindexMyAreas, { ...caller(userId) });
+      expect(String(first.runId)).toBe(String(created._id));
       expect(await t.run((ctx) => ctx.db.get(first.runId))).toMatchObject({
         status: 'queued',
-        reason: 'Second request',
+        reason: 'Manual area reindex',
       });
       await t.run((ctx) => ctx.db.patch(first.runId, { status: 'running' }));
-      const third = await t.mutation(internal.albatross.queueUserAreaReindex, {
-        userId,
-        reason: 'While running',
-        delayMs: 60_000,
-      });
-      expect(String(third.runId)).toBe(String(first.runId));
+      const second = await t.mutation(api.albatross.reindexMyAreas, { ...caller(userId), areaId });
+      expect(String(second.runId)).toBe(String(first.runId));
       const run = await t.run((ctx) => ctx.db.get(first.runId));
       expect(run?.rerunRequestedAt).toBeNumber();
-      expect(run?.reason).toBe('While running');
-    }));
-});
-
-describe('seedContextGraphFromFixture', () => {
-  test('replaces the user context graph from a fixture with normalized statuses', () =>
-    withSecret(async () => {
-      const t = convexTest(schema, convexModules);
-      const userId = 'seed_user';
-      const ts = Date.now();
-      await t.run(async (ctx) => {
-        const staleAreaId = await ctx.db.insert('areas', {
-          userId,
-          name: 'Stale area',
-          kind: 'general',
-          status: 'active',
-          createdAt: ts,
-          updatedAt: ts,
-        });
-        await ctx.db.insert('areaFacts', {
-          userId,
-          areaId: staleAreaId,
-          kind: 'note',
-          value: 'Old fact',
-          status: 'candidate',
-          sourceRefs: [],
-          confirmationRefs: [],
-          createdAt: ts,
-          updatedAt: ts,
-        });
-        await ctx.db.insert(
-          'areaArtifactLinks',
-          bareLink(userId, staleAreaId, { artifactId: 'stale_thread' }) as any,
-        );
-      });
-      const result = await t.mutation(api.albatross.seedContextGraphFromFixture, {
-        internalSecret: SECRET,
-        userId,
-        fixture: {
-          tables: {
-            areas: [
-              { id: 'area-1', name: 'Fixture area', kind: 'project', priority: 1 },
-              { id: 'area-2', name: 'Archived fixture', status: 'archived' },
-            ],
-            areaFacts: [
-              {
-                id: 'fact-1',
-                areaId: 'area-1',
-                kind: 'domain',
-                value: 'fixture.dev',
-                status: 'verified',
-                confirmationRefs: [
-                  { kind: 'userConfirmation', id: 'seed-conf', confirmedAt: '2026-07-01T00:00:00Z' },
-                ],
-              },
-              { id: 'fact-2', areaId: 'area-1', kind: 'note', value: 'Loose idea', status: 'weird' },
-              { id: 'fact-orphan', areaId: 'missing-area', kind: 'note', value: 'Dropped' },
-            ],
-            areaArtifactLinks: [
-              {
-                id: 'link-1',
-                areaId: 'area-1',
-                artifactKind: 'mailThread',
-                artifactId: 'seed_thread',
-                accountId: 'account_1',
-                role: 'primary',
-                confidence: 0.4,
-              },
-              { id: 'link-2', areaId: 'area-2', artifactKind: 'not-a-kind', artifactId: 'weird_artifact' },
-              { id: 'link-orphan', areaId: 'missing-area', artifactId: 'dropped' },
-            ],
-          },
-        },
-      });
-      expect(result).toEqual({
-        userId,
-        counts: { areas: 2, areaFacts: 2, areaArtifactLinks: 2 },
-      });
-      const areas = await t.run((ctx) => ctx.db.query('areas').collect());
-      expect(areas.map((area) => area.name).sort()).toEqual(['Archived fixture', 'Fixture area']);
-      expect(areas.find((area) => area.name === 'Archived fixture')?.status).toBe('archived');
-      const facts = await t.run((ctx) => ctx.db.query('areaFacts').collect());
-      expect(facts).toHaveLength(2);
-      const verifiedFact = facts.find((fact) => fact.value === 'fixture.dev');
-      expect(verifiedFact?.status).toBe('verified');
-      expect(verifiedFact?.verifiedAt).toBeNumber();
-      expect(facts.find((fact) => fact.value === 'Loose idea')?.status).toBe('candidate');
-      const links = await t.run((ctx) => ctx.db.query('areaArtifactLinks').collect());
-      expect(links).toHaveLength(2);
-      expect(links.find((link) => link.artifactId === 'weird_artifact')?.artifactKind).toBe('manual');
-      expect(links.find((link) => link.artifactId === 'stale_thread')).toBeUndefined();
+      expect(run?.reason).toBe('Manual area brief refresh');
+      expect(await t.run((ctx) => ctx.db.query('areaReindexRuns').collect())).toHaveLength(1);
     }));
 });
 

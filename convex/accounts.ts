@@ -1,5 +1,7 @@
 import { v } from 'convex/values';
+import { redactExportRow } from '../lib/hosted/export-redaction';
 import { pickAccountForGrant } from '../lib/mail/grant-account';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { internalMutation, mutation, query } from './_generated/server';
@@ -216,9 +218,44 @@ export const upsertConnectedAccount = mutation({
     } else {
       // Same-grant reconnects/token refreshes must not revoke an
       // already-synced corpus or restart backfill.
-      await ctx.db.patch(syncState._id, { provider: args.provider, updatedAt: ts });
+      // A reconnect clears a sync error left by the dead grant.
+      await ctx.db.patch(syncState._id, {
+        provider: args.provider,
+        ...(syncState.status === 'error'
+          ? { status: syncState.corpusReady ? ('ready' as const) : ('idle' as const), error: undefined }
+          : {}),
+        updatedAt: ts,
+      });
     }
     return { accountId: id, replacedGrantId };
+  },
+});
+
+// One account health state (SYNC-2, CAL-8). Grant webhooks and grant-gone
+// sync errors put each connected account on the grant into `error` with a
+// reconnect reason. Sync, backfill kicks, and calendar polls only run for
+// `connected` accounts, so the attempts stop. upsertConnectedAccount (a good
+// OAuth reconnect) sets `connected` and clears the reason.
+export const markGrantReconnectNeeded = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    grantId: v.string(),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_grant', (q) => q.eq('grantId', args.grantId))
+      .collect();
+    let updated = 0;
+    const ts = now();
+    for (const row of rows) {
+      if (row.status !== 'connected') continue;
+      await ctx.db.patch(row._id, { status: 'error', error: truncateText(args.reason, 300), updatedAt: ts });
+      updated += 1;
+    }
+    return { updated };
   },
 });
 
@@ -236,7 +273,7 @@ export const updateConnectedAccountAlias = mutation({
       .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
       .unique();
     if (!row) throw new Error('Connected account not found');
-    const displayName = (args.displayName || '').trim().slice(0, 80) || undefined;
+    const displayName = truncateText((args.displayName || '').trim(), 80) || undefined;
     await ctx.db.patch(row._id, {
       displayName,
       updatedAt: now(),
@@ -249,21 +286,22 @@ export const updateConnectedAccountAlias = mutation({
 // corpus cannot be deleted inside one Convex transaction (it exceeds the
 // per-transaction document limits, which is exactly how account removal used
 // to 500 and strand orphan rows).
-const ACCOUNT_BULK_TABLES = [
-  'threads',
-  'messages',
+export const ACCOUNT_BULK_TABLES = [
   'mailCorpusThreads',
   'mailCorpusMessages',
+  // Custom-label membership rows point at corpus threads (CLS-13).
+  'mailLabelMembership',
   'mailWebhookEvents',
   // One-time codes are live authentication secrets. They expire on their own,
   // but a disconnected account's codes must not outlive the disconnection.
   'mailOneTimeCodes',
+  // Snooze rows would otherwise keep waking threads of a removed mailbox.
+  'mailSnoozes',
   'calendarEvents',
-  'calendarEventCorpus',
   'areaArtifactLinks',
 ] as const;
 
-const USER_BULK_TABLES = [
+export const USER_BULK_TABLES = [
   'briefJobs',
   ...ACCOUNT_BULK_TABLES,
   'areaFacts',
@@ -279,6 +317,7 @@ const USER_BULK_TABLES = [
   'mobileSyncTombstones',
   'nativePushDeliveries',
   'documentRevisions',
+  'documentModels',
   'officeDocuments',
   'officeVersions',
   'officeSessions',
@@ -286,9 +325,38 @@ const USER_BULK_TABLES = [
   // Append-only telemetry with no pruning; an active account outgrows one
   // transaction, so it drains in batches like the other bulk tables.
   'briefItemEvents',
+  'briefEditionTelemetry',
+  // Shared narrative memory and connected content grow with the mailbox.
+  // Each contentItems row takes its contentChunks with it (see below).
+  'narrativeEntries',
+  'narrativeRuns',
+  'contentItems',
+  'briefPreparations',
 ] as const;
 
 const PURGE_BATCH = 250;
+// A content item has at most ~34 embedding chunks, so a few items per pass
+// keep one purge transaction far below the Convex read limits.
+const CONTENT_ITEMS_PER_PASS = 5;
+// A document model row can be close to 1 MiB.
+const DOCUMENT_MODELS_PER_PASS = 8;
+// Tables expose one of these userId-prefixed indexes; try each in turn.
+export const USER_INDEXES = ['by_user', 'by_user_account', 'by_user_key', 'by_user_created'] as const;
+
+async function takeByUser(ctx: any, table: string, userId: string, limit: number) {
+  let lastErr: unknown;
+  for (const index of USER_INDEXES) {
+    try {
+      return await ctx.db
+        .query(table)
+        .withIndex(index as any, (q: any) => q.eq('userId', userId))
+        .take(limit);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
 
 // Whole-user purge twin of purgeAccountDataBatch: account deletion already
 // batches, and user deletion must too — a populated mailbox exceeds Convex's
@@ -299,20 +367,30 @@ export const purgeUserDataBatch = internalMutation({
     let deleted = 0;
     for (const table of USER_BULK_TABLES) {
       if (deleted >= PURGE_BATCH) break;
-      const rows = await ctx.db
-        .query(table)
-        .withIndex('by_user' as any, (q: any) => q.eq('userId', args.userId))
-        .take(PURGE_BATCH - deleted)
-        .catch(async () =>
-          ctx.db
-            .query(table)
-            .withIndex('by_user_account' as any, (q: any) => q.eq('userId', args.userId))
-            .take(PURGE_BATCH - deleted),
-        );
+      const remaining = PURGE_BATCH - deleted;
+      const rows = await takeByUser(
+        ctx,
+        table,
+        args.userId,
+        table === 'contentItems'
+          ? Math.min(remaining, CONTENT_ITEMS_PER_PASS)
+          : table === 'documentModels'
+            ? Math.min(remaining, DOCUMENT_MODELS_PER_PASS)
+            : remaining,
+      );
       for (const row of rows) {
         if ((table === 'officeVersions' || table === 'documentAssets') && 'storageId' in row) {
           // Metadata must not be deleted before its private binary.
           await ctx.storage.delete(row.storageId as Id<'_storage'>);
+        }
+        if (table === 'contentItems') {
+          // contentChunks has no userId index; it hangs off its item.
+          const chunks = await ctx.db
+            .query('contentChunks')
+            .withIndex('by_item', (q) => q.eq('itemId', row._id as Id<'contentItems'>))
+            .collect();
+          for (const chunk of chunks) await ctx.db.delete(chunk._id);
+          deleted += chunks.length;
         }
         await ctx.db.delete(row._id);
         deleted += 1;
@@ -359,62 +437,24 @@ export const deleteConnectedAccount = mutation({
     requireInternalSecret(args.internalSecret);
     // Small tables go inline so the account vanishes from the UI immediately;
     // the bulk corpus drains in scheduled batches right after.
-    // Index per table — syncJobs only has by_account; assuming
-    // by_user_account everywhere is exactly how this mutation Server-Errored.
-    const smallTables: Array<[string, 'by_user_account' | 'by_account']> = [
-      ['connectedAccounts', 'by_user_account'],
-      ['providerGrants', 'by_user_account'],
-      ['syncJobs', 'by_account'],
-      ['mailSyncStates', 'by_user_account'],
-      ['calendars', 'by_user_account'],
-      ['calendarSyncStates', 'by_user_account'],
-    ];
-    for (const [table, index] of smallTables) {
-      const rows =
-        index === 'by_account'
-          ? await ctx.db
-              .query(table as any)
-              .withIndex('by_account' as any, (q: any) => q.eq('accountId', args.accountId))
-              .collect()
-          : await ctx.db
-              .query(table as any)
-              .withIndex('by_user_account' as any, (q: any) =>
-                q.eq('userId', args.userId).eq('accountId', args.accountId),
-              )
-              .collect();
-      for (const row of rows) {
-        if (row.userId && row.userId !== args.userId) continue;
-        await ctx.db.delete(row._id);
-      }
+    const smallTables = [
+      'connectedAccounts',
+      'providerGrants',
+      'mailSyncStates',
+      'calendars',
+      'calendarSyncStates',
+    ] as const;
+    for (const table of smallTables) {
+      const rows = await ctx.db
+        .query(table)
+        .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+        .collect();
+      for (const row of rows) await ctx.db.delete(row._id);
     }
     await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDataBatch, {
       userId: args.userId,
       accountId: args.accountId,
     });
-
-    const reports = await ctx.db
-      .query('dailyReports')
-      .withIndex('by_user', (q) => q.eq('userId', args.userId))
-      .collect();
-    for (const report of reports) {
-      if (report.accountIds.includes(args.accountId)) await ctx.db.delete(report._id);
-    }
-
-    const memories = await ctx.db
-      .query('memories')
-      .withIndex('by_user', (q) => q.eq('userId', args.userId))
-      .collect();
-    for (const memory of memories) {
-      if (!memory.sourceAccountIds.includes(args.accountId)) continue;
-      const remaining = memory.sourceAccountIds.filter((id) => id !== args.accountId);
-      if (memory.userPinned) {
-        await ctx.db.patch(memory._id, { sourceAccountIds: remaining, updatedAt: now() });
-      } else if (remaining.length) {
-        await ctx.db.patch(memory._id, { sourceAccountIds: remaining, updatedAt: now() });
-      } else {
-        await ctx.db.delete(memory._id);
-      }
-    }
     return { ok: true };
   },
 });
@@ -436,68 +476,8 @@ export const deleteUserCascade = mutation({
       await ctx.db.patch(job._id, { active: false, state: 'cancelled', token: undefined });
 
     const counts: Record<string, number> = {};
-    // Small tables sweep inline. Bulk tables ('threads', 'messages',
-    // 'mailCorpusThreads', 'mailCorpusMessages', 'mailWebhookEvents',
-    // 'calendarEvents', 'calendarEventCorpus') would blow Convex's per-transaction limits on a real
-    // mailbox, so they drain through the scheduled purge instead.
-    const userTables = [
-      'connectedAccounts',
-      'mailOutbox',
-      'providerGrants',
-      'nylasOAuthStates',
-      'aiSettings',
-      'aiProviderKeys',
-      'aiEntitlements',
-      'aiUsagePeriods',
-      'aiUsageEvents',
-      'dailyReports',
-      'memories',
-      'auditEvents',
-      'syncJobs',
-      'mailSyncStates',
-      'rateLimits',
-      'userDocs',
-      'aiOperations',
-      'suggestions',
-      'calendars',
-      'calendarSyncStates',
-      'albatrossDevRecords',
-      'albatrossProjects',
-      'albatrossProjectLinks',
-      'albatrossSprints',
-      'albatrossApprovals',
-      'albatrossPlanApplications',
-      'completionEvents',
-      'albatrossIntents',
-      'albatrossIntentPlans',
-      'albatrossCaptures',
-      'albatrossWorkQuestions',
-      'albatrossAreaBriefs',
-      'albatrossNotifications',
-      'albatrossNotificationPreferences',
-      'webPushSubscriptions',
-      'mobilePushDevices',
-      'mobileSyncHeads',
-      'notificationDeliveries',
-      'albatrossDailyCheckins',
-      'albatrossBrowserSessions',
-      'areas',
-      'mcpConnections',
-      'mcpCredentials',
-      'mcpOAuthStates',
-      'mcpItems',
-      'mcpSyncStates',
-      'mcpTaskLinks',
-      'cloudFileConnections',
-      'cloudFileCredentials',
-      'cloudFileOAuthStates',
-      'cloudFileOAuthCompletions',
-      'documents',
-      'documentSuggestions',
-      'documentImportCancellations',
-    ] as const;
-
-    for (const table of userTables) {
+    // Small tables sweep inline; bulk tables drain through purgeUserDataBatch.
+    for (const table of USER_INLINE_TABLES) {
       const rows = await rowsByUser(ctx, table, args.userId);
       counts[table] = rows.length;
       for (const row of rows) {
@@ -568,11 +548,86 @@ export const deleteUserCascade = mutation({
   },
 });
 
+// Small per-user tables that deleteUserCascade sweeps inline. Bulk tables
+// (the mail corpus, calendar events) would blow Convex's
+// per-transaction limits on a real mailbox, so they drain through
+// purgeUserDataBatch instead. tests/account-cascade-coverage.test.ts fails when
+// a schema table with a userId field is in neither list.
+export const USER_INLINE_TABLES = [
+  'connectedAccounts',
+  'mailOutbox',
+  'providerGrants',
+  'nylasOAuthStates',
+  'aiSettings',
+  'aiProviderKeys',
+  'aiEntitlements',
+  'aiUsagePeriods',
+  'aiUsageEvents',
+  'mailSyncStates',
+  'rateLimits',
+  'userDocs',
+  'aiOperations',
+  'suggestions',
+  'calendars',
+  'calendarSyncStates',
+  'albatrossDevRecords',
+  'albatrossProjects',
+  'albatrossProjectLinks',
+  'albatrossSprints',
+  'albatrossApprovals',
+  'albatrossPlanApplications',
+  'completionEvents',
+  'albatrossIntents',
+  'albatrossIntentPlans',
+  'albatrossCaptures',
+  'albatrossWorkQuestions',
+  'albatrossAreaBriefs',
+  'albatrossNotifications',
+  'albatrossNotificationPreferences',
+  'webPushSubscriptions',
+  'mobilePushDevices',
+  'mobileSyncHeads',
+  'notificationDeliveries',
+  'albatrossDailyCheckins',
+  'albatrossBrowserSessions',
+  'areas',
+  'mcpConnections',
+  'mcpCredentials',
+  'mcpOAuthStates',
+  'mcpItems',
+  'mcpSyncStates',
+  'mcpTaskLinks',
+  'cloudFileConnections',
+  'cloudFileCredentials',
+  'cloudFileOAuthStates',
+  'cloudFileOAuthCompletions',
+  'documents',
+  'documentSuggestions',
+  'documentImportCancellations',
+  // Control rows go inline so the narrative and content crons stop
+  // dispatching for this user at once; their bulk rows drain in batches.
+  'narrativeSettings',
+  'narrativeCursors',
+  'narrativeExclusions',
+  'contentSync',
+] as const;
+
+// userId tables that the cascade deletes through their own pass, not through
+// the lists above. The value says where.
+export const CASCADE_SPECIAL_TABLES: Record<string, string> = {
+  agentUploads: 'deleteUserCascade deletes each upload with its stored file (by_user_created).',
+  boardMembers: 'deleteUserCascade removes memberships on owned and foreign boards.',
+  cards: 'deleteUserCascade removes cards on owned boards and cards the user wrote.',
+  contentChunks: 'purgeUserDataBatch deletes the chunks of each contentItems row (by_item).',
+};
+
+// userId tables that stay after account deletion. Each entry must give the
+// reason. Keep this empty unless there is a legal or operational need.
+export const CASCADE_EXEMPT_TABLES: Record<string, string> = {};
+
 async function rowsByUser(ctx: any, table: string, userId: string) {
-  // Tables expose one of these userId-prefixed indexes; try each in turn.
-  const indexes = ['by_user', 'by_user_account', 'by_user_created'];
   let lastErr: unknown;
-  for (const index of indexes) {
+  for (const index of USER_INDEXES) {
     try {
       return await ctx.db
         .query(table)
@@ -584,3 +639,133 @@ async function rowsByUser(ctx: any, table: string, userId: string) {
   }
   throw lastErr;
 }
+
+/**
+ * Whether the user already made or imported any document. Settings, Advanced
+ * starts "Show Files" on for these users and off for everyone else.
+ */
+export const hasDocuments = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const documents = await ctx.db
+      .query('documents')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .take(25);
+    if (documents.some((row) => !row.archivedAt)) return true;
+    const office = await ctx.db
+      .query('officeDocuments')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .first();
+    return office !== null;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Data export (Settings, Account, Export my data)
+// ---------------------------------------------------------------------------
+
+// Tables in the deletion cascade that the export leaves out, with the reason.
+export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
+  contentChunks: 'Search chunks and embeddings derived from contentItems, which the export includes.',
+  nylasOAuthStates: 'Short-lived sign-in state for a mailbox connection, not user content.',
+  mcpOAuthStates: 'Short-lived sign-in state for a tool connection, not user content.',
+  cloudFileOAuthStates: 'Short-lived sign-in state for a file connection, not user content.',
+  cloudFileOAuthCompletions: 'Short-lived sign-in state for a file connection, not user content.',
+  rateLimits: 'Request counters that protect the service, not user content.',
+};
+
+/**
+ * Every table the export writes, one JSON file each. It follows the deletion
+ * cascade, so a table that the cascade learns about is exported too.
+ */
+export const EXPORT_TABLES: readonly string[] = [
+  ...new Set<string>([
+    'users',
+    ...USER_INLINE_TABLES,
+    ...USER_BULK_TABLES,
+    ...Object.keys(CASCADE_SPECIAL_TABLES),
+    'boards',
+    'boardColumns',
+  ]),
+].filter((table) => !(table in EXPORT_SKIPPED_TABLES));
+
+export const exportTableList = query({
+  args: { internalSecret: v.optional(v.string()) },
+  handler: async (_ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return [...EXPORT_TABLES];
+  },
+});
+
+/** One page of one table for one user, with secrets removed. */
+export const exportUserTablePage = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    table: v.string(),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    if (!EXPORT_TABLES.includes(args.table)) throw new Error('This table is not part of the export.');
+    const numItems = Math.min(Math.max(Math.floor(args.numItems), 1), 200);
+    const done = (rows: any[]) => ({
+      page: rows.map((row) => redactExportRow(args.table, row)),
+      isDone: true,
+      continueCursor: '',
+    });
+    if (args.table === 'users') {
+      return done(
+        await ctx.db
+          .query('users')
+          .withIndex('by_clerk_user_id', (q) => q.eq('clerkUserId', args.userId))
+          .collect(),
+      );
+    }
+    if (args.table === 'boardColumns') {
+      // Columns carry no userId; they belong to the boards the user owns.
+      const boards = await ctx.db
+        .query('boards')
+        .withIndex('by_owner', (q) => q.eq('ownerUserId', args.userId))
+        .take(200);
+      const columns: any[] = [];
+      for (const board of boards)
+        columns.push(
+          ...(await ctx.db
+            .query('boardColumns')
+            .withIndex('by_board', (q) => q.eq('boardId', board._id))
+            .collect()),
+        );
+      return done(columns);
+    }
+    const opts = { cursor: args.cursor, numItems };
+    let result: any;
+    if (args.table === 'boards') {
+      result = await ctx.db
+        .query('boards')
+        .withIndex('by_owner', (q) => q.eq('ownerUserId', args.userId))
+        .paginate(opts);
+    } else {
+      let lastErr: unknown;
+      for (const index of USER_INDEXES) {
+        try {
+          result = await ctx.db
+            .query(args.table as any)
+            .withIndex(index as any, (q: any) => q.eq('userId', args.userId))
+            .paginate(opts);
+          break;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      if (!result) throw lastErr;
+    }
+    return {
+      page: result.page.map((row: any) => redactExportRow(args.table, row)),
+      isDone: result.isDone,
+      continueCursor: result.continueCursor,
+    };
+  },
+});

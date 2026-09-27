@@ -45,18 +45,28 @@ describe('tool registry', () => {
     });
   });
 
-  test('invokeTool records successful audit entries', async () => {
-    const remember = getTool('remember');
-    const listAudit = getTool('list_audit');
-    expect(remember && listAudit).toBeTruthy();
-    await withToolContext(async () => {
-      await invokeTool(
-        remember!,
-        { email: 'audit@example.test', notes: 'likes concise replies' },
-        toolContext(),
-      );
-      const audit = await invokeTool(listAudit!, { limit: 20 }, toolContext());
-      expect(audit.entries.some((entry: any) => entry.tool === 'remember')).toBe(true);
-    });
+  test('invokeTool audits a failed call as an error without its detail', async () => {
+    const update = getTool('update_tracked_thread');
+    expect(update).toBeTruthy();
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      await withToolContext(async () => {
+        await expect(invokeTool(update!, { id: 'missing_tracked' }, toolContext())).rejects.toThrow(
+          'Tracked thread not found',
+        );
+      });
+    } finally {
+      console.log = original;
+    }
+    const entries = lines
+      .filter((line) => line.startsWith('[audit] '))
+      .map((line) => JSON.parse(line.slice(8)));
+    expect(entries).toContainEqual(
+      expect.objectContaining({ tool: 'update_tracked_thread', result: 'error', detail: '[REDACTED]' }),
+    );
   });
 });

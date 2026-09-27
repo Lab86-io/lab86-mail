@@ -1,6 +1,7 @@
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
 import ExcelJS from 'exceljs';
 import pptxgen from 'pptxgenjs';
+import { truncateText } from '../shared/text';
 import { loadDeckAsset } from './deck-assets';
 import { deckExportFace, deckTextSlot, upgradeDeckModel } from './deck-versions';
 import { type AlbatrossDocumentRecord, type DeckElementV2, type DocBlock, sheetGridModel } from './model';
@@ -122,12 +123,12 @@ export function uniqueWorksheetName(name: string, used: Set<string>) {
       .trim()
       .replace(/^'+|'+$/gu, '')
       .trim() || 'Sheet';
-  const base = cleaned.slice(0, 31) || 'Sheet';
+  const base = truncateText(cleaned, 31) || 'Sheet';
   let candidate = base;
   let suffix = 2;
   while (used.has(candidate.toLocaleLowerCase('en-US'))) {
     const marker = ` (${suffix})`;
-    candidate = `${base.slice(0, 31 - marker.length)}${marker}`;
+    candidate = `${truncateText(base, 31 - marker.length)}${marker}`;
     suffix += 1;
   }
   used.add(candidate.toLocaleLowerCase('en-US'));

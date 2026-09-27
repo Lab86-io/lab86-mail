@@ -239,7 +239,10 @@ describe('waiting for an email reply', () => {
     });
     expect(work?.replyWatch).toBeUndefined();
     const live = await s.user.query(api.albatrossWork.dailyReportContext, {});
-    const context = buildAlbatrossDailyReportContextFromLive(live);
+    // The query filters out rows without a reply, which its inferred type does not show.
+    const context = buildAlbatrossDailyReportContextFromLive(
+      live as Parameters<typeof buildAlbatrossDailyReportContextFromLive>[0],
+    );
     expect(context.activeIntents[0]).toMatchObject({ id: s.workId, status: 'active' });
     expect(context.activeIntents[0].text).toContain('active again');
     expect(context.activeIntents[0].text).toContain('LLC advice arrived');
@@ -335,7 +338,7 @@ describe('waiting for an email reply', () => {
   });
 
   test('completion and release cancel watches and reject late wake attempts', async () => {
-    for (const end of ['done', 'released']) {
+    for (const end of ['done', 'released'] as const) {
       const s = await setup();
       const original = await s.record();
       const messageId = await s.message();
@@ -404,13 +407,13 @@ describe('waiting for an email reply', () => {
     ).toEqual([s.workId]);
     await expect(
       s.user.mutation(api.albatrossWorkV2.answerQuestion, {
-        questionId,
+        questionId: questionId!,
         expectedWorkId: 'different-work',
         answer: 'Jolie',
       }),
     ).rejects.toThrow(/not attached/);
     const answer = await s.user.mutation(api.albatrossWorkV2.answerQuestion, {
-      questionId,
+      questionId: questionId!,
       expectedWorkId: s.workId,
       answer: 'Jolie',
     });

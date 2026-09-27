@@ -29,8 +29,11 @@ export const VIEW_OPEN_CLIENT_DEBOUNCE_MS = 30_000;
 // failure copy.
 export const SYNC_SETTLE_CAP_MS = 20_000;
 
+/** The part of fetch the resync calls use, so a test can pass a plain function. */
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export async function postCalendarResync(
-  fetchImpl: typeof fetch,
+  fetchImpl: FetchLike,
   body: { reason: CalendarResyncClientReason; accountId?: string },
 ): Promise<CalendarResyncResult> {
   let response: Response;
@@ -108,7 +111,7 @@ export function syncSettled(states: readonly CalendarSyncStateView[], baseline: 
 }
 
 export interface CalendarResyncHost {
-  fetch: typeof fetch;
+  fetch: FetchLike;
   now: () => number;
   setTimeout: (callback: () => void, delayMs: number) => unknown;
   clearTimeout: (handle: unknown) => void;
@@ -177,6 +180,9 @@ export function useCalendarResync({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<CalendarSyncError | null>(null);
   const [responseSyncedAt, setResponseSyncedAt] = useState<number | null>(null);
+  // The baseline of a kick that hit the hold cap. A slow sync can still end
+  // well after the cap; the failure sentence then goes away (CAL-9).
+  const [timedOut, setTimedOut] = useState<SyncBaseline | null>(null);
 
   const statesRef = useRef(syncStates);
   statesRef.current = syncStates;
@@ -198,6 +204,7 @@ export function useCalendarResync({
       busyRef.current = true;
       setBusy(true);
       if (reason !== 'view_open') setError(null);
+      setTimedOut(null);
       const result = await postCalendarResync(h.fetch, { reason });
       busyRef.current = false;
       if (!mounted.current) return;
@@ -248,10 +255,24 @@ export function useCalendarResync({
     const handle = h.setTimeout(() => {
       if (kickRef.current !== kick) return;
       setKick(null);
+      setTimedOut(kick.baseline);
       setError({ kind: 'failed' });
     }, SYNC_SETTLE_CAP_MS);
     return () => h.clearTimeout(handle);
   }, [kick, h]);
+
+  // A sync time past the start of the timed-out request clears its failure.
+  const liveOldest = oldestSyncedAt(syncStates);
+  const lateSuccess =
+    timedOut !== null &&
+    liveOldest !== null &&
+    (timedOut.syncedAt === null || liveOldest > timedOut.syncedAt) &&
+    !syncStates.some((state) => state.status === 'error');
+  useEffect(() => {
+    if (!lateSuccess) return;
+    setTimedOut(null);
+    setError((current) => (current?.kind === 'failed' ? null : current));
+  }, [lateSuccess]);
 
   // A rate-limit sentence expires on its own.
   useEffect(() => {

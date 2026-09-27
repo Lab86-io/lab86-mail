@@ -21,9 +21,12 @@ export function BriefMasthead({
   bleed = true,
   frameId,
   artwork,
+  title,
 }: {
   generatedAt: number;
   timezone?: string;
+  /** Replaces "The <weekday> Brief", for the weekly review. */
+  title?: string;
   /** False when this masthead must supply its own inset outside BriefCanvas. */
   bleed?: boolean;
   /** Pins one frame, for previews and tests. Unset picks the day's frame. */
@@ -41,6 +44,7 @@ export function BriefMasthead({
       timezone={timezone}
       bleed={bleed}
       frameId={frameId}
+      title={title}
     />
   );
 }
@@ -51,12 +55,14 @@ function MastheadArtwork({
   timezone,
   bleed,
   frameId,
+  title: titleOverride,
 }: {
   art: DailyArt;
   generatedAt: number;
   timezone?: string;
   bleed: boolean;
   frameId?: string | null;
+  title?: string;
 }) {
   const candidates = useMemo(() => dailyArtCandidates(art), [art]);
   const [sourceIndex, setSourceIndex] = useState(0);
@@ -68,7 +74,7 @@ function MastheadArtwork({
   );
   const ink = useMemo(() => artInkColor(displayed?.palette), [displayed?.palette]);
   const dateline = dailyBriefDatelineAt(generatedAt, timezone);
-  const title = dailyBriefEditionTitleAt(generatedAt, timezone);
+  const title = titleOverride?.trim() || dailyBriefEditionTitleAt(generatedAt, timezone);
 
   return (
     <div

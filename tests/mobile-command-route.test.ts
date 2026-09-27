@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { createMobileCommandPost } from '../app/api/mobile/v1/commands/route';
+import { createMobileCommandPost, MAX_EXECUTION_ATTEMPTS } from '../app/api/mobile/v1/commands/route';
 
 const user = {
   userId: 'command_user',
@@ -173,5 +173,36 @@ describe('mobile command route', () => {
       errorMessage: 'The server could not complete the request.',
       errorRetryable: true,
     });
+  });
+
+  test('makes a retryable failure final after the last allowed run', async () => {
+    const deps = dependencies();
+    deps.claimCommand.mockResolvedValue({
+      claimed: true,
+      command: { _id: 'command-1', status: 'queued', attemptCount: MAX_EXECUTION_ATTEMPTS },
+    });
+    deps.executeMobileCommand.mockImplementation(async () => {
+      throw new Error('provider still down');
+    });
+
+    const payload = await (await createMobileCommandPost(deps as any)(request())).json();
+
+    expect(payload.recoverableError).toMatchObject({ code: 'SERVER_ERROR', retryable: false });
+    expect(deps.completeCommand.mock.calls[0][0]).toMatchObject({ status: 'failed', errorRetryable: false });
+  });
+
+  test('keeps a retryable failure retryable before the last run', async () => {
+    const deps = dependencies();
+    deps.claimCommand.mockResolvedValue({
+      claimed: true,
+      command: { _id: 'command-1', status: 'queued', attemptCount: MAX_EXECUTION_ATTEMPTS - 1 },
+    });
+    deps.executeMobileCommand.mockImplementation(async () => {
+      throw new Error('provider down');
+    });
+
+    const payload = await (await createMobileCommandPost(deps as any)(request())).json();
+
+    expect(payload.recoverableError.retryable).toBe(true);
   });
 });

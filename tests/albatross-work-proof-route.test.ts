@@ -23,7 +23,7 @@ function dependencies(state = 'active') {
     enforceUserRateLimit: mock(async () => ({ ok: true }) as any),
     attachProof: mock(async () => 'evidence-1'),
     workDetail: mock(async () => ({ work: { workState: state } })),
-    mailThread: mock(async () => ({ _id: 'thread-1' })),
+    mailThread: mock(async (): Promise<{ _id: string } | null> => ({ _id: 'thread-1' })),
   };
 }
 

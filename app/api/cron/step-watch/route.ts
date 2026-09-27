@@ -6,6 +6,8 @@ import { completeWorkStep } from '@/lib/albatross/step-execution';
 import { type StepVerification, stepNeedsCheck } from '@/lib/albatross/step-verification';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { isStandingOrderPaused } from '@/lib/hosted/standing-orders';
+import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,6 +26,7 @@ interface StepWatchDependencies {
   completeWorkStep: typeof completeWorkStep;
   evidenceSatisfies: typeof evidenceSatisfies;
   reportError: typeof console.error;
+  watchesPaused: (userId: string) => Promise<boolean>;
 }
 
 const defaults: StepWatchDependencies = {
@@ -33,6 +36,7 @@ const defaults: StepWatchDependencies = {
   completeWorkStep,
   evidenceSatisfies,
   reportError: console.error,
+  watchesPaused: (userId) => isStandingOrderPaused(userId, 'watches'),
 };
 
 interface WatchableStep {
@@ -44,6 +48,15 @@ interface WatchableStep {
   evidenceHint: string | null;
   done: boolean;
   verification?: StepVerification | null;
+}
+
+/** The row shape `mailCorpus.listRecentCorpusThreads` returns. */
+export interface RecentCorpusThread {
+  _id: string;
+  account: string;
+  subject?: string;
+  snippet?: string;
+  smartCategory?: { primary?: unknown; model?: unknown } | null;
 }
 
 /**
@@ -63,14 +76,16 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
     if (!userId || !workId) {
       return NextResponse.json({ ok: false, error: 'userId and workId are required.' }, { status: 400 });
     }
+    // Settings, Standing orders: paused watches read and check off nothing.
+    if (await deps.watchesPaused(userId)) return NextResponse.json({ ok: true, skipped: 'paused' });
     try {
-      const detail = await deps.convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
+      const detail = await deps.convexQuery<any>(api.albatrossWorkV2.workDetail, {
         userId,
         workId,
       });
       if (detail?.work?.replyWatch && detail.work.workState === 'waiting') {
         const replies = await checkWaitingReplies({ userId, workId }, deps);
-        await deps.convexMutation((api as any).albatrossWorkV2.completeMailWatch, {
+        await deps.convexMutation(api.albatrossWorkV2.completeMailWatch, {
           userId,
           workId,
           stillWatching: true,
@@ -83,7 +98,7 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
         (step) => stepNeedsCheck(step) && step.evidenceKind === 'mail_confirmation' && step.identity,
       );
       if (!outstanding.length) {
-        await deps.convexMutation((api as any).albatrossWorkV2.completeMailWatch, {
+        await deps.convexMutation(api.albatrossWorkV2.completeMailWatch, {
           userId,
           workId,
           stillWatching: false,
@@ -92,7 +107,7 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
       }
 
       const threads =
-        (await deps.convexQuery<any[]>((api as any).mailCorpus.listRecentCorpusThreads, {
+        (await deps.convexQuery<RecentCorpusThread[]>(api.mailCorpus.listRecentCorpusThreads, {
           userId,
           limit: WATCH_RECENT_THREADS,
         })) || [];
@@ -123,15 +138,17 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
             evidenceText: candidate.text,
           });
           if (!verdict.satisfies) continue;
-          await deps.convexMutation((api as any).albatrossWorkV2.attachProof, {
+          await deps.convexMutation(api.albatrossWorkV2.attachProof, {
             userId,
             workId,
-            claim: `${step.title}: ${verdict.reason || 'confirmed by mail'}`.slice(0, 400),
-            title: String(candidate.thread.subject || 'Mail confirmation').slice(0, 300),
-            summary: String(candidate.thread.snippet || '').slice(0, 600) || undefined,
+            claim: truncateText(`${step.title}: ${verdict.reason || 'confirmed by mail'}`, 400),
+            title: truncateText(String(candidate.thread.subject || 'Mail confirmation'), 300),
+            summary: truncateText(String(candidate.thread.snippet || ''), 600) || undefined,
             sourceKind: 'mail_thread',
-            sourceId: String(candidate.thread.providerThreadId),
-            accountId: String(candidate.thread.accountId),
+            // listRecentCorpusThreads returns the provider thread id as `_id`
+            // and the account as `account` (WRK-2).
+            sourceId: String(candidate.thread._id),
+            accountId: String(candidate.thread.account),
             stepIdentity: step.identity,
             trust: 'observed',
             settleContract: true,
@@ -143,7 +160,7 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
       }
 
       const stillWatching = outstanding.length - completedSteps > 0;
-      await deps.convexMutation((api as any).albatrossWorkV2.completeMailWatch, {
+      await deps.convexMutation(api.albatrossWorkV2.completeMailWatch, {
         userId,
         workId,
         stillWatching,

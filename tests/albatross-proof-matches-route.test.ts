@@ -38,7 +38,7 @@ describe('proof matches route', () => {
     const post = createProofMatchesPost(
       makeDeps({
         convexQuery: mock(async (_fn: any, args: any) => {
-          if (args.providerThreadId) return { llmCategory: { primary: 'noise' } };
+          if (args.providerThreadId) return { smartPrimary: 'noise' };
           return [sheetsWork];
         }) as any,
         evidenceSatisfies: evidenceGate as any,

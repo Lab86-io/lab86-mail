@@ -15,7 +15,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ planId: st
     const artifact = await convexQuery<{
       artifactHtml: string | null;
       artifactTitle: string | null;
-    }>((api as any).albatrossIntents.getPlanArtifact, { userId: user.userId, planId });
+    }>(api.albatrossIntents.getPlanArtifact, { userId: user.userId, planId });
     if (!artifact.artifactHtml) {
       return new Response('This plan has no brief yet.', {
         status: 404,
@@ -32,7 +32,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ planId: st
         // origin (in-app the same document runs sandboxed with an opaque origin,
         // where its theme-listener script is safe to run).
         'content-security-policy':
-          "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; img-src data:; frame-src https://www.google.com",
+          "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; img-src data:; frame-src https://www.google.com; frame-ancestors 'self'",
       },
     });
   } catch (err: any) {

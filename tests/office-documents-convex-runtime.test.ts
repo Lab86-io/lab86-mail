@@ -306,6 +306,46 @@ describe('binary Office working copies', () => {
     expect(await t.mutation(office.saveVersion, first)).toMatchObject({ ok: false, code: 'SESSION_INVALID' });
   });
 
+  test('a save of the unchanged bytes adds no revision (OFF-1)', async () => {
+    const t = convexTest(schema, modules);
+    const store = (text: string) => t.run((ctx) => ctx.storage.store(new Blob([text])));
+    await t.mutation(office.create, {
+      ...auth,
+      documentId: 'same',
+      title: 'Same.docx',
+      extension: 'docx',
+      storageId: await store('original'),
+      size: 8,
+      sha256: 'original',
+    });
+    await t.mutation(office.startSession, {
+      ...auth,
+      documentId: 'same',
+      sessionId: 'fresh',
+      key: 'fresh',
+      expectedRevision: 1,
+    });
+    const echo = await store('original');
+    expect(
+      await t.mutation(office.saveVersion, {
+        ...auth,
+        documentId: 'same',
+        sessionId: 'fresh',
+        key: 'fresh',
+        expectedRevision: 1,
+        storageId: echo,
+        size: 8,
+        sha256: 'original',
+        saveRequestId: 'save-1',
+      }),
+    ).toMatchObject({ ok: true, revision: 1 });
+    const document = await t.query(office.get, { ...auth, documentId: 'same' });
+    expect(document.currentRevision).toBe(1);
+    expect(document.versions).toHaveLength(1);
+    expect(document.lastWopiSave).toEqual({ id: 'save-1', revision: 1 });
+    expect(await t.run((ctx) => ctx.db.system.get(echo))).toBeNull();
+  });
+
   test('retains ambiguous A to B to A content as recovery instead of falsely acknowledging a revert', async () => {
     const t = convexTest(schema, modules);
     const store = (text: string) => t.run((ctx) => ctx.storage.store(new Blob([text])));

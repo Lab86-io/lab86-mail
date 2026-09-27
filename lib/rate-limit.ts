@@ -21,7 +21,7 @@ export class RateLimitError extends Error {
 }
 
 export async function enforceUserRateLimit(options: UserRateLimitOptions) {
-  const result = await convexMutation<any>((api as any).rateLimits.consume, {
+  const result = await convexMutation<any>(api.rateLimits.consume, {
     userId: options.userId,
     key: options.key,
     limit: options.limit,

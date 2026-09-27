@@ -4,6 +4,7 @@ import { DOCUMENT_KINDS } from '@/lib/documents/model';
 import { createAndLinkGoogleDocument, findDocumentByGoogleFile } from '@/lib/documents/service';
 import { browseCloudFiles } from '@/lib/files/browse';
 import { listCloudFileConnections } from '@/lib/files/connections';
+import { truncateText } from '@/lib/shared/text';
 import { defineTool } from './registry';
 
 function requireUserId(userId: string | null | undefined) {
@@ -102,7 +103,7 @@ export const cloudFileSearch = defineTool({
               connectionId: targets[index].connectionId,
               error:
                 result.reason instanceof Error
-                  ? result.reason.message.slice(0, 500)
+                  ? truncateText(result.reason.message, 500)
                   : 'The file connection could not be searched.',
             },
           ]
@@ -128,6 +129,7 @@ export const googleFileImport = defineTool({
   description:
     'Import a Google Doc, Sheet, or Slides file returned by cloud_file_search into the revisioned Albatross editor. Existing imports are reused. This does not publish or share the file.',
   category: 'documents',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     connectionId: z.string().min(1).max(500),

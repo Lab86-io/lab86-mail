@@ -19,7 +19,7 @@ Configure `.env.local` for your development services:
 | --- | --- |
 | Convex | `NEXT_PUBLIC_CONVEX_URL` and `LAB86_CONVEX_INTERNAL_SECRET`. Set the same internal secret on the Convex deployment. |
 | Clerk | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`. Configure the Clerk `convex` JWT template and set `CLERK_JWT_ISSUER_DOMAIN` on Convex. |
-| App origin | Set `LAB86_MAIL_PUBLIC_URL=http://127.0.0.1:18838` for local callbacks. |
+| App origin | Set `LAB86_MAIL_PUBLIC_URL=http://localhost:3000` for local callbacks. |
 | Mail | Nylas credentials and webhook configuration from `.env.example`. Users connect their own provider accounts through the app. |
 | AI | At least one of `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`. The runtime prefers OpenRouter, then OpenAI, then Anthropic. |
 
@@ -35,7 +35,7 @@ bun run convex:dev
 bun run dev
 ```
 
-Open **http://127.0.0.1:18838**. The `dev` and `start` scripts set this port themselves. To use another port, invoke Next directly, for example `bun x next dev --turbopack -H 127.0.0.1 -p 18839`, and update `LAB86_MAIL_PUBLIC_URL` to match.
+Open **http://localhost:3000**. To use another port, add `-p`, for example `bun run dev -p 18839`, and update `LAB86_MAIL_PUBLIC_URL` to match. Bind to `localhost`, not `127.0.0.1`: with `127.0.0.1`, Next 16 dev cannot proxy page renders.
 
 ### UI preview
 

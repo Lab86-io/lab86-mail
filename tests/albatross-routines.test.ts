@@ -31,7 +31,7 @@ describe('Albatross routines', () => {
       { cadence: 'daily', localTime: '20:30', timezone: 'America/New_York' },
       Date.parse('2026-07-14T20:00:00Z'),
     );
-    expect(new Date(next).toISOString()).toBe('2026-07-15T00:30:00.000Z');
+    expect(new Date(next!).toISOString()).toBe('2026-07-15T00:30:00.000Z');
   });
 
   test('includes the exact scheduled minute and rejects invalid custom schedules', () => {

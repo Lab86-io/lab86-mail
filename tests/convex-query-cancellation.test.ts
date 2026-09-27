@@ -8,7 +8,7 @@ test('scoped cancellation clients retain the explicit missing configuration erro
   delete process.env.CONVEX_URL;
   try {
     await expect(
-      convexQuery(makeFunctionReference('narrative:search'), {}, new AbortController().signal),
+      convexQuery(makeFunctionReference<'query'>('narrative:search'), {}, new AbortController().signal),
     ).rejects.toThrow('Convex is not configured');
   } finally {
     for (const [i, key] of ['NEXT_PUBLIC_CONVEX_URL', 'CONVEX_URL'].entries()) {
@@ -31,8 +31,8 @@ test('narrative cancellation reaches the scoped Convex fetch without sharing sig
       process.env.NEXT_PUBLIC_CONVEX_URL = url;
       const controller = new AbortController();
       expect(
-        await convexQuery(
-          makeFunctionReference('narrative:search'),
+        await convexQuery<unknown>(
+          makeFunctionReference<'query'>('narrative:search'),
           { userId: 'synthetic' },
           controller.signal,
         ),
@@ -40,7 +40,7 @@ test('narrative cancellation reaches the scoped Convex fetch without sharing sig
       expect(signals.at(-1)).toBe(controller.signal);
       controller.abort();
       await expect(
-        convexQuery(makeFunctionReference('narrative:search'), {}, controller.signal),
+        convexQuery(makeFunctionReference<'query'>('narrative:search'), {}, controller.signal),
       ).rejects.toThrow();
     }
     expect(signals).toHaveLength(2);

@@ -125,9 +125,12 @@ describe('the product names itself', () => {
   });
 
   test('the rail offers Today and Albatrosses as real destinations', () => {
-    const rail = read('components/shell/Rail.tsx');
-    expect(rail).toContain("view: 'today', label: 'Today'");
-    expect(rail).toContain("view: 'albatrosses', label: 'Albatrosses'");
+    // The surface list moved to lib/shell/rail-surfaces so the optional board
+    // can join it; the rail renders that list.
+    expect(read('components/shell/Rail.tsx')).toContain('railSurfaces({ boardEnabled, filesEnabled })');
+    const surfaces = read('lib/shell/rail-surfaces.ts');
+    expect(surfaces).toContain("view: 'today', label: 'Today'");
+    expect(surfaces).toContain("view: 'albatrosses', label: 'Albatrosses'");
   });
 
   test('the rail badge is words, never a number', () => {
@@ -151,7 +154,13 @@ describe('Today puts responsibility above decoration', () => {
   test('the shell routes Today to the Daily Brief', () => {
     const shell = read('components/shell/AppShell.tsx');
     expect(shell).toContain('<Today />');
-    expect(read('components/report/Today.tsx')).toContain('return <DailyReport />;');
+    // Today is the Brief. The only thing above it is the quiet trial note.
+    const today = read('components/report/Today.tsx');
+    expect(today).toContain('<DailyReport />');
+    expect([...today.matchAll(/<([A-Z][A-Za-z]+)/g)].map((match) => match[1]).sort()).toEqual([
+      'DailyReport',
+      'TrialDaysLeftNote',
+    ]);
     expect(shell).not.toContain('<DailyReport />');
   });
 

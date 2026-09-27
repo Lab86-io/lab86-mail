@@ -644,7 +644,7 @@ if (process.env.ALBATROSS_DECK_EDITOR_DOM_TEST !== '1') {
       });
       expect(image.width).toBeLessThanOrEqual(60);
       expect(Math.round(image.x * 2 + image.width)).toBe(100);
-      expect(image.id).toBe(
+      expect(image.id).toBe<unknown>(
         document.querySelector('[data-selected="true"]')?.getAttribute('data-element-id'),
       );
       const line = `Artwork: ${credit}, ${client.posted[0].source}`;

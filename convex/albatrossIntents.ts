@@ -9,6 +9,8 @@ import {
   type StepProgressEntry,
 } from '../lib/albatross/step-progress';
 import { assertWorkOpen, isTerminalWork } from '../lib/albatross/work-lifecycle';
+import { appliedStepsFromApplicationArtifacts, mergeAppliedSteps } from '../lib/albatross/work-model';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -100,6 +102,8 @@ const appliedStepValidator = v.object({
   cardId: v.optional(v.string()),
   eventId: v.optional(v.string()),
   draftId: v.optional(v.string()),
+  // A document step records its created document (WRK-5).
+  documentId: v.optional(v.string()),
 });
 
 const outcomeContractValidator = v.object({
@@ -138,7 +142,7 @@ async function resolveUserId(
 
 function bounded(value: string | undefined, max: number, fallback = '') {
   if (value === undefined) return undefined;
-  return normalizeText(value, fallback).slice(0, max);
+  return truncateText(normalizeText(value, fallback), max);
 }
 
 function normalizedProofRequirement(value: string) {
@@ -151,7 +155,7 @@ function normalizedProofRequirement(value: string) {
 // Raw dumps are always preserved (epic non-negotiable #6): trim the ends and cap
 // length, but never collapse internal whitespace or line breaks the user typed.
 function preserveRaw(value: string, max = RAW_TEXT_MAX): string {
-  return value.replace(/^\s+|\s+$/g, '').slice(0, max);
+  return truncateText(value.replace(/^\s+|\s+$/g, ''), max);
 }
 
 async function requireIntent(ctx: QueryCtx | MutationCtx, intentId: Id<'albatrossIntents'>, userId: string) {
@@ -178,6 +182,19 @@ async function normalizeIntentAreaId(
   const area = await ctx.db.get(docId);
   if (!area || area.userId !== userId || area.status !== 'active') throw new Error('Area not found.');
   return String(area._id);
+}
+
+/**
+ * The legacy `areaId` string and the Work v2 `primaryAreaId` id must name the
+ * same Area. Every write goes through this one helper, so tasks never go to
+ * a different Area board than the Work page shows (WRK-18).
+ */
+async function intentAreaFields(ctx: MutationCtx, userId: string, areaId: string | undefined) {
+  const normalized = await normalizeIntentAreaId(ctx, userId, areaId);
+  return {
+    areaId: normalized,
+    primaryAreaId: normalized ? (ctx.db.normalizeId('areas', normalized) ?? undefined) : undefined,
+  };
 }
 
 export const createIntent = mutation({
@@ -230,7 +247,7 @@ export const createIntent = mutation({
                   : {}),
               }
             : {}),
-          ...(!existing.areaId ? { areaId: await normalizeIntentAreaId(ctx, userId, args.areaId) } : {}),
+          ...(!existing.areaId ? await intentAreaFields(ctx, userId, args.areaId) : {}),
           areaAutoAssigned: undefined,
           conversationId: existing.conversationId || `work_${String(existing._id)}`,
           ...(!args.replaceRawText ? { workState: existing.workState || ('active' as const) } : {}),
@@ -242,7 +259,7 @@ export const createIntent = mutation({
       }
     }
     const ts = now();
-    const areaId = await normalizeIntentAreaId(ctx, userId, args.areaId);
+    const areaFields = await intentAreaFields(ctx, userId, args.areaId);
     const intentId = await ctx.db.insert('albatrossIntents', {
       userId,
       externalId,
@@ -251,7 +268,7 @@ export const createIntent = mutation({
       source: args.source,
       title: bounded(args.title, 180),
       status: 'captured',
-      areaId,
+      ...areaFields,
       areaAutoAssigned: undefined,
       workState: 'active',
       agentState: 'researching',
@@ -348,6 +365,8 @@ export const updateIntent = mutation({
     priority: v.optional(v.number()),
     status: v.optional(intentStatusValidator),
     planError: v.optional(v.string()),
+    // The plan error is a timeout that a later try can pass (WRK-12).
+    planRetryable: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -358,7 +377,7 @@ export const updateIntent = mutation({
     if (args.title !== undefined) patch.title = bounded(args.title, 180);
     if (args.kind !== undefined) patch.kind = bounded(args.kind, 40);
     if (args.areaId !== undefined) {
-      patch.areaId = await normalizeIntentAreaId(ctx, userId, args.areaId);
+      Object.assign(patch, await intentAreaFields(ctx, userId, args.areaId));
       // The user picked (or explicitly cleared to Personal) — stop auto-sorting.
       patch.areaAutoAssigned = false;
     }
@@ -369,6 +388,12 @@ export const updateIntent = mutation({
     }
     if (!terminal && args.planError !== undefined)
       patch.planError = bounded(args.planError, 500) || undefined;
+    if (!terminal && patch.planError) {
+      const retries = (intent.planTimeoutRetries ?? 0) + 1;
+      const retry = args.planRetryable === true && retries <= PLAN_TIMEOUT_MAX_RETRIES;
+      patch.planRetryAt = retry ? ts + PLAN_TIMEOUT_BACKOFF_MS * 2 ** (retries - 1) : undefined;
+      if (retry) patch.planTimeoutRetries = retries;
+    }
     await ctx.db.patch(args.intentId, patch);
     await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(args.intentId));
     // Completion history (issue #87/#18): only a real transition into 'done'
@@ -384,151 +409,6 @@ export const updateIntent = mutation({
       });
     }
     return args.intentId;
-  },
-});
-
-// Intents still carrying a defaulted (Personal) area — the intent half of the
-// classifier's work queue. Internal-secret-gated: only the cron path reads it.
-export const listAutoAssigned = query({
-  args: {
-    internalSecret: v.optional(v.string()),
-    userId: v.string(),
-    limit: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
-    // Indexed on the flag itself: a flagged intent kept for retry (model
-    // outage) can never fall out of a recency window and strand.
-    const rows = await ctx.db
-      .query('albatrossIntents')
-      .withIndex('by_user_autoassigned', (q) => q.eq('userId', args.userId).eq('areaAutoAssigned', true))
-      .order('desc')
-      .take(limit + 50);
-    return rows
-      .filter((row) => row.status !== 'archived')
-      .slice(0, limit)
-      .map((row) => ({
-        intentId: String(row._id),
-        title: row.title ?? null,
-        rawText: row.rawText.slice(0, 500),
-        source: row.source,
-      }));
-  },
-});
-
-// Apply fast-model area verdicts to auto-assigned intents. A verdict with an
-// areaId re-homes the intent (candidate trust — the link records the model's
-// reasoning); without one the intent stays in Personal. Either way the
-// auto-assigned flag clears so the intent is classified exactly once. Intents
-// the user re-homed between the read and this write are left untouched.
-export const applyAreaVerdicts = mutation({
-  args: {
-    internalSecret: v.optional(v.string()),
-    userId: v.string(),
-    verdicts: v.array(
-      v.object({
-        intentId: v.id('albatrossIntents'),
-        areaId: v.optional(v.id('areas')),
-        reason: v.optional(v.string()),
-      }),
-    ),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const userId = args.userId;
-    const ts = now();
-    let assigned = 0;
-    let kept = 0;
-    let skipped = 0;
-    for (const verdict of args.verdicts.slice(0, 50)) {
-      const intent = await ctx.db.get(verdict.intentId);
-      if (!intent || intent.userId !== userId || intent.areaAutoAssigned !== true) {
-        skipped += 1;
-        continue;
-      }
-      if (!verdict.areaId) {
-        await ctx.db.patch(intent._id, { areaAutoAssigned: false, updatedAt: ts });
-        kept += 1;
-        continue;
-      }
-      const area = await ctx.db.get(verdict.areaId);
-      if (!area || area.userId !== userId || area.status !== 'active') {
-        skipped += 1;
-        continue;
-      }
-      await ctx.db.patch(intent._id, {
-        areaId: String(area._id),
-        primaryAreaId: area._id,
-        areaAutoAssigned: false,
-        updatedAt: ts,
-      });
-      const existingLink = await ctx.db
-        .query('areaArtifactLinks')
-        .withIndex('by_user_artifact', (q) =>
-          q.eq('userId', userId).eq('artifactKind', 'intent').eq('artifactId', String(intent._id)),
-        )
-        .collect();
-      if (!existingLink.some((row) => row.areaId === area._id)) {
-        await ctx.db.insert('areaArtifactLinks', {
-          userId,
-          areaId: area._id,
-          artifactKind: 'intent',
-          artifactId: String(intent._id),
-          role: 'primary',
-          status: 'candidate',
-          confidence: 0.6,
-          reason: bounded(verdict.reason, 700) || 'fast-model area classification',
-          sourceRefs: [{ kind: 'system', id: 'area-classifier', label: 'Automatic intent sorting' }],
-          confirmationRefs: [],
-          createdAt: ts,
-          updatedAt: ts,
-        });
-      }
-      assigned += 1;
-    }
-    return { assigned, kept, skipped };
-  },
-});
-
-export const answerQuestions = mutation({
-  args: {
-    ...callerArgs,
-    intentId: v.id('albatrossIntents'),
-    answers: v.array(
-      v.object({ id: v.string(), answer: v.string(), answeredOptionId: v.optional(v.string()) }),
-    ),
-  },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const intent = await requireIntent(ctx, args.intentId, userId);
-    assertWorkOpen(intent);
-    const ts = now();
-    const byId = new Map(
-      args.answers.map((entry) => [
-        entry.id,
-        { answer: preserveRaw(entry.answer, 2000), answeredOptionId: entry.answeredOptionId },
-      ]),
-    );
-    const questions = (intent.questions || []).map((question) => {
-      const entry = byId.get(question.id);
-      return entry
-        ? {
-            ...question,
-            answer: entry.answer,
-            answeredOptionId: entry.answeredOptionId,
-            answeredAt: ts,
-          }
-        : question;
-    });
-    const unanswered = questions.some((question) => !question.answer);
-    await ctx.db.patch(args.intentId, {
-      questions,
-      status: unanswered ? 'needs_answers' : intent.status === 'needs_answers' ? 'captured' : intent.status,
-      updatedAt: ts,
-    });
-    await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(args.intentId));
-    return { questions, unanswered };
   },
 });
 
@@ -640,7 +520,7 @@ export const savePlan = mutation({
       })),
       assumptions: args.assumptions.map((assumption) => bounded(assumption, 500)!).filter(Boolean),
       sourceRefs: normalizeSourceRefs(args.sourceRefs),
-      artifactHtml: args.artifactHtml ? args.artifactHtml.slice(0, ARTIFACT_HTML_MAX) : undefined,
+      artifactHtml: args.artifactHtml ? truncateText(args.artifactHtml, ARTIFACT_HTML_MAX) : undefined,
       document: args.document,
       artifactSource: args.artifactSource,
       artifactTitle: bounded(args.artifactTitle, 180),
@@ -673,8 +553,9 @@ export const savePlan = mutation({
       // The planner saw research the capture splitter never had, so its
       // shape verdict overwrites the capture guess when it offers one.
       shape: args.shape ?? intent.shape,
-      areaId:
-        args.areaId !== undefined ? await normalizeIntentAreaId(ctx, userId, args.areaId) : intent.areaId,
+      ...(args.areaId !== undefined
+        ? await intentAreaFields(ctx, userId, args.areaId)
+        : { areaId: intent.areaId }),
       priority:
         args.priority !== undefined ? Math.min(Math.max(Math.round(args.priority), 1), 3) : intent.priority,
       questions: args.questions ?? intent.questions,
@@ -684,6 +565,8 @@ export const savePlan = mutation({
       ...(carriedProgress.length ? { stepProgress: carriedProgress } : {}),
       planError: undefined,
       planAttempts: 0,
+      planRetryAt: undefined,
+      planTimeoutRetries: undefined,
       updatedAt: ts,
     });
 
@@ -699,6 +582,33 @@ export const savePlan = mutation({
 
 export const PLAN_STALE_AFTER_MS = 5 * 60_000;
 export const PLAN_MAX_ATTEMPTS = 3;
+// A timed-out generation retries after 10, 20, then 40 minutes (WRK-12).
+export const PLAN_TIMEOUT_MAX_RETRIES = 3;
+export const PLAN_TIMEOUT_BACKOFF_MS = 10 * 60_000;
+
+/** Open Work whose timed-out plan is due for another try. */
+export const planRetryCandidates = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const ts = now();
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_plan_retry', (q) => q.gt('planRetryAt', 0).lte('planRetryAt', ts))
+      .take(25);
+    return rows.map((row) => ({ intentId: row._id, userId: row.userId }));
+  },
+});
+
+/** Claim one retry. Closed or already-planned Work only loses its flag. */
+export const beginPlanRetry = internalMutation({
+  args: { intentId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const intent = await ctx.db.get(args.intentId);
+    if (!intent?.planRetryAt || intent.planRetryAt > now()) return false;
+    await ctx.db.patch(args.intentId, { planRetryAt: undefined });
+    return !isTerminalWork(intent) && Boolean(intent.planError) && intent.status !== 'planning';
+  },
+});
 
 export const stalePlanningIntents = internalQuery({
   args: {},
@@ -759,8 +669,13 @@ export const planReconcileTick = internalAction({
       return;
     }
     const stale = await ctx.runQuery(internal.albatrossIntents.stalePlanningIntents, {});
-    if (!stale.length) return;
+    const timedOut = await ctx.runQuery(internal.albatrossIntents.planRetryCandidates, {});
+    if (!stale.length && !timedOut.length) return;
     const retry: Array<{ userId: string; intentId: string }> = [];
+    for (const row of timedOut) {
+      if (await ctx.runMutation(internal.albatrossIntents.beginPlanRetry, { intentId: row.intentId }))
+        retry.push({ userId: row.userId, intentId: String(row.intentId) });
+    }
     for (const row of stale) {
       if (row.attempts >= PLAN_MAX_ATTEMPTS) {
         await ctx.runMutation(internal.albatrossIntents.failStalePlan, { intentId: row.intentId });
@@ -867,9 +782,6 @@ export const conductorTick = internalAction({
       console.error('[work-conductor cron] missing LAB86_MAIL_PUBLIC_URL or internal secret');
       return;
     }
-    // Backfill the first legacy page before relying on the workState index;
-    // the mutation schedules the remaining pages until the migration is done.
-    await ctx.runMutation(internal.albatrossWorkV2.migrateLegacyBatch, { limit: 100 });
     const candidates = await ctx.runQuery(internal.albatrossIntents.conductorCandidates, {});
     const claimed: Array<{ userId: string; workId: Id<'albatrossIntents'> }> = [];
     for (const candidate of candidates) {
@@ -920,23 +832,39 @@ export const markPlanApplied = mutation({
       throw new Error('This plan revision was replaced by a newer one.');
     }
     const ts = now();
+    // A retry after a failed step applies only the missing actions. Merge the
+    // steps an earlier attempt recorded for this plan, so the retry does not
+    // drop them (WRK-4).
+    const applications = await ctx.db
+      .query('albatrossPlanApplications')
+      .withIndex('by_user_intent', (q) => q.eq('userId', userId).eq('intentId', String(plan.intentId)))
+      .order('desc')
+      .take(50);
+    const recordedSteps = applications
+      .filter((application) => application.planId === String(plan._id) && application.status !== 'undone')
+      .reverse()
+      .map((application) => appliedStepsFromApplicationArtifacts(application.artifacts || []));
+    const appliedSteps = args.appliedSteps
+      ? mergeAppliedSteps(plan.appliedSteps, ...recordedSteps, args.appliedSteps)
+      : undefined;
     // Apply turned plan steps into real cards. Bind the document's keyed
     // checklist items to them so every checkbox is the live task record.
-    const boundDocument = args.appliedSteps?.length
-      ? bindPlanDocumentSteps(plan.document, args.appliedSteps)
+    const boundDocument = appliedSteps?.length
+      ? bindPlanDocumentSteps(plan.document, appliedSteps)
       : { document: plan.document, bound: 0 };
     await ctx.db.patch(args.planId, {
       status: 'applied',
       appliedApplicationId: bounded(args.applicationId, 180),
       ...(boundDocument.bound ? { document: boundDocument.document } : {}),
-      ...(args.appliedSteps
+      ...(appliedSteps
         ? {
-            appliedSteps: args.appliedSteps.slice(0, 60).map((step) => ({
+            appliedSteps: appliedSteps.slice(0, 60).map((step) => ({
               stepKey: step.stepKey.slice(0, 80),
               kind: step.kind.slice(0, 40),
               cardId: step.cardId ? step.cardId.slice(0, 120) : undefined,
               eventId: step.eventId ? step.eventId.slice(0, 240) : undefined,
               draftId: step.draftId ? step.draftId.slice(0, 240) : undefined,
+              documentId: step.documentId ? step.documentId.slice(0, 240) : undefined,
             })),
           }
         : {}),

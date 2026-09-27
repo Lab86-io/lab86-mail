@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { SearchClause } from '../lib/mail/search/ast';
 import {
   type CorpusMessageDocument,
   compileAstToLocalCorpusQuery,
@@ -52,5 +53,28 @@ describe('typed search against the local mail corpus', () => {
     expect(filterCorpusMessagesByAst(messages, parseMailSearchQuery('in:all'))).toEqual([message]);
     expect(filterCorpusMessagesByAst(messages, parseMailSearchQuery('in:spam'))).toEqual([spam]);
     expect(filterCorpusMessagesByAst(messages, parseMailSearchQuery('in:trash'))).toEqual([trash]);
+  });
+
+  test('a custom folder matches its label by folded name', () => {
+    const receipt = { ...message, labels: ['INBOX', 'Label_Receipts 2026'] };
+    const messages = [message, receipt];
+    expect(filterCorpusMessagesByAst(messages, parseMailSearchQuery('label:label_receipts-2026'))).toEqual([
+      receipt,
+    ]);
+    expect(filterCorpusMessagesByAst(messages, parseMailSearchQuery('-in:Label_Receipts_2026'))).toEqual([
+      message,
+    ]);
+  });
+
+  test('a clause type the local tier does not know is reported as dropped', () => {
+    const unknown = { type: 'size', value: '10M' } as unknown as SearchClause;
+    const plan = compileAstToLocalCorpusQuery({
+      kind: 'mail-search',
+      clauses: [{ type: 'text', value: 'railway' }, unknown],
+    });
+    expect(plan.query).toBe('railway');
+    expect(plan.dropped).toEqual([
+      { clause: unknown, reason: 'local search does not understand this clause' },
+    ]);
   });
 });

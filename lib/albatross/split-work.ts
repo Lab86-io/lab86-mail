@@ -5,6 +5,7 @@ import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { WORK_SHAPE_GUIDE, WORK_SHAPES } from '@/lib/albatross/work-shape';
 import { preserveCaptureText } from '@/lib/albatross/work-v2';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 
 /**
  * Split one existing Work into independent sibling Works. A blob like "book a
@@ -108,7 +109,7 @@ export async function proposeWorkSplit(
   dependencies: Partial<SplitWorkDependencies> = {},
 ): Promise<{ workTitle: string; items: SplitWorkChild[] }> {
   const deps = { ...defaultDependencies, ...dependencies };
-  const detail = await deps.query<any>((api as any).albatrossWorkV2.workDetail, {
+  const detail = await deps.query<any>(api.albatrossWorkV2.workDetail, {
     userId: input.userId,
     workId: input.workId,
   });
@@ -127,10 +128,10 @@ export async function proposeWorkSplit(
     system: SPLIT_WORK_SYSTEM,
     prompt: JSON.stringify(
       {
-        title: workTitle.slice(0, 300),
-        rawText: String(detail.work.rawText || '').slice(0, 8_000),
+        title: truncateText(workTitle, 300),
+        rawText: truncateText(String(detail.work.rawText || ''), 8_000),
         planSteps: planSteps.slice(0, 24),
-        focus: input.focus?.slice(0, 300) || undefined,
+        focus: truncateText(input.focus, 300) || undefined,
       },
       null,
       2,
@@ -157,9 +158,7 @@ export async function commitWorkSplit(
   const deps = { ...defaultDependencies, ...dependencies };
   const items = input.items
     .map((item) => ({
-      title: String(item.title || '')
-        .trim()
-        .slice(0, 180),
+      title: truncateText(String(item.title || '').trim(), 180),
       rawText: preserveCaptureText(String(item.rawText || '')),
       shape: item.shape,
     }))
@@ -167,7 +166,7 @@ export async function commitWorkSplit(
   if (items.length < 2 || items.length > 6) {
     throw new Error('A split needs between 2 and 6 Works.');
   }
-  const detail = await deps.query<any>((api as any).albatrossWorkV2.workDetail, {
+  const detail = await deps.query<any>(api.albatrossWorkV2.workDetail, {
     userId: input.userId,
     workId: input.workId,
   });
@@ -182,7 +181,7 @@ export async function commitWorkSplit(
   for (const item of items) {
     const externalId = uniqueExternalId(`split:${input.workId}:${contentSlug(item.title)}`, taken);
     taken.add(externalId);
-    const upserted = await deps.mutate<any>((api as any).albatrossIntents.createIntent, {
+    const upserted = await deps.mutate<any>(api.albatrossIntents.createIntent, {
       userId: input.userId,
       externalId,
       rawText: item.rawText,
@@ -201,10 +200,10 @@ export async function commitWorkSplit(
   // failure after this point never loses work.
   const titles = items.map((item) => item.title);
   await deps
-    .mutate((api as any).albatrossWorkV2.attachProof, {
+    .mutate(api.albatrossWorkV2.attachProof, {
       userId: input.userId,
       workId: input.workId,
-      claim: `Split into ${workIds.length} Works: ${titles.join('; ')}`.slice(0, 900),
+      claim: truncateText(`Split into ${workIds.length} Works: ${titles.join('; ')}`, 900),
       title: 'Split this work',
       sourceKind: 'manual',
       sourceId: `split:${input.workId}`,
@@ -217,10 +216,10 @@ export async function commitWorkSplit(
       console.error('[split-work] provenance evidence failed', input.workId, error);
       return undefined;
     });
-  await deps.mutate((api as any).albatrossWorkV2.releaseWork, {
+  await deps.mutate(api.albatrossWorkV2.releaseWork, {
     userId: input.userId,
     workId: input.workId,
-    reason: `Split into: ${titles.join('; ')}`.slice(0, 400),
+    reason: truncateText(`Split into: ${titles.join('; ')}`, 400),
     proposedBy: 'user',
   });
 

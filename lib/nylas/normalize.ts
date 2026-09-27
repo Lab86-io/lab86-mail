@@ -56,7 +56,8 @@ export function normalizeNylasMessage(message: NylasMessage, account: string): M
   for (const header of message.headers || []) headers[header.name.toLowerCase()] = header.value;
   return {
     _id: message.id,
-    threadId: message.threadId || message.id,
+    // Webhook payloads are snake_case; SDK responses are camelCase.
+    threadId: message.threadId || (message as any).thread_id || message.id,
     account,
     subject: message.subject || '(no subject)',
     from: formatEmailList(message.from || []),
@@ -72,6 +73,7 @@ export function normalizeNylasMessage(message: NylasMessage, account: string): M
     htmlBody: body,
     labels: message.folders || [],
     unread: Boolean((message as any).unread),
+    starred: Boolean((message as any).starred),
     attachments: (message.attachments || []).map(normalizeNylasAttachment),
     headers,
     cachedAt: Date.now(),

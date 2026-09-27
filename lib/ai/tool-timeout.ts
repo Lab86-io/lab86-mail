@@ -13,10 +13,8 @@ export function agentToolTimeoutMs(name: string, args: Record<string, unknown> =
   if (
     name === 'presentation_plan' ||
     name === 'albatross_replan_work' ||
-    name === 'document_suggest_changes' ||
-    name === 'document_apply_instruction' ||
     name === 'document_review_slides' ||
-    (name === 'document_create' && (args.instructions || args.presentation))
+    (name === 'document_create' && args.instructions)
   )
     return GENERATION_TIMEOUT_MS;
   return DEFAULT_TIMEOUT_MS;

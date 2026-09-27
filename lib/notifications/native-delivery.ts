@@ -1,4 +1,5 @@
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import { APNsDeliveryError, sendAPNsPush } from './apns';
 import type { NotificationEnvelope } from './delivery';
 import { nativePushDisabledReason } from './mobile-preferences';
@@ -53,7 +54,7 @@ export async function dispatchNativeNotification(
   options: NativeDeliveryOptions = {},
 ) {
   const context = await dependencies.query<NativeDeliveryContext | null>(
-    (api as any).albatrossNotifications.nativeDeliveryContext,
+    api.albatrossNotifications.nativeDeliveryContext,
     { userId, notificationId },
   );
   if (!context?.notification) return { sent: 0, failed: 0, skipped: 'not_found' as const };
@@ -75,7 +76,7 @@ export async function dispatchNativeNotification(
     const delivered = (context.nativeDeviceDeliveries || []).some(
       (delivery) => delivery.status === 'delivered',
     );
-    await dependencies.mutate((api as any).albatrossNotifications.recordDelivery, {
+    await dependencies.mutate(api.albatrossNotifications.recordDelivery, {
       userId,
       notificationId,
       channel: 'native_push',
@@ -106,7 +107,7 @@ export async function dispatchNativeNotification(
     error?: string,
   ) => {
     try {
-      await dependencies.mutate((api as any).albatrossNotifications.recordNativeDeviceDelivery, {
+      await dependencies.mutate(api.albatrossNotifications.recordNativeDeviceDelivery, {
         userId,
         notificationId,
         token,
@@ -143,13 +144,13 @@ export async function dispatchNativeNotification(
     }
   }
   const status = sent > 0 && unresolvedErrors.length === 0 ? 'sent' : 'failed';
-  await dependencies.mutate((api as any).albatrossNotifications.recordDelivery, {
+  await dependencies.mutate(api.albatrossNotifications.recordDelivery, {
     userId,
     notificationId,
     channel: 'native_push',
     status,
     providerId: providerIds.join(',').slice(0, 500) || undefined,
-    error: status === 'sent' ? undefined : deliveryErrors.join('; ').slice(0, 500),
+    error: status === 'sent' ? undefined : truncateText(deliveryErrors.join('; '), 500),
   });
   return { sent, failed };
 }

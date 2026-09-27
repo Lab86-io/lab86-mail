@@ -36,7 +36,7 @@ export function createMobilePreferencesHandlers(deps: MobilePreferencesDependenc
   async function post() {
     try {
       const user = await deps.requireCurrentUser();
-      const preferences = await deps.convexQuery((api as any).albatrossNotifications.mobilePreferences, {
+      const preferences = await deps.convexQuery(api.albatrossNotifications.mobilePreferences, {
         userId: user.userId,
       });
       return Response.json({ ok: true, preferences });
@@ -57,7 +57,7 @@ export function createMobilePreferencesHandlers(deps: MobilePreferencesDependenc
           { status: 400 },
         );
       }
-      await deps.convexMutation((api as any).albatrossNotifications.saveMobilePreferences, {
+      await deps.convexMutation(api.albatrossNotifications.saveMobilePreferences, {
         userId: user.userId,
         nativePushEnabled: body.nativePushEnabled,
         newMailPushEnabled: body.newMailPushEnabled,

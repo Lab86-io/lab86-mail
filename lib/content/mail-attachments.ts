@@ -18,7 +18,7 @@ export async function syncMailAttachments(userId: string, files: any[], deps = d
     version: contentVersion([file.messageId, file.attachmentId, file.filename, file.size]),
   }));
   if (!candidates.length) return;
-  const versions = await deps.convexQuery<Record<string, string | null>>((api as any).content.versions, {
+  const versions = await deps.convexQuery<Record<string, string | null>>(api.content.versions, {
     userId,
     keys: candidates.map(({ file, id }) => `attachment:${file.connectionId}:${id}`),
   });
@@ -60,7 +60,7 @@ export async function syncMailAttachments(userId: string, files: any[], deps = d
         if (!permanent) continue;
       }
     }
-    await deps.convexMutation((api as any).content.upsert, {
+    await deps.convexMutation(api.content.upsert, {
       userId,
       items: [
         {

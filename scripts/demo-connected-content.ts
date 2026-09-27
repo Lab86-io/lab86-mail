@@ -2,10 +2,10 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject } from 'ai';
 import { getFunctionName } from 'convex/server';
+import { evaluateClassifier } from '../lib/classifier/client';
 import type { ContentItem } from '../lib/content/contract';
 import { classifyContent, embedContent } from '../lib/content/intelligence';
 import { prepareBriefWork } from '../lib/content/prepare';
-import { evaluateJev } from '../lib/jev/client';
 
 // Live providers, entirely synthetic source material. No user account reads or writes.
 const apiKey = process.env.OPENROUTER_API_KEY;
@@ -15,9 +15,9 @@ const provider = createOpenAI({ apiKey, baseURL: 'https://openrouter.ai/api/v1' 
 const output = process.env.CONTENT_DEMO_OUTPUT || '/tmp/albatross-connected-content/live';
 await mkdir(output, { recursive: true });
 const inference: any = {
-  resolveJevRuntime: async () => ({ apiKey }),
-  evaluateJev,
-  recordJevUsage: async () => {},
+  resolveClassifierRuntime: async () => ({ apiKey }),
+  evaluateClassifier,
+  recordClassifierUsage: async () => {},
 };
 const now = Date.now();
 function item(id: string, title: string, text: string): ContentItem {

@@ -84,7 +84,7 @@ export function EventDetailsDialog({ event, children, open: controlledOpen, onOp
   // Only subscribe to linked cards while the dialog is open — otherwise every
   // rendered event card on a dense calendar holds a live Convex subscription.
   const linkedCardsQuery = useConvexQuery({
-    query: (api as any).boards.liveCardsForCalendarEvent,
+    query: api.boards.liveCardsForCalendarEvent,
     args: open ? { eventId: event.id, masterEventId: event.masterEventId } : 'skip',
   });
   const linkedCards: Array<{ cardId: string; title: string; completedAt?: number }> =

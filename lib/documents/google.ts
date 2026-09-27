@@ -1,6 +1,12 @@
 import { getCloudFileAccess, listCloudFileConnections } from '@/lib/files/connections';
+import { truncateText } from '@/lib/shared/text';
 import { upgradeDeckModel } from './deck-versions';
-import { assertGoogleFileEditable, GoogleDocumentFidelityError } from './google-fidelity';
+import {
+  assertGoogleFileEditable,
+  GOOGLE_QUOTE_COLOR,
+  GOOGLE_QUOTE_INDENT_PT,
+  GoogleDocumentFidelityError,
+} from './google-fidelity';
 import { googleModelWriteLimitation } from './google-write-policy';
 import {
   type AlbatrossDocumentModel,
@@ -173,7 +179,10 @@ async function syncGoogleDoc(
         requests.push({
           updateTextStyle: {
             range: { startIndex, endIndex: segmentEndIndex - 1 },
-            textStyle: { italic: true, foregroundColor: { color: { rgbColor: hexToRgb('#52606D') } } },
+            textStyle: {
+              italic: true,
+              foregroundColor: { color: { rgbColor: hexToRgb(GOOGLE_QUOTE_COLOR) } },
+            },
             fields: 'italic,foregroundColor',
           },
         });
@@ -181,7 +190,7 @@ async function syncGoogleDoc(
           updateParagraphStyle: {
             range,
             paragraphStyle: {
-              indentStart: { magnitude: 24, unit: 'PT' },
+              indentStart: { magnitude: GOOGLE_QUOTE_INDENT_PT, unit: 'PT' },
             },
             fields: 'indentStart',
           },
@@ -636,7 +645,7 @@ export async function updateGoogleNativeFile(input: {
     await syncGoogleDoc(access.accessToken, input.fileId, model, false, input.expectedProviderVersion);
   if (model.kind === 'sheet') await syncGoogleSheet(access.accessToken, input.fileId, sheetGridModel(model)!);
   if (model.kind === 'deck') await syncGoogleDeck(access.accessToken, input.fileId, model);
-  const title = input.title.trim().slice(0, 500) || 'Untitled';
+  const title = truncateText(input.title.trim(), 500) || 'Untitled';
   await googleJson(
     access.accessToken,
     `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.fileId)}?supportsAllDrives=true&fields=id`,

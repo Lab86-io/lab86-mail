@@ -1,6 +1,7 @@
+import { truncateText } from '../../shared/text';
 import type { SearchAst, SearchClause, SearchProvider, SearchUnsupportedClause } from './ast';
 import { endOfDayMs, startOfDayMs } from './dates';
-import { foldLabel, normalizeFolder, SYSTEM_LABEL_ALIASES } from './folders';
+import { type FolderRole, foldLabel, labelsHaveRole, normalizeFolder, SYSTEM_LABEL_ALIASES } from './folders';
 
 export interface CorpusMessageDocument {
   accountId: string;
@@ -68,8 +69,8 @@ export function corpusMessagesToThreads(
         lastDate: latest.receivedAt,
         snippet:
           (order === 'relevant'
-            ? bestMatch.snippet || bestMatch.textBody?.slice(0, 1600)
-            : latest.snippet || latest.textBody?.slice(0, 240)) || '',
+            ? bestMatch.snippet || truncateText(bestMatch.textBody, 1600)
+            : latest.snippet || truncateText(latest.textBody, 240)) || '',
         searchRank: order === 'relevant' ? messages.indexOf(bestMatch) : undefined,
         labels,
         unread: threadMessages.some((message) => Boolean(message.unread) || hasLabel(message, 'UNREAD')),
@@ -151,15 +152,15 @@ function hasAnyLabel(message: CorpusMessageDocument, labels: readonly string[]) 
   return labels.some((label) => hasLabel(message, label));
 }
 
+// Folder checks go through the provider-neutral role, so iCloud and IMAP ids
+// (`v0:<uuid>:INBOX`) and role labels stored at ingest match (SEARCH-1).
 function hasSystemLabel(message: CorpusMessageDocument, folder: string) {
   const normalized = normalizeFolder(folder);
   if (normalized === 'ALL') {
-    return (
-      !hasAnyLabel(message, SYSTEM_LABEL_ALIASES.TRASH) && !hasAnyLabel(message, SYSTEM_LABEL_ALIASES.SPAM)
-    );
+    return !labelsHaveRole(message.labels, 'TRASH') && !labelsHaveRole(message.labels, 'SPAM');
   }
-  const aliases = SYSTEM_LABEL_ALIASES[normalized as keyof typeof SYSTEM_LABEL_ALIASES] || [normalized];
-  return hasAnyLabel(message, aliases);
+  if (normalized in SYSTEM_LABEL_ALIASES) return labelsHaveRole(message.labels, normalized as FolderRole);
+  return hasLabel(message, normalized);
 }
 
 function includesFolded(value: string | undefined, needle: string) {

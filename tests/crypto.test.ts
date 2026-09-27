@@ -24,6 +24,20 @@ describe('crypto helpers', () => {
       else process.env.LAB86_MAIL_ENCRYPTION_KEY = previous;
     }
   });
+  test('reads only LAB86_MAIL_ENCRYPTION_KEY, not the old tailnet variable', () => {
+    const previous = process.env.LAB86_MAIL_ENCRYPTION_KEY;
+    const previousOld = process.env.MAIL_OS_ENCRYPTION_KEY;
+    delete process.env.LAB86_MAIL_ENCRYPTION_KEY;
+    process.env.MAIL_OS_ENCRYPTION_KEY = 'old-tailnet-key';
+    try {
+      expect(() => encryptSecret('token')).toThrow(/LAB86_MAIL_ENCRYPTION_KEY is required/);
+    } finally {
+      if (previous === undefined) delete process.env.LAB86_MAIL_ENCRYPTION_KEY;
+      else process.env.LAB86_MAIL_ENCRYPTION_KEY = previous;
+      if (previousOld === undefined) delete process.env.MAIL_OS_ENCRYPTION_KEY;
+      else process.env.MAIL_OS_ENCRYPTION_KEY = previousOld;
+    }
+  });
   test('rejects invalid encrypted payloads', () => {
     const previous = process.env.LAB86_MAIL_ENCRYPTION_KEY;
     process.env.LAB86_MAIL_ENCRYPTION_KEY = 'test-passphrase-for-unit-tests';

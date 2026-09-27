@@ -6,7 +6,7 @@ import {
   type UnshapedWorkRow,
 } from '@/lib/albatross/shape-backfill';
 import { isInternalCronRequest } from '@/lib/cron-auth';
-import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { api, type ConvexCallArgs, convexMutation, convexQuery } from '@/lib/hosted/convex';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,15 +22,15 @@ export const maxDuration = 300;
 export interface ShapeBackfillDeps {
   isInternalCronRequest: (request: NextRequest) => boolean;
   listUnshaped: (input: { userId: string; limit: number }) => Promise<UnshapedWorkRow[]>;
-  applyWrite: (input: Record<string, unknown>) => Promise<unknown>;
+  applyWrite: (input: ConvexCallArgs<typeof api.albatrossWorkV2.applyShapeBackfill>) => Promise<unknown>;
   plan: typeof planShapeBackfill;
 }
 
 const defaultDeps: ShapeBackfillDeps = {
   isInternalCronRequest,
   listUnshaped: ({ userId, limit }) =>
-    convexQuery((api as any).albatrossWorkV2.unshapedWork, { userId, limit }) as Promise<UnshapedWorkRow[]>,
-  applyWrite: (input) => convexMutation((api as any).albatrossWorkV2.applyShapeBackfill, input),
+    convexQuery(api.albatrossWorkV2.unshapedWork, { userId, limit }) as Promise<UnshapedWorkRow[]>,
+  applyWrite: (input) => convexMutation(api.albatrossWorkV2.applyShapeBackfill, input),
   plan: planShapeBackfill,
 };
 

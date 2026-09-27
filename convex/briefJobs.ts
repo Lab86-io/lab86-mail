@@ -1,9 +1,10 @@
 import { v } from 'convex/values';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
-import { BRIEF_JOB_LEASE_MS } from './briefJobState';
+import { BRIEF_JOB_LEASE_MS, BRIEF_JOB_MAX_ATTEMPTS } from './briefJobState';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 
 const caller = { internalSecret: v.optional(v.string()), userId: v.string() };
@@ -30,15 +31,70 @@ async function markAreaGenerating(ctx: MutationCtx, userId: string, areaId: Id<'
     });
 }
 
+// A daily edition with content (a fallback document or the older HTML) is a
+// published edition. A retry keeps it ready and marks it `retrying`; only the
+// empty placeholder written by enqueue shows as generating.
+function hasEditionContent(doc: any) {
+  return Boolean(doc?.document || (typeof doc?.html === 'string' && doc.html));
+}
+
+async function dailyReportRow(ctx: MutationCtx, userId: string, reportId: string | undefined) {
+  if (!reportId) return null;
+  return await ctx.db
+    .query('userDocs')
+    .withIndex('by_user_kind_key', (q) =>
+      q.eq('userId', userId).eq('kind', 'dailyReport').eq('key', reportId),
+    )
+    .unique();
+}
+
+// Ends the generation state of a job's artifact: the daily edition becomes
+// ready (with whatever it holds), and an area brief leaves "generating".
+async function publishJobArtifact(ctx: MutationCtx, job: any, now: number, error?: string) {
+  if (job.kind === 'daily') {
+    const report = await dailyReportRow(ctx, job.userId, job.reportId);
+    if (report && (report.doc.status === 'partial' || report.doc.retrying || report.doc.progress)) {
+      const { progress: _progress, retrying: _retrying, ...doc } = report.doc;
+      const empty = !hasEditionContent(doc) && !doc.narrative;
+      await ctx.db.patch(report._id, {
+        doc: {
+          ...doc,
+          status: 'ready',
+          ...(empty
+            ? { narrative: 'This edition could not be written. Write a new edition to try again.' }
+            : {}),
+        },
+        updatedAt: now,
+      });
+    }
+  } else if (job.kind === 'area' && job.areaId) {
+    const brief = await ctx.db
+      .query('albatrossAreaBriefs')
+      .withIndex('by_user_area', (q) => q.eq('userId', job.userId).eq('areaId', job.areaId))
+      .unique();
+    if (brief?.status === 'generating')
+      await ctx.db.patch(
+        brief._id,
+        brief.lede
+          ? { status: 'ready', updatedAt: now }
+          : { status: 'error', error: error || 'The writer is unavailable.', updatedAt: now },
+      );
+  }
+}
+
 export const enqueue = mutation({
   args: {
     ...caller,
     kind: v.union(v.literal('daily'), v.literal('area'), v.literal('narrative')),
-    edition: v.optional(v.union(v.literal('morning'), v.literal('evening'), v.literal('manual'))),
+    edition: v.optional(v.union(v.literal('morning'), v.literal('manual'), v.literal('weekly'))),
     areaId: v.optional(v.id('areas')),
     timezone: v.optional(v.string()),
     force: v.optional(v.boolean()),
     reportId: v.optional(v.string()),
+    // A weekend edition without the know, waiting, task, and tool sections.
+    light: v.optional(v.boolean()),
+    // The first edition after the first mailbox connects (FEATURES item 4).
+    first: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -47,14 +103,26 @@ export const enqueue = mutation({
       if (!area || area.userId !== args.userId) throw new Error('Area not found');
     }
     if (args.kind === 'daily' && (!args.reportId || !args.edition)) throw new Error('Edition required');
+    // The first edition is queued once: never after any edition exists.
+    if (args.first) {
+      const existing = await ctx.db
+        .query('userDocs')
+        .withIndex('by_user_kind', (q) => q.eq('userId', args.userId).eq('kind', 'dailyReport'))
+        .first();
+      if (existing)
+        return { jobId: null, reportId: undefined, started: false, skipped: 'has_edition' as const };
+    }
     const now = Date.now();
     // A slow earlier edition must not prevent tomorrow's cron from starting.
     // Each day's active edition is coalesced independently, without expiring it.
+    // The weekly review has its own scope, so a manual edition on the same
+    // Sunday neither joins nor cancels it.
+    const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: args.timezone || 'UTC' }).format(now);
     const scope =
       args.kind === 'area'
         ? `area:${args.areaId}`
         : args.kind === 'daily'
-          ? `daily:${new Intl.DateTimeFormat('en-CA', { timeZone: args.timezone || 'UTC' }).format(now)}`
+          ? `${args.edition === 'weekly' ? 'weekly' : 'daily'}:${localDate}`
           : args.kind;
     const active = await ctx.db
       .query('briefJobs')
@@ -62,6 +130,25 @@ export const enqueue = mutation({
         q.eq('userId', args.userId).eq('scope', scope).eq('active', true),
       )
       .unique();
+    if (args.kind === 'daily') {
+      // A new day supersedes every earlier day's unfinished edition job.
+      const earlier = await ctx.db
+        .query('briefJobs')
+        .withIndex('by_user_active', (q) => q.eq('userId', args.userId).eq('active', true))
+        .collect();
+      for (const job of earlier) {
+        // Only an earlier day's job is replaced; the same day's other scope stays.
+        if (job.kind !== 'daily' || job.scope === scope || job.scope.endsWith(`:${localDate}`)) continue;
+        await ctx.db.patch(job._id, {
+          state: 'cancelled',
+          active: false,
+          token: undefined,
+          error: 'A newer day replaced this edition.',
+          completedAt: now,
+        });
+        await publishJobArtifact(ctx, job, now);
+      }
+    }
     if (active) {
       if (args.kind === 'area' && args.force && !active.force) {
         await ctx.db.patch(active._id, { force: true });
@@ -78,6 +165,8 @@ export const enqueue = mutation({
       timezone: args.timezone,
       force: args.force,
       reportId: args.reportId,
+      ...(args.light ? { light: true } : {}),
+      ...(args.first ? { first: true } : {}),
       state: 'queued',
       active: true,
       availableAt: now,
@@ -96,11 +185,12 @@ export const enqueue = mutation({
         doc: {
           _id: args.reportId,
           kind: args.edition,
+          ...(args.light ? { light: true } : {}),
           generatedAt: now,
           status: 'partial',
           progress: { stage: 'queued', done: 0, total: 1 },
           accounts: [],
-          title: 'Daily Brief',
+          title: args.edition === 'weekly' ? 'Weekly Review' : 'Daily Brief',
           narrative: '',
           sections: {},
           stats: {},
@@ -109,7 +199,7 @@ export const enqueue = mutation({
     } else if (args.kind === 'area' && args.force) {
       await markAreaGenerating(ctx, args.userId, args.areaId!);
     }
-    await ctx.scheduler.runAfter(0, (internal as any).briefJobs.deliver, { ids: [id] });
+    await ctx.scheduler.runAfter(0, internal.briefJobs.deliver, { ids: [id] });
     return { jobId: id, reportId: args.reportId, started: true };
   },
 });
@@ -131,6 +221,7 @@ export const claim = mutation({
           error: 'Area no longer active',
           completedAt: now,
         });
+        await publishJobArtifact(ctx, job, now, 'Area no longer active');
         return null;
       }
     }
@@ -159,66 +250,76 @@ export const heartbeat = mutation({
 });
 
 export const settle = mutation({
-  args: { ...owned, error: v.optional(v.string()), force: v.optional(v.boolean()) },
+  args: {
+    ...owned,
+    error: v.optional(v.string()),
+    force: v.optional(v.boolean()),
+    // The writer cannot succeed on another attempt (no plan, key, or credits).
+    terminal: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const job = await ctx.db.get(args.id);
     if (!job || job.userId !== args.userId || job.state !== 'running' || job.token !== args.token)
       return false;
+    const now = Date.now();
     // An explicit refresh arriving during an unchanged-revision check must
     // still get a newly written area edition after that check finishes.
     if (job.kind === 'area' && job.force && args.force === false && !args.error) {
-      await ctx.db.patch(job._id, { state: 'queued', token: undefined, availableAt: Date.now() });
+      await ctx.db.patch(job._id, { state: 'queued', token: undefined, availableAt: now });
       await markAreaGenerating(ctx, job.userId, job.areaId!);
-      await ctx.scheduler.runAfter(0, (internal as any).briefJobs.deliver, { ids: [job._id] });
+      await ctx.scheduler.runAfter(0, internal.briefJobs.deliver, { ids: [job._id] });
       return true;
     }
-    const retryAt = Date.now() + Math.min(300_000, 5_000 * 2 ** Math.min(job.attempts, 6));
-    await ctx.db.patch(
-      job._id,
-      args.error
-        ? {
-            state: 'queued',
-            token: undefined,
-            availableAt: retryAt,
-            error: args.error.slice(0, 300),
-          }
-        : { state: 'completed', active: false, token: undefined, completedAt: Date.now() },
-    );
-    if (args.error) {
-      if (job.kind === 'daily') {
-        const report = await ctx.db
-          .query('userDocs')
-          .withIndex('by_user_kind_key', (q) =>
-            q.eq('userId', job.userId).eq('kind', 'dailyReport').eq('key', job.reportId!),
-          )
-          .unique();
-        if (
-          report &&
-          !(
-            report.doc.status === 'ready' &&
-            report.doc.artifactStatus === 'ready' &&
-            report.doc.editorial?.mode === 'generated'
-          )
-        )
-          await ctx.db.patch(report._id, {
-            doc: {
-              ...report.doc,
-              status: 'partial',
-              progress: { stage: 'Retrying the writer', done: 0, total: 1 },
-            },
-            updatedAt: Date.now(),
-          });
-      } else if (job.kind === 'area') {
-        const brief = await ctx.db
-          .query('albatrossAreaBriefs')
-          .withIndex('by_user_area', (q) => q.eq('userId', job.userId).eq('areaId', job.areaId!))
-          .unique();
-        if (brief)
-          await ctx.db.patch(brief._id, { status: 'generating', error: undefined, updatedAt: Date.now() });
-      }
-      await ctx.scheduler.runAt(retryAt, (internal as any).briefJobs.deliver, { ids: [job._id] });
+    const final = !args.error || args.terminal === true || job.attempts >= BRIEF_JOB_MAX_ATTEMPTS;
+    if (final) {
+      // Completed, with the fallback edition published when the writer failed.
+      await ctx.db.patch(job._id, {
+        state: 'completed',
+        active: false,
+        token: undefined,
+        completedAt: now,
+        ...(args.error ? { error: truncateText(args.error, 300) } : {}),
+      });
+      await publishJobArtifact(ctx, job, now, args.error);
+      return true;
     }
+    const retryAt = now + Math.min(300_000, 5_000 * 2 ** Math.min(job.attempts, 6));
+    await ctx.db.patch(job._id, {
+      state: 'queued',
+      token: undefined,
+      availableAt: retryAt,
+      error: truncateText(args.error!, 300),
+    });
+    if (job.kind === 'daily') {
+      const report = await dailyReportRow(ctx, job.userId, job.reportId);
+      if (
+        report &&
+        !(
+          report.doc.status === 'ready' &&
+          report.doc.artifactStatus === 'ready' &&
+          report.doc.editorial?.mode === 'generated'
+        )
+      ) {
+        const { progress: _progress, ...doc } = report.doc;
+        await ctx.db.patch(report._id, {
+          doc: hasEditionContent(doc)
+            ? // The published fallback stays readable while the writer retries.
+              { ...doc, status: 'ready', retrying: true }
+            : { ...doc, status: 'partial', progress: { stage: 'Retrying the writer', done: 0, total: 1 } },
+          updatedAt: now,
+        });
+      }
+    } else if (job.kind === 'area' && job.force) {
+      // Only an explicit refresh shows "generating" while it retries; a
+      // scheduled refresh keeps the current area brief readable.
+      const brief = await ctx.db
+        .query('albatrossAreaBriefs')
+        .withIndex('by_user_area', (q) => q.eq('userId', job.userId).eq('areaId', job.areaId!))
+        .unique();
+      if (brief) await ctx.db.patch(brief._id, { status: 'generating', error: undefined, updatedAt: now });
+    }
+    await ctx.scheduler.runAt(retryAt, internal.briefJobs.deliver, { ids: [job._id] });
     return true;
   },
 });
@@ -253,7 +354,7 @@ export const deliver = internalAction({
     const url = process.env.LAB86_MAIL_PUBLIC_URL?.replace(/\/$/, '');
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     if (!url || !secret) return;
-    const targets = await ctx.runQuery((internal as any).briefJobs.targets, args);
+    const targets = await ctx.runQuery(internal.briefJobs.targets, args);
     // This short request only acknowledges a durable job; it never waits for AI.
     await fanOutInternalPost(`${url}/api/cron/brief-job`, secret, targets, { label: 'brief jobs' });
   },
@@ -261,8 +362,8 @@ export const deliver = internalAction({
 export const recover = internalAction({
   args: {},
   handler: async (ctx) => {
-    const jobs = await ctx.runQuery((internal as any).briefJobs.due, {});
+    const jobs = await ctx.runQuery(internal.briefJobs.due, {});
     if (jobs.length)
-      await ctx.runAction((internal as any).briefJobs.deliver, { ids: jobs.map((job: any) => job._id) });
+      await ctx.runAction(internal.briefJobs.deliver, { ids: jobs.map((job: any) => job._id) });
   },
 });

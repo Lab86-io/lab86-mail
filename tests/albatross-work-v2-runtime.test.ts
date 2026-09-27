@@ -53,7 +53,7 @@ async function seedAreaWork() {
 }
 
 async function seedMailThread(t: any, accountId: string, providerThreadId: string) {
-  await t.run((ctx) => {
+  await t.run((ctx: any) => {
     const ts = Date.now();
     return ctx.db.insert('mailCorpusThreads', {
       userId,

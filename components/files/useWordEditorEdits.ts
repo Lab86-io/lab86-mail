@@ -8,7 +8,7 @@ export function useWordEditorEdits(input: {
   request: OfficeFile['aiEdit'];
   session: CollaboraSession | null;
   ready: boolean;
-  save: () => Promise<string>;
+  save: () => Promise<string | null>;
   pause: () => void;
   resume: () => void;
   onError: (message: string) => void;

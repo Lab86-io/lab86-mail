@@ -8,6 +8,7 @@ import { briefSourceCoverage } from '../mail/brief-source-refresh';
 import { resolveBriefTimezone } from '../mail/brief-timezone';
 import { narrativePrompt, prepareBriefContext } from '../narrative/service';
 import { type BriefDocumentV2, type BriefRegion, parseBriefDocument } from '../shared/brief-document';
+import { truncateText } from '../shared/text';
 import { injectAreaArtifactFontContract } from './area-artifact-fonts';
 import { dailyIntentBudget, intentAppliesToScope } from './daily-intent';
 
@@ -66,7 +67,7 @@ function iso(value: unknown) {
 }
 
 function clean(value: unknown, max: number) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : null;
+  return typeof value === 'string' ? truncateText(value.trim(), max) : null;
 }
 
 /**
@@ -421,7 +422,7 @@ Rules:
 - Plain English. Sentence case. No bullet lists, no headings, no emoji, no exclamation marks, no ALL-CAPS words. Preserve relevant product names and technical terms from the sources.`;
 
 function firstString(value: unknown, max: number): string {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+  return typeof value === 'string' ? truncateText(value.trim(), max) : '';
 }
 
 // A pulse from the context alone. Used when no model is available and as the
@@ -790,22 +791,19 @@ export async function generateAreaLivingBrief(input: {
     .prepareBriefContext(input.userId)
     .catch(() => [{ source: 'source discovery', status: 'unavailable' as const }]);
   const [home, pulseContext, evidenceIndex] = await Promise.all([
-    areaLivingBriefDependencies.convexQuery<AreaHomeLike>((api as any).albatross.areaHome, {
+    areaLivingBriefDependencies.convexQuery<AreaHomeLike>(api.albatross.areaHome, {
       userId: input.userId,
       areaId: input.areaId,
     }),
-    areaLivingBriefDependencies.convexQuery<Record<string, any>>((api as any).albatrossRoutines.areaPulse, {
+    areaLivingBriefDependencies.convexQuery<Record<string, any>>(api.albatrossRoutines.areaPulse, {
       userId: input.userId,
       areaId: input.areaId,
     }),
-    areaLivingBriefDependencies.convexQuery<Record<string, any>>(
-      (api as any).albatrossEvidence.indexSummary,
-      {
-        userId: input.userId,
-        targetKind: 'area',
-        targetId: input.areaId,
-      },
-    ),
+    areaLivingBriefDependencies.convexQuery<Record<string, any>>(api.albatrossEvidence.indexSummary, {
+      userId: input.userId,
+      targetKind: 'area',
+      targetId: input.areaId,
+    }),
   ]);
   const timezone = await resolveBriefTimezone(input.userId, getAiRequestContext().userTimezone).catch(
     () => getAiRequestContext().userTimezone,
@@ -823,7 +821,7 @@ export async function generateAreaLivingBrief(input: {
 
   const areaName = String(home.area?.name || 'Area');
   const previous = fallbackAreaPulse(context);
-  await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+  await areaLivingBriefDependencies.convexMutation(api.albatrossWorkV2.saveAreaBrief, {
     briefJob: getAiRequestContext().briefJob,
     userId: input.userId,
     areaId: input.areaId,
@@ -842,7 +840,7 @@ export async function generateAreaLivingBrief(input: {
     const document = composeAreaPulseDocument(context, pulse);
     const artifactHtml = renderAreaPulseHtml(areaName, pulse);
     const lede = pulse.lastChange || pulse.nextMove || pulse.prose;
-    await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+    await areaLivingBriefDependencies.convexMutation(api.albatrossWorkV2.saveAreaBrief, {
       briefJob: getAiRequestContext().briefJob,
       userId: input.userId,
       areaId: input.areaId,
@@ -855,7 +853,7 @@ export async function generateAreaLivingBrief(input: {
       sourceRefs: [],
       basedOnRevision: revision,
     });
-    await areaLivingBriefDependencies.convexMutation((api as any).albatrossAreaPulse.saveAreaPulse, {
+    await areaLivingBriefDependencies.convexMutation(api.albatrossAreaPulse.saveAreaPulse, {
       briefJob: getAiRequestContext().briefJob,
       userId: input.userId,
       areaId: input.areaId,
@@ -873,7 +871,7 @@ export async function generateAreaLivingBrief(input: {
     };
   } catch (error) {
     await areaLivingBriefDependencies
-      .convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+      .convexMutation(api.albatrossWorkV2.saveAreaBrief, {
         briefJob: getAiRequestContext().briefJob,
         userId: input.userId,
         areaId: input.areaId,

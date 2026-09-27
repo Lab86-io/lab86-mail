@@ -29,12 +29,12 @@ const answers: any = {
 test('classification supplies trusted owner identity, validates answer types and requires confident work matching', async () => {
   const calls: any[] = [];
   const deps: any = {
-    resolveJevRuntime: async () => ({ apiKey: 'fake' }),
-    evaluateJev: async (args: any) => {
+    resolveClassifierRuntime: async () => ({ apiKey: 'fake' }),
+    evaluateClassifier: async (args: any) => {
       calls.push(args);
       return { model: 'typesafe/jev-1.13', answers };
     },
-    recordJevUsage: async () => {},
+    recordClassifierUsage: async () => {},
   };
   expect(await classifyContent('owner', item, [{ id: 'work', text: 'Launch' }], deps)).toMatchObject({
     actionable: true,
@@ -42,7 +42,7 @@ test('classification supplies trusted owner identity, validates answer types and
     workId: 'work',
   });
   expect(calls[0].state.ownerIdentities).toEqual(['Jakob']);
-  deps.evaluateJev = async () => ({
+  deps.evaluateClassifier = async () => ({
     model: 'typesafe/jev-1.13',
     answers: {
       ...answers,
@@ -54,7 +54,7 @@ test('classification supplies trusted owner identity, validates answer types and
     actionable: false,
     workId: null,
   });
-  deps.evaluateJev = async () => ({
+  deps.evaluateClassifier = async () => ({
     model: 'typesafe/jev-1.13',
     answers: { ...answers, actionable: { type: 'choice' } },
   });
@@ -64,8 +64,8 @@ test('classification supplies trusted owner identity, validates answer types and
 test('embedding parsing restores provider order, records usage and rejects malformed dimensions', async () => {
   const usage: any[] = [];
   const deps: any = {
-    resolveJevRuntime: async () => ({ apiKey: 'fake' }),
-    recordJevUsage: async (...args: any[]) => usage.push(args),
+    resolveOpenRouterUtilityRuntime: async () => ({ apiKey: 'fake' }),
+    recordClassifierUsage: async (...args: any[]) => usage.push(args),
   };
   const fetcher: any = async (_url: string, args: any) => {
     expect(JSON.parse(args.body).dimensions).toBe(1536);
@@ -86,12 +86,18 @@ test('embedding parsing restores provider order, records usage and rejects malfo
       'owner',
       ['a'],
       undefined,
-      async () => Response.json({ data: [{ index: 0, embedding: [1] }] }),
+      (async () => Response.json({ data: [{ index: 0, embedding: [1] }] })) as unknown as typeof fetch,
       deps,
     ),
   ).rejects.toThrow('Invalid');
   await expect(
-    embedContent('owner', ['a'], undefined, async () => new Response('', { status: 503 }), deps),
+    embedContent(
+      'owner',
+      ['a'],
+      undefined,
+      (async () => new Response('', { status: 503 })) as unknown as typeof fetch,
+      deps,
+    ),
   ).rejects.toThrow('unavailable');
 });
 
@@ -231,6 +237,18 @@ test('connected tools page only with advertised parameters and explicitly report
   await syncMcpContent('owner', failed.deps);
   expect(failed.writes.at(-1).status).toBe('error');
   expect(failed.closed()).toBe(1);
+});
+
+test('connected tools skip content history while the sign-in needs a reconnect (AI-7)', async () => {
+  const h = mcpHarness('slack');
+  const [row] = await h.deps.listUserConnections();
+  h.deps.listUserConnections = async () => [
+    { ...row, connectionId: 'broken', status: 'error' },
+    { ...row, connectionId: 'gone', status: 'disconnected' },
+  ];
+  await syncMcpContent('owner', h.deps);
+  expect(h.writes).toEqual([]);
+  expect(h.closed()).toBe(0);
 });
 
 test('content cycle independently commits successful classifications when embeddings fail and still prepares work', async () => {

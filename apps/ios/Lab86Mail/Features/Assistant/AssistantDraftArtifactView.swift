@@ -344,7 +344,7 @@ struct AssistantDraftArtifactContent: View {
     // and the revision waits for a decision.
     private func suggestionBanner(_ suggestion: AssistantDraftSeed) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Albatross suggested a revision", systemImage: "sparkles")
+            Label("Albatross suggested a revision", systemImage: "square.and.pencil")
                 .font(.footnote.weight(.semibold))
             Text(suggestion.subject)
                 .font(.caption.weight(.medium))

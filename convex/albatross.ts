@@ -31,6 +31,7 @@ import {
 } from '../lib/albatross/area-reindex';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
 import { isTerminalWork } from '../lib/albatross/work-lifecycle';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -38,7 +39,6 @@ import { internalAction, internalMutation, mutation, query } from './_generated/
 import {
   type AlbatrossConfirmationRef,
   type AlbatrossSourceRef,
-  type AreaArtifactLinkStatus,
   type AreaFactStatus,
   assertFactTransitionAllowed,
   assertVerifiedArtifactLinkAllowed,
@@ -80,7 +80,6 @@ const factStatusValidator = v.union(
   v.literal('superseded'),
 );
 const creatableFactStatusValidator = v.union(v.literal('candidate'), v.literal('verified'));
-const linkStatusValidator = v.union(v.literal('candidate'), v.literal('verified'), v.literal('rejected'));
 const artifactKindValidator = v.union(
   v.literal('mailThread'),
   v.literal('calendarEvent'),
@@ -89,7 +88,6 @@ const artifactKindValidator = v.union(
   v.literal('intent'),
   v.literal('manual'),
 );
-const linkRoleValidator = v.union(v.literal('primary'), v.literal('secondary'), v.literal('supporting'));
 const ARTIFACT_ID_MAX = 500;
 const ACCOUNT_ID_MAX = 120;
 
@@ -178,7 +176,7 @@ async function ensureAreaBoard(
 }
 
 function cleanOptionalUrl(value: string | undefined) {
-  const raw = normalizeText(value || '').slice(0, 800);
+  const raw = truncateText(normalizeText(value || ''), 800);
   return /^https?:\/\//i.test(raw) ? raw : undefined;
 }
 
@@ -225,14 +223,14 @@ async function upsertAreaEvidence(
     targetId: String(input.areaId),
     sourceKind: input.sourceKind,
     sourceId: input.sourceId,
-    title: input.title.slice(0, 500),
-    summary: input.summary?.slice(0, 2_000),
+    title: truncateText(input.title, 500),
+    summary: truncateText(input.summary, 2_000),
     occurredAt: input.occurredAt,
     weight: evidenceWeight(input.sourceKind, input.trust, confidence),
     confidence,
     trust: input.trust,
     dedupeKey: input.dedupeKey,
-    searchText: `${input.title} ${input.summary || ''}`.trim().slice(0, 4_000),
+    searchText: truncateText(`${input.title} ${input.summary || ''}`.trim(), 4_000),
     metadata: input.metadata,
     updatedAt: now(),
   };
@@ -263,7 +261,7 @@ async function scheduleAreaReindex(
   if (running) {
     await ctx.db.patch(running._id, {
       rerunRequestedAt: ts,
-      reason: input.reason ? normalizeText(input.reason).slice(0, 160) : running.reason,
+      reason: input.reason ? truncateText(normalizeText(input.reason), 160) : running.reason,
       updatedAt: ts,
     });
     return running._id;
@@ -274,7 +272,7 @@ async function scheduleAreaReindex(
     .first();
   if (queued) {
     await ctx.db.patch(queued._id, {
-      reason: input.reason ? normalizeText(input.reason).slice(0, 160) : queued.reason,
+      reason: input.reason ? truncateText(normalizeText(input.reason), 160) : queued.reason,
       updatedAt: ts,
     });
     return queued._id;
@@ -283,7 +281,7 @@ async function scheduleAreaReindex(
     userId,
     areaId: input.areaId ? String(input.areaId) : undefined,
     status: 'queued',
-    reason: input.reason ? normalizeText(input.reason).slice(0, 160) : undefined,
+    reason: input.reason ? truncateText(normalizeText(input.reason), 160) : undefined,
     scanned: 0,
     inserted: 0,
     matched: 0,
@@ -326,6 +324,66 @@ async function retireLegacyPersonalArea(ctx: MutationCtx, userId: string) {
   return { areaId: legacy._id, archived: !userAdopted };
 }
 
+const LEGACY_PERSONAL_LINK_BATCH = 200;
+
+/**
+ * One-time migration for the legacy `system:personal` catch-all area
+ * (WRK-7). For each user that still has one, it deletes the weak automatic
+ * links under that area in bounded batches, then retires the area the same
+ * way the reindex does: archived, or kept without its system id when the user
+ * adopted it. Idempotent: a finished user has no legacy area left, so a new
+ * run does nothing. Paginated over the areas table; each page schedules the
+ * next. Run once after deploy:
+ *   npx convex run albatross:migrateLegacyPersonalAreas '{}'
+ */
+export const migrateLegacyPersonalAreas = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    retiredAreas: v.optional(v.number()),
+    deletedLinks: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    let retiredAreas = args.retiredAreas ?? 0;
+    let deletedLinks = args.deletedLinks ?? 0;
+    const page = await ctx.db.query('areas').paginate({ cursor: args.cursor ?? null, numItems: 50 });
+    for (const area of page.page) {
+      if (area.externalId !== LEGACY_PERSONAL_AREA_EXTERNAL_ID) continue;
+      const links = await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_area', (q) => q.eq('userId', area.userId).eq('areaId', area._id))
+        .take(LEGACY_PERSONAL_LINK_BATCH);
+      let deletedHere = 0;
+      for (const link of links) {
+        if (!isWeakAutomaticAreaLink(link)) continue;
+        await ctx.db.delete(link._id);
+        deletedHere += 1;
+      }
+      deletedLinks += deletedHere;
+      if (links.length === LEGACY_PERSONAL_LINK_BATCH && deletedHere > 0) {
+        // More links may remain. Run this page again before the area loses
+        // its system id, so the next pass can still find it.
+        await ctx.scheduler.runAfter(0, internal.albatross.migrateLegacyPersonalAreas, {
+          cursor: args.cursor,
+          retiredAreas,
+          deletedLinks,
+        });
+        return { retiredAreas, deletedLinks, done: false };
+      }
+      if (await retireLegacyPersonalArea(ctx, area.userId)) retiredAreas += 1;
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.albatross.migrateLegacyPersonalAreas, {
+        cursor: page.continueCursor,
+        retiredAreas,
+        deletedLinks,
+      });
+      return { retiredAreas, deletedLinks, done: false };
+    }
+    console.log(`[legacy personal migration] retired ${retiredAreas} areas, deleted ${deletedLinks} links`);
+    return { retiredAreas, deletedLinks, done: true };
+  },
+});
+
 export const createArea = mutation({
   args: {
     ...callerArgs,
@@ -341,7 +399,7 @@ export const createArea = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const externalId = args.externalId ? normalizeText(args.externalId) : undefined;
-    const name = normalizeText(args.name, 'Untitled area').slice(0, 120);
+    const name = truncateText(normalizeText(args.name, 'Untitled area'), 120);
     const ts = now();
     // Re-creating an area the user already named (active OR archived) revives
     // the existing row instead of spawning a duplicate — and therefore reuses
@@ -357,8 +415,8 @@ export const createArea = mutation({
         status: 'active',
         archivedAt: undefined,
         ...(externalId ? { externalId } : {}),
-        ...(args.kind ? { kind: normalizeText(args.kind, 'general').slice(0, 80) } : {}),
-        ...(args.description ? { description: normalizeText(args.description).slice(0, 600) } : {}),
+        ...(args.kind ? { kind: truncateText(normalizeText(args.kind, 'general'), 80) } : {}),
+        ...(args.description ? { description: truncateText(normalizeText(args.description), 600) } : {}),
         ...(args.priority !== undefined ? { priority: args.priority } : {}),
         ...areaBrandingPatch(args),
         updatedAt: ts,
@@ -372,9 +430,9 @@ export const createArea = mutation({
       userId,
       externalId,
       name,
-      kind: normalizeText(args.kind || 'general', 'general').slice(0, 80),
+      kind: truncateText(normalizeText(args.kind || 'general', 'general'), 80),
       status: 'active',
-      description: args.description ? normalizeText(args.description).slice(0, 600) : undefined,
+      description: args.description ? truncateText(normalizeText(args.description), 600) : undefined,
       priority: args.priority,
       ...areaBrandingPatch(args),
       createdAt: ts,
@@ -472,10 +530,12 @@ export const updateArea = mutation({
     const area = await requireArea(ctx, args.areaId, userId);
     const ts = now();
     await ctx.db.patch(args.areaId, {
-      ...(args.name !== undefined ? { name: normalizeText(args.name, 'Untitled area').slice(0, 120) } : {}),
-      ...(args.kind !== undefined ? { kind: normalizeText(args.kind, 'general').slice(0, 80) } : {}),
+      ...(args.name !== undefined
+        ? { name: truncateText(normalizeText(args.name, 'Untitled area'), 120) }
+        : {}),
+      ...(args.kind !== undefined ? { kind: truncateText(normalizeText(args.kind, 'general'), 80) } : {}),
       ...(args.description !== undefined
-        ? { description: normalizeText(args.description).slice(0, 600) || undefined }
+        ? { description: truncateText(normalizeText(args.description), 600) || undefined }
         : {}),
       ...(args.priority !== undefined ? { priority: args.priority } : {}),
       ...areaBrandingPatch(args),
@@ -620,8 +680,8 @@ export const addAreaFact = mutation({
       userId,
       areaId: args.areaId,
       externalId: args.externalId ? normalizeText(args.externalId) : undefined,
-      kind: normalizeText(args.kind, 'note').slice(0, 80),
-      value: normalizeText(args.value).slice(0, 1200),
+      kind: truncateText(normalizeText(args.kind, 'note'), 80),
+      value: truncateText(normalizeText(args.value), 1200),
       status,
       sourceRefs: refs.sourceRefs,
       confirmationRefs: refs.confirmationRefs,
@@ -629,8 +689,8 @@ export const addAreaFact = mutation({
       createdAt: ts,
       updatedAt: ts,
     });
-    const factKind = normalizeText(args.kind, 'note').slice(0, 80);
-    const factValue = normalizeText(args.value).slice(0, 1200);
+    const factKind = truncateText(normalizeText(args.kind, 'note'), 80);
+    const factValue = truncateText(normalizeText(args.value), 1200);
     await upsertAreaEvidence(ctx, {
       userId,
       areaId: args.areaId,
@@ -697,7 +757,7 @@ export const rejectAreaFact = mutation({
     const ts = now();
     await ctx.db.patch(args.factId, {
       status: 'rejected',
-      rejectedReason: args.reason ? normalizeText(args.reason).slice(0, 500) : undefined,
+      rejectedReason: args.reason ? truncateText(normalizeText(args.reason), 500) : undefined,
       rejectedAt: ts,
       updatedAt: ts,
     });
@@ -751,8 +811,8 @@ export const supersedeAreaFact = mutation({
         userId,
         areaId: fact.areaId,
         externalId: args.replacement.externalId ? normalizeText(args.replacement.externalId) : undefined,
-        kind: normalizeText(args.replacement.kind || fact.kind, fact.kind).slice(0, 80),
-        value: normalizeText(args.replacement.value).slice(0, 1200),
+        kind: truncateText(normalizeText(args.replacement.kind || fact.kind, fact.kind), 80),
+        value: truncateText(normalizeText(args.replacement.value), 1200),
         status: replacementStatus,
         sourceRefs: refs.sourceRefs,
         confirmationRefs: refs.confirmationRefs,
@@ -773,25 +833,6 @@ export const supersedeAreaFact = mutation({
   },
 });
 
-export const listAreaFacts = query({
-  args: { ...callerArgs, areaId: v.id('areas'), status: v.optional(factStatusValidator) },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    await requireArea(ctx, args.areaId, userId);
-    return args.status
-      ? await ctx.db
-          .query('areaFacts')
-          .withIndex('by_user_area_status', (q) =>
-            q.eq('userId', userId).eq('areaId', args.areaId).eq('status', args.status!),
-          )
-          .collect()
-      : await ctx.db
-          .query('areaFacts')
-          .withIndex('by_area', (q) => q.eq('areaId', args.areaId))
-          .collect();
-  },
-});
-
 export const listVerifiedFacts = query({
   args: { ...callerArgs, areaId: v.optional(v.id('areas')) },
   handler: async (ctx, args) => {
@@ -809,104 +850,6 @@ export const listVerifiedFacts = query({
       .query('areaFacts')
       .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'verified'))
       .collect();
-  },
-});
-
-export const linkArtifactToArea = mutation({
-  args: {
-    ...callerArgs,
-    areaId: v.id('areas'),
-    externalId: v.optional(v.string()),
-    artifactKind: artifactKindValidator,
-    artifactId: v.string(),
-    accountId: v.optional(v.string()),
-    role: v.optional(linkRoleValidator),
-    status: v.optional(linkStatusValidator),
-    confidence: v.optional(v.number()),
-    reason: v.optional(v.string()),
-    sourceRefs: v.optional(v.array(sourceRefValidator)),
-    confirmationRefs: v.optional(v.array(confirmationRefValidator)),
-  },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    await requireArea(ctx, args.areaId, userId);
-    const refs = normalizedRefs(args);
-    const ts = now();
-    const { artifactId, accountId } = normalizedArtifactIdentity(args);
-    const status = (args.status || 'candidate') as AreaArtifactLinkStatus;
-    assertVerifiedArtifactLinkAllowed(status, refs.confirmationRefs);
-    const artifactLinks = accountId
-      ? await ctx.db
-          .query('areaArtifactLinks')
-          .withIndex('by_user_account_artifact', (q) =>
-            q
-              .eq('userId', userId)
-              .eq('accountId', accountId)
-              .eq('artifactKind', args.artifactKind)
-              .eq('artifactId', artifactId),
-          )
-          .collect()
-      : await ctx.db
-          .query('areaArtifactLinks')
-          .withIndex('by_user_artifact', (q) =>
-            q.eq('userId', userId).eq('artifactKind', args.artifactKind).eq('artifactId', artifactId),
-          )
-          .collect();
-    const existing = artifactLinks.find(
-      (link) => link.areaId === args.areaId && (link.accountId || undefined) === accountId,
-    );
-    const patch = {
-      userId,
-      areaId: args.areaId,
-      externalId: args.externalId ? normalizeText(args.externalId) : undefined,
-      artifactKind: args.artifactKind,
-      artifactId,
-      accountId,
-      role: args.role || 'primary',
-      status,
-      confidence: args.confidence,
-      reason: args.reason ? normalizeText(args.reason).slice(0, 700) : undefined,
-      sourceRefs: refs.sourceRefs,
-      confirmationRefs: refs.confirmationRefs,
-      updatedAt: ts,
-    };
-    if (existing) {
-      await ctx.db.patch(existing._id, patch);
-      await upsertAreaEvidence(ctx, {
-        userId,
-        areaId: args.areaId,
-        sourceKind: artifactEvidenceKind(args.artifactKind),
-        sourceId: artifactId,
-        title: `${args.artifactKind} filed to this Area`,
-        summary: patch.reason,
-        occurredAt: ts,
-        trust: status === 'verified' ? 'confirmed' : status === 'rejected' ? 'rejected' : 'inferred',
-        confidence: args.confidence ?? (status === 'verified' ? 1 : status === 'rejected' ? 0 : 0.65),
-        dedupeKey: `area-link:${String(args.areaId)}:${args.artifactKind}:${accountId || ''}:${artifactId}`,
-        metadata: {
-          artifactKind: args.artifactKind,
-          role: patch.role,
-          status,
-          linkId: String(existing._id),
-        },
-      });
-      return existing._id;
-    }
-    const linkId = await ctx.db.insert('areaArtifactLinks', { ...patch, createdAt: ts });
-    await upsertAreaEvidence(ctx, {
-      userId,
-      areaId: args.areaId,
-      sourceKind: artifactEvidenceKind(args.artifactKind),
-      sourceId: artifactId,
-      title: `${args.artifactKind} filed to this Area`,
-      summary: patch.reason,
-      occurredAt: ts,
-      trust: status === 'verified' ? 'confirmed' : status === 'rejected' ? 'rejected' : 'inferred',
-      confidence: args.confidence ?? (status === 'verified' ? 1 : status === 'rejected' ? 0 : 0.65),
-      dedupeKey: `area-link:${String(args.areaId)}:${args.artifactKind}:${accountId || ''}:${artifactId}`,
-      metadata: { artifactKind: args.artifactKind, role: patch.role, status, linkId: String(linkId) },
-    });
-    return linkId;
   },
 });
 
@@ -1065,58 +1008,6 @@ export const moveMailThreadsToArea = mutation({
   },
 });
 
-export const listAreaArtifactLinks = query({
-  args: { ...callerArgs, areaId: v.id('areas'), status: v.optional(linkStatusValidator) },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    await requireArea(ctx, args.areaId, userId);
-    return args.status
-      ? await ctx.db
-          .query('areaArtifactLinks')
-          .withIndex('by_user_area_status', (q) =>
-            q.eq('userId', userId).eq('areaId', args.areaId).eq('status', args.status!),
-          )
-          .collect()
-      : await ctx.db
-          .query('areaArtifactLinks')
-          .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
-          .collect();
-  },
-});
-
-export const listArtifactLinks = query({
-  args: {
-    ...callerArgs,
-    artifactKind: artifactKindValidator,
-    artifactId: v.string(),
-    accountId: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const { artifactId, accountId } = normalizedArtifactIdentity(args);
-    if (accountId) {
-      return await ctx.db
-        .query('areaArtifactLinks')
-        .withIndex('by_user_account_artifact', (q) =>
-          q
-            .eq('userId', userId)
-            .eq('accountId', accountId)
-            .eq('artifactKind', args.artifactKind)
-            .eq('artifactId', artifactId),
-        )
-        .collect();
-    }
-    return (
-      await ctx.db
-        .query('areaArtifactLinks')
-        .withIndex('by_user_artifact', (q) =>
-          q.eq('userId', userId).eq('artifactKind', args.artifactKind).eq('artifactId', artifactId),
-        )
-        .collect()
-    ).filter((link) => !link.accountId);
-  },
-});
-
 // Persist the user's answer to a discovery question. Verification requires a
 // server-minted confirmation ref from the Teach tool; rejection is retained
 // as negative evidence so the crawler does not keep proposing the same item.
@@ -1135,9 +1026,9 @@ export const setAreaArtifactLinkStatus = mutation({
     const confirmationRefs =
       args.status === 'verified' ? normalizeConfirmationRefs(args.confirmationRefs) : [];
     assertVerifiedArtifactLinkAllowed(args.status, confirmationRefs);
-    const userReason = args.reason ? normalizeText(args.reason).slice(0, 300) : '';
+    const userReason = args.reason ? truncateText(normalizeText(args.reason), 300) : '';
     const reason = userReason
-      ? `${link.reason ? `${link.reason}; ` : ''}user response: ${userReason}`.slice(0, 700)
+      ? truncateText(`${link.reason ? `${link.reason}; ` : ''}user response: ${userReason}`, 700)
       : link.reason;
     const ts = now();
     await ctx.db.patch(link._id, {
@@ -2151,16 +2042,18 @@ export const unclassifiedAreaArtifacts = query({
         accountId: row.accountId,
         source: 'calendar',
         title: row.title || '(untitled event)',
-        text: [
-          row.title,
-          row.description,
-          row.location,
-          JSON.stringify(row.participants || []),
-          JSON.stringify(row.organizer || {}),
-        ]
-          .filter(Boolean)
-          .join('\n')
-          .slice(0, 8_000),
+        text: truncateText(
+          [
+            row.title,
+            row.description,
+            row.location,
+            JSON.stringify(row.participants || []),
+            JSON.stringify(row.organizer || {}),
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          8_000,
+        ),
         occurredAt: row.startAt,
       })),
       ...cards.map((row) => ({
@@ -2168,10 +2061,12 @@ export const unclassifiedAreaArtifacts = query({
         artifactId: String(row._id),
         source: 'tasks',
         title: row.title,
-        text: [row.title, row.description, ...(row.labels || []), JSON.stringify(row.source || {})]
-          .filter(Boolean)
-          .join('\n')
-          .slice(0, 8_000),
+        text: truncateText(
+          [row.title, row.description, ...(row.labels || []), JSON.stringify(row.source || {})]
+            .filter(Boolean)
+            .join('\n'),
+          8_000,
+        ),
         occurredAt: row.updatedAt,
       })),
       ...mcp.map((row) => ({
@@ -2181,7 +2076,7 @@ export const unclassifiedAreaArtifacts = query({
         accountId: row.connectionId,
         source: row.server,
         title: row.title,
-        text: row.searchText.slice(0, 8_000),
+        text: truncateText(row.searchText, 8_000),
         occurredAt: row.updatedAtSource ?? row.updatedAt,
       })),
     ].sort((left, right) => right.occurredAt - left.occurredAt);
@@ -2340,7 +2235,7 @@ export const unclassifiedThreads = query({
         toAddress: latest?.to,
         lastDate: row.lastDate,
         snippet: row.snippet,
-        bodyText: latest?.textBody ? latest.textBody.slice(0, CLASSIFY_BODY_CHARS) : undefined,
+        bodyText: latest?.textBody ? truncateText(latest.textBody, CLASSIFY_BODY_CHARS) : undefined,
         messageId,
       });
     }
@@ -2515,7 +2410,7 @@ export const recordAreaVerdicts = mutation({
         }
         const refs = normalizedRefs(link);
         assertVerifiedArtifactLinkAllowed(link.status, refs.confirmationRefs);
-        const reason = link.reason ? normalizeText(link.reason).slice(0, 700) : undefined;
+        const reason = link.reason ? truncateText(normalizeText(link.reason), 700) : undefined;
         keptAreaIds.add(areaKey);
         if (prior) {
           await ctx.db.patch(prior._id, {
@@ -2646,7 +2541,7 @@ export const recordAreaLinks = mutation({
         role: link.role ?? 'supporting',
         status: link.status,
         confidence: link.confidence,
-        reason: link.reason ? normalizeText(link.reason).slice(0, 700) : undefined,
+        reason: link.reason ? truncateText(normalizeText(link.reason), 700) : undefined,
         sourceRefs: refs.sourceRefs,
         confirmationRefs: refs.confirmationRefs,
         createdAt: ts,
@@ -2655,20 +2550,6 @@ export const recordAreaLinks = mutation({
       inserted += 1;
     }
     return { inserted, skipped };
-  },
-});
-
-export const queueUserAreaReindex = internalMutation({
-  args: {
-    userId: v.string(),
-    reason: v.optional(v.string()),
-    delayMs: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const runId = await scheduleAreaReindex(ctx, args.userId, Math.max(0, args.delayMs ?? 0), {
-      reason: args.reason,
-    });
-    return { runId };
   },
 });
 
@@ -2879,7 +2760,7 @@ export const reindexUserAreaArtifacts = internalMutation({
             {
               kind: match.fact._id.startsWith('area-domain:') ? 'area' : 'areaFact',
               id: match.fact._id,
-              label: `${match.fact.kind}: ${match.fact.value}`.slice(0, 200),
+              label: truncateText(`${match.fact.kind}: ${match.fact.value}`, 200),
             },
           ]),
           confirmationRefs: normalizeConfirmationRefs(confirmationRefs),
@@ -2973,149 +2854,12 @@ export const reindexUserAreaArtifacts = internalMutation({
         matched: trackedRun.matched + matched,
         retired: (trackedRun.retired ?? 0) + retired,
         skipped: trackedRun.skipped + skipped,
-        error: message.slice(0, 1000),
+        error: truncateText(message, 1000),
         finishedAt: now(),
         updatedAt: now(),
       });
       return { inserted, matched, retired, skipped, scanned, done: false, error: message };
     }
-  },
-});
-
-type SeedFixture = {
-  tables?: {
-    areas?: any[];
-    areaFacts?: any[];
-    areaArtifactLinks?: any[];
-  };
-};
-
-function seedConfirmationRefs(refs: any[] | undefined): AlbatrossConfirmationRef[] {
-  return (refs || []).map((ref) => ({
-    kind: String(ref.kind || ''),
-    id: String(ref.id || ''),
-    confirmedAt:
-      typeof ref.confirmedAt === 'number'
-        ? ref.confirmedAt
-        : Date.parse(String(ref.confirmedAt || '')) || now(),
-    confirmedBy: typeof ref.confirmedBy === 'string' ? ref.confirmedBy : undefined,
-    prompt: typeof ref.prompt === 'string' ? ref.prompt : undefined,
-    sourceRefId: typeof ref.sourceRefId === 'string' ? ref.sourceRefId : undefined,
-  }));
-}
-
-export const seedContextGraphFromFixture = mutation({
-  args: { internalSecret: v.optional(v.string()), userId: v.string(), fixture: v.any() },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const fixture = args.fixture as SeedFixture;
-    const tables = fixture.tables || {};
-    const existingLinks = await ctx.db
-      .query('areaArtifactLinks')
-      .withIndex('by_user', (q) => q.eq('userId', args.userId))
-      .collect();
-    for (const link of existingLinks) await ctx.db.delete(link._id);
-    const existingFacts = await ctx.db
-      .query('areaFacts')
-      .withIndex('by_user', (q) => q.eq('userId', args.userId))
-      .collect();
-    for (const fact of existingFacts) await ctx.db.delete(fact._id);
-    const existingAreas = await ctx.db
-      .query('areas')
-      .withIndex('by_user', (q) => q.eq('userId', args.userId))
-      .collect();
-    for (const area of existingAreas) await ctx.db.delete(area._id);
-
-    const ts = now();
-    const areaIds = new Map<string, Id<'areas'>>();
-    for (const area of tables.areas || []) {
-      const id = await ctx.db.insert('areas', {
-        userId: args.userId,
-        externalId: String(area.id || ''),
-        name: normalizeText(String(area.name || ''), 'Untitled area').slice(0, 120),
-        kind: normalizeText(String(area.kind || 'general'), 'general').slice(0, 80),
-        status: area.status === 'archived' ? 'archived' : 'active',
-        description:
-          typeof area.description === 'string' ? normalizeText(area.description).slice(0, 600) : undefined,
-        priority: typeof area.priority === 'number' ? area.priority : undefined,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-      if (area.id) areaIds.set(String(area.id), id);
-    }
-
-    const factIds = new Map<string, Id<'areaFacts'>>();
-    for (const fact of tables.areaFacts || []) {
-      const areaId = areaIds.get(String(fact.areaId || ''));
-      if (!areaId) continue;
-      const status = ['verified', 'rejected', 'superseded'].includes(fact.status)
-        ? (fact.status as AreaFactStatus)
-        : 'candidate';
-      const refs = {
-        sourceRefs: normalizeSourceRefs(fact.sourceRefs || []),
-        confirmationRefs: normalizeConfirmationRefs(seedConfirmationRefs(fact.confirmationRefs)),
-      };
-      assertVerifiedFactAllowed({
-        kind: String(fact.kind || ''),
-        status,
-        confirmationRefs: refs.confirmationRefs,
-      });
-      const id = await ctx.db.insert('areaFacts', {
-        userId: args.userId,
-        areaId,
-        externalId: String(fact.id || ''),
-        kind: normalizeText(String(fact.kind || 'note'), 'note').slice(0, 80),
-        value: normalizeText(String(fact.value || '')).slice(0, 1200),
-        status,
-        sourceRefs: refs.sourceRefs,
-        confirmationRefs: refs.confirmationRefs,
-        ...verifiedFactPatch(status, refs.confirmationRefs, ts),
-        createdAt: ts,
-        updatedAt: ts,
-      });
-      if (fact.id) factIds.set(String(fact.id), id);
-    }
-
-    let linkCount = 0;
-    for (const link of tables.areaArtifactLinks || []) {
-      const areaId = areaIds.get(String(link.areaId || ''));
-      if (!areaId) continue;
-      const status = ['verified', 'rejected'].includes(link.status)
-        ? (link.status as AreaArtifactLinkStatus)
-        : 'candidate';
-      const confirmationRefs = normalizeConfirmationRefs(seedConfirmationRefs(link.confirmationRefs));
-      assertVerifiedArtifactLinkAllowed(status, confirmationRefs);
-      await ctx.db.insert('areaArtifactLinks', {
-        userId: args.userId,
-        areaId,
-        externalId: String(link.id || ''),
-        artifactKind: ['mailThread', 'calendarEvent', 'task', 'mcpItem', 'intent', 'manual'].includes(
-          link.artifactKind,
-        )
-          ? link.artifactKind
-          : 'manual',
-        artifactId: normalizeText(String(link.artifactId || '')),
-        accountId: typeof link.accountId === 'string' ? normalizeText(link.accountId) : undefined,
-        role: ['primary', 'secondary', 'supporting'].includes(link.role) ? link.role : 'supporting',
-        status,
-        confidence: typeof link.confidence === 'number' ? link.confidence : undefined,
-        reason: typeof link.reason === 'string' ? normalizeText(link.reason).slice(0, 700) : undefined,
-        sourceRefs: normalizeSourceRefs(link.sourceRefs || []),
-        confirmationRefs,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-      linkCount += 1;
-    }
-
-    return {
-      userId: args.userId,
-      counts: {
-        areas: areaIds.size,
-        areaFacts: factIds.size,
-        areaArtifactLinks: linkCount,
-      },
-    };
   },
 });
 

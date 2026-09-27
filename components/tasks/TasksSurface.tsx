@@ -16,15 +16,12 @@ import {
   GripVertical,
   LayoutList,
   Link2,
-  Mail,
   MessageSquare,
   MoreHorizontal,
   Paperclip,
-  Pencil,
   Plus,
   SquareKanban,
   Trash2,
-  UploadCloud,
   Users,
   X,
 } from 'lucide-react';
@@ -75,6 +72,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Markdown } from '@/components/ui/markdown';
 import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { taskSourceColor } from '@/lib/shared/task-colors';
@@ -82,12 +80,49 @@ import { normalizeUrl } from '@/lib/shared/url';
 import { cn } from '@/lib/utils';
 import { ProjectsLens } from './ProjectsLens';
 
-const boardsApi = (api as any).boards;
+const boardsApi = api.boards;
+
+// Board, column, and card ids reach this file as strings (routes, drag events,
+// and the HTTP fallback). They are Convex ids, and the server checks them with v.id().
+const cardRef = (id: string) => id as Id<'cards'>;
+const boardRef = (id: string) => id as Id<'boards'>;
+const columnRef = (id: string) => id as Id<'boardColumns'>;
+
+// Matches ATTACHMENT_MAX_BYTES in convex/boards.ts. The server check is the
+// real limit; this one only saves a long upload that would be refused.
+const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+
+// Uploads one file to Convex storage and has the server check it. A refused
+// file is deleted on the server and its reason is thrown here.
+async function uploadCardFile(
+  file: File,
+  target: { cardId: string } | { boardId: string },
+  generateUploadUrl: (args: any) => Promise<unknown>,
+  verifyUpload: (args: any) => Promise<any>,
+) {
+  if (file.size > ATTACHMENT_MAX_BYTES) throw new Error(`${file.name} is larger than 25 MB.`);
+  const uploadUrl = await generateUploadUrl(target);
+  const response = await fetch(uploadUrl as string, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+  });
+  if (!response.ok) throw new Error(`Upload failed (${response.status})`);
+  const { storageId } = (await response.json()) as { storageId: Id<'_storage'> };
+  const checked = await verifyUpload({ ...target, storageId, contentType: file.type || undefined });
+  if (!checked?.ok) throw new Error(checked?.error || `${file.name} cannot be attached.`);
+  return {
+    name: file.name,
+    storageId,
+    contentType: checked.contentType ?? (file.type || undefined),
+    size: checked.size ?? (file.size || undefined),
+  };
+}
 
 interface CardAttachment {
   name: string;
   url?: string;
-  storageId?: string;
+  storageId?: Id<'_storage'>;
   contentType?: string;
   size?: number;
 }
@@ -415,7 +450,7 @@ function BoardView({
   openCardRequest?: OpenCardRequest | null;
 }) {
   const headerSlot = useContext(BoardHeaderActionsSlot);
-  const boardQuery = useConvexQuery({ query: boardsApi.getBoard, args: { boardId } });
+  const boardQuery = useConvexQuery({ query: boardsApi.getBoard, args: { boardId: boardRef(boardId) } });
   const fallbackBoard = useHTTPQuery({
     queryKey: ['tasks', 'board', boardId, 'http-fallback'],
     queryFn: () => callTool<{ board: BoardPayload }>('tasks_get_board', { boardId }),
@@ -496,9 +531,12 @@ function BoardView({
     const beforeOrder = beforeId ? cardsById.get(beforeId)?.order : undefined;
     const afterOrder = afterId ? cardsById.get(afterId)?.order : undefined;
     if (previous.columnId === targetColumn && beforeId === undefined && afterId === undefined) return;
-    void moveCard({ cardId, columnId: targetColumn, beforeOrder, afterOrder }).catch((err: any) =>
-      toast.error(err?.message || 'Could not move card'),
-    );
+    void moveCard({
+      cardId: cardRef(cardId),
+      columnId: columnRef(targetColumn),
+      beforeOrder,
+      afterOrder,
+    }).catch((err: any) => toast.error(err?.message || 'Could not move card'));
   };
 
   const persistColumnOrder = (nextColumns: BoardColumnItem[]) => {
@@ -509,7 +547,7 @@ function BoardView({
     void Promise.all(
       changedColumns.map((column) =>
         updateColumn({
-          columnId: column.id,
+          columnId: columnRef(column.id),
           order: (nextColumns.findIndex((item) => item.id === column.id) + 1) * 1024,
         }),
       ),
@@ -581,7 +619,7 @@ function BoardView({
                     className="h-7 gap-1.5 px-2 text-[12px]"
                     onClick={() => setNewColumnOpen(true)}
                   >
-                    <Plus className="size-3" /> Column
+                    Add column
                   </Button>
                 ) : null}
               </>,
@@ -634,7 +672,7 @@ function BoardView({
                         onRename={() => setRenameColumn({ columnId: column.id, name: String(column.name) })}
                         onDelete={async () => {
                           try {
-                            await deleteColumn({ columnId: column.id });
+                            await deleteColumn({ columnId: columnRef(column.id) });
                           } catch (err: any) {
                             toast.error(err?.message || 'Could not delete column');
                           }
@@ -691,7 +729,7 @@ function BoardView({
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   void updateCard({
-                                    cardId: card.cardId,
+                                    cardId: cardRef(card.cardId),
                                     completedAt: done ? null : Date.now(),
                                   }).catch((err: any) =>
                                     toast.error(err?.message || 'Could not update card'),
@@ -718,7 +756,7 @@ function BoardView({
                       onClick={() => setCreateInColumn(column.id)}
                       className="mx-2 mb-2 mt-auto inline-flex h-8 items-center justify-start gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
                     >
-                      <Plus className="size-3.5" /> Add card
+                      Add card
                     </button>
                   ) : null}
                 </KanbanBoard>
@@ -762,8 +800,8 @@ function BoardView({
           onCreate={async (fields) => {
             try {
               await createCard({
-                boardId: board.boardId,
-                columnId: createInColumn,
+                boardId: boardRef(board.boardId),
+                columnId: columnRef(createInColumn),
                 source: { kind: 'manual' },
                 ...fields,
               });
@@ -782,7 +820,7 @@ function BoardView({
         onClose={() => setNewColumnOpen(false)}
         onSubmit={async (name) => {
           try {
-            await createColumn({ boardId: board.boardId, name });
+            await createColumn({ boardId: boardRef(board.boardId), name });
           } catch (err: any) {
             toast.error(err?.message || 'Could not add column');
           }
@@ -798,7 +836,7 @@ function BoardView({
         onSubmit={async (name) => {
           if (!renameColumn) return;
           try {
-            await updateColumn({ columnId: renameColumn.columnId, name });
+            await updateColumn({ columnId: columnRef(renameColumn.columnId), name });
           } catch (err: any) {
             toast.error(err?.message || 'Could not rename column');
           }
@@ -819,48 +857,56 @@ function ColumnMenu({
   cardCount: number;
   columnName: string;
 }) {
+  // The confirmation is a sibling of the menu, not inside it. It opens after
+  // the menu has closed, so the two never hold the page lock at once.
+  const [confirmDelete, setConfirmDelete] = useState(false);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
-          title="Column actions"
-        >
-          <MoreHorizontal className="size-3.5" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuItem onSelect={onRename} className="gap-2 text-[12.5px]">
-          <Pencil className="size-3.5" /> Rename
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <DropdownMenuItem
-              onSelect={(event) => event.preventDefault()}
-              className="gap-2 text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+            title="Column actions"
+          >
+            <MoreHorizontal className="size-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuItem onSelectAfterClose={onRename} className="text-[12.5px]">
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelectAfterClose={() => setConfirmDelete(true)}
+            className="text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
+          >
+            Delete column
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{columnName}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {cardCount
+                ? `Its ${cardCount} card${cardCount === 1 ? '' : 's'} will be deleted with it.`
+                : 'The column is empty.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={onDelete}
+              className="bg-[var(--color-danger)] text-white hover:bg-[var(--color-danger)]/90"
             >
-              <Trash2 className="size-3.5" /> Delete column
-            </DropdownMenuItem>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete “{columnName}”?</AlertDialogTitle>
-              <AlertDialogDescription>
-                {cardCount
-                  ? `Its ${cardCount} card${cardCount === 1 ? '' : 's'} will be deleted with it.`
-                  : 'The column is empty.'}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={onDelete}>Delete</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </DropdownMenuContent>
-    </DropdownMenu>
+              Delete column
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -909,7 +955,7 @@ function ListView({
                     disabled={!canEdit}
                     onCheckedChange={(checked) => {
                       void updateCard({
-                        cardId: card.cardId,
+                        cardId: cardRef(card.cardId),
                         completedAt: checked ? Date.now() : null,
                       }).catch((err: any) => toast.error(err?.message || 'Could not update'));
                     }}
@@ -1036,7 +1082,7 @@ function CardMetaChips({ card, hideAssignees }: { card?: BoardCard; hideAssignee
           className="inline-flex items-center gap-1 rounded bg-[var(--color-bg-muted)] px-1 py-0 text-[9.5px] font-medium text-[var(--color-text-muted)]"
           title="Created from an email"
         >
-          <Mail className="size-2.5" /> Email
+          Email
         </span>
       ) : null}
       {card.source?.eventId || card.sourceCalendarEventId ? (
@@ -1044,7 +1090,7 @@ function CardMetaChips({ card, hideAssignees }: { card?: BoardCard; hideAssignee
           className="inline-flex items-center gap-1 rounded bg-[var(--color-bg-muted)] px-1 py-0 text-[9.5px] font-medium text-[var(--color-text-muted)]"
           title="Created from a calendar event"
         >
-          <CalendarClock className="size-2.5" /> Event
+          Event
         </span>
       ) : null}
       {card.attachments?.length ? (
@@ -1233,7 +1279,6 @@ function CardAttachments({
               title="Attach a file"
               className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] disabled:opacity-60"
             >
-              <Paperclip className="size-3.5" />
               {uploading ? 'Uploading…' : 'Attach'}
             </button>
             <button
@@ -1245,7 +1290,7 @@ function CardAttachments({
                 linkOpen ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]',
               )}
             >
-              <Link2 className="size-3.5" /> Link
+              Link
             </button>
           </div>
         ) : null}
@@ -1420,8 +1465,7 @@ function CardAttachments({
 
         {!attachments.length && !linkOpen ? (
           canEdit ? (
-            <div className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border)] px-3 py-2.5 text-[12px] text-[var(--color-text-faint)]">
-              <UploadCloud className="size-3.5 shrink-0" />
+            <div className="rounded-lg border border-dashed border-[var(--color-border)] px-3 py-2.5 text-[12px] text-[var(--color-text-faint)]">
               Drag files here, or use Attach / Link above.
             </div>
           ) : (
@@ -1522,6 +1566,7 @@ function CardPanel({
   const deleteCard = useConvexMutation(boardsApi.deleteCard);
   const addComment = useConvexMutation(boardsApi.addComment);
   const generateUploadUrl = useConvexMutation(boardsApi.generateAttachmentUploadUrl);
+  const verifyUpload = useConvexMutation(boardsApi.verifyAttachmentUpload);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -1597,7 +1642,7 @@ function CardPanel({
   const save = async () => {
     try {
       await updateCard({
-        cardId: card.cardId,
+        cardId: cardRef(card.cardId),
         title: title.trim() || card.title,
         description,
         labels: labels
@@ -1618,7 +1663,7 @@ function CardPanel({
   const addAttachment = async (attachment: CardAttachment) => {
     try {
       await updateCard({
-        cardId: card.cardId,
+        cardId: cardRef(card.cardId),
         attachments: [...persistable(card.attachments || []), attachment],
       });
     } catch (err: any) {
@@ -1628,7 +1673,7 @@ function CardPanel({
 
   const removeAttachment = (index: number) => {
     void updateCard({
-      cardId: card.cardId,
+      cardId: cardRef(card.cardId),
       attachments: persistable((card.attachments || []).filter((_, i) => i !== index)),
     }).catch((err: any) => toast.error(err?.message || 'Could not remove'));
   };
@@ -1637,20 +1682,9 @@ function CardPanel({
     setUploading(true);
     try {
       for (const file of files) {
-        const uploadUrl = await generateUploadUrl({ cardId: card.cardId });
-        const response = await fetch(uploadUrl as string, {
-          method: 'POST',
-          headers: { 'Content-Type': file.type || 'application/octet-stream' },
-          body: file,
-        });
-        if (!response.ok) throw new Error(`Upload failed (${response.status})`);
-        const { storageId } = (await response.json()) as { storageId: string };
-        await addAttachment({
-          name: file.name,
-          storageId,
-          contentType: file.type || undefined,
-          size: file.size || undefined,
-        });
+        await addAttachment(
+          await uploadCardFile(file, { cardId: card.cardId }, generateUploadUrl, verifyUpload),
+        );
       }
       toast.success(files.length > 1 ? `Uploaded ${files.length} files` : `Uploaded ${files[0]?.name}`);
     } catch (err: any) {
@@ -1727,7 +1761,7 @@ function CardPanel({
                 className="h-8 px-3 text-[12px]"
                 onClick={async () => {
                   try {
-                    await updateCard({ cardId: card.cardId, completedAt: done ? null : Date.now() });
+                    await updateCard({ cardId: cardRef(card.cardId), completedAt: done ? null : Date.now() });
                   } catch (err: any) {
                     toast.error(err?.message || 'Could not update card');
                   }
@@ -1759,14 +1793,15 @@ function CardPanel({
                     <AlertDialogAction
                       onClick={async () => {
                         try {
-                          await deleteCard({ cardId: card.cardId });
+                          await deleteCard({ cardId: cardRef(card.cardId) });
                           onClose();
                         } catch (err: any) {
                           toast.error(err?.message || 'Could not delete card');
                         }
                       }}
+                      className="bg-[var(--color-danger)] text-white hover:bg-[var(--color-danger)]/90"
                     >
-                      Delete
+                      Delete card
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
@@ -1839,7 +1874,7 @@ function CardPanel({
                               onClick={openNotesEditor}
                               className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
                             >
-                              <Pencil className="size-3" /> Edit
+                              Edit
                             </button>
                           ) : null}
                         </div>
@@ -1858,7 +1893,7 @@ function CardPanel({
                             onClick={openNotesEditor}
                             className="flex w-full items-center gap-2 px-3.5 py-3 text-left text-[13px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text-muted)]"
                           >
-                            <Pencil className="size-3.5 shrink-0" /> Add details, context, or a checklist…
+                            Add details, context, or a checklist…
                           </button>
                         ) : (
                           <p className="px-3.5 py-3 text-[13px] text-[var(--color-text-faint)]">
@@ -1941,7 +1976,7 @@ function CardPanel({
                           if (!body || commentSubmitting) return;
                           setCommentSubmitting(true);
                           try {
-                            await addComment({ cardId: card.cardId, body });
+                            await addComment({ cardId: cardRef(card.cardId), body });
                             setCommentDraft('');
                             setComposingComment(false);
                           } catch (err: any) {
@@ -2139,7 +2174,7 @@ function CardPanel({
                   }}
                   className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                 >
-                  <Mail className="size-3.5 shrink-0" /> From this email — open thread
+                  From this email — open thread
                 </button>
               </div>
             ) : null}
@@ -2155,7 +2190,6 @@ function CardPanel({
                       rel="noreferrer noopener"
                       className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                     >
-                      <ExternalLink className="size-3.5 shrink-0" />
                       {card.source?.title || 'Open calendar event'}
                     </a>
                   ) : null}
@@ -2167,7 +2201,7 @@ function CardPanel({
                     }}
                     className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                   >
-                    <CalendarClock className="size-3.5 shrink-0" /> Show calendar
+                    Show calendar
                   </button>
                 </div>
               </div>
@@ -2200,6 +2234,7 @@ function CreateCardDialog({
   }) => void;
 }) {
   const generateUploadUrl = useConvexMutation(boardsApi.generateAttachmentUploadUrl);
+  const verifyUpload = useConvexMutation(boardsApi.verifyAttachmentUpload);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [labels, setLabels] = useState('');
@@ -2235,7 +2270,9 @@ function CreateCardDialog({
       setDue(r.dueAt ? toLocalInputValue(r.dueAt) : '');
       setNlText('');
       if (r.model === 'local') {
-        toast.message('Used your text as the title — enable AI in settings for date/priority parsing.');
+        toast.message(
+          'Used your text as the title. Set up a model in Settings, Intelligence, to read dates and priority.',
+        );
       }
     } catch (err: any) {
       toast.error(err?.message || 'Could not parse that');
@@ -2248,23 +2285,8 @@ function CreateCardDialog({
     setUploading(true);
     try {
       for (const file of files) {
-        const uploadUrl = await generateUploadUrl({ boardId });
-        const response = await fetch(uploadUrl as string, {
-          method: 'POST',
-          headers: { 'Content-Type': file.type || 'application/octet-stream' },
-          body: file,
-        });
-        if (!response.ok) throw new Error(`Upload failed (${response.status})`);
-        const { storageId } = (await response.json()) as { storageId: string };
-        setAttachments((prev) => [
-          ...prev,
-          {
-            name: file.name,
-            storageId,
-            contentType: file.type || undefined,
-            size: file.size || undefined,
-          },
-        ]);
+        const attachment = await uploadCardFile(file, { boardId }, generateUploadUrl, verifyUpload);
+        setAttachments((prev) => [...prev, attachment]);
       }
     } catch (err: any) {
       toast.error(err?.message || 'Upload failed');

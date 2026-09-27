@@ -9,6 +9,7 @@ import SwiftUI
 struct MacShellView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var activationRefresh = MacActivationRefresh()
 
     var body: some View {
         @Bindable var navigation = environment.navigation
@@ -42,6 +43,20 @@ struct MacShellView: View {
         .overlay {
             MacChatOverlay()
         }
+        // Edit > Undo and Command-Z take back the change the undo notice
+        // names (round 2).
+        .macUndoBridge()
+        // Files leaves the source list when Settings turns it off. The list
+        // behind a hidden row gives way to Today; an open document stays.
+        .onChange(of: environment.trust.showsFiles) { _, showsFiles in
+            if let destination = MacSourceSelection.destination(
+                afterFilesShown: showsFiles,
+                selectedTab: environment.navigation.selectedTab,
+                documentOpen: environment.navigation.documentRoute != nil
+            ) {
+                environment.navigation.selectPrimary(destination)
+            }
+        }
         .task {
             let ownerID = environment.sessionStore.ownerID
             _ = await environment.flushCommandOutbox(ownerID: ownerID)
@@ -58,9 +73,14 @@ struct MacShellView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             environment.navigation.consumeAppIntentRequests()
             Task {
+                // Mail actions saved while offline go out on return (NAT-10).
+                _ = await environment.flushCommandOutbox(ownerID: environment.sessionStore.ownerID)
                 await environment.notifications.retryPendingTextResponses()
                 await ShellNotificationActions.consumePendingMailAction(environment: environment)
                 await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
+                // The Mac process stays up for days: the Files choice, the
+                // trial note, and the source line are read again on return.
+                await activationRefresh.run(environment)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .lab86RemoteWake)) { _ in
@@ -123,12 +143,70 @@ struct MacShellView: View {
     }
 }
 
+// Which source-list row reads as selected, and what a row asks the mail
+// list for. Pure, so the rules are testable.
+enum MacSourceSelection {
+    // A primary row is selected while its tab is up. An open Area belongs to
+    // its own row, and a label view or the Snoozed mailbox belongs to its row.
+    static func isPrimarySelected(
+        _ destination: PrimaryTab,
+        selectedTab: PrimaryTab,
+        areaID: String?,
+        mailLabelID: String?,
+        mailbox: MailboxScope = .inbox
+    ) -> Bool {
+        guard selectedTab == destination else { return false }
+        switch destination {
+        case .work: return areaID == nil
+        case .mail: return mailLabelID == nil && mailbox != .snoozed
+        default: return true
+        }
+    }
+
+    static func isLabelSelected(_ labelID: String, selectedTab: PrimaryTab, mailLabelID: String?) -> Bool {
+        selectedTab == .mail && mailLabelID == labelID
+    }
+
+    static func isSnoozedSelected(selectedTab: PrimaryTab, mailbox: MailboxScope) -> Bool {
+        selectedTab == .mail && mailbox == .snoozed
+    }
+
+    // Where the detail goes when the Files switch changes (round 2, FEATURES
+    // item 17). Nil keeps the current destination. Only the Files list gives
+    // way when its row leaves; an open document stays, as a link to one does.
+    static func destination(afterFilesShown showsFiles: Bool, selectedTab: PrimaryTab, documentOpen: Bool) -> PrimaryTab? {
+        guard !showsFiles, selectedTab == .files, !documentOpen else { return nil }
+        return .today
+    }
+
+    // The Mail row goes back to Main from a label view or the Snoozed
+    // mailbox. Other rows ask the mail list for nothing.
+    static func mailCategory(
+        forPrimary destination: PrimaryTab,
+        mailLabelID: String?,
+        mailbox: MailboxScope = .inbox
+    ) -> String? {
+        destination == .mail && (mailLabelID != nil || mailbox == .snoozed) ? MailCategoryScope.main.rawValue : nil
+    }
+
+    // A label row opens Mail on that label (NAT-4).
+    static func mailCategory(forLabel label: MailLabelSummary) -> String {
+        label.rawCategory
+    }
+}
+
 // The Mac sidebar: the same destinations as the iOS wheel — product sources,
-// then the user's areas — as a conventional Mac source list.
+// the labels shown in the sidebar, then the user's areas — as a conventional
+// Mac source list.
 struct MacSourceList: View {
     @Environment(AppEnvironment.self) private var environment
+    @State private var showsNewArea = false
+    @State private var newAreaName = ""
+    @State private var isCreatingArea = false
 
-    private var primaries: [PrimaryTab] { PrimaryTab.sourceList }
+    // Files shows only while Settings, Advanced turns it on (round 2).
+    private var primaries: [PrimaryTab] { PrimaryTab.sourceList(showsFiles: environment.trust.showsFiles) }
+    private var labels: [MailLabelSummary] { environment.store.mailLabels }
     private var areas: [AreaSummary] { environment.store.areas }
 
     var body: some View {
@@ -141,6 +219,20 @@ struct MacSourceList: View {
                     sourceRow(destination)
                 }
             }
+            // Snoozed mail is archived until its time, so no other view
+            // shows it.
+            Section("Mailboxes") {
+                snoozedRow
+            }
+            // Mail that a label-move rule files leaves Main, so the label
+            // view must be reachable from here (NAT-4).
+            if !labels.isEmpty {
+                Section("Labels") {
+                    ForEach(labels) { label in
+                        labelRow(label)
+                    }
+                }
+            }
             Section("Your areas") {
                 if areas.isEmpty {
                     areaState
@@ -149,6 +241,7 @@ struct MacSourceList: View {
                         areaRow(area)
                     }
                 }
+                newAreaRow
             }
         }
         .listStyle(.sidebar)
@@ -206,10 +299,24 @@ struct MacSourceList: View {
     }
 
     private func sourceRow(_ destination: PrimaryTab) -> some View {
-        let selected = environment.navigation.selectedTab == destination
-            && (destination != .work || environment.navigation.areaRoute == nil)
+        let navigation = environment.navigation
+        let selected = MacSourceSelection.isPrimarySelected(
+            destination,
+            selectedTab: navigation.selectedTab,
+            areaID: navigation.areaRoute?.areaID,
+            mailLabelID: navigation.mailLabelID,
+            mailbox: navigation.mailbox
+        )
         return Button {
-            environment.navigation.selectPrimary(destination)
+            let category = MacSourceSelection.mailCategory(
+                forPrimary: destination,
+                mailLabelID: navigation.mailLabelID,
+                mailbox: navigation.mailbox
+            )
+            navigation.selectPrimary(destination)
+            if let category {
+                navigation.pendingMailCategory = category
+            }
         } label: {
             Label(destination.title, systemImage: destination.symbol)
                 .fontWeight(selected ? .semibold : .regular)
@@ -224,6 +331,98 @@ struct MacSourceList: View {
                 : nil
         )
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var snoozedRow: some View {
+        let navigation = environment.navigation
+        let selected = MacSourceSelection.isSnoozedSelected(
+            selectedTab: navigation.selectedTab,
+            mailbox: navigation.mailbox
+        )
+        return Button {
+            navigation.selectPrimary(.mail)
+            navigation.pendingMailbox = .snoozed
+        } label: {
+            Label(MailboxScope.snoozed.title, systemImage: MailboxScope.snoozed.symbol)
+                .fontWeight(selected ? .semibold : .regular)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(
+            selected
+                ? RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+                : nil
+        )
+        .accessibilityHint("Shows mail that comes back to the inbox later")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func labelRow(_ label: MailLabelSummary) -> some View {
+        let navigation = environment.navigation
+        let selected = MacSourceSelection.isLabelSelected(
+            label.id,
+            selectedTab: navigation.selectedTab,
+            mailLabelID: navigation.mailLabelID
+        )
+        return Button {
+            navigation.selectPrimary(.mail)
+            navigation.pendingMailCategory = MacSourceSelection.mailCategory(forLabel: label)
+        } label: {
+            Label(label.name, systemImage: selected ? "tag.fill" : "tag")
+                .fontWeight(selected ? .semibold : .regular)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(
+            selected
+                ? RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+                : nil
+        )
+        .accessibilityLabel("\(label.name) label")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    // NAT-9: an Area can be created from the source list, as on the web and
+    // the iOS sidebar. Text only, in the secondary color, under the areas.
+    private var newAreaRow: some View {
+        Button {
+            newAreaName = ""
+            showsNewArea = true
+        } label: {
+            Text(isCreatingArea ? "Creating area…" : "New Area")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(isCreatingArea)
+        .popover(isPresented: $showsNewArea, arrowEdge: .trailing) {
+            MacNewAreaPopover(
+                name: $newAreaName,
+                onCancel: { showsNewArea = false },
+                onCreate: createArea
+            )
+        }
+        .accessibilityHint("Names a new area and opens it")
+        .accessibilityIdentifier("mac-new-area")
+    }
+
+    private func createArea() {
+        guard let name = MacNewArea.cleanName(newAreaName) else { return }
+        showsNewArea = false
+        isCreatingArea = true
+        Task {
+            defer { isCreatingArea = false }
+            // A failure sets the store error, and the shell's alert shows it.
+            if let areaID = await environment.store.createArea(name: name) {
+                environment.navigation.openArea(id: areaID, name: name)
+            }
+        }
     }
 
     private func areaRow(_ area: AreaSummary) -> some View {

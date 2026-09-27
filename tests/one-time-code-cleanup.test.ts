@@ -3,8 +3,7 @@ import { consumeOneTimeCode, parseCleanupMode } from '../lib/mail/one-time-code-
 
 interface FolderCall {
   messageId: string;
-  add?: string[];
-  remove?: string[];
+  to: string;
 }
 
 function harness(options: { markUsed?: Record<string, unknown>; updateFoldersError?: Error } = {}) {
@@ -27,12 +26,12 @@ function harness(options: { markUsed?: Record<string, unknown>; updateFoldersErr
     }
     return { ok: true };
   }) as any;
-  const updateFolders = (async (args: any) => {
-    folderCalls.push({ messageId: args.messageId, add: args.add, remove: args.remove });
+  const moveMessage = (async (args: any) => {
+    folderCalls.push({ messageId: args.messageId, to: args.to });
     if (options.updateFoldersError) throw options.updateFoldersError;
     return { ok: true };
   }) as any;
-  return { mutate, updateFolders, mutations, folderCalls };
+  return { mutate, moveMessage, mutations, folderCalls };
 }
 
 describe('parseCleanupMode', () => {
@@ -51,54 +50,54 @@ describe('parseCleanupMode', () => {
 
 describe('consumeOneTimeCode', () => {
   test('marks the code used without touching the mailbox when cleanup is off', async () => {
-    const { mutate, updateFolders, folderCalls } = harness();
+    const { mutate, moveMessage, folderCalls } = harness();
     const result = await consumeOneTimeCode(
       { userId: 'user-1', codeId: 'code-1', cleanup: 'none' },
-      { mutate, updateFolders },
+      { mutate, moveMessage },
     );
     expect(result.cleanupStatus).toBe('skipped');
     expect(folderCalls).toHaveLength(0);
   });
 
   test('archives by removing the message from the inbox', async () => {
-    const { mutate, updateFolders, folderCalls } = harness();
+    const { mutate, moveMessage, folderCalls } = harness();
     const result = await consumeOneTimeCode(
       { userId: 'user-1', codeId: 'code-1', cleanup: 'archive' },
-      { mutate, updateFolders },
+      { mutate, moveMessage },
     );
     expect(result.cleanupStatus).toBe('archived');
-    expect(folderCalls).toEqual([{ messageId: 'msg-1', add: undefined, remove: ['INBOX'] }]);
+    expect(folderCalls).toEqual([{ messageId: 'msg-1', to: 'archive' }]);
   });
 
   test('trashes by adding the trash folder', async () => {
-    const { mutate, updateFolders, folderCalls } = harness();
+    const { mutate, moveMessage, folderCalls } = harness();
     const result = await consumeOneTimeCode(
       { userId: 'user-1', codeId: 'code-1', cleanup: 'trash' },
-      { mutate, updateFolders },
+      { mutate, moveMessage },
     );
     expect(result.cleanupStatus).toBe('trashed');
-    expect(folderCalls).toEqual([{ messageId: 'msg-1', add: ['TRASH'], remove: undefined }]);
+    expect(folderCalls).toEqual([{ messageId: 'msg-1', to: 'trash' }]);
   });
 
   test('does not file the message twice when a consume is retried', async () => {
-    const { mutate, updateFolders, folderCalls } = harness({
+    const { mutate, moveMessage, folderCalls } = harness({
       markUsed: { alreadyUsed: true, cleanup: 'trashed' },
     });
     const result = await consumeOneTimeCode(
       { userId: 'user-1', codeId: 'code-1', cleanup: 'trash' },
-      { mutate, updateFolders },
+      { mutate, moveMessage },
     );
     expect(result.cleanupStatus).toBe('trashed');
     expect(folderCalls).toHaveLength(0);
   });
 
   test('reports a cleanup failure without un-spending the code', async () => {
-    const { mutate, updateFolders, mutations } = harness({
+    const { mutate, moveMessage, mutations } = harness({
       updateFoldersError: new Error('Nylas is unavailable'),
     });
     const result = await consumeOneTimeCode(
       { userId: 'user-1', codeId: 'code-1', cleanup: 'archive' },
-      { mutate, updateFolders },
+      { mutate, moveMessage },
     );
     expect(result.ok).toBe(true);
     expect(result.cleanupStatus).toBe('failed');

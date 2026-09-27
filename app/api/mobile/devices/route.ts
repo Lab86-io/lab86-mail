@@ -48,13 +48,10 @@ export function createMobileDeviceHandlers(deps: MobileDeviceDependencies = defa
     try {
       const user = await deps.requireCurrentUser();
       const registration = deps.parseMobileDeviceRegistration(await req.json());
-      const deviceId = await deps.convexMutation<string>(
-        (api as any).albatrossNotifications.upsertMobileDevice,
-        {
-          userId: user.userId,
-          ...registration,
-        },
-      );
+      const deviceId = await deps.convexMutation<string>(api.albatrossNotifications.upsertMobileDevice, {
+        userId: user.userId,
+        ...registration,
+      });
       return Response.json({ ok: true, deviceId });
     } catch (error) {
       return errorResponse(error, deps.reportUnexpectedError);
@@ -66,7 +63,7 @@ export function createMobileDeviceHandlers(deps: MobileDeviceDependencies = defa
       const user = await deps.requireCurrentUser();
       const revocation = deps.parseMobileDeviceRevocation(await req.json());
       const result = await deps.convexMutation<{ revoked: number }>(
-        (api as any).albatrossNotifications.revokeMobileDevice,
+        api.albatrossNotifications.revokeMobileDevice,
         { userId: user.userId, ...revocation },
       );
       return Response.json({ ok: true, revoked: result.revoked });

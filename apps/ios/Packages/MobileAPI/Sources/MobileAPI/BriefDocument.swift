@@ -7,6 +7,9 @@ public struct BriefDocumentV2: Codable, Hashable, Sendable {
     public let generatedAt: Double
     public let regions: [BriefRegion]
     public let timezone: String?
+    // "editorial" when a model composed the page from tool_ui components
+    // (2026-09-23 on). Nil for the letter and older editions.
+    public let layout: String?
 
     public init(
         version: Int,
@@ -14,7 +17,8 @@ public struct BriefDocumentV2: Codable, Hashable, Sendable {
         summary: String,
         generatedAt: Double,
         regions: [BriefRegion],
-        timezone: String? = nil
+        timezone: String? = nil,
+        layout: String? = nil
     ) {
         self.version = version
         self.title = title
@@ -22,6 +26,19 @@ public struct BriefDocumentV2: Codable, Hashable, Sendable {
         self.generatedAt = generatedAt
         self.regions = regions
         self.timezone = timezone
+        self.layout = layout
+    }
+
+    public var isEditorial: Bool { layout == "editorial" }
+
+    /// True when the document places the live section in its own body. The
+    /// owner surface must then not mount that section a second time.
+    public func hasLiveSection(_ section: String) -> Bool {
+        func visit(_ node: BriefNode) -> Bool {
+            if node.kind == "live_section" { return node.section == section }
+            return (node.children ?? []).contains(where: visit)
+        }
+        return regions.contains { visit($0.tree) }
     }
 
     public static func decode(_ data: Data) -> BriefDocumentV2? {
@@ -107,7 +124,8 @@ public struct BriefDocumentV2: Codable, Hashable, Sendable {
                     ),
                 ]
                 : normalizedRegions,
-            timezone: timezone
+            timezone: timezone,
+            layout: layout
         )
     }
 }
@@ -204,6 +222,17 @@ public struct BriefNode: Codable, Hashable, Sendable {
     public let timelineItems: [BriefTimelineItem]?
     public let checklistItems: [BriefChecklistItem]?
     public let collectionItems: [BriefCollectionItem]?
+    // `tool_ui`: an authored component with its evidence rows. `props` is
+    // the component's own serializable payload; `summary` is its plain-text
+    // meaning; `toolSources` are the source rows with their actions.
+    public let component: String?
+    public let props: [String: BriefJSONValue]?
+    public let summary: String?
+    public let toolSources: [BriefToolSource]?
+    // `live_section`: a private, permission-checked module (`narrative` or
+    // `prepared_work`) that the client loads live at this place.
+    public let section: String?
+    public let at: Double?
 
     enum CodingKeys: String, CodingKey {
         case kind, id, emphasis, tone, footprint, density, columns, ratio, surface, title, kicker, collapsible, children
@@ -213,6 +242,7 @@ public struct BriefNode: Codable, Hashable, Sendable {
         case current, hourly, daily, source, attributionURL, channel, sender, recipients, sentAt, snippet
         case attachmentCount, messageCount, ref, options, citations, markers, routes
         case filename, language, oldCode, newCode, command, stdout, stderr, exitCode, durationMs, cwd, truncated
+        case component, props, summary, sources, section, at
     }
 
     public init(from decoder: Decoder) throws {
@@ -307,6 +337,26 @@ public struct BriefNode: Codable, Hashable, Sendable {
             planItems = try values.decodeIfPresent([BriefPlanItem].self, forKey: .items)
         } else {
             planItems = nil
+        }
+        if kind == "tool_ui" {
+            component = try values.decodeIfPresent(String.self, forKey: .component)
+            props = try? values.decodeIfPresent([String: BriefJSONValue].self, forKey: .props)
+            summary = try values.decodeIfPresent(String.self, forKey: .summary)
+            // One malformed source row must not blank the whole edition.
+            toolSources = (try? values.decodeIfPresent([BriefLossyToolSource].self, forKey: .sources))?
+                .compactMap(\.value)
+        } else {
+            component = nil
+            props = nil
+            summary = nil
+            toolSources = nil
+        }
+        if kind == "live_section" {
+            section = try values.decodeIfPresent(String.self, forKey: .section)
+            at = try values.decodeIfPresent(Double.self, forKey: .at)
+        } else {
+            section = nil
+            at = nil
         }
 
         switch kind {
@@ -410,6 +460,12 @@ public struct BriefNode: Codable, Hashable, Sendable {
         try values.encodeIfPresent(durationMs, forKey: .durationMs)
         try values.encodeIfPresent(cwd, forKey: .cwd)
         try values.encodeIfPresent(truncated, forKey: .truncated)
+        try values.encodeIfPresent(component, forKey: .component)
+        try values.encodeIfPresent(props, forKey: .props)
+        try values.encodeIfPresent(summary, forKey: .summary)
+        try values.encodeIfPresent(toolSources, forKey: .sources)
+        try values.encodeIfPresent(section, forKey: .section)
+        try values.encodeIfPresent(at, forKey: .at)
         if let planItems { try values.encode(planItems, forKey: .items) }
         if let timelineItems { try values.encode(timelineItems, forKey: .items) }
         if let checklistItems { try values.encode(checklistItems, forKey: .items) }
@@ -501,7 +557,13 @@ public struct BriefNode: Codable, Hashable, Sendable {
         truncated: Bool? = nil,
         timelineItems: [BriefTimelineItem]? = nil,
         checklistItems: [BriefChecklistItem]? = nil,
-        collectionItems: [BriefCollectionItem]? = nil
+        collectionItems: [BriefCollectionItem]? = nil,
+        component: String? = nil,
+        props: [String: BriefJSONValue]? = nil,
+        summary: String? = nil,
+        toolSources: [BriefToolSource]? = nil,
+        section: String? = nil,
+        at: Double? = nil
     ) {
         self.kind = kind
         self.id = id
@@ -578,6 +640,12 @@ public struct BriefNode: Codable, Hashable, Sendable {
         self.timelineItems = timelineItems
         self.checklistItems = checklistItems
         self.collectionItems = collectionItems
+        self.component = component
+        self.props = props
+        self.summary = summary
+        self.toolSources = toolSources
+        self.section = section
+        self.at = at
     }
 
     fileprivate func normalized(summary: String, depth: Int, nodeCount: inout Int) -> BriefNode {
@@ -587,6 +655,7 @@ public struct BriefNode: Codable, Hashable, Sendable {
             "email_preview", "decision", "citations", "geo_map", "code_diff", "terminal",
             "timeline", "checklist", "collection",
             "text", "actions", "prompt", "divider", "canvas",
+            "tool_ui", "live_section",
         ])
         guard depth <= 4, nodeCount < 48 else {
             return .fallback(title: title ?? "Brief", summary: summary)
@@ -682,6 +751,35 @@ public struct BriefSourceRef: Codable, Hashable, Sendable {
     }
 
     public var key: String { "\(kind):\(account ?? ""):\(id)" }
+}
+
+// One evidence row under a `tool_ui` component: the source and the actions
+// that act on it (Done, Remove, Open, and so on).
+public struct BriefToolSource: Codable, Hashable, Sendable {
+    public let ref: BriefSourceRef
+    public let actions: [BriefDocumentAction]
+
+    public init(ref: BriefSourceRef, actions: [BriefDocumentAction]) {
+        self.ref = ref
+        self.actions = actions
+    }
+
+    enum CodingKeys: String, CodingKey { case ref, actions }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        ref = try values.decode(BriefSourceRef.self, forKey: .ref)
+        actions = (try? values.decodeIfPresent([BriefDocumentAction].self, forKey: .actions)) ?? []
+    }
+}
+
+// Decodes a source row or nothing, so the array survives one bad row.
+struct BriefLossyToolSource: Decodable {
+    let value: BriefToolSource?
+
+    init(from decoder: Decoder) throws {
+        value = try? BriefToolSource(from: decoder)
+    }
 }
 
 public struct BriefDocumentAction: Codable, Hashable, Sendable {

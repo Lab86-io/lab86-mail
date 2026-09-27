@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { truncateText } from '../shared/text';
 import type { DeckElement, DeckElementV2, DeckModelV2, DeckSlideV2, DeckTheme } from './model';
 import {
   ARTWORK_PREFIX,
@@ -491,19 +492,19 @@ export function applyCopyRepairs(
     const slide = next.slides[index];
     if (!slide) continue;
     if (match[1] === 'title') {
-      if (fix.text.trim()) slide.title = fix.text.slice(0, 120);
-    } else if (match[1] === 'kicker') slide.kicker = fix.text.slice(0, 40);
-    else if (match[1] === 'body') slide.body = fix.text.slice(0, 320);
-    else if (match[1] === 'notes') slide.notes = fix.text.slice(0, 4000);
+      if (fix.text.trim()) slide.title = truncateText(fix.text, 120);
+    } else if (match[1] === 'kicker') slide.kicker = truncateText(fix.text, 40);
+    else if (match[1] === 'body') slide.body = truncateText(fix.text, 320);
+    else if (match[1] === 'notes') slide.notes = truncateText(fix.text, 4000);
     else if (match[1] === 'chart.source') {
-      if (slide.chart) slide.chart.source = fix.text.slice(0, 200);
+      if (slide.chart) slide.chart.source = truncateText(fix.text, 200);
     } else {
       const item = slide.items[Number(match[2])];
       if (!item) continue;
       if (match[3] === 'label') {
-        if (fix.text.trim()) item.label = fix.text.slice(0, 60);
-      } else if (match[3] === 'detail') item.detail = fix.text.slice(0, 160);
-      else item.meta = fix.text.slice(0, 40);
+        if (fix.text.trim()) item.label = truncateText(fix.text, 60);
+      } else if (match[3] === 'detail') item.detail = truncateText(fix.text, 160);
+      else item.meta = truncateText(fix.text, 40);
     }
   }
   return next;

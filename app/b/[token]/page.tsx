@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: 'Shared board · Lab86', robots: { in
 // the query exposes board content and nothing else (no members, no mail).
 export default async function PublicBoardPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const board = await convexQuery<any>((api as any).boards.getPublicBoard, { token }).catch(() => null);
+  const board = await convexQuery<any>(api.boards.getPublicBoard, { token }).catch(() => null);
 
   if (!board) {
     return (

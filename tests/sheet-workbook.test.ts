@@ -117,7 +117,7 @@ describe('workbook model boundaries', () => {
   test('validates bounded AI cell changes, including clears and explicitly named new sheets', () => {
     const change = { sheet: 'Forecast', cell: 'A1', content: '' };
     const payload = { kind: 'sheet-changes', version: 1, changes: [change], newSheets: ['Plan'] };
-    expect(sheetChangeSetSchema.parse(payload)).toEqual(payload);
+    expect(sheetChangeSetSchema.parse(payload)).toEqual<unknown>(payload);
     expect(
       sheetChangeSetSchema.safeParse({
         ...payload,

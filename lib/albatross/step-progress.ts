@@ -1,3 +1,5 @@
+import { truncateText } from '../shared/text';
+
 export type StepProgressSource = 'user' | 'task' | 'evidence';
 
 export interface StepProgressEntry {
@@ -46,9 +48,7 @@ export interface ProgressPlanStep {
 }
 
 function bounded(value: unknown, max: number) {
-  return String(value || '')
-    .trim()
-    .slice(0, max);
+  return truncateText(String(value || '').trim(), max);
 }
 
 /** Normalize exact step identity fields without introducing fuzzy matching. */

@@ -1,5 +1,4 @@
 import { v } from 'convex/values';
-import type { QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
@@ -7,12 +6,6 @@ import { now, requireInternalSecret } from './lib';
 // Detectors and the morning sweep write here from the Next server; the review
 // tray reads live via Clerk identity. Accepting a suggestion happens in the
 // tool layer (which records an aiOperation), then resolves the row here.
-
-async function requireUserId(ctx: QueryCtx) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity?.subject) throw new Error('Not authenticated');
-  return identity.subject;
-}
 
 export const upsert = mutation({
   args: {
@@ -111,22 +104,5 @@ export const listPending = query({
       .take(limit);
     const ts = now();
     return rows.filter((row) => !row.expiresAt || row.expiresAt > ts);
-  },
-});
-
-// Live tray feed + rail badge count.
-export const livePending = query({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, args) => {
-    const userId = await requireUserId(ctx);
-    const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
-    const rows = await ctx.db
-      .query('suggestions')
-      .withIndex('by_user_status_created', (q) => q.eq('userId', userId).eq('status', 'pending'))
-      .order('desc')
-      .take(limit);
-    const ts = now();
-    const pending = rows.filter((row) => !row.expiresAt || row.expiresAt > ts);
-    return { count: pending.length, suggestions: pending };
   },
 });

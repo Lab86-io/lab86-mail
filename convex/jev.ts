@@ -9,11 +9,18 @@ import {
   normalizeJevPreferences,
 } from '../lib/jev/contract';
 import { type JevMailInput, type JevMailMessage, mailSourceRevision } from '../lib/jev/mail';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import { internalAction, internalMutation, mutation, query } from './_generated/server';
 import { nextConnectedUsers } from './content';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
-import { classifyCorpusThread, loadSmartContext, normalizeCorpusThread } from './smart';
+import {
+  classifyCorpusThread,
+  latestThreadContent,
+  loadSmartContext,
+  normalizeCorpusThread,
+  syncLabelMembership,
+} from './smart';
 
 async function preferencesRow(ctx: any, userId: string) {
   return ctx.db
@@ -158,7 +165,7 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
       to: message.to,
       cc: message.cc || '',
       subject: message.subject,
-      body: String(message.textBody || message.snippet || '').slice(0, 2400),
+      body: truncateText(String(message.textBody || message.snippet || ''), 2400),
       date: message.receivedAt,
       headers: Object.fromEntries(
         Object.entries(message.headers || {})
@@ -167,7 +174,7 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
               typeof value === 'string' &&
               /^(list-id|list-unsubscribe|precedence|auto-submitted)$/i.test(key),
           )
-          .map(([key, value]) => [key.toLowerCase(), String(value).slice(0, 500)]),
+          .map(([key, value]) => [key.toLowerCase(), truncateText(String(value), 500)]),
       ),
       attachments: (message.attachments || [])
         .slice(0, 10)
@@ -180,10 +187,10 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
     sourceRevision: mailSourceRevision(messages),
     selfAddresses: accounts.map((account: any) => account.email.toLowerCase()),
     messages,
-    contextComplete:
-      recent.length <= 16 &&
-      (!row.messageCount || row.messageCount <= messages.length) &&
-      [...byId.values()].every((message) => String(message.textBody || message.snippet || '').length <= 2400),
+    // Context is complete when the message window holds the whole thread. A
+    // long body is cut to 2400 characters, but that does not hide a message:
+    // most marketing mail is longer, and a body-length test sent it to Review.
+    contextComplete: recent.length <= 16 && (!row.messageCount || row.messageCount <= messages.length),
   };
 }
 
@@ -222,6 +229,11 @@ export const claimPending = mutation({
         jevLeaseId: leaseId,
         jevLeaseUntil: now + 90_000,
         jevStatus: 'pending',
+        // Rows synced before latestMessageId existed take it from the newest
+        // message. storeAssessments requires the row to name the message the
+        // claim assessed, so without this the result is dropped every time and
+        // the row is claimed again forever.
+        ...(row.latestMessageId ? {} : { latestMessageId: input.messageId }),
       });
       items.push({ ...input, leaseId });
       if (items.length === limit) break;
@@ -280,7 +292,7 @@ export const storeAssessments = mutation({
             !input.messages.some(
               (message) =>
                 message.id === evidence.messageId &&
-                (message.body || message.subject).slice(0, 2400) === evidence.text,
+                truncateText(message.body || message.subject, 2400) === evidence.text,
             ),
         )
       ) {
@@ -297,7 +309,11 @@ export const storeAssessments = mutation({
         continue;
       }
       const assessment = parsed.data;
-      const merged = classifyCorpusThread({ ...row, jev: assessment }, context);
+      const merged = classifyCorpusThread(
+        { ...row, jev: assessment },
+        context,
+        await latestThreadContent(ctx, row),
+      );
       await ctx.db.patch(row._id, {
         ...merged,
         jev: assessment,
@@ -316,6 +332,7 @@ export const storeAssessments = mutation({
         jevChange: assessment.meaningfulChange,
         updatedAt: Date.now(),
       });
+      await syncLabelMembership(ctx, row, { ...row, ...merged });
       stored++;
     }
     return { stored };
@@ -423,7 +440,7 @@ export const reprocess = mutation({
   args: { internalSecret: v.optional(v.string()), userId: v.string() },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    await ctx.scheduler.runAfter(0, (internal as any).jev.queueUser, { userId: args.userId });
+    await ctx.scheduler.runAfter(0, internal.jev.queueUser, { userId: args.userId });
     return { queued: true };
   },
 });
@@ -469,7 +486,7 @@ export const queueUser = internalMutation({
         jevLeaseUntil: undefined,
       });
     if (!page.isDone)
-      await ctx.scheduler.runAfter(1_000, (internal as any).jev.queueUser, {
+      await ctx.scheduler.runAfter(1_000, internal.jev.queueUser, {
         userId: args.userId,
         cursor: page.continueCursor,
       });
@@ -484,7 +501,7 @@ export const queueUnassessed = internalMutation({
       .take(100);
     for (const row of rows)
       await ctx.db.patch(row._id, { jevVersion: 0, llmPending: true, jevStatus: 'pending', jevAttempts: 0 });
-    if (rows.length === 100) await ctx.scheduler.runAfter(1_000, (internal as any).jev.queueUnassessed, {});
+    if (rows.length === 100) await ctx.scheduler.runAfter(1_000, internal.jev.queueUnassessed, {});
   },
 });
 export const usersWithMail = internalMutation({
@@ -498,7 +515,7 @@ export const tick = internalAction({
     const base = process.env.LAB86_MAIL_PUBLIC_URL;
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     if (!base || !secret) return;
-    const users: string[] = await ctx.runMutation((internal as any).jev.usersWithMail, {});
+    const users: string[] = await ctx.runMutation(internal.jev.usersWithMail, {});
     await fanOutInternalPost(
       `${base.replace(/\/$/, '')}/api/cron/jev`,
       secret,

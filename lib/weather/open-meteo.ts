@@ -110,18 +110,70 @@ export function precipitationLevelFromMm(mm: number | undefined): PrecipitationL
   return 'heavy';
 }
 
-// America/* plus a few holdouts default to Fahrenheit; everywhere else Celsius.
+// Zones of the countries that use Fahrenheit (IANA zone.tab): the United
+// States and its territories, the Bahamas, Belize, the Cayman Islands,
+// Liberia, Palau, Micronesia, and the Marshall Islands. Everywhere else,
+// including Canada and Mexico, uses Celsius (WX-1).
+const FAHRENHEIT_ZONES = new Set([
+  'America/New_York',
+  'America/Detroit',
+  'America/Chicago',
+  'America/Menominee',
+  'America/Denver',
+  'America/Boise',
+  'America/Phoenix',
+  'America/Los_Angeles',
+  'America/Anchorage',
+  'America/Juneau',
+  'America/Sitka',
+  'America/Metlakatla',
+  'America/Yakutat',
+  'America/Nome',
+  'America/Adak',
+  'America/Atka',
+  'America/Shiprock',
+  'America/Fort_Wayne',
+  'America/Indianapolis',
+  'America/Knox_IN',
+  'America/Louisville',
+  'America/Puerto_Rico',
+  'America/St_Thomas',
+  'America/Virgin',
+  'America/Nassau',
+  'America/Belize',
+  'America/Cayman',
+  'Pacific/Honolulu',
+  'Pacific/Johnston',
+  'Pacific/Guam',
+  'Pacific/Saipan',
+  'Pacific/Pago_Pago',
+  'Pacific/Samoa',
+  'Pacific/Midway',
+  'Pacific/Wake',
+  'Pacific/Palau',
+  'Pacific/Chuuk',
+  'Pacific/Truk',
+  'Pacific/Yap',
+  'Pacific/Pohnpei',
+  'Pacific/Ponape',
+  'Pacific/Kosrae',
+  'Pacific/Majuro',
+  'Pacific/Kwajalein',
+  'Kwajalein',
+  'Africa/Monrovia',
+  'Navajo',
+  'EST5EDT',
+  'CST6CDT',
+  'MST7MDT',
+  'PST8PDT',
+]);
+const FAHRENHEIT_PREFIXES = ['US/', 'America/Indiana/', 'America/Kentucky/', 'America/North_Dakota/'];
+
 export function defaultUnitForTimezone(timezone: string | undefined): TemperatureUnit {
-  const tz = String(timezone || '');
-  if (
-    /^America\//.test(tz) &&
-    !/America\/(Argentina|Sao_Paulo|Bogota|Lima|Santiago|Mexico_City|Montevideo|Caracas|La_Paz|Guayaquil)/.test(
-      tz,
-    )
-  ) {
+  const tz = String(timezone || '').trim();
+  if (FAHRENHEIT_ZONES.has(tz) || FAHRENHEIT_PREFIXES.some((prefix) => tz.startsWith(prefix))) {
     return 'fahrenheit';
   }
-  if (/^Pacific\/(Honolulu|Guam|Pago_Pago)/.test(tz)) return 'fahrenheit';
   return 'celsius';
 }
 

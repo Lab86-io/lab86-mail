@@ -391,7 +391,7 @@ if (process.env.ALBATROSS_DECK_ARTWORK_DOM_TEST !== '1') {
       expect(q('.deck-artwork-selected-title').textContent).toBeTruthy();
       await click(buttonNamed('Place on slide'));
       expect(panel.posted).toHaveLength(1);
-      expect(panel.posted[0].credit).toBe(second.getAttribute('aria-label'));
+      expect(panel.posted[0].credit).toBe<unknown>(second.getAttribute('aria-label'));
       expect(panel.posted[0].imageUrl).toMatch(/^https:\/\//);
       expect(panel.placed).toHaveLength(1);
       expect(panel.placed[0].asset).toMatchObject({ assetId: 'asset-1', src: '/assets/1.jpg', aspect: 1.6 });

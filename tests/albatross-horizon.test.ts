@@ -176,6 +176,26 @@ describe('parseHorizonHint', () => {
     });
   });
 
+  test('a count of days or years after a sleep word sleeps until that day', () => {
+    expect(parseHorizonHint('Ask about the refund again starting in 3 days', NOW)).toEqual({
+      kind: 'later',
+      notBefore: localDay(2026, 8, 5),
+      label: 'starting in 3 days',
+    });
+    expect(parseHorizonHint('Check the roof warranty after a year', NOW)).toEqual({
+      kind: 'later',
+      notBefore: localDay(2027, 8, 2),
+      label: 'after a year',
+    });
+  });
+
+  test('an empty "not before" keeps scanning for a later sleep phrase', () => {
+    expect(parseHorizonHint('Paint the fence, not before ... after the move', NOW)).toEqual({
+      kind: 'later',
+      label: 'after the move',
+    });
+  });
+
   test('a sleep and a soft target combine', () => {
     const parsed = parseHorizonHint('Renew the passport not before November, by December 10', NOW);
     expect(parsed?.kind).toBe('later');
@@ -201,5 +221,40 @@ describe('workHorizonSchema', () => {
     ).toBe(true);
     expect(workHorizonSchema.safeParse({ kind: 'never' }).success).toBe(false);
     expect(workHorizonSchema.safeParse({ kind: 'now', extra: true }).success).toBe(false);
+  });
+});
+
+describe('WRK-19 horizon dates in the user timezone', () => {
+  // Friday 2026-09-25, 12:00 in New York.
+  const FRIDAY_NY = Date.parse('2026-09-25T16:00:00Z');
+
+  test('"not before Monday" wakes at Monday midnight in the user zone', () => {
+    const parsed = parseHorizonHint('Call the bank, not before Monday', FRIDAY_NY, 'America/New_York');
+    expect(parsed?.notBefore).toBe(Date.parse('2026-09-28T04:00:00Z'));
+  });
+
+  test('the user calendar day decides "next", not the server day', () => {
+    // Sunday 22:00 in New York is already Monday in UTC.
+    const sundayNight = Date.parse('2026-09-28T02:00:00Z');
+    expect(parseHorizonHint('not before Monday', sundayNight, 'America/New_York')?.notBefore).toBe(
+      Date.parse('2026-09-28T04:00:00Z'),
+    );
+    expect(parseHorizonHint('Reply in 2 days', sundayNight, 'America/New_York')?.notBefore).toBe(
+      Date.parse('2026-09-29T04:00:00Z'),
+    );
+    expect(parseHorizonHint('Plan it next month', sundayNight, 'America/New_York')?.notBefore).toBe(
+      Date.parse('2026-10-01T04:00:00Z'),
+    );
+    expect(parseHorizonHint('Renew it in November', sundayNight, 'Asia/Tokyo')?.notBefore).toBe(
+      Date.parse('2026-10-31T15:00:00Z'),
+    );
+    expect(parseHorizonHint('Send it by Friday', sundayNight, 'America/New_York')?.by).toBe(
+      Date.parse('2026-10-02T04:00:00Z'),
+    );
+  });
+
+  test('an invalid or missing zone keeps the local clock', () => {
+    expect(parseHorizonHint('Reply next week', NOW, 'Not/AZone')?.notBefore).toBe(localDay(2026, 8, 7));
+    expect(parseHorizonHint('Reply next week', NOW, undefined)?.notBefore).toBe(localDay(2026, 8, 7));
   });
 });

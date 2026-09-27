@@ -17,13 +17,13 @@ import {
   type AlbatrossApplicationStep,
   appliedStepsFromApplyResult,
   buildAlbatrossApplicationPlan,
-  unresolvedArtifactsAfterUndo,
 } from '@/lib/albatross/work-model';
 import { summarizeWorkPlanRevision } from '@/lib/albatross/work-revision';
 import { WORK_SHAPES } from '@/lib/albatross/work-shape';
 import { resolveWorkByTitle } from '@/lib/albatross/work-title-match';
 import { unappliedActions } from '@/lib/albatross/work-v2';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import { calendarCreateEvent, calendarRsvpEvent } from './calendar';
 import { saveDraftTool, sendMessage } from './compose';
 import { documentCreate } from './documents';
@@ -396,6 +396,7 @@ export const albatrossCaptureWork = defineTool({
   description:
     'Create Albatross Work when the user explicitly asks to create an Albatross or to hold, keep, track, or remember an outcome as work, including a response to a brief recommendation. Reuse matching existing Work; never treat a recommendation alone as permission. Returns the Work items with their shape and horizon.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     text: z.string().trim().min(1).max(20_000),
@@ -478,6 +479,7 @@ export const albatrossListAdd = defineTool({
   description:
     'Add one item to a list-shaped Albatross Work ("add Blade Runner to the movie list"). Give workId, or workTitle in the user\'s words; the tool resolves the list by title. Returns the item and the full list.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z
     .object({
@@ -521,6 +523,7 @@ export const albatrossMetricLog = defineTool({
   description:
     'Log one value for a practice-shaped Albatross Work ("log 182.4 for the weight goal"). Give workId, or workTitle in the user\'s words. Returns the entry, the metric, and the review line data.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z
     .object({
@@ -588,6 +591,7 @@ export const albatrossCompleteWork = defineTool({
   description:
     'Complete an existing Albatross when the user explicitly says its outcome is done. Saves their statement and closes it immediately. No research, evidence attachments, or replanning required. Does not complete merely related work.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ workId: z.string().min(1), claim: z.string().min(1).max(2_000) }),
   output: z.object({ ok: z.boolean(), workId: z.string(), state: z.literal('done'), summary: z.string() }),
@@ -610,6 +614,7 @@ export const albatrossRecordProgress = defineTool({
   description:
     "Persist the user's authoritative partial progress on an existing Albatross. When they have done everything they can and are waiting on an email, supply waitingForReply using the sent email's accountId and threadId: this saves the report AND pauses work until a relevant incoming reply reactivates it. Do not replan waiting work. Optional evidence and question answers must not prevent saving the user's report. For a completed outcome use albatross_complete_work.",
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     workId: z.string().min(1),
@@ -743,6 +748,7 @@ export const albatrossReplanWork = defineTool({
   description:
     'Regenerate the latest plan for the SAME Albatross Work after progress/evidence has been recorded. Creates a versioned plan revision and returns a compact before/after summary with the new current step.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     workId: z.string().min(1),
@@ -978,6 +984,7 @@ export const albatrossSplitWork = defineTool({
   description:
     'Split one Albatross Work that bundles several independent outcomes into sibling Works. Call without items to get a proposal to show the user. Call again with the confirmed items to commit: children are created, the parent is released with provenance, and the children are planned.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     workId: z.string().min(1),
@@ -1044,6 +1051,7 @@ export const albatrossApplyIntentPlan = defineTool({
   description:
     'Apply an Albatross intent plan through real safe tools. Creates tasks/calendar holds/drafts/projects in one operation batch and queues human-facing actions for approval.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     intentId: z.string(),
@@ -1094,91 +1102,106 @@ export const albatrossApplyIntentPlan = defineTool({
     const approvalIds: string[] = [];
     const approvals: any[] = [];
 
+    // Each step runs on its own. A failed step does not lose the artifacts
+    // earlier steps created: they are recorded below, so a retry applies only
+    // the missing actions (WRK-4).
+    const failures: Array<{ stepKey?: string; actionKey?: string; title: string; error: string }> = [];
     for (const step of plan.executableSteps) {
-      if (step.kind === 'project') {
-        projectId = await deps.convexMutation<string>(albatrossApi().createProject, {
-          userId,
-          externalId: `intent:${args.intentId}`,
-          title: step.title,
-          outcome: args.plan.outcome,
-          areaId: args.areaId || step.areaId,
-          sourceIntentId: args.intentId,
-          sourceBatchId: operationBatchId,
-          sourceRefs: step.sourceRefs,
-        });
-        const operationId = await recordProjectOperation({
-          userId,
+      try {
+        if (step.kind === 'project') {
+          projectId = await deps.convexMutation<string>(albatrossApi().createProject, {
+            userId,
+            externalId: `intent:${args.intentId}`,
+            title: step.title,
+            outcome: args.plan.outcome,
+            areaId: args.areaId || step.areaId,
+            sourceIntentId: args.intentId,
+            sourceBatchId: operationBatchId,
+            sourceRefs: step.sourceRefs,
+          });
+          const operationId = await recordProjectOperation({
+            userId,
+            projectId,
+            title: step.title,
+            operationBatchId,
+          });
+          operations.push({ operationId, tool: 'albatross_create_project', projectId, title: step.title });
+          artifacts.push({ kind: 'project', id: projectId, title: step.title, operationId });
+          await linkToProject(userId, projectId, {
+            artifactKind: 'intent',
+            artifactId: args.intentId,
+            title: args.intentText || args.intentId,
+            areaId: args.areaId,
+            operationBatchId,
+            sourceIntentId: args.intentId,
+            role: 'primary',
+          });
+          continue;
+        }
+        const result: any = await executeToolStep(step, batchContext(ctx, operationBatchId), {
           projectId,
-          title: step.title,
-          operationBatchId,
+          boardId: areaBoardId,
         });
-        operations.push({ operationId, tool: 'albatross_create_project', projectId, title: step.title });
-        artifacts.push({ kind: 'project', id: projectId, title: step.title, operationId });
+        const artifactId =
+          result.cardId ||
+          result.eventId ||
+          result.draft?._id ||
+          result.draft?.id ||
+          result.documentId ||
+          result.operationId ||
+          step.id;
+        operations.push({
+          operationId: result.operationId,
+          tool: step.toolName,
+          artifactId,
+          title: step.title,
+          // stepKey/kind let callers map plan steps back to created artifacts
+          // (the plan dossier's toggleable task cards).
+          stepKey: step.stepKey,
+          actionKey: step.actionKey,
+          kind: step.kind,
+          result,
+        });
+        artifacts.push({
+          kind:
+            step.kind === 'calendar_event'
+              ? 'calendarEvent'
+              : step.kind === 'email_draft'
+                ? 'emailDraft'
+                : step.kind === 'document'
+                  ? 'document'
+                  : step.kind,
+          id: artifactId,
+          title: step.title,
+          operationId: result.operationId,
+          actionKey: step.actionKey,
+          stepKey: step.stepKey,
+        });
         await linkToProject(userId, projectId, {
-          artifactKind: 'intent',
-          artifactId: args.intentId,
-          title: args.intentText || args.intentId,
-          areaId: args.areaId,
+          artifactKind:
+            step.kind === 'calendar_event'
+              ? 'calendarEvent'
+              : step.kind === 'email_draft'
+                ? 'emailDraft'
+                : step.kind === 'document'
+                  ? 'document'
+                  : 'task',
+          artifactId,
+          title: step.title,
+          areaId: step.areaId,
           operationBatchId,
           sourceIntentId: args.intentId,
-          role: 'primary',
         });
-        continue;
+      } catch (error) {
+        failures.push({
+          stepKey: step.stepKey,
+          actionKey: step.actionKey,
+          title: step.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Later steps may need the project. Stop when it cannot be created.
+        if (step.kind === 'project') break;
       }
-      const result: any = await executeToolStep(step, batchContext(ctx, operationBatchId), {
-        projectId,
-        boardId: areaBoardId,
-      });
-      const artifactId =
-        result.cardId ||
-        result.eventId ||
-        result.draft?._id ||
-        result.draft?.id ||
-        result.documentId ||
-        result.operationId ||
-        step.id;
-      operations.push({
-        operationId: result.operationId,
-        tool: step.toolName,
-        artifactId,
-        title: step.title,
-        // stepKey/kind let callers map plan steps back to created artifacts
-        // (the plan dossier's toggleable task cards).
-        stepKey: step.stepKey,
-        actionKey: step.actionKey,
-        kind: step.kind,
-        result,
-      });
-      artifacts.push({
-        kind:
-          step.kind === 'calendar_event'
-            ? 'calendarEvent'
-            : step.kind === 'email_draft'
-              ? 'emailDraft'
-              : step.kind === 'document'
-                ? 'document'
-                : step.kind,
-        id: artifactId,
-        title: step.title,
-        operationId: result.operationId,
-        actionKey: step.actionKey,
-        stepKey: step.stepKey,
-      });
-      await linkToProject(userId, projectId, {
-        artifactKind:
-          step.kind === 'calendar_event'
-            ? 'calendarEvent'
-            : step.kind === 'email_draft'
-              ? 'emailDraft'
-              : step.kind === 'document'
-                ? 'document'
-                : 'task',
-        artifactId,
-        title: step.title,
-        areaId: step.areaId,
-        operationBatchId,
-        sourceIntentId: args.intentId,
-      });
     }
 
     for (const step of plan.approvalSteps) {
@@ -1213,6 +1236,7 @@ export const albatrossApplyIntentPlan = defineTool({
         title: step.title,
         actionKey: step.actionKey,
         stepKey: step.stepKey,
+        stepKind: step.kind,
       });
       await linkToProject(userId, projectId, {
         artifactKind: 'operationBatch',
@@ -1224,11 +1248,16 @@ export const albatrossApplyIntentPlan = defineTool({
       });
     }
 
-    const applicationStatus = statusForApplication({
-      operations,
-      approvals,
-      unresolved: plan.unresolved,
-    });
+    const applicationStatus = failures.length
+      ? 'partially_applied'
+      : statusForApplication({
+          operations,
+          approvals,
+          unresolved: plan.unresolved,
+        });
+    if (failures.length && !artifacts.length) {
+      throw new Error(`Could not apply the plan: ${failures[0].error}`);
+    }
     const applicationId = await deps.convexMutation<string>(albatrossApi().recordPlanApplication, {
       userId,
       intentId: args.intentId,
@@ -1241,8 +1270,21 @@ export const albatrossApplyIntentPlan = defineTool({
       artifacts,
       operationIds: operations.map((operation) => String(operation.operationId || '')).filter(Boolean),
       pendingApprovalIds: approvalIds,
-      unresolvedArtifacts: plan.unresolved,
+      unresolvedArtifacts: [
+        ...plan.unresolved,
+        ...failures.map((failure) => ({ ...failure, reason: 'failed' })),
+      ],
     });
+    if (failures.length) {
+      // The created artifacts are recorded. The caller sees the failure and
+      // does not mark the plan applied, so a retry creates only what is missing.
+      throw new Error(
+        `Applied ${artifacts.length} of the plan's actions. ${failures.length} failed: ${truncateText(
+          failures.map((failure) => `${failure.title} (${failure.error})`).join('; '),
+          400,
+        )}`,
+      );
+    }
 
     return {
       ok: true,
@@ -1283,6 +1325,7 @@ export const albatrossApproveAction = defineTool({
   description:
     'Approve one Albatross approval card and execute its allowlisted human-facing tool. editedArgs can override the stored args before execution.',
   category: 'tasks',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     approvalId: z.string(),
@@ -1343,6 +1386,7 @@ export const albatrossRejectAction = defineTool({
   name: 'albatross_reject_action',
   description: 'Reject an Albatross approval card. The originating plan remains unresolved/rejected.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ approvalId: z.string(), reason: z.string().optional() }),
   output: z.object({ ok: z.boolean() }),
@@ -1358,44 +1402,11 @@ export const albatrossRejectAction = defineTool({
   },
 });
 
-export const albatrossUndoApproval = defineTool({
-  name: 'albatross_undo_approval',
-  description:
-    'Mark an approved Albatross approval as undone during its short undo window. Provider-level undo is delegated to the underlying operation when available.',
-  category: 'tasks',
-  mutating: true,
-  input: z.object({ approvalId: z.string() }),
-  output: z.object({ ok: z.boolean() }),
-  async handler(args, ctx) {
-    const userId = requireUserId(ctx.userId);
-    const approval = await deps.convexQuery<any | null>(albatrossApi().getApproval, {
-      userId,
-      approvalId: args.approvalId,
-    });
-    if (!approval) throw new Error('Approval not found.');
-    if (approval.status !== 'approved') throw new Error(`Only approved actions can be undone.`);
-    if (approval.undoExpiresAt && Date.now() > approval.undoExpiresAt) {
-      throw new Error('Undo window expired.');
-    }
-    const operationId = approval.result?.operationId;
-    if (!operationId) {
-      throw new Error('This approval did not record an undoable provider operation.');
-    }
-    await deps.undoOperation(userId, operationId);
-    await deps.convexMutation(albatrossApi().decideApproval, {
-      userId,
-      approvalId: args.approvalId,
-      status: 'undone',
-      decisionNote: 'Undone from Albatross approval queue.',
-    });
-    return { ok: true };
-  },
-});
-
 export const albatrossCreateProject = defineTool({
   name: 'albatross_create_project',
   description: 'Create or update an Albatross project/epic without creating task cards by itself.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     externalId: z.string().optional(),
@@ -1456,6 +1467,7 @@ export const albatrossUpdateProject = defineTool({
   name: 'albatross_update_project',
   description: 'Change an Albatross project state after explicit user review.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     projectId: z.string(),
@@ -1494,6 +1506,7 @@ export const albatrossCreateRoutine = defineTool({
   description:
     'Create a durable recurring routine inside an Albatross Project/Epic. Use this after the user declares a recurring personal or professional commitment, such as daily weight-loss actions, an evening food check-in, a weekly client review, or weekday launch work. A routine can materialize tasks, questions, or both in the user’s local timezone. It never enables notifications silently; the living assistant asks once for notification consent after the first check-in.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     projectId: z.string(),
@@ -1591,6 +1604,7 @@ export const albatrossSetRoutineConsent = defineTool({
   description:
     'Enable, pause, or decline a routine only after the user explicitly agrees. Notification delivery is a separate explicit choice and defaults off.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     routineId: z.string(),
@@ -1623,6 +1637,7 @@ export const albatrossRunRoutineNow = defineTool({
   description:
     'Materialize today’s task/check-in for an enabled routine now. The stable local-date run key prevents duplicate tasks or questions.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ routineId: z.string() }),
   output: z.object({ ok: z.boolean() }),
@@ -1656,6 +1671,7 @@ export const albatrossCreateSprint = defineTool({
   name: 'albatross_create_sprint',
   description: 'Create an Albatross sprint, optionally scoped to a project.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     projectId: z.string().optional(),
@@ -1712,19 +1728,6 @@ export const albatrossListSprints = defineTool({
       limit: args.limit,
     });
     return { sprints };
-  },
-});
-
-export const albatrossPreviewUndoUnresolved = defineTool({
-  name: 'albatross_preview_undo_unresolved',
-  description:
-    'Given a stored application artifact list and operation rows, return which artifacts would reappear as unresolved after undo.',
-  category: 'tasks',
-  mutating: false,
-  input: z.object({ application: z.any(), operations: z.array(z.any()) }),
-  output: z.object({ unresolved: z.array(z.any()) }),
-  async handler(args) {
-    return { unresolved: unresolvedArtifactsAfterUndo(args.application, args.operations) };
   },
 });
 

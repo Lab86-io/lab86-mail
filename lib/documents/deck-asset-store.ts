@@ -137,7 +137,7 @@ export function __setDeckAssetDepsForTest(overrides: Partial<typeof defaultDepen
   dependencies = { ...defaultDependencies, ...overrides };
 }
 
-const assets = () => (api as any).documentAssets;
+const assets = () => api.documentAssets;
 
 function toAsset(row: {
   assetId: string;

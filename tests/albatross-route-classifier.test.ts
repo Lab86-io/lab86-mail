@@ -193,3 +193,25 @@ describe('classifyRoute', () => {
     expect(JSON.parse(calls[0].prompt).text.length).toBe(2_000);
   });
 });
+
+describe('WRK-6 contractions, curly apostrophes, and "may"', () => {
+  test.each([
+    'what’s on my calendar tomorrow',
+    "what's on my calendar tomorrow",
+    'when’s my flight next week',
+    'who’s coming on friday',
+    'may i see the invoice',
+    'may we move the call to next week',
+  ])('"%s" is a question', (text) => {
+    expect(routeHeuristic(text)?.route).toBe('ask');
+  });
+
+  test.each([
+    'renew the passport in may',
+    'book the cabin by may 12',
+    'don’t forget to pay the rent',
+    'i’m going to finish the deck this weekend',
+  ])('"%s" is still held', (text) => {
+    expect(routeHeuristic(text)?.route).toBe('hold');
+  });
+});

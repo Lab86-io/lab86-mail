@@ -50,7 +50,7 @@ export async function startCollaboraSession(
     throw new OfficeError('The document server returned an unexpected editor address.', 503);
   const sessionId = crypto.randomUUID();
   const session = await dependencies.convexMutation<{ ok: boolean; expiresAt?: number }>(
-    (api as any).officeDocuments.startSession,
+    api.officeDocuments.startSession,
     {
       userId,
       documentId: document.documentId,

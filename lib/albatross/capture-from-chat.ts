@@ -3,6 +3,7 @@ import type { WorkHorizon } from '@/lib/albatross/horizon';
 import type { WorkShape } from '@/lib/albatross/work-shape';
 import type { CurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 
 // Capture Work from the chat bar or from a chat reply. The user text and the
 // assistant reply are stored together as one raw capture, so the split reads
@@ -65,7 +66,7 @@ export function chatCaptureRawText(text: string, replyText?: string): string {
   const user = String(text || '').trim();
   const reply = String(replyText || '').trim();
   const joined = reply ? `${user}\n\n${reply}` : user;
-  return joined.slice(0, CHAT_CAPTURE_TEXT_MAX);
+  return truncateText(joined, CHAT_CAPTURE_TEXT_MAX);
 }
 
 function summaryFromRow(row: any): ChatCaptureWorkSummary {
@@ -84,7 +85,7 @@ export async function captureFromChat(
 ): Promise<ChatCaptureResult> {
   const rawText = chatCaptureRawText(input.text, input.replyText);
   if (!rawText) throw new Error('text required');
-  const chatApi = (api as any).albatrossChatCapture;
+  const chatApi = api.albatrossChatCapture;
   const externalId = chatCaptureExternalId(input.conversationId, input.sourceMessageId);
 
   if (externalId) {
@@ -117,14 +118,14 @@ export async function captureFromChat(
   }
   for (const workId of captured.workIds) {
     if (input.shape) {
-      await dependencies.mutate((api as any).albatrossWorkV2.setShape, {
+      await dependencies.mutate(api.albatrossWorkV2.setShape, {
         userId: user.userId,
         workId,
         shape: input.shape,
       });
     }
     if (input.horizon) {
-      await dependencies.mutate((api as any).albatrossWorkV2.setHorizon, {
+      await dependencies.mutate(api.albatrossWorkV2.setHorizon, {
         userId: user.userId,
         workId,
         horizon: input.horizon,

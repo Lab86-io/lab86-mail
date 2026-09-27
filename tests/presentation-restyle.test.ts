@@ -409,7 +409,7 @@ describe('restyle requests through the document proposal', () => {
   });
 
   test('an appearance request becomes a restyle proposal without regenerating content', async () => {
-    const generate = mock(async () => ({
+    const generate = mock(async (..._args: unknown[]) => ({
       object: {
         restyle: true,
         palette: 'signal',
@@ -466,7 +466,7 @@ describe('restyle requests through the document proposal', () => {
 
   test('a content request on an existing deck never hits the classifier', async () => {
     const current = record(referenceDeck('editorial'));
-    const generate = mock(async () => ({
+    const generate = mock(async (..._args: unknown[]) => ({
       object: {
         title: 'Lakeshore',
         summary: 'Added a budget slide.',
@@ -487,7 +487,7 @@ describe('restyle requests through the document proposal', () => {
     });
     expect(generate).toHaveBeenCalledTimes(1);
     expect(generate.mock.calls[0][0]).toMatchObject({ feature: 'document_suggestion' });
-    expect(generate.mock.calls[0][0].schema).not.toBe(restyleClassificationSchema);
+    expect((generate.mock.calls[0][0] as any).schema).not.toBe(restyleClassificationSchema);
     expect(proposal.summary).toContain('Added a budget slide.');
   });
 
@@ -555,7 +555,7 @@ describe('restyle requests through the document proposal', () => {
     });
     const current = record(referenceDeck('editorial'));
     const artworks = poolArtworks(2).map(compositionArtwork);
-    const resolve = mock(async () => ({
+    const resolve = mock(async (..._args: unknown[]) => ({
       artworks: { statement: artworks[0], close: artworks[1] },
       imagery: { mode: 'paintings' as const, subject: 'valley' },
       notes: [],
@@ -618,7 +618,7 @@ describe('restyle requests through the document proposal', () => {
 
   test('with the flag off, an appearance request runs the existing content path', async () => {
     const current = record(referenceDeck('editorial'));
-    const generate = mock(async () => ({
+    const generate = mock(async (..._args: unknown[]) => ({
       object: {
         title: 'Lakeshore',
         summary: 'Restyled by hand.',
@@ -638,7 +638,7 @@ describe('restyle requests through the document proposal', () => {
       current,
     });
     expect(generate).toHaveBeenCalledTimes(1);
-    expect(generate.mock.calls[0][0].schema).not.toBe(restyleClassificationSchema);
+    expect((generate.mock.calls[0][0] as any).schema).not.toBe(restyleClassificationSchema);
     expect(proposal.summary).toContain('Restyled by hand.');
   });
 });

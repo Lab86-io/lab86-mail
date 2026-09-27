@@ -1,8 +1,8 @@
 import { syncCalendarAccount } from '../calendar/sync';
+import { mapConcurrent } from '../classifier/client';
 import { syncCloudContent } from '../content/cloud-sync';
 import { listCloudFileConnections } from '../files/connections';
 import { api, convexQuery } from '../hosted/convex';
-import { mapConcurrent } from '../jev/client';
 import { listUserConnections } from '../mcp/connections';
 import { syncConnection } from '../mcp/sync';
 import { reconcileMailCorpusAccount } from './corpus-sync';
@@ -13,7 +13,7 @@ export interface BriefSourceCheck {
 }
 const defaults = {
   accounts: (userId: string) =>
-    convexQuery<Array<{ accountId: string; status: string }>>((api as any).accounts.listConnectedAccounts, {
+    convexQuery<Array<{ accountId: string; status: string }>>(api.accounts.listConnectedAccounts, {
       userId,
     }),
   connections: listUserConnections,

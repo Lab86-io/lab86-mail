@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import { invokeTool } from '@/lib/tools/registry';
 import { browserbaseFetch, browserbaseSearch } from '@/lib/tools/web';
 
@@ -115,7 +116,7 @@ export async function enrichPlace(input: EnrichPlaceInput): Promise<EnrichPlaceR
       const page: any = await deps
         .invokeTool(browserbaseFetch, { url }, { agent: 'ai', userId: input.userId })
         .catch(() => null);
-      const content = String(page?.content || '').slice(0, 6000);
+      const content = truncateText(String(page?.content || ''), 6000);
       return content ? { url, content } : null;
     }),
   );
@@ -126,7 +127,7 @@ export async function enrichPlace(input: EnrichPlaceInput): Promise<EnrichPlaceR
     '## Search results',
     ...results.map(
       (result, index) =>
-        `${index + 1}. ${result.title || 'Untitled'} — ${result.url}${result.snippet ? `\n   ${String(result.snippet).slice(0, 200)}` : ''}`,
+        `${index + 1}. ${result.title || 'Untitled'} — ${result.url}${result.snippet ? `\n   ${truncateText(String(result.snippet), 200)}` : ''}`,
     ),
     ...pages.filter(Boolean).flatMap((page) => ['', `## Page content: ${page!.url}`, page!.content]),
   ].join('\n');

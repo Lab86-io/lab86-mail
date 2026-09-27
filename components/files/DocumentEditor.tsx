@@ -26,7 +26,10 @@ import { Button } from '@/components/ui/button';
 import { useClientStore } from '@/lib/client-state';
 import { documentDraftMatchesSave } from '@/lib/documents/autosave';
 import { discardDraft, peekDraft, pendingFlush, type RetainedDraft } from '@/lib/documents/draft-store';
-import { googleModelWriteLimitation } from '@/lib/documents/google-write-policy';
+import {
+  googleLinkedFileSyncLimitation,
+  googleModelWriteLimitation,
+} from '@/lib/documents/google-write-policy';
 import type {
   AlbatrossDocumentModel,
   AlbatrossDocumentRecord,
@@ -515,6 +518,9 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   const engineSheet = model.kind === 'sheet';
   const googleWriteNotice = googleModelWriteLimitation(model);
   const googleWriteBlocked = engineSheet || Boolean(googleWriteNotice);
+  // A linked spreadsheet or deck can import from Google but never sync back.
+  const googleSyncBlocked =
+    googleWriteBlocked || Boolean(googleLinkedFileSyncLimitation(document.kind, document.google));
   const importNotes = document.importSource?.warnings || [];
 
   return (
@@ -567,21 +573,24 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
         >
           <History className="size-3.5" />
         </Button>
-        {!googleWriteBlocked ? (
+        {!googleSyncBlocked ? (
           <Button
             variant="outline"
             size="sm"
             onClick={() => publishMutation.mutate()}
-            disabled={googleWriteBlocked || publishMutation.isPending || saveMutation.isPending || dirty}
+            disabled={googleSyncBlocked || publishMutation.isPending || saveMutation.isPending || dirty}
             aria-label={document.google ? 'Sync Google' : 'Publish to Google'}
             title={googleWriteBlocked ? googleWriteNotice || undefined : undefined}
           >
+            {/* Icon when narrow, the word when wide: never an icon before text. */}
             {publishMutation.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <Loader2 className="size-3.5 animate-spin sm:hidden" />
             ) : (
-              <CloudUpload className="size-3.5" />
+              <CloudUpload className="size-3.5 sm:hidden" />
             )}
-            <span className="hidden sm:inline">{document.google ? 'Sync Google' : 'Publish'}</span>
+            <span className="hidden sm:inline">
+              {publishMutation.isPending ? 'Publishing…' : document.google ? 'Sync Google' : 'Publish'}
+            </span>
           </Button>
         ) : null}
         {document.google && !googleWriteBlocked ? (
@@ -636,9 +645,9 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
             onClick={() => openWordMutation.mutate()}
           >
             {openWordMutation.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <Loader2 className="size-3.5 animate-spin sm:hidden" />
             ) : (
-              <ExternalLink className="size-3.5" />
+              <ExternalLink className="size-3.5 sm:hidden" />
             )}
             <span className="hidden sm:inline">Word processor</span>
             <span className="sr-only sm:hidden">Word processor</span>
@@ -1280,8 +1289,13 @@ function SemanticGoogleDocumentEditor({
         </div>
         {file.webUrl || source.webUrl ? (
           <Button asChild variant="outline" size="sm">
-            <a href={file.webUrl || source.webUrl} target="_blank" rel="noreferrer">
-              <ExternalLink className="size-3.5" />
+            <a
+              href={file.webUrl || source.webUrl}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Open in Google"
+            >
+              <ExternalLink className="size-3.5 sm:hidden" />
               <span className="hidden sm:inline">Open in Google</span>
             </a>
           </Button>
@@ -1711,7 +1725,7 @@ function DocumentSuggestionReview({
                     suggestion.baseRevision !== document.currentRevision
                   }
                 >
-                  <Check className="size-3" /> Apply
+                  Apply
                 </Button>
                 <Button
                   variant="ghost"

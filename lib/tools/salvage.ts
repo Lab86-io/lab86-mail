@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { api, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import { parseIsoInTimezone } from '@/lib/shared/timezones';
 import { defineTool } from './registry';
 
@@ -80,7 +81,7 @@ function compactTask(card: any, nowMs: number) {
 function compactIntent(intent: any) {
   return {
     intentId: intent._id,
-    title: intent.title || String(intent.rawText || '').slice(0, 120),
+    title: intent.title || truncateText(String(intent.rawText || ''), 120),
     status: intent.status,
     priority: intent.priority,
     areaId: intent.areaId,
@@ -91,7 +92,7 @@ function compactProject(project: any) {
   return {
     projectId: project._id,
     title: project.title,
-    outcome: typeof project.outcome === 'string' ? project.outcome.slice(0, 300) : undefined,
+    outcome: typeof project.outcome === 'string' ? truncateText(project.outcome, 300) : undefined,
     status: project.status,
     areaId: project.areaId,
   };
@@ -113,6 +114,7 @@ export const salvageContext = defineTool({
     now: z.string(),
     timezone: z.string(),
     events: z.array(z.any()),
+    eventsTruncated: z.boolean(),
     tasks: z.array(z.any()),
     intents: z.array(z.any()),
     projects: z.array(z.any()),
@@ -122,8 +124,8 @@ export const salvageContext = defineTool({
     const timezone = args.timezone || ctx.userTimezone || 'UTC';
     const nowMs = deps.now();
     const endOfDay = endOfTodayMs(nowMs, timezone);
-    const [eventRows, cardRows, intentRows, projectRows] = await Promise.all([
-      deps.convexQuery<any[]>((deps.api as any).calendarData.listEvents, {
+    const [eventPage, cardRows, intentRows, projectRows] = await Promise.all([
+      deps.convexQuery<{ events: any[]; truncated: boolean }>((deps.api as any).calendarData.listEventsPage, {
         userId,
         startAt: nowMs,
         endAt: endOfDay,
@@ -147,10 +149,12 @@ export const salvageContext = defineTool({
     return {
       now: new Date(nowMs).toISOString(),
       timezone,
-      events: (eventRows || [])
+      events: (eventPage?.events || [])
         .filter((row) => row.status !== 'cancelled')
         .slice(0, EVENT_CAP)
         .map(compactEvent),
+      // True when the calendar read hit its cap, so the event list is partial.
+      eventsTruncated: Boolean(eventPage?.truncated) || (eventPage?.events?.length ?? 0) > EVENT_CAP,
       tasks: (cardRows || [])
         .filter((card) => !card.completedAt)
         .sort((a, b) => (a.dueAt ?? 0) - (b.dueAt ?? 0))

@@ -76,11 +76,6 @@ export const getUpload = query({
   },
 });
 
-export const listRecent = query({
-  args: { ...callerArgs, limit: v.optional(v.number()) },
-  handler: async (ctx, args) => recentUploads(ctx, args, 20),
-});
-
 export const listRecentFiles = query({
   args: { ...callerArgs, limit: v.optional(v.number()) },
   handler: async (ctx, args) => {

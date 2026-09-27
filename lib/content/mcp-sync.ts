@@ -10,6 +10,8 @@ import { getServerDef, normalizeItems } from '../mcp/servers';
 const defaults = { convexMutation, callMcpTool, connectMcp, getConnectionToken, listUserConnections };
 export async function syncMcpContent(userId: string, deps = defaults) {
   for (const connection of await deps.listUserConnections(userId)) {
+    // Only a working sign-in can page the source (AI-7). A reconnect-needed
+    // row keeps its indexed items; the main sync heals it back to connected.
     if (
       connection.status !== 'connected' ||
       (!connection.includeInSearch && !connection.includeInBrief) ||
@@ -17,7 +19,7 @@ export async function syncMcpContent(userId: string, deps = defaults) {
     )
       continue;
     const connectionId = `__history:${connection.connectionId}`;
-    const claim = await deps.convexMutation<any>((api as any).content.claimSync, { userId, connectionId });
+    const claim = await deps.convexMutation<any>(api.content.claimSync, { userId, connectionId });
     if (!claim) continue;
     let handle: Awaited<ReturnType<typeof connectMcp>> | undefined;
     try {
@@ -79,13 +81,13 @@ export async function syncMcpContent(userId: string, deps = defaults) {
       }
       items = [...new Map(items.map((item) => [item.externalId, item])).values()];
       for (let i = 0; i < items.length; i += 50)
-        await deps.convexMutation((api as any).mcp.upsertItems, {
+        await deps.convexMutation(api.mcp.upsertItems, {
           userId,
           connectionId: connection.connectionId,
           server: connection.server,
           items: items.slice(i, i + 50),
         });
-      await deps.convexMutation((api as any).content.finishSync, {
+      await deps.convexMutation(api.content.finishSync, {
         userId,
         connectionId,
         lease: claim.lease,
@@ -95,7 +97,7 @@ export async function syncMcpContent(userId: string, deps = defaults) {
         status,
       });
     } catch {
-      await deps.convexMutation((api as any).content.finishSync, {
+      await deps.convexMutation(api.content.finishSync, {
         userId,
         connectionId,
         lease: claim.lease,
