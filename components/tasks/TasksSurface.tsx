@@ -897,7 +897,12 @@ function ColumnMenu({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onDelete}>Delete</AlertDialogAction>
+            <AlertDialogAction
+              onClick={onDelete}
+              className="bg-[var(--color-danger)] text-white hover:bg-[var(--color-danger)]/90"
+            >
+              Delete column
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1794,8 +1799,9 @@ function CardPanel({
                           toast.error(err?.message || 'Could not delete card');
                         }
                       }}
+                      className="bg-[var(--color-danger)] text-white hover:bg-[var(--color-danger)]/90"
                     >
-                      Delete
+                      Delete card
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
