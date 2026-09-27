@@ -146,8 +146,8 @@ describe('what the user sees', () => {
     expect(early.prices.byok).toEqual({
       name: 'Own key',
       monthlyUsd: 12,
-      annualUsd: 50.4,
-      line: '$12/month or $50.40/year',
+      annualUsd: 120,
+      line: '$12/month or $120/year',
     });
     const late = billingPlanView({ plan: 'pro', trialEndsAt: NOW + 2 * DAY_MS }, NOW);
     expect(late.note).toBe('2 days left in your Pro trial. After that, your account moves to Free.');

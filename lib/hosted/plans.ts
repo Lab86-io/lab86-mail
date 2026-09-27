@@ -35,7 +35,7 @@ export const PAID_PLANS: Readonly<Record<PaidPlanId, PaidPlan>> = {
     id: 'byok',
     name: 'Own key',
     monthlyUsd: 12,
-    annualUsd: 50.4,
+    annualUsd: 120,
     summary: 'Everything, with your own OpenRouter, OpenAI, or Anthropic key. You pay your provider.',
   },
 };
@@ -48,7 +48,7 @@ export const TRIAL_DAYS = 14;
 export const TRIAL_NOTE_DAYS = 5;
 export const DAY_MS = 86_400_000;
 
-/** "$15" or "$50.40": whole dollars drop the cents. */
+/** "$15" or "$4.20": whole dollars drop the cents. */
 export function formatUsd(amount: number): string {
   return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`;
 }

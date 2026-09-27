@@ -42,15 +42,15 @@ function files(dir: string, out: string[] = []): string[] {
 describe('one price and one name', () => {
   test('the plans match what Clerk Billing charges in production', () => {
     expect(PAID_PLANS.pro).toMatchObject({ name: 'Pro', monthlyUsd: 15, annualUsd: 150 });
-    expect(PAID_PLANS.byok).toMatchObject({ name: 'Own key', monthlyUsd: 12, annualUsd: 50.4 });
+    expect(PAID_PLANS.byok).toMatchObject({ name: 'Own key', monthlyUsd: 12, annualUsd: 120 });
     expect(planPriceLine('pro')).toBe('$15/month or $150/year');
-    expect(planPriceLine('byok')).toBe('$12/month or $50.40/year');
-    expect(planPriceShort('byok')).toBe('$12/mo or $50.40/yr');
+    expect(planPriceLine('byok')).toBe('$12/month or $120/year');
+    expect(planPriceShort('byok')).toBe('$12/mo or $120/yr');
     expect(formatUsd(7)).toBe('$7');
     expect(formatUsd(4.2)).toBe('$4.20');
     // The budget module re-exports the same numbers for server callers.
     expect([B2C_MONTHLY_PRICE_USD, B2C_ANNUAL_PRICE_USD]).toEqual([15, 150]);
-    expect([B2C_BYOK_MONTHLY_PRICE_USD, B2C_BYOK_ANNUAL_PRICE_USD]).toEqual([12, 50.4]);
+    expect([B2C_BYOK_MONTHLY_PRICE_USD, B2C_BYOK_ANNUAL_PRICE_USD]).toEqual([12, 120]);
   });
 
   test('Terms, Support, and Pricing state the same prices and the product name', () => {
@@ -58,8 +58,8 @@ describe('one price and one name', () => {
       const html = renderToStaticMarkup(<Page />);
       expect(html).toContain(PRODUCT_NAME);
       expect(html).toContain('$15/month or $150/year');
-      expect(html).toContain('$12/month or $50.40/year');
-      expect(html).not.toContain('$120');
+      expect(html).toContain('$12/month or $120/year');
+      expect(html).not.toContain('$50.40');
       expect(html).not.toContain('Lab86 Mail');
       expect(html).not.toMatch(/\bAI\b/);
     }
@@ -124,7 +124,7 @@ describe('the pricing page', () => {
       feature: 'Price',
       free: '$0',
       pro: '$15/month or $150/year',
-      byok: '$12/month or $50.40/year',
+      byok: '$12/month or $120/year',
     });
     expect(new Set(rows.map((row) => row.feature)).size).toBe(rows.length);
     const faq = pricingFaq();
