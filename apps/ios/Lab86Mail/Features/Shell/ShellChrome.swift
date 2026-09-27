@@ -91,6 +91,10 @@ struct ShellStatusOverlay: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(environment.theme.accentColor)
+                        #if os(macOS)
+                        // Edit > Undo holds the same change (MacUndoBridge).
+                        .help("Undo (Command-Z)")
+                        #endif
                         Button("Dismiss") {
                             environment.store.dismissUndoNotice()
                         }

@@ -922,6 +922,10 @@ struct BriefSteeringMenu: View {
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
         .fixedSize()
+        #if os(macOS)
+        // The trigger is an icon; the Mac names it on hover.
+        .help("Tune this item in the brief")
+        #endif
         .accessibilityLabel("Tune this item in the brief")
     }
 }

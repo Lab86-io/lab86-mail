@@ -85,6 +85,9 @@ struct TodayView: View {
                         }
                     }
             }
+            #if os(macOS)
+            .macFormSheet()
+            #endif
         }
         .task { await environment.trust.refreshPlan() }
         .sheet(isPresented: $showsHistory) {
@@ -266,6 +269,10 @@ struct TodayView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    // An older HTML edition draws its own masthead, so the
+                    // source line, the Reconnect rows, and the trial note
+                    // lead the page (round 2).
+                    sourceStrip
                     NarrativeBriefView(memory: narrative, backend: environment.backend)
                     DailyBriefView(
                         report: report,

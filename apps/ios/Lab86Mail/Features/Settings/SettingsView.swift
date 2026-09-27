@@ -144,6 +144,10 @@ struct SettingsView: View {
                     showsAccountDeletion = false
                     dismiss()
                 }
+                #if os(macOS)
+                // Export first attaches its save panel to this sheet.
+                .macFormSheet(.editor)
+                #endif
             }
             .sheet(isPresented: $showsAllSettings) { NativeWorkspaceView(destination: .settings) }
         }

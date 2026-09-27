@@ -1,8 +1,5 @@
 import SwiftUI
 import UniformTypeIdentifiers
-#if os(macOS)
-import AppKit
-#endif
 
 /// Settings, Standing orders (round 2, FEATURES item 14): everything
 /// Albatross does without a new request, each with a pause switch. The
@@ -221,7 +218,9 @@ struct DataExportButton: View {
             let download = try await environment.backend.download(path: DataExport.path)
             let url = try DataExport.stage(download)
             #if os(macOS)
-            savedMessage = try Self.save(url)
+            // A save panel on the sheet that asked; the staged copy goes
+            // away when the panel closes (MacExportSavePanel).
+            savedMessage = try await MacExportSavePanel.save(url)
             #else
             exported = ExportedFile(url: url)
             #endif
@@ -229,22 +228,6 @@ struct DataExportButton: View {
             errorMessage = error.localizedDescription.nilIfBlank ?? "Could not export your data."
         }
     }
-
-    #if os(macOS)
-    @MainActor
-    private static func save(_ url: URL) throws -> String? {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = url.lastPathComponent
-        panel.allowedContentTypes = [.zip]
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let destination = panel.url else { return nil }
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
-        }
-        try FileManager.default.copyItem(at: url, to: destination)
-        return "Your export is saved as \(destination.lastPathComponent)."
-    }
-    #endif
 }
 
 struct ExportedFile: Identifiable, Equatable {
