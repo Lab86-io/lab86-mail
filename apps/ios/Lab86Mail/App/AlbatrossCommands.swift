@@ -42,14 +42,10 @@ struct AlbatrossCommands: Commands {
 
             Divider()
 
-            Button("Brief") { environment.navigation.selectPrimary(.today) }
-                .keyboardShortcut("1", modifiers: .command)
-            Button("Tasks") { environment.navigation.selectPrimary(.tasks) }
-                .keyboardShortcut("2", modifiers: .command)
-            Button("Calendar") { environment.navigation.selectPrimary(.calendar) }
-                .keyboardShortcut("3", modifiers: .command)
-            Button("Areas") { environment.navigation.selectPrimary(.work) }
-                .keyboardShortcut("4", modifiers: .command)
+            ForEach(PrimaryTab.commandShortcuts(showsFiles: environment.trust.showsFiles), id: \.tab) { shortcut in
+                Button(shortcut.tab.title) { environment.navigation.selectPrimary(shortcut.tab) }
+                    .keyboardShortcut(KeyEquivalent(shortcut.key), modifiers: .command)
+            }
 
             Divider()
 

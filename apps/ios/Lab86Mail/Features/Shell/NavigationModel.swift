@@ -48,6 +48,15 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
     static func sourceList(showsFiles: Bool) -> [PrimaryTab] {
         showsFiles ? sourceList : sourceList.filter { $0 != .files }
     }
+
+    /// Command-1 to Command-9 in the Albatross menu, in sidebar order, so the
+    /// numbers match the rows the user sees.
+    static func commandShortcuts(showsFiles: Bool) -> [(tab: PrimaryTab, key: Character)] {
+        sourceList(showsFiles: showsFiles)
+            .prefix(9)
+            .enumerated()
+            .map { index, tab in (tab: tab, key: Character(String(index + 1))) }
+    }
 }
 
 struct ThreadRoute: Identifiable, Hashable, Sendable {
