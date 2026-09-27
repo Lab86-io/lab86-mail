@@ -33,6 +33,7 @@ import { AiSection } from '@/components/settings/AiSection';
 import { BriefSection } from '@/components/settings/BriefSection';
 import { JevSection } from '@/components/settings/JevSection';
 import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
+import { McpReconnectNote, McpSyncProblemNote } from '@/components/settings/McpConnectionNotes';
 import { SavedRepliesSettings } from '@/components/settings/SavedRepliesSettings';
 import { SignatureSettings } from '@/components/settings/SignatureSettings';
 import { StandingOrdersSection } from '@/components/settings/StandingOrdersSection';
@@ -1126,6 +1127,8 @@ interface McpConnectionRow {
   connectionId: string;
   server: McpServer;
   serverUrl: string;
+  authKind?: 'token' | 'oauth';
+  // `error` means the saved sign-in failed and the user must reconnect.
   status: 'connected' | 'disconnected' | 'error';
   displayName?: string;
   scopes: string[];
@@ -1133,6 +1136,9 @@ interface McpConnectionRow {
   includeInSearch: boolean;
   lastSyncedAt?: number;
   error?: string;
+  lastSyncError?: string;
+  lastSyncErrorAt?: number;
+  lastSyncOkAt?: number;
   syncStatus?: 'idle' | 'syncing' | 'ready' | 'error';
   itemCount?: number;
   accountEmail?: string;
@@ -1223,7 +1229,9 @@ function ConnectionsSection() {
 
   const connections: McpConnectionRow[] = data?.connections || [];
   const servers: McpServerInfo[] = data?.servers || [];
-  const connectedServers = new Set(connections.map((c) => c.server));
+  // A server whose only connection needs a reconnect stays available, so its
+  // new sign-in or token replaces the broken connection in place.
+  const connectedServers = new Set(connections.filter((c) => c.status !== 'error').map((c) => c.server));
   const availableServers = servers.filter((s) => !connectedServers.has(s.id));
 
   return (
@@ -1258,18 +1266,19 @@ function ConnectionsSection() {
                   ) : null}
                 </div>
                 {connection.status === 'error' ? (
-                  <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">
-                    Connection error — {connection.error || 'will retry automatically'}
-                  </div>
+                  <McpReconnectNote connection={connection} />
                 ) : connection.status === 'connected' ? (
-                  <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
-                    <ShieldCheck className="size-3" />
-                    Connected
-                    {connection.lastSyncedAt ? ` · synced ${relativeTime(connection.lastSyncedAt)}` : ''}
-                    {connection.itemCount !== undefined
-                      ? ` · ${connection.itemCount.toLocaleString()} item${connection.itemCount === 1 ? '' : 's'}`
-                      : ''}
-                  </div>
+                  <>
+                    <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                      <ShieldCheck className="size-3" />
+                      Connected
+                      {connection.lastSyncedAt ? ` · synced ${relativeTime(connection.lastSyncedAt)}` : ''}
+                      {connection.itemCount !== undefined
+                        ? ` · ${connection.itemCount.toLocaleString()} item${connection.itemCount === 1 ? '' : 's'}`
+                        : ''}
+                    </div>
+                    <McpSyncProblemNote connection={connection} />
+                  </>
                 ) : (
                   <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">Disconnected</div>
                 )}

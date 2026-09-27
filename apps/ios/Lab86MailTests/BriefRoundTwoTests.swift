@@ -411,6 +411,61 @@ struct BriefRoundTwoTests {
         #expect(BriefSourceHealth.syncedAgo(now.addingTimeInterval(-2 * 86_400), now: now) == "2 days ago")
     }
 
+    // AI-7: a connected tool shows Reconnect only when its sign-in failed. A
+    // sync problem is a quiet note, and a row from an older server decodes.
+    @Test
+    func aConnectedToolAsksForReconnectOnlyWhenItsSignInFailed() throws {
+        let partial = try #require(ConnectedSourceConnection(json: .object([
+            "connectionId": .string("granola_1"), "server": .string("granola"), "status": .string("connected"),
+            "syncStatus": .string("error"), "syncError": .string("account check: rate limited"),
+            "lastSyncError": .string("account check: rate limited."), "lastSyncErrorAt": .number(5),
+            "lastSyncOkAt": .number(5), "itemCount": .number(8),
+        ])))
+        #expect(!partial.needsReconnect)
+        #expect(partial.statusText.hasPrefix("Connected"))
+        #expect(partial.syncProblemText == "Last sync had a problem: account check: rate limited. It will try again.")
+
+        let broken = try #require(ConnectedSourceConnection(json: .object([
+            "connectionId": .string("github_1"), "server": .string("github"), "status": .string("error"),
+            "error": .string("auth rejected — reconnect with a valid token"),
+            "lastSyncError": .string("auth rejected — reconnect with a valid token"),
+        ])))
+        #expect(broken.needsReconnect)
+        #expect(broken.statusText == "Reconnect needed. The saved sign-in no longer works.")
+        #expect(broken.syncProblemText == nil)
+
+        // An older server sends no lastSyncError fields.
+        let legacy = try #require(ConnectedSourceConnection(json: .object([
+            "connectionId": .string("jira_1"), "server": .string("jira"), "status": .string("connected"),
+            "syncStatus": .string("error"), "syncError": .string("socket hang up"),
+        ])))
+        #expect(!legacy.needsReconnect)
+        #expect(legacy.syncProblem == "socket hang up")
+
+        let clean = try #require(ConnectedSourceConnection(json: .object([
+            "connectionId": .string("slack_1"), "server": .string("slack"),
+            "lastSyncError": .null, "lastSyncErrorAt": .null,
+        ])))
+        #expect(clean.status == "connected")
+        #expect(clean.syncProblemText == nil)
+        #expect(ConnectedSourceConnection(json: .object(["server": .string("slack")])) == nil)
+
+        // In the Brief, a partial sync problem is a quiet stale source, not a problem row.
+        let health = try #require(BriefSourceHealth(json: .object([
+            "sources": .array([
+                .object([
+                    "id": .string("mcp:granola_1"), "kind": .string("connector"), "label": .string("Granola"),
+                    "provider": .string("granola"), "status": .string("stale"), "reconnectPath": .null,
+                    "detail": .string("Part of the last Granola sync had a problem. Some items can be missing."),
+                ]),
+            ]),
+            "attention": .number(0),
+            "line": .string("From Granola."),
+        ])))
+        #expect(health.problems.isEmpty)
+        #expect(health.others.map(\.id) == ["mcp:granola_1"])
+    }
+
     @Test
     func refreshingTheBriefReadsTheSourcesForThatEdition() async {
         let tools = RecordingTools { name, _ in

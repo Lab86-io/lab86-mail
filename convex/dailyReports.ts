@@ -526,6 +526,9 @@ export const briefSourceRows = query({
         includeInBrief: row.includeInBrief,
         lastSyncedAt: row.lastSyncedAt,
         error: row.error,
+        lastSyncError: row.lastSyncError,
+        lastSyncErrorAt: row.lastSyncErrorAt,
+        lastSyncOkAt: row.lastSyncOkAt,
       })),
       connectorSync: connectorSync.map((row) => ({
         connectionId: row.connectionId,

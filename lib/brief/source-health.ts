@@ -1,4 +1,5 @@
 import { api, convexQuery } from '../hosted/convex';
+import { mcpNeedsReconnect, mcpSyncProblem } from '../mcp/connection-health';
 import { isReconnectReason } from '../nylas/grant-health';
 import type { DailyReport } from '../shared/types';
 
@@ -73,6 +74,9 @@ export interface BriefSourceRows {
     includeInBrief: boolean;
     lastSyncedAt?: number;
     error?: string;
+    lastSyncError?: string;
+    lastSyncErrorAt?: number;
+    lastSyncOkAt?: number;
   }>;
   connectorSync: Array<{ connectionId: string; status: string; lastSyncedAt?: number; error?: string }>;
 }
@@ -187,20 +191,33 @@ export function briefSourceHealth(
     const name = CONNECTOR_LABELS[connection.server] ?? connection.server;
     const sync = connectorSync.get(connection.connectionId);
     const last = newest(sync?.lastSyncedAt, connection.lastSyncedAt);
+    // Only a failed sign-in asks for a reconnect (AI-7). A sync problem on a
+    // working connection is an error when the whole run failed, and a quiet
+    // stale note when the same run also saved items. A row from before AI-7
+    // has only the sync-state error.
+    const legacyProblem =
+      connection.lastSyncOkAt === undefined &&
+      connection.lastSyncErrorAt === undefined &&
+      sync?.status === 'error';
+    const problem = mcpSyncProblem(connection) ?? (legacyProblem ? { partial: false } : null);
     let status: BriefSourceStatus;
     let detail: string | null = null;
-    if (connection.status === 'error') {
+    if (mcpNeedsReconnect(connection)) {
       status = 'reconnect';
       detail = `${name} needs you to connect it again.`;
-    } else if (sync?.status === 'error') {
+    } else if (problem && !problem.partial) {
       status = 'error';
-      detail = `${name} could not sync. It will try again.`;
+      detail = `The last ${name} sync had a problem. It will try again.`;
     } else if (!last) {
       status = 'syncing';
       detail = `${name} has not synced yet.`;
     } else {
       status = freshness(last, now);
       if (status === 'stale') detail = `${name} has not synced for more than six hours.`;
+      else if (problem) {
+        status = 'stale';
+        detail = `Part of the last ${name} sync had a problem. Some items can be missing.`;
+      }
     }
     sources.push({
       id: `mcp:${connection.connectionId}`,

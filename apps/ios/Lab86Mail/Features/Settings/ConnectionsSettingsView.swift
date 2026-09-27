@@ -1,19 +1,63 @@
 import SwiftUI
 
+/// One connected tool row from `/api/mcp/status` (AI-7). `status` says only
+/// whether the saved sign-in works: `error` means the user must reconnect. A
+/// failed or partial sync is `syncProblem`, a quiet note that retries by
+/// itself. Every new field is optional, so an older server still decodes.
+struct ConnectedSourceConnection: Identifiable, Equatable {
+    let id: String
+    let server: String
+    let displayName: String?
+    let status: String
+    let includeInBrief: Bool
+    let includeInSearch: Bool
+    let lastSyncedAt: Date?
+    let itemCount: Int?
+    let syncProblem: String?
+
+    init?(json row: JSONValue) {
+        guard let id = row["connectionId"]?.stringValue,
+              let server = row["server"]?.stringValue else { return nil }
+        self.id = id
+        self.server = server
+        displayName = row["displayName"]?.stringValue?.nilIfBlank
+        status = row["status"]?.stringValue ?? "connected"
+        includeInBrief = row["includeInBrief"]?.boolValue ?? true
+        includeInSearch = row["includeInSearch"]?.boolValue ?? true
+        lastSyncedAt = CalendarDateParser.date(row["lastSyncedAt"])
+        itemCount = row["itemCount"]?.doubleValue.map(Int.init)
+        // An older server has no lastSyncError; its sync-state error still counts.
+        let legacyProblem = row["syncStatus"]?.stringValue == "error" ? row["syncError"]?.stringValue : nil
+        syncProblem = status == "error"
+            ? nil
+            : (row["lastSyncError"]?.stringValue ?? legacyProblem)?
+                .trimmingCharacters(in: CharacterSet(charactersIn: ". \n"))
+                .nilIfBlank
+    }
+
+    /// Only a failed sign-in asks for Reconnect.
+    var needsReconnect: Bool { status == "error" }
+
+    var statusText: String {
+        if needsReconnect { return "Reconnect needed. The saved sign-in no longer works." }
+        var pieces = ["Connected"]
+        if let date = lastSyncedAt {
+            pieces.append("synced \(date.formatted(.relative(presentation: .named)))")
+        }
+        if let itemCount { pieces.append("\(itemCount.formatted()) items") }
+        return pieces.joined(separator: " · ")
+    }
+
+    /// The quiet note under a working connection whose last sync had a problem.
+    var syncProblemText: String? {
+        syncProblem.map { "Last sync had a problem: \($0). It will try again." }
+    }
+}
+
 struct ConnectionsSettingsView: View {
     @Environment(AppEnvironment.self) private var environment
 
-    private struct Connection: Identifiable {
-        let id: String
-        let server: String
-        let displayName: String?
-        let status: String
-        let includeInBrief: Bool
-        let includeInSearch: Bool
-        let lastSyncedAt: Date?
-        let itemCount: Int?
-        let error: String?
-    }
+    private typealias Connection = ConnectedSourceConnection
 
     private struct Server: Identifiable {
         let id: String
@@ -56,13 +100,7 @@ struct ConnectionsSettingsView: View {
             Section("Add a source") {
                 ForEach(availableServers) { server in
                     Button {
-                        if server.connectMode == "oauth" {
-                            Task { await connectOAuth(server) }
-                        } else {
-                            token = ""
-                            displayName = ""
-                            tokenServer = server
-                        }
+                        startConnect(server)
                     } label: {
                         HStack {
                             Label(server.label, systemImage: "plus.circle")
@@ -147,11 +185,23 @@ struct ConnectionsSettingsView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(connection.displayName ?? connection.server.capitalized).font(.headline)
-                    Text(statusText(connection))
+                    Text(connection.statusText)
                         .font(.caption)
-                        .foregroundStyle(connection.status == "error" ? .red : .secondary)
+                        .foregroundStyle(connection.needsReconnect ? .red : .secondary)
+                    if let note = connection.syncProblemText {
+                        Text(note)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                 }
                 Spacer()
+                if connection.needsReconnect, let server = servers.first(where: { $0.id == connection.server }) {
+                    Button("Reconnect") { startConnect(server) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(busyID != nil)
+                }
                 Menu {
                     Button("Resync", systemImage: "arrow.clockwise") {
                         Task { await resync(connection) }
@@ -195,21 +245,7 @@ struct ConnectionsSettingsView: View {
         defer { isLoading = false }
         do {
             let result = try await environment.backend.get(path: "/api/mcp/status")
-            connections = (result["connections"]?.arrayValue ?? []).compactMap { row in
-                guard let id = row["connectionId"]?.stringValue,
-                      let server = row["server"]?.stringValue else { return nil }
-                return Connection(
-                    id: id,
-                    server: server,
-                    displayName: row["displayName"]?.stringValue,
-                    status: row["status"]?.stringValue ?? "connected",
-                    includeInBrief: row["includeInBrief"]?.boolValue ?? true,
-                    includeInSearch: row["includeInSearch"]?.boolValue ?? true,
-                    lastSyncedAt: CalendarDateParser.date(row["lastSyncedAt"]),
-                    itemCount: row["itemCount"]?.doubleValue.map(Int.init),
-                    error: row["syncError"]?.stringValue ?? row["error"]?.stringValue
-                )
-            }
+            connections = (result["connections"]?.arrayValue ?? []).compactMap(Connection.init(json:))
             servers = (result["servers"]?.arrayValue ?? []).compactMap { row in
                 guard let id = row["id"]?.stringValue else { return nil }
                 return Server(
@@ -222,6 +258,18 @@ struct ConnectionsSettingsView: View {
             }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // Starts a sign-in. For a server whose connection needs a reconnect, the
+    // server replaces that broken connection in place.
+    private func startConnect(_ server: Server) {
+        if server.connectMode == "oauth" {
+            Task { await connectOAuth(server) }
+        } else {
+            token = ""
+            displayName = ""
+            tokenServer = server
         }
     }
 
@@ -311,15 +359,5 @@ struct ConnectionsSettingsView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
-    }
-
-    private func statusText(_ connection: Connection) -> String {
-        if connection.status == "error" { return connection.error ?? "Connection error" }
-        var pieces = ["Connected"]
-        if let date = connection.lastSyncedAt {
-            pieces.append("synced \(date.formatted(.relative(presentation: .named)))")
-        }
-        if let count = connection.itemCount { pieces.append("\(count.formatted()) items") }
-        return pieces.joined(separator: " · ")
     }
 }

@@ -335,3 +335,154 @@ describe('the masthead source line', () => {
     expect(syncedAgo(NOW - 72 * 3600_000, NOW)).toBe('3 days ago');
   });
 });
+
+describe('connector sync problems in the source line (AI-7)', () => {
+  const connector = (overrides: Record<string, unknown>) => ({
+    connectionId: 'c',
+    server: 'github',
+    status: 'connected' as const,
+    authKind: 'token' as const,
+    includeInBrief: true,
+    lastSyncedAt: NOW - 10 * 60_000,
+    ...overrides,
+  });
+
+  function health() {
+    return briefSourceHealth(
+      {
+        accounts: [],
+        mailSync: [],
+        calendarSync: [],
+        connections: [
+          // Part of the last sync failed; the same run saved items.
+          connector({
+            connectionId: 'gh',
+            lastSyncError: 'account check: rate limited',
+            lastSyncErrorAt: NOW - 10 * 60_000,
+            lastSyncOkAt: NOW - 10 * 60_000,
+          }),
+          // The whole last run failed after an older good sync.
+          connector({
+            connectionId: 'jira',
+            server: 'jira',
+            lastSyncError: 'socket hang up',
+            lastSyncErrorAt: NOW - 5 * 60_000,
+            lastSyncOkAt: NOW - 40 * 60_000,
+          }),
+          // The sign-in failed.
+          connector({
+            connectionId: 'granola',
+            server: 'granola',
+            authKind: 'oauth',
+            status: 'error',
+            error: 'Reconnect Granola: its sign-in expired.',
+            lastSyncError: 'Reconnect Granola: its sign-in expired.',
+            lastSyncErrorAt: NOW - 5 * 60_000,
+          }),
+        ],
+        // The sync-state row still says error for both sync problems.
+        connectorSync: [
+          { connectionId: 'gh', status: 'error', lastSyncedAt: NOW - 10 * 60_000 },
+          { connectionId: 'jira', status: 'error', lastSyncedAt: NOW - 40 * 60_000 },
+        ],
+      },
+      { now: NOW },
+    );
+  }
+
+  test('only a failed sign-in asks for a reconnect; a sync problem says the last sync had a problem', () => {
+    const summary = health();
+    const byId = Object.fromEntries(summary.sources.map((source) => [source.id, source]));
+    expect(byId['mcp:gh']).toMatchObject({
+      status: 'stale',
+      reconnectPath: null,
+      detail: 'Part of the last GitHub sync had a problem. Some items can be missing.',
+    });
+    expect(byId['mcp:jira']).toMatchObject({
+      status: 'error',
+      reconnectPath: null,
+      detail: 'The last Jira sync had a problem. It will try again.',
+    });
+    expect(byId['mcp:granola']).toMatchObject({
+      status: 'reconnect',
+      reconnectPath: '/api/mcp/oauth/start?server=granola',
+    });
+    expect(summary.attention).toBe(2);
+    expect(summary.line).toBe(
+      'From GitHub, Jira, and Granola. The last Jira sync had a problem. It will try again. Granola needs you to connect it again.',
+    );
+  });
+
+  test('the masthead shows Reconnect only for the source that needs it', () => {
+    const html = renderToStaticMarkup(<BriefSourceLineView health={health()} now={NOW} />);
+    expect(html.match(/>Reconnect</g)).toHaveLength(1);
+    expect(html).toContain('The last Jira sync had a problem. It will try again.');
+    expect(html).toContain('data-brief-source-status="stale"');
+  });
+
+  test('a partial problem on a source older than six hours still reads as not synced', () => {
+    const summary = briefSourceHealth(
+      {
+        accounts: [],
+        mailSync: [],
+        calendarSync: [],
+        connections: [
+          connector({
+            lastSyncedAt: NOW - BRIEF_SOURCE_STALE_MS - 1,
+            lastSyncError: 'details unavailable',
+            lastSyncErrorAt: NOW - BRIEF_SOURCE_STALE_MS - 1,
+            lastSyncOkAt: NOW - BRIEF_SOURCE_STALE_MS - 1,
+          }),
+        ],
+        connectorSync: [],
+      },
+      { now: NOW },
+    );
+    expect(summary.sources[0]).toMatchObject({
+      status: 'stale',
+      detail: 'GitHub has not synced for more than six hours.',
+    });
+  });
+
+  test('Convex passes the connector sync problem fields to the source line', async () => {
+    const previous = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = SECRET;
+    try {
+      const t = convexTest(schema, {
+        '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
+        '../convex/dailyReports.ts': () => import('../convex/dailyReports'),
+      });
+      await t.run(async (ctx) => {
+        await ctx.db.insert('mcpConnections', {
+          userId: 'u1',
+          connectionId: 'c1',
+          server: 'github',
+          serverUrl: 'https://api.github.com',
+          authKind: 'token',
+          status: 'connected',
+          scopes: [],
+          includeInBrief: true,
+          includeInSearch: true,
+          lastSyncedAt: NOW,
+          lastSyncError: 'rate limited',
+          lastSyncErrorAt: NOW,
+          lastSyncOkAt: NOW,
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      });
+      const result = await loadBriefSourceRows('u1', ((fn: any, args: any) =>
+        t.query(fn, { ...args, internalSecret: SECRET })) as any);
+      expect(result.connections[0]).toMatchObject({
+        status: 'connected',
+        lastSyncError: 'rate limited',
+        lastSyncErrorAt: NOW,
+        lastSyncOkAt: NOW,
+      });
+      expect(briefSourceHealth(result, { now: NOW }).sources[0].status).toBe('stale');
+    } finally {
+      if (previous === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previous;
+    }
+  });
+});
