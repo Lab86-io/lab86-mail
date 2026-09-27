@@ -9,6 +9,7 @@ import SwiftUI
 struct MacShellView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var activationRefresh = MacActivationRefresh()
 
     var body: some View {
         @Bindable var navigation = environment.navigation
@@ -45,6 +46,17 @@ struct MacShellView: View {
         // Edit > Undo and Command-Z take back the change the undo notice
         // names (round 2).
         .macUndoBridge()
+        // Files leaves the source list when Settings turns it off. The list
+        // behind a hidden row gives way to Today; an open document stays.
+        .onChange(of: environment.trust.showsFiles) { _, showsFiles in
+            if let destination = MacSourceSelection.destination(
+                afterFilesShown: showsFiles,
+                selectedTab: environment.navigation.selectedTab,
+                documentOpen: environment.navigation.documentRoute != nil
+            ) {
+                environment.navigation.selectPrimary(destination)
+            }
+        }
         .task {
             let ownerID = environment.sessionStore.ownerID
             _ = await environment.flushCommandOutbox(ownerID: ownerID)
@@ -66,6 +78,9 @@ struct MacShellView: View {
                 await environment.notifications.retryPendingTextResponses()
                 await ShellNotificationActions.consumePendingMailAction(environment: environment)
                 await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
+                // The Mac process stays up for days: the Files choice, the
+                // trial note, and the source line are read again on return.
+                await activationRefresh.run(environment)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .lab86RemoteWake)) { _ in
@@ -156,6 +171,14 @@ enum MacSourceSelection {
         selectedTab == .mail && mailbox == .snoozed
     }
 
+    // Where the detail goes when the Files switch changes (round 2, FEATURES
+    // item 17). Nil keeps the current destination. Only the Files list gives
+    // way when its row leaves; an open document stays, as a link to one does.
+    static func destination(afterFilesShown showsFiles: Bool, selectedTab: PrimaryTab, documentOpen: Bool) -> PrimaryTab? {
+        guard !showsFiles, selectedTab == .files, !documentOpen else { return nil }
+        return .today
+    }
+
     // The Mail row goes back to Main from a label view or the Snoozed
     // mailbox. Other rows ask the mail list for nothing.
     static func mailCategory(
@@ -181,7 +204,8 @@ struct MacSourceList: View {
     @State private var newAreaName = ""
     @State private var isCreatingArea = false
 
-    private var primaries: [PrimaryTab] { PrimaryTab.sourceList }
+    // Files shows only while Settings, Advanced turns it on (round 2).
+    private var primaries: [PrimaryTab] { PrimaryTab.sourceList(showsFiles: environment.trust.showsFiles) }
     private var labels: [MailLabelSummary] { environment.store.mailLabels }
     private var areas: [AreaSummary] { environment.store.areas }
 

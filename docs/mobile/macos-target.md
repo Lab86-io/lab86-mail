@@ -72,6 +72,29 @@ source identity + `CONFIGURATION=Debug`); every CI and Release path keeps the fu
 - ~~Notification-permission deep link opens the Notifications pane generically~~ — opens the
   app's own row (`?id=io.lab86.mail`) as of 2026-09-03.
 
+## Round 2 on the Mac (2026-09-27)
+
+The round 2 features come from the shared SwiftUI code. These parts are Mac only:
+
+- **Command-Z.** While the shell shows an undo notice, the window's undo manager holds one
+  action for it (`MacUndoBridge`). Edit > Undo reads "Undo <summary>". The action goes when
+  the notice goes. Activity keeps the Undo after that.
+- **Sender cleanup** is a Mac sheet (`MacSenderCleanupView`): a checkbox and Unsubscribe on
+  each sender, then Select all, the count, Done (Escape), and Block in the footer. Return
+  never blocks. A sender that did not block stays selected.
+- **Files row.** The source list uses `PrimaryTab.sourceList(showsFiles:)`. When Files turns
+  off, the Files list gives way to Today. An open document stays open.
+- **Return to the app.** At most once in five minutes, the shell reads the Files choice, the
+  plan and its trial note, and the source line again (`MacActivationRefresh`).
+- **Export** attaches its save panel to the sheet that asked, and removes the staged ZIP
+  when the panel closes (`MacExportSavePanel`).
+- **Sheets.** The Daily Brief sheet from Today, Connections from the source line, the saved
+  reply editor, and account deletion use `macFormSheet(_:)`: the grouped form and a size.
+- **Fields.** A grouped Mac form shows a field's title as its label. The example text of the
+  VIP, greeting, tone, and saved reply name fields is a prompt on the Mac.
+- An older HTML edition shows the source line and the Reconnect rows over the edition. The
+  open Snoozed row is marked while the reading pane shows it.
+
 ## Visual QA on production (2026-08-19)
 
 Ran the Mac app against production (`Config/Local.xcconfig` production values; staging backup
