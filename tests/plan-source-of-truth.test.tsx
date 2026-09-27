@@ -70,12 +70,29 @@ describe('one price and one name', () => {
   test('the privacy policy names the product the same way', () => {
     // Google checks that the policy names the app on the consent screen, so the name must match.
     const html = renderToStaticMarkup(<PrivacyPage />);
-    expect(html).toContain(`${PRODUCT_NAME} connects to mail providers`);
+    expect(html).toContain(`${PRODUCT_NAME} connects to your mail provider only with the access you authorize`);
     expect(html).toContain(
       `${PRODUCT_NAME}&#x27;s use and transfer of information received from Google APIs`,
     );
     expect(html).not.toMatch(/Lab86 (?:Mail|AI)/);
     expect(html).toContain('mailto:support@lab86.io');
+  });
+
+  test('the privacy policy covers what Google checks before it shows the branding', () => {
+    const html = renderToStaticMarkup(<PrivacyPage />);
+    for (const heading of [
+      'Data we collect',
+      'How we use data',
+      'Google user data',
+      'How we share data',
+      'Security',
+      'Retention and deletion',
+      'Your choices',
+      'Contact',
+    ])
+      expect(html).toContain(`>${heading}</h2>`);
+    expect(html).toContain('Limited Use requirements');
+    expect(html).toContain('https://myaccount.google.com/permissions');
   });
 
   test('no surface hard-codes a plan price or the old product name', () => {
