@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { convexTest } from 'convex-test';
 import './tools/harness';
@@ -376,6 +376,11 @@ describe('steering in the document', () => {
 });
 
 describe('handled items leave the live edition', () => {
+  // The live projection runs only while an edition is under 24 hours old, and
+  // it measures that with the real clock. Freeze the clock at the fixture's
+  // time, or these tests fail one day after NOW.
+  beforeEach(() => setSystemTime(new Date(NOW)));
+  afterEach(() => setSystemTime());
   const policy = { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] as any[] };
   const assessment = (
     kinds: Array<'reply' | 'action' | 'waiting'>,

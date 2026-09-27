@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, mock, setSystemTime, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
 import { NextRequest } from 'next/server';
@@ -207,6 +207,9 @@ describe('the ingest scan holds or pushes', () => {
   });
 
   test('priority-only pushes urgent mail and holds the rest for the digest', async () => {
+    // Code detection skips codes that are already old by the real clock, so
+    // freeze the clock at the fixture's afternoon.
+    setSystemTime(new Date(AFTERNOON));
     const { deps, holds, dispatched } = harness(
       settings({ mode: 'priority', quietHours: { enabled: false, start: 22, end: 7 } }),
       AFTERNOON,
@@ -227,6 +230,7 @@ describe('the ingest scan holds or pushes', () => {
     );
     expect(holds.map((hold) => [hold.notificationId, hold.reason])).toEqual([['n_m1', 'priority_only']]);
     expect(dispatched).toEqual(['n_m3']);
+    setSystemTime();
   });
 });
 
