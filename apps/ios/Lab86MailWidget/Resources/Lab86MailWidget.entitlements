@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The widget reads the Today summary the app writes to the shared
+	     group. It never signs in or calls the server. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.io.lab86.mail</string>
+	</array>
+</dict>
+</plist>
