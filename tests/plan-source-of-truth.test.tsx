@@ -4,6 +4,7 @@ import path from 'node:path';
 import { JSDOM } from 'jsdom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import PricingPage from '../app/pricing/page';
+import PrivacyPage from '../app/privacy/page';
 import SupportPage from '../app/support/page';
 import TermsPage from '../app/terms/page';
 import {
@@ -66,9 +67,20 @@ describe('one price and one name', () => {
     expect(terms).toContain(`${TRIAL_DAYS} days of Pro with no card`);
   });
 
+  test('the privacy policy names the product the same way', () => {
+    // Google checks that the policy names the app on the consent screen, so the name must match.
+    const html = renderToStaticMarkup(<PrivacyPage />);
+    expect(html).toContain(`${PRODUCT_NAME} connects to mail providers`);
+    expect(html).toContain(
+      `${PRODUCT_NAME}&#x27;s use and transfer of information received from Google APIs`,
+    );
+    expect(html).not.toMatch(/Lab86 (?:Mail|AI)/);
+    expect(html).toContain('mailto:support@lab86.io');
+  });
+
   test('no surface hard-codes a plan price or the old product name', () => {
     const offenders: string[] = [];
-    const skip = ['app/privacy/', 'lib/hosted/plans.ts', 'lib/documents/', 'components/albatross/GuidedStep'];
+    const skip = ['lib/hosted/plans.ts', 'lib/documents/', 'components/albatross/GuidedStep'];
     for (const dir of ['app', 'components', 'lib']) {
       for (const file of files(path.join(ROOT, dir))) {
         const rel = path.relative(ROOT, file).split(path.sep).join('/');
