@@ -176,6 +176,26 @@ describe('parseHorizonHint', () => {
     });
   });
 
+  test('a count of days or years after a sleep word sleeps until that day', () => {
+    expect(parseHorizonHint('Ask about the refund again starting in 3 days', NOW)).toEqual({
+      kind: 'later',
+      notBefore: localDay(2026, 8, 5),
+      label: 'starting in 3 days',
+    });
+    expect(parseHorizonHint('Check the roof warranty after a year', NOW)).toEqual({
+      kind: 'later',
+      notBefore: localDay(2027, 8, 2),
+      label: 'after a year',
+    });
+  });
+
+  test('an empty "not before" keeps scanning for a later sleep phrase', () => {
+    expect(parseHorizonHint('Paint the fence, not before ... after the move', NOW)).toEqual({
+      kind: 'later',
+      label: 'after the move',
+    });
+  });
+
   test('a sleep and a soft target combine', () => {
     const parsed = parseHorizonHint('Renew the passport not before November, by December 10', NOW);
     expect(parsed?.kind).toBe('later');
