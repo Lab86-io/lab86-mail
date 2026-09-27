@@ -2637,6 +2637,8 @@ export default defineSchema({
     ),
     serverUrl: v.string(),
     authKind: v.union(v.literal('token'), v.literal('oauth')),
+    // The connection state only (AI-7). `error` means the user must
+    // reconnect; a failed or partial sync never sets it.
     status: v.union(v.literal('connected'), v.literal('disconnected'), v.literal('error')),
     displayName: v.optional(v.string()),
     scopes: v.array(v.string()),
@@ -2644,7 +2646,14 @@ export default defineSchema({
     includeInBrief: v.boolean(),
     includeInSearch: v.boolean(),
     lastSyncedAt: v.optional(v.number()),
+    // The reconnect reason, when `status` is `error`.
     error: v.optional(v.string()),
+    // The problem from the last sync, cleared by a clean sync. `lastSyncOkAt`
+    // is when a sync last reached the source and saved items (a partial sync
+    // counts), so `lastSyncOkAt >= lastSyncErrorAt` means a partial sync.
+    lastSyncError: v.optional(v.string()),
+    lastSyncErrorAt: v.optional(v.number()),
+    lastSyncOkAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

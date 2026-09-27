@@ -241,7 +241,7 @@ describe('oauth state store', () => {
 });
 
 describe('sync state', () => {
-  test('setSyncState upserts and mirrors status onto the connection row', async () => {
+  test('setSyncState upserts and mirrors the sync result onto the connection row', async () => {
     const t = newHarness();
     await connect(t);
     await t.mutation(api.mcp.setSyncState, {
@@ -253,7 +253,9 @@ describe('sync state', () => {
       error: 'rate limited',
     });
     let connection = await t.run((ctx) => ctx.db.query('mcpConnections').unique());
-    expect(connection).toMatchObject({ status: 'error', error: 'rate limited' });
+    // A failed sync with no sign-in failure keeps the connection state.
+    expect(connection).toMatchObject({ status: 'connected', lastSyncError: 'rate limited' });
+    expect(connection?.error).toBeUndefined();
 
     await t.mutation(api.mcp.setSyncState, {
       internalSecret: SECRET,
@@ -267,6 +269,9 @@ describe('sync state', () => {
     });
     connection = await t.run((ctx) => ctx.db.query('mcpConnections').unique());
     expect(connection).toMatchObject({ status: 'connected', lastSyncedAt: 777 });
+    expect(connection?.lastSyncError).toBeUndefined();
+    expect(connection?.lastSyncErrorAt).toBeUndefined();
+    expect(typeof connection?.lastSyncOkAt).toBe('number');
     const [listed] = await t.query(api.mcp.listConnections, { internalSecret: SECRET, userId: USER });
     expect(listed).toMatchObject({ syncStatus: 'ready', itemCount: 3, accountEmail: 'me@example.com' });
     const states = await t.run((ctx) => ctx.db.query('mcpSyncStates').collect());
@@ -523,7 +528,11 @@ describe('connector sync errors', () => {
       error: 'account check: rate limited',
     });
     const connections = await t.query(api.mcp.listConnections, { internalSecret: SECRET, userId: USER });
-    expect(connections[0]).toMatchObject({ status: 'error', syncError: 'account check: rate limited' });
+    expect(connections[0]).toMatchObject({
+      status: 'connected',
+      lastSyncError: 'account check: rate limited',
+      syncError: 'account check: rate limited',
+    });
     const found = await t.query(api.mcp.searchItems, {
       internalSecret: SECRET,
       userId: USER,
@@ -551,6 +560,211 @@ describe('connector sync errors', () => {
     expect(await t.run((ctx) => contentAccess(ctx, USER, content))).toBe(true);
     await setStatus('disconnected');
     expect(await t.run((ctx) => contentAccess(ctx, USER, content))).toBe(false);
+  });
+});
+
+describe('connection health (AI-7)', () => {
+  const syncResult = (t: Harness, args: Record<string, unknown>) =>
+    t.mutation(api.mcp.setSyncState, {
+      internalSecret: SECRET,
+      userId: USER,
+      connectionId: CONNECTION,
+      server: 'github',
+      ...args,
+    } as any);
+  const row = (t: Harness) => t.run((ctx) => ctx.db.query('mcpConnections').unique());
+
+  test('a partial sync failure keeps the connection connected and records the error', async () => {
+    const t = newHarness();
+    await connect(t);
+    await syncResult(t, { status: 'syncing' });
+    expect(await row(t)).toMatchObject({ status: 'connected' });
+    await syncResult(t, {
+      status: 'error',
+      outcome: 'ok',
+      error: 'account check: rate limited',
+      lastSyncedAt: 900,
+      itemCount: 4,
+    });
+    const connection = await row(t);
+    expect(connection).toMatchObject({
+      status: 'connected',
+      lastSyncedAt: 900,
+      lastSyncError: 'account check: rate limited',
+    });
+    expect(connection?.error).toBeUndefined();
+    // The same run saved items, so the problem reads as partial.
+    expect(connection?.lastSyncOkAt).toBe(connection?.lastSyncErrorAt);
+    const [listed] = await t.query(api.mcp.listConnections, { internalSecret: SECRET, userId: USER });
+    expect(listed).toMatchObject({ status: 'connected', syncStatus: 'error', itemCount: 4 });
+  });
+
+  test('a failed sign-in needs a reconnect, and the next good sync heals it', async () => {
+    const t = newHarness();
+    await connect(t);
+    await syncResult(t, {
+      status: 'error',
+      outcome: 'reconnect',
+      error: 'auth rejected — reconnect with a valid token',
+    });
+    expect(await row(t)).toMatchObject({
+      status: 'error',
+      error: 'auth rejected — reconnect with a valid token',
+      lastSyncError: 'auth rejected — reconnect with a valid token',
+    });
+    // A later failure that says nothing about the sign-in keeps the reconnect state.
+    await syncResult(t, { status: 'error', error: 'socket hang up' });
+    expect(await row(t)).toMatchObject({
+      status: 'error',
+      error: 'auth rejected — reconnect with a valid token',
+      lastSyncError: 'socket hang up',
+    });
+    await syncResult(t, { status: 'ready', outcome: 'ok', lastSyncedAt: 1000, itemCount: 1 });
+    const healed = await row(t);
+    expect(healed).toMatchObject({ status: 'connected', lastSyncedAt: 1000 });
+    expect(healed?.error).toBeUndefined();
+    expect(healed?.lastSyncError).toBeUndefined();
+  });
+
+  test('a new sign-in on the same connection clears the reconnect reason and the sync problem', async () => {
+    const t = newHarness();
+    await connect(t);
+    await syncResult(t, { status: 'error', outcome: 'reconnect', error: 'Reconnect GitHub: expired.' });
+    await connect(t, { accessTokenEncrypted: 'enc:new-token' });
+    const connection = await row(t);
+    expect(connection).toMatchObject({ status: 'connected' });
+    expect(connection?.error).toBeUndefined();
+    expect(connection?.lastSyncError).toBeUndefined();
+    expect(connection?.lastSyncErrorAt).toBeUndefined();
+  });
+
+  test('a sync that finishes after a disconnect does not bring the connection back', async () => {
+    const t = newHarness();
+    await connect(t);
+    await t.mutation(api.mcp.disconnectConnection, {
+      internalSecret: SECRET,
+      userId: USER,
+      connectionId: CONNECTION,
+    });
+    await syncResult(t, { status: 'ready', outcome: 'ok', lastSyncedAt: 5, itemCount: 0 });
+    expect(await row(t)).toMatchObject({ status: 'disconnected' });
+  });
+});
+
+describe('repairSyncErrorStatus migration (AI-7)', () => {
+  async function seed(t: Harness) {
+    await t.run(async (ctx) => {
+      const base = {
+        userId: USER,
+        server: 'github' as const,
+        serverUrl: 'https://api.github.com',
+        authKind: 'token' as const,
+        scopes: [],
+        includeInBrief: true,
+        includeInSearch: true,
+        createdAt: 1,
+      };
+      const credential = (connectionId: string, extra: Record<string, unknown> = {}) =>
+        ctx.db.insert('mcpCredentials', {
+          userId: USER,
+          connectionId,
+          server: 'github',
+          accessTokenEncrypted: 'enc:token',
+          createdAt: 1,
+          updatedAt: 1,
+          ...extra,
+        });
+      // A past partial failure with a good token: back to connected.
+      await ctx.db.insert('mcpConnections', {
+        ...base,
+        connectionId: 'partial',
+        status: 'error',
+        error: 'account check: rate limited',
+        updatedAt: 500,
+      });
+      await credential('partial');
+      // A real sign-in failure: keeps the reconnect state.
+      await ctx.db.insert('mcpConnections', {
+        ...base,
+        connectionId: 'auth',
+        status: 'error',
+        error: 'auth rejected — reconnect with a valid token',
+        updatedAt: 600,
+      });
+      await credential('auth');
+      // No credentials: keeps the reconnect state.
+      await ctx.db.insert('mcpConnections', {
+        ...base,
+        connectionId: 'nocreds',
+        status: 'error',
+        error: 'socket hang up',
+        updatedAt: 700,
+      });
+      // An expired OAuth sign-in with no refresh token: keeps the reconnect state.
+      await ctx.db.insert('mcpConnections', {
+        ...base,
+        connectionId: 'expired',
+        server: 'granola',
+        authKind: 'oauth',
+        status: 'error',
+        error: 'socket hang up',
+        updatedAt: 800,
+      });
+      await credential('expired', { expiresAt: 10 });
+      // A healthy row is not touched.
+      await ctx.db.insert('mcpConnections', {
+        ...base,
+        connectionId: 'healthy',
+        status: 'connected',
+        updatedAt: 900,
+      });
+      await credential('healthy');
+    });
+  }
+  const byId = async (t: Harness) =>
+    Object.fromEntries(
+      (await t.run((ctx) => ctx.db.query('mcpConnections').collect())).map((r) => [r.connectionId, r]),
+    );
+
+  test('moves past partial failures back to connected and keeps real reconnects, idempotently', async () => {
+    const t = newHarness();
+    await seed(t);
+
+    const dry = await t.mutation(internal.mcp.repairSyncErrorStatus, { dryRun: true });
+    expect(dry).toMatchObject({ scanned: 4, repaired: 1, kept: 3, dryRun: true, isDone: true });
+    expect((await byId(t)).partial.status).toBe('error');
+
+    const first = await t.mutation(internal.mcp.repairSyncErrorStatus, {});
+    expect(first).toMatchObject({ scanned: 4, repaired: 1, kept: 3, isDone: true });
+    const rows = await byId(t);
+    expect(rows.partial).toMatchObject({
+      status: 'connected',
+      lastSyncError: 'account check: rate limited',
+      lastSyncErrorAt: 500,
+    });
+    expect(rows.partial.error).toBeUndefined();
+    expect(rows.auth).toMatchObject({
+      status: 'error',
+      error: 'auth rejected — reconnect with a valid token',
+    });
+    expect(rows.nocreds.status).toBe('error');
+    expect(rows.expired.status).toBe('error');
+    expect(rows.healthy).toMatchObject({ status: 'connected', updatedAt: 900 });
+
+    const second = await t.mutation(internal.mcp.repairSyncErrorStatus, {});
+    expect(second).toMatchObject({ scanned: 3, repaired: 0, kept: 3 });
+  });
+
+  test('pages through the rows and schedules each next page', async () => {
+    const t = newHarness();
+    await seed(t);
+    const first = await t.mutation(internal.mcp.repairSyncErrorStatus, { batchSize: 1 });
+    expect(first).toMatchObject({ scanned: 1, isDone: false });
+    expect(typeof first.continueCursor).toBe('string');
+    await t.finishAllScheduledFunctions(() => {});
+    const rows = await byId(t);
+    expect(rows.partial.status).toBe('connected');
+    expect(['auth', 'nocreds', 'expired'].map((id) => rows[id].status)).toEqual(['error', 'error', 'error']);
   });
 });
 

@@ -10,8 +10,10 @@ import { getServerDef, normalizeItems } from '../mcp/servers';
 const defaults = { convexMutation, callMcpTool, connectMcp, getConnectionToken, listUserConnections };
 export async function syncMcpContent(userId: string, deps = defaults) {
   for (const connection of await deps.listUserConnections(userId)) {
+    // Only a working sign-in can page the source (AI-7). A reconnect-needed
+    // row keeps its indexed items; the main sync heals it back to connected.
     if (
-      connection.status === 'disconnected' ||
+      connection.status !== 'connected' ||
       (!connection.includeInSearch && !connection.includeInBrief) ||
       !['slack', 'jira', 'granola'].includes(connection.server)
     )

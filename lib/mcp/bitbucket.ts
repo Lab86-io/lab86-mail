@@ -101,7 +101,10 @@ async function fetchJson<T>(
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       const detail = body.trim() ? `: ${truncateText(body.trim(), 500)}` : '';
-      throw new Error(`Bitbucket ${operation} failed with HTTP ${response.status}${detail}`);
+      const error = new Error(`Bitbucket ${operation} failed with HTTP ${response.status}${detail}`);
+      // Only the sign-in probe's status says the token was rejected. A 403 on
+      // one workspace after a good probe is a sync problem, not a reconnect.
+      throw operation === 'auth probe' ? Object.assign(error, { statusCode: response.status }) : error;
     }
     return (await response.json()) as T;
   } catch (err) {

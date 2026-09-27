@@ -106,6 +106,49 @@ describe('MCP connection persistence', () => {
       saveTokenConnection({ userId: 'user_1', server: 'granola', token: 'token' }),
     ).rejects.toThrow('browser authorization');
   });
+
+  test('a new sign-in replaces the connection that needs a reconnect, in place (AI-7)', async () => {
+    queryResult = [
+      { ...granolaRow, connectionId: 'granola_broken', status: 'error', displayName: 'Work meetings' },
+      { ...granolaRow, connectionId: 'github_ok', server: 'github', authKind: 'token', status: 'connected' },
+      {
+        ...granolaRow,
+        connectionId: 'github_broken',
+        server: 'github',
+        authKind: 'token',
+        status: 'error',
+        displayName: 'Work GitHub',
+      },
+    ];
+    const oauth = await saveOAuthConnection({
+      userId: 'user_1',
+      server: 'granola',
+      displayName: 'Granola',
+      persisted: {
+        state: 'state_2',
+        clientInformation: { client_id: 'client_1' },
+        tokens: { access_token: 'access_2', token_type: 'Bearer' },
+      },
+    });
+    expect(oauth.connectionId).toBe('granola_broken');
+    expect(mutations.at(-1)?.args).toMatchObject({
+      connectionId: 'granola_broken',
+      displayName: 'Work meetings',
+    });
+
+    const token = await saveTokenConnection({ userId: 'user_1', server: 'github', token: 'ghp_new' });
+    expect(token.connectionId).toBe('github_broken');
+    expect(mutations.at(-1)?.args).toMatchObject({
+      connectionId: 'github_broken',
+      displayName: 'Work GitHub',
+    });
+
+    // A server with only working connections gets a new connection.
+    queryResult = [{ ...granolaRow, connectionId: 'github_ok', server: 'github', status: 'connected' }];
+    const fresh = await saveTokenConnection({ userId: 'user_1', server: 'github', token: 'ghp_other' });
+    expect(fresh.connectionId).toStartWith('github_');
+    expect(fresh.connectionId).not.toBe('github_ok');
+  });
 });
 
 describe('MCP OAuth token reads', () => {

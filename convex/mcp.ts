@@ -3,8 +3,9 @@ import { v } from 'convex/values';
 import { matchAreaContext } from '../lib/albatross/area-matching';
 import { areaMcpArtifactId, mcpAreaTargetDecision } from '../lib/albatross/area-mcp-identity';
 import { evidenceWeight, githubEvidenceKind } from '../lib/albatross/evidence-index';
+import { isMcpReconnectMessage } from '../lib/mcp/connection-health';
 import { detachedMcpSource } from '../lib/mcp/disconnect';
-import { mcpSyncStateFields } from '../lib/mcp/sync-state';
+import { mcpConnectionSyncPatch, mcpSyncStateFields } from '../lib/mcp/sync-state';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import { internalMutation, internalQuery, mutation, query } from './_generated/server';
@@ -64,7 +65,11 @@ export const upsertConnection = mutation({
       status: 'connected' as const,
       displayName: args.displayName,
       scopes: args.scopes ?? [],
+      // New credentials start a clean slate: no reconnect reason and no old
+      // sync problem.
       error: undefined,
+      lastSyncError: undefined,
+      lastSyncErrorAt: undefined,
       updatedAt: ts,
     };
     if (existing) {
@@ -481,6 +486,9 @@ export const setSyncState = mutation({
     accountEmail: v.optional(v.string()),
     workspaceName: v.optional(v.string()),
     error: v.optional(v.string()),
+    // What this run learned about the connection itself (AI-7): `ok` when
+    // the source answered, `reconnect` when the sign-in failed.
+    outcome: v.optional(v.union(v.literal('ok'), v.literal('reconnect'))),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -491,24 +499,21 @@ export const setSyncState = mutation({
         q.eq('userId', args.userId).eq('connectionId', args.connectionId),
       )
       .unique();
-    const next = mcpSyncStateFields(args, ts);
+    const { outcome, ...syncArgs } = args;
+    const next = mcpSyncStateFields(syncArgs, ts);
     if (row) await ctx.db.patch(row._id, next);
     else await ctx.db.insert('mcpSyncStates', { ...next, createdAt: ts });
-    // Surface the latest sync time/error on the connection row too.
+    // Surface the latest sync time and problem on the connection row too. A
+    // sync problem stays out of `status`; only a failed sign-in asks the user
+    // to reconnect.
     const connection = await ctx.db
       .query('mcpConnections')
       .withIndex('by_user_connection', (q) =>
         q.eq('userId', args.userId).eq('connectionId', args.connectionId),
       )
       .unique();
-    if (connection) {
-      await ctx.db.patch(connection._id, {
-        lastSyncedAt: args.lastSyncedAt ?? connection.lastSyncedAt,
-        status: args.status === 'error' ? 'error' : 'connected',
-        error: args.error,
-        updatedAt: ts,
-      });
-    }
+    const patch = connection ? mcpConnectionSyncPatch(connection, { ...args, outcome }, ts) : null;
+    if (connection && patch) await ctx.db.patch(connection._id, patch);
     return { ok: true };
   },
 });
@@ -837,8 +842,9 @@ export const searchItems = query({
   },
 });
 
-// Distinct userIds with a connected or errored connection — errored providers
-// are retried so endpoint migrations and transient failures can self-heal.
+// Distinct userIds with a connected or reconnect-needed connection. A
+// reconnect-needed provider is still retried, so a short auth outage or a
+// rate-limit 403 can self-heal: the next good sync sets `connected` again.
 // internalQuery: called only from the sync action via runQuery, so no
 // internal-secret gate (internal functions aren't client-exposed).
 export const listSyncTargetUserIds = internalQuery({
@@ -850,5 +856,71 @@ export const listSyncTargetUserIds = internalQuery({
         rows.filter((row) => row.status === 'connected' || row.status === 'error').map((row) => row.userId),
       ),
     ];
+  },
+});
+
+// AI-7 repair: before the fix, any failed sync call set a connection's
+// `status` to `error`, so a working connector read as broken. This moves each
+// `error` row that still has usable credentials and no sign-in failure back
+// to `connected`, and keeps its message as `lastSyncError`. Rows whose sign-in
+// really failed keep the reconnect state. Idempotent: a second run finds only
+// reconnect rows and changes nothing. Each page schedules the next one.
+export const repairSyncErrorStatus = internalMutation({
+  args: {
+    cursor: v.optional(v.union(v.string(), v.null())),
+    dryRun: v.optional(v.boolean()),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const ts = now();
+    const page = await ctx.db
+      .query('mcpConnections')
+      .withIndex('by_status', (q) => q.eq('status', 'error'))
+      .paginate({
+        cursor: args.cursor ?? null,
+        numItems: Math.min(Math.max(args.batchSize ?? DISCONNECT_BATCH_SIZE, 1), DISCONNECT_BATCH_SIZE),
+      });
+    let repaired = 0;
+    let kept = 0;
+    for (const row of page.page) {
+      const credentials = await ctx.db
+        .query('mcpCredentials')
+        .withIndex('by_user_connection', (q) =>
+          q.eq('userId', row.userId).eq('connectionId', row.connectionId),
+        )
+        .unique();
+      const expired =
+        row.authKind === 'oauth' &&
+        typeof credentials?.expiresAt === 'number' &&
+        credentials.expiresAt <= ts &&
+        !credentials.refreshTokenEncrypted;
+      const usable = Boolean(credentials?.accessTokenEncrypted) && !expired;
+      if (!usable || isMcpReconnectMessage(row.error)) {
+        kept += 1;
+        continue;
+      }
+      repaired += 1;
+      if (args.dryRun) continue;
+      await ctx.db.patch(row._id, {
+        status: 'connected',
+        error: undefined,
+        ...(row.error ? { lastSyncError: truncateText(row.error, 300), lastSyncErrorAt: row.updatedAt } : {}),
+        updatedAt: ts,
+      });
+    }
+    if (!page.isDone && !args.dryRun) {
+      await ctx.scheduler.runAfter(0, internal.mcp.repairSyncErrorStatus, {
+        cursor: page.continueCursor,
+        batchSize: args.batchSize,
+      });
+    }
+    return {
+      scanned: page.page.length,
+      repaired,
+      kept,
+      dryRun: Boolean(args.dryRun),
+      isDone: page.isDone,
+      continueCursor: page.isDone ? null : page.continueCursor,
+    };
   },
 });

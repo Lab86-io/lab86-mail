@@ -239,6 +239,18 @@ test('connected tools page only with advertised parameters and explicitly report
   expect(failed.closed()).toBe(1);
 });
 
+test('connected tools skip content history while the sign-in needs a reconnect (AI-7)', async () => {
+  const h = mcpHarness('slack');
+  const [row] = await h.deps.listUserConnections();
+  h.deps.listUserConnections = async () => [
+    { ...row, connectionId: 'broken', status: 'error' },
+    { ...row, connectionId: 'gone', status: 'disconnected' },
+  ];
+  await syncMcpContent('owner', h.deps);
+  expect(h.writes).toEqual([]);
+  expect(h.closed()).toBe(0);
+});
+
 test('content cycle independently commits successful classifications when embeddings fail and still prepares work', async () => {
   const writes: any[] = [];
   let preparations = 0;

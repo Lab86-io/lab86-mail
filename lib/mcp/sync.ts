@@ -35,10 +35,27 @@ const defaultDeps: SyncConnectionDeps = {
   callMcpTool,
 };
 
-function classifyError(err: unknown): string {
+/**
+ * True when the source rejected the saved sign-in (AI-7). A 403 that names a
+ * rate limit is a sync problem, not a reason to reconnect.
+ */
+export function isMcpAuthFailure(err: unknown): boolean {
   const code = Number((err as { statusCode?: number; code?: number })?.statusCode ?? (err as any)?.code);
-  if (code === 401 || code === 403) return 'auth rejected — reconnect with a valid token';
+  if ((err as { name?: string })?.name === 'UnauthorizedError') return true;
+  if (code === 401) return true;
+  if (code !== 403) return false;
+  const message = String((err as { message?: string })?.message || '');
+  return !/rate limit|secondary rate|abuse detection/i.test(message);
+}
+
+function classifyError(err: unknown): string {
+  if (isMcpAuthFailure(err)) return 'auth rejected — reconnect with a valid token';
   return truncateText(String((err as { message?: string })?.message || 'sync failed'), 200);
+}
+
+/** What a failed step says about the connection: reconnect, or nothing known. */
+function failureOutcome(err: unknown) {
+  return isMcpAuthFailure(err) ? { outcome: 'reconnect' as const } : {};
 }
 
 /** An MCP tool result that reports a failure in-band (isError) instead of throwing. */
@@ -121,6 +138,7 @@ export async function syncConnection(
       server: missing.server,
       status: 'error',
       error: missing.error,
+      outcome: 'reconnect',
     });
     return { ok: false, count: 0, error: missing.error };
   }
@@ -173,6 +191,7 @@ export async function syncConnection(
         connectionId,
         server: row.server,
         status: 'ready',
+        outcome: 'ok',
         lastSyncedAt: Date.now(),
         itemCount: result.items.length,
       });
@@ -185,6 +204,7 @@ export async function syncConnection(
         server: row.server,
         status: 'error',
         error,
+        ...failureOutcome(err),
       });
       return { ok: false, count: 0, error };
     }
@@ -201,6 +221,7 @@ export async function syncConnection(
       server: row.server,
       status: 'error',
       error,
+      ...failureOutcome(err),
     });
     return { ok: false, count: 0, error };
   }
@@ -210,13 +231,18 @@ export async function syncConnection(
   let supportedQueries = 0;
   let successfulQueries = 0;
   const queryErrors: string[] = [];
+  let authFailures = 0;
+  const noteQueryError = (err: unknown, prefix = '') => {
+    if (isMcpAuthFailure(err)) authFailures += 1;
+    queryErrors.push(`${prefix}${classifyError(err)}`);
+  };
   let accountInfo: { email?: string; workspaceName?: string } = {};
   try {
     if (row.server === 'granola' && handle.toolNames.has('get_account_info')) {
       try {
         accountInfo = granolaAccountInfo(await callSyncTool(deps, handle, 'get_account_info', {}));
       } catch (err) {
-        queryErrors.push(`account check: ${classifyError(err)}`);
+        noteQueryError(err, 'account check: ');
       }
     }
     for (const query of def.syncQueries) {
@@ -238,7 +264,7 @@ export async function syncConnection(
           items.push(item);
         }
       } catch (err) {
-        queryErrors.push(classifyError(err));
+        noteQueryError(err);
       }
     }
     if (row.server === 'granola' && handle.toolNames.has('get_meetings')) {
@@ -256,7 +282,7 @@ export async function syncConnection(
           );
           items = mergeGranolaMeetingDetails(items, detailed);
         } catch (err) {
-          queryErrors.push(classifyError(err));
+          noteQueryError(err);
         }
       }
     }
@@ -283,6 +309,7 @@ export async function syncConnection(
       server: row.server,
       status: 'error',
       error,
+      ...(authFailures ? { outcome: 'reconnect' as const } : {}),
     });
     return { ok: false, count: 0, error };
   }
@@ -296,6 +323,9 @@ export async function syncConnection(
     server: row.server,
     status: queryErrors.length ? 'error' : 'ready',
     ...(queryErrors.length ? { error: queryErrors[0] } : {}),
+    // The source answered at least one query, so the connection works even
+    // when part of the sync failed (AI-7).
+    outcome: 'ok',
     lastSyncedAt: Date.now(),
     itemCount: items.length,
     accountEmail: accountInfo.email,
@@ -312,6 +342,7 @@ export async function syncAllMcpConnections(
   userId: string,
   deps: SyncConnectionDeps = defaultDeps,
 ): Promise<{ connections: number; items: number }> {
+  // A reconnect-needed (`error`) row is still tried: a good sync heals it.
   const connections = (await deps.listUserConnections(userId)).filter(
     (c): c is McpConnectionRow => c.status === 'connected' || c.status === 'error',
   );

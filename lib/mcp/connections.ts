@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { decryptSecret, encryptSecret, maskFingerprint, secretFingerprint } from '@/lib/security/crypto';
+import type { McpConnectionStatus } from './connection-health';
 import { oauthExpiresAt, oauthScopes, type PersistedMcpOAuthState, refreshMcpOAuth } from './oauth';
 import { getServerDef, type McpServerId } from './servers';
 
@@ -28,13 +29,18 @@ export interface McpConnectionRow {
   server: McpServerId;
   serverUrl: string;
   authKind: 'token' | 'oauth';
-  status: 'connected' | 'disconnected' | 'error';
+  /** `error` means the user must reconnect; a sync problem never sets it (AI-7). */
+  status: McpConnectionStatus;
   displayName?: string;
   scopes: string[];
   includeInBrief: boolean;
   includeInSearch: boolean;
   lastSyncedAt?: number;
+  /** The reconnect reason, when `status` is `error`. */
   error?: string;
+  lastSyncError?: string;
+  lastSyncErrorAt?: number;
+  lastSyncOkAt?: number;
   syncStatus?: 'idle' | 'syncing' | 'ready' | 'error';
   itemCount?: number;
   accountEmail?: string;
@@ -101,6 +107,24 @@ export function newConnectionId(server: string): string {
   return `${server}_${randomBytes(8).toString('hex')}`;
 }
 
+/**
+ * A new sign-in for a server whose connection needs a reconnect replaces that
+ * row in place (AI-7), so its items, toggles, and task links stay and the
+ * Reconnect prompt goes away. Otherwise the sign-in makes a new connection.
+ */
+async function connectionTarget(
+  userId: string,
+  server: McpServerId,
+): Promise<{ connectionId: string; displayName?: string }> {
+  const rows = await listUserConnections(userId).catch(() => [] as McpConnectionRow[]);
+  const broken = (Array.isArray(rows) ? rows : []).find(
+    (row) => row.server === server && row.status === 'error',
+  );
+  return broken
+    ? { connectionId: broken.connectionId, displayName: broken.displayName }
+    : { connectionId: newConnectionId(server) };
+}
+
 // Connect a server with a pre-obtained token/PAT (the headless path). The token
 // is encrypted before it ever reaches Convex; only a non-reversible fingerprint
 // + masked tail are stored for display.
@@ -117,7 +141,8 @@ export async function saveTokenConnection(opts: {
   if (!token) throw new Error('A token is required to connect.');
 
   const fingerprint = deps.secretFingerprint(token);
-  const connectionId = newConnectionId(opts.server);
+  const target = await connectionTarget(opts.userId, opts.server);
+  const connectionId = target.connectionId;
   await deps.convexMutation(mcpApi.upsertConnection, {
     userId: opts.userId,
     connectionId,
@@ -127,7 +152,7 @@ export async function saveTokenConnection(opts: {
     // be a token-exfiltration / SSRF surface.
     serverUrl: def.defaultUrl,
     authKind: 'token',
-    displayName: opts.displayName || def.label,
+    displayName: opts.displayName || target.displayName || def.label,
     scopes: def.scopes,
     accessTokenEncrypted: deps.encryptSecret(token),
     fingerprint,
@@ -147,7 +172,8 @@ export async function saveOAuthConnection(opts: {
   const clientInformation = opts.persisted.clientInformation;
   if (!def || def.connectMode !== 'oauth') throw new Error(`OAuth is not supported for ${opts.server}.`);
   if (!tokens?.access_token || !clientInformation) throw new Error('OAuth credentials are incomplete.');
-  const connectionId = newConnectionId(opts.server);
+  const target = await connectionTarget(opts.userId, opts.server);
+  const connectionId = target.connectionId;
   const fingerprint = deps.secretFingerprint(tokens.access_token);
   await deps.convexMutation(mcpApi.upsertConnection, {
     userId: opts.userId,
@@ -155,7 +181,7 @@ export async function saveOAuthConnection(opts: {
     server: opts.server,
     serverUrl: def.defaultUrl,
     authKind: 'oauth',
-    displayName: opts.displayName || def.label,
+    displayName: target.displayName || opts.displayName || def.label,
     scopes: oauthScopes(tokens, def.scopes),
     accessTokenEncrypted: deps.encryptSecret(tokens.access_token),
     refreshTokenEncrypted: tokens.refresh_token ? deps.encryptSecret(tokens.refresh_token) : undefined,
