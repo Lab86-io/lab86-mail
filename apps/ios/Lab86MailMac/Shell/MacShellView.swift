@@ -42,6 +42,9 @@ struct MacShellView: View {
         .overlay {
             MacChatOverlay()
         }
+        // Edit > Undo and Command-Z take back the change the undo notice
+        // names (round 2).
+        .macUndoBridge()
         .task {
             let ownerID = environment.sessionStore.ownerID
             _ = await environment.flushCommandOutbox(ownerID: ownerID)
