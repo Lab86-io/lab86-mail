@@ -33,6 +33,7 @@ import type * as calendarData from "../calendarData.js";
 import type * as calendarSync from "../calendarSync.js";
 import type * as classifier from "../classifier.js";
 import type * as cloudFiles from "../cloudFiles.js";
+import type * as contacts from "../contacts.js";
 import type * as content from "../content.js";
 import type * as contentSchema from "../contentSchema.js";
 import type * as crons from "../crons.js";
@@ -94,6 +95,7 @@ declare const fullApi: ApiFromModules<{
   calendarSync: typeof calendarSync;
   classifier: typeof classifier;
   cloudFiles: typeof cloudFiles;
+  contacts: typeof contacts;
   content: typeof content;
   contentSchema: typeof contentSchema;
   crons: typeof crons;
