@@ -6,7 +6,7 @@ Database and file storage: Convex. Status of this text: 2026-09-28, branch
 
 This document tells where Google user data goes, step by step. Each step names
 the code. The mark "(after the casa-prep round)" identifies a statement that is
-true only when the named work of that round is merged and deployed.
+correct only when the named work of that round is merged and deployed.
 
 ## Diagram
 
@@ -55,7 +55,7 @@ true only when the named work of that round is merged and deployed.
 ## 1. Sign-in to Albatross
 
 - Clerk hosts sign-in and sign-up (`app/sign-in/[[...sign-in]]/page.tsx:36`,
-  `app/sign-up/[[...sign-up]]/page.tsx:39`). The proxy requires a Clerk session
+  `app/sign-up/[[...sign-up]]/page.tsx:39`). The proxy makes a Clerk session necessary
   on each route that is not public (`proxy.ts:12-59`).
 - Albatross reads only the Clerk profile: user id, e-mail address, name, and
   image (`lib/auth/current-user.ts:21-68`). Albatross never reads Google data
@@ -92,11 +92,11 @@ true only when the named work of that round is merged and deployed.
     signature (`app/api/nylas/webhook/route.ts:57-79`).
   - A webhook row in Convex keeps ids only, not mail content
     (`lib/mail/webhook-storage.ts:1-4`, `:67-80`).
-  - Schedules in `convex/crons.ts`: calendar every 15 minutes (`:39`),
-    contacts every hour (`:43`), mail repair every 30 minutes (`:149`).
+  - Schedules in `convex/crons.ts`: calendar at 15-minute intervals (`:39`),
+    contacts at 1-hour intervals (`:43`), mail repair at 30-minute intervals (`:149`).
 - **After the casa-prep round (direct Google).** A schedule reads the Gmail
-  History API every 2 minutes for each direct account. A Pub/Sub push route
-  exists but stays off until the owner makes a subscription
+  History API at 2-minute intervals for each direct account. A Pub/Sub push route
+  is in the code but stays off until the owner makes a subscription
   (`docs/google-direct-transport.md`, section "Sync").
 
 ## 4. Storage in Convex
@@ -208,7 +208,7 @@ user controls notifications in Settings and in the device settings.
   Datadog, or similar package in `package.json`).
 - The audit line writes the user id and the tool name. It removes the
   arguments (`lib/store/audit.ts:3-19`).
-- No log line writes a subject, a body, or a token on purpose. Some catch
+- No log line writes a subject, a body, or a token intentionally. Some catch
   blocks log a raw model error object (for example
   `lib/mail/daily-report.ts:1068`). A model SDK error can hold the text that
   the call sent. This is an open item for the security workstream.
@@ -246,7 +246,7 @@ Browserbase directly. Three features use Browserbase:
 
 - The repository has no backup job and no export job. A manual Convex export
   step is in the release runbook (`docs/hosted-release-runbook.md:389-403`).
-- Convex keeps platform backups under its own policy. The owner confirms the
+- Convex keeps platform backups under its own policy. The owner makes sure of the
   Convex plan and its backup retention (see `submission-checklist.md`).
 
 ## 11. Deletion
@@ -272,4 +272,4 @@ See `retention-and-deletion.md`. In short:
   OpenRouter setting `data_collection: deny` (after the casa-prep round) keeps
   calls away from providers that train on data.
 - Lab86 staff do not read user mail, except with the user's consent, for
-  security, or when the law requires it (`app/privacy/page.tsx:61-76`).
+  security, or when the law makes it necessary (`app/privacy/page.tsx:61-76`).

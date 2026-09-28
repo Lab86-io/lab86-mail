@@ -3,15 +3,15 @@
 Product: Albatross, from Lab86. Status of this text: 2026-09-28, branch
 `claude/casa-verify`.
 
-This document gives each data store, its retention rule, and the code that
+This document gives each data table, its retention rule, and the code that
 deletes the data. The mark "(after the casa-prep round)" identifies a
-statement that is true only when the named work of that round is merged and
-deployed. "Open item" identifies a gap that no workstream of this round owns.
+statement that is correct only when the named work of that round is merged and
+deployed. "Open item" identifies a problem that no workstream of this round owns.
 
 ## Rules in short
 
 - Albatross keeps Google data while the mailbox or the Drive connection stays
-  connected and the user account exists.
+  connected and the user account is not deleted.
 - Disconnect of a mailbox deletes the data of that mailbox.
 - Disconnect of Google Drive revokes the Google token and deletes the Drive
   index.
@@ -21,7 +21,7 @@ deployed. "Open item" identifies a gap that no workstream of this round owns.
 - Albatross never deletes mail, events, contacts, or files at Google because of
   a disconnect or an account deletion.
 
-## Stores and rules
+## Tables and rules
 
 Column keys: **Disconnect** = mailbox disconnect
 (`convex/accounts.ts:514-550`). **30 d** = dead-account purge
@@ -30,20 +30,20 @@ Column keys: **Disconnect** = mailbox disconnect
 
 ### Mail, calendar, and contacts
 
-| Store | Content | Retention rule | Disconnect | 30 d | Delete |
+| Table | Content | Retention rule | Disconnect | 30 d | Delete |
 |---|---|---|---|---|---|
-| `connectedAccounts` (`convex/schema.ts:144-173`) | Address, provider, scopes, grant id, status | Kept while connected | Yes, at once | Row stays; `corpusPurgedAt` is set | Yes |
-| `providerGrants` (`convex/schema.ts:175-190`) | Encrypted tokens, grant id | Kept while connected | Yes, at once | No (open item) | Yes |
+| `connectedAccounts` (`convex/schema.ts:144-173`) | Address, provider, scopes, grant id, status | Kept while connected | Yes, immediately | Row stays; `corpusPurgedAt` is set | Yes |
+| `providerGrants` (`convex/schema.ts:175-190`) | Encrypted tokens, grant id | Kept while connected | Yes, immediately | No (open item) | Yes |
 | `mailCorpusThreads`, `mailCorpusMessages`, `mailLabelMembership` | Thread and message headers, snippets, labels | No age limit | Yes, in batches | Yes | Yes |
 | `mailCorpusBodies` (`convex/schema.ts:457-472`) | Text body (32,000 characters maximum) and HTML body (200,000 maximum) | No age limit | Yes, in batches | Yes | Yes |
-| `mailSyncStates` | Sync cursor | Kept while connected | Yes, at once | Yes, first | Yes |
+| `mailSyncStates` | Sync cursor | Kept while connected | Yes, immediately | Yes, first | Yes |
 | `mailSnoozes` | Snooze times | Until wake | Yes | Yes | Yes |
 | `mailOneTimeCodes` | Sign-in codes found in mail | 2 to 30 minutes (default 10); deleted 1 day after expiry | Yes | Yes | Yes |
 | `mailOutbox` (`convex/schema.ts:84-102`) | Outgoing message payload | Payload deleted at send or cancel; row and payload deleted 7 days after queue | No (no account id) | No | Yes |
 | `calendars`, `calendarEvents` | Calendars; events −92 to +366 days, history 5 years | Events that Google no longer returns in the window are deleted | Yes | Yes | Yes |
 | `contacts`, `contactEmails` | Saved, other, and directory contacts | Deleted 30 days after the last good contact sync when the mailbox is not connected (`lib/contacts/model.ts:32`) | Yes | No (own 30-day rule) | Yes |
 | `correspondents` | Recipient counts from mail | Kept while connected | Yes | Yes | Yes |
-| Attachment files in Convex file storage | Mail attachments | 60 days; 25 MB maximum each (after the casa-prep round, item: "attachment files stored in Convex file storage") | Yes (after the casa-prep round) | See the attachments workstream | Yes |
+| Attachment files in Convex file storage | Mail attachments. | 60 days. 25 MB maximum for each file. (After the casa-prep round, item: "attachment files stored in Convex file storage".) | Yes (after the casa-prep round). | See the attachments workstream. | Yes. |
 
 Today, Albatross does not keep attachment files. The attachment route streams
 the file with `cache-control: private, no-store`
@@ -51,9 +51,9 @@ the file with `cache-control: private, no-store`
 
 ### Search index and derived data
 
-| Store | Content | Retention rule | Disconnect | 30 d | Delete |
+| Table | Content | Retention rule | Disconnect | 30 d | Delete |
 |---|---|---|---|---|---|
-| `contentItems`, `contentChunks` (`convex/contentSchema.ts:9-46`) | Text of mail threads (last 60 days), attachment text, Drive text; 1,536-dimension vectors | Deleted with the source | Mail: yes (after the casa-prep round, item: "disconnect deletes the content index too"). Drive: yes | Yes (`convex/deadAccounts.ts:145-157`) | Yes |
+| `contentItems`, `contentChunks` (`convex/contentSchema.ts:9-46`) | Text of mail threads (last 60 days), attachment text, and Drive text. Vectors with 1,536 dimensions. | Deleted with the source. | Mail: yes (after the casa-prep round, item: "disconnect deletes the content index too"). Drive: yes. | Yes (`convex/deadAccounts.ts:145-157`) | Yes |
 | `userDocs` (`convex/schema.ts:479-495`) | Daily Brief editions, chat sessions (80 messages each), drafts, thread notes | No age limit | No (open item) | No | Yes |
 | `albatrossEvidence`, `narrativeEntries`, `areaArtifactLinks` | Derived notes that point to mail or events | No age limit | `areaArtifactLinks`: yes. Others: no (open item) | No | Yes |
 | `albatrossNotifications` | Notification title and body | Rows expire but stay | No (open item) | No | Yes |
@@ -61,7 +61,7 @@ the file with `cache-control: private, no-store`
 
 ### Google Drive
 
-| Store | Content | Retention rule | Drive disconnect | Delete |
+| Table | Content | Retention rule | Drive disconnect | Delete |
 |---|---|---|---|---|
 | `cloudFileConnections`, `cloudFileCredentials` | Connection and encrypted tokens | Kept while connected | Yes, after the Google revoke | Yes |
 | `contentItems` and `contentChunks` of the connection | Drive text and vectors | Kept while connected | Yes, in batches of 25 (`convex/cloudFiles.ts:371-405`) | Yes |
@@ -70,7 +70,7 @@ the file with `cache-control: private, no-store`
 
 ### Short-lived rows
 
-| Store | Retention rule | Code |
+| Table | Retention rule | Code |
 |---|---|---|
 | `mailWebhookEvents` (ids only, no mail) | Processed: 14 days. Error: 30 days. Received: 30 days | `convex/retention.ts:12-22`; sweep `:46-102`; hourly cron `convex/crons.ts:167` |
 | `nylasOAuthStates` | 10 minutes; swept after 1 day | `app/api/nylas/connect/route.ts:92`; `convex/retention.ts:78-88` |
@@ -85,7 +85,7 @@ data" (`app/settings/page.tsx:929-935`, `:1087-1092`). The web and iOS apps call
 `POST /api/nylas/disconnect` (`app/api/nylas/disconnect/route.ts:10-40`).
 
 1. `deleteNylasAccount` runs first in Convex (`lib/nylas/provider.ts:1127-1138`).
-2. `deleteConnectedAccount` deletes the small tables at once:
+2. `deleteConnectedAccount` deletes the small tables immediately:
    `connectedAccounts`, `providerGrants`, `mailSyncStates`, `calendars`,
    `calendarSyncStates`, `contactSyncStates` (`convex/accounts.ts:524-538`).
 3. It schedules `purgeAccountDataBatch` over `ACCOUNT_BULK_TABLES`, 250 rows
@@ -130,7 +130,7 @@ Entry point: Settings > Account > "Delete account"
 2. `deleteUserData` disconnects each mailbox as above.
 3. If a disconnect throws, the deletion stops. The user can try again.
 4. `deleteUserCascade` (`convex/accounts.ts:552-640`) stops active brief jobs,
-   deletes the small tables and their stored files, deletes agent uploads with
+   deletes the small tables and their files in storage, deletes agent uploads with
    their files, deletes boards and cards, and deletes the `users` row. It
    schedules `purgeUserDataBatch` for the large tables (`convex/accounts.ts:441-477`).
 5. The route then deletes the Clerk user (`app/api/account/route.ts:30-31`).
@@ -173,7 +173,7 @@ Open items for account deletion:
 | Google | Albatross does not delete Google data. The user removes access at <https://myaccount.google.com/permissions>. | None |
 | Nylas | Today, Nylas holds the Google tokens and caches mail for its API. Disconnect destroys the grant. | Confirm the Nylas data retention terms. |
 | OpenRouter and model providers | With `data_collection: deny` (after the casa-prep round), OpenRouter uses only providers that do not keep or train on the data. | Turn on the same setting for the OpenRouter account. |
-| Railway logs | Kept under the Railway plan. Logs do not hold mail on purpose (see `data-flow.md`, step 7). | Confirm the Railway log retention. |
+| Railway logs | Kept under the Railway plan. Logs do not hold mail intentionally (see `data-flow.md`, step 7). | Confirm the Railway log retention. |
 | Browserbase | Session recordings of the guided-work browser. | Confirm the Browserbase retention for recordings. |
 | Resend | The brief e-mail, if the user turned it on. | Confirm the Resend log retention. |
 | Convex backups | Under the Convex plan. | Confirm the backup retention. |
@@ -191,4 +191,4 @@ These gaps are not in the list of work for the casa-prep round:
 3. Drive disconnect keeps `officeDocuments` and `officeVersions`.
 4. Account deletion does not revoke Google Drive tokens at Google.
 5. `app/privacy/page.tsx:94-102` says that disconnect deletes "index rows".
-   This is true only after the casa-prep round.
+   This is correct only after the casa-prep round.

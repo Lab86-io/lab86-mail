@@ -65,9 +65,9 @@ Clerk. The app does not read Google data through Clerk
 - **Feature.** Albatross identifies the Google account that the user connects.
 - **Code.** Nylas adds `openid` to each Google OAuth call. The Nylas Google
   guide says so: <https://developer.nylas.com/docs/provider-guides/google/create-google-app/>.
-  The Drive flow asks for it in `lib/files/providers.ts:41`. The direct flow
-  asks for it after the casa-prep round.
-- **Narrower scope.** No narrower scope exists. `openid` is the minimum
+  The Drive flow includes it in `lib/files/providers.ts:41`. The direct flow
+  includes it after the casa-prep round.
+- **Narrower scope.** Google has no narrower scope. `openid` is the minimum
   OpenID Connect scope.
 - **Demo.** Show the consent screen at mailbox connect and at Drive connect.
 
@@ -80,7 +80,7 @@ Clerk. The app does not read Google data through Clerk
     (`app/api/nylas/callback/route.ts:62-74`).
   - The direct cutover compares the OAuth address with the account address
     (`docs/google-direct-transport.md`, section "Cutover").
-  - The Drive flow asks for the `email` alias (`lib/files/providers.ts:42`).
+  - The Drive flow includes the `email` alias (`lib/files/providers.ts:42`).
     It reads the address from `oauth2/v2/userinfo`
     (`lib/files/connections.ts:195-210`).
 - **Narrower scope.** No narrower scope gives the account address.
@@ -95,14 +95,14 @@ Clerk. The app does not read Google data through Clerk
   the scopes, and the encrypted tokens
   (`app/api/nylas/callback/route.ts:62-74`). The owner keeps this scope for the
   direct flow (decision of 2026-09-28).
-- **Narrower scope.** No narrower scope exists. The scope is non-sensitive.
+- **Narrower scope.** Google has no narrower scope. The scope is non-sensitive.
 - **Demo.** Show the consent screen.
 
 ## gmail.modify (restricted)
 
 - **Feature.** The Mail view and the features that read mail.
   - Read, search, and show threads and messages.
-  - Send new mail, replies, and forwards. Send at a later time.
+  - Send new mail, replies, and forwards. Send at a time that the user sets.
   - Archive, move to Trash, and move back to the inbox.
   - Mark as read or unread. Star or unstar.
   - Create labels. Add labels to threads and remove labels from threads.
@@ -120,7 +120,7 @@ Clerk. The app does not read Google data through Clerk
   | List and create labels | `lib/nylas/provider.ts:575`, `:594` |
   | Change labels, read state, star | `lib/nylas/provider.ts:831` (messages), `:625`, `:981` (threads) |
   | Archive, Trash, back to inbox (Gmail label rules) | `lib/nylas/provider.ts:649-656` |
-  | Send, reply, forward, send later | `lib/nylas/provider.ts:1030` |
+  | Send, reply, forward, send at a set time | `lib/nylas/provider.ts:1030` |
   | Scheduled sends: list, find, cancel | `lib/nylas/provider.ts:1061`, `:1078`, `:1100` |
   | Download an attachment | `lib/nylas/provider.ts:1120` |
 
@@ -150,12 +150,12 @@ Clerk. The app does not read Google data through Clerk
     and change labels together.
   - Albatross never deletes mail permanently. The code has no
     `messages.delete`, `threads.delete`, or `batchDelete` call. Thus
-    Albatross does not ask for `https://mail.google.com/`.
+    Albatross does not include `https://mail.google.com/`.
 - **Demo.**
   1. Open Mail. Open a thread. Show the message body.
   2. Reply to the thread. Show the sent reply in Gmail.
   3. Archive the thread. Show that the thread left the Gmail inbox.
-  4. Mark a thread as unread. Add a label. Show both in Gmail.
+  4. Mark a thread as unread. Add a label. Show the two changes in Gmail.
   5. Move a thread to Trash. Show it in Gmail Trash.
 
 ## calendar (sensitive)
@@ -179,8 +179,8 @@ Clerk. The app does not read Google data through Clerk
   | Answer an invitation | `lib/calendar/mutate.ts:507` |
 
   The Calendar view calls these from `components/calendar/CalendarSurface.tsx`
-  (create `:215`, change `:239`, delete `:268`). The assistant versions ask
-  the user for approval first (`lib/ai/approval.ts:47-57`).
+  (create `:215`, change `:239`, delete `:268`). The assistant versions get
+  the approval of the user first (`lib/ai/approval.ts:47-57`).
 - **Code after the casa-prep round.** The same calls go to the Google Calendar
   API (`CALENDAR_API` in `lib/google/http.ts:114`) through
   `lib/google/adapter/calendar.ts`.
@@ -189,20 +189,20 @@ Clerk. The app does not read Google data through Clerk
     cannot write.
   - `calendar.events` writes events. It cannot delete a calendar or remove a
     calendar from the calendar list.
-  - `calendar.events.owned` covers only calendars that the user owns. Users
+  - `calendar.events.owned` includes only calendars that the user owns. Users
     also change events on shared calendars where they have write access.
-  - `calendar.app.created` covers only calendars that the app made.
+  - `calendar.app.created` includes only calendars that the app made.
   - Google's `calendars.delete` method accepts only `calendar`,
     `calendar.app.created`, or `calendar.calendars`
     (<https://developers.google.com/workspace/calendar/api/v3/reference/calendars/delete>).
-  - Thus the feature set needs three narrower scopes together:
+  - Thus three narrower scopes together are necessary for the feature set:
     `calendar.events`, `calendar.calendarlist`, and `calendar.calendars`.
     Together they give almost the same access as `calendar`. The owner keeps
     one scope, `calendar` (decision of 2026-09-28).
 - **Demo.**
   1. Open Calendar. Show events from the Google calendar.
   2. Make an event with a Google Meet link. Show it in Google Calendar.
-  3. Change the time of the event. Then delete it. Show both in Google
+  3. Change the time of the event. Then delete it. Show the two changes in Google
      Calendar.
   4. Answer "Yes" to an invitation. Show the answer in Google Calendar.
 
@@ -232,7 +232,7 @@ Clerk. The app does not read Google data through Clerk
   in `lib/contacts/model.ts:80-84`). The autocomplete path is the same as
   above.
 - **Narrower scope.** No other scope reads "Other contacts". The People API
-  method `otherContacts.list` needs this scope.
+  method `otherContacts.list` accepts only this scope.
 - **Demo.** Type the first letters of a person from "Other contacts". Show the
   suggestion.
 
@@ -244,7 +244,7 @@ Clerk. The app does not read Google data through Clerk
   in `lib/contacts/model.ts:80-84`). The autocomplete path is the same as
   above.
 - **Narrower scope.** No other scope reads the Workspace directory. The People
-  API method `people.listDirectoryPeople` needs this scope.
+  API method `people.listDirectoryPeople` accepts only this scope.
 - **Demo.** With a Workspace test account, type the first letters of a
   coworker. Show the suggestion.
 
@@ -264,10 +264,10 @@ Clerk. The app does not read Google data through Clerk
     Sheets as `.xlsx`, and Slides as `.pptx`.
   - File metadata for import: `lib/documents/google-import.ts:65`.
 - **Narrower scope.**
-  - `drive.file` covers only files that the app made or that the user opened
+  - `drive.file` includes only files that the app made or that the user opened
     through the app. The user browses and searches all Drive files.
   - `drive.metadata.readonly` cannot read file content. Search and the index
-    need the text.
+    must read the text.
   - `drive.readonly` is the narrowest scope that reads all files.
 - **Demo.**
   1. Open Files. Browse to a folder in My Drive. Show its files.
@@ -322,7 +322,7 @@ Clerk. The app does not read Google data through Clerk
     writes only to a Sheet that it made. An existing Google Sheet can be
     imported but not written back (`lib/documents/google-write-policy.ts:53-62`).
 - **Narrower scope.** See the owner note at the end. For the code of today,
-  `drive.readonly` covers the reads and `drive.file` covers the writes.
+  `drive.readonly` includes the reads and `drive.file` includes the writes.
 - **Demo.** Open a Google Sheet from Files in the Albatross editor. Then save
   an Albatross sheet to Google as a new file. Show the new Sheet.
 
@@ -336,7 +336,7 @@ Clerk. The app does not read Google data through Clerk
     `presentations.batchUpdate`. Albatross writes only to a Slides file that it
     made (`lib/documents/google-write-policy.ts:53-62`).
 - **Narrower scope.** See the owner note at the end. For the code of today,
-  `drive.readonly` covers the reads and `drive.file` covers the writes.
+  `drive.readonly` includes the reads and `drive.file` includes the writes.
 - **Demo.** Open a Slides file from Files in the Albatross deck editor. Then
   save an Albatross deck to Google as a new file. Show the new Slides file.
 
@@ -356,8 +356,8 @@ These notes are not for the reviewer. Decide each one before the submission.
      Drive v3 `PATCH`);
    - the Office working-copy save (`lib/documents/google-working-copy.ts:193-199`,
      Drive v2 upload).
-   For a file that the app did not make, the Drive API needs the full `drive`
-   scope for these calls. Albatross does not ask for `drive`. We did not test
+   For a file that the app did not make, the full `drive` scope is necessary
+   for these Drive API calls. Albatross does not include `drive`. We did not test
    these calls with a live account. Test them before the video. Do not show
    them if they fail.
 3. **`scripts/nylas-provision.ts:148-154`** lists only `gmail.modify`,
