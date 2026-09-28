@@ -357,6 +357,31 @@ describe('calendar cron targets', () => {
     });
     expect(await t.query(internal.calendarSync.syncTargets, {})).toEqual([USER]);
   });
+
+  test('the tick posts each target user once, and stops without an app URL', async () => {
+    const t = await harnessWithAccounts();
+    const originalFetch = globalThis.fetch;
+    const savedUrl = process.env.LAB86_MAIL_PUBLIC_URL;
+    const posts: Array<{ url: string; body: string }> = [];
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      posts.push({ url: String(url), body: String(init.body) });
+      return new Response('{}', { status: 202 });
+    }) as typeof fetch;
+    try {
+      delete process.env.LAB86_MAIL_PUBLIC_URL;
+      await t.action(internal.calendarSync.tick, {});
+      expect(posts).toHaveLength(0);
+      process.env.LAB86_MAIL_PUBLIC_URL = 'https://mail.example.test/';
+      await t.action(internal.calendarSync.tick, {});
+      expect(posts).toEqual([
+        { url: 'https://mail.example.test/api/cron/calendar-sync', body: JSON.stringify({ userId: USER }) },
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (savedUrl === undefined) delete process.env.LAB86_MAIL_PUBLIC_URL;
+      else process.env.LAB86_MAIL_PUBLIC_URL = savedUrl;
+    }
+  });
 });
 
 describe('sync state machine', () => {
