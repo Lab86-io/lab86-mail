@@ -114,7 +114,9 @@ export function encryptSecret(plaintext: string) {
 }
 
 function open(key: Buffer, ivRaw: string, tagRaw: string, ciphertextRaw: string, aad?: string) {
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivRaw, 'base64url'));
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivRaw, 'base64url'), {
+    authTagLength: 16,
+  });
   if (aad) decipher.setAAD(Buffer.from(aad, 'utf8'));
   decipher.setAuthTag(Buffer.from(tagRaw, 'base64url'));
   return Buffer.concat([decipher.update(Buffer.from(ciphertextRaw, 'base64url')), decipher.final()]).toString(

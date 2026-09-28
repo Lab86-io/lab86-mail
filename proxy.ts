@@ -134,6 +134,14 @@ export const config = {
   ],
 };
 
+/** Compares two strings in time that does not depend on where they differ. */
+export function constantTimeEqual(a: string, b: string) {
+  let diff = a.length ^ b.length;
+  const length = Math.max(a.length, b.length);
+  for (let i = 0; i < length; i += 1) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return diff === 0;
+}
+
 function basicAuthOrNext(req: Request) {
   const url = new URL(req.url);
   if (!shouldRequireBasicAuth(req, url.pathname)) return NextResponse.next();
@@ -148,7 +156,7 @@ function basicAuthOrNext(req: Request) {
   const [scheme, encoded] = authHeader.split(/\s+/, 2);
   if (scheme?.toLowerCase() === 'basic' && encoded) {
     const decoded = decodeBase64(encoded);
-    if (decoded === `${user}:${password}`) return NextResponse.next();
+    if (constantTimeEqual(decoded, `${user}:${password}`)) return NextResponse.next();
   }
 
   return new NextResponse('Authentication required.', {
