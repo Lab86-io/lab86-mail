@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { api, convexQuery } from '../hosted/convex';
+import { isConvexConfigured } from '../hosted/env';
 import { getPhotoFromCache, PHOTO_CACHE_VERSION, setPhotoCache } from '../store/photos';
 import { companyLogoCandidates, companyLogoUrl, resolveProviderProfilePhoto } from './photo-resolution';
 import { defineTool } from './registry';
@@ -18,8 +20,19 @@ interface PhotoToolDeps {
   companyLogoUrl: typeof companyLogoUrl;
   companyLogoCandidates: typeof companyLogoCandidates;
   resolveProviderProfilePhoto: typeof resolveProviderProfilePhoto;
+  // Photos of synced contacts (convex/contacts.ts photosForEmails).
+  contactPhotos: (userId: string | null | undefined, emails: string[]) => Promise<Map<string, string>>;
   now: () => number;
   providerLookupTimeoutMs: number;
+}
+
+async function storedContactPhotos(userId: string | null | undefined, emails: string[]) {
+  if (!userId || !emails.length || !isConvexConfigured()) return new Map<string, string>();
+  const result = await convexQuery<{ photos: Array<{ email: string; url: string }> }>(
+    api.contacts.photosForEmails,
+    { userId, emails },
+  );
+  return new Map((result?.photos || []).map((entry) => [entry.email, entry.url]));
 }
 
 const defaultDeps: PhotoToolDeps = {
@@ -28,6 +41,7 @@ const defaultDeps: PhotoToolDeps = {
   companyLogoUrl,
   companyLogoCandidates,
   resolveProviderProfilePhoto,
+  contactPhotos: storedContactPhotos,
   now: () => Date.now(),
   providerLookupTimeoutMs: PROVIDER_LOOKUP_TIMEOUT_MS,
 };
@@ -56,11 +70,19 @@ export const resolvePhotos = defineTool({
     const seen = new Set<string>();
     const providerStartedAt = deps.now();
     let providerLookups = 0;
+    // Synced contact photos first: one query, and no Nylas call for them.
+    const wanted = [...new Set(emails.map((raw) => (raw || '').trim().toLowerCase()).filter(Boolean))];
+    const stored = await deps.contactPhotos(ctx.userId, wanted).catch(() => new Map<string, string>());
 
     for (const raw of emails) {
       const email = (raw || '').trim().toLowerCase();
       if (!email || seen.has(email)) continue;
       seen.add(email);
+      const contactPhoto = stored.get(email);
+      if (contactPhoto) {
+        out[email] = contactPhoto;
+        continue;
+      }
 
       const cached = await deps.getPhotoFromCache(email).catch(() => null);
       const logoUrl =

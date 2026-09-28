@@ -533,6 +533,43 @@ export const namesForEmails = query({
   },
 });
 
+/**
+ * Synced contact photos for the given addresses (https only), so the avatar
+ * pipeline asks Nylas only for the rest. Saved contacts win over the
+ * directory, and the directory over `inbox` rows.
+ */
+export const photosForEmails = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), emails: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const emails = [
+      ...new Set(args.emails.map(normalizeContactEmail).filter((email): email is string => Boolean(email))),
+    ].slice(0, 200);
+    if (!emails.length) return { photos: [] };
+    const live = await liveAccountIds(ctx, args.userId);
+    if (!live.size) return { photos: [] };
+    const photos: Array<{ email: string; url: string }> = [];
+    for (const email of emails) {
+      const rows = (
+        await ctx.db
+          .query('contactEmails')
+          .withIndex('by_user_email', (q) => q.eq('userId', args.userId).eq('email', email))
+          .take(5)
+      )
+        .filter((row) => live.has(row.accountId))
+        .sort((a, b) => b.weight - a.weight);
+      for (const row of rows) {
+        const contact = await ctx.db.get(row.contactId);
+        if (contact?.photoUrl?.startsWith('https://')) {
+          photos.push({ email, url: contact.photoUrl });
+          break;
+        }
+      }
+    }
+    return { photos };
+  },
+});
+
 const CORRESPONDENT_SCAN = 300;
 
 /**
