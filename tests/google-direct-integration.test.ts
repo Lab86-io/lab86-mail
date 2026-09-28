@@ -288,6 +288,14 @@ describe('applyProviderMessageChanges', () => {
         .filter((call) => call.path === 'mailCorpus:upsertCorpusBatch')
         .map((call) => call.args.messages.map((m: any) => m.providerMessageId));
       expect(batches).toEqual([['ok-1', 'bad', 'ok-2'], ['ok-1'], ['bad'], ['ok-2']]);
+      // A message that cannot be read at all is counted and never written.
+      h.convexCalls.length = 0;
+      expect(await applyProviderMessageChanges(row, { upserts: [null], deletes: [] })).toEqual({
+        upserted: 0,
+        deleted: 0,
+        failed: 1,
+      });
+      expect(h.convexCalls.some((call) => call.path === 'mailCorpus:upsertCorpusBatch')).toBe(false);
     });
   });
 });

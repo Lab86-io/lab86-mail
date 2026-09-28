@@ -764,10 +764,8 @@ export async function applyProviderMessageChanges(
     }
     if (!messages.length) continue;
     detectMailSuggestions(row, messages);
-    // Alerts are best effort here: a failed scan must not keep mail out.
-    await scanIngestedMail(row, messages).catch((err: any) =>
-      console.warn('[mail-corpus] urgent scan failed', err?.message || err),
-    );
+    // scanIngestedMail never rejects: a missed alert must not keep mail out.
+    await scanIngestedMail(row, messages);
     const result = await upsertProviderMessages(row, messages, progress);
     upserted += result.upserted;
     failed += result.failed;
