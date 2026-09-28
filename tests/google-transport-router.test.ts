@@ -191,6 +191,44 @@ describe('googleFetch', () => {
     expect(seen).toHaveLength(1);
   });
 
+  test('retries a rate-limit 403 and reports it as 429 at the end', async () => {
+    const limited = {
+      error: { message: 'Rate Limit Exceeded', errors: [{ reason: 'userRateLimitExceeded' }] },
+    };
+    const { fetch, seen } = responder([{ status: 403, body: limited }]);
+    __setGoogleHttpDepsForTest({ fetch, getGoogleAccessToken: async () => 'tok', sleep: async () => {} });
+    const error = (await googleFetch('google:a', 'https://x.test', { attempts: 2 }).catch(
+      (e: unknown) => e,
+    )) as GoogleApiError;
+    expect(error.statusCode).toBe(429);
+    expect(error.reason).toBe('userRateLimitExceeded');
+    expect(seen).toHaveLength(2);
+  });
+
+  test('a rate-limit 403 that clears on retry returns the answer', async () => {
+    const limited = { error: { message: 'Rate Limit Exceeded', errors: [{ reason: 'rateLimitExceeded' }] } };
+    const { fetch, seen } = responder([
+      { status: 403, body: limited },
+      { status: 200, body: { ok: true } },
+    ]);
+    __setGoogleHttpDepsForTest({ fetch, getGoogleAccessToken: async () => 'tok', sleep: async () => {} });
+    expect(await googleJson<{ ok: boolean }>('google:a', 'https://x.test')).toEqual({ ok: true });
+    expect(seen).toHaveLength(2);
+  });
+
+  test('a scope 403 is not retried and keeps its status', async () => {
+    const denied = {
+      error: { message: 'Insufficient Permission', errors: [{ reason: 'insufficientPermissions' }] },
+    };
+    const { fetch, seen } = responder([{ status: 403, body: denied }]);
+    __setGoogleHttpDepsForTest({ fetch, getGoogleAccessToken: async () => 'tok', sleep: async () => {} });
+    const error = (await googleFetch('google:a', 'https://x.test').catch(
+      (e: unknown) => e,
+    )) as GoogleApiError;
+    expect(error.statusCode).toBe(403);
+    expect(seen).toHaveLength(1);
+  });
+
   test('googleJson returns undefined for 204', async () => {
     const { fetch } = responder([{ status: 204 }]);
     __setGoogleHttpDepsForTest({ fetch, getGoogleAccessToken: async () => 'tok', sleep: async () => {} });
