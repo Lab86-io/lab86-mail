@@ -36,6 +36,7 @@ import type * as cloudFiles from "../cloudFiles.js";
 import type * as contacts from "../contacts.js";
 import type * as content from "../content.js";
 import type * as contentSchema from "../contentSchema.js";
+import type * as correspondents from "../correspondents.js";
 import type * as crons from "../crons.js";
 import type * as dailyReports from "../dailyReports.js";
 import type * as documentAssets from "../documentAssets.js";
@@ -98,6 +99,7 @@ declare const fullApi: ApiFromModules<{
   contacts: typeof contacts;
   content: typeof content;
   contentSchema: typeof contentSchema;
+  correspondents: typeof correspondents;
   crons: typeof crons;
   dailyReports: typeof dailyReports;
   documentAssets: typeof documentAssets;

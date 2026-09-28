@@ -373,6 +373,8 @@ export const USER_BULK_TABLES = [
   'narrativeRuns',
   'contentItems',
   'briefPreparations',
+  // Recipient-search counts derived from the mail of every mailbox.
+  'correspondents',
 ] as const;
 
 const PURGE_BATCH = 250;
@@ -384,7 +386,13 @@ const DOCUMENT_MODELS_PER_PASS = 8;
 // A contact has at most 20 address rows, so one pass stays small.
 const CONTACTS_PER_PASS = 50;
 // Tables expose one of these userId-prefixed indexes; try each in turn.
-export const USER_INDEXES = ['by_user', 'by_user_account', 'by_user_key', 'by_user_created'] as const;
+export const USER_INDEXES = [
+  'by_user',
+  'by_user_account',
+  'by_user_key',
+  'by_user_created',
+  'by_user_email',
+] as const;
 
 async function takeByUser(ctx: any, table: string, userId: string, limit: number) {
   let lastErr: unknown;
@@ -516,6 +524,11 @@ export const deleteConnectedAccount = mutation({
       for (const row of rows) await ctx.db.delete(row._id);
     }
     await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDataBatch, {
+      userId: args.userId,
+      accountId: args.accountId,
+    });
+    // The mailbox's share of the recipient-search counts goes too.
+    await ctx.scheduler.runAfter(0, internal.correspondents.purgeAccountCorrespondents, {
       userId: args.userId,
       accountId: args.accountId,
     });
@@ -735,6 +748,7 @@ export const hasDocuments = query({
 export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
   contentChunks: 'Search chunks and embeddings derived from contentItems, which the export includes.',
   contactEmails: 'Address lookup rows derived from contacts, which the export includes.',
+  correspondents: 'Recipient-search counts derived from mailCorpusMessages, which the export includes.',
   nylasOAuthStates: 'Short-lived sign-in state for a mailbox connection, not user content.',
   mcpOAuthStates: 'Short-lived sign-in state for a tool connection, not user content.',
   cloudFileOAuthStates: 'Short-lived sign-in state for a file connection, not user content.',
