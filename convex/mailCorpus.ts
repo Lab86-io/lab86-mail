@@ -686,7 +686,6 @@ export const deleteCorpusMessage = mutation({
     if (row && row.userId === args.userId) {
       await ctx.db.delete(row._id);
       await deleteMessageBody(ctx, args.userId, args.accountId, args.providerMessageId);
-      await deleteMessageAttachmentData(ctx, args.userId, args.accountId, args.providerMessageId);
       await upsertSyncState(ctx, {
         userId: args.userId,
         accountId: args.accountId,
@@ -695,6 +694,11 @@ export const deleteCorpusMessage = mutation({
         messagesSyncedDelta: -1,
       });
     }
+    // The stored attachment files of the message go also when the corpus has
+    // no row for it: the attachment route stores the files that a person
+    // opens, and such a message can be outside the corpus. The cleanup reads
+    // only the rows of this user.
+    await deleteMessageAttachmentData(ctx, args.userId, args.accountId, args.providerMessageId);
     return { ok: true };
   },
 });

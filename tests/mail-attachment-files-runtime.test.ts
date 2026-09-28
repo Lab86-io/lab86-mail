@@ -615,6 +615,70 @@ describe('deletion', () => {
     expect(await rows(t, 'mailAttachmentFiles')).toEqual([]);
     expect(await blobCount(t)).toBe(0);
   });
+
+  test('a deleted message with no corpus row still takes its stored files, and only its own', async () => {
+    const t = harness();
+    await addAccount(t, 'acct');
+    await addAccount(t, 'acct', 'connected', OTHER);
+    // Lazy fill: a person opened the files of a message that the corpus does not hold.
+    await storeFile(t, 'acct', 'att_1', 'outside one', 'outside');
+    await storeFile(t, 'acct', 'att_2', 'kept shared', 'outside');
+    await storeFile(t, 'acct', 'att_3', 'kept shared', 'kept');
+    // The same ids for another user: separate rows and a separate file.
+    const foreign = await upload(t, 'foreign bytes');
+    await t.mutation(api.mailAttachments.recordFile, {
+      internalSecret: SECRET,
+      userId: OTHER,
+      accountId: 'acct',
+      providerMessageId: 'outside',
+      attachmentId: 'att_1',
+      filename: 'f.pdf',
+      mimeType: 'application/pdf',
+      size: foreign.size,
+      sha256: foreign.sha256,
+      storageId: foreign.storageId,
+    });
+    await t.run((ctx) =>
+      ctx.db.insert('mailAttachmentQueue', {
+        userId: USER,
+        accountId: 'acct',
+        providerMessageId: 'outside',
+        attachmentId: 'att_9',
+        filename: 'q',
+        mimeType: 'application/pdf',
+        size: 9000,
+        receivedAt: NOW,
+        state: 'failed',
+        attempts: 5,
+        dueAt: NOW,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }),
+    );
+    expect(await blobCount(t)).toBe(3);
+    const syncBefore = await t.run((ctx) => ctx.db.query('mailSyncStates').collect());
+
+    expect(
+      await t.mutation(api.mailCorpus.deleteCorpusMessage, {
+        internalSecret: SECRET,
+        userId: USER,
+        accountId: 'acct',
+        providerMessageId: 'outside',
+      }),
+    ).toEqual({ ok: true });
+
+    const files = await rows(t, 'mailAttachmentFiles');
+    expect(files.map((row) => `${row.userId}/${row.providerMessageId}`).sort()).toEqual([
+      `${USER}/kept`,
+      `${OTHER}/outside`,
+    ]);
+    expect(await rows(t, 'mailAttachmentQueue')).toEqual([]);
+    // "outside one" is gone; the shared file stays for "kept", and the other user keeps theirs.
+    expect(await blobCount(t)).toBe(2);
+    expect(await t.run((ctx) => ctx.storage.getUrl(foreign.storageId))).toBeString();
+    // No corpus row: the synced count does not change.
+    expect(await t.run((ctx) => ctx.db.query('mailSyncStates').collect())).toEqual(syncBefore);
+  });
 });
 
 async function seedCorpus(t: T, accountId: string, count: number, receivedAt: (i: number) => number) {
