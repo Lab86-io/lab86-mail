@@ -54,7 +54,7 @@ describe('GET /api/mobile/v1/contacts/recipients', () => {
     const get = createMobileRecipientsGet({
       requireCurrentUser: async () => user,
       checkRateLimit: () => undefined,
-      suggest: async (userId, input) => {
+      suggest: async (userId: string, input: any) => {
         calls.push({ userId, ...input });
         return {
           query: input.query,

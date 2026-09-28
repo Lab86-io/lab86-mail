@@ -26,11 +26,19 @@ interface PhotoToolDeps {
   providerLookupTimeoutMs: number;
 }
 
-async function storedContactPhotos(userId: string | null | undefined, emails: string[]) {
-  if (!userId || !emails.length || !isConvexConfigured()) return new Map<string, string>();
-  const result = await convexQuery<{ photos: Array<{ email: string; url: string }> }>(
+export async function storedContactPhotos(
+  userId: string | null | undefined,
+  emails: string[],
+  query: typeof convexQuery = convexQuery,
+  configured: () => boolean = isConvexConfigured,
+) {
+  if (!userId || !emails.length || !configured()) return new Map<string, string>();
+  const result = await query<{ photos: Array<{ email: string; url: string }> }>(
     api.contacts.photosForEmails,
-    { userId, emails },
+    {
+      userId,
+      emails,
+    },
   );
   return new Map((result?.photos || []).map((entry) => [entry.email, entry.url]));
 }
@@ -41,7 +49,7 @@ const defaultDeps: PhotoToolDeps = {
   companyLogoUrl,
   companyLogoCandidates,
   resolveProviderProfilePhoto,
-  contactPhotos: storedContactPhotos,
+  contactPhotos: (userId, emails) => storedContactPhotos(userId, emails),
   now: () => Date.now(),
   providerLookupTimeoutMs: PROVIDER_LOOKUP_TIMEOUT_MS,
 };
