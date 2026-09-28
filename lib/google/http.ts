@@ -1,0 +1,126 @@
+// Direct Google transport: the one HTTP client for Gmail, Calendar, and
+// People API calls. Every adapter method goes through `googleFetch` or
+// `googleJson`, so authorization, retries, and error shape stay in one place.
+//
+// Errors carry `statusCode`, the field that `nylasErrorStatus()` and the
+// grant-health code already read, so callers need no change.
+
+import { getGoogleAccessToken, invalidateGoogleAccessToken } from './tokens';
+
+export class GoogleApiError extends Error {
+  readonly statusCode: number;
+  readonly reason?: string;
+  readonly providerError = true;
+
+  constructor(statusCode: number, message: string, reason?: string) {
+    super(message);
+    this.name = 'GoogleApiError';
+    this.statusCode = statusCode;
+    this.reason = reason;
+  }
+}
+
+export interface GoogleRequestInit extends Omit<RequestInit, 'body'> {
+  /** A JSON body. Sets the content type. */
+  json?: unknown;
+  body?: RequestInit['body'];
+  /** Attempts for 429 and 5xx answers, default 4. */
+  attempts?: number;
+}
+
+type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
+const defaults = {
+  fetch: ((input: string, init?: RequestInit) => fetch(input, init)) as FetchLike,
+  getGoogleAccessToken,
+  invalidateGoogleAccessToken,
+  sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+};
+
+let deps = defaults;
+
+export function __setGoogleHttpDepsForTest(overrides: Partial<typeof defaults> = {}) {
+  deps = { ...defaults, ...overrides };
+}
+
+function retryable(status: number) {
+  return status === 429 || status >= 500;
+}
+
+async function errorFrom(response: Response): Promise<GoogleApiError> {
+  let message = `Google API request failed with status ${response.status}.`;
+  let reason: string | undefined;
+  try {
+    const body: any = await response.json();
+    const error = body?.error;
+    if (typeof error === 'string') {
+      reason = error;
+      message = body?.error_description || error;
+    } else if (error) {
+      message = error.message || message;
+      reason = error.errors?.[0]?.reason || error.status;
+    }
+  } catch {
+    // Keep the default message: the body was not JSON.
+  }
+  return new GoogleApiError(response.status, message, reason);
+}
+
+/** One authorized request. Refreshes the token once on 401. Retries 429 and 5xx. */
+export async function googleFetch(
+  grantId: string,
+  url: string,
+  init: GoogleRequestInit = {},
+): Promise<Response> {
+  const { json, attempts = 4, headers, ...rest } = init;
+  let refreshed = false;
+  for (let attempt = 1; ; attempt += 1) {
+    const token = await deps.getGoogleAccessToken(grantId);
+    const requestHeaders = new Headers(headers);
+    requestHeaders.set('authorization', `Bearer ${token}`);
+    if (json !== undefined) requestHeaders.set('content-type', 'application/json');
+    const response = await deps.fetch(url, {
+      ...rest,
+      headers: requestHeaders,
+      body: json !== undefined ? JSON.stringify(json) : rest.body,
+    });
+    if (response.ok) return response;
+    if (response.status === 401 && !refreshed) {
+      refreshed = true;
+      deps.invalidateGoogleAccessToken(grantId);
+      continue;
+    }
+    if (retryable(response.status) && attempt < attempts) {
+      const retryAfter = Number(response.headers.get('retry-after'));
+      const wait =
+        Number.isFinite(retryAfter) && retryAfter > 0
+          ? retryAfter * 1000
+          : Math.min(8000, 250 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 200);
+      await deps.sleep(wait);
+      continue;
+    }
+    throw await errorFrom(response);
+  }
+}
+
+export async function googleJson<T>(grantId: string, url: string, init: GoogleRequestInit = {}): Promise<T> {
+  const response = await googleFetch(grantId, url, init);
+  if (response.status === 204) return undefined as T;
+  const text = await response.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+export const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
+export const CALENDAR_API = 'https://www.googleapis.com/calendar/v3';
+export const PEOPLE_API = 'https://people.googleapis.com/v1';
+
+/** Builds a URL with query parameters. Skips undefined values; repeats arrays. */
+export function googleUrl(base: string, params: Record<string, unknown> = {}) {
+  const url = new URL(base);
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue;
+    if (Array.isArray(value)) for (const item of value) url.searchParams.append(key, String(item));
+    else url.searchParams.set(key, String(value));
+  }
+  return url.toString();
+}
