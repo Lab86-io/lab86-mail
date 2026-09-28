@@ -12,7 +12,10 @@ import { fileURLToPath } from 'node:url';
 
 export const artifactName = 'native-tour';
 
-const platformOrder = ['iOS', 'macOS'];
+/** Both jobs must leave images. A platform with none fails the gallery. */
+export const expectedPlatforms = ['iOS', 'macOS'];
+
+const platformOrder = expectedPlatforms;
 
 async function walk(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -25,24 +28,38 @@ async function walk(directory) {
   return files;
 }
 
-/** Reads every sidecar that has its PNG next to it. */
+/**
+ * Reads every sidecar. A sidecar that does not parse, that has no `file` or
+ * `platform`, or whose PNG is missing is a problem, not a silent omission:
+ * the gallery lists it and the build fails.
+ */
 export async function collectRecords(inputDirectory) {
   const files = await walk(inputDirectory);
   const pngs = new Set(files.filter((file) => file.endsWith('.png')));
   const records = [];
+  const problems = [];
   for (const file of files.filter((candidate) => candidate.endsWith('.json'))) {
+    const name = path.relative(inputDirectory, file);
     let record;
     try {
       record = JSON.parse(await readFile(file, 'utf8'));
-    } catch {
+    } catch (error) {
+      problems.push({ file: name, reason: `The JSON does not parse: ${error.message}` });
       continue;
     }
-    if (typeof record?.file !== 'string' || typeof record?.platform !== 'string') continue;
+    if (typeof record?.file !== 'string' || typeof record?.platform !== 'string') {
+      problems.push({ file: name, reason: 'The sidecar has no file or platform.' });
+      continue;
+    }
     const source = path.join(path.dirname(file), record.file);
-    if (!pngs.has(source)) continue;
+    if (!pngs.has(source)) {
+      problems.push({ file: name, reason: `The image ${record.file} is missing.` });
+      continue;
+    }
     records.push({ ...record, source });
   }
-  return records;
+  problems.sort((a, b) => a.file.localeCompare(b.file));
+  return { records, problems };
 }
 
 function platformRank(platform) {
@@ -99,6 +116,10 @@ export function buildManifest(records, meta = {}) {
       blank: images.filter((image) => image.blankWarning).map((image) => image.file),
       uncoveredImages: images.filter((image) => image.uncovered.length > 0).length,
       uncoveredRequests: images.reduce((sum, image) => sum + image.uncovered.length, 0),
+      sidecarProblems: meta.problems ?? [],
+      missingPlatforms: (meta.expectedPlatforms ?? expectedPlatforms).filter(
+        (platform) => !byPlatform[platform],
+      ),
     },
     screens: screens.map(({ key: _key, ...group }) => group),
     images,
@@ -208,6 +229,7 @@ export function renderGallery(manifest) {
   .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
   .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .problems { margin: 8px 0 0; padding-left: 18px; color: var(--warn); }
 </style>
 </head>
 <body>
@@ -215,6 +237,7 @@ export function renderGallery(manifest) {
   <h1>Albatross native screenshot tour</h1>
   <p>${manifest.counts.total} images (${platformCounts})${commit}${run} · generated ${escapeHTML(manifest.generatedAt)}</p>
   <p>Blank frames: ${manifest.warnings.blank.length} · requests with no fixture: ${manifest.warnings.uncoveredRequests}</p>
+  ${problemsHTML(manifest)}
 </div>
 <nav>
       ${nav}
@@ -227,7 +250,27 @@ export function renderGallery(manifest) {
 `;
 }
 
-export function summaryMarkdown(manifest, { iosExpected = true } = {}) {
+function problemsHTML(manifest) {
+  const { sidecarProblems, missingPlatforms } = manifest.warnings;
+  const items = [
+    ...missingPlatforms.map((platform) => `No ${escapeHTML(platform)} images.`),
+    ...sidecarProblems.map(
+      (problem) => `<code>${escapeHTML(problem.file)}</code>: ${escapeHTML(problem.reason)}`,
+    ),
+  ];
+  if (items.length === 0) return '';
+  return `<ul class="problems">${items.map((item) => `<li>${item}</li>`).join('')}</ul>`;
+}
+
+/** Why the gallery must fail. An empty list means the gallery is complete. */
+export function validationErrors(manifest) {
+  return [
+    ...manifest.warnings.missingPlatforms.map((platform) => `The ${platform} tour made no images.`),
+    ...manifest.warnings.sidecarProblems.map((problem) => `${problem.file}: ${problem.reason}`),
+  ];
+}
+
+export function summaryMarkdown(manifest) {
   const platforms = Object.entries(manifest.counts.byPlatform)
     .map(([platform, count]) => `${platform} ${count}`)
     .join(', ');
@@ -241,13 +284,20 @@ export function summaryMarkdown(manifest, { iosExpected = true } = {}) {
     }`,
     `- Requests with no fixture: ${manifest.warnings.uncoveredRequests} in ${manifest.warnings.uncoveredImages} images`,
   ];
-  if (iosExpected && !manifest.counts.byPlatform.iOS) lines.push('- **The iOS tour made no images.**');
+  for (const platform of manifest.warnings.missingPlatforms) {
+    lines.push(`- **The ${platform} tour made no images.**`);
+  }
+  const problems = manifest.warnings.sidecarProblems;
+  if (problems.length > 0) {
+    lines.push(`- **Sidecar problems: ${problems.length}**`);
+    for (const problem of problems) lines.push(`  - \`${problem.file}\`: ${problem.reason}`);
+  }
   return `${lines.join('\n')}\n`;
 }
 
 export async function buildGallery(inputDirectory, outputDirectory, meta = {}) {
-  const records = await collectRecords(inputDirectory);
-  const manifest = buildManifest(records, meta);
+  const { records, problems } = await collectRecords(inputDirectory);
+  const manifest = buildManifest(records, { ...meta, problems });
   for (const record of records) {
     const target = path.join(outputDirectory, imagePath(record));
     await mkdir(path.dirname(target), { recursive: true });
@@ -274,8 +324,10 @@ async function main([inputDirectory, outputDirectory]) {
   const summary = summaryMarkdown(manifest);
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
   console.log(summary);
-  if (!manifest.counts.byPlatform.iOS) {
-    console.error('The iOS tour made no images.');
+  // The gallery is already written, so the upload keeps the partial evidence.
+  const errors = validationErrors(manifest);
+  if (errors.length > 0) {
+    for (const error of errors) console.error(error);
     process.exit(1);
   }
 }

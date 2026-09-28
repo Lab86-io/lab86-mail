@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import {
   artifactName,
   buildGallery,
@@ -11,7 +14,23 @@ import {
   escapeHTML,
   renderGallery,
   summaryMarkdown,
+  validationErrors,
 } from './native-tour-gallery.mjs';
+
+const script = fileURLToPath(new URL('./native-tour-gallery.mjs', import.meta.url));
+const run = promisify(execFile);
+
+/** Runs the script as the workflow does and returns its exit code and output. */
+async function runScript(input, output) {
+  try {
+    const { stdout, stderr } = await run(process.execPath, [script, input, output], {
+      env: { ...process.env, GITHUB_STEP_SUMMARY: '' },
+    });
+    return { code: 0, stdout, stderr };
+  } catch (error) {
+    return { code: error.code, stdout: error.stdout, stderr: error.stderr };
+  }
+}
 
 function record(overrides) {
   return {
@@ -87,23 +106,38 @@ test('counts blank frames and requests that no fixture covered', () => {
   const manifest = buildManifest([
     record({ blankWarning: true }),
     record({ file: 'b.png', uncovered: ['POST /api/tools/list_drafts', 'GET /api/prefs'] }),
+    record({ file: 'm.png', platform: 'macOS', screen: 'mac-today' }),
   ]);
   assert.deepEqual(manifest.warnings, {
     blank: ['ios-mail-list-iphone-light.png'],
     uncoveredImages: 1,
     uncoveredRequests: 2,
+    sidecarProblems: [],
+    missingPlatforms: [],
   });
+  assert.deepEqual(validationErrors(manifest), []);
   const summary = summaryMarkdown(manifest);
-  assert.match(summary, /Images: 2 \(iOS 2\)/);
+  assert.match(summary, /Images: 3 \(iOS 2, macOS 1\)/);
   assert.match(summary, /Artifact: `native-tour`/);
   assert.match(summary, /Blank frames: 1 \(ios-mail-list-iphone-light.png\)/);
   assert.match(summary, /Requests with no fixture: 2 in 1 images/);
   assert.doesNotMatch(summary, /made no images/);
+  assert.doesNotMatch(summary, /Sidecar problems/);
 });
 
-test('says so when the iOS tour made no images', () => {
-  const summary = summaryMarkdown(buildManifest([record({ platform: 'macOS', file: 'm.png' })]));
-  assert.match(summary, /The iOS tour made no images/);
+test('names each platform that made no images and fails validation', () => {
+  const noIOS = buildManifest([record({ platform: 'macOS', file: 'm.png' })]);
+  assert.deepEqual(noIOS.warnings.missingPlatforms, ['iOS']);
+  assert.match(summaryMarkdown(noIOS), /The iOS tour made no images/);
+  assert.deepEqual(validationErrors(noIOS), ['The iOS tour made no images.']);
+
+  const noMac = buildManifest([record({})]);
+  assert.deepEqual(noMac.warnings.missingPlatforms, ['macOS']);
+  assert.match(summaryMarkdown(noMac), /The macOS tour made no images/);
+  assert.match(renderGallery(noMac), /<li>No macOS images\.<\/li>/);
+  assert.deepEqual(validationErrors(noMac), ['The macOS tour made no images.']);
+
+  assert.deepEqual(buildManifest([]).warnings.missingPlatforms, ['iOS', 'macOS']);
 });
 
 test('renders captions, badges, and escaped text into the gallery', () => {
@@ -141,17 +175,64 @@ test('collects only sidecars with an image and writes the gallery files', async 
     );
     await writeFile(path.join(input, 'native-tour-ios-sha', 'ios', 'broken.json'), '{');
 
-    const records = await collectRecords(input);
+    await writeFile(path.join(input, 'native-tour-ios-sha', 'ios', 'nameless.json'), '{"platform":"iOS"}');
+
+    const { records, problems } = await collectRecords(input);
     assert.equal(records.length, 2);
+    assert.deepEqual(
+      problems.map((problem) => problem.file),
+      [
+        path.join('native-tour-ios-sha', 'ios', 'broken.json'),
+        path.join('native-tour-ios-sha', 'ios', 'nameless.json'),
+        path.join('native-tour-ios-sha', 'ios', 'orphan.json'),
+      ],
+    );
+    assert.match(problems[0].reason, /does not parse/);
+    assert.equal(problems[1].reason, 'The sidecar has no file or platform.');
+    assert.equal(problems[2].reason, 'The image x.png is missing.');
 
     const output = path.join(root, 'output');
     const manifest = await buildGallery(input, output, { commit: 'abc' });
     assert.equal(manifest.counts.total, 2);
+    assert.equal(manifest.warnings.sidecarProblems.length, 3);
+    assert.equal(validationErrors(manifest).length, 3);
     const written = JSON.parse(await readFile(path.join(output, 'manifest.json'), 'utf8'));
     assert.equal(written.images.length, 2);
-    assert.match(await readFile(path.join(output, 'index.html'), 'utf8'), /2 images \(iOS 1, macOS 1\)/);
+    assert.equal(written.warnings.sidecarProblems.length, 3);
+    const html = await readFile(path.join(output, 'index.html'), 'utf8');
+    assert.match(html, /2 images \(iOS 1, macOS 1\)/);
+    assert.match(html, /broken\.json<\/code>: The JSON does not parse/);
+    assert.match(summaryMarkdown(manifest), /Sidecar problems: 3/);
     assert.ok((await stat(path.join(output, 'images', 'ios', 'ios-mail-list-iphone-light.png'))).isFile());
     assert.ok((await stat(path.join(output, 'images', 'macos', 'macos-mac-today-dark.png'))).isFile());
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('the script fails on a problem but still writes the gallery for the upload', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'native-tour-cli-'));
+  try {
+    const input = path.join(root, 'input');
+    const output = path.join(root, 'output');
+    await writeTour(path.join(input, 'native-tour-ios-sha', 'ios'), [record({})]);
+    await writeFile(path.join(input, 'native-tour-ios-sha', 'ios', 'broken.json'), '{');
+
+    const failed = await runScript(input, output);
+    assert.equal(failed.code, 1);
+    assert.match(failed.stderr, /The macOS tour made no images\./);
+    assert.match(failed.stderr, /broken\.json: The JSON does not parse/);
+    assert.match(failed.stdout, /Sidecar problems: 1/);
+    assert.ok((await stat(path.join(output, 'index.html'))).isFile());
+    assert.ok((await stat(path.join(output, 'images', 'ios', 'ios-mail-list-iphone-light.png'))).isFile());
+
+    await rm(path.join(input, 'native-tour-ios-sha', 'ios', 'broken.json'));
+    await writeTour(path.join(input, 'native-tour-macos-sha', 'macos'), [
+      record({ file: 'macos-mac-today-dark.png', platform: 'macOS', screen: 'mac-today' }),
+    ]);
+    const passed = await runScript(input, path.join(root, 'complete'));
+    assert.equal(passed.code, 0, passed.stderr);
+    assert.match(passed.stdout, /Images: 2 \(iOS 1, macOS 1\)/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
