@@ -244,23 +244,27 @@ describe('usage records the cost the provider reported', () => {
   });
 
   test('a classifier result passes its reported cost; no cost keeps the plain token usage', async () => {
-    const record: any = async (...args: any[]) => args[2];
+    const recorded: any[] = [];
+    const record: any = async (...args: any[]) => {
+      recorded.push(args[2]);
+    };
     const owner = { userId: 'owner', source: 'lab86' as const };
-    expect(
-      await recordClassifierUsage(
-        owner,
-        'jev_mail',
-        { model: 'typesafe/jev-1.13', usage: { input_tokens: 200, output_tokens: 0, cost: 0.0000084 } },
-        record,
-      ),
-    ).toEqual({ inputTokens: 200, outputTokens: 0, costUsd: 0.0000084 });
-    expect(
-      await recordClassifierUsage(
-        owner,
-        'jev_mail',
-        { model: 'typesafe/jev-1.13', usage: { input_tokens: 200, output_tokens: 0 } },
-        record,
-      ),
-    ).toEqual({ inputTokens: 200, outputTokens: 0 });
+    await recordClassifierUsage(
+      owner,
+      'jev_mail',
+      { model: 'typesafe/jev-1.13', usage: { input_tokens: 200, output_tokens: 0, cost: 0.0000084 } },
+      record,
+    );
+    await recordClassifierUsage(
+      owner,
+      'jev_mail',
+      { model: 'typesafe/jev-1.13', usage: { input_tokens: 200, output_tokens: 0 } },
+      record,
+    );
+    expect(recorded).toEqual([
+      { inputTokens: 200, outputTokens: 0, costUsd: 0.0000084 },
+      { inputTokens: 200, outputTokens: 0 },
+    ]);
+    expect('costUsd' in recorded[1]).toBe(false);
   });
 });
