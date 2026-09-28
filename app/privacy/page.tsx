@@ -111,10 +111,12 @@ export default function PrivacyPage() {
         <h2 className="pt-2 text-lg font-semibold">Retention and deletion</h2>
         <p>
           We keep your data while your account is active. When you disconnect a mailbox, we revoke our access
-          to it and delete its {COMPANY_NAME}-hosted grant records. Then we delete its stored mail, labels,
-          calendar events, contacts, attachment copies, search index, and sync state. We also delete its
-          provider webhook records and what we made from its mail: memory notes, Work receipts, notifications,
-          event suggestions, and prepared brief items.
+          to it and delete its {COMPANY_NAME}-hosted grant records. If your Google Drive connection uses the
+          same Google sign-in, we delete our copy of the mailbox access but do not revoke the sign-in, so that
+          Drive keeps working. The same rule applies when you disconnect Google Drive. Then we delete its
+          stored mail, labels, calendar events, contacts, attachment copies, search index, and sync state. We
+          also delete its provider webhook records and what we made from its mail: memory notes, Work
+          receipts, notifications, event suggestions, and prepared brief items.
         </p>
         <p>
           If a mailbox needs a reconnect for 30 days, a daily job deletes the same mailbox data. It keeps the
