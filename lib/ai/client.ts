@@ -30,13 +30,19 @@ export const anthropic = ANTHROPIC_KEY ? createAnthropic({ apiKey: ANTHROPIC_KEY
 export type ConfiguredProviders = { openrouter: unknown; openai: unknown; anthropic: unknown };
 const CONFIGURED: ConfiguredProviders = { openrouter, openai, anthropic };
 
-export function pickPrimaryModel(configured: ConfiguredProviders = CONFIGURED, env = process.env) {
+export function pickPrimaryModel(
+  configured: ConfiguredProviders = CONFIGURED,
+  env: Record<string, string | undefined> = process.env,
+) {
   if (configured.openrouter) return env.LAB86_MAIL_OPENAI_MODEL || OPENROUTER_DEFAULT_PRIMARY;
   if (configured.openai) return env.LAB86_MAIL_OPENAI_MODEL || OPENAI_DEFAULT_PRIMARY;
   return '';
 }
 
-export function pickFastModel(configured: ConfiguredProviders = CONFIGURED, env = process.env) {
+export function pickFastModel(
+  configured: ConfiguredProviders = CONFIGURED,
+  env: Record<string, string | undefined> = process.env,
+) {
   if (configured.openrouter) return env.LAB86_MAIL_OPENAI_FAST_MODEL || OPENROUTER_DEFAULT_FAST;
   if (configured.openai) return env.LAB86_MAIL_OPENAI_FAST_MODEL || OPENAI_DEFAULT_FAST;
   return '';
