@@ -156,6 +156,12 @@ export default defineSchema({
     // dead-account purge deletes the corpus of an account that stays in
     // `error` for 30 days (convex/deadAccounts.ts). A reconnect clears both.
     errorSince: v.optional(v.number()),
+    // What set errorSince: the status change itself, or the one-time
+    // backfill (deadAccounts:backfillErrorSince) from the last good mail
+    // sync or from updatedAt. A reconnect clears it.
+    errorSinceSource: v.optional(
+      v.union(v.literal('status_change'), v.literal('last_mail_sync'), v.literal('updated_at')),
+    ),
     corpusPurgedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),

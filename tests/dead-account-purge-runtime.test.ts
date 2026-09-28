@@ -8,6 +8,7 @@ import {
   isPurgeDue,
 } from '../convex/deadAccounts';
 import schema from '../convex/schema';
+import { ABSENT_BODY_PART, bodyPartHash, joinBodyHash } from '../lib/mail/corpus-body';
 
 const convexModules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
@@ -184,12 +185,13 @@ describe('dead-account bookkeeping', () => {
     await connect(t);
     await markDead(t);
     let row = await t.run((ctx) => ctx.db.query('connectedAccounts').first());
-    expect(row).toMatchObject({ status: 'error', errorSince: T0 });
+    expect(row).toMatchObject({ status: 'error', errorSince: T0, errorSinceSource: 'status_change' });
     setSystemTime(new Date(T0 + DAY));
     await connect(t);
     row = await t.run((ctx) => ctx.db.query('connectedAccounts').first());
     expect(row?.status).toBe('connected');
     expect(row?.errorSince).toBeUndefined();
+    expect(row?.errorSinceSource).toBeUndefined();
     expect(row?.corpusPurgedAt).toBeUndefined();
   });
 
@@ -326,12 +328,165 @@ describe('dead-account purge', () => {
     expect(dry.accounts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ accountId: 'grant_1', errorSince: lastGood, source: 'last_mail_sync' }),
-        expect.objectContaining({ accountId: 'grant_2', errorSince: T0, source: 'updatedAt' }),
+        expect.objectContaining({ accountId: 'grant_2', errorSince: T0, source: 'updated_at' }),
       ]),
     );
     expect(await t.mutation(internal.deadAccounts.backfillErrorSince, {})).toMatchObject({ updated: 2 });
+    const sources = await t.run(async (ctx) =>
+      (await ctx.db.query('connectedAccounts').collect()).map((row) => [row.accountId, row.errorSinceSource]),
+    );
+    expect(sources.sort()).toEqual([
+      ['grant_1', 'last_mail_sync'],
+      ['grant_2', 'updated_at'],
+    ]);
     expect(await t.mutation(internal.deadAccounts.backfillErrorSince, {})).toMatchObject({ updated: 0 });
     const due = await t.mutation(internal.deadAccounts.purgeDeadAccountsTick, { now: T0, dryRun: true });
     expect(due.accounts.map((row: { accountId: string }) => row.accountId)).toEqual(['grant_1']);
+  });
+
+  test('a purge chain stops when the error period changes', async () => {
+    const t = convexTest(schema, convexModules);
+    setSystemTime(new Date(T0));
+    await connect(t);
+    await markDead(t);
+    await seedCorpus(t, 'grant_1', 45);
+    // The first pass pins the current period and deletes one page.
+    const first = await t.mutation(internal.deadAccounts.purgeDeadAccountBatch, {
+      userId: USER,
+      accountId: 'grant_1',
+    });
+    expect(first).toMatchObject({ done: false });
+    expect((await countFor(t, 'grant_1')).mailCorpusMessages).toBe(5);
+    // The account reconnects and fails again before the next pass runs.
+    setSystemTime(new Date(T0 + 2 * DAY));
+    await connect(t);
+    await markDead(t);
+    await drain(t);
+    expect((await countFor(t, 'grant_1')).mailCorpusMessages).toBe(5);
+    const row = await t.run((ctx) => ctx.db.query('connectedAccounts').first());
+    expect(row).toMatchObject({ status: 'error', errorSince: T0 + 2 * DAY });
+    expect(row?.corpusPurgedAt).toBeUndefined();
+    // A pass for an old period stops at once.
+    expect(
+      await t.mutation(internal.deadAccounts.purgeDeadAccountBatch, {
+        userId: USER,
+        accountId: 'grant_1',
+        errorSince: T0,
+      }),
+    ).toEqual({ deleted: 0, stopped: 'error_period_changed' });
+    // A row from before errorSince existed is period null: a new error sets it.
+    expect(
+      await t.mutation(internal.deadAccounts.purgeDeadAccountBatch, {
+        userId: USER,
+        accountId: 'grant_1',
+        errorSince: null,
+      }),
+    ).toEqual({ deleted: 0, stopped: 'error_period_changed' });
+  });
+
+  async function insertErrorAccounts(t: T, count: number, fields: Record<string, unknown> = {}) {
+    await t.run(async (ctx) => {
+      for (let i = 0; i < count; i++)
+        await ctx.db.insert('connectedAccounts', {
+          userId: USER,
+          accountId: `bulk_${i}`,
+          email: `bulk${i}@example.com`,
+          provider: 'google',
+          grantId: `bulk_grant_${i}`,
+          status: 'error',
+          scopes: [],
+          createdAt: T0,
+          updatedAt: T0,
+          ...fields,
+        } as never);
+    });
+  }
+
+  test('the tick and the backfill read every account in error, page by page', async () => {
+    const t = convexTest(schema, convexModules);
+    setSystemTime(new Date(T0));
+    await insertErrorAccounts(t, 120);
+    await connect(t, 'grant_live', 'live@example.com');
+    const later = T0 + DEAD_ACCOUNT_PURGE_AFTER_MS + DAY;
+
+    const dry = await t.mutation(internal.deadAccounts.purgeDeadAccountsTick, { now: later, dryRun: true });
+    expect(dry.accounts).toHaveLength(100);
+    expect(dry.isDone).toBe(false);
+    const dryRest = await t.mutation(internal.deadAccounts.purgeDeadAccountsTick, {
+      now: later,
+      dryRun: true,
+      cursor: dry.continueCursor,
+    });
+    expect(dryRest.accounts).toHaveLength(20);
+    expect(dryRest).toMatchObject({ isDone: true, continueCursor: null });
+
+    const backfillDry = await t.mutation(internal.deadAccounts.backfillErrorSince, { dryRun: true });
+    expect(backfillDry.accounts).toHaveLength(50);
+    expect(backfillDry.isDone).toBe(false);
+    expect(await t.mutation(internal.deadAccounts.backfillErrorSince, {})).toMatchObject({ updated: 50 });
+    await drain(t);
+    const rows = await t.run((ctx) => ctx.db.query('connectedAccounts').collect());
+    const bulk = rows.filter((row) => row.accountId.startsWith('bulk_'));
+    expect(bulk.every((row) => row.errorSince === T0 && row.errorSinceSource === 'updated_at')).toBe(true);
+    // The backfill does not touch an account that is not in error.
+    const live = rows.find((row) => row.accountId === 'grant_live');
+    expect(live?.errorSince).toBeUndefined();
+    expect(live?.errorSinceSource).toBeUndefined();
+
+    expect(await t.mutation(internal.deadAccounts.purgeDeadAccountsTick, { now: later })).toMatchObject({
+      scheduled: 100,
+      isDone: false,
+    });
+    await drain(t);
+    const purged = await t.run(
+      async (ctx) =>
+        (await ctx.db.query('connectedAccounts').collect()).filter((row) => row.corpusPurgedAt).length,
+    );
+    expect(purged).toBe(120);
+  });
+
+  test('the report pages its accounts and counts bodies without reading them', async () => {
+    const t = convexTest(schema, convexModules);
+    setSystemTime(new Date(T0));
+    await insertErrorAccounts(t, 3);
+    const withBody = joinBodyHash({ text: bodyPartHash('Hello'), html: ABSENT_BODY_PART });
+    const noBody = joinBodyHash({ text: ABSENT_BODY_PART, html: ABSENT_BODY_PART });
+    await t.run(async (ctx) => {
+      for (const [index, bodyHash] of [withBody, withBody, noBody, undefined].entries())
+        await ctx.db.insert('mailCorpusMessages', {
+          userId: USER,
+          accountId: 'bulk_0',
+          grantId: 'bulk_grant_0',
+          provider: 'google',
+          providerMessageId: `m${index}`,
+          providerThreadId: 't',
+          subject: 's',
+          from: 'a@example.com',
+          to: 'me@example.com',
+          receivedAt: T0,
+          snippet: 's',
+          searchText: 's',
+          labels: ['INBOX'],
+          yearMonth: '2026-06',
+          createdAt: T0,
+          updatedAt: T0,
+          ...(bodyHash ? { bodyHash } : {}),
+        });
+    });
+    const first = await t.query(internal.deadAccounts.deadAccountReport, { now: T0, numItems: 2 });
+    expect(first.accounts).toHaveLength(2);
+    expect(first.isDone).toBe(false);
+    const bulk0 = first.accounts.find((row: { accountId: string }) => row.accountId === 'bulk_0');
+    expect(bulk0?.counts).toMatchObject({ mailCorpusMessages: 4, mailCorpusBodies: 2 });
+    expect(bulk0).toMatchObject({ errorSinceKnown: false, errorSinceSource: null });
+    const rest = await t.query(internal.deadAccounts.deadAccountReport, {
+      now: T0,
+      numItems: 50,
+      cursor: first.continueCursor,
+    });
+    expect(rest.accounts).toHaveLength(1);
+    expect(rest).toMatchObject({ isDone: true, continueCursor: null });
+    // The default page is small.
+    expect((await t.query(internal.deadAccounts.deadAccountReport, { now: T0 })).accounts).toHaveLength(2);
   });
 });
