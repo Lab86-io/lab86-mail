@@ -41,10 +41,16 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
 
     func connectMailbox(provider: String) async throws {
         let encoded = provider.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? provider
+        // `finalize=1` tells the server that this build can redeem the
+        // completion token of a direct Google sign-in (docs/google-direct-transport.md).
         let response = try await backend.get(
-            path: "/api/nylas/connect?provider=\(encoded)&native=1&format=json"
+            path: "/api/nylas/connect?provider=\(encoded)&native=1&format=json&finalize=1"
         )
-        try await authorize(response: response, successKey: "nylas_connected")
+        try await authorize(
+            response: response,
+            successKey: "nylas_connected",
+            completionPath: "/api/google/connect/finalize"
+        )
     }
 
     func connectOAuthSource(server: String) async throws {
@@ -121,7 +127,7 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
             } ?? []
         )
         if values[successKey] != nil { return }
-        if let completionToken = values["files_completion"], let completionPath {
+        if let completionToken = values["files_completion"] ?? values["mail_completion"], let completionPath {
             _ = try await backend.post(
                 path: completionPath,
                 body: .object(["completionToken": .string(completionToken)])

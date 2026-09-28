@@ -127,7 +127,9 @@ describe('googleFetch', () => {
   test('sends the bearer token and a JSON body', async () => {
     const { fetch, seen } = responder([{ status: 200, body: { id: 'm1' } }]);
     __setGoogleHttpDepsForTest({ fetch, getGoogleAccessToken: async () => 'tok', sleep: async () => {} });
-    expect(await googleJson<unknown>('google:a', 'https://x.test/m', { method: 'POST', json: { a: 1 } })).toEqual({
+    expect(
+      await googleJson<unknown>('google:a', 'https://x.test/m', { method: 'POST', json: { a: 1 } }),
+    ).toEqual({
       id: 'm1',
     });
     expect(seen[0].auth).toBe('Bearer tok');

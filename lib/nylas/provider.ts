@@ -1,4 +1,5 @@
 import type { CreateAttachmentRequest } from 'nylas';
+import { isGoogleDirectGrant } from '@/lib/google/transport';
 import { assertOutboundSendEnabled } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { maybeKickCorpusBackfill } from '@/lib/mail/corpus-sync';
@@ -1125,6 +1126,16 @@ export async function downloadNylasAttachment({
 }
 
 export async function deleteNylasAccount(userId: string, accountId: string, grantId?: string) {
+  if (grantId && isGoogleDirectGrant(grantId)) {
+    // A direct Google grant keeps its refresh token in the providerGrants row
+    // that the delete removes, so the revoke must come first. If the delete
+    // then fails, the account stays with a dead token and shows Reconnect.
+    await requireNylas()
+      .grants.destroy({ grantId })
+      .catch(() => undefined);
+    await convexMutation(api.accounts.deleteConnectedAccount, { userId, accountId });
+    return { ok: true };
+  }
   // Convex first: if this throws, the account survives WITH a live grant.
   // (Destroying the grant first is how failed deletes used to strand
   // connected-looking accounts whose provider grant was already burned.)
