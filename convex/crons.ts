@@ -166,6 +166,15 @@ crons.hourly('model cost alarm', { minuteUTC: 17 }, internal.aiCostAlarm.tick, {
 // batch comes back full.
 crons.hourly('retention sweep', { minuteUTC: 41 }, internal.retention.sweep, {});
 
+// A mailbox that stays in `error` (reconnect needed) for 30 days loses its
+// stored corpus in bounded batches. The account row stays for Reconnect.
+crons.daily(
+  'dead account purge',
+  { hourUTC: 10, minuteUTC: 13 },
+  internal.deadAccounts.purgeDeadAccountsTick,
+  {},
+);
+
 // Shared browser sessions use keepAlive. End the stale ones at Browserbase and
 // in the ledger, so no pane shows a dead live view.
 crons.interval(

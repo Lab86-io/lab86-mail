@@ -40,6 +40,7 @@ import type * as contentSchema from "../contentSchema.js";
 import type * as correspondents from "../correspondents.js";
 import type * as crons from "../crons.js";
 import type * as dailyReports from "../dailyReports.js";
+import type * as deadAccounts from "../deadAccounts.js";
 import type * as documentAssets from "../documentAssets.js";
 import type * as documents from "../documents.js";
 import type * as fileLibrary from "../fileLibrary.js";
@@ -105,6 +106,7 @@ declare const fullApi: ApiFromModules<{
   correspondents: typeof correspondents;
   crons: typeof crons;
   dailyReports: typeof dailyReports;
+  deadAccounts: typeof deadAccounts;
   documentAssets: typeof documentAssets;
   documents: typeof documents;
   fileLibrary: typeof fileLibrary;

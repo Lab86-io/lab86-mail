@@ -152,6 +152,10 @@ export const upsertConnectedAccount = mutation({
       scopes: args.scopes,
       grantId: args.grantId,
       error: undefined,
+      // A reconnect ends the dead state. After a purge, the missing sync
+      // states make the next sync a fresh backfill.
+      errorSince: undefined,
+      corpusPurgedAt: undefined,
       updatedAt: ts,
     };
     if (existing) {
@@ -253,7 +257,12 @@ export const markGrantReconnectNeeded = mutation({
     const ts = now();
     for (const row of rows) {
       if (row.status !== 'connected') continue;
-      await ctx.db.patch(row._id, { status: 'error', error: truncateText(args.reason, 300), updatedAt: ts });
+      await ctx.db.patch(row._id, {
+        status: 'error',
+        error: truncateText(args.reason, 300),
+        errorSince: row.errorSince ?? ts,
+        updatedAt: ts,
+      });
       updated += 1;
     }
     return { updated };

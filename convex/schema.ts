@@ -152,6 +152,11 @@ export default defineSchema({
     grantId: v.string(),
     lastSyncedAt: v.optional(v.number()),
     error: v.optional(v.string()),
+    // When the account last went from `connected` to `error`. The daily
+    // dead-account purge deletes the corpus of an account that stays in
+    // `error` for 30 days (convex/deadAccounts.ts). A reconnect clears both.
+    errorSince: v.optional(v.number()),
+    corpusPurgedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
