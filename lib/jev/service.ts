@@ -1,5 +1,5 @@
 import { recordClassifierUsage, resolveClassifierRuntime } from '../ai/gateway';
-import { evaluateClassifier, mapConcurrent } from '../classifier/client';
+import { classifierFailureText, evaluateClassifier, mapConcurrent } from '../classifier/client';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import type { DailyReport } from '../shared/types';
 import type { JevCorrection, JevPreferences } from './contract';
@@ -84,8 +84,9 @@ export async function runJevSweep(userId: string, dependencies = sweepDefaults) 
           });
           await recordClassifierUsage(runtime, feature, result);
           return result;
-        } catch {
-          await recordClassifierUsage(runtime, feature);
+        } catch (error) {
+          // The reason (timeout, provider, invalid_response) stays on the row.
+          await recordClassifierUsage(runtime, feature, undefined, undefined, classifierFailureText(error));
           return null;
         }
       };

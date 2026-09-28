@@ -18,6 +18,11 @@ export class ClassifierUnavailableError extends Error {
     super(`Classifier evaluation unavailable (${reason}).`);
   }
 }
+/** The text a usage row keeps for a failed classifier call: the adapter's reason when it has one. */
+export function classifierFailureText(error: unknown) {
+  return error instanceof ClassifierUnavailableError ? error.message : 'Classifier evaluation unavailable';
+}
+
 const probability = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 

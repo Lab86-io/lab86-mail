@@ -3,6 +3,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { api } from '../convex/_generated/api';
 import schema from '../convex/schema';
 import { classifierById } from '../lib/classifier/catalog';
+import { ClassifierUnavailableError } from '../lib/classifier/client';
 import {
   assessmentFromResponse,
   classifierState,
@@ -88,6 +89,7 @@ describe('the sweep runs the stages', () => {
   function sweepDeps(item: any, answer: (state: any) => any) {
     const calls: any[] = [];
     const usage: Array<[string, boolean]> = [];
+    const failures: string[] = [];
     const stored: any[] = [];
     let claimed = false;
     const deps = {
@@ -102,8 +104,15 @@ describe('the sweep runs the stages', () => {
         calls.push(request);
         return answer(request.state);
       },
-      recordClassifierUsage: async (_runtime: unknown, feature: string, result?: unknown) => {
+      recordClassifierUsage: async (
+        _runtime: unknown,
+        feature: string,
+        result?: unknown,
+        _record?: unknown,
+        failure?: string,
+      ) => {
         usage.push([feature, Boolean(result)]);
+        if (failure) failures.push(failure);
       },
       afterClassified: () => undefined,
       convexMutation: async (_ref: unknown, args: any) => {
@@ -116,7 +125,7 @@ describe('the sweep runs the stages', () => {
         return { items: [item], moreRemaining: false };
       },
     } as any;
-    return { deps, calls, usage, stored };
+    return { deps, calls, usage, failures, stored };
   }
 
   test('a clear first-stage answer makes one small call and stores its verdict', async () => {
@@ -168,7 +177,16 @@ describe('the sweep runs the stages', () => {
     await runJevSweep('u', run.deps);
     expect(run.calls).toHaveLength(1);
     expect(run.usage).toEqual([[JEV_FACTS_FEATURE, false]]);
+    expect(run.failures).toEqual(['Classifier evaluation unavailable']);
     expect(run.stored[0]).toMatchObject({ error: 'unavailable', leaseId: 'lease' });
+  });
+
+  test('a failed call keeps the reason the adapter gave on its usage row', async () => {
+    const run = sweepDeps(claimItem(), () => {
+      throw new ClassifierUnavailableError('timeout');
+    });
+    await runJevSweep('u', run.deps);
+    expect(run.failures).toEqual(['Classifier evaluation unavailable (timeout).']);
   });
 
   test('a failed body-stage call is stored as unavailable', async () => {

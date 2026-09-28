@@ -279,11 +279,17 @@ export function resolveOpenRouterUtilityRuntime(userId: string, dependencies = c
   });
 }
 
+/**
+ * One classifier call. A result names the served model, with its date suffix
+ * (typesafe/jev-1.13-20260917). A failed call has no served model, so its row
+ * names the wire id that was sent (typesafe/jev-1.13) and gives the reason.
+ */
 export async function recordClassifierUsage(
   runtime: { userId: string; source: AiSource; model?: ClassifierModel },
   feature: string,
   result?: { model: string; usage: { input_tokens: number; output_tokens: number; cost?: number } },
   record = recordUsage,
+  failure = 'Classifier evaluation unavailable',
 ) {
   const model = runtime.model || defaultClassifier();
   return record(
@@ -304,7 +310,7 @@ export async function recordClassifierUsage(
         }
       : undefined,
     Boolean(result),
-    result ? undefined : 'Classifier evaluation unavailable',
+    result ? undefined : failure,
   );
 }
 
