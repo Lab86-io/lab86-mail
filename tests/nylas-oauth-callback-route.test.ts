@@ -15,6 +15,7 @@ function dependencies(overrides: Record<string, unknown> = {}) {
     encryptSecret: (value: string) => value,
     syncCalendarAccount: async () => undefined,
     maybeKickCorpusBackfill: () => undefined,
+    maybeKickContactSync: () => undefined,
     ...overrides,
   } as any;
 }
@@ -79,6 +80,7 @@ describe('Nylas OAuth callback', () => {
     const upserts: Array<Record<string, unknown>> = [];
     const syncs: Array<Record<string, unknown>> = [];
     const backfills: Array<Record<string, unknown>> = [];
+    const contactKicks: Array<Record<string, unknown>> = [];
     const destroyedGrants: string[] = [];
     const callback = createNylasOAuthCallback(
       dependencies({
@@ -117,6 +119,9 @@ describe('Nylas OAuth callback', () => {
         maybeKickCorpusBackfill: (input: Record<string, unknown>) => {
           backfills.push(input);
         },
+        maybeKickContactSync: (input: Record<string, unknown>, options: Record<string, unknown>) => {
+          contactKicks.push({ ...input, ...options });
+        },
       }),
     );
 
@@ -138,6 +143,9 @@ describe('Nylas OAuth callback', () => {
       { userId: 'user_1', accountId: 'account_1', force: true, reason: 'oauth_callback' },
     ]);
     expect(backfills).toEqual([{ userId: 'user_1', accountId: 'account_1' }]);
+    expect(contactKicks).toEqual([
+      { userId: 'user_1', accountId: 'account_1', force: true, reason: 'oauth_callback' },
+    ]);
     expect(destroyedGrants).toEqual(['grant_old']);
   });
 
