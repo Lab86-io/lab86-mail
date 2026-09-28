@@ -7,6 +7,7 @@ import { emailFromHeader } from '../lib/shared/format';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
+import { recordInsertedMessages } from './correspondents';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 import {
   classificationFreshnessPatch,
@@ -16,6 +17,7 @@ import {
   latestThreadContent,
   loadSmartContext,
   normalizeCorpusThread,
+  noteSavedContactSender,
   queryCategoryThreads,
   syncLabelMembership,
 } from './smart';
@@ -228,6 +230,7 @@ export const upsertCorpusBatch = mutation({
     requireInternalSecret(args.internalSecret);
     const ts = now();
     let insertedMessages = 0;
+    const newMessages: Array<(typeof args.messages)[number]> = [];
     const changedContentThreads = new Set<string>();
     for (const message of args.messages) {
       const existing = await ctx.db
@@ -286,8 +289,11 @@ export const upsertCorpusBatch = mutation({
       } else {
         await ctx.db.insert('mailCorpusMessages', { ...patch, createdAt: ts } as any);
         insertedMessages += 1;
+        newMessages.push(message);
       }
     }
+    // Recipient search: each message counts once, when it is first stored.
+    await recordInsertedMessages(ctx, args.userId, args.accountId, newMessages);
 
     // Thread aggregates are recomputed from STORED messages, not the batch:
     // an out-of-order backfill page or a single-message webhook must never
@@ -376,6 +382,7 @@ export const upsertCorpusBatch = mutation({
       const classifyRow = existing
         ? { ...existing, ...patch, ...freshnessPatch }
         : { ...patch, ...freshnessPatch };
+      if (smartContext) await noteSavedContactSender(ctx, args.userId, smartContext, classifyRow.fromAddress);
       const classified = smartContext ? classifyCorpusThread(classifyRow, smartContext, classifyBody) : {};
       if (existing) await ctx.db.patch(existing._id, { ...patch, ...freshnessPatch, ...classified });
       else

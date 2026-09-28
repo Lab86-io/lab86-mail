@@ -1828,6 +1828,34 @@ export default defineSchema({
     .index('by_user_email', ['userId', 'email'])
     .index('by_contact', ['contactId']),
 
+  // The correspondent index: one row for each address the user wrote to or
+  // heard from, built from the mail corpus (lib/contacts/recipients.ts). Mail
+  // the user sent weighs most. `frecency` is a log-space sum of decaying
+  // events, so the stored order stays right as time passes; `score` is
+  // frecency with demoted bulk and no-reply senders moved to the end.
+  // `accounts` keeps small per-mailbox counts for the From-mailbox boost and
+  // for account removal.
+  correspondents: defineTable({
+    userId: v.string(),
+    email: v.string(),
+    name: v.optional(v.string()),
+    sentCount: v.number(),
+    receivedCount: v.number(),
+    bulkCount: v.number(),
+    lastSentAt: v.optional(v.number()),
+    lastReceivedAt: v.optional(v.number()),
+    frecency: v.number(),
+    score: v.number(),
+    accounts: v.array(
+      v.object({ accountId: v.string(), sent: v.number(), received: v.number(), lastAt: v.number() }),
+    ),
+    searchText: v.string(),
+    updatedAt: v.number(),
+  })
+    .index('by_user_email', ['userId', 'email'])
+    .index('by_user_score', ['userId', 'score'])
+    .searchIndex('by_search_text', { searchField: 'searchText', filterFields: ['userId'] }),
+
   // Contact sync state for each mailbox: a lease so one worker syncs a grant,
   // the result of each source, and the Retry-After wait after a 429.
   // `needs_reconnect` means the grant lacks a contact scope; the mail grant

@@ -382,6 +382,8 @@ export const MailThreadSummarySchema = z
     subject: z.string().max(2_000),
     fromHeader: z.string().max(1_000),
     senderEmail: z.string().max(320).optional(),
+    // The saved contact name, only when the From header gives no real name.
+    senderName: z.string().max(200).optional(),
     snippet: z.string().max(500),
     lastMessageAt: z.number().int().nonnegative(),
     unread: z.boolean(),
@@ -681,6 +683,86 @@ export const AssistantRouteVerdictSchema = z
 
 export type AssistantRouteVerdict = z.infer<typeof AssistantRouteVerdictSchema>;
 
+// Recipient search for the To, Cc, and Bcc fields:
+// GET /api/mobile/v1/contacts/recipients?q=&fromAccountID=&limit=&exclude=.
+// One item for each person; the first item is a complete typed address when
+// `q` is one. `highlights` are UTF-16 offsets into `name` or `email`.
+export const RecipientHighlightSchema = z
+  .object({
+    field: z.enum(['name', 'email']),
+    start: z.number().int().nonnegative(),
+    length: z.number().int().positive(),
+  })
+  .strict();
+
+export const RecipientSuggestionSchema = z
+  .object({
+    id: z.string().min(3).max(320),
+    email: z.string().min(3).max(320),
+    name: z.string().max(200).optional(),
+    alternateEmails: z.array(z.string().max(320)).max(5).optional(),
+    savedContact: z.boolean(),
+    directory: z.boolean(),
+    sources: z.array(z.enum(['addressBook', 'inbox', 'domain', 'mail', 'typed'])).max(5),
+    company: z.string().max(200).optional(),
+    jobTitle: z.string().max(200).optional(),
+    photoURL: z.url().max(2_048).optional(),
+    lastContactedAt: z.number().int().nonnegative().optional(),
+    sentCount: z.number().int().nonnegative(),
+    receivedCount: z.number().int().nonnegative(),
+    highlights: z.array(RecipientHighlightSchema).max(4),
+    score: z.number(),
+  })
+  .strict();
+export type RecipientSuggestionV1 = z.infer<typeof RecipientSuggestionSchema>;
+
+export const RecipientSuggestionPageSchema = z
+  .object({
+    version: z.literal(1),
+    query: z.string().max(200),
+    items: z.array(RecipientSuggestionSchema).max(10),
+    serverTime: isoTimestamp,
+  })
+  .strict();
+
+// Contact sync state for each mailbox: GET /api/mobile/v1/contacts/status.
+// `needsReconnect` means the grant lacks a contact scope; the fix is the
+// usual mailbox connect flow for the same provider.
+export const ContactSourceStatusSchema = z
+  .object({
+    source: z.enum(['addressBook', 'inbox', 'domain']),
+    state: z.enum(['ok', 'missingScope', 'unsupported', 'capped', 'error']),
+    count: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export const ContactAccountStatusSchema = z
+  .object({
+    accountID: identifier,
+    email: z.string().max(320),
+    provider: ProviderSchema,
+    state: z.enum(['ready', 'syncing', 'pending', 'needsReconnect', 'unsupported', 'error', 'paused']),
+    needsReconnect: z.boolean(),
+    contactCount: z.number().int().nonnegative(),
+    lastSyncedAt: z.number().int().nonnegative().optional(),
+    sources: z.array(ContactSourceStatusSchema).max(3),
+    message: z.string().max(300).optional(),
+  })
+  .strict();
+export type ContactAccountStatusV1 = z.infer<typeof ContactAccountStatusSchema>;
+
+export const ContactStatusPageSchema = z
+  .object({
+    version: z.literal(1),
+    accounts: z.array(ContactAccountStatusSchema).max(100),
+    serverTime: isoTimestamp,
+  })
+  .strict();
+
+// POST /api/mobile/v1/contacts/resync: one contact pass for one mailbox now.
+export const ContactResyncRequestSchema = z.object({ accountID: identifier }).strict();
+export const ContactResyncReceiptSchema = z.object({ accountID: identifier, started: z.boolean() }).strict();
+
 export const MobileContractV1 = {
   version: 1 as const,
   schemas: {
@@ -689,12 +771,20 @@ export const MobileContractV1 = {
     BriefEditionKind: BriefEditionKindSchema,
     TodaySummary: TodaySummarySchema,
     CommandReceipt: CommandReceiptSchema,
+    ContactAccountStatus: ContactAccountStatusSchema,
+    ContactResyncReceipt: ContactResyncReceiptSchema,
+    ContactResyncRequest: ContactResyncRequestSchema,
+    ContactSourceStatus: ContactSourceStatusSchema,
+    ContactStatusPage: ContactStatusPageSchema,
     MailThreadPage: MailThreadPageSchema,
     MailThreadSummary: MailThreadSummarySchema,
     MobileBootstrap: MobileBootstrapSchema,
     MobileCommand: MobileCommandSchema,
     MobileErrorEnvelope: MobileErrorEnvelopeSchema,
     ProviderCapabilitySet: ProviderCapabilitySetSchema,
+    RecipientHighlight: RecipientHighlightSchema,
+    RecipientSuggestion: RecipientSuggestionSchema,
+    RecipientSuggestionPage: RecipientSuggestionPageSchema,
     WorkShape: WorkShapeSchema,
     ...MobileCommandVariantSchemas,
   },

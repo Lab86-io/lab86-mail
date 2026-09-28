@@ -344,6 +344,274 @@
         }
       }
     },
+    "/api/mobile/v1/contacts/recipients": {
+      "get": {
+        "operationId": "getMobileRecipientSuggestions",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "What the user typed. Empty means the top people for a focused field.",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "fromAccountID",
+            "in": "query",
+            "required": false,
+            "description": "The selected From mailbox. People seen on it rank higher.",
+            "schema": {
+              "type": "string",
+              "maxLength": 240
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            }
+          },
+          {
+            "name": "exclude",
+            "in": "query",
+            "required": false,
+            "description": "Addresses already in the field; repeat the parameter or separate with commas.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50
+            },
+            "style": "form",
+            "explode": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ranked recipients, best first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipientSuggestionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/contacts/status": {
+      "get": {
+        "operationId": "getMobileContactStatus",
+        "responses": {
+          "200": {
+            "description": "Contact sync state and reconnect need for each mailbox",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactStatusPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/contacts/resync": {
+      "post": {
+        "operationId": "postMobileContactResync",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactResyncRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Whether a contact pass started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactResyncReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown mailbox",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/mobile/v1/today/summary": {
       "get": {
         "operationId": "getMobileTodaySummary",
@@ -656,6 +924,293 @@
         ],
         "additionalProperties": false
       },
+      "ContactAccountStatus": {
+        "type": "object",
+        "properties": {
+          "accountID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 320
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "google",
+              "microsoft",
+              "icloud",
+              "imap"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "syncing",
+              "pending",
+              "needsReconnect",
+              "unsupported",
+              "error",
+              "paused"
+            ]
+          },
+          "needsReconnect": {
+            "type": "boolean"
+          },
+          "contactCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "lastSyncedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "sources": {
+            "maxItems": 3,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "addressBook",
+                    "inbox",
+                    "domain"
+                  ]
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "ok",
+                    "missingScope",
+                    "unsupported",
+                    "capped",
+                    "error"
+                  ]
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "source",
+                "state"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "accountID",
+          "email",
+          "provider",
+          "state",
+          "needsReconnect",
+          "contactCount",
+          "sources"
+        ],
+        "additionalProperties": false
+      },
+      "ContactResyncReceipt": {
+        "type": "object",
+        "properties": {
+          "accountID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "started": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "accountID",
+          "started"
+        ],
+        "additionalProperties": false
+      },
+      "ContactResyncRequest": {
+        "type": "object",
+        "properties": {
+          "accountID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "required": [
+          "accountID"
+        ],
+        "additionalProperties": false
+      },
+      "ContactSourceStatus": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "addressBook",
+              "inbox",
+              "domain"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "missingScope",
+              "unsupported",
+              "capped",
+              "error"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "source",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "ContactStatusPage": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "const": 1
+          },
+          "accounts": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "accountID": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "email": {
+                  "type": "string",
+                  "maxLength": 320
+                },
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "google",
+                    "microsoft",
+                    "icloud",
+                    "imap"
+                  ]
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "syncing",
+                    "pending",
+                    "needsReconnect",
+                    "unsupported",
+                    "error",
+                    "paused"
+                  ]
+                },
+                "needsReconnect": {
+                  "type": "boolean"
+                },
+                "contactCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "lastSyncedAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "sources": {
+                  "maxItems": 3,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "addressBook",
+                          "inbox",
+                          "domain"
+                        ]
+                      },
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "ok",
+                          "missingScope",
+                          "unsupported",
+                          "capped",
+                          "error"
+                        ]
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "state"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "message": {
+                  "type": "string",
+                  "maxLength": 300
+                }
+              },
+              "required": [
+                "accountID",
+                "email",
+                "provider",
+                "state",
+                "needsReconnect",
+                "contactCount",
+                "sources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "serverTime": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        },
+        "required": [
+          "version",
+          "accounts",
+          "serverTime"
+        ],
+        "additionalProperties": false
+      },
       "MailThreadPage": {
         "type": "object",
         "properties": {
@@ -685,6 +1240,10 @@
                 "senderEmail": {
                   "type": "string",
                   "maxLength": 320
+                },
+                "senderName": {
+                  "type": "string",
+                  "maxLength": 200
                 },
                 "snippet": {
                   "type": "string",
@@ -793,6 +1352,10 @@
           "senderEmail": {
             "type": "string",
             "maxLength": 320
+          },
+          "senderName": {
+            "type": "string",
+            "maxLength": 200
           },
           "snippet": {
             "type": "string",
@@ -1294,6 +1857,307 @@
           "scheduledSend",
           "push",
           "search"
+        ],
+        "additionalProperties": false
+      },
+      "RecipientHighlight": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "name",
+              "email"
+            ]
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "length": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "field",
+          "start",
+          "length"
+        ],
+        "additionalProperties": false
+      },
+      "RecipientSuggestion": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 320
+          },
+          "email": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 320
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "alternateEmails": {
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 320
+            }
+          },
+          "savedContact": {
+            "type": "boolean"
+          },
+          "directory": {
+            "type": "boolean"
+          },
+          "sources": {
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "addressBook",
+                "inbox",
+                "domain",
+                "mail",
+                "typed"
+              ]
+            }
+          },
+          "company": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "jobTitle": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "photoURL": {
+            "type": "string",
+            "maxLength": 2048,
+            "format": "uri"
+          },
+          "lastContactedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "sentCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "receivedCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "highlights": {
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "name",
+                    "email"
+                  ]
+                },
+                "start": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "length": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "field",
+                "start",
+                "length"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "score": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "savedContact",
+          "directory",
+          "sources",
+          "sentCount",
+          "receivedCount",
+          "highlights",
+          "score"
+        ],
+        "additionalProperties": false
+      },
+      "RecipientSuggestionPage": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "const": 1
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "items": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 320
+                },
+                "email": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 320
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "alternateEmails": {
+                  "maxItems": 5,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 320
+                  }
+                },
+                "savedContact": {
+                  "type": "boolean"
+                },
+                "directory": {
+                  "type": "boolean"
+                },
+                "sources": {
+                  "maxItems": 5,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "addressBook",
+                      "inbox",
+                      "domain",
+                      "mail",
+                      "typed"
+                    ]
+                  }
+                },
+                "company": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "jobTitle": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "photoURL": {
+                  "type": "string",
+                  "maxLength": 2048,
+                  "format": "uri"
+                },
+                "lastContactedAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "sentCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "receivedCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "highlights": {
+                  "maxItems": 4,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "field": {
+                        "type": "string",
+                        "enum": [
+                          "name",
+                          "email"
+                        ]
+                      },
+                      "start": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "length": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "field",
+                      "start",
+                      "length"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "score": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "email",
+                "savedContact",
+                "directory",
+                "sources",
+                "sentCount",
+                "receivedCount",
+                "highlights",
+                "score"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "serverTime": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        },
+        "required": [
+          "version",
+          "query",
+          "items",
+          "serverTime"
         ],
         "additionalProperties": false
       },

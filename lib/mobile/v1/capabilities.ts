@@ -21,7 +21,8 @@ export function capabilitiesForProvider(
     case 'microsoft':
       return { ...FULL_MAIL, labels: false };
     case 'icloud':
-      return { ...FULL_MAIL, contacts: false, labels: false };
+      // The iCloud address book syncs over CardDAV with the app password.
+      return { ...FULL_MAIL, labels: false };
     case 'imap':
       return {
         mail: true,

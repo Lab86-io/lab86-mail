@@ -875,7 +875,7 @@ function MessageCard({
   onShowContactEmails: (email: string) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const sender = contactFromHeader(message.from);
+  const sender = contactFromHeader(message.from, message.fromName);
   const recipient = contactFromHeader(message.to || message.account);
   return (
     // Flat interior: messages separate with hairlines, not boxes — the
@@ -958,10 +958,12 @@ type ContactInfo = {
   raw: string;
 };
 
-function contactFromHeader(value: string | null | undefined): ContactInfo {
+// `savedName` is the contact name the server found for a header that gives
+// only an address.
+function contactFromHeader(value: string | null | undefined, savedName?: string): ContactInfo {
   const raw = String(value || '').trim();
   const email = emailFromHeader(raw);
-  const name = shortFrom(raw || email || 'Unknown');
+  const name = savedName || shortFrom(raw || email || 'Unknown');
   return { name, email, raw };
 }
 

@@ -1,4 +1,5 @@
 import { requireCurrentUser } from '@/lib/auth/current-user';
+import { withContactNames } from '@/lib/contacts/names';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { MailThreadPageSchema } from '@/lib/mobile/v1/contract';
 import { MobileInputError, mobileErrorResponse, mobileJSON, mobileRequestID } from '@/lib/mobile/v1/http';
@@ -30,12 +31,15 @@ interface MobileMailThreadsDependencies {
     limit: number;
     before?: number;
   }): Promise<CorpusPage>;
+  // Adds `senderName` where a saved contact names a bare-address sender.
+  senderNames?: (userId: string, items: any[]) => Promise<any[]>;
 }
 
 const defaultDependencies: MobileMailThreadsDependencies = {
   requireCurrentUser,
   pageRecent: (args) => convexQuery<CorpusPage>(api.mailCorpus.pageRecentCorpusThreads, args),
   pageCategory: (args) => convexQuery<CorpusPage>(api.mailCorpus.listSmartCategoryThreads, args),
+  senderNames: (userId, items) => withContactNames(userId, items, (item) => item?.fromAddress, 'senderName'),
 };
 
 export function createMobileMailThreadsGet(deps: MobileMailThreadsDependencies = defaultDependencies) {
@@ -58,8 +62,11 @@ export function createMobileMailThreadsGet(deps: MobileMailThreadsDependencies =
         typeof page.nextBefore === 'number' && Number.isFinite(page.nextBefore) && page.nextBefore > 0
           ? Math.floor(page.nextBefore)
           : undefined;
+      const items = deps.senderNames
+        ? await deps.senderNames(user.userId, page.items || [])
+        : page.items || [];
       const payload = MailThreadPageSchema.parse({
-        items: (page.items || []).map(mailThreadSummaryFromCorpus),
+        items: items.map(mailThreadSummaryFromCorpus),
         nextCursor: nextBefore !== undefined ? String(nextBefore) : undefined,
         hasMore: nextBefore !== undefined,
         serverTime: new Date().toISOString(),

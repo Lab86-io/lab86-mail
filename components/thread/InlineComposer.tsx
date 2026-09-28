@@ -16,6 +16,7 @@ import TextareaAutosize from 'react-textarea-autosize';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { type DurableComposeDraft, usePendingSend } from '@/components/compose/PendingSendProvider';
+import { RecipientInput } from '@/components/compose/RecipientInput';
 import { NarrativeDraftAssistant } from '@/components/narrative/NarrativeDraftAssistant';
 import { useSavedReplies } from '@/components/settings/SavedRepliesSettings';
 import { useSignatures } from '@/components/settings/SignatureSettings';
@@ -208,6 +209,9 @@ export function InlineComposer({
   const undoSendSeconds = prefsQuery.data?.undoSendSeconds ?? DEFAULT_UNDO_SEND_SECONDS;
   const signaturesQuery = useSignatures();
   const signature = activeSignature(signaturesQuery.data, fromAccount || account);
+  // People search ranks those seen on the From mailbox first. The unified
+  // inbox has no single mailbox until the user picks one.
+  const recipientFromAccount = (fromAccount || account) === '__all__' ? undefined : fromAccount || account;
   const savedReplies = useSavedReplies(savedRepliesOpen);
   const insertSavedReply = (text: string) => {
     const field = bodyRef.current;
@@ -673,16 +677,22 @@ export function InlineComposer({
         <div className="border-b border-[var(--color-border)]">
           {composerNeedsRecipients ? (
             <>
-              <RecipientField
+              <RecipientInput
                 label="To"
                 value={to}
                 onChange={setTo}
-                placeholder="alice@example.com, bob@example.com"
+                fromAccount={recipientFromAccount}
+                placeholder="Name or address"
               />
               {showCcBcc ? (
                 <>
-                  <RecipientField label="Cc" value={cc} onChange={setCc} />
-                  <RecipientField label="Bcc" value={bcc} onChange={setBcc} />
+                  <RecipientInput label="Cc" value={cc} onChange={setCc} fromAccount={recipientFromAccount} />
+                  <RecipientInput
+                    label="Bcc"
+                    value={bcc}
+                    onChange={setBcc}
+                    fromAccount={recipientFromAccount}
+                  />
                 </>
               ) : (
                 <button

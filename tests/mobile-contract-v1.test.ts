@@ -81,7 +81,7 @@ describe('MobileContractV1 schemas', () => {
   test('provider capability differences are explicit instead of broken controls', () => {
     expect(capabilitiesForProvider('google').calendar).toBe(true);
     expect(capabilitiesForProvider('microsoft').labels).toBe(false);
-    expect(capabilitiesForProvider('icloud')).toMatchObject({ mail: true, contacts: false, labels: false });
+    expect(capabilitiesForProvider('icloud')).toMatchObject({ mail: true, contacts: true, labels: false });
     expect(capabilitiesForProvider('imap')).toMatchObject({
       mail: true,
       calendar: false,
@@ -226,6 +226,9 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
       '/api/mobile/v1/assistant/route',
       '/api/mobile/v1/bootstrap',
       '/api/mobile/v1/commands',
+      '/api/mobile/v1/contacts/recipients',
+      '/api/mobile/v1/contacts/resync',
+      '/api/mobile/v1/contacts/status',
       '/api/mobile/v1/mail/threads',
       '/api/mobile/v1/today/summary',
     ]);
