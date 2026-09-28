@@ -347,6 +347,7 @@ private struct SourceList: View {
             position: model.position,
             slotY: model.slotY,
             engagement: model.engagement,
+            restOffset: model.restOffset,
             spacing: 4,
             onMeasure: { [measurementSequence] centers, total in
                 // Layout may measure off the main actor; the model is
@@ -385,9 +386,9 @@ private struct SourceList: View {
             )
             .allowsHitTesting(false)
         }
-        // The wheel replaces scrolling, so the whole hierarchy is realised up
-        // front. Twenty rows do not need laziness, and lazy instantiation
-        // mid-fling is its own source of pop-in.
+        // The wheel is the sidebar's scroll, so the whole hierarchy is
+        // realised up front. Twenty rows do not need laziness, and lazy
+        // instantiation mid-fling is its own source of pop-in.
         .accessibilityElement(children: .contain)
     }
 
@@ -484,7 +485,8 @@ private struct SourceList: View {
         }
     }
 
-    // Committing routes through the exact paths a tap uses.
+    // Where a tap on a row goes. Rows reach it only through the wheel model's
+    // `activate`, which refuses a tap while the wheel is held or travelling.
     private func commit(_ destination: SidebarDestination) {
         switch destination {
         case .primary(let tab):
@@ -513,9 +515,7 @@ private struct SourceList: View {
         let selected = environment.navigation.selectedTab == destination
             && (destination != .work || environment.navigation.areaRoute == nil)
         return Button {
-            guard !model.suppressesRowTaps else { return }
-            environment.navigation.selectPrimary(destination)
-            onSelect()
+            model.activate(.primary(destination))
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: destination.symbol)
@@ -545,8 +545,7 @@ private struct SourceList: View {
     private func labelButton(_ label: MailLabelSummary) -> some View {
         let destination = SidebarDestination.mailLabel(id: label.id, name: label.name)
         return Button {
-            guard !model.suppressesRowTaps else { return }
-            commit(destination)
+            model.activate(destination)
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "tag")
@@ -575,7 +574,7 @@ private struct SourceList: View {
     // NAT-9: an Area can be created from the sidebar, as on the web.
     private var newAreaButton: some View {
         Button {
-            guard !model.suppressesRowTaps else { return }
+            guard model.acceptsRowTap() else { return }
             newAreaName = ""
             showsNewArea = true
         } label: {
@@ -614,9 +613,7 @@ private struct SourceList: View {
     private func areaButton(_ area: AreaSummary) -> some View {
         let destination = SidebarDestination.area(id: area.id, name: area.name)
         return Button {
-            guard !model.suppressesRowTaps else { return }
-            environment.navigation.openArea(id: area.id, name: area.name)
-            onSelect()
+            model.activate(destination)
         } label: {
             HStack(spacing: 10) {
                 AreaIdentityMark(
@@ -768,17 +765,18 @@ private struct SidebarRowDetail: View {
     }
 }
 
-// The resting selection block is suppressed while the wheel is turning, so the
-// pick is marked by weight and the open page alone rather than by two competing
-// highlights.
+// The page you are on keeps its block while the wheel turns. The riffle only
+// looks, so the row that says where you are must stay marked under the pick.
 private struct SidebarRowBackground: View {
     let selected: Bool
     let model: SidebarWheelModel
 
     var body: some View {
-        if selected, model.engagement <= 0.01 {
+        if selected {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.primary.opacity(0.075))
+                .fill(Color.primary.opacity(
+                    SidebarSelectionMark.opacity(selected: true, engagement: model.engagement)
+                ))
         }
     }
 }

@@ -14,7 +14,14 @@ enum SidebarWheelSpace {
 // Owns the engine, the clock, and the haptics, and mirrors the engine's outputs
 // into separately observed properties.
 //
-// That mirroring is deliberate rather than redundant. Observation tracks whole
+// The riffle is a scroll. A drag turns the wheel — the fan, the bloom, and the
+// detent ticks all follow the thumb — but letting go only lets the list coast
+// and settle, and the list then stays where it stopped. Navigation happens in
+// exactly one way: an explicit tap on a row, through `activate`. There is no
+// swipe that selects; a sideways swipe belongs to the sidebar's own reveal and
+// dismiss.
+//
+// The mirroring is deliberate rather than redundant. Observation tracks whole
 // stored properties, so if a view read `engine.engagement` it would register a
 // dependency on `engine` — which changes every single frame — and every row
 // would rebuild at 120Hz. Splitting the outputs means the layout container
@@ -35,16 +42,20 @@ final class SidebarWheelModel {
     // The fan opens here, not at the slot — near either end of the hierarchy
     // the surface stops moving and the pick walks the rows already on screen.
     private(set) var focusY: CGFloat = 0
+    // Where the surface rests between gestures. Written once as each scroll
+    // comes to rest, so the row you coasted to is still under your thumb when
+    // you tap it.
+    private(set) var restOffset: CGFloat = 0
     private(set) var isGrabbed = false
     var viewportHeight: CGFloat = 0
 
     var destinations: [SidebarDestination] = [] {
         didSet {
             guard destinations != oldValue else { return }
-            // The index a fling is coasting toward means nothing once the
-            // ordering changes underneath it — areas load asynchronously, so
-            // this is reachable — and a bounds check cannot catch a reorder.
-            pendingCommit = nil
+            // Areas load asynchronously, so the rows can change under a moving
+            // wheel. The engine keeps itself inside the new range; the row the
+            // last scroll stopped on means nothing once the order changes.
+            restingAnchor = nil
             engine.setCount(destinations.count)
             sync()
         }
@@ -53,12 +64,19 @@ final class SidebarWheelModel {
     var boundaryIndices: Set<Int> = []
     // The wheel's frame in window coordinates; touches outside are not ours.
     var activeRect: CGRect = .zero
+    // Navigation. Reached only from `activate` — a tap on a row, or VoiceOver
+    // activating one. Never from a drag, a fling, or the end of either.
     var onCommit: ((SidebarDestination) -> Void)?
+    // The open page. The wheel ticks as the pick passes it, and a first grab
+    // starts there.
     var currentIndex: (() -> Int?)?
 
     var reduceMotion = false {
         didSet { engine.tuning = reduceMotion ? .reduced : .standard }
     }
+
+    // Off in tests, which step the wheel by hand through `advance(by:)`.
+    @ObservationIgnored var drivesDisplayClock = true
 
     @ObservationIgnored private var engine = SidebarWheelEngine()
     @ObservationIgnored private var clock: SidebarWheelClock?
@@ -71,16 +89,17 @@ final class SidebarWheelModel {
     // through main-actor tasks whose relative order Swift does not promise,
     // so an older one that lands late is dropped rather than applied.
     @ObservationIgnored private(set) var measurementSequence = 0
-    // A pick the wheel is still coasting toward. Held until it arrives so the
-    // committed row is always the one showing as picked.
-    @ObservationIgnored private var pendingCommit: Int?
+    // The row the last scroll came to rest on. The next grab starts there, so
+    // the pick opens on a row that is on screen rather than on a current page
+    // the scroll has since carried out of view.
+    @ObservationIgnored private var restingAnchor: Int?
     // Thumb travel already spent activating the recogniser. Without rebasing
     // it, the wheel arrived already half a row along from movement the user
     // reads as merely pressing.
     @ObservationIgnored private var grabTranslationY: CGFloat = 0
     // True from the moment the wheel claims a touch until just after it is
-    // released. Rows consult it so that even if a Button somehow survives
-    // gesture arbitration, it cannot navigate behind the wheel's back.
+    // released. A row's Button that survives gesture arbitration for the same
+    // touch therefore cannot navigate behind the wheel's back.
     @ObservationIgnored private(set) var suppressesRowTaps = false
 
     func setMeasurement(centers: [CGFloat], total: CGFloat, sequence: Int? = nil) {
@@ -99,6 +118,22 @@ final class SidebarWheelModel {
 
     var pickedDestination: SidebarDestination? {
         destinations.indices.contains(detent) ? destinations[detent] : nil
+    }
+
+    // Read by tests and by nothing on screen.
+    var phase: SidebarWheelEngine.Phase { engine.phase }
+    var isMoving: Bool { engine.isRunning }
+    var tuning: SidebarWheelEngine.Tuning { engine.tuning }
+    var surfaceOffset: CGFloat {
+        SidebarWheelPlacement.surface(
+            position: engine.position,
+            centers: restingCenters,
+            slotY: slotY,
+            viewport: viewportHeight,
+            total: contentHeight,
+            engagement: engine.engagement,
+            restOffset: restOffset
+        )
     }
 
     // One comfortable thumb arc has to cover the whole hierarchy, so per-item
@@ -121,26 +156,29 @@ final class SidebarWheelModel {
         if !isGrabbed {
             guard !destinations.isEmpty else { return }
             isGrabbed = true
-            // Grabbing again mid-settle abandons whatever the last fling was
-            // heading for.
-            pendingCommit = nil
             grabTranslationY = translation.y
             suppressesRowTaps = true
-            let origin = min(destinations.count - 1, max(0, currentIndex?() ?? 0))
-            // The slot is where the current page already sits, not where the
-            // thumb landed. Anchoring it to the thumb meant grabbing anywhere
-            // yanked the whole hierarchy across to meet your finger before you
-            // had asked for anything.
-            let resting = restingCenters.indices.contains(origin)
-                ? restingCenters[origin]
-                : start.y - activeRect.minY
-            // …but a long hierarchy can leave the current page below the fold,
-            // and a slot off the bottom of the viewport would put the open page
-            // somewhere nobody can see. Pull it into view; that is the one case
-            // where the surface is meant to move on grab.
-            slotY = SidebarWheelPlacement.slot(resting: resting, viewport: viewportHeight)
             haptics.prepare()
-            engine.grab(at: origin)
+            if engine.isRunning {
+                // Still coasting, bouncing, or relaxing: take hold of it where
+                // it is, as a thumb stops a scroll view. The slot stays, so
+                // nothing on screen moves.
+                engine.grabInPlace()
+            } else {
+                let origin = startIndex()
+                // The slot is where the start row already sits on screen, not
+                // where the thumb landed. Anchoring it to the thumb meant
+                // grabbing anywhere yanked the whole hierarchy across to meet
+                // your finger before you had asked for anything.
+                let resting = restingCenters.indices.contains(origin)
+                    ? restingCenters[origin] + restingSurface
+                    : start.y - activeRect.minY
+                // …but a slot off the edge of the viewport would open the fan
+                // somewhere nobody can see. Pull it into view; that is the one
+                // case where the surface is meant to move on grab.
+                slotY = SidebarWheelPlacement.slot(resting: resting, viewport: viewportHeight)
+                engine.grab(at: origin)
+            }
             haptics.play(.home)
             sync()
             startClock()
@@ -151,6 +189,8 @@ final class SidebarWheelModel {
         sync()
     }
 
+    // Letting go is a scroll, never a choice: the wheel coasts, bounces off
+    // either end, and settles. Nothing here navigates.
     func handleEnd(velocity: CGPoint, completed: Bool) {
         guard isGrabbed else { return }
         isGrabbed = false
@@ -158,32 +198,38 @@ final class SidebarWheelModel {
         // same touch would otherwise land after the flag had already cleared.
         DispatchQueue.main.async { [weak self] in self?.suppressesRowTaps = false }
         if completed {
-            let items = Double(-velocity.y / max(itemTravel, 1))
-            let highlighted = engine.detent
-            let landing = engine.release(velocityInItemsPerSecond: items)
-            if let landing, destinations.indices.contains(landing) {
-                if landing == highlighted {
-                    // Nothing to coast to: what you were looking at is what you
-                    // get, immediately.
-                    commit(landing)
-                } else {
-                    // A fling is going somewhere you have not seen yet.
-                    // Committing now would navigate to a row that was never the
-                    // highlighted one, so the pick waits for the wheel to
-                    // actually arrive — you watch it land on what it takes.
-                    pendingCommit = landing
-                }
-            }
+            engine.release(velocityInItemsPerSecond: Double(-velocity.y / max(itemTravel, 1)))
         } else {
-            pendingCommit = nil
             engine.cancel()
         }
         sync()
         startClock()
     }
 
+    // MARK: - Selection
+
+    // Whether a tap on a row may navigate right now. Not while the wheel is
+    // held, and not from the touch that just turned it. A tap on a wheel that
+    // is still travelling stops it instead, as a tap stops a scroll view, so a
+    // row sliding past under the finger is never opened by accident; the next
+    // tap goes through.
+    func acceptsRowTap() -> Bool {
+        guard !isGrabbed, !suppressesRowTaps else { return false }
+        guard engine.isCatchable else { return true }
+        engine.halt()
+        sync()
+        startClock()
+        return false
+    }
+
+    // The single place a row becomes navigation: a tap, or VoiceOver
+    // activating the row's button, which arrives through the same action.
+    func activate(_ destination: SidebarDestination) {
+        guard acceptsRowTap() else { return }
+        onCommit?(destination)
+    }
+
     func stop() {
-        pendingCommit = nil
         // Never leave taps suppressed behind us; a stuck flag would make every
         // row in the sidebar dead to a plain tap.
         suppressesRowTaps = false
@@ -195,35 +241,50 @@ final class SidebarWheelModel {
     // MARK: - Clock
 
     private func startClock() {
+        guard drivesDisplayClock else { return }
         if clock == nil {
-            clock = SidebarWheelClock { [weak self] dt in self?.frame(dt) }
+            clock = SidebarWheelClock { [weak self] dt in self?.advance(by: dt) }
         }
         clock?.start()
     }
 
-    private func frame(_ dt: Double) {
+    // One frame. Called by the display link, and by tests directly.
+    func advance(by dt: Double) {
         if let rolled = engine.step(dt: dt) { play(rolled) }
-        sync()
-        // The spring is done well before the blend back to the resting list is,
-        // so a coasted pick commits the moment it arrives rather than waiting
-        // out the fade.
-        if pendingCommit != nil, engine.phase == .idle {
-            let landing = pendingCommit
-            pendingCommit = nil
-            if let landing { commit(landing) }
+        if !isGrabbed {
+            // A frame is always a later turn of the run loop than the touch
+            // that ended the drag, so the same-touch guard has done its job.
+            suppressesRowTaps = false
+            if engine.phase == .idle { recordRest() }
         }
+        sync()
         guard !isGrabbed, !engine.isRunning else { return }
         clock?.stop()
         haptics.relax()
     }
 
-    // The single place a pick becomes navigation. By the time this runs the
-    // wheel is resting on `index`, so the row showing as picked and the row
-    // being opened are the same row.
-    private func commit(_ index: Int) {
-        guard destinations.indices.contains(index) else { return }
-        haptics.play(index == engine.origin ? .home : .commit)
-        onCommit?(destinations[index])
+    // Once the wheel has stopped, the surface stays where it is, less any
+    // band it was still showing — that part relaxes away with the fan.
+    private func recordRest() {
+        let wheel = SidebarWheelPlacement.shift(
+            position: engine.position,
+            centers: restingCenters,
+            slotY: slotY,
+            viewport: viewportHeight,
+            total: contentHeight
+        )
+        let rest = SidebarWheelPlacement.resting(wheel, viewport: viewportHeight, total: contentHeight)
+        if restOffset != rest { restOffset = rest }
+        restingAnchor = engine.detent
+    }
+
+    private var restingSurface: CGFloat {
+        SidebarWheelPlacement.resting(restOffset, viewport: viewportHeight, total: contentHeight)
+    }
+
+    private func startIndex() -> Int {
+        let preferred = restingAnchor ?? currentIndex?() ?? 0
+        return min(destinations.count - 1, max(0, preferred))
     }
 
     // Assign only on change. `@Observable` fires the observation on assignment
@@ -241,7 +302,8 @@ final class SidebarWheelModel {
             slotY: slotY,
             viewport: viewportHeight,
             total: contentHeight,
-            engagement: engine.engagement
+            engagement: engine.engagement,
+            restOffset: restOffset
         )
         if focusY != focus { focusY = focus }
     }
@@ -259,12 +321,29 @@ final class SidebarWheelModel {
                 .end
             } else if boundaryIndices.contains(index) {
                 .boundary
-            } else if index == engine.origin {
+            } else if index == currentIndex?() {
                 .home
             } else {
                 .row
             }
         haptics.play(tick)
+    }
+}
+
+// MARK: - The open page, while the wheel turns
+
+// The page you are on stays marked through a riffle. The wheel is a way to
+// look, not a way to choose, so the one row that tells you where you are must
+// not vanish under it. The mark firms up a little while the wheel turns,
+// because the fan dims every row around it.
+enum SidebarSelectionMark {
+    static let restingOpacity: Double = 0.075
+    static let turningOpacity: Double = 0.11
+
+    static func opacity(selected: Bool, engagement: Double) -> Double {
+        guard selected else { return 0 }
+        let blend = min(1, max(0, engagement))
+        return restingOpacity + (turningOpacity - restingOpacity) * blend
     }
 }
 

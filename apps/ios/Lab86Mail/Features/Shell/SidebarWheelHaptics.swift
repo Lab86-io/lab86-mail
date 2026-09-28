@@ -17,10 +17,8 @@ final class SidebarWheelHaptics {
         case boundary
         // The first or last row: you cannot go further this way.
         case end
-        // Back where the grab started. Lifting here changes nothing.
+        // The grab itself, and the pick passing the page that is open now.
         case home
-        // The wheel took the pick.
-        case commit
 
         var intensity: Float {
             switch self {
@@ -28,7 +26,6 @@ final class SidebarWheelHaptics {
             case .boundary: 0.8
             case .end: 1
             case .home: 0.55
-            case .commit: 0.85
             }
         }
 
@@ -38,7 +35,6 @@ final class SidebarWheelHaptics {
             case .boundary: 0.85
             case .end: 0.1
             case .home: 0.95
-            case .commit: 0.55
             }
         }
 
@@ -47,7 +43,7 @@ final class SidebarWheelHaptics {
         // merely harder.
         var duration: TimeInterval {
             switch self {
-            case .row, .home, .commit: 0
+            case .row, .home: 0
             case .boundary: 0.04
             case .end: 0.11
             }
@@ -65,7 +61,6 @@ final class SidebarWheelHaptics {
             case .row: 0.028
             case .boundary, .home: 0.06
             case .end: 0.12
-            case .commit: 0
             }
         }
     }
