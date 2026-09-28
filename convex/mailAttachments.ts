@@ -182,18 +182,37 @@ export async function deleteAttachmentFileRow(
   return true;
 }
 
-/** Deletes the file rows (and unshared files) and queue rows of one message. */
+const MESSAGE_DELETE_BATCH = 100;
+
+/**
+ * Deletes all the file rows (and unshared files) and queue rows of one
+ * message, in batches until none is left. The lazy fill has no cap for each
+ * message, so one batch could leave rows and files behind.
+ */
 export async function deleteMessageAttachmentData(
   ctx: Ctx,
   userId: string,
   accountId: string,
   providerMessageId: string,
 ) {
-  const files = await byMessage(ctx, 'mailAttachmentFiles', userId, accountId, providerMessageId).take(100);
-  for (const row of files) await deleteAttachmentFileRow(ctx, row);
-  const queued = await byMessage(ctx, 'mailAttachmentQueue', userId, accountId, providerMessageId).take(100);
-  for (const row of queued) await ctx.db.delete(row._id);
-  return files.length + queued.length;
+  let deleted = 0;
+  for (;;) {
+    const files = await byMessage(ctx, 'mailAttachmentFiles', userId, accountId, providerMessageId).take(
+      MESSAGE_DELETE_BATCH,
+    );
+    for (const row of files) await deleteAttachmentFileRow(ctx, row);
+    deleted += files.length;
+    if (files.length < MESSAGE_DELETE_BATCH) break;
+  }
+  for (;;) {
+    const queued = await byMessage(ctx, 'mailAttachmentQueue', userId, accountId, providerMessageId).take(
+      MESSAGE_DELETE_BATCH,
+    );
+    for (const row of queued) await ctx.db.delete(row._id);
+    deleted += queued.length;
+    if (queued.length < MESSAGE_DELETE_BATCH) break;
+  }
+  return deleted;
 }
 
 async function clearQueueRow(ctx: Ctx, key: FileKey) {

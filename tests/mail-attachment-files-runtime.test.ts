@@ -616,6 +616,53 @@ describe('deletion', () => {
     expect(await blobCount(t)).toBe(0);
   });
 
+  test('a deleted message takes all its files, also past one batch of 100', async () => {
+    const t = harness();
+    await addAccount(t, 'acct');
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 130; i++) {
+        const storageId = await ctx.storage.store(new Blob([`file ${i}`]));
+        await ctx.db.insert('mailAttachmentFiles', {
+          userId: USER,
+          accountId: 'acct',
+          providerMessageId: 'big',
+          attachmentId: `att_${i}`,
+          filename: 'f.pdf',
+          mimeType: 'application/pdf',
+          size: 6,
+          sha256: `sha_${i}`,
+          storageId,
+          createdAt: NOW,
+        });
+        await ctx.db.insert('mailAttachmentQueue', {
+          userId: USER,
+          accountId: 'acct',
+          providerMessageId: 'big',
+          attachmentId: `queued_${i}`,
+          filename: 'q',
+          mimeType: 'application/pdf',
+          size: 9000,
+          receivedAt: NOW,
+          state: 'failed',
+          attempts: 5,
+          dueAt: NOW,
+          createdAt: NOW,
+          updatedAt: NOW,
+        });
+      }
+    });
+    expect(await blobCount(t)).toBe(130);
+    await t.mutation(api.mailCorpus.deleteCorpusMessage, {
+      internalSecret: SECRET,
+      userId: USER,
+      accountId: 'acct',
+      providerMessageId: 'big',
+    });
+    expect(await rows(t, 'mailAttachmentFiles')).toEqual([]);
+    expect(await rows(t, 'mailAttachmentQueue')).toEqual([]);
+    expect(await blobCount(t)).toBe(0);
+  });
+
   test('a deleted message with no corpus row still takes its stored files, and only its own', async () => {
     const t = harness();
     await addAccount(t, 'acct');
