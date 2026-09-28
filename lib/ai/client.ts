@@ -1,5 +1,6 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
+import { captureGenerationIdFetch } from './generation-cost';
 import { createOpenRouterProvider } from './openrouter-policy';
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
@@ -15,7 +16,13 @@ const OPENROUTER_DEFAULT_FAST = 'openai/gpt-5-nano';
 const OPENAI_DEFAULT_PRIMARY = 'gpt-5.5';
 const OPENAI_DEFAULT_FAST = 'gpt-5-nano';
 
-export const openrouter = OPENROUTER_KEY ? createOpenRouterProvider(OPENROUTER_KEY) : null;
+// The data policy wraps the generation-id capture: each request carries
+// `data_collection: 'deny'` (lib/ai/openrouter-policy.ts), and each response
+// notes its generation id, so a failed or stopped call can still record its
+// real cost (lib/ai/generation-cost.ts).
+export const openrouter = OPENROUTER_KEY
+  ? createOpenRouterProvider(OPENROUTER_KEY, { fetch: captureGenerationIdFetch() })
+  : null;
 export const openai = OPENAI_KEY ? createOpenAI({ apiKey: OPENAI_KEY }) : null;
 export const anthropic = ANTHROPIC_KEY ? createAnthropic({ apiKey: ANTHROPIC_KEY }) : null;
 

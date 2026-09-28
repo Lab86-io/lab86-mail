@@ -46,20 +46,30 @@ export async function kvList<T = any>(
   return rows.map((row) => row.doc as T);
 }
 
-export async function kvUpsert<T = any>(kind: string, key: string, doc: T, ref?: string): Promise<T> {
+export async function kvUpsert<T = any>(
+  kind: string,
+  key: string,
+  doc: T,
+  ref?: string,
+  options?: { skipQueue?: boolean },
+): Promise<T> {
   const userId = requireStoreUserId();
   if (!isConvexConfigured()) {
     memoryUpsert(userId, kind, key, doc, ref);
     return doc;
   }
-  await convexMutation(userDataApi.upsertDoc, {
-    userId,
-    kind,
-    key,
-    ref,
-    doc,
-    ...(kind === 'dailyReport' ? { briefJob: getAiRequestContext().briefJob } : {}),
-  });
+  await convexMutation(
+    userDataApi.upsertDoc,
+    {
+      userId,
+      kind,
+      key,
+      ref,
+      doc,
+      ...(kind === 'dailyReport' ? { briefJob: getAiRequestContext().briefJob } : {}),
+    },
+    options,
+  );
   return doc;
 }
 

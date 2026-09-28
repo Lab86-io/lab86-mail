@@ -484,6 +484,39 @@ describe('the alarm against Convex', () => {
     expect(mergeCostTotals(first.totals, second.totals)).toMatchObject({ credits: 1005, calls: 1005 });
   });
 
+  test('a failed call with a real cost counts in the period credits and in the exact scan', async () => {
+    const t = convexTest(schema, {
+      '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
+      '../convex/aiCostAlarm.ts': () => import('../convex/aiCostAlarm'),
+      '../convex/ai.ts': () => import('../convex/ai'),
+    });
+    const row = (ok: boolean, estimatedCredits: number, error?: string) =>
+      t.mutation(api.ai.recordUsage, {
+        internalSecret: SECRET,
+        userId: 'user_failed',
+        feature: 'brief_preparation_research',
+        source: 'lab86',
+        provider: 'openrouter',
+        model: 'anthropic/claude-opus-5.5',
+        estimatedCredits,
+        ok,
+        ...(error ? { error } : {}),
+      });
+    await row(true, 0.5);
+    await row(false, 0.52, 'No object generated: response did not match schema.');
+    const periods = await t.run((ctx) => ctx.db.query('aiUsagePeriods').collect());
+    expect(periods[0]).toMatchObject({ calls: 2 });
+    expect(periods[0].creditsUsed).toBeCloseTo(1.02);
+    const page = await t.query(api.aiCostAlarm.usagePage, {
+      internalSecret: SECRET,
+      userId: 'user_failed',
+      since: 0,
+      until: Date.now() + DAY,
+    });
+    expect(page.totals.calls).toBe(2);
+    expect(page.totals.credits).toBeCloseTo(1.02);
+  });
+
   test('a failed usage read for one user does not stop the others', async () => {
     const t = harness();
     await use(t, 'user_broken', [{ feature: 'jev_mail', credits: 700, at: NOW - HOUR }]);
