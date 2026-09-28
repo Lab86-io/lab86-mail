@@ -455,6 +455,96 @@ async function mailThreadContent(ctx: any, userId: string, row: any) {
 
 // Messages of one thread in its content item.
 const MAIL_CONTENT_MESSAGES = 16;
+// Threads that one change page reads at most.
+const MAIL_CHANGES_PAGE = 25;
+// A change page stops after about this many characters of body text and
+// HTML, far under the 16 MB read limit of a query.
+const MAIL_CHANGES_BODY_BUDGET = 4_000_000;
+
+/**
+ * The mail threads that changed after a watermark (IO-1, K2). The content
+ * cycle used to walk the whole corpus every two minutes. Now it reads only
+ * the threads whose row changed after the last pass, oldest change first,
+ * through the (userId, updatedAt, _creationTime) order of
+ * `by_narrative_updated`. The watermark is the position of the last thread
+ * read, so a group of threads with the same updatedAt is never skipped.
+ *
+ * It skips threads of accounts that are not connected, spam and trash, and
+ * mail older than `sinceLastDate`; the watermark still moves past them.
+ */
+export const mailChanges = query({
+  args: {
+    ...caller,
+    after: v.object({ updatedAt: v.number(), creationTime: v.number() }),
+    sinceLastDate: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = Math.min(Math.max(Math.floor(args.limit ?? MAIL_CHANGES_PAGE), 1), 100);
+    const tie = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_narrative_updated', (q) =>
+        q
+          .eq('userId', args.userId)
+          .eq('updatedAt', args.after.updatedAt)
+          .gt('_creationTime', args.after.creationTime),
+      )
+      .take(limit + 1);
+    const newer =
+      tie.length > limit
+        ? []
+        : await ctx.db
+            .query('mailCorpusThreads')
+            .withIndex('by_narrative_updated', (q) =>
+              q.eq('userId', args.userId).gt('updatedAt', args.after.updatedAt),
+            )
+            .take(limit + 1 - tie.length);
+    const rows = [...tie, ...newer];
+    const live = new Set(
+      (
+        await ctx.db
+          .query('connectedAccounts')
+          .withIndex('by_user', (q) => q.eq('userId', args.userId))
+          .collect()
+      )
+        .filter((account) => account.status === 'connected')
+        .map((account) => account.accountId),
+    );
+    const items = [];
+    const attachments: any[] = [];
+    let watermark = args.after;
+    let budget = MAIL_CHANGES_BODY_BUDGET;
+    let read = 0;
+    for (const row of rows.slice(0, limit)) {
+      if (budget <= 0) break;
+      read++;
+      watermark = { updatedAt: row.updatedAt, creationTime: row._creationTime };
+      if (
+        !live.has(row.accountId) ||
+        (row.labels || []).some((label: string) => ['TRASH', 'SPAM'].includes(label.toUpperCase())) ||
+        (args.sinceLastDate !== undefined && (row.lastDate || 0) < args.sinceLastDate)
+      )
+        continue;
+      const mail = await mailThreadContent(ctx, args.userId, row);
+      budget -= mail.bodyChars;
+      attachments.push(...mail.attachments);
+      items.push({
+        source: 'mail',
+        connectionId: row.accountId,
+        externalId: row.providerThreadId,
+        title: row.subject || '(untitled)',
+        text: mail.text,
+        modifiedAt: row.lastDate || row.updatedAt,
+        partial: mail.partial,
+        deleted: false,
+        mailAssessment: row.jev,
+      });
+    }
+    return { items, attachments, watermark, more: rows.length > read };
+  },
+});
+
 export const versions = query({
   args: { ...caller, keys: v.array(v.string()) },
   handler: async (ctx, args) => {

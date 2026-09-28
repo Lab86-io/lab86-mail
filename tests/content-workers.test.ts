@@ -539,13 +539,20 @@ test('a new Jev pass on unchanged mail keeps the content version; a new category
       if (name.endsWith(':claimItems')) return [];
       return { changed: args.items?.length || 0 };
     },
-    convexQuery: async (ref: any, args: any) => {
-      if (getFunctionName(ref).endsWith(':workCandidates')) return [];
-      const items =
-        args.source === 'mail'
-          ? [{ ...mail, source: 'mail', connectionId: 'a', externalId: 't', mailAssessment: verdict }]
-          : [];
-      return { items, cursor: null, attachments: [] };
+    convexQuery: async (ref: any) => {
+      const name = getFunctionName(ref);
+      if (name.endsWith(':workCandidates')) return [];
+      // Mail comes from the change feed (IO-1), the other sources from pages.
+      const items = name.endsWith(':mailChanges')
+        ? [{ ...mail, source: 'mail', connectionId: 'a', externalId: 't', mailAssessment: verdict }]
+        : [];
+      return {
+        items,
+        cursor: null,
+        attachments: [],
+        watermark: { updatedAt: 1, creationTime: 1 },
+        more: false,
+      };
     },
     syncCloudContent: async () => {},
     syncMailAttachments: async () => {},

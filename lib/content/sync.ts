@@ -38,6 +38,75 @@ export function localContentVersion(
   return contentVersion([item.title, item.text, item.deleted, mailAssessmentDigest(mailAssessment)]);
 }
 
+/** Mail older than this is not added to the content index by the change feed. */
+export const CONTENT_MAIL_WINDOW_MS = 60 * 86_400_000;
+/**
+ * Where the mail change feed starts for a user whose old walk cursor exists:
+ * the old walk indexed the corpus already, so only recent changes need a pass.
+ */
+export const CONTENT_MAIL_RESUME_MS = 10 * 60_000;
+/** The longest time between two preparation claims of an idle user. */
+export const PREPARE_IDLE_MS = 30 * 60_000;
+const lastPrepared = new Map<string, number>();
+
+export function __resetPreparationClockForTest() {
+  lastPrepared.clear();
+}
+
+interface LocalPage {
+  items: any[];
+  attachments: any[];
+  cursor: unknown;
+  more: boolean;
+}
+
+type Watermark = { updatedAt: number; creationTime: number };
+
+/** The saved mail watermark, or the start point for a user with no watermark yet. */
+export function mailWatermark(cursor: any, now = Date.now()): Watermark {
+  const saved = cursor?.mail;
+  if (saved && Number.isFinite(saved.updatedAt) && Number.isFinite(saved.creationTime))
+    return { updatedAt: Number(saved.updatedAt), creationTime: Number(saved.creationTime) };
+  // A user with an old walk cursor has an index already: start near now.
+  // A new user starts at the mail window.
+  return { updatedAt: now - (cursor ? CONTENT_MAIL_RESUME_MS : CONTENT_MAIL_WINDOW_MS), creationTime: 0 };
+}
+
+// IO-1 (K2): mail reads only the threads that changed after the watermark.
+async function mailChangePage(userId: string, cursor: any, deps: typeof defaults): Promise<LocalPage> {
+  const now = Date.now();
+  const page = await deps.convexQuery<any>(ref.mailChanges, {
+    userId,
+    after: mailWatermark(cursor, now),
+    sinceLastDate: now - CONTENT_MAIL_WINDOW_MS,
+  });
+  return {
+    items: page.items,
+    attachments: page.attachments || [],
+    cursor: { mail: page.watermark },
+    more: page.more,
+  };
+}
+
+// Connector items and documents: one page of the walk plus the newest items.
+async function localSourcePage(
+  userId: string,
+  source: 'mcp' | 'document',
+  cursor: any,
+  deps: typeof defaults,
+): Promise<LocalPage> {
+  const [page, recent] = await Promise.all([
+    deps.convexQuery<any>(ref.localPage, { userId, source, cursor: cursor?.page || undefined }),
+    deps.convexQuery<any>(ref.localPage, { userId, source, recent: true }),
+  ]);
+  const items = [
+    ...new Map(
+      [...page.items, ...recent.items].map((row: any) => [`${row.connectionId}:${row.externalId}`, row]),
+    ).values(),
+  ];
+  return { items, attachments: [], cursor: { page: page.cursor }, more: Boolean(page.cursor) };
+}
+
 const defaults = {
   convexMutation,
   convexQuery,
@@ -54,22 +123,16 @@ export async function runContentCycle(userId: string, deps = defaults) {
   if (!lease) return { started: false };
   try {
     await deps.syncMcpContent(userId);
+    let indexedChanges = 0;
     for (const source of ['mail', 'mcp', 'document'] as const) {
       const claim = await deps.convexMutation<any>(ref.claimSync, { userId, connectionId: `__${source}` });
       if (!claim) continue;
       try {
-        const [page, recent] = await Promise.all([
-          deps.convexQuery<any>(ref.localPage, { userId, source, cursor: claim.cursor?.page || undefined }),
-          deps.convexQuery<any>(ref.localPage, { userId, source, recent: true }),
-        ]);
-        const items = [
-          ...new Map(
-            [...page.items, ...recent.items].map((row: any) => [
-              `${row.connectionId}:${row.externalId}`,
-              row,
-            ]),
-          ).values(),
-        ].map((row: any) => {
+        const next =
+          source === 'mail'
+            ? await mailChangePage(userId, claim.cursor, deps)
+            : await localSourcePage(userId, source, claim.cursor, deps);
+        const items = next.items.map((row: any) => {
           const { mailAssessment, ...item } = row;
           return {
             ...item,
@@ -82,19 +145,16 @@ export async function runContentCycle(userId: string, deps = defaults) {
           changed += (
             await deps.convexMutation<any>(ref.upsert, { userId, items: items.slice(start, start + 5) })
           ).changed;
-        if (source === 'mail')
-          await deps.syncMailAttachments(userId, [
-            ...(recent.attachments || []),
-            ...(page.attachments || []),
-          ]);
+        indexedChanges += changed;
+        if (source === 'mail') await deps.syncMailAttachments(userId, next.attachments);
         await deps.convexMutation(ref.finishSync, {
           userId,
           connectionId: `__${source}`,
           lease: claim.lease,
-          cursor: { page: page.cursor },
+          cursor: next.cursor,
           indexed: changed,
           skipped: 0,
-          status: page.cursor ? 'indexing' : 'ready',
+          status: next.more ? 'indexing' : 'ready',
         });
       } catch {
         await deps.convexMutation(ref.finishSync, {
@@ -134,7 +194,18 @@ export async function runContentCycle(userId: string, deps = defaults) {
         vectors: embeddings.status === 'fulfilled' ? embeddings.value : undefined,
       });
     });
-    await deps.prepareBriefWork(userId);
+    // IO-1: the preparation claim reads the 100 newest content items. Run it
+    // when this cycle indexed or labelled something, else at most every
+    // PREPARE_IDLE_MS, so time-based eligibility still gets its turn.
+    const nowMs = Date.now();
+    if (
+      indexedChanges > 0 ||
+      items.length > 0 ||
+      nowMs - (lastPrepared.get(userId) ?? 0) >= PREPARE_IDLE_MS
+    ) {
+      lastPrepared.set(userId, nowMs);
+      await deps.prepareBriefWork(userId);
+    }
     return { started: true, processed: items.length };
   } finally {
     await deps.convexMutation(ref.finishSync, {
