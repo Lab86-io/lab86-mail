@@ -437,6 +437,15 @@ function ReportArtifact({
   const frameRef = useRef<HTMLIFrameElement>(null);
   // The srcdoc frame inherits the page CSP; its scripts need the page nonce.
   const frameNonce = useFrameNonce();
+  // The frame re-renders on each height message; the document passes stay done.
+  const srcDoc = useMemo(
+    () =>
+      withFrameNonce(
+        withReportArtifactRuntime(html, albatrossContext, { launcherClearance: !autoHeight }),
+        frameNonce,
+      ),
+    [html, albatrossContext, autoHeight, frameNonce],
+  );
   const [artifactReady, setArtifactReady] = useState(false);
   const [artifactHeight, setArtifactHeight] = useState<number | null>(null);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
@@ -752,10 +761,7 @@ function ReportArtifact({
       title="The Daily Brief"
       // A frame that grows to its own height scrolls with the page, and the
       // page leaves the room; a frame that fills the pane leaves it inside.
-      srcDoc={withFrameNonce(
-        withReportArtifactRuntime(html, albatrossContext, { launcherClearance: !autoHeight }),
-        frameNonce,
-      )}
+      srcDoc={srcDoc}
       aria-busy={!artifactReady}
       onLoad={() => {
         postTheme();
