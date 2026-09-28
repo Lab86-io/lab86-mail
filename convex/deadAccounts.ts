@@ -3,44 +3,21 @@ import { v } from 'convex/values';
 import { bodyHashHasBody } from '../lib/mail/corpus-body';
 import { internal } from './_generated/api';
 import { internalMutation, internalQuery } from './_generated/server';
+import { ACCOUNT_BULK_TABLES, ACCOUNT_PURGE_INDEX, finishAccountPurge, purgeAccountPass } from './accounts';
 import { now } from './lib';
-import schema from './schema';
 
 // Dead-account purge (connections audit, section 4 item 2). A mailbox whose
 // sign-in stays broken still holds its whole corpus: in production 81% of the
 // stored mail belonged to four dead grants. After 30 days in `error`, the
-// daily cron deletes the corpus of the account in bounded batches. The
-// account row stays, so Settings still shows "Reconnect", and a reconnect
-// starts a fresh backfill (the purge deletes the sync states first).
+// daily cron deletes the data of the account in bounded batches. It deletes
+// the same set as a disconnect, through the same pass (purgeAccountPass in
+// convex/accounts.ts). The account row and its grant row stay, so Settings
+// still shows "Reconnect" and a disconnect can still revoke the grant. A
+// reconnect starts a fresh backfill (each pass deletes the sync states first).
 
 const DAY_MS = 86_400_000;
 export const DEAD_ACCOUNT_PURGE_AFTER_MS = 30 * DAY_MS;
 
-/**
- * Tables that hold the corpus of one mailbox, each read through a
- * `(userId, accountId)` prefix index. `cap` bounds the rows of one table in
- * one pass: a message row can hold a large body. A table that is not in the
- * schema is skipped, so `mailCorpusBodies` (the body table of the io-core
- * branch) is purged as soon as it exists, with a `by_user_account` index.
- */
-export const DEAD_ACCOUNT_TABLES = [
-  { table: 'mailCorpusBodies', index: 'by_user_account', cap: 25 },
-  { table: 'mailCorpusMessages', index: 'by_user_account', cap: 40 },
-  { table: 'mailCorpusThreads', index: 'by_user_account', cap: 200 },
-  { table: 'mailLabelMembership', index: 'by_user_account', cap: 250 },
-  { table: 'calendarEvents', index: 'by_user_account', cap: 250 },
-  { table: 'mailWebhookEvents', index: 'by_user_account', cap: 50 },
-  { table: 'mailSnoozes', index: 'by_user_account', cap: 250 },
-  { table: 'mailOneTimeCodes', index: 'by_user_account', cap: 250 },
-] as const;
-
-/** Small per-account state rows. They go first, so a reconnect during the purge backfills fresh. */
-export const DEAD_ACCOUNT_STATE_TABLES = ['mailSyncStates', 'calendarSyncStates', 'calendars'] as const;
-
-// Documents deleted in one pass, over all tables.
-const PASS_LIMIT = 250;
-// A content item takes up to ~34 vector chunks with it.
-const CONTENT_ITEMS_PER_PASS = 5;
 // Rows read for each table by the dry-run report.
 const REPORT_SAMPLE = 100;
 // Accounts in `error` read by one page of each scan. The tick and the
@@ -50,12 +27,6 @@ const TICK_PAGE = 100;
 const BACKFILL_PAGE = 50;
 const REPORT_PAGE = 2;
 const REPORT_PAGE_MAX = 10;
-
-const presentTables = new Set(Object.keys(schema.tables));
-
-function corpusTables() {
-  return DEAD_ACCOUNT_TABLES.filter((entry) => presentTables.has(entry.table));
-}
 
 /** When the account became dead: `errorSince`, else the row's last update. */
 export function deadSince(account: { errorSince?: number; updatedAt: number }) {
@@ -81,8 +52,12 @@ async function accountRow(ctx, userId: string, accountId: string) {
     .unique();
 }
 
-function byAccount(ctx, table: string, index: string, userId: string, accountId: string) {
-  return ctx.db.query(table).withIndex(index, (q) => q.eq('userId', userId).eq('accountId', accountId));
+function byAccount(ctx, table: string, userId: string, accountId: string) {
+  return ctx.db
+    .query(table)
+    .withIndex(ACCOUNT_PURGE_INDEX[table] ?? 'by_user_account', (q) =>
+      q.eq('userId', userId).eq('accountId', accountId),
+    );
 }
 
 function errorAccountPage(ctx, cursor: string | null | undefined, numItems: number) {
@@ -105,8 +80,9 @@ function contentRows(ctx, userId: string, accountId: string) {
  * when the account is no longer in `error` (a reconnect), or when its error
  * period changed (a reconnect and a new error while the chain waited), so a
  * new period gets its own 30 days. The last pass marks the account row with
- * `corpusPurgedAt` and removes the account's share of the recipient counts.
- * Each pass that deletes rows schedules the next one for the same period.
+ * `corpusPurgedAt` and runs finishAccountPurge (the recipient counts, the
+ * receipts, and the memory chapters). Each pass that deletes rows schedules
+ * the next one for the same period.
  */
 export const purgeDeadAccountBatch = internalMutation({
   args: {
@@ -119,43 +95,7 @@ export const purgeDeadAccountBatch = internalMutation({
     if (!account || account.status !== 'error') return { deleted: 0, stopped: 'not_dead' };
     const period = args.errorSince === undefined ? (account.errorSince ?? null) : args.errorSince;
     if ((account.errorSince ?? null) !== period) return { deleted: 0, stopped: 'error_period_changed' };
-    let deleted = 0;
-    const byTable: Record<string, number> = {};
-    const note = (table: string, count: number) => {
-      if (!count) return;
-      byTable[table] = (byTable[table] ?? 0) + count;
-      deleted += count;
-    };
-
-    for (const table of DEAD_ACCOUNT_STATE_TABLES) {
-      const rows = await byAccount(ctx, table, 'by_user_account', args.userId, args.accountId).collect();
-      for (const row of rows) await ctx.db.delete(row._id);
-      note(table, rows.length);
-    }
-
-    for (const entry of corpusTables()) {
-      if (deleted >= PASS_LIMIT) break;
-      const rows = await byAccount(ctx, entry.table, entry.index, args.userId, args.accountId).take(
-        Math.min(entry.cap, PASS_LIMIT - deleted),
-      );
-      for (const row of rows) await ctx.db.delete(row._id);
-      note(entry.table, rows.length);
-    }
-
-    if (deleted < PASS_LIMIT) {
-      const items = await contentRows(ctx, args.userId, args.accountId).take(CONTENT_ITEMS_PER_PASS);
-      for (const item of items) {
-        const chunks = await ctx.db
-          .query('contentChunks')
-          .withIndex('by_item', (q) => q.eq('itemId', item._id))
-          .collect();
-        for (const chunk of chunks) await ctx.db.delete(chunk._id);
-        await ctx.db.delete(item._id);
-        note('contentChunks', chunks.length);
-        note('contentItems', 1);
-      }
-    }
-
+    const { deleted, byTable } = await purgeAccountPass(ctx, args.userId, args.accountId);
     if (deleted > 0) {
       await ctx.scheduler.runAfter(0, internal.deadAccounts.purgeDeadAccountBatch, {
         userId: args.userId,
@@ -165,10 +105,7 @@ export const purgeDeadAccountBatch = internalMutation({
       return { deleted, byTable, done: false };
     }
     await ctx.db.patch(account._id, { corpusPurgedAt: now() });
-    await ctx.scheduler.runAfter(0, internal.correspondents.purgeAccountCorrespondents, {
-      userId: args.userId,
-      accountId: args.accountId,
-    });
+    await finishAccountPurge(ctx, args.userId, args.accountId);
     return { deleted: 0, byTable, done: true };
   },
 });
@@ -240,13 +177,11 @@ export const deadAccountReport = internalQuery({
     const accounts = [];
     for (const row of page.page) {
       const counts: Record<string, number> = {};
-      for (const entry of corpusTables()) {
-        if (entry.table === 'mailCorpusBodies') continue;
-        const rows = await byAccount(ctx, entry.table, entry.index, row.userId, row.accountId).take(
-          REPORT_SAMPLE,
-        );
-        counts[entry.table] = rows.length;
-        if (entry.table === 'mailCorpusMessages')
+      for (const table of ACCOUNT_BULK_TABLES) {
+        if (table === 'mailCorpusBodies') continue;
+        const rows = await byAccount(ctx, table, row.userId, row.accountId).take(REPORT_SAMPLE);
+        counts[table] = rows.length;
+        if (table === 'mailCorpusMessages')
           counts.mailCorpusBodies = rows.filter((message) => bodyHashHasBody(message.bodyHash)).length;
       }
       counts.contentItems = (await contentRows(ctx, row.userId, row.accountId).take(REPORT_SAMPLE)).length;
