@@ -8,7 +8,8 @@ import XCTest
 /// The screenshot tour for iPhone and iPad: every main screen, drawn by the
 /// real views from fixture data through a stub backend (no network), at
 /// iPhone size (compact width, light, dark, and one large text size) and at
-/// iPad size (regular width, portrait and landscape, light and dark).
+/// iPad size (regular width, portrait and landscape, light and dark). Long
+/// pages (Today, a thread, a Work detail) also get one full-page iPhone image.
 ///
 /// Each image is a PNG with a JSON sidecar in `TOUR_DIR` (CI sets
 /// `TEST_RUNNER_TOUR_DIR`). `.github/scripts/native-tour-gallery.mjs` turns
@@ -30,15 +31,21 @@ final class NativeTourTests: XCTestCase {
     }
 
     func testTour02TodayBrief() async throws {
-        try await tour(Screen(id: "today-brief", title: "Today with a full brief", section: "Today", tab: .today))
+        var screen = Screen(id: "today-brief", title: "Today with a full brief", section: "Today", tab: .today)
+        screen.fullPage = true
+        try await tour(screen)
     }
 
     func testTour03TodayEmpty() async throws {
-        try await tour(Screen(id: "today-empty", title: "Today with no brief yet", section: "Today", tab: .today))
+        var screen = Screen(id: "today-empty", title: "Today with no brief yet", section: "Today", tab: .today)
+        screen.fullPage = true
+        try await tour(screen)
     }
 
     func testTour04TodayError() async throws {
-        try await tour(Screen(id: "today-error", title: "Today when the brief does not load", section: "Today", tab: .today))
+        var screen = Screen(id: "today-error", title: "Today when the brief does not load", section: "Today", tab: .today)
+        screen.fullPage = true
+        try await tour(screen)
     }
 
     func testTour05MailList() async throws {
@@ -50,6 +57,7 @@ final class NativeTourTests: XCTestCase {
         screen.setUp = { environment in
             environment.navigation.threadRoute = ThreadRoute(accountID: "acct-work", threadID: "t-venue")
         }
+        screen.fullPage = true
         try await tour(screen)
     }
 
@@ -123,9 +131,11 @@ final class NativeTourTests: XCTestCase {
     func testTour16WorkDetail() async throws {
         // The Work list pushes the detail when the route changes, so the route
         // is set after the list is on screen.
-        try await tour(Screen(id: "work-detail", title: "One Albatross (Work detail)", section: "Tasks and Work", tab: .work) { environment in
+        var screen = Screen(id: "work-detail", title: "One Albatross (Work detail)", section: "Tasks and Work", tab: .work) { environment in
             environment.navigation.openWork(id: "w-passport", title: "Renew my passport before the Denver trip")
-        })
+        }
+        screen.fullPage = true
+        try await tour(screen)
     }
 
     func testTour17Files() async throws {
@@ -157,6 +167,9 @@ final class NativeTourTests: XCTestCase {
         let section: String
         var tab: PrimaryTab = .today
         var calendarMode: String?
+        /// Adds one iPhone image as tall as the page, for pages whose lower
+        /// part (the brief, the error and empty states) is below the fold.
+        var fullPage = false
         var setUp: (@MainActor (AppEnvironment) async -> Void)?
         var afterAppear: (@MainActor (AppEnvironment) async -> Void)?
 
@@ -186,13 +199,14 @@ final class NativeTourTests: XCTestCase {
         let category: UIContentSizeCategory
         let safeArea: UIEdgeInsets
         let scale: CGFloat
+        var fullPage = false
 
         var appearance: String { style == .dark ? "dark" : "light" }
         var textSize: String { category == .large ? "default" : "AX3 (accessibility extra large)" }
         var sizeClass: String { horizontal == .regular ? "regular width" : "compact width" }
     }
 
-    private static func variants(scene: UIWindowScene) -> [Variant] {
+    private static func variants(scene: UIWindowScene, fullPage: Bool) -> [Variant] {
         let phone = scene.screen.bounds.size
         let hostInsets = scene.windows.first { $0.windowLevel == .normal }?.safeAreaInsets ?? .zero
         let phoneInsets = hostInsets.top > 0 ? hostInsets : UIEdgeInsets(top: 62, left: 0, bottom: 34, right: 0)
@@ -213,7 +227,9 @@ final class NativeTourTests: XCTestCase {
                 orientation: orientation, style: style, category: .large, safeArea: padInsets, scale: 1.5
             )
         }
-        return [
+        var fullPageVariant = phoneVariant("iphone-light-full", .light, .large)
+        fullPageVariant.fullPage = true
+        return (fullPage ? [fullPageVariant] : []) + [
             phoneVariant("iphone-light", .light, .large),
             phoneVariant("iphone-dark", .dark, .large),
             phoneVariant("iphone-ax3", .light, .accessibilityExtraLarge),
@@ -265,7 +281,7 @@ final class NativeTourTests: XCTestCase {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         UIView.setAnimationsEnabled(false)
         defer { UIView.setAnimationsEnabled(true) }
-        for (index, variant) in Self.variants(scene: scene).enumerated() {
+        for (index, variant) in Self.variants(scene: scene, fullPage: screen.fullPage).enumerated() {
             do {
                 try await render(screen, variant: variant, variantOrder: index, fixtures: fixtures, scene: scene, directory: directory)
             } catch {
@@ -335,9 +351,10 @@ final class NativeTourTests: XCTestCase {
             await afterAppear(environment)
         }
         await settle(window, backend: backend)
+        if variant.fullPage { await growToContent(window, backend: backend) }
 
         let screenBounds = scene.screen.bounds.size
-        let fitsScreen = variant.size.width <= screenBounds.width + 0.5 && variant.size.height <= screenBounds.height + 0.5
+        let fitsScreen = window.bounds.width <= screenBounds.width + 0.5 && window.bounds.height <= screenBounds.height + 0.5
         let useHierarchy = fitsScreen || TourCapture.drawHierarchyCoversOffscreen(scene: scene)
         let format = UIGraphicsImageRendererFormat()
         format.scale = variant.scale
@@ -367,6 +384,9 @@ final class NativeTourTests: XCTestCase {
         if variant.device == "iPad" {
             notes.append("An iPad-sized window on the iPhone simulator, with iPad size classes and safe area.")
         }
+        if variant.fullPage {
+            notes.append("The full-page image grows the window to the height of the page, so floating controls sit at its foot.")
+        }
         let log = backend.log
         let record = TourRecord(
             file: file,
@@ -379,11 +399,11 @@ final class NativeTourTests: XCTestCase {
             variantOrder: variantOrder,
             device: variant.device,
             sizeClass: variant.sizeClass,
-            orientation: variant.orientation,
+            orientation: variant.fullPage ? "portrait, full page" : variant.orientation,
             appearance: variant.appearance,
             textSize: variant.textSize,
-            width: Double(variant.size.width),
-            height: Double(variant.size.height),
+            width: Double(window.bounds.width),
+            height: Double(window.bounds.height),
             scale: Double(variant.scale),
             captureMethod: method,
             distinctBytes: distinct,
@@ -395,6 +415,38 @@ final class NativeTourTests: XCTestCase {
         try TourOutput.write(png: png, record: record, to: directory)
         // Removes the owner's cache and search index entries.
         await environment.store.clearForSignOut()
+    }
+
+    /// Makes the window as tall as the main scroll content, so one image shows
+    /// the whole page. A lazy stack grows as it lays out, so this measures
+    /// again after each change.
+    private func growToContent(_ window: UIWindow, backend: TourBackend) async {
+        for _ in 0..<4 {
+            guard let scroll = Self.mainScrollView(in: window) else { return }
+            let visible = scroll.convert(scroll.bounds, to: window).height
+            let chrome = max(0, window.bounds.height - visible)
+            let insets = scroll.adjustedContentInset.top + scroll.adjustedContentInset.bottom
+            let needed = (scroll.contentSize.height + insets + chrome).rounded(.up)
+            let target = min(max(needed, window.bounds.height), 8_000)
+            guard abs(target - window.bounds.height) >= 2 else { return }
+            window.frame.size.height = target
+            await settle(window, backend: backend)
+        }
+    }
+
+    /// The scroll view that covers the largest part of the window.
+    private static func mainScrollView(in window: UIWindow) -> UIScrollView? {
+        var best: (view: UIScrollView, area: CGFloat)?
+        func visit(_ view: UIView) {
+            if let scroll = view as? UIScrollView, !scroll.isHidden, scroll.alpha > 0.01 {
+                let frame = scroll.convert(scroll.bounds, to: window).intersection(window.bounds)
+                let area = frame.isNull ? 0 : frame.width * frame.height
+                if area > (best?.area ?? 0) { best = (scroll, area) }
+            }
+            for subview in view.subviews { visit(subview) }
+        }
+        visit(window)
+        return best?.view
     }
 
     /// Waits until the screen stops asking the backend for data, then gives
