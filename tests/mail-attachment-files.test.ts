@@ -211,6 +211,24 @@ describe('openMailAttachment', () => {
   });
 });
 
+test('a failed store through a custom defer resolves, and goes to the log', async () => {
+  const h = harness(connected());
+  h.deps.convexMutation.mockImplementation(async () => {
+    throw new Error('convex down');
+  });
+  const errors = mock(() => undefined);
+  const original = console.error;
+  console.error = errors;
+  try {
+    const read = await readMailAttachmentBytes(ref, { fill: 'always', defer: h.defer }, h.deps);
+    expect(read?.source).toBe('provider');
+    await h.runTasks();
+  } finally {
+    console.error = original;
+  }
+  expect(errors).toHaveBeenCalledTimes(1);
+});
+
 describe('readMailAttachmentBytes', () => {
   test('reads stored bytes, and provider bytes that are then stored', async () => {
     const stored = harness(

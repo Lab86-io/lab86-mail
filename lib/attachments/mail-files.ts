@@ -135,9 +135,18 @@ export async function readBounded(stream: ReadableStream<Uint8Array>, limit: num
   return bytes;
 }
 
-/** Runs a task after the caller returns; a failure goes to the log only. */
-function runDetached(task: () => Promise<unknown>) {
-  void task().catch((error) => console.error('[mail-files] store failed:', describeError(error)));
+type Defer = (task: () => Promise<unknown>) => void;
+
+/**
+ * Runs a store after the caller returns, through `defer` (Next `after` in a
+ * route) or as a detached promise. A failed store goes to the log only: the
+ * reader has the file already, and the queue or the next read stores it.
+ */
+function scheduleStore(defer: Defer | undefined, task: () => Promise<unknown>) {
+  const guarded = () =>
+    task().catch((error) => console.error('[mail-files] store failed:', describeError(error)));
+  if (defer) defer(guarded);
+  else void guarded();
 }
 
 async function lookupStored(ref: MailAttachmentRef, deps: MailFileDeps) {
@@ -248,7 +257,7 @@ export async function openMailAttachment(
   options: {
     fill?: MailAttachmentFill;
     hint?: MailAttachmentHint;
-    defer?: (task: () => Promise<unknown>) => void;
+    defer?: Defer;
   } = {},
   deps: MailFileDeps = defaults,
 ): Promise<OpenedMailAttachment | null> {
@@ -260,7 +269,7 @@ export async function openMailAttachment(
     return opened;
   const [served, copy] = opened.stream.tee();
   const target = storeTarget(ref, lookup, opened);
-  (options.defer ?? runDetached)(async () => {
+  scheduleStore(options.defer, async () => {
     const bytes = await readBounded(copy, ATTACHMENT_STORE_MAX_BYTES);
     if (bytes) await storeMailAttachmentBytes({ ...target, bytes }, deps);
   });
@@ -278,7 +287,7 @@ export async function readMailAttachmentBytes(
     maxBytes?: number;
     fill?: MailAttachmentFill;
     hint?: MailAttachmentHint;
-    defer?: (task: () => Promise<unknown>) => void;
+    defer?: Defer;
   } = {},
   deps: MailFileDeps = defaults,
 ): Promise<MailAttachmentBytes | null> {
@@ -295,7 +304,7 @@ export async function readMailAttachmentBytes(
     fillAllowed(options.fill ?? 'never', lookup, hint, Date.now(), bytes.byteLength)
   ) {
     const target = storeTarget(ref, lookup, opened);
-    (options.defer ?? runDetached)(() => storeMailAttachmentBytes({ ...target, bytes }, deps));
+    scheduleStore(options.defer, () => storeMailAttachmentBytes({ ...target, bytes }, deps));
   }
   return { bytes, source: opened.source, filename: opened.filename, mimeType: opened.mimeType };
 }
