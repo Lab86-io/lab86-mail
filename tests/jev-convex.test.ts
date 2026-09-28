@@ -543,6 +543,17 @@ describe('Jev spends model calls only on live, recent mail', () => {
     expect(thread.jevStatus).toBe(jevStatus);
     expect(thread.jevError).toBe(jevError);
   }
+  // Each page schedules the next one with a zero delay. Let each timer fire,
+  // then wait for the page, until no scheduled page remains.
+  async function drainScheduled(t: TestConvex<typeof schema>) {
+    for (let i = 0; i < 50; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await t.finishInProgressScheduledFunctions();
+      const jobs = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+      if (!jobs.some((job) => job.state.kind === 'pending' || job.state.kind === 'inProgress')) return;
+    }
+    throw new Error('Scheduled pages did not finish.');
+  }
   async function setAccountStatus(t: TestConvex<typeof schema>, account: string, status: 'error') {
     await t.run(async (ctx) => {
       const found = await ctx.db
@@ -646,5 +657,52 @@ describe('Jev spends model calls only on live, recent mail', () => {
     }
     expectOffQueue(await row(t), 'unavailable', 'Message content changed during classification.');
     expect((await claim(t)).items).toEqual([]);
+  });
+
+  test('the queue cleanup counts on a dry run, then clears gated rows for every user once', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      for (const clerkUserId of ['owner', 'other'])
+        await ctx.db.insert('users', {
+          clerkUserId,
+          email: `${clerkUserId}@example.test`,
+          createdAt: 0,
+          updatedAt: 0,
+        });
+    });
+    await seed(t, 'a', 'owner', 'live');
+    await seed(t, 'a', 'owner', 'old');
+    await seed(t, 'a', 'owner', 'junk');
+    await seed(t, 'dead', 'owner', 'gone');
+    await seed(t, 'x', 'other', 'foreign');
+    await setAccountStatus(t, 'dead', 'error');
+    await patchThread(t, 'old', { lastDate: NOW - 61 * DAY });
+    await patchThread(t, 'junk', { labels: ['SPAM'] });
+    await t.run(async (ctx) => {
+      const account = await ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user_account', (q) => q.eq('userId', 'other').eq('accountId', 'x'))
+        .unique();
+      await ctx.db.patch(account!._id, { status: 'error' });
+    });
+    const cleanup = (internal as any).jev.clearIneligiblePending;
+    const dry = await t.mutation(cleanup, { dryRun: true, userId: 'owner' });
+    expect(dry).toEqual({ scanned: 4, cleared: { account: 1, age: 1, spam: 1 }, done: true });
+    expect((await row(t, 'dead', 'gone'))?.llmPending).toBe(true);
+
+    // Pages of two rows: the pass schedules the next page, then the next user.
+    const first = await t.mutation(cleanup, { limit: 2 });
+    expect(first.done).toBe(false);
+    await drainScheduled(t);
+    const pending = await t.run((ctx) =>
+      ctx.db
+        .query('mailCorpusThreads')
+        .filter((q) => q.eq(q.field('llmPending'), true))
+        .collect(),
+    );
+    expect(pending.map((thread) => thread.providerThreadId)).toEqual(['live']);
+    expect(await row(t, 'dead', 'gone')).toMatchObject({ jevError: 'The account is not connected.' });
+    const again = await t.mutation(cleanup, {});
+    expect(again.cleared).toEqual({ account: 0, age: 0, spam: 0 });
   });
 });

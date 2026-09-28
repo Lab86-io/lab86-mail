@@ -207,7 +207,7 @@ const JEV_GATE_ERRORS: Record<JevGate, string> = {
 /**
  * The reason Jev must not send a thread to the model, or null when it may.
  * Only recent mail of a connected account, outside spam and trash, is sent.
- * claimPending uses this test.
+ * claimPending and clearIneligiblePending use this one test.
  */
 export function jevGate(
   row: { accountId: string; lastDate?: number; labels?: string[] },
@@ -587,6 +587,90 @@ export const queueUnassessed = internalMutation({
   },
 });
 
+const clearedCounts = v.object({ account: v.number(), age: v.number(), spam: v.number() });
+
+/**
+ * One-time queue cleanup (cost stop, 2026-09-27). It takes queued rows that
+ * fail jevGate off the Jev queue: mail of accounts that are not connected, mail
+ * older than 60 days, and spam or trash. No model call occurs for them.
+ *
+ * It reads the pending index of one user at a time, at most 200 rows in each
+ * transaction, and schedules the next page, then the next user. It is
+ * idempotent: a cleared row leaves the pending index, so a second run finds
+ * nothing to clear. The totals are in the deployment logs.
+ * Run a dry run first (counts only, no writes), then the real pass:
+ *   npx convex run jev:clearIneligiblePending '{"dryRun": true}'
+ *   npx convex run jev:clearIneligiblePending '{}'
+ * Add `"userId": "<clerk user id>"` to clean one user only.
+ */
+export const clearIneligiblePending = internalMutation({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    userId: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    // Continuation state. The scheduler sets these; a caller leaves them out.
+    current: v.optional(v.string()),
+    cursor: v.optional(v.string()),
+    scanned: v.optional(v.number()),
+    cleared: v.optional(clearedCounts),
+  },
+  handler: async (ctx, args) => {
+    const scope = args.userId ? `user ${args.userId}` : 'all users';
+    const cleared = args.cleared ?? { account: 0, age: 0, spam: 0 };
+    let scanned = args.scanned ?? 0;
+    // Users go in clerkUserId order. `current` is the user this page reads.
+    let current = args.current;
+    if (!current)
+      current = args.userId
+        ? args.userId
+        : (await ctx.db.query('users').withIndex('by_clerk_user_id').first())?.clerkUserId;
+    const report = (done: boolean) => {
+      const total = cleared.account + cleared.age + cleared.spam;
+      if (done)
+        console.log(
+          `[jev queue cleanup] ${scope}: scanned ${scanned}, cleared ${total} (account ${cleared.account}, age ${cleared.age}, spam ${cleared.spam})${args.dryRun ? ' (dry run)' : ''}`,
+        );
+      return { scanned, cleared, done };
+    };
+    if (!current) return report(true);
+    const userId: string = current;
+    const page = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_llm_pending', (q) => q.eq('userId', userId).eq('llmPending', true))
+      .paginate({
+        cursor: args.cursor ?? null,
+        numItems: Math.min(Math.max(args.limit ?? 200, 1), 200),
+      });
+    const { live } = await userAccounts(ctx, userId);
+    const now = Date.now();
+    for (const row of page.page) {
+      scanned++;
+      const gate = jevGate(row, live, now);
+      if (!gate) continue;
+      cleared[gate]++;
+      if (!args.dryRun) await ctx.db.patch(row._id, gatedPatch(row, gate));
+    }
+    let next: { current: string; cursor?: string } | null = null;
+    if (!page.isDone) next = { current: userId, cursor: page.continueCursor };
+    else if (!args.userId) {
+      const following = await ctx.db
+        .query('users')
+        .withIndex('by_clerk_user_id', (q) => q.gt('clerkUserId', userId))
+        .first();
+      if (following) next = { current: following.clerkUserId };
+    }
+    if (!next) return report(true);
+    await ctx.scheduler.runAfter(0, internal.jev.clearIneligiblePending, {
+      dryRun: args.dryRun,
+      userId: args.userId,
+      limit: args.limit,
+      ...next,
+      scanned,
+      cleared,
+    });
+    return report(false);
+  },
+});
 export const usersWithMail = internalMutation({
   args: {},
   // 24 users / 3 workers * 55 seconds remains inside the action execution budget.
