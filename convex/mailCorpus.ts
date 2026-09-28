@@ -17,6 +17,7 @@ import {
   latestThreadContent,
   loadSmartContext,
   normalizeCorpusThread,
+  noteSavedContactSender,
   queryCategoryThreads,
   syncLabelMembership,
 } from './smart';
@@ -381,6 +382,7 @@ export const upsertCorpusBatch = mutation({
       const classifyRow = existing
         ? { ...existing, ...patch, ...freshnessPatch }
         : { ...patch, ...freshnessPatch };
+      if (smartContext) await noteSavedContactSender(ctx, args.userId, smartContext, classifyRow.fromAddress);
       const classified = smartContext ? classifyCorpusThread(classifyRow, smartContext, classifyBody) : {};
       if (existing) await ctx.db.patch(existing._id, { ...patch, ...freshnessPatch, ...classified });
       else

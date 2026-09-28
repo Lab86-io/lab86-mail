@@ -18,10 +18,12 @@ import {
   smartIndexKey,
   smartRuleMatches,
 } from '../lib/mail/smart-categories';
+import { emailFromHeader } from '../lib/shared/format';
 import { truncateText } from '../lib/shared/text';
-import type { SmartRule } from '../lib/shared/types';
+import type { SmartCategory, SmartRule } from '../lib/shared/types';
 import { internal } from './_generated/api';
 import { internalMutation, mutation } from './_generated/server';
+import { isSavedContactEmail } from './contacts';
 import { now, requireInternalSecret } from './lib';
 
 // Write-time smart classification. Categories are computed once when a thread
@@ -43,6 +45,61 @@ export async function loadSmartContext(ctx: any, userId: string): Promise<SmartC
   return {
     customLabels: labels.map((row: any) => row.doc).filter((label: any) => label?.enabled !== false),
     rules: rules.map((row: any) => row.doc).filter((rule: any) => rule?.enabled !== false),
+    // Filled sender by sender through noteSavedContactSender.
+    savedContacts: new Set<string>(),
+  };
+}
+
+// Senders already looked up for one context, so a batch reads each once.
+const checkedSenders = new WeakMap<SmartClassificationContext, Set<string>>();
+
+/**
+ * Looks up whether the sender of a thread is a saved contact and records it
+ * in the context before the thread is classified. One indexed read for each
+ * new sender. This is a signal for new classifications only: stored verdicts
+ * change when their thread is written or sorted again, never by a sweep.
+ */
+export async function noteSavedContactSender(
+  ctx: any,
+  userId: string,
+  context: SmartClassificationContext,
+  fromAddress: string | null | undefined,
+) {
+  const email = emailFromHeader(fromAddress || '');
+  const saved = context.savedContacts as Set<string> | undefined;
+  if (!email || !saved) return;
+  let checked = checkedSenders.get(context);
+  if (!checked) {
+    checked = new Set();
+    checkedSenders.set(context, checked);
+  }
+  if (checked.has(email)) return;
+  checked.add(email);
+  if (await isSavedContactEmail(ctx, userId, email)) saved.add(email);
+}
+
+/**
+ * A saved contact's direct mail stays out of Noise and Review. The floor
+ * moves a model verdict to Main only when the deterministic pass saw a saved
+ * contact writing as a person (no list headers, not a role or no-reply
+ * address), and the model did not call the mail a promotion, a newsletter,
+ * or a transaction. User rules still decide after this.
+ */
+export function savedContactFloor(
+  verdict: SmartCategory,
+  deterministic: SmartCategory,
+  jev?: { purpose?: string } | null,
+): SmartCategory {
+  if (verdict === deterministic) return verdict;
+  if (deterministic.primary !== 'main' || !deterministic.signals?.includes('saved_contact')) return verdict;
+  if (verdict.model === 'user_rule') return verdict;
+  if (verdict.primary !== 'noise' && verdict.primary !== 'review') return verdict;
+  if (jev?.purpose && ['promotion', 'newsletter', 'transaction'].includes(jev.purpose)) return verdict;
+  return {
+    ...verdict,
+    primary: 'main',
+    reason: 'Direct mail from a saved contact.',
+    signals: [...new Set([...(verdict.signals || []), 'saved_contact'])],
   };
 }
 
@@ -118,8 +175,9 @@ export function classifyCorpusThread(
   const jevCurrent = assessmentIsCurrent(row.jev, row.latestMessageId);
   // User placement rules apply last, on top of whichever verdict won, so a
   // label move or a Never Main rule holds after every later model pass.
+  const modelVerdict = jevCurrent ? smartCategoryFromJev(row.jev, det, Boolean(row.unread)) : llm || det;
   const verdict = applyUserRuleOverrides(
-    jevCurrent ? smartCategoryFromJev(row.jev, det, Boolean(row.unread)) : llm || det,
+    savedContactFloor(modelVerdict, det, jevCurrent ? row.jev : null),
     input,
     context,
     det.primary,
@@ -534,6 +592,7 @@ export const classifyBacklog = internalMutation({
         context = await loadSmartContext(ctx, row.userId);
         contexts.set(row.userId, context);
       }
+      await noteSavedContactSender(ctx, row.userId, context, row.fromAddress);
       const patch = classifyCorpusThread(row, context, await latestThreadContent(ctx, row));
       await ctx.db.patch(row._id, patch);
       // A version bump makes this sweep write membership for every row.
@@ -574,6 +633,7 @@ export const reclassifyMatchingThreads = mutation({
     let patched = 0;
     for (const row of rows) {
       if (!smartRuleMatches(rule, classifierInput(row))) continue;
+      await noteSavedContactSender(ctx, args.userId, context, row.fromAddress);
       const patch = classifyCorpusThread(row, context, await latestThreadContent(ctx, row));
       await ctx.db.patch(row._id, patch);
       await syncLabelMembership(ctx, row, { ...row, ...patch });
@@ -792,6 +852,7 @@ export const reclassifyUserThreads = internalMutation({
       .withIndex('by_user', (q: any) => q.eq('userId', args.userId))
       .paginate({ cursor: cursor ?? null, numItems: 50 });
     for (const row of page.page) {
+      await noteSavedContactSender(ctx, args.userId, context, row.fromAddress);
       const patch = classifyCorpusThread(row, context, await latestThreadContent(ctx, row));
       await ctx.db.patch(row._id, patch);
       await syncLabelMembership(ctx, row, { ...row, ...patch });

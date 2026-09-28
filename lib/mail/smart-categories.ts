@@ -129,16 +129,21 @@ const PROMO_CODE_PATTERNS =
 export interface SmartClassificationContext {
   rules?: SmartRule[];
   customLabels?: SmartLabelDefinition[];
+  // Lowercased sender addresses that are in the user's address books. The
+  // Convex writers fill it for the senders they classify (convex/smart.ts).
+  savedContacts?: ReadonlySet<string>;
 }
 
 // The fields the classifier reads. `listId` and `listUnsubscribe` are the
-// latest message's list headers, when the caller has them.
+// latest message's list headers, when the caller has them. `savedContact`
+// is true when the sender is in one of the user's address books.
 export type ClassifierThread = Partial<Thread> & {
   from?: string;
   fromAddress?: string;
   bodyText?: string;
   listId?: string;
   listUnsubscribe?: string;
+  savedContact?: boolean;
 };
 
 // How much of the latest message body participates in classification: the
@@ -271,6 +276,36 @@ export function bulkSignals(thread: ClassifierThread) {
   return [...new Set(signals)];
 }
 
+// List mail by its headers, its footer, or Gmail's bulk tabs. A saved contact
+// who sends list mail still sends list mail.
+function isListMail(thread: ClassifierThread) {
+  if (thread.listId || thread.listUnsubscribe) return true;
+  if (BULK_GMAIL_CATEGORIES.some((label) => (thread.labels || []).includes(label))) return true;
+  return /\b(unsubscribe|list-id|mailing list)\b/i.test(haystack(thread));
+}
+
+/**
+ * True when a saved contact wrote this mail as a person: the address is in
+ * an address book, it is not a role, platform, or no-reply mailbox, and the
+ * mail is not list mail. Body words such as "offer" or "marketing" do not
+ * change it.
+ */
+export function isSavedContactPerson(thread: ClassifierThread) {
+  if (!thread.savedContact) return false;
+  const from = String(thread.fromAddress || (thread as any).from || '');
+  const address = senderEmail(thread);
+  if (!address || isNoReplyLike(from)) return false;
+  const [localPart = ''] = address.split('@');
+  if (
+    BLOCKED_SENDER_ADDRESS.test(address) ||
+    ROLE_MAILBOX.test(address) ||
+    RELAYED_BRAND_LOCAL_PART.test(localPart) ||
+    BLOCKED_SENDER_DOMAIN.test(senderDomain(thread))
+  )
+    return false;
+  return !isListMail(thread);
+}
+
 export function isHumanLike(thread: ClassifierThread) {
   const from = String(thread.fromAddress || (thread as any).from || '');
   const email = emailFromHeader(from);
@@ -279,6 +314,7 @@ export function isHumanLike(thread: ClassifierThread) {
   const labels = thread.labels || [];
   if (!email) return false;
   if (isNoReplyLike(from)) return false;
+  if (isSavedContactPerson(thread)) return true;
   const [localPart = ''] = address.split('@');
   const blockedAddress =
     BLOCKED_SENDER_ADDRESS.test(address) ||
@@ -350,7 +386,9 @@ function verdict(
     allowNoReplyInMain: options.allowNoReplyInMain ?? (noReply && urgentAutomation),
     bulkSignals: options.bulkSignals || bulkSignals(thread),
     ruleHits: options.ruleHits || [],
-    signals: options.signals || [],
+    signals: isSavedContactPerson(thread)
+      ? [...new Set([...(options.signals || []), 'saved_contact'])]
+      : options.signals || [],
     classifiedAt: Date.now(),
     model: options.model || 'deterministic',
   };
@@ -582,7 +620,9 @@ export function classifyThreadWithContext(
   thread: ClassifierThread,
   context: SmartClassificationContext = {},
 ): SmartCategory {
-  return applyUserRuleOverrides(classifyBaseline(thread, context), thread, context);
+  const sender = senderEmail(thread);
+  const input = sender && context.savedContacts?.has(sender) ? { ...thread, savedContact: true } : thread;
+  return applyUserRuleOverrides(classifyBaseline(input, context), input, context);
 }
 
 function classifyBaseline(thread: ClassifierThread, context: SmartClassificationContext): SmartCategory {

@@ -20,6 +20,7 @@ import {
   latestThreadContent,
   loadSmartContext,
   normalizeCorpusThread,
+  noteSavedContactSender,
   syncLabelMembership,
 } from './smart';
 
@@ -391,6 +392,7 @@ export const storeAssessments = mutation({
         continue;
       }
       const assessment = parsed.data;
+      await noteSavedContactSender(ctx, args.userId, context, row.fromAddress);
       const merged = classifyCorpusThread(
         { ...row, jev: assessment },
         context,
