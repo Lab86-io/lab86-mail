@@ -330,7 +330,13 @@ describe('narrative agent run', () => {
     expect(requests[1].system).toContain('4000 characters');
     expect(requests[1].messages[0].content).toContain('"id":"E1"');
     expect(JSON.stringify(requests[1].messages)).not.toContain('evidence1');
-    expect(requests[0].stopWhen({ steps: Array(100).fill({}) })).toBe(false);
+    // The research loop stops at 6 steps or at 200k input tokens, whichever comes first.
+    const stops = (steps: any[]) => requests[0].stopWhen.some((condition: any) => condition({ steps }));
+    expect(stops(Array(5).fill({ usage: { inputTokens: 1_000 } }))).toBe(false);
+    expect(stops(Array(6).fill({ usage: { inputTokens: 1_000 } }))).toBe(true);
+    expect(stops([{ usage: { inputTokens: 150_000 } }, { usage: { inputTokens: 49_999 } }])).toBe(false);
+    expect(stops([{ usage: { inputTokens: 150_000 } }, { usage: { inputTokens: 50_000 } }])).toBe(true);
+    expect(stops([{}, { usage: {} }])).toBe(false);
     expect(Object.keys(requests[0].tools).sort()).toEqual([
       'narrative_changes_since',
       'narrative_read',
