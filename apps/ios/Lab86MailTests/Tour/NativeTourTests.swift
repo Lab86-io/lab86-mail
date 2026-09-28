@@ -359,28 +359,35 @@ final class NativeTourTests: XCTestCase {
         let format = UIGraphicsImageRendererFormat()
         format.scale = variant.scale
         let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
-        let image: UIImage
-        let method: String
+        var image: UIImage
+        var method: String
+        var notes: [String] = []
         if useHierarchy {
+            var drew = false
             image = renderer.image { _ in
-                _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                drew = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
             method = "drawHierarchy"
+            // A very tall window can pass the render server's size limit;
+            // then drawHierarchy draws nothing.
+            if !drew || Self.distinctBytes(of: image) <= TourPixels.blankThreshold {
+                image = renderer.image { context in
+                    window.layer.render(in: context.cgContext)
+                }
+                method = "layer.render"
+                notes.append("Drawn with layer.render because drawHierarchy drew nothing for this window size. Blur, glass, and system materials do not show.")
+            }
         } else {
             image = renderer.image { context in
                 window.layer.render(in: context.cgContext)
             }
             method = "layer.render"
+            notes.append("Drawn with layer.render because the window is larger than the simulator screen. Blur, glass, and system materials do not show.")
         }
 
         let file = "ios-\(screen.id)-\(variant.id).png"
-        let pixels = image.cgImage?.dataProvider?.data as Data?
-        let distinct = pixels.map { TourPixels.distinctBytes($0) } ?? 0
+        let distinct = Self.distinctBytes(of: image)
         guard let png = image.pngData() else { throw TourError.unreadableImage(file) }
-        var notes: [String] = []
-        if method == "layer.render" {
-            notes.append("Drawn with layer.render because the window is larger than the simulator screen. Blur, glass, and system materials do not show.")
-        }
         if variant.device == "iPad" {
             notes.append("An iPad-sized window on the iPhone simulator, with iPad size classes and safe area.")
         }
@@ -415,6 +422,11 @@ final class NativeTourTests: XCTestCase {
         try TourOutput.write(png: png, record: record, to: directory)
         // Removes the owner's cache and search index entries.
         await environment.store.clearForSignOut()
+    }
+
+    private static func distinctBytes(of image: UIImage) -> Int {
+        guard let pixels = image.cgImage?.dataProvider?.data as Data? else { return 0 }
+        return TourPixels.distinctBytes(pixels)
     }
 
     /// Makes the window as tall as the main scroll content, so one image shows
