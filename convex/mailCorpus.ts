@@ -1,5 +1,12 @@
 import { v } from 'convex/values';
-import { buildCorpusSearchText } from '../lib/mail/corpus';
+import {
+  bodyHashHasBody,
+  buildSmallSearchText,
+  CORPUS_SNIPPET_MAX_CHARS,
+  isLegacyCorpusMessage,
+  storedBodyExcerpt,
+  storedBodyText,
+} from '../lib/mail/corpus-body';
 import { pageEndsInTie, pageThroughTies } from '../lib/mail/search/page-ties';
 import { matchingMailExcerpt } from '../lib/mail/search/ranking';
 import { keptMessageHeaders, rankSendersForCleanup } from '../lib/mail/sender-cleanup';
@@ -10,11 +17,20 @@ import { internalAction, internalQuery, mutation, query } from './_generated/ser
 import { recordInsertedMessages } from './correspondents';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 import {
+  deleteMessageBody,
+  deleteThreadBodies,
+  moveMessageBody,
+  planBodyWrite,
+  readMessageBody,
+  readThreadBodies,
+  resolvedBody,
+  writeMessageBody,
+} from './mailBodies';
+import {
   classificationFreshnessPatch,
   classifierContent,
   classifyCorpusThread,
   deleteLabelMembership,
-  latestThreadContent,
   loadSmartContext,
   normalizeCorpusThread,
   noteSavedContactSender,
@@ -232,65 +248,16 @@ export const upsertCorpusBatch = mutation({
     let insertedMessages = 0;
     const newMessages: Array<(typeof args.messages)[number]> = [];
     const changedContentThreads = new Set<string>();
+    // Threads with an inserted or changed message. The others keep their row.
+    const touchedThreads = new Set<string>();
     for (const message of args.messages) {
-      const existing = await ctx.db
-        .query('mailCorpusMessages')
-        .withIndex('by_account_message', (q) =>
-          q.eq('accountId', args.accountId).eq('providerMessageId', message.providerMessageId),
-        )
-        .unique();
-      const patch: Record<string, unknown> = {
-        userId: args.userId,
-        accountId: args.accountId,
-        grantId: args.grantId,
-        provider: args.provider,
-        providerMessageId: message.providerMessageId,
-        providerThreadId: message.providerThreadId,
-        subject: message.subject,
-        from: message.from,
-        to: message.to,
-        cc: message.cc,
-        bcc: message.bcc,
-        receivedAt: message.receivedAt,
-        snippet: message.snippet,
-        textBody: truncateText(String(message.textBody ?? ''), 32_000),
-        searchText: trimCorpusText(message.searchText),
-        labels: message.labels,
-        unread: message.unread,
-        starred: message.starred,
-        attachments: message.attachments,
-        headers: message.headers,
-        yearMonth: yearMonth(message.receivedAt),
-        updatedAt: ts,
-      };
-      // Preserve markup verbatim (no whitespace collapse). The key is only set
-      // when the batch carried a body: patch(.., {htmlBody: undefined}) would
-      // strip a body an earlier hydration already stored.
-      if (message.htmlBody !== undefined) patch.htmlBody = trimCorpusHtml(message.htmlBody);
-      // Partial metadata sync must not erase previously hydrated bodies/headers.
-      for (const key of ['textBody', 'headers', 'attachments', 'cc', 'bcc'] as const)
-        if (message[key] === undefined) delete patch[key];
-      if (existing?.textBody && message.textBody === undefined) {
-        const defined = Object.fromEntries(
-          Object.entries(message).filter(([, value]) => value !== undefined),
-        );
-        patch.searchText = buildCorpusSearchText({ ...existing, ...defined, textBody: existing.textBody });
-      }
-      if (
-        existing &&
-        ['subject', 'from', 'to', 'cc', 'textBody', 'headers', 'attachments'].some(
-          (key) =>
-            Object.hasOwn(patch, key) && stableContent((existing as any)[key]) !== stableContent(patch[key]),
-        )
-      )
-        changedContentThreads.add(message.providerThreadId);
-      if (existing) {
-        await ctx.db.patch(existing._id, patch);
-      } else {
-        await ctx.db.insert('mailCorpusMessages', { ...patch, createdAt: ts } as any);
+      const result = await upsertCorpusMessage(ctx, args, message, ts);
+      if (result.inserted) {
         insertedMessages += 1;
         newMessages.push(message);
       }
+      if (result.wrote) touchedThreads.add(message.providerThreadId);
+      if (result.contentChanged) changedContentThreads.add(message.providerThreadId);
     }
     // Recipient search: each message counts once, when it is first stored.
     await recordInsertedMessages(ctx, args.userId, args.accountId, newMessages);
@@ -304,8 +271,21 @@ export const upsertCorpusBatch = mutation({
     ]);
     // Classify at write time so category listing is an indexed read. One
     // context load serves the whole batch.
+    const batchThreads = new Set(args.messages.map((message) => message.providerThreadId));
     const smartContext = threadIds.size ? await loadSmartContext(ctx, args.userId) : null;
     for (const providerThreadId of threadIds) {
+      // IO-1 hash skip: a batch that changed no message of this thread (a
+      // repair pass over unchanged mail) leaves the thread row as it is. A
+      // thread with no row, or a thread named with no message, is computed.
+      if (batchThreads.has(providerThreadId) && !touchedThreads.has(providerThreadId)) {
+        const current = await ctx.db
+          .query('mailCorpusThreads')
+          .withIndex('by_account_thread', (q) =>
+            q.eq('accountId', args.accountId).eq('providerThreadId', providerThreadId),
+          )
+          .unique();
+        if (current) continue;
+      }
       const AGGREGATE_WINDOW = 500;
       const stored = await ctx.db
         .query('mailCorpusMessages')
@@ -458,6 +438,87 @@ export const upsertCorpusBatch = mutation({
     return { ok: true, threads: args.threads.length, messages: args.messages.length };
   },
 });
+
+type CorpusMessageArg = typeof corpusMessageValidator.type;
+const PARTIAL_KEYS = ['headers', 'attachments', 'cc', 'bcc'] as const;
+const CONTENT_KEYS = ['subject', 'from', 'to', 'cc', 'headers', 'attachments'] as const;
+
+/**
+ * Writes one message of a batch (IO-1). The small document is written only
+ * when a small field changes. The body document is written only when the
+ * body hash changes, and it is not read otherwise. A document from before the
+ * body split moves its inline body out on its first write.
+ */
+async function upsertCorpusMessage(
+  ctx: any,
+  scope: { userId: string; accountId: string; grantId: string; provider: string },
+  message: CorpusMessageArg,
+  ts: number,
+): Promise<{ inserted: boolean; wrote: boolean; contentChanged: boolean }> {
+  const existing = await ctx.db
+    .query('mailCorpusMessages')
+    .withIndex('by_account_message', (q: any) =>
+      q.eq('accountId', scope.accountId).eq('providerMessageId', message.providerMessageId),
+    )
+    .unique();
+  const plan = planBodyWrite(existing, { textBody: message.textBody, htmlBody: message.htmlBody });
+  const next: Record<string, unknown> = {
+    userId: scope.userId,
+    accountId: scope.accountId,
+    grantId: scope.grantId,
+    provider: scope.provider,
+    providerMessageId: message.providerMessageId,
+    providerThreadId: message.providerThreadId,
+    subject: message.subject,
+    from: message.from,
+    to: message.to,
+    cc: message.cc,
+    bcc: message.bcc,
+    receivedAt: message.receivedAt,
+    snippet: truncateText(String(message.snippet ?? ''), CORPUS_SNIPPET_MAX_CHARS),
+    labels: message.labels,
+    unread: message.unread,
+    starred: message.starred,
+    attachments: message.attachments,
+    headers: message.headers,
+    yearMonth: yearMonth(message.receivedAt),
+    bodyHash: plan.bodyHash,
+  };
+  // Partial metadata sync must not erase stored headers or recipients.
+  for (const key of PARTIAL_KEYS) if (message[key] === undefined && existing) next[key] = existing[key];
+  // The search text is built here from the final fields, so it always holds
+  // the provider-neutral role labels. The batch search text is not used.
+  Object.assign(next, buildSmallSearchText(next as any, plan.excerpt ?? ''));
+  if (existing && isLegacyCorpusMessage(existing)) {
+    next.textBody = undefined;
+    next.htmlBody = undefined;
+  }
+  const contentChanged =
+    Boolean(existing) &&
+    (plan.textChanged ||
+      CONTENT_KEYS.some((key) => stableContent(existing[key]) !== stableContent(next[key])));
+  const smallChanged =
+    !existing || Object.keys(next).some((key) => stableContent(existing[key]) !== stableContent(next[key]));
+  const bodyInput = {
+    userId: scope.userId,
+    accountId: scope.accountId,
+    providerMessageId: message.providerMessageId,
+    providerThreadId: message.providerThreadId,
+  };
+  if (plan.write) await writeMessageBody(ctx, bodyInput, plan, ts);
+  else if (
+    existing &&
+    existing.providerThreadId !== message.providerThreadId &&
+    bodyHashHasBody(plan.bodyHash)
+  )
+    await moveMessageBody(ctx, bodyInput, ts);
+  if (!existing) {
+    await ctx.db.insert('mailCorpusMessages', { ...next, createdAt: ts, updatedAt: ts });
+    return { inserted: true, wrote: true, contentChanged: false };
+  }
+  if (smallChanged) await ctx.db.patch(existing._id, { ...next, updatedAt: ts });
+  return { inserted: false, wrote: smallChanged || plan.write, contentChanged };
+}
 
 export const recordWebhookEvent = mutation({
   args: {
@@ -617,6 +678,7 @@ export const deleteCorpusMessage = mutation({
       .unique();
     if (row && row.userId === args.userId) {
       await ctx.db.delete(row._id);
+      await deleteMessageBody(ctx, args.userId, args.accountId, args.providerMessageId);
       await upsertSyncState(ctx, {
         userId: args.userId,
         accountId: args.accountId,
@@ -659,6 +721,7 @@ export const deleteCorpusThread = mutation({
         deleted += 1;
       }
     }
+    await deleteThreadBodies(ctx, args.userId, args.accountId, args.providerThreadId);
     if (deleted && (thread || messages.length)) {
       const source = thread || messages[0];
       await upsertSyncState(ctx, {
@@ -714,7 +777,7 @@ export const searchCorpusMessages = query({
         if (rows.length < limit * 2) break;
         before = rows[rows.length - 1].receivedAt - 1;
       }
-      return matched.slice(0, limit);
+      return matched.slice(0, limit).map(searchResultMessage);
     }
     const search = ctx.db.query('mailCorpusMessages').withSearchIndex('by_search_text', (q) => {
       let builder = q.search('searchText', text).eq('userId', args.userId).eq('accountId', args.accountId);
@@ -723,7 +786,10 @@ export const searchCorpusMessages = query({
       return builder;
     });
     const rows = await search.take(limit * 3);
-    return rows.filter((row) => withinReceivedAtBounds(row, args)).slice(0, limit);
+    return rows
+      .filter((row) => withinReceivedAtBounds(row, args))
+      .slice(0, limit)
+      .map(searchResultMessage);
   },
 });
 
@@ -754,10 +820,14 @@ export const searchCorpusMessagesPage = query({
       numItems: clampLimit(args.limit, 50, 50),
     });
     return {
-      items: page.page.map(({ htmlBody: _html, textBody, ...row }) => ({
-        ...row,
-        textBody: textBody ? matchingMailExcerpt(textBody, args.query) : undefined,
-      })),
+      items: page.page.map((row) => {
+        // The excerpt starts near the first match, anywhere in the stored text.
+        const text = storedBodyText(row);
+        return {
+          ...searchResultMessage(row),
+          textBody: text ? matchingMailExcerpt(text, args.query) : undefined,
+        };
+      }),
       nextCursor: page.isDone ? undefined : page.continueCursor,
     };
   },
@@ -868,8 +938,12 @@ export const listCorpusThreadMessages = query({
         q.eq('accountId', args.accountId).eq('providerThreadId', args.providerThreadId),
       )
       .take(limit);
-    // The index has no userId column; enforce tenancy in the filter.
-    return rows.filter((row) => row.userId === args.userId).sort((a, b) => a.receivedAt - b.receivedAt);
+    // The index has no userId column; enforce tenancy in the filter. The
+    // timeline shows no body, so the result carries none.
+    return rows
+      .filter((row) => row.userId === args.userId)
+      .sort((a, b) => a.receivedAt - b.receivedAt)
+      .map(searchResultMessage);
   },
 });
 
@@ -932,12 +1006,13 @@ export const getCorpusThreadBundle = query({
       )
       .order('asc')
       .collect();
-    const messages = rows.map(projectCorpusMessage);
+    const bodies = await readThreadBodies(ctx, args.userId, args.accountId, args.providerThreadId, rows);
+    const messages = rows.map((row) => projectCorpusMessage(row, bodies.get(row.providerMessageId)));
     return {
       threadId: args.providerThreadId,
       subject: thread.subject || messages[0]?.subject || '(no subject)',
       messages,
-      bodiesComplete: messages.length > 0 && rows.every((row) => row.htmlBody !== undefined),
+      bodiesComplete: messages.length > 0 && messages.every((message) => message.htmlBody !== null),
     };
   },
 });
@@ -960,11 +1035,16 @@ export const getCorpusMessage = query({
       )
       .take(5);
     const row = rows.find((candidate) => candidate.userId === args.userId);
-    return row ? projectCorpusMessage(row) : null;
+    if (!row) return null;
+    const body = isLegacyCorpusMessage(row)
+      ? null
+      : await readMessageBody(ctx, args.userId, args.accountId, args.providerMessageId);
+    return projectCorpusMessage(row, body);
   },
 });
 
-function projectCorpusMessage(row: any) {
+function projectCorpusMessage(row: any, body?: { textBody?: string; htmlBody?: string } | null) {
+  const resolved = resolvedBody(row, body);
   return {
     _id: row.providerMessageId,
     threadId: row.providerThreadId,
@@ -976,8 +1056,8 @@ function projectCorpusMessage(row: any) {
     bcc: row.bcc || '',
     date: row.receivedAt || 0,
     snippet: row.snippet || '',
-    textBody: row.textBody || '',
-    htmlBody: row.htmlBody ?? null,
+    textBody: resolved.textBody,
+    htmlBody: resolved.htmlBody,
     labels: row.labels || [],
     unread: Boolean(row.unread),
     starred: Boolean(row.starred),
@@ -985,6 +1065,19 @@ function projectCorpusMessage(row: any) {
     headers: row.headers || {},
     cachedAt: row.updatedAt || row.receivedAt || 0,
   };
+}
+
+// The characters of body text that search results and previews carry.
+const SEARCH_BODY_CHARS = 1_600;
+
+// A message for search results and timelines: the small fields only. A
+// document from before the body split drops its inline body here, so a
+// result is small even before the migration ends; `textBody` is a short
+// excerpt for the preview fallback.
+function searchResultMessage(row: any) {
+  const { htmlBody: _html, textBody: _text, ...small } = row;
+  const excerpt = storedBodyExcerpt(row, SEARCH_BODY_CHARS);
+  return { ...small, textBody: excerpt || undefined };
 }
 
 // One thread row in client shape. Light corpus-first identity lookup for
@@ -1117,22 +1210,6 @@ export const pageRecentCorpusThreads = query({
     return { items: page.map(normalizeCorpusThread), nextBefore };
   },
 });
-
-function trimCorpusText(value: unknown) {
-  return truncateText(
-    String(value ?? '')
-      .replace(/\s+/g, ' ')
-      .trim(),
-    32_000,
-  );
-}
-
-// HTML keeps its whitespace (markup-significant) and gets a larger budget
-// than search text; 200KB covers effectively all real emails while staying
-// far under the Convex document limit.
-function trimCorpusHtml(value: unknown) {
-  return truncateText(String(value ?? ''), 200_000);
-}
 
 function yearMonth(ts: unknown) {
   const value = Number(ts);
@@ -1489,7 +1566,7 @@ export const recentSentMessages = query({
         subject: row.subject,
         to: row.to,
         receivedAt: row.receivedAt,
-        textBody: String(row.textBody || row.snippet || '').slice(0, 4000),
+        textBody: truncateText(storedBodyText(row) || row.snippet || '', 4000),
       });
     }
     return { messages };

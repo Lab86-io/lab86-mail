@@ -620,13 +620,26 @@ export const recentCorrespondents = query({
  * Users with a mailbox that is due for its daily pass, or with contacts of a
  * dead mailbox past the retention time.
  */
+export const SYNC_TARGET_PAGE_SIZE = 100;
+
 export const syncTargets = internalQuery({
-  args: { now: v.optional(v.number()) },
+  args: {
+    now: v.optional(v.number()),
+    // One bounded page of accounts; the cron reads page after page.
+    cursor: v.optional(v.union(v.string(), v.null())),
+    numItems: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     const ts = args.now ?? now();
-    const accounts = await ctx.db.query('connectedAccounts').collect();
+    const page = await ctx.db.query('connectedAccounts').paginate({
+      cursor: args.cursor ?? null,
+      numItems: Math.min(
+        Math.max(Math.floor(args.numItems ?? SYNC_TARGET_PAGE_SIZE), 1),
+        SYNC_TARGET_PAGE_SIZE,
+      ),
+    });
     const userIds = new Set<string>();
-    for (const account of accounts) {
+    for (const account of page.page) {
       if (userIds.has(account.userId)) continue;
       const state = await syncState(ctx, account.userId, account.accountId);
       if (account.status === 'connected') {
@@ -641,9 +654,33 @@ export const syncTargets = internalQuery({
         if (ts - lastGood >= DEAD_ACCOUNT_CONTACT_RETENTION_MS) userIds.add(account.userId);
       }
     }
-    return [...userIds];
+    return {
+      userIds: [...userIds],
+      cursor: page.isDone ? null : page.continueCursor,
+      isDone: page.isDone,
+    };
   },
 });
+
+/** Every due user, read one bounded page at a time. */
+export async function collectContactSyncTargets(
+  runPage: (args: { cursor: string | null }) => Promise<{
+    userIds: string[];
+    cursor: string | null;
+    isDone: boolean;
+  }>,
+  maxPages = 1_000,
+) {
+  const userIds = new Set<string>();
+  let cursor: string | null = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await runPage({ cursor });
+    for (const userId of result.userIds) userIds.add(userId);
+    if (result.isDone || !result.cursor) break;
+    cursor = result.cursor;
+  }
+  return [...userIds];
+}
 
 // Hourly. Only users with due work get a call; the app route then runs the
 // pass for each due mailbox (the Nylas calls live in the app).
@@ -656,7 +693,9 @@ export const tick = internalAction({
       console.error('[contacts-sync cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
       return;
     }
-    const userIds = await ctx.runQuery(internal.contacts.syncTargets, {});
+    const userIds = await collectContactSyncTargets((page) =>
+      ctx.runQuery(internal.contacts.syncTargets, page),
+    );
     if (!userIds.length) return;
     const ok = await fanOutInternalPost(
       `${appUrl}/api/cron/contacts-sync`,

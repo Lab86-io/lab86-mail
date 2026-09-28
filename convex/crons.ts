@@ -140,6 +140,9 @@ crons.interval('connected content and Brief preparation', { minutes: 2 }, intern
 // Disconnect normally schedules its own bounded cleanup chain. This sweep is
 // the recovery path if a deploy interrupts that chain between batches.
 crons.interval('mcp disconnect cleanup', { minutes: 30 }, internal.mcp.sweepDisconnectedConnections, {});
+// Connector items that no sync returned for 14 days, and that no task links,
+// go with their evidence and content rows. Bounded pages, once a day.
+crons.daily('mcp stale item prune', { hourUTC: 9, minuteUTC: 7 }, internal.mcp.pruneStaleItemsTick, {});
 
 // Mail repair (SYNC-3): retry failed Nylas webhook events with backoff, and
 // sweep each connected mailbox's recent mail for changes a lost event missed.
@@ -162,6 +165,15 @@ crons.hourly('model cost alarm', { minuteUTC: 17 }, internal.aiCostAlarm.tick, {
 // windows, and expired OAuth states. The sweep reschedules itself while a
 // batch comes back full.
 crons.hourly('retention sweep', { minuteUTC: 41 }, internal.retention.sweep, {});
+
+// A mailbox that stays in `error` (reconnect needed) for 30 days loses its
+// stored corpus in bounded batches. The account row stays for Reconnect.
+crons.daily(
+  'dead account purge',
+  { hourUTC: 10, minuteUTC: 13 },
+  internal.deadAccounts.purgeDeadAccountsTick,
+  {},
+);
 
 // Shared browser sessions use keepAlive. End the stale ones at Browserbase and
 // in the ledger, so no pane shows a dead live view.

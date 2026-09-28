@@ -21,27 +21,18 @@ struct NativeWorkspaceTests {
         #expect(values.first(where: { $0.name == "file" })?.value == route.fileID)
     }
 
-    @Test func allPrimaryDestinationsHaveAnInAppFullWorkspace() {
-        for tab in PrimaryTab.allCases {
-            let destination = NativeWorkspaceDestination.workspace(tab)
-            #expect(destination.path.hasPrefix("/"))
-            #expect(!destination.title.isEmpty)
-            #expect(destination.path.contains("view="))
+    // The web sheet is only for surfaces with no native form. "All tools",
+    // which opened a web copy of the screen already on show, is gone: no
+    // destination may point at the web shell's own screens.
+    @Test func theWebSheetOnlyOpensSurfacesWithNoNativeForm() throws {
+        let route = GoogleDocumentRoute(connectionID: "c", fileID: "f", mimeType: "application/vnd.google-apps.document", webURL: nil)
+        let destinations: [NativeWorkspaceDestination] = [.files, .settings, .document("doc"), .google(route)]
+        for destination in destinations {
+            let url = try #require(URL(string: destination.path, relativeTo: base)?.absoluteURL)
+            #expect(url.path == "/native/files" || url.path == "/settings", "Unexpected web surface: \(destination.path)")
+            #expect(!destination.title.contains("All tools"))
         }
-    }
-
-    @MainActor @Test func fullWorkspaceKeepsTheSelectedAreaWorkAndFile() throws {
-        let navigation = NavigationModel()
-        navigation.selectedTab = .calendar
-        #expect(NativeWorkspaceDestination.current(navigation) == .workspace(.calendar))
-        navigation.areaRoute = AreaRoute(areaID: "area&one", name: "Home")
-        let area = try #require(URLComponents(string: NativeWorkspaceDestination.current(navigation).path)?.queryItems)
-        #expect(area.first(where: { $0.name == "area" })?.value == "area&one")
-        navigation.workRoute = WorkRoute(workID: "work?one", title: "Launch")
-        let work = try #require(URLComponents(string: NativeWorkspaceDestination.current(navigation).path)?.queryItems)
-        #expect(work.first(where: { $0.name == "work" })?.value == "work?one")
-        navigation.documentRoute = DocumentRoute(source: .albatross(documentID: "doc/one"))
-        #expect(NativeWorkspaceDestination.current(navigation) == .document("doc/one"))
+        #expect(NativeWorkspaceDestination.settings.title == "All settings")
     }
 
     @Test func bridgeOnlyAcceptsTheTrustedMainFrameBootstrap() {

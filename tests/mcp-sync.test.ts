@@ -744,6 +744,28 @@ describe('MCP syncConnection state transitions', () => {
     expect(result).toEqual({ connections: 2, items: 2 });
   });
 
+  test('syncAllMcpConnections does not poll a connection with both toggles off (X8)', async () => {
+    const { syncAllMcpConnections } = await import('../lib/mcp/sync');
+    const polled: string[] = [];
+    const result = await syncAllMcpConnections(
+      'user_1',
+      depsFor({
+        listUserConnections: async () =>
+          [
+            { ...bitbucketRow, connectionId: 'off_conn', includeInBrief: false, includeInSearch: false },
+            { ...bitbucketRow, connectionId: 'search_conn', includeInBrief: false, includeInSearch: true },
+          ] as any,
+        getConnectionToken: async (_userId, connectionId) => {
+          polled.push(connectionId);
+          return { row: { ...bitbucketRow, connectionId } as any, token: 'token' };
+        },
+        loadBitbucketItems: async () => ({ items: [] }),
+      }),
+    );
+    expect(polled).toEqual(['search_conn']);
+    expect(result).toEqual({ connections: 1, items: 0 });
+  });
+
   test('syncAllMcpConnections isolates an unexpected failure to one connection', async () => {
     const { syncAllMcpConnections } = await import('../lib/mcp/sync');
     const result = await syncAllMcpConnections(

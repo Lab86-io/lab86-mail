@@ -12,6 +12,7 @@ import {
   retryFailedWebhookEvents,
   webhookMessageObject,
 } from '../lib/mail/corpus-sync';
+import { repairFingerprint } from '../lib/mail/repair-fingerprint';
 import {
   isGrantGoneError,
   isReconnectReason,
@@ -140,6 +141,14 @@ describe('webhook ingest (SYNC-1, SYNC-2, SYNC-4)', () => {
         providerMessageId: 'm1',
         providerThreadId: 't1',
         starred: true,
+      });
+      // M5: the durable row keeps ids, not the mail.
+      const recorded = h.convexCalls.find((c) => c.path === 'mailCorpus:recordWebhookEvent');
+      expect(recorded?.args.payload).toEqual({
+        stored: 'ids',
+        id: 'evt-1',
+        type: 'message.updated',
+        data: { object: { id: 'm1', grant_id: 'grant_1', thread_id: 't1' } },
       });
     });
   });
@@ -340,11 +349,71 @@ describe('durable webhook retry and repair sweep (SYNC-3)', () => {
         maxPages: 2,
         now,
       });
-      expect(result).toEqual({ ok: true, accountId: 'acct_1', messages: 40 });
+      expect(result).toEqual({ ok: true, accountId: 'acct_1', messages: 40, skipped: 0 });
       expect(h.nylasCalls).toHaveLength(2);
       expect(h.nylasCalls[0].search).toContain(`received_after=${Math.floor((now - 7 * 86_400_000) / 1000)}`);
       expect(h.nylasCalls[1].search).toContain('page_token=more1');
       expect(h.convexCalls.filter((c) => c.path === 'mailCorpus:upsertCorpusBatch')).toHaveLength(2);
+    });
+  });
+
+  test('an unchanged repair page writes nothing, and a changed message writes alone (M6)', async () => {
+    await withHttpHarness(async (h) => {
+      h.convexFallback = () => ({});
+      h.onConvex('accounts:getConnectedAccount', () => accountRow());
+      let unreadM2 = true;
+      h.onNylas('GET', /\/v3\/grants\/grant_1\/messages$/, () => ({
+        json: {
+          data: [nylasMessage({ id: 'm1' }), nylasMessage({ id: 'm2', unread: unreadM2 })],
+        },
+      }));
+      // First pass: nothing stored, so both messages are written.
+      const stored: Record<string, string | null> = {};
+      h.onConvex('mailRepair:messageFingerprints', (args) =>
+        Object.fromEntries(args.providerMessageIds.map((id: string) => [id, stored[id] ?? null])),
+      );
+      expect(
+        await repairMailCorpusAccount({ userId: 'user_1', accountId: 'acct_1', maxPages: 1 }),
+      ).toMatchObject({ messages: 2, skipped: 0 });
+      const firstBatch = h.convexCalls.find((c) => c.path === 'mailCorpus:upsertCorpusBatch');
+      for (const message of firstBatch?.args.messages || [])
+        stored[message.providerMessageId] = repairFingerprint(message);
+
+      // Second pass: the same state writes nothing at all.
+      h.convexCalls.length = 0;
+      expect(
+        await repairMailCorpusAccount({ userId: 'user_1', accountId: 'acct_1', maxPages: 1 }),
+      ).toMatchObject({ messages: 2, skipped: 2 });
+      expect(h.convexCalls.map((c) => c.path)).toEqual([
+        'accounts:getConnectedAccount',
+        'mailRepair:messageFingerprints',
+      ]);
+
+      // Third pass: one message was read elsewhere, so only it is written.
+      unreadM2 = false;
+      h.convexCalls.length = 0;
+      expect(
+        await repairMailCorpusAccount({ userId: 'user_1', accountId: 'acct_1', maxPages: 1 }),
+      ).toMatchObject({ messages: 2, skipped: 1 });
+      const batch = h.convexCalls.find((c) => c.path === 'mailCorpus:upsertCorpusBatch');
+      expect(batch?.args.messages.map((m: any) => m.providerMessageId)).toEqual(['m2']);
+    });
+  });
+
+  test('a failed fingerprint read writes the whole repair page', async () => {
+    await withHttpHarness(async (h) => {
+      h.convexFallback = () => ({});
+      h.onConvex('accounts:getConnectedAccount', () => accountRow());
+      h.onConvex('mailRepair:messageFingerprints', () => {
+        throw new Error('convex down');
+      });
+      h.onNylas('GET', /\/v3\/grants\/grant_1\/messages$/, () => ({
+        json: { data: [nylasMessage({ id: 'm1' })] },
+      }));
+      expect(
+        await repairMailCorpusAccount({ userId: 'user_1', accountId: 'acct_1', maxPages: 1 }),
+      ).toMatchObject({ messages: 1, skipped: 0 });
+      expect(h.convexCalls.filter((c) => c.path === 'mailCorpus:upsertCorpusBatch')).toHaveLength(1);
     });
   });
 

@@ -1,5 +1,10 @@
 import Foundation
 
+// A web surface that has no native form yet, opened in the in-app browser
+// sheet: the full file library, the file editor, and the full settings page.
+// There is deliberately no destination for "this screen, on the web" — a
+// native screen does its own work instead of handing people a web copy of
+// itself.
 struct NativeWorkspaceDestination: Identifiable, Hashable, Sendable {
     let title: String
     let path: String
@@ -17,37 +22,6 @@ struct NativeWorkspaceDestination: Identifiable, Hashable, Sendable {
             ("view", "files"), ("provider", "google_drive"), ("connection", route.connectionID),
             ("file", route.fileID), ("mime", route.mimeType),
         ]))
-    }
-
-    static func workspace(_ tab: PrimaryTab) -> Self {
-        if tab == .files { return .files }
-        let view: String
-        switch tab {
-        case .today: view = "today"
-        case .tasks: view = "tasks"
-        case .work: view = "albatrosses"
-        case .calendar: view = "calendar"
-        case .mail: view = "mail"
-        case .chat: view = "chat"
-        case .files: view = "files"
-        }
-        return Self(title: "\(tab.title) · All tools", path: query(path: "/", values: [("view", view)]))
-    }
-
-    @MainActor static func current(_ navigation: NavigationModel) -> Self {
-        if let route = navigation.documentRoute {
-            switch route.source {
-            case .albatross(let id): return .document(id)
-            case .google(let google): return .google(google)
-            }
-        }
-        if let work = navigation.workRoute {
-            return Self(title: work.title ?? "Albatross", path: query(path: "/", values: [("view", "albatrosses"), ("work", work.workID)]))
-        }
-        if let area = navigation.areaRoute {
-            return Self(title: area.name ?? "Area", path: query(path: "/", values: [("view", "areas"), ("area", area.areaID)]))
-        }
-        return .workspace(navigation.selectedTab)
     }
 
     private static func query(path: String, values: [(String, String)]) -> String {

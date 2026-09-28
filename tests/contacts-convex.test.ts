@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
-import { isSavedContactEmail } from '../convex/contacts';
+import { collectContactSyncTargets, isSavedContactEmail } from '../convex/contacts';
 import schema from '../convex/schema';
 import {
   CONTACT_FULL_SYNC_INTERVAL_MS,
@@ -433,8 +433,32 @@ describe('cron targets and cleanup', () => {
       await state('user_dead', 'g_dead', { lastFullSyncAt: ts - DEAD_ACCOUNT_CONTACT_RETENTION_MS - 1 });
       await state('user_dead_recent', 'g_dead_recent', { lastFullSyncAt: ts - 60_000 });
     });
-    const targets = await t.query(internal.contacts.syncTargets, { now: ts });
+    const single = await t.query(internal.contacts.syncTargets, { now: ts });
+    expect(single.isDone).toBe(true);
+    expect(single.userIds.sort()).toEqual(['user_dead', 'user_new']);
+    // Small pages give the same users, read one bounded page at a time.
+    const pages: Array<string | null> = [];
+    const targets = await collectContactSyncTargets((page) => {
+      pages.push(page.cursor);
+      return t.query(internal.contacts.syncTargets, { now: ts, numItems: 2, ...page });
+    });
     expect(targets.sort()).toEqual(['user_dead', 'user_new']);
+    expect(pages.length).toBeGreaterThanOrEqual(3);
+    expect(pages[0]).toBeNull();
+  });
+
+  test('collectContactSyncTargets stops at the page cap and on a lost cursor', async () => {
+    let calls = 0;
+    expect(
+      await collectContactSyncTargets(async () => {
+        calls += 1;
+        return { userIds: ['u'], cursor: 'next', isDone: false };
+      }, 3),
+    ).toEqual(['u']);
+    expect(calls).toBe(3);
+    expect(
+      await collectContactSyncTargets(async () => ({ userIds: ['a'], cursor: null, isDone: false })),
+    ).toEqual(['a']);
   });
 
   test('retiring a dead mailbox drains its contacts; a live one stays', async () => {

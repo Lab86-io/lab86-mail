@@ -5,8 +5,9 @@
 // credentials (OAuth tokens, encrypted keys, push tokens, one-time codes,
 // sign-in state) are not the user's content and would be dangerous in a
 // downloaded file, so they are replaced with REDACTED. Derived search data
-// (embeddings, search text) and mail bodies (the provider keeps the original)
-// are dropped to keep the file readable.
+// (embeddings, search text) is dropped to keep the file readable. Mail bodies
+// are in the export: mailCorpusBodies holds them, and a message row from
+// before the body split keeps its inline body.
 
 export const REDACTED = '[removed from export]';
 
@@ -26,12 +27,6 @@ const TABLE_SECRETS: Record<string, readonly string[]> = {
   albatrossBrowserSessions: ['liveViewUrl'],
 };
 
-/** Fields dropped in one table to keep the export a readable size. */
-const TABLE_DROPS: Record<string, readonly string[]> = {
-  // Mail bodies stay with the mail provider, which holds the original.
-  mailCorpusMessages: ['textBody', 'htmlBody'],
-};
-
 function clean(value: unknown, depth: number): unknown {
   if (depth > 12 || value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map((entry) => clean(entry, depth + 1));
@@ -46,7 +41,6 @@ function clean(value: unknown, depth: number): unknown {
 export function redactExportRow(table: string, row: Record<string, unknown>): Record<string, unknown> {
   const out = clean(row, 0) as Record<string, unknown>;
   for (const key of TABLE_SECRETS[table] ?? []) if (key in out) out[key] = REDACTED;
-  for (const key of TABLE_DROPS[table] ?? []) delete out[key];
   return out;
 }
 
@@ -58,6 +52,9 @@ export function exportPageSize(table: string): number {
   switch (table) {
     case 'documentModels':
       return 2;
+    // A body document holds up to ~230 kB of text and HTML.
+    case 'mailCorpusBodies':
+      return 10;
     case 'documents':
     case 'contentItems':
     case 'officeDocuments':

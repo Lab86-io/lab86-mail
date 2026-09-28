@@ -12,6 +12,7 @@ import {
 } from './_generated/server';
 import { documentModel } from './documents';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
+import { readThreadBodies, resolvedBody } from './mailBodies';
 
 const caller = { internalSecret: v.optional(v.string()), userId: v.string() };
 export async function contentPreferences(ctx: any, userId: string) {
@@ -381,35 +382,10 @@ export const localPage = query({
       let text = row.searchText || '';
       let partial = false;
       if (args.source === 'mail') {
-        const messages = await ctx.db
-          .query('mailCorpusMessages')
-          .withIndex('by_user_account_thread_received', (q) =>
-            q
-              .eq('userId', args.userId)
-              .eq('accountId', row.accountId)
-              .eq('providerThreadId', row.providerThreadId),
-          )
-          .order('desc')
-          .take(17);
-        partial = messages.length > 16;
-        text = messages
-          .slice(0, 16)
-          .reverse()
-          .filter((m) => m.userId === args.userId)
-          .map((m) => `${m.from}\n${m.subject}\n${m.textBody || m.snippet || ''}`)
-          .join('\n\n');
-        for (const message of messages.slice(0, 16))
-          if (message.userId === args.userId)
-            for (const file of message.attachments || [])
-              attachments.push({
-                connectionId: row.accountId,
-                messageId: message.providerMessageId,
-                attachmentId: file.attachmentId || file.id,
-                filename: file.filename || file.name || 'attachment',
-                mimeType: file.mimeType || file.content_type || file.contentType || '',
-                size: file.size || 0,
-                modifiedAt: message.receivedAt,
-              });
+        const mail = await mailThreadContent(ctx, args.userId, row);
+        text = mail.text;
+        partial = mail.partial;
+        attachments.push(...mail.attachments);
       } else if (args.source === 'document') text = documentText(await documentModel(ctx, row));
       else {
         text = [
@@ -439,6 +415,156 @@ export const localPage = query({
     return { items, attachments, cursor: page.isDone ? null : page.continueCursor };
   },
 });
+// The content of one mail thread for the content index: the newest 16
+// messages, oldest first, as "from, subject, body". The body comes from the
+// body table (IO-1), so the text and its version are the same as before the
+// body split.
+async function mailThreadContent(ctx: any, userId: string, row: any) {
+  const messages = await ctx.db
+    .query('mailCorpusMessages')
+    .withIndex('by_user_account_thread_received', (q: any) =>
+      q.eq('userId', userId).eq('accountId', row.accountId).eq('providerThreadId', row.providerThreadId),
+    )
+    .order('desc')
+    .take(MAIL_CONTENT_MESSAGES + 1);
+  const window = messages.slice(0, MAIL_CONTENT_MESSAGES).filter((m: any) => m.userId === userId);
+  const bodies = await readThreadBodies(ctx, userId, row.accountId, row.providerThreadId, window);
+  let bodyChars = 0;
+  const text = [...window]
+    .reverse()
+    .map((m: any) => {
+      const body = resolvedBody(m, bodies.get(m.providerMessageId));
+      bodyChars += body.textBody.length + (body.htmlBody?.length ?? 0);
+      return `${m.from}\n${m.subject}\n${body.textBody || m.snippet || ''}`;
+    })
+    .join('\n\n');
+  const attachments = [];
+  for (const message of window)
+    for (const file of message.attachments || [])
+      attachments.push({
+        connectionId: row.accountId,
+        messageId: message.providerMessageId,
+        attachmentId: file.attachmentId || file.id,
+        filename: file.filename || file.name || 'attachment',
+        mimeType: file.mimeType || file.content_type || file.contentType || '',
+        size: file.size || 0,
+        modifiedAt: message.receivedAt,
+      });
+  return { text, partial: messages.length > MAIL_CONTENT_MESSAGES, attachments, bodyChars };
+}
+
+// Messages of one thread in its content item.
+const MAIL_CONTENT_MESSAGES = 16;
+// Threads that one change page reads at most.
+const MAIL_CHANGES_PAGE = 25;
+// A change page stops after about this many characters of body text and
+// HTML, far under the 16 MB read limit of a query.
+const MAIL_CHANGES_BODY_BUDGET = 4_000_000;
+
+/**
+ * The mail threads that changed after a watermark (IO-1, K2). The content
+ * cycle used to walk the whole corpus every two minutes. Now it reads only
+ * the threads whose row changed after the last pass, oldest change first,
+ * through the (userId, updatedAt, _creationTime) order of
+ * `by_narrative_updated`. The watermark is the position of the last thread
+ * read, so a group of threads with the same updatedAt is never skipped.
+ *
+ * It skips threads of accounts that are not connected and mail older than
+ * `sinceLastDate`; the watermark still moves past them. A spam or trash
+ * thread that has a live content row comes back as a deleted item.
+ */
+export const mailChanges = query({
+  args: {
+    ...caller,
+    after: v.object({ updatedAt: v.number(), creationTime: v.number() }),
+    sinceLastDate: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = Math.min(Math.max(Math.floor(args.limit ?? MAIL_CHANGES_PAGE), 1), 100);
+    const tie = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_narrative_updated', (q) =>
+        q
+          .eq('userId', args.userId)
+          .eq('updatedAt', args.after.updatedAt)
+          .gt('_creationTime', args.after.creationTime),
+      )
+      .take(limit + 1);
+    const newer =
+      tie.length > limit
+        ? []
+        : await ctx.db
+            .query('mailCorpusThreads')
+            .withIndex('by_narrative_updated', (q) =>
+              q.eq('userId', args.userId).gt('updatedAt', args.after.updatedAt),
+            )
+            .take(limit + 1 - tie.length);
+    const rows = [...tie, ...newer];
+    const live = new Set(
+      (
+        await ctx.db
+          .query('connectedAccounts')
+          .withIndex('by_user', (q) => q.eq('userId', args.userId))
+          .collect()
+      )
+        .filter((account) => account.status === 'connected')
+        .map((account) => account.accountId),
+    );
+    const items = [];
+    const attachments: any[] = [];
+    let watermark = args.after;
+    let budget = MAIL_CHANGES_BODY_BUDGET;
+    let read = 0;
+    for (const row of rows.slice(0, limit)) {
+      if (budget <= 0) break;
+      read++;
+      watermark = { updatedAt: row.updatedAt, creationTime: row._creationTime };
+      if (!live.has(row.accountId)) continue;
+      if ((row.labels || []).some((label: string) => ['TRASH', 'SPAM'].includes(label.toUpperCase()))) {
+        // A thread that moved to spam or trash leaves the index: its content
+        // row gets a tombstone, so the upsert clears the text and chunks.
+        // Mail that was never indexed gets no row.
+        const indexed = await ctx.db
+          .query('contentItems')
+          .withIndex('by_user_key', (q) =>
+            q.eq('userId', args.userId).eq('key', `mail:${row.accountId}:${row.providerThreadId}`),
+          )
+          .unique();
+        if (indexed && !indexed.deleted)
+          items.push({
+            source: 'mail',
+            connectionId: row.accountId,
+            externalId: row.providerThreadId,
+            title: row.subject || '(untitled)',
+            text: '',
+            modifiedAt: row.lastDate || row.updatedAt,
+            partial: false,
+            deleted: true,
+          });
+        continue;
+      }
+      if (args.sinceLastDate !== undefined && (row.lastDate || 0) < args.sinceLastDate) continue;
+      const mail = await mailThreadContent(ctx, args.userId, row);
+      budget -= mail.bodyChars;
+      attachments.push(...mail.attachments);
+      items.push({
+        source: 'mail',
+        connectionId: row.accountId,
+        externalId: row.providerThreadId,
+        title: row.subject || '(untitled)',
+        text: mail.text,
+        modifiedAt: row.lastDate || row.updatedAt,
+        partial: mail.partial,
+        deleted: false,
+        mailAssessment: row.jev,
+      });
+    }
+    return { items, attachments, watermark, more: rows.length > read };
+  },
+});
+
 export const versions = query({
   args: { ...caller, keys: v.array(v.string()) },
   handler: async (ctx, args) => {

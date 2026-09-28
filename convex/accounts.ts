@@ -7,6 +7,7 @@ import type { Id } from './_generated/dataModel';
 import { internalMutation, mutation, query } from './_generated/server';
 import { deleteContactRow } from './contacts';
 import { now, requireInternalSecret } from './lib';
+import schema from './schema';
 
 const providerValidator = v.union(
   v.literal('google'),
@@ -152,6 +153,11 @@ export const upsertConnectedAccount = mutation({
       scopes: args.scopes,
       grantId: args.grantId,
       error: undefined,
+      // A reconnect ends the dead state. After a purge, the missing sync
+      // states make the next sync a fresh backfill.
+      errorSince: undefined,
+      errorSinceSource: undefined,
+      corpusPurgedAt: undefined,
       updatedAt: ts,
     };
     if (existing) {
@@ -253,7 +259,14 @@ export const markGrantReconnectNeeded = mutation({
     const ts = now();
     for (const row of rows) {
       if (row.status !== 'connected') continue;
-      await ctx.db.patch(row._id, { status: 'error', error: truncateText(args.reason, 300), updatedAt: ts });
+      await ctx.db.patch(row._id, {
+        status: 'error',
+        error: truncateText(args.reason, 300),
+        ...(row.errorSince === undefined
+          ? { errorSince: ts, errorSinceSource: 'status_change' as const }
+          : {}),
+        updatedAt: ts,
+      });
       updated += 1;
     }
     return { updated };
@@ -328,6 +341,8 @@ export const updateConnectedAccountAlias = mutation({
 export const ACCOUNT_BULK_TABLES = [
   'mailCorpusThreads',
   'mailCorpusMessages',
+  // Mail bodies (IO-1). A body document can hold ~230 kB, so a pass takes few.
+  'mailCorpusBodies',
   // Custom-label membership rows point at corpus threads (CLS-13).
   'mailLabelMembership',
   'mailWebhookEvents',
@@ -385,6 +400,17 @@ const CONTENT_ITEMS_PER_PASS = 5;
 const DOCUMENT_MODELS_PER_PASS = 8;
 // A contact has at most 20 address rows, so one pass stays small.
 const CONTACTS_PER_PASS = 50;
+// A mail body document holds up to ~230 kB of text and HTML.
+const MAIL_BODIES_PER_PASS = 25;
+
+// The most rows of one table that one purge pass takes.
+function purgePassLimit(table: string, remaining: number) {
+  if (table === 'contentItems') return Math.min(remaining, CONTENT_ITEMS_PER_PASS);
+  if (table === 'documentModels') return Math.min(remaining, DOCUMENT_MODELS_PER_PASS);
+  if (table === 'contacts') return Math.min(remaining, CONTACTS_PER_PASS);
+  if (table === 'mailCorpusBodies') return Math.min(remaining, MAIL_BODIES_PER_PASS);
+  return remaining;
+}
 // Tables expose one of these userId-prefixed indexes; try each in turn.
 export const USER_INDEXES = [
   'by_user',
@@ -419,18 +445,7 @@ export const purgeUserDataBatch = internalMutation({
     for (const table of USER_BULK_TABLES) {
       if (deleted >= PURGE_BATCH) break;
       const remaining = PURGE_BATCH - deleted;
-      const rows = await takeByUser(
-        ctx,
-        table,
-        args.userId,
-        table === 'contentItems'
-          ? Math.min(remaining, CONTENT_ITEMS_PER_PASS)
-          : table === 'documentModels'
-            ? Math.min(remaining, DOCUMENT_MODELS_PER_PASS)
-            : table === 'contacts'
-              ? Math.min(remaining, CONTACTS_PER_PASS)
-              : remaining,
-      );
+      const rows = await takeByUser(ctx, table, args.userId, purgePassLimit(table, remaining));
       for (const row of rows) {
         if ((table === 'officeVersions' || table === 'documentAssets') && 'storageId' in row) {
           // Metadata must not be deleted before its private binary.
@@ -479,9 +494,7 @@ export const purgeAccountDataBatch = internalMutation({
         .withIndex((ACCOUNT_PURGE_INDEX[table] ?? 'by_user_account') as any, (q: any) =>
           q.eq('userId', args.userId).eq('accountId', args.accountId),
         )
-        .take(
-          table === 'contacts' ? Math.min(PURGE_BATCH - deleted, CONTACTS_PER_PASS) : PURGE_BATCH - deleted,
-        );
+        .take(purgePassLimit(table, PURGE_BATCH - deleted));
       for (const row of rows) {
         if (table === 'contacts') {
           deleted += await deleteContactRow(ctx, row._id as Id<'contacts'>);
@@ -773,6 +786,15 @@ export const EXPORT_TABLES: readonly string[] = [
   ]),
 ].filter((table) => !(table in EXPORT_SKIPPED_TABLES));
 
+/** The first userId-prefixed index of a table, read from the schema. */
+export function exportUserIndex(table: string): string | undefined {
+  const definition = (schema.tables as Record<string, any>)[table];
+  const names = new Set<string>(
+    (definition?.[' indexes']?.() ?? []).map((index: { indexDescriptor: string }) => index.indexDescriptor),
+  );
+  return USER_INDEXES.find((index) => names.has(index));
+}
+
 export const exportTableList = query({
   args: { internalSecret: v.optional(v.string()) },
   handler: async (_ctx, args) => {
@@ -831,19 +853,14 @@ export const exportUserTablePage = query({
         .withIndex('by_owner', (q) => q.eq('ownerUserId', args.userId))
         .paginate(opts);
     } else {
-      let lastErr: unknown;
-      for (const index of USER_INDEXES) {
-        try {
-          result = await ctx.db
-            .query(args.table as any)
-            .withIndex(index as any, (q: any) => q.eq('userId', args.userId))
-            .paginate(opts);
-          break;
-        } catch (err) {
-          lastErr = err;
-        }
-      }
-      if (!result) throw lastErr;
+      // One paginated read only: Convex allows one `.paginate()` in each
+      // function, so a failed try on a missing index cannot fall through.
+      const index = exportUserIndex(args.table);
+      if (!index) throw new Error('This table has no user index.');
+      result = await ctx.db
+        .query(args.table as any)
+        .withIndex(index as any, (q: any) => q.eq('userId', args.userId))
+        .paginate(opts);
     }
     return {
       page: result.page.map((row: any) => redactExportRow(args.table, row)),

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  isOwnCommit,
   loadGitHubItems,
   normalizeGitHubCommit,
   normalizeGitHubIssue,
@@ -144,9 +145,11 @@ describe('GitHub evidence normalization', () => {
     });
   });
 
-  test('indexes repository-wide issues, merged pull requests, and commits from other authors', async () => {
+  test('indexes repository-wide issues and merged pull requests, but only the own commits', async () => {
+    const commitUrls: string[] = [];
     const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
+      if (url.includes('/repos/') && url.includes('/commits?')) commitUrls.push(url);
       if (url.endsWith('/user')) {
         return new Response(JSON.stringify({ login: 'jakob' }), { status: 200 });
       }
@@ -205,6 +208,16 @@ describe('GitHub evidence normalization', () => {
                 committer: { date: '2026-07-14T15:00:00Z' },
               },
             },
+            {
+              sha: 'own-sha',
+              author: { login: 'Jakob' },
+              commit: { message: 'Ship the area inbox', committer: { date: '2026-07-15T15:00:00Z' } },
+            },
+            {
+              sha: 'unlinked-email-sha',
+              author: null,
+              commit: { message: 'Commit from a laptop email', committer: { date: '2026-07-16T15:00:00Z' } },
+            },
           ]),
           { status: 200 },
         );
@@ -236,12 +249,20 @@ describe('GitHub evidence normalization', () => {
           title: 'Render Areas as artifacts',
           state: 'merged',
         }),
-        expect.objectContaining({
-          externalId: 'github:commit:Lab86-io/lab86-mail:other-author-sha',
-          author: 'grace',
-        }),
+        expect.objectContaining({ externalId: 'github:commit:Lab86-io/lab86-mail:own-sha' }),
+        expect.objectContaining({ externalId: 'github:commit:Lab86-io/lab86-mail:unlinked-email-sha' }),
       ]),
     );
+    expect(result.items.some((item) => item.externalId.includes('other-author-sha'))).toBe(false);
+    expect(commitUrls).toHaveLength(1);
+    expect(new URL(commitUrls[0]).searchParams.get('author')).toBe('jakob');
+  });
+
+  test('isOwnCommit keeps the viewer and unlinked commits and drops other authors', () => {
+    expect(isOwnCommit({ author: { login: 'JAKOB' } }, 'jakob')).toBe(true);
+    expect(isOwnCommit({ author: null }, 'jakob')).toBe(true);
+    expect(isOwnCommit({}, 'jakob')).toBe(true);
+    expect(isOwnCommit({ author: { login: 'grace' } }, 'jakob')).toBe(false);
   });
 
   test('uses configured enterprise REST and GraphQL endpoints', async () => {

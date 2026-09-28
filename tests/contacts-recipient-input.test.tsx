@@ -210,6 +210,29 @@ describe('RecipientInput', () => {
     expect(field.values.at(-1)).toBe('Julia Lopez <julia@x.io>');
   });
 
+  test('Enter keeps a complete typed address; the arrows can still pick a row', async () => {
+    const field = await mount();
+    await act(async () => field.input().props.onFocus());
+    await field.type('sam@else.io');
+    await field.key('Enter');
+    expect(field.values.at(-1)).toBe('sam@else.io');
+    await field.type('bo@x.io');
+    await field.key('ArrowDown');
+    await field.key('Tab');
+    expect(field.values.at(-1)).toBe('sam@else.io, Jakob Langtry <jakob@lab86.io>');
+  });
+
+  test('an arrow choice on older rows does not replace new typed text', async () => {
+    const field = await mount();
+    await act(async () => field.input().props.onFocus());
+    await field.type('ja');
+    await field.key('ArrowDown');
+    // New text, and Enter before the debounce brings the rows for it.
+    await act(async () => field.input().props.onChange({ target: { value: 'kim@else.io' } }));
+    await field.key('Enter');
+    expect(field.values.at(-1)).toBe('kim@else.io');
+  });
+
   test('new typing cancels a waiting Enter; the old text never comes back', async () => {
     const field = await mount('', async (url) => {
       if (url.includes('q=jul')) await new Promise(() => undefined); // never answers

@@ -9,12 +9,15 @@ import { nylasErrorStatus, retryAfterMs, withNylasRetry } from '@/lib/nylas/retr
 import { stripLoneSurrogatesDeep } from '@/lib/shared/text';
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
+import { changedRepairMessages } from './repair-fingerprint';
 import { withFolderRoleLabels } from './search/folders';
 import { keptMessageHeaders } from './sender-cleanup';
 import { detectMailSuggestions } from './suggestion-detectors';
 import { scanIngestedMail } from './urgent-detectors';
+import { webhookPayloadForStorage } from './webhook-storage';
 
 const mailCorpusApi = api.mailCorpus;
+const mailRepairApi = api.mailRepair;
 const accountsApi = api.accounts;
 
 const defaultClassifierLoaders = {
@@ -479,7 +482,9 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
     accountId: row?.accountId,
     grantId: metadata.grantId,
     provider: row?.provider,
-    payload,
+    // M5: the row keeps ids only. This call uses the full payload in memory,
+    // and a retry refetches the current object from the provider.
+    payload: webhookPayloadForStorage(payload),
   });
   if (event.duplicate) {
     return { ok: true, duplicate: true, eventId: metadata.eventId };
@@ -537,6 +542,7 @@ export async function repairMailCorpusAccount({
   const receivedAfter = Math.floor((now - REPAIR_WINDOW_MS) / 1000);
   let pageToken: string | undefined;
   let messagesSeen = 0;
+  let messagesSkipped = 0;
   try {
     for (let page = 0; page < Math.max(1, maxPages); page += 1) {
       const token = pageToken;
@@ -546,8 +552,12 @@ export async function repairMailCorpusAccount({
           queryParams: { limit: 20, receivedAfter, ...(token ? { page_token: token } : {}) } as any,
         }),
       );
-      const messages = result.data.map((message) => corpusMessageFromNylas(row, message));
-      messagesSeen += messages.length;
+      const listed = result.data.map((message) => corpusMessageFromNylas(row, message));
+      messagesSeen += listed.length;
+      // M6: write only new or changed messages. An unchanged sweep writes
+      // nothing, so no thread recompute and no classifier work follow.
+      const messages = await changedRepairPage(row, listed);
+      messagesSkipped += listed.length - messages.length;
       if (messages.length) {
         await upsertCorpus(row, {
           messages,
@@ -563,7 +573,30 @@ export async function repairMailCorpusAccount({
     await noteGrantFailure(row.grantId, err);
     throw err;
   }
-  return { ok: true as const, accountId: row.accountId, messages: messagesSeen };
+  return { ok: true as const, accountId: row.accountId, messages: messagesSeen, skipped: messagesSkipped };
+}
+
+/**
+ * The repair-page messages that differ from the stored rows (M6). The
+ * comparison uses the role labels that the writer stores. If the fingerprint
+ * read fails, every message is written, as before this check.
+ */
+async function changedRepairPage(row: NylasAccountRow, messages: CorpusMessageInput[]) {
+  if (!messages.length) return messages;
+  try {
+    const roled = await withProviderFolderRoles(row, { messages, threads: [] });
+    const stored = await convexQuery<Record<string, string | null>>(mailRepairApi.messageFingerprints, {
+      userId: row.userId,
+      accountId: row.accountId,
+      providerMessageIds: messages.map((message) => message.providerMessageId),
+    });
+    const changed = new Set(
+      changedRepairMessages(roled.messages, stored || {}).map((message) => message.providerMessageId),
+    );
+    return messages.filter((message) => changed.has(message.providerMessageId));
+  } catch {
+    return messages;
+  }
 }
 
 /** The repair sweep for every connected, corpus-ready mailbox of one user. */

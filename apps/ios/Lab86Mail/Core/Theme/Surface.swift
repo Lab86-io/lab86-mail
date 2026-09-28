@@ -193,12 +193,25 @@ struct InitialsAvatar: View {
     var size: CGFloat = 36
 
     var body: some View {
+        ThemedInitialsAvatar(theme: environment.theme, name: name, seed: seed, size: size)
+    }
+}
+
+// The same mark for views that take the theme as a dependency (the recipient
+// field and the inline draft), so they render without an app environment.
+struct ThemedInitialsAvatar: View {
+    let theme: ThemeStore
+    let name: String
+    var seed: String?
+    var size: CGFloat = 36
+
+    var body: some View {
         Circle()
-            .fill(environment.theme.avatarColor(seed: seed ?? name).gradient)
+            .fill(theme.avatarColor(seed: seed ?? name).gradient)
             .frame(width: size, height: size)
             .overlay(
                 Text(initials)
-                    .font(environment.theme.displayType.displayFont(size: size * 0.4))
+                    .font(theme.displayType.displayFont(size: size * 0.4))
                     .foregroundStyle(.white)
             )
             .accessibilityHidden(true)

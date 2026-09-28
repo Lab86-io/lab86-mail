@@ -39,6 +39,10 @@ final class AppEnvironment {
     // "Prepared for you" under the Brief: GET/POST /api/content?view=brief.
     let preparedWork: PreparedWorkClient?
     let accountStore: AccountStore
+    // Recipient search for To, Cc, and Bcc, and each mailbox's contact status
+    // (mobile v1 contacts endpoints).
+    let recipientSearch: (any RecipientSearching)?
+    let contactStatus: (any ContactStatusServing)?
     // The plan, the trial note, and the optional Files surface (round 2).
     let trust: AccountTrustStore
     // The current Albatross conversation. Held here so switching destinations
@@ -46,7 +50,10 @@ final class AppEnvironment {
     // one. Distinct from intent capture, which stays a form.
     private(set) var assistantChat: AssistantChatModel?
 
-    init(configuration: AppConfiguration) {
+    // Rendering tests build a second, isolated environment inside the host
+    // app. Its local database lives in memory, so it never shares the app's
+    // store file.
+    init(configuration: AppConfiguration, inMemoryPersistence: Bool = false) {
         self.configuration = configuration
         let sessionStore = SessionStore()
         self.sessionStore = sessionStore
@@ -60,7 +67,7 @@ final class AppEnvironment {
             tokenProvider: tokenProvider
         )
         let tools = ToolClient(backend: backend)
-        let mobileContainer = MobilePersistence.makeContainer()
+        let mobileContainer = MobilePersistence.makeContainer(inMemory: inMemoryPersistence)
         let convexClient: ConvexClientWithAuth<String>?
         if configuration.clerkPublishableKey != nil, let deploymentURL = configuration.convexDeploymentURL {
             convexClient = ConvexClientWithAuth(
@@ -89,6 +96,8 @@ final class AppEnvironment {
                 tokenProvider: tokenProvider
             )
             self.mobileClient = mobileClient
+            recipientSearch = mobileClient
+            contactStatus = mobileClient
             briefHydration = BriefHydrationClient(
                 baseURL: apiBaseURL,
                 tokenProvider: tokenProvider
@@ -104,6 +113,8 @@ final class AppEnvironment {
             )
         } else {
             mobileClient = nil
+            recipientSearch = nil
+            contactStatus = nil
             briefHydration = nil
             preparedWork = nil
             processor = nil

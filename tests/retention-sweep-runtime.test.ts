@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { convexTest } from 'convex-test';
 import { internal } from '../convex/_generated/api';
-import { RETENTION_BATCH, WEBHOOK_EVENT_RETENTION_MS } from '../convex/retention';
+import {
+  RETENTION_BATCH,
+  WEBHOOK_EVENT_RETENTION_MS,
+  WEBHOOK_EVENT_TTL_MS,
+  WEBHOOK_SLIM_BATCH,
+} from '../convex/retention';
 import schema from '../convex/schema';
 
 const modules = {
@@ -153,6 +158,93 @@ describe('retention sweep', () => {
         ['live', 'active'],
       ]);
     });
+  });
+
+  test('error and received webhook rows leave after their own TTL (M5)', async () => {
+    const t = convexTest(schema, modules);
+    const insert = (eventId: string, status: 'processed' | 'received' | 'error') =>
+      t.run((ctx) =>
+        ctx.db.insert('mailWebhookEvents', {
+          eventId,
+          type: 'message.updated',
+          payload: {},
+          status,
+          receivedAt: Date.now(),
+        }),
+      );
+    for (const status of ['received', 'error'] as const) await insert(`old-${status}`, status);
+    await insert('old-processed', 'processed');
+    const ids = async () =>
+      t.run(async (ctx) =>
+        (await ctx.db.query('mailWebhookEvents').collect()).map((row) => row.eventId).sort(),
+      );
+
+    // Past the processed TTL, before their own: only the processed row goes.
+    expect(WEBHOOK_EVENT_TTL_MS.processed).toBeLessThan(WEBHOOK_EVENT_TTL_MS.error);
+    expect(WEBHOOK_EVENT_TTL_MS.processed).toBeLessThan(WEBHOOK_EVENT_TTL_MS.received);
+    setSystemTime(new Date(START + WEBHOOK_EVENT_TTL_MS.processed + DAY));
+    expect((await t.mutation(internal.retention.sweep, {})).counts.mailWebhookEvents).toBe(1);
+    expect(await ids()).toEqual(['old-error', 'old-received']);
+
+    // A newer error row of the same kind stays after the old rows go.
+    await insert('new-error', 'error');
+    setSystemTime(new Date(START + WEBHOOK_EVENT_TTL_MS.error + DAY));
+    const result = await t.mutation(internal.retention.sweep, {});
+    expect(result.counts.mailWebhookEvents).toBe(2);
+    expect(await ids()).toEqual(['new-error']);
+  });
+
+  test('slimWebhookPayloads cuts old payloads to ids, page by page', async () => {
+    const t = convexTest(schema, modules);
+    const body = 'x'.repeat(5_000);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < WEBHOOK_SLIM_BATCH + 2; i++)
+        await ctx.db.insert('mailWebhookEvents', {
+          eventId: `e${i}`,
+          type: 'message.updated',
+          payload: {
+            id: `e${i}`,
+            type: 'message.updated',
+            data: { object: { id: `m${i}`, grant_id: 'g1', thread_id: 't1', body } },
+          },
+          status: 'error',
+          receivedAt: START,
+        });
+      await ctx.db.insert('mailWebhookEvents', {
+        eventId: 'done',
+        type: 'message.created',
+        payload: { id: 'done', data: { object: { id: 'm', body } } },
+        status: 'processed',
+        receivedAt: START,
+      });
+    });
+    const dry = await t.mutation(internal.retention.slimWebhookPayloads, { dryRun: true });
+    expect(dry).toMatchObject({ status: 'error', scanned: WEBHOOK_SLIM_BATCH, slimmed: WEBHOOK_SLIM_BATCH });
+    expect(dry.bytesAfter).toBeLessThan(dry.bytesBefore / 20);
+    await t.run(async (ctx) => {
+      const rows = await ctx.db.query('mailWebhookEvents').collect();
+      expect(rows.every((row) => JSON.stringify(row.payload).includes(body))).toBe(true);
+    });
+
+    const first = await t.mutation(internal.retention.slimWebhookPayloads, {});
+    expect(first).toMatchObject({ slimmed: WEBHOOK_SLIM_BATCH, isDone: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await t.finishAllScheduledFunctions(() => undefined);
+    await t.run(async (ctx) => {
+      const rows = await ctx.db.query('mailWebhookEvents').collect();
+      const errors = rows.filter((row) => row.status === 'error');
+      expect(errors.every((row) => !JSON.stringify(row.payload).includes(body))).toBe(true);
+      expect(errors[0].payload).toMatchObject({
+        stored: 'ids',
+        data: { object: { id: 'm0', grant_id: 'g1', thread_id: 't1' } },
+      });
+      // Other statuses wait for their own run.
+      expect(JSON.stringify(rows.find((row) => row.eventId === 'done')?.payload)).toContain(body);
+    });
+    const again = await t.mutation(internal.retention.slimWebhookPayloads, {});
+    expect(again).toMatchObject({ slimmed: 0 });
+    const processed = await t.mutation(internal.retention.slimWebhookPayloads, { status: 'processed' });
+    expect(processed).toMatchObject({ slimmed: 1, isDone: true });
   });
 
   test('a full batch schedules another pass until the backlog drains', async () => {

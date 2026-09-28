@@ -271,6 +271,101 @@ describe('syncCalendarAccount', () => {
     });
   });
 
+  test('an auto sync with a recent full pass walks only the hot window', async () => {
+    await withHarness(async (h) => {
+      const row = account();
+      const before = Date.now();
+      h.onConvex('accounts:getConnectedAccount', () => row);
+      h.onConvex('calendarData:claimCalendarSync', () => ({
+        claimed: true,
+        state: { lastFullSyncAt: before - 60 * 60_000 },
+      }));
+      h.onConvex('calendarData:upsertCalendarBatch', () => ({ ok: true }));
+      h.onConvex('calendarData:upsertEventBatch', () => ({ ok: true }));
+      h.onConvex('calendarData:markSyncState', () => ({ ok: true }));
+      h.onConvex('calendarData:reconcileWindow', () => ({ done: true, pruned: 0 }));
+      h.onNylas('GET', /\/v3\/grants\/grant_1\/calendars$/, () => ({
+        json: { request_id: 'req_c', data: [{ id: 'cal_1', name: 'Work' }] },
+      }));
+      const nowSeconds = Math.floor(before / 1000);
+      h.onNylas('GET', /\/v3\/grants\/grant_1\/events$/, () => ({
+        json: { request_id: 'req_e', data: [rawEvent('evt_1', nowSeconds + 3600)] },
+      }));
+
+      const result = await syncCalendarAccount({
+        userId: 'user_1',
+        accountId: 'acct_1',
+        reason: 'cron',
+        window: 'auto',
+      });
+      expect(result).toEqual({ ok: true, accountId: 'acct_1', calendars: 1, events: 1 });
+
+      const eventLists = h.nylasCalls.filter((call) => call.url.pathname.endsWith('/events'));
+      expect(eventLists).toHaveLength(1);
+      const start = Number(eventLists[0].url.searchParams.get('start')) * 1000;
+      const end = Number(eventLists[0].url.searchParams.get('end')) * 1000;
+      expect(Math.abs(start - (before - DAY_MS))).toBeLessThan(10_000);
+      expect(Math.abs(end - (before + 14 * DAY_MS))).toBeLessThan(10_000);
+
+      const reconcile = h.convexCalls.find((call) => call.path === 'calendarData:reconcileWindow');
+      expect(reconcile?.args.endBefore).toBe(reconcile?.args.windowEnd + 35 * DAY_MS);
+
+      const marks = h.convexCalls.filter((call) => call.path === 'calendarData:markSyncState');
+      // No heartbeat: one ready write only.
+      expect(marks).toHaveLength(1);
+      expect(marks[0].args).toMatchObject({ status: 'ready', calendarsSynced: 1 });
+      expect(marks[0].args.progress).toMatchObject({ window: 'hot' });
+      expect(marks[0].args.lastFullSyncAt).toBeUndefined();
+      expect(marks[0].args.eventsSynced).toBeUndefined();
+      expect(marks[0].args.windowStart).toBeUndefined();
+      // A hot pass does not kick the history backfill.
+      expect(h.convexCalls.some((call) => call.path === 'calendarData:getSyncState')).toBe(false);
+    });
+  });
+
+  test('a hot pass on a state from before lastFullSyncAt records the old full-pass time', async () => {
+    await withHarness(async (h) => {
+      const before = Date.now();
+      const legacyFullAt = before - 60 * 60_000;
+      h.onConvex('accounts:getConnectedAccount', () => account());
+      h.onConvex('calendarData:claimCalendarSync', () => ({
+        claimed: true,
+        state: { lastSyncedAt: legacyFullAt, windowEnd: before + 300 * DAY_MS },
+      }));
+      h.onConvex('calendarData:upsertCalendarBatch', () => ({ ok: true }));
+      h.onConvex('calendarData:markSyncState', () => ({ ok: true }));
+      h.onNylas('GET', /\/v3\/grants\/grant_1\/calendars$/, () => ({
+        json: { request_id: 'req_c', data: [] },
+      }));
+      await syncCalendarAccount({ userId: 'user_1', accountId: 'acct_1', window: 'auto' });
+      const ready = h.convexCalls.find(
+        (call) => call.path === 'calendarData:markSyncState' && call.args.status === 'ready',
+      );
+      expect(ready?.args.progress).toMatchObject({ window: 'hot' });
+      expect(ready?.args.lastFullSyncAt).toBe(legacyFullAt);
+      expect(ready?.args.lastSyncedAt).toBeGreaterThanOrEqual(before);
+    });
+  });
+
+  test('a full pass records lastFullSyncAt', async () => {
+    await withHarness(async (h) => {
+      h.onConvex('accounts:getConnectedAccount', () => account());
+      h.onConvex('calendarData:claimCalendarSync', () => ({ claimed: true }));
+      h.onConvex('calendarData:upsertCalendarBatch', () => ({ ok: true }));
+      h.onConvex('calendarData:markSyncState', () => ({ ok: true }));
+      h.onConvex('calendarData:getSyncState', () => ({ historyBackfillReady: true }));
+      h.onNylas('GET', /\/v3\/grants\/grant_1\/calendars$/, () => ({
+        json: { request_id: 'req_c', data: [] },
+      }));
+      await syncCalendarAccount({ userId: 'user_1', accountId: 'acct_1', window: 'auto' });
+      const ready = h.convexCalls.find(
+        (call) => call.path === 'calendarData:markSyncState' && call.args.status === 'ready',
+      );
+      expect(ready?.args.lastFullSyncAt).toBe(ready?.args.lastSyncedAt);
+      expect(ready?.args.progress).toMatchObject({ window: 'full' });
+    });
+  });
+
   test('returns the previous counters when the sync claim is lost', async () => {
     await withHarness(async (h) => {
       h.onConvex('accounts:getConnectedAccount', () => account());
