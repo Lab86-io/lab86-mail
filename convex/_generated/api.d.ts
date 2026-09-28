@@ -57,6 +57,7 @@ import type * as mcpSync from "../mcpSync.js";
 import type * as mobile from "../mobile.js";
 import type * as narrative from "../narrative.js";
 import type * as narrativeSchema from "../narrativeSchema.js";
+import type * as oauthCompletions from "../oauthCompletions.js";
 import type * as officeDocuments from "../officeDocuments.js";
 import type * as operations from "../operations.js";
 import type * as rateLimits from "../rateLimits.js";
@@ -124,6 +125,7 @@ declare const fullApi: ApiFromModules<{
   mobile: typeof mobile;
   narrative: typeof narrative;
   narrativeSchema: typeof narrativeSchema;
+  oauthCompletions: typeof oauthCompletions;
   officeDocuments: typeof officeDocuments;
   operations: typeof operations;
   rateLimits: typeof rateLimits;

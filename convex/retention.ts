@@ -87,7 +87,12 @@ export const sweep = internalMutation({
     );
     more ||= counts.nylasOAuthStates === RETENTION_BATCH.oauthStates;
 
-    for (const table of ['mcpOAuthStates', 'cloudFileOAuthStates', 'cloudFileOAuthCompletions'] as const) {
+    for (const table of [
+      'mcpOAuthStates',
+      'cloudFileOAuthStates',
+      'cloudFileOAuthCompletions',
+      'oauthCompletions',
+    ] as const) {
       const rows = await ctx.db
         .query(table)
         .withIndex('by_expires', (q) => q.lt('expiresAt', ts))

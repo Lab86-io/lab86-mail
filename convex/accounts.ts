@@ -693,6 +693,7 @@ export const USER_INLINE_TABLES = [
   'cloudFileCredentials',
   'cloudFileOAuthStates',
   'cloudFileOAuthCompletions',
+  'oauthCompletions',
   'documents',
   'documentSuggestions',
   'documentImportCancellations',
@@ -767,6 +768,7 @@ export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
   mcpOAuthStates: 'Short-lived sign-in state for a tool connection, not user content.',
   cloudFileOAuthStates: 'Short-lived sign-in state for a file connection, not user content.',
   cloudFileOAuthCompletions: 'Short-lived sign-in state for a file connection, not user content.',
+  oauthCompletions: 'Short-lived sign-in state for a mailbox or tool connection, not user content.',
   rateLimits: 'Request counters that protect the service, not user content.',
   aiCostWatch: 'Cost samples for the owner alarm that protect the service, not user content.',
 };
