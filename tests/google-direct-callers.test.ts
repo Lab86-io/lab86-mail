@@ -78,6 +78,14 @@ async function withStubs(
   // A calendar write kicks a background sync. It finds the account and then
   // does not get the claim, so it ends at once.
   convexHandlers.set('accounts:getConnectedAccount', () => account());
+  // The Gmail adapter answers grants.find from the token row of the grant.
+  convexHandlers.set('googleDirect:getGrantCredentials', () => ({
+    userId: 'user_1',
+    accountId: 'acct-1',
+    email: 'ann@work.example.test',
+    scopes: account().scopes,
+    refreshTokenEncrypted: 'encrypted-refresh-token',
+  }));
   convexHandlers.set('calendarData:claimCalendarSync', () => ({ claimed: false, reason: 'active' }));
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {

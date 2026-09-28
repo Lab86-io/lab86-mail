@@ -96,6 +96,10 @@ export default defineSchema({
     undoSeconds: v.number(),
     payloadId: v.optional(v.id('_storage')),
     messageId: v.optional(v.string()),
+    // A scheduled send of a direct Google account (Gmail has no scheduled
+    // send). The row holds the message until `fireAt` (convex/googleDirect.ts).
+    accountId: v.optional(v.string()),
+    scheduled: v.optional(v.boolean()),
     updatedAt: v.number(),
   })
     .index('by_user_key', ['userId', 'key'])
@@ -182,12 +186,17 @@ export default defineSchema({
     refreshTokenEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
     scopes: v.array(v.string()),
+    // The Nylas grant of a Google account that now talks to Google directly
+    // (grantId `google:<accountId>`). A rollback puts it back. It is
+    // destroyed only when the user removes the account.
+    previousNylasGrantId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
-    .index('by_grant', ['grantId']),
+    .index('by_grant', ['grantId'])
+    .index('by_previous_nylas_grant', ['previousNylasGrantId']),
 
   nylasOAuthStates: defineTable({
     state: v.string(),
@@ -2097,6 +2106,25 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId']),
+
+  // Direct Google mail sign-in (convex/googleDirect.ts). The Google callback
+  // shares the Files redirect URI, so this state is separate from the Files
+  // state: the callback tries this store first. A native flow keeps its
+  // result in oauthCompletions, as the Nylas flow does.
+  googleMailOAuthStates: defineTable({
+    userId: v.string(),
+    state: v.string(),
+    mode: v.union(v.literal('switch'), v.literal('new'), v.literal('reconnect')),
+    accountId: v.optional(v.string()),
+    redirectTo: v.optional(v.string()),
+    nativeCallback: v.optional(v.boolean()),
+    codeVerifierEncrypted: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_state', ['state'])
+    .index('by_expires', ['expiresAt']),
 
   cloudFileOAuthStates: defineTable({
     userId: v.string(),

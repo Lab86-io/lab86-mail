@@ -1,6 +1,12 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import {
+  finalizeGoogleMailCompletion,
+  GoogleConnectError,
+  type GoogleMailCompletionPayload,
+  isGoogleMailCompletion,
+} from '@/lib/google/connect';
 import { completeNylasConnection, type NylasOAuthCompletionPayload } from '@/lib/nylas/oauth-connection';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { consumeOAuthCompletion } from '@/lib/security/oauth-completions';
@@ -16,9 +22,14 @@ const defaultDependencies = {
   requireCurrentUser,
   enforceUserRateLimit,
   consumeOAuthCompletion: (input: { userId: string; kind: 'mail'; completionToken: string }) =>
-    consumeOAuthCompletion<NylasOAuthCompletionPayload>(input),
+    consumeOAuthCompletion<NylasOAuthCompletionPayload | GoogleMailCompletionPayload>(input),
   completeNylasConnection: (input: { userId: string; code: string; provider?: string }) =>
     completeNylasConnection(input),
+  // A native direct Google sign-in keeps its result in the same store
+  // (lib/google/connect.ts). Absent in tests that cover only Nylas.
+  finalizeGoogleMailCompletion: finalizeGoogleMailCompletion as
+    | typeof finalizeGoogleMailCompletion
+    | undefined,
 };
 
 // The native app redeems the single-use token from /api/nylas/callback here,
@@ -40,7 +51,11 @@ export function createNylasOAuthFinalize(deps: typeof defaultDependencies = defa
         kind: 'mail',
         completionToken: input.completionToken,
       });
-      if (!stored?.code) {
+      if (isGoogleMailCompletion(stored) && deps.finalizeGoogleMailCompletion) {
+        const result = await deps.finalizeGoogleMailCompletion({ userId: user.userId, completion: stored });
+        return NextResponse.json({ ok: true, accountId: result.accountId, outcome: result.outcome });
+      }
+      if (!stored || !('code' in stored) || !stored.code) {
         return NextResponse.json(
           { ok: false, error: 'Mailbox authorization is invalid or expired.' },
           { status: 409 },
@@ -59,6 +74,9 @@ export function createNylasOAuthFinalize(deps: typeof defaultDependencies = defa
       }
       if (error instanceof z.ZodError) {
         return NextResponse.json({ ok: false, error: 'Invalid authorization completion.' }, { status: 400 });
+      }
+      if (error instanceof GoogleConnectError) {
+        return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
       }
       console.error('[nylas/finalize] failed', error);
       return NextResponse.json(

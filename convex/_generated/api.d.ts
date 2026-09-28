@@ -45,6 +45,7 @@ import type * as documentAssets from "../documentAssets.js";
 import type * as documents from "../documents.js";
 import type * as encryptionRotation from "../encryptionRotation.js";
 import type * as fileLibrary from "../fileLibrary.js";
+import type * as googleDirect from "../googleDirect.js";
 import type * as jev from "../jev.js";
 import type * as lib from "../lib.js";
 import type * as liveMail from "../liveMail.js";
@@ -115,6 +116,7 @@ declare const fullApi: ApiFromModules<{
   documents: typeof documents;
   encryptionRotation: typeof encryptionRotation;
   fileLibrary: typeof fileLibrary;
+  googleDirect: typeof googleDirect;
   jev: typeof jev;
   lib: typeof lib;
   liveMail: typeof liveMail;

@@ -29,6 +29,8 @@ export const ENCRYPTED_FIELDS: readonly EncryptedField[] = [
   },
   { table: 'cloudFileOAuthCompletions', path: ['codeVerifierEncrypted'], holds: 'PKCE verifier (minutes)' },
   { table: 'oauthCompletions', path: ['payloadEncrypted'], holds: 'Authorization code (minutes)' },
+  // Direct Google mail sign-in (convex/googleDirect.ts).
+  { table: 'googleMailOAuthStates', path: ['codeVerifierEncrypted'], holds: 'PKCE verifier (minutes)' },
   { table: 'mcpCredentials', path: ['accessTokenEncrypted'], holds: 'Tool access token' },
   { table: 'mcpCredentials', path: ['refreshTokenEncrypted'], holds: 'Tool refresh token' },
   {

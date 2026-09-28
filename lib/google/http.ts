@@ -5,20 +5,10 @@
 // Errors carry `statusCode`, the field that `nylasErrorStatus()` and the
 // grant-health code already read, so callers need no change.
 
+import { GoogleApiError } from './errors';
 import { getGoogleAccessToken, invalidateGoogleAccessToken } from './tokens';
 
-export class GoogleApiError extends Error {
-  readonly statusCode: number;
-  readonly reason?: string;
-  readonly providerError = true;
-
-  constructor(statusCode: number, message: string, reason?: string) {
-    super(message);
-    this.name = 'GoogleApiError';
-    this.statusCode = statusCode;
-    this.reason = reason;
-  }
-}
+export { GoogleApiError };
 
 export interface GoogleRequestInit extends Omit<RequestInit, 'body'> {
   /** A JSON body. Sets the content type. */
@@ -26,6 +16,11 @@ export interface GoogleRequestInit extends Omit<RequestInit, 'body'> {
   body?: RequestInit['body'];
   /** Attempts for 429 and 5xx answers, default 4. */
   attempts?: number;
+  /**
+   * Retry 5xx answers too (default true). A send turns this off: Gmail can
+   * deliver a message and still answer 5xx, and a retry would send it twice.
+   */
+  retryServerErrors?: boolean;
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -43,8 +38,8 @@ export function __setGoogleHttpDepsForTest(overrides: Partial<typeof defaults> =
   deps = { ...defaults, ...overrides };
 }
 
-function retryable(status: number) {
-  return status === 429 || status >= 500;
+function retryable(status: number, serverErrors: boolean) {
+  return status === 429 || (serverErrors && status >= 500);
 }
 
 // Gmail and Calendar answer a rate limit with 403 and one of these reasons.
@@ -84,7 +79,7 @@ export async function googleFetch(
   url: string,
   init: GoogleRequestInit = {},
 ): Promise<Response> {
-  const { json, attempts = 4, headers, ...rest } = init;
+  const { json, attempts = 4, retryServerErrors = true, headers, ...rest } = init;
   let refreshed = false;
   for (let attempt = 1; ; attempt += 1) {
     const token = await deps.getGoogleAccessToken(grantId);
@@ -102,7 +97,7 @@ export async function googleFetch(
       deps.invalidateGoogleAccessToken(grantId);
       continue;
     }
-    if (retryable(response.status) && attempt < attempts) {
+    if (retryable(response.status, retryServerErrors) && attempt < attempts) {
       await deps.sleep(backoff(attempt, response));
       continue;
     }

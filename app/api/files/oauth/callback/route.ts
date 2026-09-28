@@ -7,6 +7,7 @@ import {
   saveCloudFileOAuthCompletion,
 } from '@/lib/files/connections';
 import { CLOUD_FILE_PROVIDER_DEFINITIONS } from '@/lib/files/providers';
+import { handleGoogleMailCallback } from '@/lib/google/connect';
 import { hostedPublicUrl } from '@/lib/hosted/env';
 import { sanitizeInternalPath } from '@/lib/security/redirect';
 
@@ -19,6 +20,7 @@ const defaultDependencies = {
   exchangeCloudFileAuthorizationCode,
   saveCloudFileConnection,
   saveCloudFileOAuthCompletion,
+  handleGoogleMailCallback,
 };
 
 function filesRedirect(
@@ -43,6 +45,12 @@ export function createCloudFileOAuthCallback(dependencies: typeof defaultDepende
     if (!state) {
       return filesRedirect(undefined, 'files_error', 'Missing OAuth state.');
     }
+    // The direct Google mail sign-in shares this redirect URI. Its own state
+    // store answers first; any other state is a Files state.
+    const googleMail = dependencies.handleGoogleMailCallback
+      ? await dependencies.handleGoogleMailCallback({ state, code, providerError })
+      : null;
+    if (googleMail) return googleMail;
 
     let redirectTo: string | undefined;
     let nativeCallback = false;

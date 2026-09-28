@@ -1,5 +1,6 @@
 import { applyCalendarWebhookDelta, isCalendarWebhookType } from '@/lib/calendar/sync';
 import { applyContactWebhookDelta, isContactWebhookType } from '@/lib/contacts/sync';
+import { isGoogleDirectGrant } from '@/lib/google/transport';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import { isGrantGoneError, markGrantNeedsReconnect, noteGrantFailure } from '@/lib/nylas/grant-health';
@@ -640,6 +641,13 @@ async function processWebhookEvent(
     await markWebhookProcessed(metadata, 'processed');
     return { ok: true, duplicate: false, eventId: metadata.eventId, reconnectNeeded: updated };
   }
+  if (metadata.grantId && !row && (await isSwitchedNylasGrant(metadata.grantId))) {
+    // The account moved to Gmail directly; its History sync owns the mailbox
+    // now. The Nylas grant stays alive only for a rollback, so its events are
+    // expected and are not errors.
+    await markWebhookProcessed(metadata, 'processed');
+    return { ok: true, duplicate: false, eventId: metadata.eventId, ignored: 'switched_to_google' };
+  }
   if (!metadata.grantId || !row) {
     // Loud on purpose. This branch returns ok:false without throwing, so it
     // never reached the queue's failure log, and it touches no sync state —
@@ -699,6 +707,54 @@ async function processWebhookEvent(
     });
     throw err;
   }
+}
+
+async function isSwitchedNylasGrant(grantId: string) {
+  const switched = await webhookDeps
+    .query<{ accountId: string; grantId?: string } | null>(api.googleDirect.accountForPreviousNylasGrant, {
+      grantId,
+    })
+    .catch(() => null);
+  return isGoogleDirectGrant(switched?.grantId);
+}
+
+/** Messages of one upsert batch: small, so one Convex mutation stays small. */
+const PROVIDER_CHANGE_BATCH = 20;
+
+/**
+ * Applies message changes that a direct transport read (the Gmail History
+ * sync, lib/google/history-sync.ts). Deletes use the webhook delete path and
+ * upserts the webhook upsert path, with the same suggestion, alert, and
+ * classifier steps, so a direct account ingests like a Nylas account.
+ */
+export async function applyProviderMessageChanges(
+  row: NylasAccountRow,
+  changes: { upserts: unknown[]; deletes: string[]; progress?: Record<string, unknown> },
+) {
+  for (const providerMessageId of changes.deletes) {
+    await convexMutation(mailCorpusApi.deleteCorpusMessage, {
+      userId: row.userId,
+      accountId: row.accountId,
+      providerMessageId,
+    });
+  }
+  let upserted = 0;
+  for (let start = 0; start < changes.upserts.length; start += PROVIDER_CHANGE_BATCH) {
+    const messages = changes.upserts
+      .slice(start, start + PROVIDER_CHANGE_BATCH)
+      .map((message) => corpusMessageFromNylas(row, message));
+    detectMailSuggestions(row, messages);
+    await scanIngestedMail(row, messages);
+    await upsertCorpus(row, {
+      messages,
+      threads: corpusThreadsFromMessages(messages),
+      progress: { stage: 'provider_changes', ...(changes.progress || {}) },
+      incremental: true,
+    });
+    upserted += messages.length;
+  }
+  if (upserted || changes.deletes.length) void kickMailClassifiers(row.userId);
+  return { upserted, deleted: changes.deletes.length };
 }
 
 async function applyWebhookDelta(

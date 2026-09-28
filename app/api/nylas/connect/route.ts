@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import type { Provider, URLForAuthenticationConfig } from 'nylas';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { directGoogleConnectChoice, GoogleConnectError, startGoogleMailConnect } from '@/lib/google/connect';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { isNylasConfigured, nylasRedirectUri } from '@/lib/hosted/env';
 import { type MailProvider, mailProviderCapability } from '@/lib/mail/provider-capabilities';
@@ -22,6 +23,10 @@ interface NylasConnectDependencies {
   requireNylas: typeof requireNylas;
   nylasRedirectUri: typeof nylasRedirectUri;
   randomState: () => string;
+  // Direct Google transport (docs/google-direct-transport.md). Absent in
+  // tests that cover only the Nylas flow.
+  directGoogleConnectChoice?: typeof directGoogleConnectChoice;
+  startGoogleMailConnect?: typeof startGoogleMailConnect;
 }
 
 const defaultDependencies: NylasConnectDependencies = {
@@ -32,6 +37,8 @@ const defaultDependencies: NylasConnectDependencies = {
   requireNylas,
   nylasRedirectUri,
   randomState: () => randomBytes(24).toString('base64url'),
+  directGoogleConnectChoice,
+  startGoogleMailConnect,
 };
 
 export function createNylasConnectGet(deps: NylasConnectDependencies = defaultDependencies) {
@@ -81,8 +88,34 @@ export function createNylasConnectGet(deps: NylasConnectDependencies = defaultDe
       name: user.name,
       imageUrl: user.imageUrl,
     });
-    const state = deps.randomState();
     const isNative = url.searchParams.get('native') === '1';
+    if (provider === 'google' && deps.directGoogleConnectChoice && deps.startGoogleMailConnect) {
+      // LAB86_GOOGLE_DIRECT=1 sends Google connections to Gmail directly
+      // (docs/google-direct-transport.md).
+      const choice = await deps.directGoogleConnectChoice({ userId: user.userId });
+      if (choice) {
+        try {
+          const started = await deps.startGoogleMailConnect({
+            userId: user.userId,
+            mode: choice.mode,
+            account: choice.account,
+            redirectTo: url.searchParams.get('redirectTo'),
+            native: isNative,
+            host: req.headers.get('host'),
+          });
+          if (url.searchParams.get('format') === 'json') {
+            return NextResponse.json({ ok: true, authorizationUrl: started.authorizationUrl });
+          }
+          return NextResponse.redirect(started.authorizationUrl);
+        } catch (error) {
+          if (error instanceof GoogleConnectError) {
+            return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+          }
+          throw error;
+        }
+      }
+    }
+    const state = deps.randomState();
     await deps.convexMutation(api.accounts.createOAuthState, {
       userId: user.userId,
       state,

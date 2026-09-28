@@ -147,6 +147,9 @@ crons.daily('mcp stale item prune', { hourUTC: 9, minuteUTC: 7 }, internal.mcp.p
 // Mail repair (SYNC-3): retry failed Nylas webhook events with backoff, and
 // sweep each connected mailbox's recent mail for changes a lost event missed.
 crons.interval('mail corpus repair', { minutes: 30 }, internal.mailCorpus.repairTick, {});
+// Direct Google accounts (grant id google:<accountId>) have no Nylas
+// webhooks. The app reads the Gmail History of each one every 2 minutes.
+crons.interval('google mail history sync', { minutes: 2 }, internal.googleDirect.historyTick, {});
 // Attachment files in our own encrypted storage: move each unfinished backfill
 // one page, then ask the app to store a few queued files for each user.
 crons.interval('mail attachment files', { minutes: 5 }, internal.mailAttachments.tick, {});
