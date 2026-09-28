@@ -2,7 +2,15 @@ import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
-import { ACCOUNT_KEYED_ROWS, evidenceNamesAccount } from '../convex/accounts';
+import {
+  ACCOUNT_KEYED_ROWS,
+  CONTENT_ITEM_BYTES,
+  evidenceNamesAccount,
+  PURGE_PASS_BYTES,
+  PURGE_ROW_BYTES,
+  purgePassRoom,
+  storedBytes,
+} from '../convex/accounts';
 import schema from '../convex/schema';
 
 // Disconnect and the 30-day dead-account purge delete one set of mailbox
@@ -529,8 +537,12 @@ describe('the disconnect purge chain', () => {
       userId: USER,
       accountId: GONE,
     });
-    // Five content items with their chunks, then the thread cache up to the batch.
-    expect(first.byTable).toEqual({ contentItems: 5, contentChunks: 15, userDocs: 230 });
+    // Five content items with their chunks, then as many thread-cache rows as
+    // the byte room of the pass allows (a 64 KiB bound each).
+    expect(first.byTable).toMatchObject({ contentItems: 5, contentChunks: 15 });
+    expect(first.byTable.userDocs).toBeGreaterThan(100);
+    expect(first.byTable.userDocs).toBeLessThanOrEqual(PURGE_PASS_BYTES / (64 * 1024));
+    expect(first.bytes).toBeLessThanOrEqual(PURGE_PASS_BYTES);
     await drain(t);
     const left = await t.run(async (ctx) => ({
       items: (await ctx.db.query('contentItems').collect()).length,
@@ -574,7 +586,7 @@ describe('rows with no account index', () => {
       userId: USER,
       accountId: GONE,
     });
-    expect(first).toEqual({ deleted: 50, done: false });
+    expect(first).toMatchObject({ deleted: 50, done: false });
     await drain(t);
     const left = await t.run(async (ctx) => await ctx.db.query('albatrossEvidence').collect());
     expect(left).toHaveLength(65);
@@ -675,7 +687,7 @@ describe('rows with no account index', () => {
         accountId: GONE,
         step: 3,
       }),
-    ).toEqual({ deleted: 0, done: true });
+    ).toMatchObject({ deleted: 0, done: true });
     await drain(t);
     const left = await t.run(async (ctx) =>
       (await ctx.db.query('narrativeEntries').collect()).map((row) => row._id),

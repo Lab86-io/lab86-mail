@@ -409,6 +409,108 @@ export const USER_BULK_TABLES = [
 ] as const;
 
 const PURGE_BATCH = 250;
+
+const KiB = 1024;
+const MiB = 1024 * KiB;
+
+// Size limits of one purge pass. One pass is one mutation. Convex lets one
+// mutation read 16 MiB and write 16 MiB, scan 32,000 documents, and make
+// 4,096 index reads, and one document holds at most 1 MiB
+// (docs.convex.dev/production/state/limits, read 2026-09-28). A pass deletes
+// the rows that it reads, so its reads also bound its writes. Before each
+// read, a pass keeps room for (rows × the row bound of the table). After the
+// read, it counts the measured size of the rows. The room never goes past
+// PURGE_PASS_BYTES, so one pass reads and deletes at most 8 MiB. A pass that
+// stops at a limit schedules the next pass.
+export const PURGE_PASS_BYTES = 8 * MiB;
+// The row bound of a table that PURGE_ROW_BYTES does not name: the document limit.
+const DEFAULT_ROW_BYTES = MiB;
+// One content item without its chunks: 120,000 text characters and short fields.
+export const CONTENT_ITEM_BYTES = 384 * KiB;
+
+/**
+ * The most bytes of one purged row, with the rows that its delete reads or
+ * removes. A bound comes from the writer's limits (3 bytes for each
+ * character), from the 1 MiB document limit when a field has no limit, or,
+ * for rows of short fields, from the largest production row on 2026-09-28
+ * with a margin of 10 or more.
+ */
+export const PURGE_ROW_BYTES: Record<string, number> = {
+  // Short provider fields and verdict objects. Production max 5.9 kB.
+  mailCorpusThreads: 64 * KiB,
+  // Split rows: a 1,500-character header line and a body excerpt. The body
+  // split is complete in production and staging. Production max 9.1 kB.
+  mailCorpusMessages: 128 * KiB,
+  // 32,000 text and 200,000 HTML characters.
+  mailCorpusBodies: 700 * KiB,
+  mailLabelMembership: 16 * KiB,
+  // A row from before the ids-only change keeps its payload, which has no
+  // limit. Production max 449 kB.
+  mailWebhookEvents: MiB,
+  mailOneTimeCodes: 16 * KiB,
+  mailSnoozes: 16 * KiB,
+  // Metadata, and the one row that can share the stored file.
+  mailAttachmentFiles: 32 * KiB,
+  mailAttachmentQueue: 16 * KiB,
+  mailAttachmentBackfills: 16 * KiB,
+  // Description and guests have no limit. Production max 12 kB.
+  calendarEvents: 256 * KiB,
+  areaArtifactLinks: 16 * KiB,
+  // A contact and its address rows (at most 20). Production max 1.8 kB.
+  contacts: 64 * KiB,
+  // CONTENT_ITEM_BYTES, and up to 34 chunks of 4,000 characters and 1,536 numbers.
+  contentItems: 1280 * KiB,
+  // Notices (180 and 1,000 characters) with their delivery rows.
+  albatrossNotifications: 64 * KiB,
+  // The payload has no limit. Production max 1.6 kB. With its notice.
+  suggestions: 128 * KiB,
+  // Memory observations. Production max 21 kB.
+  narrativeEntries: 128 * KiB,
+  // Rows of ids and numbers.
+  briefItemEvents: 16 * KiB,
+  briefEditionTelemetry: 16 * KiB,
+  mobileSyncTombstones: 16 * KiB,
+  nativePushDeliveries: 16 * KiB,
+};
+
+function purgeRowBytes(table: string) {
+  return PURGE_ROW_BYTES[table] ?? DEFAULT_ROW_BYTES;
+}
+
+// UTF-8 length. Each half of a surrogate pair counts 3 bytes, which is more
+// than the 4 bytes of the pair.
+function utf8Bytes(text: string) {
+  let bytes = 0;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : 3;
+  }
+  return bytes;
+}
+
+/** An upper estimate of the stored size of a Convex value, in bytes. */
+export function storedBytes(value: unknown): number {
+  if (typeof value === 'string') return utf8Bytes(value) + 4;
+  if (Array.isArray(value)) {
+    let bytes = 4;
+    for (const item of value) bytes += storedBytes(item);
+    return bytes;
+  }
+  if (value instanceof ArrayBuffer) return value.byteLength + 4;
+  if (value && typeof value === 'object') {
+    let bytes = 4;
+    for (const [key, item] of Object.entries(value)) bytes += utf8Bytes(key) + 2 + storedBytes(item);
+    return bytes;
+  }
+  // A number, a bigint, a boolean, or null.
+  return 9;
+}
+
+/** The rows that the next read of a pass may take: at most `cap`, and within the row and byte room. */
+export function purgePassRoom(pass: { rows: number; bytes: number }, rowBytes: number, cap: number) {
+  const byBytes = Math.floor((PURGE_PASS_BYTES - pass.bytes) / rowBytes);
+  return Math.max(0, Math.min(cap, PURGE_BATCH - pass.rows, byBytes));
+}
 // A content item has at most ~34 embedding chunks, so a few items per pass
 // keep one purge transaction far below the Convex read limits.
 const CONTENT_ITEMS_PER_PASS = 5;
@@ -466,15 +568,23 @@ async function takeByUser(ctx: any, table: string, userId: string, limit: number
 export const purgeUserDataBatch = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
-    let deleted = 0;
+    // Rows deleted and bytes read in this pass (see PURGE_PASS_BYTES).
+    const pass = { rows: 0, bytes: 0 };
+    let more = false;
     for (const table of USER_BULK_TABLES) {
-      if (deleted >= PURGE_BATCH) break;
-      const remaining = PURGE_BATCH - deleted;
-      const rows = await takeByUser(ctx, table, args.userId, purgePassLimit(table, remaining));
+      const room = purgePassRoom(pass, purgeRowBytes(table), purgePassLimit(table, PURGE_BATCH));
+      if (room === 0) {
+        more = true;
+        continue;
+      }
+      const rows = await takeByUser(ctx, table, args.userId, room);
       for (const row of rows) {
+        pass.bytes += storedBytes(row);
         if (table === 'mailAttachmentFiles') {
+          // It also reads the row that can share the stored file.
+          pass.bytes += purgeRowBytes(table);
           await deleteAttachmentFileRow(ctx, row as any);
-          deleted += 1;
+          pass.rows += 1;
           continue;
         }
         if ((table === 'officeVersions' || table === 'documentAssets') && 'storageId' in row) {
@@ -487,22 +597,25 @@ export const purgeUserDataBatch = internalMutation({
             .query('contentChunks')
             .withIndex('by_item', (q) => q.eq('itemId', row._id as Id<'contentItems'>))
             .collect();
+          pass.bytes += storedBytes(chunks);
           for (const chunk of chunks) await ctx.db.delete(chunk._id);
-          deleted += chunks.length;
+          pass.rows += chunks.length;
         }
         if (table === 'contacts') {
-          // 'contactEmails' has no userId index for the sweep; it hangs off its contact.
-          deleted += await deleteContactRow(ctx, row._id as Id<'contacts'>);
+          // 'contactEmails' has no userId index for the sweep; it hangs off
+          // its contact. The pass counts the bound for the address rows.
+          pass.bytes += purgeRowBytes(table);
+          pass.rows += await deleteContactRow(ctx, row._id as Id<'contacts'>);
           continue;
         }
         await ctx.db.delete(row._id);
-        deleted += 1;
+        pass.rows += 1;
       }
     }
-    if (deleted > 0) {
+    if (pass.rows > 0 || more) {
       await ctx.scheduler.runAfter(0, internal.accounts.purgeUserDataBatch, args);
     }
-    return { deleted };
+    return { deleted: pass.rows, bytes: pass.bytes };
   },
 });
 
@@ -518,7 +631,8 @@ export const ACCOUNT_PURGE_INDEX: Partial<Record<(typeof ACCOUNT_BULK_TABLES)[nu
  * reads one index: userId, then `kind` when it is set, then `field`, which
  * is equal to `value(accountId)`, or starts with it when `prefix` is set.
  * A key prefix ends with a separator, so one account id never matches the
- * rows of a longer one.
+ * rows of a longer one. `rowBytes` is the row bound of the entry (see
+ * PURGE_ROW_BYTES); one pass takes at most PURGE_PASS_BYTES / rowBytes rows.
  */
 export type AccountKeyedRows = {
   table: 'userDocs' | 'narrativeEntries' | 'albatrossNotifications' | 'suggestions';
@@ -527,6 +641,7 @@ export type AccountKeyedRows = {
   field: string;
   value: (accountId: string) => string;
   prefix?: boolean;
+  rowBytes: number;
 };
 
 const accountKeyPrefix = (accountId: string) => `${accountId}:`;
@@ -536,9 +651,30 @@ const accountJsonKeyPrefix = (accountId: string) => `${JSON.stringify([accountId
 export const ACCOUNT_KEYED_ROWS: readonly AccountKeyedRows[] = [
   // Per-user document store (lib/store/*): thread and message caches, thread
   // notes, tracked threads, drafts, and dismissals of the mailbox's threads.
-  { table: 'userDocs', index: 'by_user_kind_ref', kind: 'thread', field: 'ref', value: (a) => a },
-  { table: 'userDocs', index: 'by_user_kind_ref', kind: 'draft', field: 'ref', value: (a) => a },
-  { table: 'userDocs', index: 'by_user_kind_ref', kind: 'proofDismissal', field: 'ref', value: (a) => a },
+  {
+    table: 'userDocs',
+    index: 'by_user_kind_ref',
+    kind: 'thread',
+    field: 'ref',
+    value: (a) => a,
+    rowBytes: 64 * KiB,
+  },
+  {
+    table: 'userDocs',
+    index: 'by_user_kind_ref',
+    kind: 'draft',
+    field: 'ref',
+    value: (a) => a,
+    rowBytes: MiB,
+  },
+  {
+    table: 'userDocs',
+    index: 'by_user_kind_ref',
+    kind: 'proofDismissal',
+    field: 'ref',
+    value: (a) => a,
+    rowBytes: 16 * KiB,
+  },
   {
     table: 'userDocs',
     index: 'by_user_kind_key',
@@ -546,6 +682,7 @@ export const ACCOUNT_KEYED_ROWS: readonly AccountKeyedRows[] = [
     field: 'key',
     value: accountKeyPrefix,
     prefix: true,
+    rowBytes: MiB,
   },
   {
     table: 'userDocs',
@@ -554,6 +691,7 @@ export const ACCOUNT_KEYED_ROWS: readonly AccountKeyedRows[] = [
     field: 'key',
     value: accountKeyPrefix,
     prefix: true,
+    rowBytes: 64 * KiB,
   },
   {
     table: 'userDocs',
@@ -562,6 +700,7 @@ export const ACCOUNT_KEYED_ROWS: readonly AccountKeyedRows[] = [
     field: 'key',
     value: accountKeyPrefix,
     prefix: true,
+    rowBytes: 64 * KiB,
   },
   {
     table: 'userDocs',
@@ -570,11 +709,24 @@ export const ACCOUNT_KEYED_ROWS: readonly AccountKeyedRows[] = [
     field: 'key',
     value: accountJsonKeyPrefix,
     prefix: true,
+    rowBytes: 16 * KiB,
   },
   // Memory observations of the mailbox's mail and calendar
   // (lib/narrative/observations.ts). The chapters built on them go at the end.
-  { table: 'narrativeEntries', index: 'by_user_source', field: 'source', value: (a) => `mail:${a}` },
-  { table: 'narrativeEntries', index: 'by_user_source', field: 'source', value: (a) => `calendar:${a}` },
+  {
+    table: 'narrativeEntries',
+    index: 'by_user_source',
+    field: 'source',
+    value: (a) => `mail:${a}`,
+    rowBytes: PURGE_ROW_BYTES.narrativeEntries,
+  },
+  {
+    table: 'narrativeEntries',
+    index: 'by_user_source',
+    field: 'source',
+    value: (a) => `calendar:${a}`,
+    rowBytes: PURGE_ROW_BYTES.narrativeEntries,
+  },
   // New-mail notifications quote the sender and the subject.
   {
     table: 'albatrossNotifications',
@@ -582,6 +734,7 @@ export const ACCOUNT_KEYED_ROWS: readonly AccountKeyedRows[] = [
     field: 'dedupeKey',
     value: (a) => `mail-message:${a}:`,
     prefix: true,
+    rowBytes: PURGE_ROW_BYTES.albatrossNotifications,
   },
   {
     table: 'albatrossNotifications',
@@ -589,6 +742,7 @@ export const ACCOUNT_KEYED_ROWS: readonly AccountKeyedRows[] = [
     field: 'dedupeKey',
     value: (a) => `urgent-mail:${a}:`,
     prefix: true,
+    rowBytes: PURGE_ROW_BYTES.albatrossNotifications,
   },
   // Event suggestions read from the mailbox's messages (lib/mail/suggestion-detectors.ts).
   {
@@ -597,6 +751,7 @@ export const ACCOUNT_KEYED_ROWS: readonly AccountKeyedRows[] = [
     field: 'dedupeKey',
     value: (a) => `ics:${a}:`,
     prefix: true,
+    rowBytes: PURGE_ROW_BYTES.suggestions,
   },
   {
     table: 'suggestions',
@@ -604,6 +759,7 @@ export const ACCOUNT_KEYED_ROWS: readonly AccountKeyedRows[] = [
     field: 'dedupeKey',
     value: (a) => `inline-event:${a}:`,
     prefix: true,
+    rowBytes: PURGE_ROW_BYTES.suggestions,
   },
 ];
 
@@ -618,30 +774,44 @@ function keyedRowsQuery(ctx: any, entry: AccountKeyedRows, userId: string, accou
   });
 }
 
+/** Deletes a notice and its delivery rows. The bytes count the delivery rows it read. */
 async function deleteNotificationRow(ctx: any, notificationId: Id<'albatrossNotifications'>) {
-  let deleted = 0;
+  const done = { rows: 1, bytes: 0 };
   for (const table of ['notificationDeliveries', 'nativePushDeliveries'] as const) {
     const rows = await ctx.db
       .query(table)
       .withIndex('by_notification', (q: any) => q.eq('notificationId', notificationId))
       .collect();
     for (const row of rows) await ctx.db.delete(row._id);
-    deleted += rows.length;
+    done.rows += rows.length;
+    done.bytes += storedBytes(rows);
   }
   await ctx.db.delete(notificationId);
-  return deleted + 1;
+  return done;
 }
 
-/** Deletes one purged row of a mailbox with the rows that hang off it. Returns the count. */
-async function deleteAccountRow(ctx: any, table: string, row: any): Promise<number> {
+/**
+ * Deletes one purged row of a mailbox with the rows that hang off it. It
+ * returns the rows deleted and the bytes read: the row, the rows it read, or
+ * the row bound when another module reads them.
+ */
+async function deleteAccountRow(ctx: any, table: string, row: any): Promise<{ rows: number; bytes: number }> {
+  const bytes = storedBytes(row);
   // 'contactEmails' has no userId index for the sweep; it hangs off its contact.
-  if (table === 'contacts') return deleteContactRow(ctx, row._id as Id<'contacts'>);
-  if (table === 'albatrossNotifications') return deleteNotificationRow(ctx, row._id);
+  if (table === 'contacts')
+    return {
+      rows: await deleteContactRow(ctx, row._id as Id<'contacts'>),
+      bytes: bytes + purgeRowBytes(table),
+    };
+  if (table === 'albatrossNotifications') {
+    const done = await deleteNotificationRow(ctx, row._id);
+    return { rows: done.rows, bytes: bytes + done.bytes };
+  }
   if (table === 'mailAttachmentFiles') {
     await deleteAttachmentFileRow(ctx, row);
-    return 1;
+    return { rows: 1, bytes: bytes + purgeRowBytes(table) };
   }
-  let deleted = 0;
+  const done = { rows: 1, bytes };
   if (table === 'suggestions') {
     // The in-app notice of an event suggestion repeats its title.
     const notices = await ctx.db
@@ -650,10 +820,15 @@ async function deleteAccountRow(ctx: any, table: string, row: any): Promise<numb
         q.eq('userId', row.userId).eq('dedupeKey', `event-suggestion:${String(row._id)}`),
       )
       .collect();
-    for (const notice of notices) deleted += await deleteNotificationRow(ctx, notice._id);
+    done.bytes += storedBytes(notices);
+    for (const notice of notices) {
+      const removed = await deleteNotificationRow(ctx, notice._id);
+      done.rows += removed.rows;
+      done.bytes += removed.bytes;
+    }
   }
   await ctx.db.delete(row._id);
-  return deleted + 1;
+  return done;
 }
 
 /**
@@ -661,47 +836,64 @@ async function deleteAccountRow(ctx: any, table: string, row: any): Promise<numb
  * dead-account purge share it, so both delete the same set: the state rows,
  * the account tables, the content index of the mailbox (mail and attachment
  * items with their text chunks and vectors), and the keyed rows above. A pass
- * that deletes nothing means that set is gone; the caller then runs
- * finishAccountPurge.
+ * stays within PURGE_BATCH rows and PURGE_PASS_BYTES bytes. `more` is true
+ * when a limit stopped a read. A pass that deletes nothing and is not stopped
+ * means that the set is gone; the caller then runs finishAccountPurge.
  */
 export async function purgeAccountPass(ctx: any, userId: string, accountId: string) {
-  let deleted = 0;
+  // Rows deleted and bytes read in this pass.
+  const pass = { rows: 0, bytes: 0 };
+  let more = false;
   const byTable: Record<string, number> = {};
   const note = (table: string, count: number) => {
     if (!count) return;
     byTable[table] = (byTable[table] ?? 0) + count;
-    deleted += count;
+    pass.rows += count;
+  };
+  // The rows that the next read may take, or 0 when a limit stops it.
+  const room = (rowBytes: number, cap: number) => {
+    const rows = purgePassRoom(pass, rowBytes, cap);
+    if (rows === 0) more = true;
+    return rows;
   };
   for (const table of ACCOUNT_STATE_TABLES) {
     const rows = await ctx.db
       .query(table)
       .withIndex('by_user_account', (q: any) => q.eq('userId', userId).eq('accountId', accountId))
       .collect();
+    pass.bytes += storedBytes(rows);
     for (const row of rows) await ctx.db.delete(row._id);
     note(table, rows.length);
   }
   for (const table of ACCOUNT_BULK_TABLES) {
-    if (deleted >= PURGE_BATCH) break;
+    const take = room(purgeRowBytes(table), purgePassLimit(table, PURGE_BATCH));
+    if (!take) continue;
     const rows = await ctx.db
       .query(table)
       .withIndex((ACCOUNT_PURGE_INDEX[table] ?? 'by_user_account') as any, (q: any) =>
         q.eq('userId', userId).eq('accountId', accountId),
       )
-      .take(purgePassLimit(table, PURGE_BATCH - deleted));
-    for (const row of rows) note(table, await deleteAccountRow(ctx, table, row));
+      .take(take);
+    for (const row of rows) {
+      const done = await deleteAccountRow(ctx, table, row);
+      pass.bytes += done.bytes;
+      note(table, done.rows);
+    }
   }
-  if (deleted < PURGE_BATCH) {
+  const takeItems = room(purgeRowBytes('contentItems'), purgePassLimit('contentItems', PURGE_BATCH));
+  if (takeItems) {
     // Mail and attachment content items use the account id as connectionId.
     const items = await ctx.db
       .query('contentItems')
       .withIndex('by_user_connection', (q: any) => q.eq('userId', userId).eq('connectionId', accountId))
-      .take(purgePassLimit('contentItems', PURGE_BATCH - deleted));
+      .take(takeItems);
     for (const item of items) {
       // contentChunks has no userId index; it hangs off its item.
       const chunks = await ctx.db
         .query('contentChunks')
         .withIndex('by_item', (q: any) => q.eq('itemId', item._id))
         .collect();
+      pass.bytes += storedBytes(item) + storedBytes(chunks);
       for (const chunk of chunks) await ctx.db.delete(chunk._id);
       await ctx.db.delete(item._id);
       note('contentChunks', chunks.length);
@@ -709,11 +901,16 @@ export async function purgeAccountPass(ctx: any, userId: string, accountId: stri
     }
   }
   for (const entry of ACCOUNT_KEYED_ROWS) {
-    if (deleted >= PURGE_BATCH) break;
-    const rows = await keyedRowsQuery(ctx, entry, userId, accountId).take(PURGE_BATCH - deleted);
-    for (const row of rows) note(entry.table, await deleteAccountRow(ctx, entry.table, row));
+    const take = room(entry.rowBytes, PURGE_BATCH);
+    if (!take) continue;
+    const rows = await keyedRowsQuery(ctx, entry, userId, accountId).take(take);
+    for (const row of rows) {
+      const done = await deleteAccountRow(ctx, entry.table, row);
+      pass.bytes += done.bytes;
+      note(entry.table, done.rows);
+    }
   }
-  return { deleted, byTable };
+  return { deleted: pass.rows, byTable, bytes: pass.bytes, more };
 }
 
 /**
@@ -728,9 +925,16 @@ export async function finishAccountPurge(ctx: any, userId: string, accountId: st
 
 // Evidence kinds that can quote a mailbox's mail or calendar.
 const DERIVED_EVIDENCE_KINDS = ['mail_thread', 'calendar_event'] as const;
+// Evidence rows have fields with no limit, so a page also stops after
+// DERIVED_PAGE_BYTES (Convex reads one more row at most: 1 MiB).
 const DERIVED_EVIDENCE_PAGE = 100;
-// A preparation reads its seed and up to 20 sources.
-const DERIVED_PREPARATIONS_PAGE = 25;
+const DERIVED_PAGE_BYTES = 4 * MiB;
+// A preparation reads its seed and its sources (the product saves up to 20),
+// each up to CONTENT_ITEM_BYTES. A pass reads a small page, then checks the
+// references while the pass has room for one more item. When the room ends,
+// the next pass starts again at the same preparation and reference.
+const DERIVED_PREPARATIONS_PAGE = 5;
+const DERIVED_PREPARATIONS_PAGE_BYTES = 2 * MiB;
 
 /** True when a Work receipt came from the mailbox (reply and proof rows, area-link rows). */
 export function evidenceNamesAccount(
@@ -742,22 +946,18 @@ export function evidenceNamesAccount(
   );
 }
 
-// A prepared brief item whose seed or a source item is gone. Its draft was
-// written from that content, and the list and the claim already skip it.
-async function preparationLostSource(ctx: any, row: any) {
-  if (!(await ctx.db.get(row.seedId))) return true;
-  for (const source of row.sources || []) {
-    const id = ctx.db.normalizeId('contentItems', String(source?._id ?? ''));
-    if (!id || !(await ctx.db.get(id))) return true;
-  }
-  return false;
+/** The content items that a prepared brief item was written from: its seed, then its sources. */
+function preparationReferences(row: { seedId: string; sources?: Array<{ _id?: unknown }> }) {
+  return [String(row.seedId), ...(row.sources || []).map((source) => String(source?._id ?? ''))];
 }
 
 /**
  * Rows that name a purged mailbox but have no index by account, read page by
  * page: the mail and calendar Work receipts of the mailbox, then prepared
- * brief items that lost their content items. The last step asks the memory
- * cleanup to delete the chapters built on the deleted observations.
+ * brief items whose seed or a source item is gone (their draft was written
+ * from that content, and the list and the claim already skip them). The last
+ * step asks the memory cleanup to delete the chapters built on the deleted
+ * observations. Each pass stays within PURGE_PASS_BYTES.
  */
 export const purgeAccountDerivedRows = internalMutation({
   args: {
@@ -765,11 +965,26 @@ export const purgeAccountDerivedRows = internalMutation({
     accountId: v.string(),
     step: v.optional(v.number()),
     cursor: v.optional(v.union(v.string(), v.null())),
+    // Where a preparations pass stopped: the row, and the next reference.
+    resumeId: v.optional(v.id('briefPreparations')),
+    position: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const step = args.step ?? 0;
     const cursor = args.cursor ?? null;
     let deleted = 0;
+    let bytes = 0;
+    // Schedules the next pass and returns its arguments.
+    const next = async (fields: {
+      step: number;
+      cursor: string | null;
+      resumeId?: Id<'briefPreparations'>;
+      position?: number;
+    }) => {
+      const nextArgs = { userId: args.userId, accountId: args.accountId, ...fields };
+      await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDerivedRows, nextArgs);
+      return nextArgs;
+    };
     let page: { isDone: boolean; continueCursor: string };
     if (step < DERIVED_EVIDENCE_KINDS.length) {
       const evidence = await ctx.db
@@ -777,7 +992,8 @@ export const purgeAccountDerivedRows = internalMutation({
         .withIndex('by_user_source', (q) =>
           q.eq('userId', args.userId).eq('sourceKind', DERIVED_EVIDENCE_KINDS[step]),
         )
-        .paginate({ cursor, numItems: DERIVED_EVIDENCE_PAGE });
+        .paginate({ cursor, numItems: DERIVED_EVIDENCE_PAGE, maximumBytesRead: DERIVED_PAGE_BYTES });
+      bytes += storedBytes(evidence.page);
       for (const row of evidence.page) {
         if (!evidenceNamesAccount(row, args.accountId)) continue;
         await ctx.db.delete(row._id);
@@ -785,12 +1001,43 @@ export const purgeAccountDerivedRows = internalMutation({
       }
       page = evidence;
     } else if (step === DERIVED_EVIDENCE_KINDS.length) {
+      // by_user_key keeps its order when a row changes, so a pass can resume.
       const preparations = await ctx.db
         .query('briefPreparations')
-        .withIndex('by_user_updated', (q) => q.eq('userId', args.userId))
-        .paginate({ cursor, numItems: DERIVED_PREPARATIONS_PAGE });
-      for (const row of preparations.page) {
-        if (!(await preparationLostSource(ctx, row))) continue;
+        .withIndex('by_user_key', (q) => q.eq('userId', args.userId))
+        .paginate({
+          cursor,
+          numItems: DERIVED_PREPARATIONS_PAGE,
+          maximumBytesRead: DERIVED_PREPARATIONS_PAGE_BYTES,
+        });
+      bytes += storedBytes(preparations.page);
+      // The rows before the resume row were checked and kept by an earlier pass.
+      const resumeAt = args.resumeId ? preparations.page.findIndex((row) => row._id === args.resumeId) : -1;
+      for (let index = Math.max(resumeAt, 0); index < preparations.page.length; index++) {
+        const row = preparations.page[index];
+        const references = preparationReferences(row);
+        let lost = false;
+        for (
+          let position = index === resumeAt ? (args.position ?? 0) : 0;
+          position < references.length;
+          position++
+        ) {
+          if (bytes + CONTENT_ITEM_BYTES > PURGE_PASS_BYTES)
+            return {
+              deleted,
+              done: false,
+              bytes,
+              next: await next({ step, cursor, resumeId: row._id, position }),
+            };
+          const id = ctx.db.normalizeId('contentItems', references[position]);
+          const item = id ? await ctx.db.get(id) : null;
+          if (!item) {
+            lost = true;
+            break;
+          }
+          bytes += storedBytes(item);
+        }
+        if (!lost) continue;
         await ctx.db.delete(row._id);
         deleted += 1;
       }
@@ -801,15 +1048,13 @@ export const purgeAccountDerivedRows = internalMutation({
         .withIndex('by_user', (q) => q.eq('userId', args.userId))
         .first();
       if (memory) await ctx.scheduler.runAfter(0, internal.narrative.cleanup, { userId: args.userId });
-      return { deleted: 0, done: true };
+      return { deleted: 0, done: true, bytes };
     }
-    await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDerivedRows, {
-      userId: args.userId,
-      accountId: args.accountId,
+    const nextArgs = await next({
       step: page.isDone ? step + 1 : step,
       cursor: page.isDone ? null : page.continueCursor,
     });
-    return { deleted, done: false };
+    return { deleted, done: false, bytes, next: nextArgs };
   },
 });
 
@@ -823,13 +1068,13 @@ export const purgeAccountDataBatch = internalMutation({
       .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
       .first();
     if (account) return { deleted: 0, stopped: 'reconnected' as const };
-    const { deleted, byTable } = await purgeAccountPass(ctx, args.userId, args.accountId);
-    if (deleted > 0) {
+    const { deleted, byTable, bytes, more } = await purgeAccountPass(ctx, args.userId, args.accountId);
+    if (deleted > 0 || more) {
       await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDataBatch, args);
-      return { deleted, byTable };
+      return { deleted, byTable, bytes };
     }
     await finishAccountPurge(ctx, args.userId, args.accountId);
-    return { deleted: 0, byTable, done: true };
+    return { deleted: 0, byTable, bytes, done: true };
   },
 });
 

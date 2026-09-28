@@ -95,18 +95,18 @@ export const purgeDeadAccountBatch = internalMutation({
     if (!account || account.status !== 'error') return { deleted: 0, stopped: 'not_dead' };
     const period = args.errorSince === undefined ? (account.errorSince ?? null) : args.errorSince;
     if ((account.errorSince ?? null) !== period) return { deleted: 0, stopped: 'error_period_changed' };
-    const { deleted, byTable } = await purgeAccountPass(ctx, args.userId, args.accountId);
-    if (deleted > 0) {
+    const { deleted, byTable, bytes, more } = await purgeAccountPass(ctx, args.userId, args.accountId);
+    if (deleted > 0 || more) {
       await ctx.scheduler.runAfter(0, internal.deadAccounts.purgeDeadAccountBatch, {
         userId: args.userId,
         accountId: args.accountId,
         errorSince: period,
       });
-      return { deleted, byTable, done: false };
+      return { deleted, byTable, bytes, done: false };
     }
     await ctx.db.patch(account._id, { corpusPurgedAt: now() });
     await finishAccountPurge(ctx, args.userId, args.accountId);
-    return { deleted: 0, byTable, done: true };
+    return { deleted: 0, byTable, bytes, done: true };
   },
 });
 
