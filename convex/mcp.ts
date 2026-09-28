@@ -946,11 +946,45 @@ async function deleteMcpItemRows(ctx, item) {
 }
 
 /**
- * One bounded prune page for one connection. An item that no sync returned
- * for 14 days goes with its evidence, candidate area links, and content row.
- * An item that a task links stays, and its clock starts again. Rows from
- * before lastSeenAt existed use updatedAt, which the old sync moved on every
- * pass. The page schedules the next one while it finds work.
+ * The time before which an item counts as not seen, or null when the prune
+ * must not touch the connection. Only a connection that the sync still polls
+ * is pruned. "Not seen" counts back from its last clean sync: a sync that
+ * reached the source and had no failed query. A paused connection, or one
+ * whose last sync failed or was partial, keeps its items, because its
+ * lastSeenAt stops for a reason that is not the source.
+ */
+export function mcpPruneCutoff(
+  connection:
+    | {
+        status?: string;
+        includeInBrief?: boolean;
+        includeInSearch?: boolean;
+        lastSyncOkAt?: number;
+        lastSyncErrorAt?: number;
+      }
+    | null
+    | undefined,
+  ts: number,
+): number | null {
+  if (!connection || !mcpConnectionWantsSync(connection)) return null;
+  const cleanSyncAt = Number(connection.lastSyncOkAt) || 0;
+  if (!cleanSyncAt || connection.lastSyncErrorAt !== undefined) return null;
+  return Math.min(ts, cleanSyncAt) - MCP_ITEM_STALE_MS;
+}
+
+async function connectionById(ctx, connectionId: string) {
+  return ctx.db
+    .query('mcpConnections')
+    .withIndex('by_connection', (q) => q.eq('connectionId', connectionId))
+    .first();
+}
+
+/**
+ * One bounded prune page for one connection. An item that no clean sync
+ * returned for 14 days goes with its evidence, candidate area links, and
+ * content row. An item that a task links stays, and its clock starts again.
+ * Rows from before lastSeenAt existed use updatedAt, which the old sync moved
+ * on every pass. The page schedules the next one while it finds work.
  */
 export const pruneStaleItems = internalMutation({
   args: {
@@ -960,7 +994,9 @@ export const pruneStaleItems = internalMutation({
   },
   handler: async (ctx, args) => {
     const ts = args.now ?? now();
-    const cutoff = ts - MCP_ITEM_STALE_MS;
+    const cutoff = mcpPruneCutoff(await connectionById(ctx, args.connectionId), ts);
+    if (cutoff === null)
+      return { deleted: 0, kept: 0, dated: 0, more: false, skipped: true, dryRun: Boolean(args.dryRun) };
     const legacy = await ctx.db
       .query('mcpItems')
       .withIndex('by_connection_seen', (q) =>
@@ -1010,14 +1046,15 @@ export const pruneStaleItems = internalMutation({
   },
 });
 
-/** Daily: one prune chain for each connection that still has items. */
+/** Daily: one prune chain for each connection that the sync polls and that last synced clean. */
 export const pruneStaleItemsTick = internalMutation({
   args: {},
   handler: async (ctx) => {
     const connections = await ctx.db.query('mcpConnections').collect();
+    const ts = now();
     let scheduled = 0;
     for (const connection of connections) {
-      if (connection.status === 'disconnected') continue;
+      if (mcpPruneCutoff(connection, ts) === null) continue;
       await ctx.scheduler.runAfter(0, internal.mcp.pruneStaleItems, {
         connectionId: connection.connectionId,
       });
