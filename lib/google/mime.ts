@@ -73,11 +73,34 @@ export function formatMimeAddress(address: MimeAddress): string {
   return `"${name.replace(/(["\\])/g, '\\$1')}" <${email}>`;
 }
 
-/** One header line; long address lists fold after each comma. */
+const HEADER_FOLD_AT = 76;
+
+/**
+ * One header field, folded (RFC 5322, 2.2.3) so that each line stays near 76
+ * characters and far below the 998 limit. An address list folds after each
+ * comma. A longer part folds at its spaces, and the header name keeps its
+ * first word. Unfolding (each CRLF removed) gives the field back.
+ */
 function header(name: string, value: string) {
   const line = `${name}: ${value}`;
-  if (line.length <= 76 || !value.includes(', ')) return line;
-  return `${name}: ${value.split(', ').join(',\r\n ')}`;
+  if (line.length <= HEADER_FOLD_AT) return line;
+  const parts = value.includes(', ') ? value.split(', ') : [value];
+  const lines: string[] = [];
+  let current = `${name}:`;
+  parts.forEach((part, partIndex) => {
+    const words = (partIndex < parts.length - 1 ? `${part},` : part).split(' ');
+    words.forEach((word, wordIndex) => {
+      const newPart = partIndex > 0 && wordIndex === 0;
+      const tooLong =
+        word !== '' && current !== `${name}:` && current.length + 1 + word.length > HEADER_FOLD_AT;
+      if (newPart || tooLong) {
+        lines.push(current);
+        current = ` ${word}`;
+      } else current = `${current} ${word}`;
+    });
+  });
+  lines.push(current);
+  return lines.join('\r\n');
 }
 
 function addressHeader(name: string, list: MimeAddress[] | undefined) {
@@ -155,8 +178,8 @@ export function buildMimeMessage(input: MimeMessageInput): string {
     header('Subject', encodeHeaderText(input.subject || '')),
     `Date: ${(input.date ?? new Date()).toUTCString()}`,
     'MIME-Version: 1.0',
-    input.inReplyTo ? `In-Reply-To: ${input.inReplyTo.replace(/[\r\n]+/g, ' ')}` : null,
-    input.references ? `References: ${input.references.replace(/[\r\n]+/g, ' ')}` : null,
+    input.inReplyTo ? header('In-Reply-To', input.inReplyTo.replace(/[\r\n]+/g, ' ')) : null,
+    input.references ? header('References', input.references.replace(/[\r\n]+/g, ' ')) : null,
   ].filter((line): line is string => Boolean(line));
 
   const body = input.body || '';

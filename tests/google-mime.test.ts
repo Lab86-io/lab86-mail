@@ -155,6 +155,42 @@ describe('buildMimeMessage', () => {
     for (const line of mime.split('\r\n')) expect(line.length).toBeLessThanOrEqual(998);
   });
 
+  // The lines of one header field: its first line and the continuation lines.
+  function field(mime: string, name: string) {
+    const lines = mime.split('\r\n');
+    const start = lines.findIndex((line) => line.startsWith(`${name}:`));
+    const end = lines.findIndex((line, index) => index > start && !line.startsWith(' '));
+    return lines.slice(start, end);
+  }
+
+  test('a long subject folds at spaces and unfolds to the same text', () => {
+    const cafe = 'Caf\u00e9 \u2615 '.repeat(120);
+    const words = 'quarterly planning notes '.repeat(40).trim();
+    for (const subject of [cafe, words]) {
+      const lines = field(buildMimeMessage({ subject, body: 'b', isPlaintext: true, date: DATE }), 'Subject');
+      expect(lines.length).toBeGreaterThan(5);
+      expect(lines.join('')).toBe(`Subject: ${encodeHeaderText(subject)}`);
+      // The first line keeps the name with the first encoded word (72 characters).
+      expect(lines[0].length).toBeLessThanOrEqual(82);
+      for (const line of lines.slice(1)) expect(line.length).toBeLessThanOrEqual(76);
+    }
+  });
+
+  test('a long References value folds between the message ids', () => {
+    const ids = Array.from({ length: 30 }, (_, i) => `<message-${i}.1790000000@mail.example.org>`).join(' ');
+    const mime = buildMimeMessage({
+      subject: 's',
+      body: 'b',
+      isPlaintext: true,
+      references: ids,
+      date: DATE,
+    });
+    const lines = field(mime, 'References');
+    expect(lines.join('')).toBe(`References: ${ids}`);
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(76);
+    expect(field(mime, 'Subject')).toEqual(['Subject: s']);
+  });
+
   test('empty lists and a missing subject are left out or empty', () => {
     const mime = buildMimeMessage({ to: [{ email: '' }], isPlaintext: true });
     expect(mime).not.toContain('To:');
