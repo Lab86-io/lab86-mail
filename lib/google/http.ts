@@ -40,6 +40,7 @@ const defaults = {
   getGoogleAccessToken,
   invalidateGoogleAccessToken,
   sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  now: () => Date.now(),
 };
 
 let deps = defaults;
@@ -57,10 +58,23 @@ function retryable(status: number, serverErrors: boolean) {
 // when the attempts run out, reported as 429.
 const RATE_LIMIT_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded']);
 
+/**
+ * The wait that a Retry-After value asks for, in ms: delay seconds or an
+ * HTTP date (RFC 9110, 10.2.3). Null for no value, a bad value, or a time
+ * that is not in the future.
+ */
+export function retryAfterMs(value: string | null, now: number): number | null {
+  const text = value?.trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) return Number(text) > 0 ? Number(text) * 1000 : null;
+  const at = Date.parse(text);
+  return Number.isFinite(at) && at > now ? at - now : null;
+}
+
 function backoff(attempt: number, response: Response) {
-  const retryAfter = Number(response.headers.get('retry-after'));
-  return Number.isFinite(retryAfter) && retryAfter > 0
-    ? Math.min(retryAfter * 1000, GOOGLE_MAX_RETRY_AFTER_MS)
+  const wait = retryAfterMs(response.headers.get('retry-after'), deps.now());
+  return wait !== null
+    ? Math.min(wait, GOOGLE_MAX_RETRY_AFTER_MS)
     : Math.min(8000, 250 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 200);
 }
 

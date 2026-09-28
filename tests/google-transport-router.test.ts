@@ -6,6 +6,7 @@ import {
   googleFetch,
   googleJson,
   googleUrl,
+  retryAfterMs,
 } from '../lib/google/http';
 import { isGoogleDirectEnabled, isGoogleDirectGrant, newGoogleDirectGrantId } from '../lib/google/transport';
 import { routeNylasClient } from '../lib/nylas/client';
@@ -267,6 +268,37 @@ describe('googleFetch', () => {
     });
     await googleFetch('google:a', 'https://x.test');
     expect(waits).toEqual([GOOGLE_MAX_RETRY_AFTER_MS]);
+  });
+
+  test('Retry-After can be delay seconds or an HTTP date, and both wait at most the cap', async () => {
+    const now = Date.parse('2026-09-28T12:00:00Z');
+    expect(retryAfterMs('7', now)).toBe(7000);
+    expect(retryAfterMs(' 7 ', now)).toBe(7000);
+    expect(retryAfterMs('Mon, 28 Sep 2026 12:00:05 GMT', now)).toBe(5000);
+    // No value, zero, a bad value, a past date, and a fraction use the backoff.
+    for (const value of [null, '', '0', '-3', 'soon', '1.5', 'Mon, 28 Sep 2026 11:59:00 GMT'])
+      expect(retryAfterMs(value, now)).toBeNull();
+
+    const waits: number[] = [];
+    const { fetch } = responder([
+      { status: 429, headers: { 'retry-after': 'Mon, 28 Sep 2026 12:00:05 GMT' } },
+      { status: 429, headers: { 'retry-after': 'Mon, 28 Sep 2026 13:00:00 GMT' } },
+      { status: 429, headers: { 'retry-after': 'Mon, 28 Sep 2026 11:00:00 GMT' } },
+      { status: 200 },
+    ]);
+    __setGoogleHttpDepsForTest({
+      fetch,
+      getGoogleAccessToken: async () => 'tok',
+      now: () => now,
+      sleep: async (ms: number) => {
+        waits.push(ms);
+      },
+    });
+    await googleFetch('google:a', 'https://x.test');
+    expect(waits.slice(0, 2)).toEqual([5000, GOOGLE_MAX_RETRY_AFTER_MS]);
+    // A past date falls back to the short backoff of the third attempt.
+    expect(waits[2]).toBeGreaterThanOrEqual(1000);
+    expect(waits[2]).toBeLessThan(1200);
   });
 
   test('googleJson returns undefined for 204', async () => {
