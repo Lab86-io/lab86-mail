@@ -21,6 +21,7 @@
 import { api, convexMutation, convexQuery } from '../lib/hosted/convex';
 import { encryptionKeyring } from '../lib/security/crypto';
 import {
+  assertRotationWriteFormat,
   formatRotationReport,
   type RotationStore,
   rotateEncryptedFields,
@@ -44,9 +45,8 @@ function parseArgs(argv: string[]) {
 }
 
 const options = parseArgs(process.argv.slice(2));
-if (options.apply && process.env.LAB86_MAIL_ENCRYPTION_WRITE_FORMAT === 'v1') {
-  throw new Error('Unset LAB86_MAIL_ENCRYPTION_WRITE_FORMAT before a rotation. v1 values have no key id.');
-}
+// Also for a dry run: with the v1 write format, its report hides values under retired keys.
+assertRotationWriteFormat();
 const keyring = encryptionKeyring();
 console.log(`Keyring: current "${keyring.currentKeyId}", all [${[...keyring.keys.keys()].join(', ')}]`);
 

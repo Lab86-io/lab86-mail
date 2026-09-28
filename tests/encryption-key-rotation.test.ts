@@ -25,6 +25,7 @@ import {
   readEncryptedValue,
 } from '../lib/security/encrypted-fields';
 import {
+  assertRotationWriteFormat,
   formatRotationReport,
   type RotationStore,
   rotateEncryptedFields,
@@ -310,6 +311,29 @@ describe('key rotation', () => {
     expect(text).toContain('providerGrants.accessTokenEncrypted | 3 | 1 | k1=1 k2=1 v1=1 | 1 | 0 | 0');
     expect(text).toContain('aiProviderKeys.encryptedKey | 0 | 0 | - | 0 | 0 | 0');
     expect(text).not.toContain(rows.providerGrants[0].doc.accessTokenEncrypted as string);
+  });
+
+  test('the v1 write format stops a dry run too, before any read', async () => {
+    const { rows } = rotatedWorld();
+    const { store, writes } = memoryStore(rows);
+    let reads = 0;
+    const counting: RotationStore = {
+      ...store,
+      listPage: (input) => {
+        reads += 1;
+        return store.listPage(input);
+      },
+    };
+    process.env.LAB86_MAIL_ENCRYPTION_WRITE_FORMAT = 'v1';
+    for (const apply of [false, true]) {
+      await expect(rotateEncryptedFields(counting, { apply })).rejects.toThrow(
+        'Unset LAB86_MAIL_ENCRYPTION_WRITE_FORMAT',
+      );
+    }
+    expect(reads).toBe(0);
+    expect(writes).toEqual([]);
+    expect(() => assertRotationWriteFormat({ LAB86_MAIL_ENCRYPTION_WRITE_FORMAT: 'v2' })).not.toThrow();
+    expect(() => assertRotationWriteFormat({})).not.toThrow();
   });
 
   test('apply re-encrypts old values, keeps current ones, and skips values it cannot open', async () => {

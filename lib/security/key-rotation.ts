@@ -64,11 +64,25 @@ function emptyReport(): FieldReport {
   return { total: 0, current: 0, byKeyId: {}, undecryptable: 0, reencrypted: 0, skipped: 0 };
 }
 
+/**
+ * Stops a rotation run, a dry run too, while the v1 write format is set. With
+ * that format every v1 value counts as current (it has no key id), so a dry
+ * run would report no work while values still need a retired key.
+ */
+export function assertRotationWriteFormat(env: Record<string, string | undefined> = process.env) {
+  if (env.LAB86_MAIL_ENCRYPTION_WRITE_FORMAT === 'v1') {
+    throw new Error(
+      'Unset LAB86_MAIL_ENCRYPTION_WRITE_FORMAT before a rotation or a dry run. v1 values have no key id.',
+    );
+  }
+}
+
 export async function rotateEncryptedFields(
   store: RotationStore,
   options: { apply: boolean; tables?: string[]; pageSize?: number },
   crypto: typeof defaultCrypto = defaultCrypto,
 ): Promise<RotationReport> {
+  assertRotationWriteFormat();
   const known = encryptedTables();
   const tables = options.tables?.length ? options.tables : known;
   for (const table of tables) {

@@ -160,7 +160,9 @@ export function encryptedKeyId(payload: string): string | null {
 
 /**
  * True when the value is not in the write format under the current key. With
- * the v1 write format, every v1 value counts as current (it has no key id).
+ * the v1 write format, every v1 value counts as current (it has no key id),
+ * so the result says nothing about a rotation: the rotation refuses that
+ * format (assertRotationWriteFormat in lib/security/key-rotation.ts).
  */
 export function needsReencryption(payload: string) {
   const kid = encryptedKeyId(payload);
