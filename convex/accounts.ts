@@ -563,6 +563,7 @@ export const USER_INLINE_TABLES = [
   'aiEntitlements',
   'aiUsagePeriods',
   'aiUsageEvents',
+  'aiCostWatch',
   'mailSyncStates',
   'rateLimits',
   'userDocs',
@@ -673,6 +674,7 @@ export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
   cloudFileOAuthStates: 'Short-lived sign-in state for a file connection, not user content.',
   cloudFileOAuthCompletions: 'Short-lived sign-in state for a file connection, not user content.',
   rateLimits: 'Request counters that protect the service, not user content.',
+  aiCostWatch: 'Cost samples for the owner alarm that protect the service, not user content.',
 };
 
 /**

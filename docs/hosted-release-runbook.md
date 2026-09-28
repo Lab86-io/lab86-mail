@@ -258,6 +258,14 @@ Narrative memory:
 - `LAB86_NARRATIVE_ENABLED`
 - `LAB86_NARRATIVE_USER_IDS` (optional allow list)
 
+The loop alarm. Each hour a Convex cron calls `/api/cron/cost-alarm`. When one user's background model
+cost (chat and own-key calls left out) passes the threshold in 24 hours, the owner gets one plain-text email
+for that user in that UTC day. It never stops or limits a user. It also needs `RESEND_API_KEY` and
+`LAB86_NOTIFICATION_FROM`:
+
+- `LAB86_OWNER_ALERT_EMAIL` (no address, no alarm; the app logs one warning)
+- `LAB86_COST_ALARM_USD` (optional, default 5)
+
 Email and web push notifications. Production does not set these yet, so email and web push do not send:
 
 - `LAB86_NOTIFICATION_LINK_SECRET`

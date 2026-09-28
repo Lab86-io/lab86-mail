@@ -237,7 +237,20 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user_period_source', ['userId', 'period', 'source'])
-    .index('by_user', ['userId']),
+    .index('by_user', ['userId'])
+    // The loop alarm finds the users with hosted use in the last day.
+    .index('by_source_updated', ['source', 'updatedAt']),
+
+  // The loop alarm (lib/ai/cost-alarm.ts): hourly samples of each user's
+  // hosted credits for the month, and the UTC day of the last alarm email.
+  aiCostWatch: defineTable({
+    userId: v.string(),
+    samples: v.array(v.object({ at: v.number(), period: v.string(), credits: v.number() })),
+    alertDay: v.optional(v.string()),
+    alertCredits: v.optional(v.number()),
+    alertedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index('by_user', ['userId']),
 
   aiUsageEvents: defineTable({
     userId: v.string(),

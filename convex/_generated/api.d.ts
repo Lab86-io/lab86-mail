@@ -12,6 +12,7 @@ import type * as accounts from "../accounts.js";
 import type * as agentExecution from "../agentExecution.js";
 import type * as agentUploads from "../agentUploads.js";
 import type * as ai from "../ai.js";
+import type * as aiCostAlarm from "../aiCostAlarm.js";
 import type * as albatross from "../albatross.js";
 import type * as albatrossAreaPulse from "../albatrossAreaPulse.js";
 import type * as albatrossBrowserSessions from "../albatrossBrowserSessions.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   agentExecution: typeof agentExecution;
   agentUploads: typeof agentUploads;
   ai: typeof ai;
+  aiCostAlarm: typeof aiCostAlarm;
   albatross: typeof albatross;
   albatrossAreaPulse: typeof albatrossAreaPulse;
   albatrossBrowserSessions: typeof albatrossBrowserSessions;

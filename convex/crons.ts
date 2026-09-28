@@ -149,6 +149,10 @@ crons.interval('mail push digest', { minutes: 15 }, internal.albatrossNotificati
 
 crons.interval('mcp oauth state cleanup', { minutes: 30 }, internal.mcp.sweepExpiredOAuthStates, {});
 
+// The loop alarm: one email to the owner when a user's background model cost
+// passes the threshold in 24 hours. It only tells; it never stops a user.
+crons.hourly('model cost alarm', { minuteUTC: 17 }, internal.aiCostAlarm.tick, {});
+
 // Retention for tables that otherwise grow with no limit: expired one-time
 // codes, processed webhook payloads older than 14 days, lapsed rate-limit
 // windows, and expired OAuth states. The sweep reschedules itself while a
