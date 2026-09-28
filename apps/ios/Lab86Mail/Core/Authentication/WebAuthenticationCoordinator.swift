@@ -39,10 +39,23 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         self.backend = backend
     }
 
-    func connectMailbox(provider: String) async throws {
+    /// The connect path for a mailbox sign-in. A reconnect names its account,
+    /// so the server signs in that mailbox again (a direct Google account stays
+    /// direct) and does not add a new one.
+    nonisolated static func mailboxConnectPath(provider: String, accountId: String? = nil) -> String {
         let encoded = provider.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? provider
+        var path = "/api/nylas/connect?provider=\(encoded)&native=1&format=json"
+        if let accountId, !accountId.isEmpty {
+            let account = accountId.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? accountId
+            path += "&account=\(account)"
+        }
+        return path
+    }
+
+    /// Starts a mailbox sign-in. Pass `accountId` for a reconnect.
+    func connectMailbox(provider: String, accountId: String? = nil) async throws {
         let response = try await backend.get(
-            path: "/api/nylas/connect?provider=\(encoded)&native=1&format=json"
+            path: Self.mailboxConnectPath(provider: provider, accountId: accountId)
         )
         try await authorize(
             response: response,
