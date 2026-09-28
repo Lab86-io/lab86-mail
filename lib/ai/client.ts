@@ -1,5 +1,6 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
+import { captureGenerationIdFetch } from './generation-cost';
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
@@ -23,6 +24,9 @@ export const openrouter = OPENROUTER_KEY
         'HTTP-Referer': process.env.LAB86_MAIL_PUBLIC_URL || 'https://mail.lab86.io',
         'X-Title': 'lab86-mail',
       },
+      // Notes the generation id of each response, so a failed or stopped
+      // call can still record its real cost (lib/ai/generation-cost.ts).
+      fetch: captureGenerationIdFetch(),
     })
   : null;
 export const openai = OPENAI_KEY ? createOpenAI({ apiKey: OPENAI_KEY }) : null;

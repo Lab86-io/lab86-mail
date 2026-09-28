@@ -178,6 +178,93 @@ describe('structured AI gateway', () => {
   });
 });
 
+describe('a failed call records its own row with the usage it had', () => {
+  afterEach(() => __setObjectGenerationDepsForTest());
+  const runtime = {
+    userId: 'u',
+    source: 'byok',
+    provider: 'openrouter',
+    modelName: 'anthropic/claude-opus-5.5',
+    model: 'opus',
+  } as any;
+
+  test('a schema failure records the usage of its response', async () => {
+    const usage: any[] = [];
+    __setObjectGenerationDepsForTest({
+      resolveAiRuntime: async () => runtime,
+      generateObject: (async () => {
+        throw Object.assign(new Error('No object generated: response did not match schema.'), {
+          usage: { inputTokens: 516, outputTokens: 158 },
+          response: { id: 'gen-opus' },
+        });
+      }) as any,
+      recordUsage: (async (...args: any[]) => usage.push(args)) as any,
+    });
+    await expect(
+      generateObjectForCurrentUser({ feature: 'brief_preparation_research', schema: {}, prompt: '{}' }),
+    ).rejects.toThrow('did not match schema');
+    expect(usage).toHaveLength(1);
+    expect(usage[0].slice(1)).toEqual([
+      'brief_preparation_research',
+      { inputTokens: 516, outputTokens: 158 },
+      false,
+      'No object generated: response did not match schema.',
+    ]);
+  });
+
+  test('each failed attempt of a text call is one row, and a fallback success is one more', async () => {
+    const usage: any[] = [];
+    // The fallback chain serves hosted calls. No request left an id, so no lookup runs.
+    const hostedRuntime = { ...runtime, source: 'lab86' };
+    const fallback = { ...hostedRuntime, modelName: 'openai/gpt-5.5', model: 'fallback' };
+    const result = await generateTextForCurrentUser(
+      { feature: 'daily_report_insight' },
+      {
+        resolveAiRuntime: async () => hostedRuntime,
+        fallbackRuntimes: () => [fallback],
+        recordUsage: (async (...args: any[]) => usage.push(args)) as any,
+        generateText: (async (request: any) => {
+          if (request.model === 'fallback')
+            return { text: 'ok', finishReason: 'stop', usage: { inputTokens: 9, outputTokens: 3 } };
+          throw Object.assign(new Error('upstream error'), {
+            statusCode: 502,
+            lastError: { usage: { inputTokens: 40, outputTokens: 7 } },
+          });
+        }) as any,
+      },
+    );
+    expect(result.text).toBe('ok');
+    expect(usage.map((row) => [row[0].modelName, row[2], row[3], row[4]])).toEqual([
+      ['anthropic/claude-opus-5.5', { inputTokens: 40, outputTokens: 7 }, false, 'upstream error'],
+      ['openai/gpt-5.5', { inputTokens: 9, outputTokens: 3 }, true, undefined],
+    ]);
+  });
+
+  test('a cut brief answer records one failed row per attempt, not two', async () => {
+    const usage: any[] = [];
+    await expect(
+      generateTextForCurrentUser(
+        { feature: 'daily_brief_prose' },
+        {
+          resolveAiRuntime: async () => runtime,
+          fallbackRuntimes: () => [],
+          recordUsage: (async (...args: any[]) => usage.push(args)) as any,
+          generateText: (async () => ({
+            text: '{"lede":',
+            finishReason: 'length',
+            usage: { inputTokens: 100, outputTokens: 32_000 },
+          })) as any,
+        },
+      ),
+    ).rejects.toThrow('exhausted its own output allowance');
+    // Two attempts (the brief retry), one row each.
+    expect(usage.map((row) => [row[2].outputTokens, row[3], row[4]])).toEqual([
+      [32_000, false, 'Incomplete brief response'],
+      [32_000, false, 'Incomplete brief response'],
+    ]);
+  });
+});
+
 describe('usage records the cost the provider reported', () => {
   afterEach(() => __setObjectGenerationDepsForTest());
   const runtime = {
