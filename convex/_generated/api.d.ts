@@ -43,6 +43,7 @@ import type * as dailyReports from "../dailyReports.js";
 import type * as deadAccounts from "../deadAccounts.js";
 import type * as documentAssets from "../documentAssets.js";
 import type * as documents from "../documents.js";
+import type * as encryptionRotation from "../encryptionRotation.js";
 import type * as fileLibrary from "../fileLibrary.js";
 import type * as jev from "../jev.js";
 import type * as lib from "../lib.js";
@@ -111,6 +112,7 @@ declare const fullApi: ApiFromModules<{
   deadAccounts: typeof deadAccounts;
   documentAssets: typeof documentAssets;
   documents: typeof documents;
+  encryptionRotation: typeof encryptionRotation;
   fileLibrary: typeof fileLibrary;
   jev: typeof jev;
   lib: typeof lib;
