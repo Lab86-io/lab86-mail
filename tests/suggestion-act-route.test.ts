@@ -50,7 +50,7 @@ function routeDependencies(payload: Record<string, unknown>) {
         created.push(input);
         return { eventId: 'event_1' };
       },
-      reportUnexpectedError: () => undefined,
+      reportUnexpectedError: (_error: unknown): void => undefined,
     },
     created,
     reads,
