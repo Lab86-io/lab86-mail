@@ -2,7 +2,6 @@ import { describe, expect, mock, test } from 'bun:test';
 import './tools/harness';
 import { kvUpsert } from '../lib/store/kv';
 import { getPhotoFromCache, setPhotoCache } from '../lib/store/photos';
-import { contactLookup, expandAlias } from '../lib/tools/contacts';
 import {
   companyLogoCandidates,
   companyLogoCandidatesForDomain,
@@ -24,15 +23,6 @@ import {
 import { runTool, withToolContext } from './tools/harness';
 
 describe('contact and photo tools', () => {
-  test('contact_lookup and expand_alias remain stubbed', async () => {
-    expect(await runTool(contactLookup.handler, { account: 'jakob@example.test', query: 'alex' })).toEqual({
-      contacts: [],
-    });
-    expect(await runTool(expandAlias.handler, { account: 'jakob@example.test', alias: 'alex' })).toEqual({
-      email: null,
-    });
-  });
-
   test('resolve_photos dedupes emails and negative-caches misses', async () => {
     const first = await runTool(resolvePhotos.handler, {
       account: 'jakob@example.test',

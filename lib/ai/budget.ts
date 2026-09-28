@@ -4,7 +4,7 @@ import { PAID_PLANS } from '../hosted/plans';
 export type AiProvider = 'openrouter' | 'openai' | 'anthropic';
 
 // Prices come from the one source of truth in lib/hosted/plans.ts.
-// Pro: Lab86 pays for the models, budgeted by credits.
+// Pro: Lab86 pays for the models, with no credit limit (see `unlimited`).
 export const B2C_MONTHLY_PRICE_USD = PAID_PLANS.pro.monthlyUsd;
 export const B2C_ANNUAL_PRICE_USD = PAID_PLANS.pro.annualUsd;
 // Own key: full feature set, user supplies their own model API key.
@@ -33,6 +33,13 @@ export interface AiBudgetPolicyInput {
   feature: string;
   monthlyCredits: number;
   creditsUsed: number;
+  /**
+   * The plan has no credit limit: Pro, the Pro trial, and admin with no
+   * explicit limit (lib/hosted/billing.ts `planHasNoCreditLimit`). The policy
+   * then never stops a call and never moves it to a cheaper model, and
+   * `monthlyCredits` does not apply. Usage is still recorded.
+   */
+  unlimited?: boolean;
 }
 
 export function estimateAiUsageCost(input: AiUsageCostInput) {
@@ -98,15 +105,27 @@ export const BRIEF_GENERATION_FEATURES = new Set([
 ]);
 
 export function resolveAiBudgetPolicy(input: AiBudgetPolicyInput) {
+  const chat = isAiChatFeature(input.feature);
+  if (input.unlimited)
+    return {
+      subscribed: true,
+      unlimited: true,
+      ratio: 0,
+      softLimited: false,
+      exhausted: false,
+      forceFastModel: false,
+      hardStopped: false,
+      chat,
+    };
   const monthlyCredits = Math.max(0, input.monthlyCredits);
   const creditsUsed = Math.max(0, input.creditsUsed);
   const ratio = monthlyCredits > 0 ? creditsUsed / monthlyCredits : 1;
   const subscribed = monthlyCredits > 0;
   const softLimited = subscribed && ratio >= AI_BUDGET_SOFT_LIMIT_RATIO;
   const exhausted = subscribed && creditsUsed >= monthlyCredits;
-  const chat = isAiChatFeature(input.feature);
   return {
     subscribed,
+    unlimited: false,
     ratio,
     softLimited,
     exhausted,
@@ -114,6 +133,27 @@ export function resolveAiBudgetPolicy(input: AiBudgetPolicyInput) {
     hardStopped: !subscribed || (chat && exhausted),
     chat,
   };
+}
+
+/**
+ * The policy for a live or stored entitlement. An entitlement that is not
+ * active or trialing gets the Free limit. `unlimited` (Pro) applies only to a
+ * current entitlement.
+ */
+export function resolveEntitlementBudgetPolicy(input: {
+  entitlement: { monthlyCredits: number; status: string; unlimited?: boolean } | null | undefined;
+  freeMonthlyCredits: number;
+  creditsUsed: number;
+  feature: string;
+}) {
+  const entitlement = input.entitlement;
+  const current = entitlement?.status === 'active' || entitlement?.status === 'trialing';
+  return resolveAiBudgetPolicy({
+    feature: input.feature,
+    monthlyCredits: current ? entitlement.monthlyCredits : input.freeMonthlyCredits,
+    creditsUsed: input.creditsUsed,
+    unlimited: current && entitlement.unlimited === true,
+  });
 }
 
 export function isAiChatFeature(feature: string) {

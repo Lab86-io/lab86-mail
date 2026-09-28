@@ -20,7 +20,7 @@ import {
   BRIEF_GENERATION_FEATURES,
   estimateAiUsageCost,
   providerReportedCostUsd,
-  resolveAiBudgetPolicy,
+  resolveEntitlementBudgetPolicy,
   shouldDepleteLab86Budget,
 } from './budget';
 import { anthropic, openai, openrouter } from './client';
@@ -832,20 +832,19 @@ export function configuredAiDefaults(provider: AiProvider) {
 
 function assertLab86Budget(
   state: RuntimeState,
-  clerkEntitlement?: { monthlyCredits: number; status: string } | null,
+  clerkEntitlement?: { monthlyCredits: number; status: string; unlimited?: boolean } | null,
   feature = 'agent',
 ) {
   if (isLab86AiDisabled()) {
     throw new AiAccessError('Hosted Intelligence is paused. Switch to your own API key to continue.');
   }
-  const defaults = aiCreditDefaults();
-  const entitlement = clerkEntitlement || state.entitlement;
-  const monthlyCredits =
-    entitlement && (entitlement.status === 'active' || entitlement.status === 'trialing')
-      ? entitlement.monthlyCredits
-      : defaults.freeMonthlyCredits;
-  const used = state.lab86Usage?.creditsUsed || 0;
-  const policy = resolveAiBudgetPolicy({ monthlyCredits, creditsUsed: used, feature });
+  // Pro has no credit limit; recordUsage still records the cost.
+  const policy = resolveEntitlementBudgetPolicy({
+    entitlement: clerkEntitlement || state.entitlement,
+    freeMonthlyCredits: aiCreditDefaults().freeMonthlyCredits,
+    creditsUsed: state.lab86Usage?.creditsUsed || 0,
+    feature,
+  });
   if (!policy.subscribed) {
     throw new AiAccessError(
       `Choose ${PAID_PLANS.pro.name}, or switch to your own API key, to use Intelligence.`,

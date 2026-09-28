@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncCalendarAccount } from '@/lib/calendar/sync';
+import { maybeKickContactSync } from '@/lib/contacts/sync';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { hostedPublicUrl, nylasRedirectUri } from '@/lib/hosted/env';
 import { maybeKickCorpusBackfill } from '@/lib/mail/corpus-sync';
@@ -16,6 +17,7 @@ const defaultDependencies = {
   encryptSecret,
   syncCalendarAccount,
   maybeKickCorpusBackfill,
+  maybeKickContactSync,
 };
 
 export function createNylasOAuthCallback(deps: typeof defaultDependencies = defaultDependencies) {
@@ -83,6 +85,8 @@ export function createNylasOAuthCallback(deps: typeof defaultDependencies = defa
             .syncCalendarAccount({ ...kick, force: true, reason: 'oauth_callback' })
             .catch(() => undefined);
           deps.maybeKickCorpusBackfill(kick);
+          // A reconnect that added contact scopes syncs contacts at once.
+          deps.maybeKickContactSync(kick, { force: true, reason: 'oauth_callback' });
         })();
       }
       return redirectWithStatus(redirectTo, 'nylas_connected', '1');

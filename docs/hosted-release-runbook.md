@@ -52,7 +52,8 @@ Create separate development and production resources for:
 Clerk Billing plan shape:
 
 - Free/default: no Lab86-hosted AI budget
-- Pro: $15/month or $120/year with a 500-credit internal AI budget
+- Pro: $29/month or $288/year (the Clerk annual fee is $24.00 a month), with no credit limit (the entitlement is `unlimited`)
+- Own key: $12/month or $120/year, plan slug `mail_byok`
 - Pro plan slug: `mail_pro`
 - Pro feature slug: `b2c_mail`
 
@@ -235,7 +236,9 @@ Models and credits:
 - `LAB86_MAIL_OPENAI_NANO_MODEL`
 - `LAB86_MAIL_AGENT_FALLBACK_MODEL`
 - `LAB86_AI_FREE_MONTHLY_CREDITS=0`
-- `LAB86_AI_PRO_MONTHLY_CREDITS=500`
+- `LAB86_AI_PRO_MONTHLY_CREDITS=500` (stored with the Pro row for rollback only; Pro has no credit limit)
+- `LAB86_AI_ADMIN_MONTHLY_CREDITS` (optional; set it only to give admin a limit)
+- `LAB86_BRIEF_COST_BUDGET_USD` (optional; the per-edition safety stop, default 2)
 - `LAB86_REQUIRE_USER_OPENROUTER_KEY`
 - `LAB86_DISABLE_SUBSCRIPTIONS`
 
@@ -255,7 +258,19 @@ Narrative memory:
 - `LAB86_NARRATIVE_ENABLED`
 - `LAB86_NARRATIVE_USER_IDS` (optional allow list)
 
-Email and web push notifications. Production does not set these yet, so email and web push do not send:
+The loop alarm. Each hour a Convex cron calls `/api/cron/cost-alarm`. When one user's background model
+cost (chat and own-key calls left out) passes the threshold in 24 hours, the owner gets one plain-text email
+for that user in that UTC day. It never stops or limits a user. It also needs `RESEND_API_KEY` and
+`LAB86_NOTIFICATION_FROM` (see the email list below). Production sets `LAB86_OWNER_ALERT_EMAIL` to
+`jakob@lab86.io`:
+
+- `LAB86_OWNER_ALERT_EMAIL` (no address, no alarm; the app logs one warning)
+- `LAB86_COST_ALARM_USD` (optional, default 5)
+
+Email and web push notifications. Production and staging set these since 2026-09-27. The cost alarm
+and the Brief by email need the Resend pair. `RESEND_API_KEY` is a send-only key for the verified
+domain `lab86.io`, and `LAB86_NOTIFICATION_FROM` is `Albatross <brief@lab86.io>`. If either one is
+missing, no email sends:
 
 - `LAB86_NOTIFICATION_LINK_SECRET`
 - `RESEND_API_KEY`

@@ -5,6 +5,7 @@ import {
   ENTITLEMENT_SNAPSHOT_MAX_AGE_MS,
   entitlementFromSnapshot,
   getAiBillingEntitlement,
+  planHasNoCreditLimit,
   resetEntitlementSnapshotCacheForTest,
 } from '../lib/hosted/billing';
 
@@ -39,7 +40,7 @@ describe('billing entitlement snapshot', () => {
   test('a signed-in request stores the plan it resolved from Clerk', async () => {
     const d = deps({ userId: 'user-1', plans: ['mail_byok'] });
     const entitlement = await getAiBillingEntitlement({}, d.deps);
-    expect(entitlement).toMatchObject({ plan: 'byok', monthlyCredits: 0, source: 'clerk' });
+    expect(entitlement).toMatchObject({ plan: 'byok', monthlyCredits: 0, unlimited: false, source: 'clerk' });
     expect(d.persist).toHaveBeenCalledTimes(1);
     expect(d.persist.mock.calls[0][0]).toBe('user-1');
     expect(d.persist.mock.calls[0][1]).toMatchObject({ plan: 'byok' });
@@ -55,7 +56,13 @@ describe('billing entitlement snapshot', () => {
       { plan: 'pro', status: 'active', monthlyCredits: 500, updatedAt: NOW - 1000 },
     );
     const entitlement = await getAiBillingEntitlement({ userId: 'user-1' }, d.deps);
-    expect(entitlement).toEqual({ plan: 'pro', status: 'active', monthlyCredits: 500, source: 'snapshot' });
+    expect(entitlement).toEqual({
+      plan: 'pro',
+      status: 'active',
+      monthlyCredits: 500,
+      unlimited: true,
+      source: 'snapshot',
+    });
     expect(d.loadSnapshot).toHaveBeenCalledWith('user-1');
     expect(d.persist).not.toHaveBeenCalled();
   });
@@ -92,6 +99,52 @@ describe('billing entitlement snapshot', () => {
       plan: 'byok',
       monthlyCredits: 0,
     });
+  });
+
+  test('Pro and admin have no credit limit; Free and Own key keep theirs', async () => {
+    const saved = process.env.LAB86_AI_ADMIN_MONTHLY_CREDITS;
+    try {
+      delete process.env.LAB86_AI_ADMIN_MONTHLY_CREDITS;
+      const cases: Array<[string[], string, boolean]> = [
+        [['mail_pro'], 'pro', true],
+        [['admin'], 'admin', true],
+        [['mail_byok'], 'byok', false],
+        [[], 'free', false],
+      ];
+      for (const [plans, plan, unlimited] of cases) {
+        resetEntitlementSnapshotCacheForTest();
+        const d = deps({ userId: 'user-1', plans }, { plan: 'free', status: 'active', trialStartedAt: 1 });
+        expect(await getAiBillingEntitlement({}, d.deps)).toMatchObject({ plan, unlimited });
+      }
+      // The stored snapshot gives background work the same answer.
+      for (const [plan, unlimited] of [
+        ['pro', true],
+        ['admin', true],
+        ['byok', false],
+        ['free', false],
+      ] as const)
+        expect(
+          entitlementFromSnapshot({ plan, status: 'active', monthlyCredits: 500, updatedAt: NOW }, NOW),
+        ).toMatchObject({ plan, unlimited });
+      expect(planHasNoCreditLimit('pro')).toBe(true);
+      expect(planHasNoCreditLimit('free')).toBe(false);
+      expect(planHasNoCreditLimit('byok')).toBe(false);
+
+      // An explicit admin limit gives admin a limit again.
+      process.env.LAB86_AI_ADMIN_MONTHLY_CREDITS = '2000';
+      resetEntitlementSnapshotCacheForTest();
+      const admin = deps({ userId: 'user-1', plans: ['admin'] });
+      expect(await getAiBillingEntitlement({}, admin.deps)).toMatchObject({
+        plan: 'admin',
+        monthlyCredits: 2000,
+        unlimited: false,
+      });
+      expect(planHasNoCreditLimit('admin')).toBe(false);
+      expect(planHasNoCreditLimit('pro')).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.LAB86_AI_ADMIN_MONTHLY_CREDITS;
+      else process.env.LAB86_AI_ADMIN_MONTHLY_CREDITS = saved;
+    }
   });
 
   test('a failed snapshot write keeps the live answer', async () => {

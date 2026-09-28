@@ -27,7 +27,7 @@ struct TrustRoundTwoTests {
             "note": showNote ? .string("3 days left in your Pro trial.") : .null,
             "trialDays": .number(14),
             "prices": .object([
-                "pro": .object(["name": .string("Pro"), "monthlyUsd": .number(15), "annualUsd": .number(150), "line": .string("$15 a month or $150 a year")]),
+                "pro": .object(["name": .string("Pro"), "monthlyUsd": .number(29), "annualUsd": .number(288), "line": .string("$29 a month or $288 a year")]),
                 "byok": .object(["name": .string("Own key"), "monthlyUsd": .number(12), "annualUsd": .number(50.4), "line": .string("$12 a month or $50.40 a year")]),
             ]),
             "subscriptionsDisabled": .bool(disabled),
@@ -43,7 +43,7 @@ struct TrustRoundTwoTests {
         #expect(plan.trialActive)
         #expect(plan.trialDaysLeft == 3)
         #expect(plan.trialNote == "3 days left in your Pro trial.")
-        #expect(plan.pro?.monthlyUsd == 15)
+        #expect(plan.pro?.monthlyUsd == 29)
         #expect(plan.ownKey?.name == "Own key")
         #expect(plan.detailLine?.hasPrefix("14-day trial, no card needed. It ends on ") == true)
 
@@ -52,7 +52,7 @@ struct TrustRoundTwoTests {
         let off = try #require(BillingPlan(json: planJSON(disabled: true)))
         #expect(off.trialNote == nil)
         let paid = try #require(BillingPlan(json: planJSON(active: false, showNote: false)))
-        #expect(paid.detailLine == "$15 a month or $150 a year")
+        #expect(paid.detailLine == "$29 a month or $288 a year")
         #expect(BillingPlan(json: .object(["ok": .bool(false), "error": .string("Sign in")])) == nil)
     }
 

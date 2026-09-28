@@ -212,7 +212,7 @@ export function AiSection({ heading }: { heading: ReactNode }) {
               active={aiMode === 'lab86'}
               disabled={requireOpenRouter}
               title="Hosted models"
-              description="Included with Pro. Curated models, no setup, with a monthly budget."
+              description="Included with Pro. Curated models, no setup, and no usage limit."
               onClick={() => setAiMode('lab86')}
             />
             <ModeCard

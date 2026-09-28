@@ -130,6 +130,75 @@ export function mobileOpenAPIV1() {
           },
         },
       },
+      '/api/mobile/v1/contacts/recipients': {
+        get: {
+          operationId: 'getMobileRecipientSuggestions',
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              required: false,
+              description: 'What the user typed. Empty means the top people for a focused field.',
+              schema: { type: 'string', maxLength: 200 },
+            },
+            {
+              name: 'fromAccountID',
+              in: 'query',
+              required: false,
+              description: 'The selected From mailbox. People seen on it rank higher.',
+              schema: { type: 'string', maxLength: 240 },
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 1, maximum: 10 },
+            },
+            {
+              name: 'exclude',
+              in: 'query',
+              required: false,
+              description: 'Addresses already in the field; repeat the parameter or separate with commas.',
+              schema: { type: 'array', items: { type: 'string' }, maxItems: 50 },
+              style: 'form',
+              explode: true,
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Ranked recipients, best first',
+              content: jsonContent('RecipientSuggestionPage'),
+            },
+            ...errorResponses,
+          },
+        },
+      },
+      '/api/mobile/v1/contacts/status': {
+        get: {
+          operationId: 'getMobileContactStatus',
+          responses: {
+            '200': {
+              description: 'Contact sync state and reconnect need for each mailbox',
+              content: jsonContent('ContactStatusPage'),
+            },
+            ...errorResponses,
+          },
+        },
+      },
+      '/api/mobile/v1/contacts/resync': {
+        post: {
+          operationId: 'postMobileContactResync',
+          requestBody: { required: true, content: jsonContent('ContactResyncRequest') },
+          responses: {
+            '200': {
+              description: 'Whether a contact pass started',
+              content: jsonContent('ContactResyncReceipt'),
+            },
+            '404': { description: 'Unknown mailbox', content: jsonContent('MobileErrorEnvelope') },
+            ...errorResponses,
+          },
+        },
+      },
       '/api/mobile/v1/today/summary': {
         get: {
           operationId: 'getMobileTodaySummary',

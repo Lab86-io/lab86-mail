@@ -8,7 +8,14 @@ export type AiBillingPlan = 'free' | 'byok' | 'pro' | 'admin';
 export interface AiBillingEntitlement {
   plan: AiBillingPlan;
   status: 'active';
+  /** The monthly credit limit. It does not apply when `unlimited` is true. */
   monthlyCredits: number;
+  /**
+   * No credit limit: Pro, the Pro trial, and admin with no explicit limit
+   * (see `planHasNoCreditLimit`). The budget never stops a call and never
+   * moves it to a cheaper model. Usage is still recorded.
+   */
+  unlimited: boolean;
   // 'clerk' is a live read of the signed-in session. 'snapshot' is the stored
   // copy that background work (brief jobs, Jev, narrative) reads by userId.
   source: 'clerk' | 'snapshot';
@@ -162,9 +169,28 @@ async function withTrial(
     plan: 'pro',
     status: 'active',
     monthlyCredits: defaults.proMonthlyCredits,
+    unlimited: true,
     source: 'clerk',
     trialEndsAt: endsAt,
   };
+}
+
+/**
+ * Pro and the Pro trial have no credit limit (owner decision, 2026-09-27).
+ * Admin has none either, unless LAB86_AI_ADMIN_MONTHLY_CREDITS sets one.
+ * Free and Own key keep their limits.
+ */
+export function planHasNoCreditLimit(plan: AiBillingPlan): boolean {
+  if (plan === 'pro') return true;
+  if (plan === 'admin') return adminMonthlyCredits() === null;
+  return false;
+}
+
+/** The explicit admin credit limit, or null when none is set. */
+function adminMonthlyCredits(): number | null {
+  const raw = process.env.LAB86_AI_ADMIN_MONTHLY_CREDITS;
+  const parsed = Number(raw);
+  return raw && Number.isFinite(parsed) ? parsed : null;
 }
 
 /** A user who had Pro or admin before does not get a trial. */
@@ -194,6 +220,9 @@ export function entitlementFromSnapshot(
   // A trial proves Pro only until it ends; after that the user is Free until a
   // signed-in request stores the next plan.
   const trialEndsAt = finite(snapshot.trialEndsAt);
+  // A trial of a plan with no usage limit needs an end date. Without one it
+  // would be unlimited use for all time, so it proves nothing.
+  if (snapshot.status === 'trialing' && trialEndsAt === null && planHasNoCreditLimit(plan)) return null;
   const trialing = snapshot.status === 'trialing' && trialEndsAt !== null;
   if (trialing && trialEndsAt <= now) return null;
   const credits = Number(snapshot.monthlyCredits);
@@ -207,6 +236,7 @@ export function entitlementFromSnapshot(
         : plan === 'byok'
           ? 0
           : defaults.proMonthlyCredits,
+    unlimited: planHasNoCreditLimit(plan),
     source: 'snapshot',
     ...(trialing ? { trialEndsAt } : {}),
   };
@@ -243,15 +273,12 @@ async function entitlementFromClerk(
     () => false,
   );
   if (admin) {
-    const rawAdminMonthlyCredits = process.env.LAB86_AI_ADMIN_MONTHLY_CREDITS;
-    const adminMonthlyCredits = Number(rawAdminMonthlyCredits);
+    const limit = adminMonthlyCredits();
     return {
       plan: 'admin',
       status: 'active',
-      monthlyCredits:
-        rawAdminMonthlyCredits && Number.isFinite(adminMonthlyCredits)
-          ? adminMonthlyCredits
-          : defaults.proMonthlyCredits,
+      monthlyCredits: limit ?? defaults.proMonthlyCredits,
+      unlimited: limit === null,
       source: 'clerk',
     };
   }
@@ -265,6 +292,7 @@ async function entitlementFromClerk(
       plan: 'pro',
       status: 'active',
       monthlyCredits: defaults.proMonthlyCredits,
+      unlimited: true,
       source: 'clerk',
     };
   }
@@ -274,7 +302,7 @@ async function entitlementFromClerk(
   const byokPlan = process.env.CLERK_BYOK_PLAN_SLUG || 'mail_byok';
   const byok = await Promise.resolve(has({ plan: byokPlan })).catch(() => false);
   if (byok) {
-    return { plan: 'byok', status: 'active', monthlyCredits: 0, source: 'clerk' };
+    return { plan: 'byok', status: 'active', monthlyCredits: 0, unlimited: false, source: 'clerk' };
   }
 
   return freeEntitlement(defaults.freeMonthlyCredits);
@@ -289,5 +317,5 @@ export function clerkBillingPortalUrl() {
 }
 
 function freeEntitlement(monthlyCredits: number): AiBillingEntitlement {
-  return { plan: 'free', status: 'active', monthlyCredits, source: 'clerk' };
+  return { plan: 'free', status: 'active', monthlyCredits, unlimited: false, source: 'clerk' };
 }

@@ -1,4 +1,5 @@
 import { applyCalendarWebhookDelta, isCalendarWebhookType } from '@/lib/calendar/sync';
+import { applyContactWebhookDelta, isContactWebhookType } from '@/lib/contacts/sync';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import { isGrantGoneError, markGrantNeedsReconnect, noteGrantFailure } from '@/lib/nylas/grant-health';
@@ -627,6 +628,19 @@ async function processWebhookEvent(
       return { ok: true, duplicate: false, eventId: metadata.eventId };
     } catch (err: any) {
       await markWebhookProcessed(metadata, 'error', err?.message || 'calendar webhook failed');
+      throw err;
+    }
+  }
+
+  // Contact triggers (contact.updated, contact.deleted) belong to the
+  // contact store; like calendar events, they never touch mail sync state.
+  if (isContactWebhookType(metadata.type)) {
+    try {
+      await applyContactWebhookDelta(row, metadata.type, payload);
+      await markWebhookProcessed(metadata, 'processed');
+      return { ok: true, duplicate: false, eventId: metadata.eventId };
+    } catch (err: any) {
+      await markWebhookProcessed(metadata, 'error', err?.message || 'contact webhook failed');
       throw err;
     }
   }

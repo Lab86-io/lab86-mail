@@ -3,6 +3,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import {
   ACCOUNT_BULK_TABLES,
+  ACCOUNT_PURGE_INDEX,
   CASCADE_EXEMPT_TABLES,
   CASCADE_SPECIAL_TABLES,
   USER_BULK_TABLES,
@@ -48,6 +49,15 @@ describe('account deletion cascade coverage', () => {
       expect(tables[name], `${name} is exempt but is not in the schema`).toBeDefined();
       expect(reason.trim().length).toBeGreaterThan(10);
     }
+  });
+
+  test('every account table has the (userId, accountId) index that the account purge reads', () => {
+    const missing = ACCOUNT_BULK_TABLES.filter((name) => {
+      const indexName = ACCOUNT_PURGE_INDEX[name] ?? 'by_user_account';
+      const index = tables[name]?.indexes.find((entry) => entry.name === indexName);
+      return !index || index.fields[0] !== 'userId' || index.fields[1] !== 'accountId';
+    });
+    expect(missing).toEqual([]);
   });
 
   test('every swept table has an index that the sweep can read by userId', () => {

@@ -62,6 +62,13 @@ export const albatrossMilestoneValidator = v.object({
   order: v.number(),
 });
 
+// Nylas contact sources. Mirrors CONTACT_SOURCES in lib/contacts/model.ts.
+export const contactSourceValidator = v.union(
+  v.literal('address_book'),
+  v.literal('inbox'),
+  v.literal('domain'),
+);
+
 const albatrossConfirmationRef = v.object({
   kind: v.string(),
   id: v.string(),
@@ -237,7 +244,20 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user_period_source', ['userId', 'period', 'source'])
-    .index('by_user', ['userId']),
+    .index('by_user', ['userId'])
+    // The loop alarm finds the users with hosted use in the last day.
+    .index('by_source_updated', ['source', 'updatedAt']),
+
+  // The loop alarm (lib/ai/cost-alarm.ts): hourly samples of each user's
+  // hosted credits for the month, and the UTC day of the last alarm email.
+  aiCostWatch: defineTable({
+    userId: v.string(),
+    samples: v.array(v.object({ at: v.number(), period: v.string(), credits: v.number() })),
+    alertDay: v.optional(v.string()),
+    alertCredits: v.optional(v.number()),
+    alertedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index('by_user', ['userId']),
 
   aiUsageEvents: defineTable({
     userId: v.string(),
@@ -1773,6 +1793,127 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId']),
+
+  // Contacts from the Nylas v3 Contacts API, one row for each provider contact
+  // of each mailbox and source (lib/contacts/model.ts). Rows keep only the
+  // fields that lookups, names, and sorting read. A full pass skips a row when
+  // its contentHash is equal, so an unchanged address book writes nothing.
+  // `by_user_account` ends with the source, so the pass prunes one source at a
+  // time and account removal drains by the (userId, accountId) prefix.
+  contacts: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    provider: v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
+    source: contactSourceValidator,
+    providerContactId: v.string(),
+    displayName: v.optional(v.string()),
+    givenName: v.optional(v.string()),
+    familyName: v.optional(v.string()),
+    nickname: v.optional(v.string()),
+    emails: v.array(v.object({ email: v.string(), type: v.optional(v.string()) })),
+    phones: v.optional(v.array(v.object({ number: v.string(), type: v.optional(v.string()) }))),
+    company: v.optional(v.string()),
+    jobTitle: v.optional(v.string()),
+    photoUrl: v.optional(v.string()),
+    groups: v.optional(v.array(v.string())),
+    searchText: v.string(),
+    contentHash: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user_account', ['userId', 'accountId', 'source'])
+    .index('by_user_account_provider_id', ['userId', 'accountId', 'providerContactId'])
+    .searchIndex('by_search_text', { searchField: 'searchText', filterFields: ['userId'] }),
+
+  // One row for each address of each contact, lowercased. Name lookups,
+  // the saved-contact sort signal, and address-prefix search read it by
+  // (userId, email). `name` copies the contact name so a lookup is one read.
+  // It drains with its contact (by_contact), never on its own.
+  contactEmails: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    contactId: v.id('contacts'),
+    email: v.string(),
+    source: contactSourceValidator,
+    weight: v.number(),
+    name: v.optional(v.string()),
+  })
+    .index('by_user_email', ['userId', 'email'])
+    .index('by_contact', ['contactId']),
+
+  // The correspondent index: one row for each address the user wrote to or
+  // heard from, built from the mail corpus (lib/contacts/recipients.ts). Mail
+  // the user sent weighs most. `frecency` is a log-space sum of decaying
+  // events, so the stored order stays right as time passes; `score` is
+  // frecency with demoted bulk and no-reply senders moved to the end.
+  // `accounts` keeps small per-mailbox counts for the From-mailbox boost and
+  // for account removal.
+  correspondents: defineTable({
+    userId: v.string(),
+    email: v.string(),
+    name: v.optional(v.string()),
+    sentCount: v.number(),
+    receivedCount: v.number(),
+    bulkCount: v.number(),
+    lastSentAt: v.optional(v.number()),
+    lastReceivedAt: v.optional(v.number()),
+    frecency: v.number(),
+    score: v.number(),
+    accounts: v.array(
+      v.object({ accountId: v.string(), sent: v.number(), received: v.number(), lastAt: v.number() }),
+    ),
+    searchText: v.string(),
+    updatedAt: v.number(),
+  })
+    .index('by_user_email', ['userId', 'email'])
+    .index('by_user_score', ['userId', 'score'])
+    .searchIndex('by_search_text', { searchField: 'searchText', filterFields: ['userId'] }),
+
+  // Contact sync state for each mailbox: a lease so one worker syncs a grant,
+  // the result of each source, and the Retry-After wait after a 429.
+  // `needs_reconnect` means the grant lacks a contact scope; the mail grant
+  // itself is fine, so this never marks the account as dead.
+  contactSyncStates: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    grantId: v.string(),
+    provider: v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
+    status: v.union(
+      v.literal('idle'),
+      v.literal('syncing'),
+      v.literal('ready'),
+      v.literal('needs_reconnect'),
+      v.literal('unsupported'),
+      v.literal('error'),
+    ),
+    sources: v.optional(
+      v.array(
+        v.object({
+          source: contactSourceValidator,
+          state: v.union(
+            v.literal('ok'),
+            v.literal('missing_scope'),
+            v.literal('unsupported'),
+            v.literal('capped'),
+            v.literal('error'),
+          ),
+          count: v.optional(v.number()),
+          syncedAt: v.optional(v.number()),
+          error: v.optional(v.string()),
+        }),
+      ),
+    ),
+    contactCount: v.optional(v.number()),
+    lastFullSyncAt: v.optional(v.number()),
+    lastAttemptAt: v.optional(v.number()),
+    lastWebhookAt: v.optional(v.number()),
+    retryAt: v.optional(v.number()),
+    leaseId: v.optional(v.string()),
+    leaseUntil: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_user_account', ['userId', 'accountId']),
 
   // Owned images a presentation may reference. The stored URL is stable for
   // the life of the file, so a deck can keep `src` beside `assetId`.

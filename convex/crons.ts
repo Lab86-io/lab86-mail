@@ -38,6 +38,10 @@ crons.interval('area brief refresh', { hours: 3 }, internal.dailyReports.areaRef
 // safety net over the webhook-driven event deltas.
 crons.interval('calendar resync', { minutes: 15 }, internal.calendarSync.tick, {});
 
+// Contacts: one full pass for each mailbox a day. The hourly check calls the
+// app only for users with a due mailbox; webhooks carry the changes between.
+crons.interval('contacts sync', { hours: 1 }, internal.contacts.tick, {});
+
 // File new mail threads into the user's areas every 30 minutes: deterministic
 // fact matches first, then one nano-LLM verdict for the rest (candidate-only).
 crons.interval('area classify', { minutes: 30 }, internal.albatross.classifyTick, {});
@@ -148,6 +152,10 @@ crons.interval('mail snooze wake', { minutes: 5 }, internal.mailCorpus.snoozeTic
 crons.interval('mail push digest', { minutes: 15 }, internal.albatrossNotifications.mailDigestTick, {});
 
 crons.interval('mcp oauth state cleanup', { minutes: 30 }, internal.mcp.sweepExpiredOAuthStates, {});
+
+// The loop alarm: one email to the owner when a user's background model cost
+// passes the threshold in 24 hours. It only tells; it never stops a user.
+crons.hourly('model cost alarm', { minuteUTC: 17 }, internal.aiCostAlarm.tick, {});
 
 // Retention for tables that otherwise grow with no limit: expired one-time
 // codes, processed webhook payloads older than 14 days, lapsed rate-limit
