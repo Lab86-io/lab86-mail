@@ -147,6 +147,9 @@ crons.daily('mcp stale item prune', { hourUTC: 9, minuteUTC: 7 }, internal.mcp.p
 // Mail repair (SYNC-3): retry failed Nylas webhook events with backoff, and
 // sweep each connected mailbox's recent mail for changes a lost event missed.
 crons.interval('mail corpus repair', { minutes: 30 }, internal.mailCorpus.repairTick, {});
+// Attachment files in our own encrypted storage: move each unfinished backfill
+// one page, then ask the app to store a few queued files for each user.
+crons.interval('mail attachment files', { minutes: 5 }, internal.mailAttachments.tick, {});
 // Snoozed threads come back to the inbox when due (MUT-1).
 crons.interval('mail snooze wake', { minutes: 5 }, internal.mailCorpus.snoozeTick, {});
 

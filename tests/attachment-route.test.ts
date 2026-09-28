@@ -11,9 +11,13 @@ const user = { userId: 'attach-user', email: 'me@example.test', name: 'Me', sour
 const params = { params: Promise.resolve({ messageId: 'm1', attachmentId: 'a1' }) };
 const request = (query: string) =>
   new NextRequest(`http://localhost/api/attachments/m1/a1?account=me%40example.test&${query}`);
+const emptyStream = () => new ReadableStream<Uint8Array>({ start: (c) => c.close() });
 const deps = () => ({
   requireCurrentUser: mock(async () => user),
-  downloadNylasAttachment: mock(async (): Promise<any> => new ReadableStream({ start: (c) => c.close() })),
+  openMailAttachment: mock(
+    async (..._args: any[]): Promise<any> => ({ stream: emptyStream(), source: 'provider' }),
+  ),
+  defer: mock((_task: () => Promise<unknown>) => undefined),
 });
 
 describe('attachment route headers', () => {
@@ -68,11 +72,64 @@ describe('attachment route headers', () => {
       (await createAttachmentGet(d)(new NextRequest('http://localhost/api/attachments/m1/a1'), params))
         .status,
     ).toBe(400);
-    d.downloadNylasAttachment.mockImplementation(async () => null);
+    d.openMailAttachment.mockImplementation(async () => null);
     expect((await createAttachmentGet(d)(request('mime=image/png'), params)).status).toBe(404);
-    d.downloadNylasAttachment.mockImplementation(async () => {
+    d.openMailAttachment.mockImplementation(async () => {
       throw new Error('boom');
     });
     expect((await createAttachmentGet(d)(request('mime=image/png'), params)).status).toBe(502);
+  });
+
+  test('reads through the shared helper with lazy fill, as the signed-in user', async () => {
+    const d = deps();
+    const res = await createAttachmentGet(d)(
+      request('mime=application/pdf&name=a%2Fb.pdf&preview=1'),
+      params,
+    );
+    expect(res.status).toBe(200);
+    const [ref, options] = d.openMailAttachment.mock.calls[0] as any[];
+    expect(ref).toEqual({
+      userId: 'attach-user',
+      account: 'me@example.test',
+      messageId: 'm1',
+      attachmentId: 'a1',
+    });
+    expect(options.fill).toBe('always');
+    expect(options.hint).toEqual({ filename: 'a_b.pdf', mimeType: 'application/pdf' });
+    expect(options.defer).toBe(d.defer);
+    expect(res.headers.get('content-disposition')).toBe('inline; filename="a_b.pdf"');
+  });
+
+  test('a stored file without query metadata uses the stored name and type, with the same guards', async () => {
+    const d = deps();
+    d.openMailAttachment.mockImplementation(async () => ({
+      stream: new Response('<script>x</script>').body,
+      source: 'store',
+      filename: 'page.html',
+      mimeType: 'text/html',
+    }));
+    const res = await createAttachmentGet(d)(
+      new NextRequest('http://localhost/api/attachments/m1/a1?account=acct&preview=1'),
+      params,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('<script>x</script>');
+    expect(res.headers.get('content-type')).toBe('text/html');
+    expect(res.headers.get('content-disposition')).toBe('attachment; filename="page.html"');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('content-security-policy')).toContain('sandbox');
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    const [, options] = d.openMailAttachment.mock.calls[0] as any[];
+    expect(options.hint).toEqual({ filename: undefined, mimeType: undefined });
+  });
+
+  test('a stored file with no name falls back to "attachment"', async () => {
+    const d = deps();
+    const res = await createAttachmentGet(d)(
+      new NextRequest('http://localhost/api/attachments/m1/a1?account=acct'),
+      params,
+    );
+    expect(res.headers.get('content-disposition')).toBe('attachment; filename="attachment"');
+    expect(res.headers.get('content-type')).toBe('application/octet-stream');
   });
 });
