@@ -3,16 +3,21 @@ import { getFunctionName } from 'convex/server';
 import {
   __setGoogleSharedGrantDepsForTest,
   driveUsesMailGrant,
-  mailSharesDriveClient,
+  googleClientProject,
+  mailSharesDriveProject,
   mailUsesDriveGrant,
 } from '../lib/google/shared-grant';
 
-const DRIVE_ONLY = { GOOGLE_DRIVE_CLIENT_ID: 'drive-client', GOOGLE_DRIVE_CLIENT_SECRET: 'drive-secret' };
+const DRIVE_CLIENT = '452431903621-drive.apps.googleusercontent.com';
+const DRIVE_ONLY = { GOOGLE_DRIVE_CLIENT_ID: DRIVE_CLIENT, GOOGLE_DRIVE_CLIENT_SECRET: 'drive-secret' };
+// A mail client in another Google Cloud project: a revoke there cannot end Drive.
 const SEPARATE = {
   ...DRIVE_ONLY,
-  GOOGLE_MAIL_CLIENT_ID: 'mail-client',
+  GOOGLE_MAIL_CLIENT_ID: '111111111111-mail.apps.googleusercontent.com',
   GOOGLE_MAIL_CLIENT_SECRET: 'mail-secret',
 };
+// A second client in the Drive project: Google revokes for every client of the project.
+const SAME_PROJECT = { ...SEPARATE, GOOGLE_MAIL_CLIENT_ID: '452431903621-mail.apps.googleusercontent.com' };
 
 afterEach(() => __setGoogleSharedGrantDepsForTest());
 
@@ -30,13 +35,26 @@ function setup(env: Record<string, string>, answers: { drive?: unknown; mail?: u
   return queries;
 }
 
-describe('mailSharesDriveClient', () => {
-  test('mail shares the Drive client unless a separate mail client is set', () => {
-    expect(mailSharesDriveClient(DRIVE_ONLY)).toBe(true);
-    expect(mailSharesDriveClient(SEPARATE)).toBe(false);
-    expect(mailSharesDriveClient({ ...SEPARATE, GOOGLE_MAIL_CLIENT_ID: 'drive-client' })).toBe(true);
-    expect(mailSharesDriveClient({})).toBe(false);
-    expect(mailSharesDriveClient({ GOOGLE_MAIL_CLIENT_ID: 'm', GOOGLE_MAIL_CLIENT_SECRET: 's' })).toBe(false);
+describe('mailSharesDriveProject', () => {
+  test('the project number is the numeric head of a client id', () => {
+    expect(googleClientProject(DRIVE_CLIENT)).toBe('452431903621');
+    expect(googleClientProject(' 42-x.apps.googleusercontent.com ')).toBe('42');
+    expect(googleClientProject('drive-client')).toBeNull();
+    expect(googleClientProject(undefined)).toBeNull();
+  });
+
+  test('mail shares with Drive unless its client is in another Google Cloud project', () => {
+    expect(mailSharesDriveProject(DRIVE_ONLY)).toBe(true);
+    expect(mailSharesDriveProject(SAME_PROJECT)).toBe(true);
+    expect(mailSharesDriveProject(SEPARATE)).toBe(false);
+    expect(mailSharesDriveProject({ ...SEPARATE, GOOGLE_MAIL_CLIENT_ID: DRIVE_CLIENT })).toBe(true);
+    // A client id with no project number is a doubt, and a doubt counts as shared.
+    expect(mailSharesDriveProject({ ...SEPARATE, GOOGLE_MAIL_CLIENT_ID: 'mail-client' })).toBe(true);
+    expect(mailSharesDriveProject({ ...SEPARATE, GOOGLE_DRIVE_CLIENT_ID: 'drive-client' })).toBe(true);
+    expect(mailSharesDriveProject({})).toBe(false);
+    expect(mailSharesDriveProject({ GOOGLE_MAIL_CLIENT_ID: 'm', GOOGLE_MAIL_CLIENT_SECRET: 's' })).toBe(
+      false,
+    );
   });
 });
 
@@ -56,10 +74,13 @@ describe('driveUsesMailGrant (before a mail revoke)', () => {
     expect(await driveUsesMailGrant({ userId: 'u1', email: 'ann@example.com' })).toBe(false);
   });
 
-  test('a separate mail client never shares, and a failed check keeps the grant', async () => {
+  test('a mail client in another project never shares, and a failed check keeps the grant', async () => {
     const queries = setup(SEPARATE, { drive });
     expect(await driveUsesMailGrant({ userId: 'u1', email: 'ann@example.com' })).toBe(false);
     expect(queries).toEqual([]);
+    // A second client in the same project still shares: the revoke is for the project.
+    setup(SAME_PROJECT, { drive });
+    expect(await driveUsesMailGrant({ userId: 'u1', email: 'ann@example.com' })).toBe(true);
     setup(DRIVE_ONLY, { fail: true });
     expect(await driveUsesMailGrant({ userId: 'u1', email: 'ann@example.com' })).toBe(true);
   });
@@ -84,9 +105,11 @@ describe('mailUsesDriveGrant (before a Drive revoke)', () => {
     expect(await mailUsesDriveGrant({ userId: 'u1', email: undefined })).toBe(false);
   });
 
-  test('a separate mail client never shares, and a failed check keeps the grant', async () => {
+  test('a mail client in another project never shares, and a failed check keeps the grant', async () => {
     setup(SEPARATE, { mail });
     expect(await mailUsesDriveGrant({ userId: 'u1', email: 'ann@example.com' })).toBe(false);
+    setup(SAME_PROJECT, { mail });
+    expect(await mailUsesDriveGrant({ userId: 'u1', email: 'ann@example.com' })).toBe(true);
     setup(DRIVE_ONLY, { fail: true });
     expect(await mailUsesDriveGrant({ userId: 'u1', email: 'ann@example.com' })).toBe(true);
   });

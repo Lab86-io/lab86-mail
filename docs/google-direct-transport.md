@@ -127,10 +127,11 @@ These rules add to the decisions above or make them exact.
 - **Reconnect.** A request to `/api/nylas/connect` that names a direct
   Google account (`account=<accountId or email>`) reconnects that account
   directly, with the flag on or off. The Settings Reconnect link names its
-  account. A request that names no account is a new connection: direct with
-  `LAB86_GOOGLE_DIRECT=1`, Nylas without it. So a user can always add a
-  different Google account. A native Reconnect does not name its account
-  yet, so with the flag off it goes through Nylas.
+  account. The native Reconnect names its account too
+  (`WebAuthenticationCoordinator.mailboxConnectPath`), so a native reconnect
+  of a direct account stays direct. A request that names no account is a new
+  connection: direct with `LAB86_GOOGLE_DIRECT=1`, Nylas without it. So a
+  user can always add a different Google account.
 - **Native.** A native Google connection takes the same choice as a web one.
   The callback keeps the Google result in the shared completion store
   (`oauthCompletions`, kind `mail`) and opens
@@ -138,8 +139,10 @@ These rules add to the decisions above or make them exact.
   `/api/nylas/finalize`, as for Nylas; that route sends a Google result to
   `finalizeGoogleMailCompletion`. So the app needs no change.
 - **Tokens.** An `invalid_grant` answer, or a missing token row, puts every
-  account on the grant in the reconnect state (`markGrantReconnectNeeded`,
-  the same state as a dead Nylas grant).
+  account on the grant in the reconnect state. `lib/google/tokens.ts` calls
+  `markGrantNeedsReconnect` (`lib/nylas/grant-health.ts`), which runs the
+  Convex mutation `accounts.markGrantReconnectNeeded`. This is the same state
+  as a dead Nylas grant.
 - **Message shape.** `folders` are the Gmail label ids, as Nylas gives them.
   A message with only a text part gets that text as `body`, not escaped HTML:
   Nylas does the same, and the stored rows must stay equal. The corpus writer
@@ -183,15 +186,18 @@ These rules add to the decisions above or make them exact.
   anyway. The Nylas grant of a switched account is destroyed at this time,
   but only when no other connection (of any user) still uses it.
 - **One grant for mail and Drive.** Mail falls back to the Drive OAuth
-  client, and Google keeps one grant for a user and a client. So a revoke
-  from one feature ends the other. The mail flow does not send
+  client. A Google revoke removes all the access that the user gave to the
+  Google Cloud project, for every OAuth client of that project. So a revoke
+  from one feature ends the other. This is also true for a separate
+  `GOOGLE_MAIL_CLIENT_ID` in the same project. The mail flow does not send
   `include_granted_scopes`. Before a revoke, the mail disconnect and the Files
   disconnect each check for a live connection of the other feature for the
-  same user and Google address on the same client
-  (`lib/google/shared-grant.ts`). If there is one, only our token row goes and
-  no revoke is sent; the log says so. A failed check also skips the revoke.
-  The clean fix is a separate `GOOGLE_MAIL_CLIENT_ID` (an owner step: a new
-  OAuth client in the same project, with the mail redirect URIs).
+  same user and Google address in the same project
+  (`lib/google/shared-grant.ts`). The project number is the numeric start of
+  the client id. If there is a connection, only our token row goes and no
+  revoke is sent; the log says so. A failed check also skips the revoke. Only
+  a mail OAuth client in another Google Cloud project ends the sharing. That
+  project needs its own consent screen and verification (an owner decision).
 - **Rollback.** `googleDirect:rollbackToNylas` does not revoke the Google
   token. Google can revoke the whole project grant, and the production Nylas
   connector is in the same Google Cloud project. The token row is deleted.

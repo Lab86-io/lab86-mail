@@ -1,12 +1,15 @@
 // Direct Google transport: one Google grant for mail and Drive.
 //
-// Mail falls back to the Drive OAuth client (lib/google/oauth.ts). Google
-// keeps one grant for a user and a client, so a token revoke from one feature
-// also ends the other: a Drive disconnect would stop direct Gmail, and a mail
-// disconnect would stop Drive. Before a revoke, each side asks here if the
-// other side still has a connection of the same user and the same Google
-// address on the same client. If yes, the caller deletes its own token row
-// but does not revoke. A separate GOOGLE_MAIL_CLIENT_ID ends the sharing.
+// Mail falls back to the Drive OAuth client (lib/google/oauth.ts). A Google
+// token revoke removes all the access that the user gave to the Google Cloud
+// project, for every OAuth client of that project. So a revoke from one
+// feature also ends the other: a Drive disconnect would stop direct Gmail,
+// and a mail disconnect would stop Drive. This is true for one shared client
+// and for two clients in the same project. Before a revoke, each side asks
+// here if the other side still has a connection of the same user and the
+// same Google address in the same project. If yes, the caller deletes its own
+// token row but does not revoke. Only a mail client in another Google Cloud
+// project ends the sharing.
 
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { googleOAuthClient } from './oauth';
@@ -24,11 +27,29 @@ export function __setGoogleSharedGrantDepsForTest(overrides: Partial<typeof defa
   deps = { ...defaults, ...overrides };
 }
 
-/** True when mail uses the Drive OAuth client (no separate mail client). */
-export function mailSharesDriveClient(env: Env = deps.env()): boolean {
+/**
+ * The Google Cloud project number of an OAuth client id. A Google client id
+ * has the form `<project number>-<id>.apps.googleusercontent.com`. Null for
+ * an id of another form.
+ */
+export function googleClientProject(clientId: string | undefined): string | null {
+  return /^(\d+)-/.exec(clientId?.trim() || '')?.[1] ?? null;
+}
+
+/**
+ * True when a mail revoke can end the Drive grant, and the reverse: mail uses
+ * the Drive client, or a mail client in the same Google Cloud project. A
+ * client id with no project number counts as the same project, so a doubt
+ * never ends the other connection.
+ */
+export function mailSharesDriveProject(env: Env = deps.env()): boolean {
   const mail = googleOAuthClient(env);
   const driveId = env.GOOGLE_DRIVE_CLIENT_ID?.trim();
-  return Boolean(mail && driveId && mail.clientId === driveId);
+  if (!mail || !driveId) return false;
+  if (mail.clientId === driveId) return true;
+  const mailProject = googleClientProject(mail.clientId);
+  const driveProject = googleClientProject(driveId);
+  return !mailProject || !driveProject || mailProject === driveProject;
 }
 
 function sameAddress(a: unknown, b: unknown) {
@@ -42,11 +63,11 @@ function sameAddress(a: unknown, b: unknown) {
 
 /**
  * Before a mail revoke: does the user have a Google Drive connection for the
- * same address on the same client? A failed check counts as yes, so a doubt
+ * same address in the same project? A failed check counts as yes, so a doubt
  * never ends the other connection.
  */
 export async function driveUsesMailGrant(input: { userId: string; email?: string }): Promise<boolean> {
-  if (!mailSharesDriveClient()) return false;
+  if (!mailSharesDriveProject()) return false;
   try {
     const rows = await deps.query<Array<{ provider?: string; accountEmail?: string }>>(
       api.cloudFiles.listConnections,
@@ -63,10 +84,10 @@ export async function driveUsesMailGrant(input: { userId: string; email?: string
 
 /**
  * Before a Drive revoke: does the user have a direct Google mail connection
- * for the same address on the same client? A failed check counts as yes.
+ * for the same address in the same project? A failed check counts as yes.
  */
 export async function mailUsesDriveGrant(input: { userId: string; email?: string }): Promise<boolean> {
-  if (!mailSharesDriveClient()) return false;
+  if (!mailSharesDriveProject()) return false;
   try {
     const rows = await deps.query<
       Array<{ provider?: string; email?: string; grantId?: string; status?: string }>
