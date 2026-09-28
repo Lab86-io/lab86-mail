@@ -475,3 +475,9 @@ test('a failed or stopped turn records its cost from the generation ids of its r
     'The turn was stopped before it finished.',
   ]);
 });
+
+test('a turn with no runtime ends with an error and records nothing', async () => {
+  const { events, usage } = await run([]);
+  expect(events.some((event) => event.type === 'error')).toBe(true);
+  expect(usage).not.toHaveBeenCalled();
+});
