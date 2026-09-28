@@ -53,11 +53,6 @@ struct AlbatrossCommands: Commands {
                 .keyboardShortcut("a", modifiers: [.command, .shift])
             Button("Settings") { environment.navigation.sheet = .settings }
                 .keyboardShortcut(",", modifiers: .command)
-            Button("All tools for this workspace") {
-                environment.navigation.sheet = .workspace(.current(environment.navigation))
-            }
-            .keyboardShortcut("e", modifiers: [.command, .shift])
-            .disabled(environment.navigation.documentRoute != nil || environment.navigation.sheet != nil)
         }
     }
 }

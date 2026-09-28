@@ -29,89 +29,10 @@ extension View {
     }
 }
 
-// MARK: - Where the surface sits
-
-// The clamp and the focus share these rules so they cannot drift apart: the
-// layout uses them to place the stack, and the model uses them to work out
-// where the picked row ended up so the fan can open on it.
-enum SidebarWheelPlacement {
-    // How much empty rail the surface may show past either edge before it
-    // stops. Small: this is the rubber band, not a scroll range.
-    static let overscroll: CGFloat = 44
-
-    // Where the open page may sit. A row that rests below the fold cannot be
-    // the slot as it stands, or the fan would open off-screen.
-    static func slot(resting: CGFloat, viewport: CGFloat) -> CGFloat {
-        guard viewport > 0 else { return resting }
-        let inset = min(72, viewport * 0.22)
-        return max(inset, min(viewport - inset, resting))
-    }
-
-    // Resting centre of a fractional position. Past either end it keeps
-    // extrapolating on the outermost gap so overscroll has something to move.
-    static func detentCenter(position: Double, centers: [CGFloat]) -> CGFloat {
-        guard let first = centers.first, let last = centers.last else { return 0 }
-        guard centers.count > 1 else { return first }
-        if position <= 0 {
-            return first + CGFloat(position) * (centers[1] - centers[0])
-        }
-        let lastIndex = centers.count - 1
-        if position >= Double(lastIndex) {
-            let gap = centers[lastIndex] - centers[lastIndex - 1]
-            return last + CGFloat(position - Double(lastIndex)) * gap
-        }
-        let lower = Int(position)
-        let fraction = CGFloat(position - Double(lower))
-        return centers[lower] + (centers[lower + 1] - centers[lower]) * fraction
-    }
-
-    // The wheel wants the picked row at the slot, but a fixed slot cannot work
-    // on a bounded list: no single slot avoids a void at both ends at once.
-    // So the surface is clamped like a scroll view and the slot is allowed to
-    // migrate — near the top the list simply stops moving and the pick walks
-    // up the rows that are already on screen.
-    static func shift(
-        position: Double,
-        centers: [CGFloat],
-        slotY: CGFloat,
-        viewport: CGFloat,
-        total: CGFloat
-    ) -> CGFloat {
-        guard !centers.isEmpty, viewport > 0 else { return 0 }
-        let desired = slotY - detentCenter(position: position, centers: centers)
-        guard total > viewport else {
-            // The whole hierarchy fits: it stays put and only the pick moves.
-            return max(-overscroll, min(overscroll, desired))
-        }
-        return max(viewport - total - overscroll, min(overscroll, desired))
-    }
-
-    // Where the picked row actually is once the clamp has had its say. This is
-    // the fan's focus, not the slot.
-    static func focus(
-        position: Double,
-        centers: [CGFloat],
-        slotY: CGFloat,
-        viewport: CGFloat,
-        total: CGFloat,
-        engagement: Double
-    ) -> CGFloat {
-        let center = detentCenter(position: position, centers: centers)
-        let applied = shift(
-            position: position,
-            centers: centers,
-            slotY: slotY,
-            viewport: viewport,
-            total: total
-        ) * CGFloat(engagement)
-        return center + applied
-    }
-}
-
 // MARK: - Placement
 
-// Stacks the sidebar naturally, then slides the whole stack so the wheel's
-// current position sits under the thumb.
+// Stacks the sidebar naturally, then slides the whole stack: under the thumb
+// while the wheel is held, and wherever the scroll left it once it lets go.
 //
 // This is the load-bearing decision in the whole gesture. Placement is the only
 // thing that changes as the wheel turns, so no row's body depends on the wheel
@@ -127,6 +48,9 @@ struct SidebarWheelLayout: Layout {
     var slotY: CGFloat
     // 0 rests as a plain stack, 1 is fully wheeled.
     var engagement: Double
+    // Where the surface rests between gestures. The riffle is a scroll, so the
+    // list stays where the last fling or drag left it.
+    var restOffset: CGFloat = 0
     var spacing: CGFloat
     // Reports each detent's resting centre and the hierarchy's full height, so
     // a grab can put the slot where the current row already is and the model
@@ -216,14 +140,15 @@ struct SidebarWheelLayout: Layout {
     }
 
     private func wheelShift(cache: Cache, in bounds: CGRect) -> CGFloat {
-        guard engagement > 0, !cache.detentCenters.isEmpty else { return 0 }
-        return SidebarWheelPlacement.shift(
+        SidebarWheelPlacement.surface(
             position: position,
             centers: cache.detentCenters,
             slotY: slotY,
             viewport: bounds.height,
-            total: cache.total
-        ) * CGFloat(engagement)
+            total: cache.total,
+            engagement: engagement,
+            restOffset: restOffset
+        )
     }
 }
 #endif

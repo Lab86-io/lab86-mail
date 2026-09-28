@@ -50,7 +50,10 @@ final class AppEnvironment {
     // one. Distinct from intent capture, which stays a form.
     private(set) var assistantChat: AssistantChatModel?
 
-    init(configuration: AppConfiguration) {
+    // Rendering tests build a second, isolated environment inside the host
+    // app. Its local database lives in memory, so it never shares the app's
+    // store file.
+    init(configuration: AppConfiguration, inMemoryPersistence: Bool = false) {
         self.configuration = configuration
         let sessionStore = SessionStore()
         self.sessionStore = sessionStore
@@ -64,7 +67,7 @@ final class AppEnvironment {
             tokenProvider: tokenProvider
         )
         let tools = ToolClient(backend: backend)
-        let mobileContainer = MobilePersistence.makeContainer()
+        let mobileContainer = MobilePersistence.makeContainer(inMemory: inMemoryPersistence)
         let convexClient: ConvexClientWithAuth<String>?
         if configuration.clerkPublishableKey != nil, let deploymentURL = configuration.convexDeploymentURL {
             convexClient = ConvexClientWithAuth(
