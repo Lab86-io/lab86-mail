@@ -31,6 +31,7 @@ import { EXPORT_DESCRIPTION, ExportBeforeDelete, ExportDataButton } from '@/comp
 import { AccountPlanRow } from '@/components/settings/AccountPlan';
 import { AiSection } from '@/components/settings/AiSection';
 import { BriefSection } from '@/components/settings/BriefSection';
+import { ContactsStatusLine } from '@/components/settings/ContactsStatusLine';
 import { JevSection } from '@/components/settings/JevSection';
 import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
 import { McpReconnectNote, McpSyncProblemNote } from '@/components/settings/McpConnectionNotes';
@@ -70,6 +71,7 @@ import { api } from '@/convex/_generated/api';
 import { settingsNavGroups, settingsTabScrollLeft } from '@/lib/albatross/settings-nav';
 import { type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
 import { useClientStore } from '@/lib/client-state';
+import type { ContactAccountStatus } from '@/lib/contacts/lookup';
 import {
   initialNotificationForm,
   type NotificationPreferences,
@@ -841,6 +843,9 @@ function MailboxesSection() {
     refetchInterval: (query) =>
       (query.state.data?.syncStates || []).some(
         (s: SyncState) => !s.corpusReady && s.status !== 'error' && s.status !== 'idle',
+      ) ||
+      (query.state.data?.contacts || []).some(
+        (c: ContactAccountStatus) => c.state === 'syncing' || c.state === 'pending',
       )
         ? 15_000
         : false,
@@ -878,10 +883,21 @@ function MailboxesSection() {
     onSuccess: () => toast.success('Calendar resync started'),
     onError: (err: any) => toast.error(err?.message || 'Could not start calendar resync'),
   });
+  const resyncContacts = useMutation({
+    mutationFn: async (accountId: string) => postJson('/api/contacts/resync', { accountId }),
+    onSuccess: () => {
+      toast.success('Contact sync started');
+      qc.invalidateQueries({ queryKey: ['nylas-status'] });
+    },
+    onError: (err: any) => toast.error(err?.message || 'Could not start contact sync'),
+  });
 
   const accounts: any[] = nylas?.accounts || [];
   const syncByAccount = new Map<string, SyncState>(
     ((nylas?.syncStates || []) as SyncState[]).map((s) => [s.accountId, s]),
+  );
+  const contactsByAccount = new Map<string, ContactAccountStatus>(
+    ((nylas?.contacts || []) as ContactAccountStatus[]).map((c) => [c.accountId, c]),
   );
   const capabilities = (nylas?.capabilities || []).filter((c: any) => c.visible);
   const icloud = capabilities.find((c: any) => c.provider === 'icloud');
@@ -905,9 +921,11 @@ function MailboxesSection() {
             key={account.accountId}
             account={account}
             sync={syncByAccount.get(account.accountId)}
+            contacts={contactsByAccount.get(account.accountId)}
             onSaveAlias={(displayName) => saveAlias.mutate({ accountId: account.accountId, displayName })}
             onResyncMail={() => resyncMail.mutate(account.accountId)}
             onResyncCalendar={() => resyncCalendar.mutate(account.accountId)}
+            onResyncContacts={() => resyncContacts.mutate(account.accountId)}
             onDisconnect={() => {
               if (
                 window.confirm(
@@ -962,17 +980,21 @@ function MailboxesSection() {
 function MailboxCard({
   account,
   sync,
+  contacts,
   onSaveAlias,
   onResyncMail,
   onResyncCalendar,
+  onResyncContacts,
   onDisconnect,
   busy,
 }: {
   account: any;
   sync?: SyncState;
+  contacts?: ContactAccountStatus;
   onSaveAlias: (displayName: string) => void;
   onResyncMail: () => void;
   onResyncCalendar: () => void;
+  onResyncContacts: () => void;
   onDisconnect: () => void;
   busy: boolean;
 }) {
@@ -1031,6 +1053,7 @@ function MailboxCard({
           connected={connected}
           reconnectHref={account.status === 'error' ? reconnectHref : undefined}
         />
+        {connected ? <ContactsStatusLine status={contacts} reconnectHref={reconnectHref} /> : null}
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -1052,6 +1075,11 @@ function MailboxCard({
           <DropdownMenuItem onSelect={() => onResyncCalendar()} className="text-[12.5px]">
             Resync calendar
           </DropdownMenuItem>
+          {connected ? (
+            <DropdownMenuItem onSelect={() => onResyncContacts()} className="text-[12.5px]">
+              Sync contacts
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem asChild className="text-[12.5px]">
             <a href={reconnectHref}>Reconnect / update permissions</a>
           </DropdownMenuItem>
