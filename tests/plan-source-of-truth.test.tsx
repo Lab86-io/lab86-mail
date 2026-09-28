@@ -41,16 +41,16 @@ function files(dir: string, out: string[] = []): string[] {
 
 describe('one price and one name', () => {
   test('the plans match what Clerk Billing charges in production', () => {
-    expect(PAID_PLANS.pro).toMatchObject({ name: 'Pro', monthlyUsd: 29, annualUsd: 290 });
+    expect(PAID_PLANS.pro).toMatchObject({ name: 'Pro', monthlyUsd: 29, annualUsd: 288 });
     expect(PAID_PLANS.byok).toMatchObject({ name: 'Own key', monthlyUsd: 12, annualUsd: 120 });
-    expect(planPriceLine('pro')).toBe('$29/month or $290/year');
-    expect(planPriceShort('pro')).toBe('$29/mo or $290/yr');
+    expect(planPriceLine('pro')).toBe('$29/month or $288/year');
+    expect(planPriceShort('pro')).toBe('$29/mo or $288/yr');
     expect(planPriceLine('byok')).toBe('$12/month or $120/year');
     expect(planPriceShort('byok')).toBe('$12/mo or $120/yr');
     expect(formatUsd(7)).toBe('$7');
     expect(formatUsd(4.2)).toBe('$4.20');
     // The budget module re-exports the same numbers for server callers.
-    expect([B2C_MONTHLY_PRICE_USD, B2C_ANNUAL_PRICE_USD]).toEqual([29, 290]);
+    expect([B2C_MONTHLY_PRICE_USD, B2C_ANNUAL_PRICE_USD]).toEqual([29, 288]);
     expect([B2C_BYOK_MONTHLY_PRICE_USD, B2C_BYOK_ANNUAL_PRICE_USD]).toEqual([12, 120]);
   });
 
@@ -58,7 +58,7 @@ describe('one price and one name', () => {
     for (const Page of [TermsPage, SupportPage, PricingPage]) {
       const html = renderToStaticMarkup(<Page />);
       expect(html).toContain(PRODUCT_NAME);
-      expect(html).toContain('$29/month or $290/year');
+      expect(html).toContain('$29/month or $288/year');
       expect(html).not.toContain('$15/month');
       expect(html).toContain('$12/month or $120/year');
       expect(html).not.toContain('$50.40');
@@ -111,7 +111,7 @@ describe('one price and one name', () => {
         const rel = path.relative(ROOT, file).split(path.sep).join('/');
         if (skip.some((prefix) => rel.startsWith(prefix))) continue;
         const source = readFileSync(file, 'utf8');
-        if (/\$(?:5|12|15|29|50|120|150|290)(?:\.\d\d)?\s*\/\s*(?:mo|month|yr|year)\b/.test(source))
+        if (/\$(?:5|12|15|29|50|120|150|288|290)(?:\.\d\d)?\s*\/\s*(?:mo|month|yr|year)\b/.test(source))
           offenders.push(`${rel}: price`);
         if (/['"`>][^'"`<\n]*\b(?:Lab86 Mail|Lab86 AI)\b/.test(source)) offenders.push(`${rel}: name`);
       }
@@ -149,7 +149,7 @@ describe('the pricing page', () => {
     expect(rows[0]).toEqual({
       feature: 'Price',
       free: '$0',
-      pro: '$29/month or $290/year',
+      pro: '$29/month or $288/year',
       byok: '$12/month or $120/year',
     });
     expect(new Set(rows.map((row) => row.feature)).size).toBe(rows.length);

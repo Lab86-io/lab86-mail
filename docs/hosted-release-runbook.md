@@ -52,7 +52,7 @@ Create separate development and production resources for:
 Clerk Billing plan shape:
 
 - Free/default: no Lab86-hosted AI budget
-- Pro: $29/month or $290/year, with no credit limit (the entitlement is `unlimited`)
+- Pro: $29/month or $288/year (the Clerk annual fee is $24.00 a month), with no credit limit (the entitlement is `unlimited`)
 - Own key: $12/month or $120/year, plan slug `mail_byok`
 - Pro plan slug: `mail_pro`
 - Pro feature slug: `b2c_mail`

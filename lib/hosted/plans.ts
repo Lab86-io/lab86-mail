@@ -29,7 +29,7 @@ export const PAID_PLANS: Readonly<Record<PaidPlanId, PaidPlan>> = {
     id: 'pro',
     name: 'Pro',
     monthlyUsd: 29,
-    annualUsd: 290,
+    annualUsd: 288,
     summary: 'Everything, with hosted models and no usage limit.',
   },
   byok: {
@@ -54,13 +54,13 @@ export function formatUsd(amount: number): string {
   return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`;
 }
 
-/** "$29/month or $290/year". */
+/** "$29/month or $288/year". */
 export function planPriceLine(id: PaidPlanId): string {
   const plan = PAID_PLANS[id];
   return `${formatUsd(plan.monthlyUsd)}/month or ${formatUsd(plan.annualUsd)}/year`;
 }
 
-/** "$29/mo or $290/yr", for tight rows. */
+/** "$29/mo or $288/yr", for tight rows. */
 export function planPriceShort(id: PaidPlanId): string {
   const plan = PAID_PLANS[id];
   return `${formatUsd(plan.monthlyUsd)}/mo or ${formatUsd(plan.annualUsd)}/yr`;
