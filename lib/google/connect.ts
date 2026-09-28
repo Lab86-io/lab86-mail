@@ -83,8 +83,11 @@ const defaults = {
   reconcileMailCorpusAccount,
   syncCalendarAccount,
   maybeKickContactSync,
-  afterConnect: (input: { userId: string; accountId: string; outcome: GoogleMailOutcome }) =>
-    kickAfterConnect(input),
+  afterConnect: (input: {
+    userId: string;
+    accountId: string;
+    outcome: GoogleMailOutcome;
+  }): Promise<void> | void => kickAfterConnect(input),
 };
 let deps = defaults;
 
