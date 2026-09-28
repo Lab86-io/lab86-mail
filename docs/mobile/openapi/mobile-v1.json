@@ -1111,10 +1111,6 @@
                   "type": "string",
                   "maxLength": 320
                 },
-                "senderName": {
-                  "type": "string",
-                  "maxLength": 200
-                },
                 "snippet": {
                   "type": "string",
                   "maxLength": 500
@@ -1218,10 +1214,6 @@
           "senderEmail": {
             "type": "string",
             "maxLength": 320
-          },
-          "senderName": {
-            "type": "string",
-            "maxLength": 200
           },
           "snippet": {
             "type": "string",

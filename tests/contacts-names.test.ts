@@ -57,15 +57,28 @@ describe('sender names from contacts', () => {
     expect(await contactNamesFor('u', ['A@b.io'], (async () => null) as any)).toEqual(new Map());
   });
 
-  test('mobile thread summaries carry the saved name', async () => {
+  test('mobile thread summaries carry the saved name in the From header', async () => {
+    const summary = mailThreadSummaryFromCorpus({
+      _id: 't1',
+      account: 'a',
+      fromAddress: 'ann@acme.com',
+      senderName: 'Ann Lee',
+    });
+    // Shipped Swift clients reject response keys they do not know, so the name
+    // rides in the existing fromHeader field and no new key appears.
+    expect(summary.fromHeader).toBe('Ann Lee <ann@acme.com>');
+    expect(Object.keys(summary)).not.toContain('senderName');
     expect(
       mailThreadSummaryFromCorpus({
-        _id: 't1',
+        _id: 't2',
         account: 'a',
-        fromAddress: 'ann@acme.com',
-        senderName: 'Ann Lee',
-      }).senderName,
-    ).toBe('Ann Lee');
+        fromAddress: 'bo@x.io',
+        senderName: 'Lee, "Bo" <x>',
+      }).fromHeader,
+    ).toBe('Lee Bo x <bo@x.io>');
+    expect(mailThreadSummaryFromCorpus({ _id: 't3', account: 'a', fromAddress: 'cy@x.io' }).fromHeader).toBe(
+      'cy@x.io',
+    );
     const handler = createMobileMailThreadsGet({
       requireCurrentUser: async () => ({
         userId: 'u',
@@ -79,6 +92,7 @@ describe('sender names from contacts', () => {
     });
     const response = await handler(new Request('https://mail.lab86.io/api/mobile/v1/mail/threads'));
     const body: any = await response.json();
-    expect(body.items[0]).toMatchObject({ fromHeader: 'ann@acme.com', senderName: 'Ann Lee' });
+    expect(body.items[0]).toMatchObject({ fromHeader: 'Ann Lee <ann@acme.com>' });
+    expect(body.items[0].senderName).toBeUndefined();
   });
 });

@@ -382,8 +382,6 @@ export const MailThreadSummarySchema = z
     subject: z.string().max(2_000),
     fromHeader: z.string().max(1_000),
     senderEmail: z.string().max(320).optional(),
-    // The saved contact name, only when the From header gives no real name.
-    senderName: z.string().max(200).optional(),
     snippet: z.string().max(500),
     lastMessageAt: z.number().int().nonnegative(),
     unread: z.boolean(),
