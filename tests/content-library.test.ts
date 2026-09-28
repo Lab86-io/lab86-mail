@@ -601,3 +601,69 @@ test('content tombstones without text are accepted and malformed attachment iden
     });
   expect(await t.query(content.search, { ...scope, query: 'approval' })).toEqual([]);
 });
+
+test('the mail content page skips threads of accounts that are not connected', async () => {
+  const t = convexTest(schema, modules);
+  await t.run(async (ctx) => {
+    for (const [accountId, status] of [
+      ['live', 'connected'],
+      ['dead', 'error'],
+    ] as const)
+      await ctx.db.insert('connectedAccounts', {
+        userId: 'owner',
+        accountId,
+        email: `${accountId}@example.test`,
+        provider: 'google',
+        grantId: `grant-${accountId}`,
+        status,
+        scopes: [],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    // `gone` has no account row at all (a removed account).
+    for (const accountId of ['live', 'dead', 'gone']) {
+      await ctx.db.insert('mailCorpusThreads', {
+        userId: 'owner',
+        accountId,
+        grantId: `grant-${accountId}`,
+        provider: 'google',
+        providerThreadId: `thread-${accountId}`,
+        subject: `Subject ${accountId}`,
+        fromAddress: 'sender@example.test',
+        lastDate: 10,
+        snippet: '',
+        labels: ['INBOX'],
+        unread: false,
+        yearMonth: '1970-01',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert('mailCorpusMessages', {
+        userId: 'owner',
+        accountId,
+        grantId: `grant-${accountId}`,
+        provider: 'google',
+        providerMessageId: `message-${accountId}`,
+        providerThreadId: `thread-${accountId}`,
+        subject: `Subject ${accountId}`,
+        from: 'sender@example.test',
+        to: `${accountId}@example.test`,
+        receivedAt: 10,
+        snippet: 'Body',
+        textBody: 'Body',
+        searchText: 'body',
+        labels: ['INBOX'],
+        unread: false,
+        attachments: [{ attachmentId: `file-${accountId}`, filename: 'a.pdf' }],
+        yearMonth: '1970-01',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    }
+  });
+  for (const recent of [false, true]) {
+    const page = await t.query(content.localPage, { ...scope, source: 'mail', recent });
+    expect(page.items.map((item: any) => item.connectionId)).toEqual(['live']);
+    expect(page.attachments.map((file: any) => file.connectionId)).toEqual(['live']);
+  }
+});

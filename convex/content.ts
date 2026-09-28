@@ -361,7 +361,23 @@ export const localPage = query({
           .paginate({ cursor: args.cursor || null, numItems: 20 });
     const items = [];
     const attachments: any[] = [];
+    // Mail of an account that is not connected is not read, labelled, or
+    // embedded. The cursor still moves past it. One read for each page.
+    const liveAccounts =
+      args.source === 'mail'
+        ? new Set(
+            (
+              await ctx.db
+                .query('connectedAccounts')
+                .withIndex('by_user', (q) => q.eq('userId', args.userId))
+                .collect()
+            )
+              .filter((account) => account.status === 'connected')
+              .map((account) => account.accountId),
+          )
+        : null;
     for (const row of page.page) {
+      if (liveAccounts && !liveAccounts.has(row.accountId)) continue;
       let text = row.searchText || '';
       let partial = false;
       if (args.source === 'mail') {
