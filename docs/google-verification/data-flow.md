@@ -153,17 +153,23 @@ content has no second, app-level encryption.
   OpenRouter, OpenAI, or Anthropic. Albatross encrypts that key
   (`app/api/ai/settings/route.ts:320`) and then sends that user's calls to that
   provider (`lib/ai/gateway.ts:347-377`).
-- **Models.**
+- **Models.** The code has defaults. Production overrides some of them with
+  environment variables. On 2026-09-28 we read only the vendor part of each
+  production value.
 
-  | Use | Default model | Code |
-  |---|---|---|
-  | Main tier | `openai/gpt-5.5` | `lib/ai/gateway.ts:149-169` |
-  | Fast and bulk tiers | `openai/gpt-5-nano` | same |
-  | Classification tier | `openai/gpt-5.6-luna` | same |
-  | Fallback for the assistant and the brief | `anthropic/claude-sonnet-4.6`, `anthropic/claude-haiku-4.5`, `openai/gpt-5.5`, `openai/gpt-5.4-mini` | `lib/ai/gateway.ts:89-94` |
-  | Mail classifier (Jev) | `typesafe/jev-1.13` on the OpenRouter `decisions` endpoint | `lib/classifier/catalog.ts:48-60` |
-  | Embeddings | `openai/text-embedding-3-small` | `lib/content/contract.ts:6` |
-  | Shared narrative (on in production) | `z-ai/glm-5.3-flash` | `convex/narrative.ts:225`, `lib/narrative/service.ts:32-42` |
+  | Use | Code default | Production on 2026-09-28 | Code |
+  |---|---|---|---|
+  | Main tier | `openai/gpt-5.5` | An Anthropic model (`LAB86_MAIL_OPENAI_MODEL`) | `lib/ai/gateway.ts:149-169` |
+  | Fast tier | `openai/gpt-5-nano` | An Anthropic model (`LAB86_MAIL_OPENAI_FAST_MODEL`) | same |
+  | Bulk tier | `openai/gpt-5-nano` | An Anthropic model (`LAB86_MAIL_OPENAI_NANO_MODEL`) | same |
+  | Classification tier | `openai/gpt-5.6-luna` | Code default | same |
+  | Fallback for the assistant and the brief | `anthropic/claude-sonnet-4.6`, `anthropic/claude-haiku-4.5`, `openai/gpt-5.5`, `openai/gpt-5.4-mini` | Anthropic models (`LAB86_MAIL_AGENT_FALLBACK_MODEL`) | `lib/ai/gateway.ts:89-94` |
+  | Mail classifier (Jev) | `typesafe/jev-1.13` on the OpenRouter `decisions` endpoint | Code default | `lib/classifier/catalog.ts:48-60` |
+  | Embeddings | `openai/text-embedding-3-small` | Code default | `lib/content/contract.ts:6` |
+  | Shared narrative (on in production) | `z-ai/glm-5.3-flash` | Code default | `convex/narrative.ts:225`, `lib/narrative/service.ts:32-42` |
+
+  Thus, in production, the providers behind OpenRouter are Anthropic, OpenAI,
+  TypeSafe (Jev), and Z.ai, plus the model that a user picks.
 
   A user can pick other catalog models for the main and fast tiers. The
   catalog has models from OpenAI, Anthropic, Google, xAI, DeepSeek, Z.ai,
