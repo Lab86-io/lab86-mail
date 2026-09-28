@@ -44,7 +44,7 @@ struct AssistantDraftArtifactContent: View {
     var recipientSearch: (any RecipientSearching)? = nil
 
     @State private var showsCopyFields = false
-    @State private var recipientProblem: String?
+    @State private var recipientProblem: String? = nil
     @State private var showsFileImporter = false
     @State private var isReadingAttachments = false
     @State private var undoSendSeconds = 10

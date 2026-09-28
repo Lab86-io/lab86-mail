@@ -536,36 +536,49 @@ struct RecipientFieldTests {
         #expect(reconnect.needsReconnect)
         #expect(reconnect.sources.map(\.state) == ["missingScope", "missingScope", "ok"])
         #expect(reconnect.sources.last?.count == 120)
-        #expect(reconnect.summary == "Reconnect this mailbox to add its contacts.")
+        #expect(reconnect.message == "Reconnect this mailbox to add its contacts.")
+        #expect(reconnect.summary() == "Contacts need permission.")
         #expect(reconnect.lastSyncedAt == nil)
 
         let ready = page.accounts[1]
         #expect(ready.state == .ready)
         #expect(!ready.needsReconnect)
         #expect(ready.lastSyncedAt == Date(timeIntervalSince1970: 1_790_550_000))
-        #expect(ready.summary.hasPrefix("Contacts: 1"))
-        #expect(ready.summary.hasSuffix(" people"))
+        let line = try #require(ready.summary(now: Date(timeIntervalSince1970: 1_790_550_000 + 300)))
+        #expect(line.hasPrefix("1"))
+        #expect(line.hasSuffix(" contacts · synced 5 mins ago"))
         #expect(!ready.isProblem)
     }
 
     @Test
-    func statusLinesUsePlainCopy() {
-        func status(_ state: ContactSyncState, count: Int = 0, reconnect: Bool = false, message: String? = nil) -> ContactAccountStatus {
+    func statusLinesMatchTheWebCopy() {
+        func status(
+            _ state: ContactSyncState,
+            count: Int = 0,
+            reconnect: Bool = false,
+            syncedAt: Date? = nil
+        ) -> ContactAccountStatus {
             ContactAccountStatus(
                 accountID: "a", email: "a@b.com", provider: "google", state: state,
-                needsReconnect: reconnect, contactCount: count, lastSyncedAt: nil, sources: [], message: message
+                needsReconnect: reconnect, contactCount: count, lastSyncedAt: syncedAt, sources: [],
+                message: "Reconnect this mailbox to add its contacts."
             )
         }
-        #expect(status(.ready, count: 1).summary == "Contacts: 1 person")
-        #expect(status(.pending).summary == "Adding contacts")
-        #expect(status(.syncing, count: 5).summary == "Adding contacts: 5 so far")
-        #expect(status(.unsupported).summary == "This mailbox has no contacts to add.")
-        #expect(status(.paused).isProblem)
-        #expect(status(.ready, reconnect: true).summary == "Reconnect this mailbox to add its contacts.")
-        #expect(status(.error, message: "Server message").summary == "Server message")
-        for line in [status(.ready, count: 3), status(.error), status(.paused)].map(\.summary) {
-            #expect(!line.contains("AI"))
-        }
+        let now = Date(timeIntervalSince1970: 1_790_550_000)
+        #expect(status(.ready).summary(now: now) == "No contacts")
+        #expect(status(.ready, count: 1).summary(now: now) == "1 contact")
+        #expect(status(.ready, count: 3, syncedAt: now.addingTimeInterval(-30)).summary(now: now) == "3 contacts · synced just now")
+        #expect(status(.ready, count: 3, syncedAt: now.addingTimeInterval(-60)).summary(now: now) == "3 contacts · synced 1 min ago")
+        #expect(status(.ready, count: 3, syncedAt: now.addingTimeInterval(-7_200)).summary(now: now) == "3 contacts · synced 2 hours ago")
+        #expect(status(.ready, count: 3, syncedAt: now.addingTimeInterval(-3 * 86_400)).summary(now: now) == "3 contacts · synced 3 days ago")
+        #expect(status(.needsReconnect, reconnect: true).summary(now: now) == "Contacts need permission.")
+        #expect(status(.syncing).summary(now: now) == "Contacts are syncing.")
+        #expect(status(.pending).summary(now: now) == "The first contact sync has not finished.")
+        #expect(status(.unsupported).summary(now: now) == "This mailbox has no contacts to sync.")
+        #expect(status(.error).summary(now: now) == "Contact sync failed. It will try again.")
+        #expect(status(.paused).summary(now: now) == nil)
+        #expect(status(.error).isProblem)
+        #expect(!status(.needsReconnect, reconnect: true).isProblem)
     }
 
     // MARK: - Fixtures

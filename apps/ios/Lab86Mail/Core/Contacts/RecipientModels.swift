@@ -149,31 +149,47 @@ struct ContactAccountStatus: Identifiable, Hashable, Sendable {
     let sources: [ContactSourceStatus]
     let message: String?
 
-    /// The line the Mailboxes row shows under the mail status.
-    var summary: String {
-        if needsReconnect {
-            return message ?? "Reconnect this mailbox to add its contacts."
-        }
+    /// The line the Mailboxes row shows under the mail status, in the same
+    /// words as the web (components/settings/ContactsStatusLine.tsx). Nil for
+    /// a paused mailbox: its row already asks for a mail reconnect.
+    func summary(now: Date = .now) -> String? {
         switch state {
         case .ready:
-            return contactCount == 1 ? "Contacts: 1 person" : "Contacts: \(contactCount.formatted()) people"
-        case .syncing, .pending:
-            return contactCount > 0
-                ? "Adding contacts: \(contactCount.formatted()) so far"
-                : "Adding contacts"
+            let count: String
+            switch contactCount {
+            case 0: count = "No contacts"
+            case 1: count = "1 contact"
+            default: count = "\(contactCount.formatted()) contacts"
+            }
+            guard let lastSyncedAt else { return count }
+            return "\(count) · synced \(Self.ago(lastSyncedAt, now: now))"
         case .needsReconnect:
-            return message ?? "Reconnect this mailbox to add its contacts."
+            return "Contacts need permission."
+        case .syncing:
+            return "Contacts are syncing."
+        case .pending:
+            return "The first contact sync has not finished."
         case .unsupported:
-            return message ?? "This mailbox has no contacts to add."
+            return "This mailbox has no contacts to sync."
         case .error:
-            return message ?? "Contacts did not sync. Try again later."
+            return "Contact sync failed. It will try again."
         case .paused:
-            return message ?? "Contacts stop until this mailbox reconnects."
+            return nil
         }
     }
 
-    var isProblem: Bool {
-        needsReconnect || state == .error || state == .paused
+    var isProblem: Bool { state == .error }
+
+    /// "just now", "5 mins ago", "3 hours ago", "2 days ago", as on the web.
+    static func ago(_ date: Date, now: Date) -> String {
+        let seconds = now.timeIntervalSince(date)
+        if seconds < 60 { return "just now" }
+        let minutes = Int((seconds / 60).rounded())
+        if minutes < 60 { return "\(minutes) min\(minutes == 1 ? "" : "s") ago" }
+        let hours = Int((Double(minutes) / 60).rounded())
+        if hours < 24 { return "\(hours) hour\(hours == 1 ? "" : "s") ago" }
+        let days = Int((Double(hours) / 24).rounded())
+        return "\(days) day\(days == 1 ? "" : "s") ago"
     }
 }
 

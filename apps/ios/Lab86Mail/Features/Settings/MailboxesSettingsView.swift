@@ -153,7 +153,7 @@ struct MailboxesSettingsView: View {
                         Task { await reconnect(mailbox) }
                     }
                     if contactStatuses[mailbox.id].map({ !$0.needsReconnect && $0.state != .unsupported && $0.state != .paused }) == true {
-                        Button("Sync contacts now", systemImage: "person.2") {
+                        Button("Sync contacts", systemImage: "person.2") {
                             Task { await resyncContacts(mailbox) }
                         }
                     }
@@ -184,10 +184,12 @@ struct MailboxesSettingsView: View {
     // the grant has no contact permission. Reconnect is the same mailbox
     // connect flow; the server starts a contact pass when it completes.
     @ViewBuilder private func contactLine(_ mailbox: Mailbox, _ contacts: ContactAccountStatus) -> some View {
-        Text(contacts.summary)
-            .font(.caption)
-            .foregroundStyle(contacts.state == .error || contacts.state == .paused ? .red : .secondary)
-            .accessibilityIdentifier("mailboxes.contacts.\(mailbox.id)")
+        if let summary = contacts.summary() {
+            Text(summary)
+                .font(.caption)
+                .foregroundStyle(contacts.isProblem ? .red : .secondary)
+                .accessibilityIdentifier("mailboxes.contacts.\(mailbox.id)")
+        }
         if contacts.needsReconnect {
             Button("Reconnect to add contacts") {
                 Task { await reconnect(mailbox) }
