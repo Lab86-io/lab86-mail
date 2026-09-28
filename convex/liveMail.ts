@@ -180,7 +180,22 @@ export const listThreads = query({
     }
 
     let rows: any[] = [];
-    if (requestedAccounts.length) {
+    if (requestedAccounts.length > 1) {
+      // Many mailboxes: one read of the user's newest rows usually fills the
+      // page. Each account read needs up to `limit` rows, so eight mailboxes
+      // read eight pages to show one (IO-1). Fall back to the account reads
+      // only when the merged read cannot prove that it holds the newest
+      // `limit` rows of the requested mailboxes.
+      const accountSet = new Set(requestedAccounts);
+      const merged = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_lastDate', (q) => q.eq('userId', userId))
+        .order('desc')
+        .take(limit * 2);
+      const kept = merged.filter((row) => accountSet.has(row.accountId));
+      if (kept.length >= limit || merged.length < limit * 2) rows = kept;
+    }
+    if (!rows.length && requestedAccounts.length) {
       const perAccount = Math.max(limit, Math.ceil((limit * 2) / Math.max(requestedAccounts.length, 1)));
       const accountRows = await Promise.all(
         requestedAccounts.map((accountId) =>
@@ -192,7 +207,7 @@ export const listThreads = query({
         ),
       );
       rows = accountRows.flat();
-    } else {
+    } else if (!rows.length) {
       rows = await ctx.db
         .query('mailCorpusThreads')
         .withIndex('by_user_lastDate', (q) => q.eq('userId', userId))
