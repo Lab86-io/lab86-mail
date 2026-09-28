@@ -2,6 +2,7 @@ import { labelsHaveRole } from '../mail/search/folders';
 import { isNoReplyLike } from '../mail/smart-categories';
 import { emailFromHeader } from '../shared/format';
 import { stripLoneSurrogates, truncateText } from '../shared/text';
+import { splitAddressList } from './address-field';
 import {
   type ContactSource,
   isConsumerMailbox,
@@ -64,26 +65,9 @@ export interface MailAddress {
  * inside quotes or angle brackets do not split ("Doe, Ann" <ann@x.io>).
  */
 export function parseAddressList(value: string | null | undefined): MailAddress[] {
-  const text = String(value || '');
-  const parts: string[] = [];
-  let current = '';
-  let quoted = false;
-  let angled = false;
-  for (const char of text) {
-    if (char === '"') quoted = !quoted;
-    else if (char === '<' && !quoted) angled = true;
-    else if (char === '>' && !quoted) angled = false;
-    if ((char === ',' || char === ';') && !quoted && !angled) {
-      parts.push(current);
-      current = '';
-      continue;
-    }
-    current += char;
-  }
-  parts.push(current);
   const out: MailAddress[] = [];
   const seen = new Set<string>();
-  for (const part of parts) {
+  for (const part of splitAddressList(value)) {
     const email = normalizeContactEmail(emailFromHeader(part));
     if (!email || seen.has(email)) continue;
     seen.add(email);
