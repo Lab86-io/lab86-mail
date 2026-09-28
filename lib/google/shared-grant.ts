@@ -39,8 +39,8 @@ export function googleClientProject(clientId: string | undefined): string | null
 /**
  * True when a mail revoke can end the Drive grant, and the reverse: mail uses
  * the Drive client, or a mail client in the same Google Cloud project. A
- * client id with no project number counts as the same project, so a doubt
- * never ends the other connection.
+ * client id with no project number counts as the same project, so an unclear
+ * case never ends the other connection.
  */
 export function mailSharesDriveProject(env: Env = deps.env()): boolean {
   const mail = googleOAuthClient(env);

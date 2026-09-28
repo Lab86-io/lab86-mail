@@ -187,8 +187,8 @@ These rules add to the decisions above or make them exact.
   but only when no other connection (of any user) still uses it.
 - **One grant for mail and Drive.** Mail falls back to the Drive OAuth
   client. A Google revoke removes all the access that the user gave to the
-  Google Cloud project, for every OAuth client of that project. So a revoke
-  from one feature ends the other. This is also true for a separate
+  Google Cloud project, for all the OAuth clients of that project. So a
+  revoke from one feature ends the other. This is also correct for a separate
   `GOOGLE_MAIL_CLIENT_ID` in the same project. The mail flow does not send
   `include_granted_scopes`. Before a revoke, the mail disconnect and the Files
   disconnect each check for a live connection of the other feature for the

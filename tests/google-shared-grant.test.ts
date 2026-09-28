@@ -48,7 +48,7 @@ describe('mailSharesDriveProject', () => {
     expect(mailSharesDriveProject(SAME_PROJECT)).toBe(true);
     expect(mailSharesDriveProject(SEPARATE)).toBe(false);
     expect(mailSharesDriveProject({ ...SEPARATE, GOOGLE_MAIL_CLIENT_ID: DRIVE_CLIENT })).toBe(true);
-    // A client id with no project number is a doubt, and a doubt counts as shared.
+    // A client id with no project number is an unclear case, and it counts as shared.
     expect(mailSharesDriveProject({ ...SEPARATE, GOOGLE_MAIL_CLIENT_ID: 'mail-client' })).toBe(true);
     expect(mailSharesDriveProject({ ...SEPARATE, GOOGLE_DRIVE_CLIENT_ID: 'drive-client' })).toBe(true);
     expect(mailSharesDriveProject({})).toBe(false);

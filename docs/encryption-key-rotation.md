@@ -34,8 +34,8 @@ in the ring on it. The tag check rejects a wrong key.
 A build before this change reads `v1` only. After this deploy, new writes are `v2`. If you think
 that you will roll back to an older build, set `LAB86_MAIL_ENCRYPTION_WRITE_FORMAT=v1` before the
 deploy. Remove it when the rollback window closes. Do not rotate a key while it is set. The
-script refuses to run while it is set, also for a dry run: with this format, every `v1` value
-counts as current, so the report cannot show the values that still need an old key.
+script stops while it is set, also for a dry run. With this format, all `v1` values count as
+current, so the report cannot show the values that need an old key.
 
 ## Procedure
 
