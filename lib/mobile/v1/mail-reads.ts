@@ -47,14 +47,25 @@ function smartList(value: unknown, max: number, count: number): string[] | undef
   return items.length ? items : undefined;
 }
 
+// A saved contact name goes into fromHeader as "Name <address>", not into a new
+// field: the Swift client of shipped apps rejects response keys it does not know.
+function senderHeader(item: any): string {
+  const header = cap(item?.fromAddress, 1_000);
+  const name = cap(item?.senderName, 200)
+    .replace(/[<>",;]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const email = emailFromHeader(item?.fromAddress || null);
+  return name && email ? cap(`${name} <${email}>`, 1_000) : header;
+}
+
 export function mailThreadSummaryFromCorpus(item: any) {
   return MailThreadSummarySchema.parse({
     id: cap(item?._id, 240),
     accountID: cap(item?.account, 240),
     subject: cap(item?.subject, 2_000, '(no subject)') || '(no subject)',
-    fromHeader: cap(item?.fromAddress, 1_000),
+    fromHeader: senderHeader(item),
     senderEmail: emailFromHeader(item?.fromAddress || null) ?? undefined,
-    senderName: cap(item?.senderName, 200) || undefined,
     snippet: cap(item?.snippet, 500),
     lastMessageAt: epochMs(item?.lastDate),
     unread: Boolean(item?.unread),
