@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test
 import { convexTest, type TestConvex } from 'convex-test';
 import { api } from '../convex/_generated/api';
 import schema from '../convex/schema';
+import { normalizeNylasContact } from '../lib/contacts/model';
 import {
   __resetContactKicksForTest,
   applyContactWebhookDelta,
@@ -515,6 +516,23 @@ describe('contact webhooks', () => {
     });
     await applyContactWebhookDelta(account, 'contact.deleted', { data: { object: { id: 'w3' } } });
     expect(await stored(t)).toEqual([]);
+
+    // A payload without a source keeps the stored source of an inbox row.
+    await t.mutation(api.contacts.upsertContactBatch, {
+      internalSecret: SECRET,
+      userId: USER,
+      accountId: 'grant_1',
+      provider: 'google',
+      contacts: [normalizeNylasContact(person('i9', 'ivy@x.io'), 'inbox')!],
+    });
+    await applyContactWebhookDelta(account, 'contact.updated', {
+      data: { object: person('i9', 'ivy@x.io', 'Ivy') },
+    });
+    expect(await stored(t)).toEqual(['inbox:i9']);
+    await applyContactWebhookDelta(account, 'contact.updated', {
+      data: { object: { ...person('i9', 'ivy@x.io', 'Ivy'), source: 'address_book' } },
+    });
+    expect(await stored(t)).toEqual(['address_book:i9']);
 
     expect(await applyContactWebhookDelta(account, 'contact.updated', { data: { object: {} } })).toEqual({
       applied: false,

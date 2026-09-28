@@ -12,6 +12,8 @@ import {
 import { checkWaitingReplies } from '../albatross/reply-watch-runtime';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { mapConcurrent } from '../classifier/client';
+import { isWeakHeaderName, preferredSenderName } from '../contacts/model';
+import { contactNamesFor } from '../contacts/names';
 import { api, convexQuery } from '../hosted/convex';
 import { briefAttention } from '../jev/brief';
 import {
@@ -530,6 +532,8 @@ export async function generateDailyReport(input: {
   await savePartial('Scanning last week', 1, bounded.length + 4, []);
   await savePartial('Adding relevant month context', 2, bounded.length + 4, []);
 
+  // Saved contact names for people whose headers give only an address.
+  const contactNames = await loadBriefContactNames(input.userId, bounded, messagesByKey, self);
   const insights: ThreadInsight[] = [];
   let lastPartialSaveAt = Date.now();
   for (const thread of bounded) {
@@ -543,6 +547,7 @@ export async function generateDailyReport(input: {
       memoryContext,
       enrich: enrichKeys.has(key),
       self,
+      contactNames,
     });
     insights.push(insight);
     // Stream the edition as it forms: lanes fill in while the slow enriched
@@ -982,9 +987,15 @@ async function buildThreadInsight(
   floor: FloorSignals,
   _tracked: boolean,
   now: number,
-  context: { calendarContext: string[]; memoryContext: string[]; enrich: boolean; self: Set<string> },
+  context: {
+    calendarContext: string[];
+    memoryContext: string[];
+    enrich: boolean;
+    self: Set<string>;
+    contactNames?: ReadonlyMap<string, string>;
+  },
 ): Promise<ThreadInsight> {
-  const people = extractPeople(thread, messages, context.self);
+  const people = extractPeople(thread, messages, context.self, context.contactNames);
   const commitments = floor.commitments;
   const surfacedBecause = surfacedBecauseFor(floor, now);
   const baseOpenLoops = [
@@ -1628,7 +1639,16 @@ function threadText(thread: Thread, messages: Message[], maxChars: number) {
   );
 }
 
-function extractPeople(thread: Thread, messages: Message[], self: Set<string>) {
+/**
+ * The people of a thread, as names. A header that gives only an address
+ * uses the saved contact name when there is one (`contactNames`).
+ */
+export function extractPeople(
+  thread: Thread,
+  messages: Message[],
+  self: Set<string>,
+  contactNames: ReadonlyMap<string, string> = new Map(),
+) {
   const values = [
     thread.fromAddress,
     ...messages.flatMap((message) => [message.from, message.to, message.cc]),
@@ -1638,11 +1658,38 @@ function extractPeople(thread: Thread, messages: Message[], self: Set<string>) {
     for (const part of String(value || '').split(',')) {
       const email = emailFromHeader(part)?.toLowerCase();
       if (email && self.has(email)) continue;
-      const label = shortFrom(part);
+      const saved = email ? preferredSenderName(part, contactNames.get(email)) : undefined;
+      const label = saved || shortFrom(part);
       if (label) names.add(label);
     }
   }
   return [...names].slice(0, 5);
+}
+
+/**
+ * Saved contact names for the addresses in the brief's threads whose headers
+ * give no real name. One query; a failure gives no names.
+ */
+export async function loadBriefContactNames(
+  userId: string | null | undefined,
+  threads: Thread[],
+  messagesByKey: ReadonlyMap<string, Message[]>,
+  self: ReadonlySet<string>,
+  lookup: typeof contactNamesFor = contactNamesFor,
+): Promise<Map<string, string>> {
+  if (!userId) return new Map();
+  const emails = new Set<string>();
+  for (const thread of threads) {
+    const messages = messagesByKey.get(`${thread.account}:${thread._id}`) || [];
+    for (const value of [thread.fromAddress, ...messages.flatMap((m) => [m.from, m.to, m.cc])]) {
+      for (const part of String(value || '').split(',')) {
+        const email = emailFromHeader(part)?.toLowerCase();
+        if (email && !self.has(email) && isWeakHeaderName(part)) emails.add(email);
+      }
+    }
+  }
+  if (!emails.size) return new Map();
+  return await lookup(userId, [...emails]).catch(() => new Map<string, string>());
 }
 
 // ---- Local (no-AI) briefing copy -------------------------------------------

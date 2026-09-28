@@ -112,3 +112,52 @@ describe('expand_alias', () => {
     expect(await runTool(expandAlias.handler, { alias: 'zed' }, { userId: null })).toEqual({ email: null });
   });
 });
+
+describe('resolve_photos reads synced contact photos first', () => {
+  test('a stored contact photo skips the provider lookup', async () => {
+    const { resolvePhotos, setPhotoToolDependenciesForTest } = await import('../lib/tools/photos');
+    const lookups: string[] = [];
+    const stored: any[] = [];
+    const reset = setPhotoToolDependenciesForTest({
+      contactPhotos: async (userId, emails) => {
+        stored.push({ userId, emails });
+        return new Map([['ann@acme.com', 'https://photos.example/ann.png']]);
+      },
+      getPhotoFromCache: async () => null,
+      setPhotoCache: async () => undefined,
+      resolveProviderProfilePhoto: async ({ email }) => {
+        lookups.push(email);
+        return null;
+      },
+    });
+    try {
+      const result = await runTool(resolvePhotos.handler, {
+        account: '__all__',
+        emails: ['Ann@acme.com', 'ann@acme.com', 'bob@acme.io'],
+      });
+      expect(result.photos['ann@acme.com']).toBe('https://photos.example/ann.png');
+      expect(stored).toEqual([{ userId: 'test_user_tools', emails: ['ann@acme.com', 'bob@acme.io'] }]);
+      expect(lookups).toEqual(['bob@acme.io']);
+    } finally {
+      reset();
+    }
+  });
+
+  test('a failed contact photo read falls back to the provider', async () => {
+    const { resolvePhotos, setPhotoToolDependenciesForTest } = await import('../lib/tools/photos');
+    const reset = setPhotoToolDependenciesForTest({
+      contactPhotos: async () => {
+        throw new Error('down');
+      },
+      getPhotoFromCache: async () => null,
+      setPhotoCache: async () => undefined,
+      resolveProviderProfilePhoto: async () => 'https://provider.example/p.png',
+    });
+    try {
+      const result = await runTool(resolvePhotos.handler, { account: '__all__', emails: ['x@acme.io'] });
+      expect(result.photos['x@acme.io']).toBe('https://provider.example/p.png');
+    } finally {
+      reset();
+    }
+  });
+});

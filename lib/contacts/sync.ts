@@ -17,6 +17,7 @@ import {
   type ContactSource,
   contactSourcePlan,
   DEAD_ACCOUNT_CONTACT_RETENTION_MS,
+  isContactSource,
   normalizeNylasContact,
 } from './model';
 
@@ -462,7 +463,8 @@ export async function applyContactWebhookDelta(row: NylasAccountRow, type: strin
       }
     }
     if (raw !== undefined) {
-      // Contact webhooks come for saved contacts; the payload names its source when it can.
+      // Contact webhooks come for saved contacts. When the payload does not
+      // name its source, a stored row keeps the source it has.
       const contact = raw ? normalizeNylasContact(raw, 'address_book') : null;
       if (contact) {
         await deps.mutate(api.contacts.upsertContactBatch, {
@@ -470,6 +472,7 @@ export async function applyContactWebhookDelta(row: NylasAccountRow, type: strin
           accountId: row.accountId,
           provider: row.provider,
           contacts: [contact],
+          ...(isContactSource(raw?.source) ? {} : { preferStoredSource: true }),
         });
       } else {
         await remove();

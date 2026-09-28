@@ -318,6 +318,39 @@ describe('contact reads', () => {
     });
   });
 
+  test('photos come from https contact photos of connected mailboxes', async () => {
+    const t = convexTest(schema, modules);
+    await connect(t);
+    await upsert(t, [
+      contact('c1', {
+        displayName: 'Ann Lee',
+        emails: [{ email: 'ann@acme.com' }],
+        pictureUrl: 'https://photos.example/ann.png',
+      }),
+      contact('c2', { emails: [{ email: 'bob@acme.com' }], pictureUrl: 'http://insecure.example/b.png' }),
+      contact('c3', { emails: [{ email: 'cy@acme.com' }] }),
+    ]);
+    const { photos } = await t.query(api.contacts.photosForEmails, {
+      internalSecret: SECRET,
+      userId: USER,
+      emails: ['ANN@acme.com', 'bob@acme.com', 'cy@acme.com', 'nope'],
+    });
+    expect(photos).toEqual([{ email: 'ann@acme.com', url: 'https://photos.example/ann.png' }]);
+    expect(
+      (await t.query(api.contacts.photosForEmails, { internalSecret: SECRET, userId: USER, emails: [] }))
+        .photos,
+    ).toEqual([]);
+    expect(
+      (
+        await t.query(api.contacts.photosForEmails, {
+          internalSecret: SECRET,
+          userId: 'nobody',
+          emails: ['a@b.co'],
+        })
+      ).photos,
+    ).toEqual([]);
+  });
+
   test('recent correspondents leave out self, noise, and no-reply senders', async () => {
     const t = convexTest(schema, modules);
     await connect(t);

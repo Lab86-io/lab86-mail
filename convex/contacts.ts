@@ -301,6 +301,9 @@ export const upsertContactBatch = mutation({
     accountId: v.string(),
     provider: providerValidator,
     contacts: v.array(contactInputValidator),
+    // A webhook payload may not name its source. Then an existing row keeps
+    // its stored source, so an `inbox` row never turns into a saved contact.
+    preferStoredSource: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -319,7 +322,8 @@ export const upsertContactBatch = mutation({
             .eq('providerContactId', contact.providerContactId),
         )
         .first();
-      if (existing && existing.contentHash === contact.contentHash && existing.source === contact.source) {
+      const source = args.preferStoredSource && existing ? existing.source : contact.source;
+      if (existing && existing.contentHash === contact.contentHash && existing.source === source) {
         unchanged += 1;
         continue;
       }
@@ -328,7 +332,7 @@ export const upsertContactBatch = mutation({
         userId: args.userId,
         accountId: args.accountId,
         provider: args.provider,
-        source: contact.source,
+        source,
         providerContactId: contact.providerContactId,
         displayName: contact.displayName,
         givenName: contact.givenName,
@@ -530,6 +534,43 @@ export const namesForEmails = query({
       if (best?.name) names.push({ email, name: best.name, source: best.source });
     }
     return { names };
+  },
+});
+
+/**
+ * Synced contact photos for the given addresses (https only), so the avatar
+ * pipeline asks Nylas only for the rest. Saved contacts win over the
+ * directory, and the directory over `inbox` rows.
+ */
+export const photosForEmails = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), emails: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const emails = [
+      ...new Set(args.emails.map(normalizeContactEmail).filter((email): email is string => Boolean(email))),
+    ].slice(0, 200);
+    if (!emails.length) return { photos: [] };
+    const live = await liveAccountIds(ctx, args.userId);
+    if (!live.size) return { photos: [] };
+    const photos: Array<{ email: string; url: string }> = [];
+    for (const email of emails) {
+      const rows = (
+        await ctx.db
+          .query('contactEmails')
+          .withIndex('by_user_email', (q) => q.eq('userId', args.userId).eq('email', email))
+          .take(5)
+      )
+        .filter((row) => live.has(row.accountId))
+        .sort((a, b) => b.weight - a.weight);
+      for (const row of rows) {
+        const contact = await ctx.db.get(row.contactId);
+        if (contact?.photoUrl?.startsWith('https://')) {
+          photos.push({ email, url: contact.photoUrl });
+          break;
+        }
+      }
+    }
+    return { photos };
   },
 });
 
