@@ -309,6 +309,10 @@ export default defineSchema({
     llmPending: v.optional(v.boolean()),
     jev: v.optional(v.any()),
     jevEvidenceMessageIds: v.optional(v.array(v.string())),
+    // The latest message of the last stored verdict. A new message does not
+    // clear it. Jev reads the newest three messages (IO-1); when this message
+    // is among them, the window holds the whole open state of the thread.
+    jevAssessedMessageId: v.optional(v.string()),
     jevVersion: v.optional(v.number()),
     jevStatus: v.optional(v.string()),
     jevAttempts: v.optional(v.number()),

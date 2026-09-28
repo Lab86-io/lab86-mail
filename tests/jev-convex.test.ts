@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
+import { JEV_CLAIM_SCAN } from '../convex/jev';
 import schema from '../convex/schema';
 import { DEFAULT_JEV_PREFERENCES } from '../lib/jev/contract';
 import { assessmentFromResponse } from '../lib/jev/mail';
@@ -593,7 +594,7 @@ describe('Jev spends model calls only on live, recent mail', () => {
     expect((await claim(t)).items).toEqual([]);
   });
 
-  test('a queue whose first 120 rows are all gated still reaches a live row', async () => {
+  test('a queue whose first rows are all gated still reaches a live row', async () => {
     const t = convexTest(schema, modules);
     await seed(t, 'a', 'owner', 'live');
     await t.run(async (ctx) => {
@@ -617,9 +618,14 @@ describe('Jev spends model calls only on live, recent mail', () => {
           updatedAt: NOW,
         });
     });
-    const first = await claim(t);
-    expect(first.items).toEqual([]);
-    expect(first.moreRemaining).toBe(true);
+    // Each claim reads JEV_CLAIM_SCAN rows and settles the gated ones, so the
+    // claims that follow read further down until the live row comes up.
+    const empty = Math.floor(125 / JEV_CLAIM_SCAN);
+    for (let pass = 0; pass < empty; pass++) {
+      const page = await claim(t);
+      expect(page.items).toEqual([]);
+      expect(page.moreRemaining).toBe(true);
+    }
     const second = await claim(t);
     expect(second.items.map((item: any) => item.threadId)).toEqual(['live']);
     const pending = await t.run((ctx) =>

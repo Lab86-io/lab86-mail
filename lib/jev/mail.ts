@@ -23,6 +23,16 @@ export interface JevMailMessage {
   headers?: Record<string, string>;
   attachments?: string[];
 }
+/**
+ * Thread facts that the first Jev stage reads in place of message bodies:
+ * the labels of the thread, its message count, and the rule-based verdict.
+ */
+export interface JevThreadFacts {
+  labels: string[];
+  messageCount: number;
+  ruleCategory?: string;
+  ruleSignals?: string[];
+}
 export interface JevMailInput {
   accountId: string;
   threadId: string;
@@ -31,6 +41,91 @@ export interface JevMailInput {
   selfAddresses: string[];
   messages: JevMailMessage[];
   contextComplete: boolean;
+  /** Set on the first-stage input only. */
+  threadFacts?: JevThreadFacts;
+}
+
+/**
+ * The first-stage view of one claim (IO-1): the newest message with its
+ * snippet as the body, plus the thread facts. A claim without it goes to the
+ * body stage at once (for example, a thread with an open obligation).
+ */
+export interface JevFactsView {
+  messages: JevMailMessage[];
+  contextComplete: boolean;
+  threadFacts: JevThreadFacts;
+}
+
+/** Messages that the body stage reads: the newest ones, plus open evidence. */
+export const JEV_BODY_MESSAGES = 3;
+/** Characters of each message body that Jev reads. */
+export const JEV_BODY_CHARS = 2_400;
+
+/**
+ * The first-stage answer is kept only when each decision has at least this
+ * probability. The Jev 1.13 cutoffs accept a purpose at 0.6 and call a
+ * yes/no answer clear outside 0.25–0.75. The first stage sees only the
+ * snippet, so it needs a clear margin over those cutoffs: 0.8 on every
+ * decision. Anything less goes to the body stage, which reads the text.
+ */
+export const JEV_FACTS_CONFIDENCE = 0.8;
+
+/** The first-stage input: the claim input with the facts view in place of the bodies. */
+export function factsInput(input: JevMailInput, facts: JevFactsView): JevMailInput {
+  return { ...input, ...facts };
+}
+
+/** The state object that the classifier reads. */
+export function classifierState(input: JevMailInput) {
+  return {
+    mailboxOwnerAddresses: input.selfAddresses,
+    messagesOldestToNewest: input.messages,
+    contextComplete: input.contextComplete,
+    ...(input.threadFacts ? { threadFacts: input.threadFacts } : {}),
+  };
+}
+
+/**
+ * The confidence of a first-stage answer: the lowest probability of its
+ * decisions. The purpose and the subject kind give their top class
+ * probability. Each yes/no question gives the probability of its more likely
+ * side. The evidence questions do not count: they only pick a message.
+ */
+export function factsConfidence(response: ClassifierResponse): number {
+  let lowest = 1;
+  for (const key of ['purpose', 'subject_kind']) {
+    const answer = response.answers[key];
+    if (answer?.type !== 'choice') return 0;
+    lowest = Math.min(lowest, answer.confidence);
+  }
+  for (const key of ['reply', 'action', 'waiting', 'change']) {
+    const answer = response.answers[key];
+    if (answer?.type !== 'noul') return 0;
+    lowest = Math.min(lowest, Math.max(answer.noul, 1 - answer.noul));
+  }
+  return lowest;
+}
+
+/**
+ * True when the first-stage answer can stand without the bodies. It must be
+ * confident, name a purpose, find no obligation and no change (their
+ * evidence must come from the text), and not be a conversation with earlier
+ * messages that the first stage did not see.
+ */
+export function factsAnswerSettles(
+  input: JevMailInput,
+  response: ClassifierResponse,
+  model: ClassifierModel = defaultClassifier(),
+): boolean {
+  if (factsConfidence(response) < JEV_FACTS_CONFIDENCE) return false;
+  const purpose = response.answers.purpose;
+  if (purpose?.type !== 'choice' || purpose.choice === 'unknown') return false;
+  for (const key of ['reply', 'action', 'waiting', 'change']) {
+    const answer = response.answers[key];
+    if (answer?.type !== 'noul' || answer.noul >= model.thresholds.noulHigh) return false;
+  }
+  const count = input.threadFacts?.messageCount ?? input.messages.length;
+  return !(purpose.choice === 'conversation' && count > 1);
 }
 
 /** A content watermark, deliberately independent of read/star state. */
