@@ -84,6 +84,9 @@ function isBlockedIpv6(ip: string): boolean {
   if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every((group) => group === 0)) {
     return isBlockedIpv4(v4);
   }
+  // The local-use translation prefix 64:ff9b:1::/48 (RFC 8215). A network can
+  // put the IPv4 address at any RFC 6052 position in it, so all of it is blocked.
+  if (groups[0] === 0x64 && groups[1] === 0xff9b && groups[2] === 1) return true;
   if (groups.every((group) => group === 0)) return true; // ::
   if (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) return true; // ::1
   const addr = groups.map((group) => group.toString(16).padStart(4, '0')).join(':');

@@ -51,6 +51,9 @@ describe('IPv6 forms of internal addresses (S3)', () => {
     'http://[::ffff:a9fe:a9fe]/latest/meta-data',
     'http://[::127.0.0.1]/',
     'http://[64:ff9b::a00:1]/',
+    // Local-use NAT64 (RFC 8215): a /96 inside it and a /48 form of 8.8.8.8.
+    'http://[64:ff9b:1::a00:1]/',
+    'http://[64:ff9b:1:808:8:800::]/',
     'http://[::1]/',
     'http://[::]/',
     'http://[fd00::1]/',
