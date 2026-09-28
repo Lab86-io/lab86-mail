@@ -21,7 +21,8 @@ struct AssistantDraftArtifactView: View {
             sendingPreferences: {
                 let result = try await environment.backend.get(path: "/api/prefs")
                 return Int(result["prefs"]?["undoSendSeconds"]?.doubleValue ?? 10)
-            }
+            },
+            recipientSearch: environment.recipientSearch
         )
     }
 }
@@ -38,8 +39,12 @@ struct AssistantDraftArtifactContent: View {
     let pendingSends: PendingSendCoordinator
     let theme: ThemeStore
     let sendingPreferences: @MainActor () async throws -> Int
+    /// Recipient search for the To, Cc, and Bcc chips. Nil in tests: the
+    /// chips still work, with no suggestion list.
+    var recipientSearch: (any RecipientSearching)? = nil
 
     @State private var showsCopyFields = false
+    @State private var recipientProblem: String?
     @State private var showsFileImporter = false
     @State private var isReadingAttachments = false
     @State private var undoSendSeconds = 10
@@ -120,6 +125,14 @@ struct AssistantDraftArtifactContent: View {
             }
             if let suggestion = record.suggestion, record.delivery.isEditable {
                 suggestionBanner(suggestion)
+            }
+            if let recipientProblem, record.delivery.isEditable {
+                Text(recipientProblem)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("assistant.draft.recipientProblem")
             }
             if let error = store.sendError(for: key) {
                 Text(error)
@@ -242,40 +255,45 @@ struct AssistantDraftArtifactContent: View {
 
     @ViewBuilder private func recipientRows(_ record: AssistantDraftRecord) -> some View {
         let editable = canEdit
-        addressRow("To", text: binding(\.to), field: .to, editable: editable)
+        addressRow("To", text: binding(\.to), field: .to, editable: editable, record: record)
             .accessibilityIdentifier("assistant.draft.to")
         hairline
         if showsCopyFields || !record.cc.isEmpty || !record.bcc.isEmpty {
-            addressRow("Cc", text: binding(\.cc), field: .cc, editable: editable)
+            addressRow("Cc", text: binding(\.cc), field: .cc, editable: editable, record: record)
                 .accessibilityIdentifier("assistant.draft.cc")
             hairline
-            addressRow("Bcc", text: binding(\.bcc), field: .bcc, editable: editable)
+            addressRow("Bcc", text: binding(\.bcc), field: .bcc, editable: editable, record: record)
                 .accessibilityIdentifier("assistant.draft.bcc")
             hairline
         }
     }
 
+    // The same chip field as the full composer, inside the card.
     private func addressRow(
         _ title: String,
         text: Binding<String>,
         field: Field,
-        editable: Bool
+        editable: Bool,
+        record: AssistantDraftRecord
     ) -> some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            TextField("", text: text)
-                .textFieldStyle(.plain)
-                .textContentType(.emailAddress)
-                .textInputAutocapitalization(.never)
-                .keyboardType(.emailAddress)
-                .focused($focusedField, equals: field)
-                .disabled(!editable)
-                .accessibilityLabel(title)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        RecipientField(
+            title: title,
+            value: text,
+            focus: $focusedField,
+            focusValue: field,
+            isFocused: focusedField == field,
+            theme: theme,
+            searcher: recipientSearch,
+            fromAccountID: record.accountID.nilIfBlank,
+            excluding: [(Field.to, record.to), (Field.cc, record.cc), (Field.bcc, record.bcc)]
+                .filter { $0.0 != field }
+                .flatMap { RecipientAddressParser.addresses(in: $0.1) },
+            isEnabled: editable,
+            suggestionLimit: 5,
+            horizontalPadding: 14,
+            verticalPadding: 5,
+            onSubmitEmpty: { focusedField = field == .to ? .subject : (field == .cc ? .bcc : .subject) }
+        )
         .frame(minHeight: 44)
     }
 
@@ -411,6 +429,11 @@ struct AssistantDraftArtifactContent: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
+                    if let problem = RecipientAddressParser.firstInvalidEntry(in: [record.to, record.cc, record.bcc]) {
+                        recipientProblem = ComposeView.invalidRecipientMessage(problem)
+                        return
+                    }
+                    recipientProblem = nil
                     Task {
                         await store.send(
                             key,

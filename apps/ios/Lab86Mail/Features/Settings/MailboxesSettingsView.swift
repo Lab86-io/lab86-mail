@@ -35,6 +35,9 @@ struct MailboxesSettingsView: View {
     @State private var disconnectTarget: Mailbox?
     @State private var aliasEdit: AliasEdit?
     @State private var aliasDraft = ""
+    // Contacts for each mailbox (GET /api/mobile/v1/contacts/status). A failed
+    // read hides the line; mail status does not depend on it.
+    @State private var contactStatuses: [String: ContactAccountStatus] = [:]
 
     var body: some View {
         List {
@@ -149,6 +152,11 @@ struct MailboxesSettingsView: View {
                     Button("Reconnect / update permissions", systemImage: "key") {
                         Task { await reconnect(mailbox) }
                     }
+                    if contactStatuses[mailbox.id].map({ !$0.needsReconnect && $0.state != .unsupported && $0.state != .paused }) == true {
+                        Button("Sync contacts now", systemImage: "person.2") {
+                            Task { await resyncContacts(mailbox) }
+                        }
+                    }
                     Divider()
                     Button("Disconnect", systemImage: "trash", role: .destructive) {
                         disconnectTarget = mailbox
@@ -165,8 +173,30 @@ struct MailboxesSettingsView: View {
             Label(syncLabel(mailbox), systemImage: syncSymbol(mailbox))
                 .font(.caption)
                 .foregroundStyle(mailbox.syncStatus == "error" ? .red : .secondary)
+            if let contacts = contactStatuses[mailbox.id] {
+                contactLine(mailbox, contacts)
+            }
         }
         .padding(.vertical, 4)
+    }
+
+    // One plain line for the mailbox's contacts, and the reconnect action when
+    // the grant has no contact permission. Reconnect is the same mailbox
+    // connect flow; the server starts a contact pass when it completes.
+    @ViewBuilder private func contactLine(_ mailbox: Mailbox, _ contacts: ContactAccountStatus) -> some View {
+        Text(contacts.summary)
+            .font(.caption)
+            .foregroundStyle(contacts.state == .error || contacts.state == .paused ? .red : .secondary)
+            .accessibilityIdentifier("mailboxes.contacts.\(mailbox.id)")
+        if contacts.needsReconnect {
+            Button("Reconnect to add contacts") {
+                Task { await reconnect(mailbox) }
+            }
+            .font(.caption.weight(.medium))
+            .buttonStyle(.borderless)
+            .disabled(busyID != nil)
+            .accessibilityIdentifier("mailboxes.contacts.reconnect.\(mailbox.id)")
+        }
     }
 
     private func load() async {
@@ -203,6 +233,28 @@ struct MailboxesSettingsView: View {
                     reason: row["reason"]?.stringValue
                 )
             }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        await loadContactStatus()
+    }
+
+    private func loadContactStatus() async {
+        guard let service = environment.contactStatus,
+              let page = try? await service.fetchContactStatus() else { return }
+        contactStatuses = Dictionary(
+            page.accounts.map { ($0.accountID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    private func resyncContacts(_ mailbox: Mailbox) async {
+        guard let service = environment.contactStatus else { return }
+        busyID = mailbox.id
+        defer { busyID = nil }
+        do {
+            _ = try await service.resyncContacts(accountID: mailbox.id)
+            await loadContactStatus()
         } catch {
             errorMessage = error.localizedDescription
         }

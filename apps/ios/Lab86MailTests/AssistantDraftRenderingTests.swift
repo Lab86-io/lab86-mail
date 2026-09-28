@@ -50,10 +50,19 @@ final class AssistantDraftRenderingTests: XCTestCase {
 
             // Edit the actual UIKit control SwiftUI hosts, not a duplicate UI.
             if name == "light" {
+                // The address shows as a chip; the text field holds only
+                // what is typed. A comma after a new address adds a chip.
                 let fields = descendants(of: controller.view).compactMap { $0 as? UITextField }
-                let recipient = try XCTUnwrap(fields.first { $0.text == "ari@example.com" })
-                recipient.text = "ari@example.com, sam@example.com"
+                let recipient = try XCTUnwrap(fields.first { $0.text == RecipientFieldText.display("") })
+                recipient.text = RecipientFieldText.display("sam@example.com,")
                 recipient.sendActions(for: .editingChanged)
+                let clock = ContinuousClock()
+                let deadline = clock.now.advanced(by: .seconds(3))
+                while fixture.store.record(for: fixture.key, ownerID: "synthetic-owner")?.to != "ari@example.com, sam@example.com",
+                      clock.now < deadline {
+                    controller.view.layoutIfNeeded()
+                    try await Task.sleep(for: .milliseconds(20))
+                }
                 XCTAssertEqual(fixture.store.record(for: fixture.key, ownerID: "synthetic-owner")?.to, "ari@example.com, sam@example.com")
                 XCTAssertEqual(window.rootViewController, controller)
                 XCTAssertNil(controller.presentedViewController, "Editing stays in chat, without a composer screen")

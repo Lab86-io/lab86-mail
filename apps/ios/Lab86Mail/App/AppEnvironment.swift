@@ -39,6 +39,10 @@ final class AppEnvironment {
     // "Prepared for you" under the Brief: GET/POST /api/content?view=brief.
     let preparedWork: PreparedWorkClient?
     let accountStore: AccountStore
+    // Recipient search for To, Cc, and Bcc, and each mailbox's contact status
+    // (mobile v1 contacts endpoints).
+    let recipientSearch: (any RecipientSearching)?
+    let contactStatus: (any ContactStatusServing)?
     // The plan, the trial note, and the optional Files surface (round 2).
     let trust: AccountTrustStore
     // The current Albatross conversation. Held here so switching destinations
@@ -75,6 +79,9 @@ final class AppEnvironment {
         trust = AccountTrustStore(backend: backend)
         documents = DocumentStore(backend: backend)
         webAuthentication = WebAuthenticationCoordinator(backend: backend)
+        let contacts = configuration.apiBaseURL.map { _ in ContactsHTTPClient(backend: backend) }
+        recipientSearch = contacts
+        contactStatus = contacts
         pendingSends = PendingSendCoordinator(backend: backend, tools: tools)
         self.mobileContainer = mobileContainer
         let commandOutbox = CommandOutbox(modelContainer: mobileContainer)
