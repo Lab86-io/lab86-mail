@@ -14,7 +14,13 @@ system. The Google scopes do not change.
 - **Identity.** A Google account keeps its `accountId`. Nylas v3 stores Gmail's
   own thread, message, and event ids, so the corpus, labels, Jev verdicts,
   calendar rows, and area links stay valid. Only the grant id changes: it
-  becomes `google:<accountId>` (`lib/google/transport.ts`).
+  becomes `google:<random UUID>`, a new id for each connection
+  (`newGoogleDirectGrantId` in `lib/google/transport.ts`). The id does not
+  hold the account id: two users can share one accountId (a Nylas grant id
+  is the accountId of the first connection, and one mailbox can be connected
+  under two users). A lookup by grant id finds exactly one connection, and
+  Convex refuses a state where two rows share a direct grant id. A reconnect
+  keeps the grant id of its connection.
 - **Router.** `requireNylas()` returns a proxy (`routeNylasClient` in
   `lib/nylas/client.ts`). A call on `messages`, `threads`, `folders`,
   `attachments`, `drafts`, `events`, `calendars`, `contacts`, or `grants` whose
@@ -30,8 +36,9 @@ system. The Google scopes do not change.
   on 429 and 5xx, and errors with `statusCode` (the field that
   `nylasErrorStatus()` reads).
 - **Tokens.** The refresh token is encrypted (`encryptSecret`) in
-  `providerGrants.refreshTokenEncrypted`, on the row whose `grantId` is
-  `google:<accountId>`. `getGoogleAccessToken` caches the access token in
+  `providerGrants.refreshTokenEncrypted`, on the one row whose `grantId` is
+  the direct grant id. A token refresh writes only the row of its own
+  (userId, accountId). `getGoogleAccessToken` caches the access token in
   memory and refreshes it. `invalid_grant` marks the account as needing a
   reconnect.
 - **OAuth client.** `GOOGLE_MAIL_CLIENT_ID` / `GOOGLE_MAIL_CLIENT_SECRET`,
@@ -117,10 +124,13 @@ These rules add to the decisions above or make them exact.
   has an account with the same address, `new` switches or reconnects it.
   After a switch or a new connection, the calendar sync and the contact sync
   start at once (forced), as after a Nylas sign-in.
-- **Reconnect with the flag off.** The Nylas connect route sends a Google
-  connection to the direct flow when a direct account of the user needs a
-  reconnect. Thus the Reconnect button does not move a switched account back
-  to Nylas.
+- **Reconnect.** A request to `/api/nylas/connect` that names a direct
+  Google account (`account=<accountId or email>`) reconnects that account
+  directly, with the flag on or off. The Settings Reconnect link names its
+  account. A request that names no account is a new connection: direct with
+  `LAB86_GOOGLE_DIRECT=1`, Nylas without it. So a user can always add a
+  different Google account. A native Reconnect does not name its account
+  yet, so with the flag off it goes through Nylas.
 - **Native.** A native Google connection takes the same choice as a web one.
   The callback keeps the Google result in the shared completion store
   (`oauthCompletions`, kind `mail`) and opens
@@ -160,10 +170,28 @@ These rules add to the decisions above or make them exact.
   with its headers. A label change is read without headers, so the stored
   headers stay. Nylas webhooks for the Nylas grant of a switched account are
   marked `processed` and ignored.
+- **History failures.** Only a failed `history.list` (or a dead grant) keeps
+  the stored History id. A message that cannot be read, a delete that fails,
+  or a message that the corpus writer refuses is counted and skipped, and the
+  id moves forward; the repair sweep reads recent mail again every 30
+  minutes. A failed upsert batch is written again one message at a time. The
+  id moves only forward (`googleDirect:advanceHistoryId` compares the ids as
+  numbers), so two overlapping runs cannot move the sync back.
 - **Disconnect.** The revoke comes before the account rows go, because the
   refresh token is in the `providerGrants` row. A network error, a 429, or a
   5xx gets two more tries. A failed revoke is logged, and the token row goes
-  anyway. The Nylas grant of a switched account is destroyed at this time.
+  anyway. The Nylas grant of a switched account is destroyed at this time,
+  but only when no other connection (of any user) still uses it.
+- **One grant for mail and Drive.** Mail falls back to the Drive OAuth
+  client, and Google keeps one grant for a user and a client. So a revoke
+  from one feature ends the other. The mail flow does not send
+  `include_granted_scopes`. Before a revoke, the mail disconnect and the Files
+  disconnect each check for a live connection of the other feature for the
+  same user and Google address on the same client
+  (`lib/google/shared-grant.ts`). If there is one, only our token row goes and
+  no revoke is sent; the log says so. A failed check also skips the revoke.
+  The clean fix is a separate `GOOGLE_MAIL_CLIENT_ID` (an owner step: a new
+  OAuth client in the same project, with the mail redirect URIs).
 - **Rollback.** `googleDirect:rollbackToNylas` does not revoke the Google
   token. Google can revoke the whole project grant, and the production Nylas
   connector is in the same Google Cloud project. The token row is deleted.
@@ -175,8 +203,9 @@ These rules add to the decisions above or make them exact.
 3. Open `/api/google/connect?mode=switch&account=<email>` in that browser.
 4. On the Google screen, choose the same Google account and allow all access.
 5. The app opens `/settings?nylas_connected=1&google_mail=switched`.
-6. Check: in the Convex dashboard, `connectedAccounts.grantId` is
-   `google:<accountId>`, and `mailSyncStates.historyId` has a value.
+6. Check: in the Convex dashboard, `connectedAccounts.grantId` starts with
+   `google:`, the `providerGrants` row has the same grant id, and
+   `mailSyncStates.historyId` has a value.
 7. Send a message to the account. It must show in the inbox within about
    2 minutes (the History cron).
 

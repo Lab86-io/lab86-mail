@@ -456,9 +456,35 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
       }) as any,
       decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
       fetch: fetchMock as any,
+      mailUsesDriveGrant: async () => false,
     });
     await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: true });
     expect(order).toEqual(['revoke', 'disconnect']);
+  });
+
+  test('keeps the Google grant when direct mail of the same address uses it: the rows go, no revoke', async () => {
+    const order: string[] = [];
+    const checks: unknown[] = [];
+    const fetchMock = mock(async () => new Response('', { status: 200 }));
+    __setCloudFileConnectionDepsForTest({
+      convexQuery: (async () => ({
+        ...stored('google_drive'),
+        connection: { ...stored('google_drive').connection, accountEmail: 'ann@example.com' },
+      })) as any,
+      convexMutation: (async () => {
+        order.push('disconnect');
+      }) as any,
+      decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
+      fetch: fetchMock as any,
+      mailUsesDriveGrant: async (input) => {
+        checks.push(input);
+        return true;
+      },
+    });
+    await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
+    expect(checks).toEqual([{ userId: 'user-1', email: 'ann@example.com' }]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(order).toEqual(['disconnect']);
   });
 
   test('a failed revoke still disconnects; OneDrive has no revoke call', async () => {
@@ -468,6 +494,7 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
       convexMutation: mutation as any,
       decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
       fetch: (async () => new Response('', { status: 503 })) as any,
+      mailUsesDriveGrant: async () => false,
     });
     await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
     expect(mutation).toHaveBeenCalledTimes(1);
