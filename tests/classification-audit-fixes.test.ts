@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { convexTest } from 'convex-test';
 import { railSmartLabels } from '../components/inbox/MailNav';
 import { api, internal } from '../convex/_generated/api';
@@ -596,6 +596,10 @@ describe('CLS-11 one resort chain for each user, and version-driven convergence'
 });
 
 describe('CLS-1 and CLS-12 Jev input and Jev writes', () => {
+  // The Jev claim takes only mail of the last 60 days. A fixed clock keeps the
+  // fixture mail recent on every date the suite runs.
+  beforeAll(() => setSystemTime(new Date(NOW + 3_600_000)));
+  afterAll(() => setSystemTime());
   async function seedMail(t: Harness, body: string) {
     await t.run(async (ctx) => {
       await ctx.db.insert('connectedAccounts', {

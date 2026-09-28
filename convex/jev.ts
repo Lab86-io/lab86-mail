@@ -9,6 +9,7 @@ import {
   normalizeJevPreferences,
 } from '../lib/jev/contract';
 import { type JevMailInput, type JevMailMessage, mailSourceRevision } from '../lib/jev/mail';
+import { labelsHaveRole } from '../lib/mail/search/folders';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import { internalAction, internalMutation, mutation, query } from './_generated/server';
@@ -194,6 +195,53 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
   };
 }
 
+/** Jev classifies mail of the last 60 days only. Older mail keeps its rule-based category. */
+export const JEV_WINDOW_MS = 60 * 86_400_000;
+export type JevGate = 'account' | 'age' | 'spam';
+const JEV_GATE_ERRORS: Record<JevGate, string> = {
+  account: 'The account is not connected.',
+  age: 'Mail older than 60 days is not classified.',
+  spam: 'Spam and trash are not classified.',
+};
+
+/**
+ * The reason Jev must not send a thread to the model, or null when it may.
+ * Only recent mail of a connected account, outside spam and trash, is sent.
+ * claimPending uses this test.
+ */
+export function jevGate(
+  row: { accountId: string; lastDate?: number; labels?: string[] },
+  liveAccountIds: ReadonlySet<string>,
+  now: number,
+): JevGate | null {
+  if (!liveAccountIds.has(row.accountId)) return 'account';
+  if (!((row.lastDate || 0) >= now - JEV_WINDOW_MS)) return 'age';
+  if (labelsHaveRole(row.labels, 'SPAM') || labelsHaveRole(row.labels, 'TRASH')) return 'spam';
+  return null;
+}
+
+async function userAccounts(ctx: any, userId: string) {
+  const accounts = await ctx.db
+    .query('connectedAccounts')
+    .withIndex('by_user', (q: any) => q.eq('userId', userId))
+    .collect();
+  const live = new Set<string>(
+    accounts.filter((account: any) => account.status === 'connected').map((a: any) => a.accountId),
+  );
+  return { accounts, live };
+}
+
+// Removes a gated row from the queue. A current verdict stays as it is; other
+// rows show the reason in the Unavailable count of the Jev settings.
+function gatedPatch(row: any, gate: JevGate) {
+  const current = assessmentIsCurrent(row.jev, row.latestMessageId);
+  return {
+    llmPending: undefined,
+    jevStatus: current ? row.jev.status : 'unavailable',
+    jevError: current ? undefined : JEV_GATE_ERRORS[gate],
+  };
+}
+
 export const claimPending = mutation({
   args: { internalSecret: v.optional(v.string()), userId: v.string(), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -206,15 +254,21 @@ export const claimPending = mutation({
       .withIndex('by_user_llm_pending', (q) => q.eq('userId', args.userId).eq('llmPending', true))
       .order('desc')
       .take(120);
-    const accounts = await ctx.db
-      .query('connectedAccounts')
-      .withIndex('by_user', (q) => q.eq('userId', args.userId))
-      .collect();
+    const { accounts, live } = await userAccounts(ctx, args.userId);
     const items = [];
     const now = Date.now();
+    // Rows this claim took off the queue with no model call. Each one lets the
+    // next claim read a row further down, so the sweep continues.
+    let settled = 0;
     for (const row of rows) {
-      if ((row.jevLeaseUntil || 0) > now || (row.jevRetryAt || 0) > now || (row.jevAttempts || 0) >= 3)
+      if ((row.jevLeaseUntil || 0) > now) continue;
+      const gate = jevGate(row, live, now);
+      if (gate) {
+        await ctx.db.patch(row._id, gatedPatch(row, gate));
+        settled++;
         continue;
+      }
+      if ((row.jevRetryAt || 0) > now || (row.jevAttempts || 0) >= 3) continue;
       const input = await threadInput(ctx, row, accounts);
       if (!input) {
         await ctx.db.patch(row._id, {
@@ -222,6 +276,7 @@ export const claimPending = mutation({
           jevStatus: 'unavailable',
           jevError: 'Message content is not synced yet.',
         });
+        settled++;
         continue;
       }
       const leaseId = `${row._id}:${now}`;
@@ -238,7 +293,7 @@ export const claimPending = mutation({
       items.push({ ...input, leaseId });
       if (items.length === limit) break;
     }
-    return { items, moreRemaining: items.length === limit };
+    return { items, moreRemaining: items.length === limit || settled > 0 };
   },
 });
 

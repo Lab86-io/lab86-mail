@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
@@ -16,8 +16,12 @@ let previous: string | undefined;
 beforeAll(() => {
   previous = process.env.LAB86_CONVEX_INTERNAL_SECRET;
   process.env.LAB86_CONVEX_INTERNAL_SECRET = secret;
+  // The claim gate reads the clock (60-day window). A fixed clock keeps the
+  // fixture mail recent on every date the suite runs.
+  setSystemTime(new Date(NOW + 3_600_000));
 });
 afterAll(() => {
+  setSystemTime();
   if (previous === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
   else process.env.LAB86_CONVEX_INTERNAL_SECRET = previous;
 });
@@ -525,4 +529,91 @@ test('reordered metadata preserves classification, and search pages omit HTML wh
   expect(result.items[0].textBody).toContain('budget approval matters');
   expect(result.items[0].textBody!.length).toBeLessThanOrEqual(1600);
   expect((result.items[0] as any).htmlBody).toBeUndefined();
+});
+
+describe('Jev spends model calls only on live, recent mail', () => {
+  const DAY = 86_400_000;
+  async function patchThread(t: TestConvex<typeof schema>, id: string, patch: any, account = 'a') {
+    const target = await row(t, account, id);
+    await t.run((ctx) => ctx.db.patch(target!._id, patch));
+  }
+  // Convex drops undefined fields, so a cleared flag is an absent key.
+  function expectOffQueue(thread: any, jevStatus: string, jevError?: string) {
+    expect(thread.llmPending).toBeUndefined();
+    expect(thread.jevStatus).toBe(jevStatus);
+    expect(thread.jevError).toBe(jevError);
+  }
+  async function setAccountStatus(t: TestConvex<typeof schema>, account: string, status: 'error') {
+    await t.run(async (ctx) => {
+      const found = await ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user_account', (q) => q.eq('userId', 'owner').eq('accountId', account))
+        .unique();
+      await ctx.db.patch(found!._id, { status });
+    });
+  }
+
+  test('the claim takes dead-account, old, and spam or trash rows off the queue with no model input', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t, 'a', 'owner', 'live');
+    await seed(t, 'a', 'owner', 'old');
+    await seed(t, 'a', 'owner', 'junk');
+    await seed(t, 'a', 'owner', 'bin');
+    await seed(t, 'dead', 'owner', 'gone');
+    await setAccountStatus(t, 'dead', 'error');
+    await patchThread(t, 'old', { lastDate: NOW - 61 * DAY });
+    // Provider-neutral roles: an iCloud junk folder id ends in `:Junk`.
+    await patchThread(t, 'junk', { labels: ['v0:abc:Junk'] });
+    await patchThread(t, 'bin', { labels: ['TRASH'] });
+    const page = await claim(t);
+    expect(page.items.map((item: any) => item.threadId)).toEqual(['live']);
+    expect(page.moreRemaining).toBe(true);
+    const reasons = {
+      old: 'Mail older than 60 days is not classified.',
+      junk: 'Spam and trash are not classified.',
+      bin: 'Spam and trash are not classified.',
+    };
+    for (const [id, error] of Object.entries(reasons))
+      expectOffQueue(await row(t, 'a', id), 'unavailable', error);
+    expectOffQueue(await row(t, 'dead', 'gone'), 'unavailable', 'The account is not connected.');
+    expect((await claim(t)).items).toEqual([]);
+  });
+
+  test('a queue whose first 120 rows are all gated still reaches a live row', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t, 'a', 'owner', 'live');
+    await t.run(async (ctx) => {
+      // Newer rows of a dead account sort first in the descending claim read.
+      for (let i = 0; i < 125; i++)
+        await ctx.db.insert('mailCorpusThreads', {
+          userId: 'owner',
+          accountId: 'dead',
+          grantId: 'grant-dead',
+          provider: 'google',
+          providerThreadId: `dead-${i}`,
+          subject: 'Old mailbox',
+          fromAddress: 'sender@example.test',
+          lastDate: NOW + 1 + i,
+          snippet: '',
+          labels: ['INBOX'],
+          unread: false,
+          llmPending: true,
+          yearMonth: '2026-09',
+          createdAt: NOW,
+          updatedAt: NOW,
+        });
+    });
+    const first = await claim(t);
+    expect(first.items).toEqual([]);
+    expect(first.moreRemaining).toBe(true);
+    const second = await claim(t);
+    expect(second.items.map((item: any) => item.threadId)).toEqual(['live']);
+    const pending = await t.run((ctx) =>
+      ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_llm_pending', (q) => q.eq('userId', 'owner').eq('llmPending', true))
+        .collect(),
+    );
+    expect(pending.map((thread) => thread.providerThreadId)).toEqual(['live']);
+  });
 });

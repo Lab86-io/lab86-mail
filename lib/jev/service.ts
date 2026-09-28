@@ -42,8 +42,11 @@ export async function runJevSweep(userId: string, dependencies = sweepDefaults) 
       moreRemaining: boolean;
     }>(api.jev.claimPending, { userId, limit: 12 });
     if (!page.items.length) {
-      moreRemaining = false;
-      break;
+      // The claim can take gated rows off the queue and return no items. It
+      // then reports more rows, and the next claim reads further down.
+      moreRemaining = page.moreRemaining;
+      if (!moreRemaining) break;
+      continue;
     }
     const items = await mapConcurrent(page.items, 4, async (input) => {
       const target = {
