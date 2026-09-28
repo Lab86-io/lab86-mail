@@ -69,6 +69,39 @@ system. The Google scopes do not change.
   an id by the file name and content type of the MIME part. It emits ids in the
   same form for new mail, so one decoder serves old and new rows.
 
+## Calendar and contacts
+
+- **Ids.** Nylas kept Google's own ids, and the adapter gives the same ids.
+  A calendar id is the Google calendar id (the address for the primary
+  calendar). A recurring instance is `<master>_<YYYYMMDDTHHMMSSZ>`, and
+  `masterEventId` is Google's `recurringEventId`. A saved contact is `c123`
+  (from `people/c123`), a directory person is the number, and an other
+  contact keeps `otherContacts/c123`. Production rows show these forms
+  (2026-09-28).
+- **Field rules.** `lib/google/calendar-map.ts` and
+  `lib/google/contacts-map.ts` hold the rules. All-day end dates are
+  exclusive, as in Google. A timed event is always a `timespan`. `readOnly` is
+  `true` on a calendar that the user cannot write. It is also `true` for an
+  event that a different person organizes.
+- **Unsubscribe.** `calendars.destroy` removes the calendar from the user's
+  calendar list (`calendarList.delete`). It does not remove the calendar
+  itself. Nylas removed a secondary calendar that the user owned.
+- **Calendar list.** The adapter includes calendars that are hidden in the
+  Google sidebar. Thus the sync prune does not remove their rows.
+- **Working location.** `events.list` does not include working-location
+  events. A caller can request that type.
+- **Rate limits.** The Calendar API can send 403 for a rate limit. The
+  adapter changes it to 429, because the callers read a 403 as a missing
+  scope.
+- **Contact search.** An `email` filter uses the search call of each source
+  (saved contacts, other contacts, directory). It keeps only the persons
+  with that address. The first search of a grant sends an empty warm-up
+  query, as the Google documentation specifies.
+- **Limits.** The People API has no read of one other contact. Thus
+  `contacts.find` for an other contact rejects with 501. A direct account gets
+  no calendar or contact push. The 15-minute poll, the daily full pass, and
+  the sync after each write keep the mirror current.
+
 ## Workstreams
 
 - Gmail (messages, threads, labels, attachments, drafts, send, grants, tokens,
