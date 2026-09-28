@@ -301,6 +301,9 @@ export const upsertContactBatch = mutation({
     accountId: v.string(),
     provider: providerValidator,
     contacts: v.array(contactInputValidator),
+    // A webhook payload may not name its source. Then an existing row keeps
+    // its stored source, so an `inbox` row never turns into a saved contact.
+    preferStoredSource: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -319,7 +322,8 @@ export const upsertContactBatch = mutation({
             .eq('providerContactId', contact.providerContactId),
         )
         .first();
-      if (existing && existing.contentHash === contact.contentHash && existing.source === contact.source) {
+      const source = args.preferStoredSource && existing ? existing.source : contact.source;
+      if (existing && existing.contentHash === contact.contentHash && existing.source === source) {
         unchanged += 1;
         continue;
       }
@@ -328,7 +332,7 @@ export const upsertContactBatch = mutation({
         userId: args.userId,
         accountId: args.accountId,
         provider: args.provider,
-        source: contact.source,
+        source,
         providerContactId: contact.providerContactId,
         displayName: contact.displayName,
         givenName: contact.givenName,
