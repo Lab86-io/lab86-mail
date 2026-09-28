@@ -4,6 +4,7 @@ import {
   B2C_INTERNAL_MONTHLY_CREDITS,
   estimateAiUsageCost,
   isAiChatFeature,
+  providerReportedCostUsd,
   resolveAiBudgetPolicy,
   shouldDepleteLab86Budget,
 } from '../lib/ai/budget';
@@ -56,6 +57,73 @@ describe('estimateAiUsageCost', () => {
       estimateAiUsageCost({ provider: 'openrouter', model: 'openai/gpt-5-nano', promptTokens: 0 })
         .estimatedCredits,
     ).toBe(0);
+  });
+  test('a cost the provider reported replaces the price-table estimate', () => {
+    const reported = estimateAiUsageCost({
+      provider: 'openrouter',
+      model: 'openai/gpt-5.5',
+      promptTokens: 1_000_000,
+      completionTokens: 1_000_000,
+      costUsd: 0.25,
+    });
+    expect(reported).toMatchObject({ estimatedCostUsd: 0.25, estimatedCredits: 25, reported: true });
+    for (const costUsd of [undefined, Number.NaN, -1]) {
+      const estimate = estimateAiUsageCost({
+        provider: 'openrouter',
+        model: 'openai/gpt-5.5',
+        promptTokens: 1_000_000,
+        completionTokens: 1_000_000,
+        costUsd,
+      });
+      expect(estimate).toMatchObject({ estimatedCostUsd: 35, reported: false });
+    }
+  });
+  test('reads the OpenRouter cost from each step body and needs it on every step', () => {
+    const step = (cost: unknown) => ({ response: { body: { usage: { prompt_tokens: 10, cost } } } });
+    expect(providerReportedCostUsd({ steps: [step(0.001), step(0.002)] })).toBeCloseTo(0.003);
+    expect(providerReportedCostUsd(step(0.004))).toBeCloseTo(0.004);
+    expect(providerReportedCostUsd({ steps: [], ...step(0) })).toBe(0);
+    expect(providerReportedCostUsd({ steps: [step(0.001), step(undefined)] })).toBeUndefined();
+    expect(providerReportedCostUsd({ response: { body: { usage: { cost: null } } } })).toBeUndefined();
+    expect(providerReportedCostUsd({ response: {} })).toBeUndefined();
+    expect(providerReportedCostUsd(undefined)).toBeUndefined();
+  });
+  test('prices OpenAI GPT-5.5 at list rates', () => {
+    const cost = estimateAiUsageCost({
+      provider: 'openai',
+      model: 'gpt-5.5',
+      promptTokens: 1_000_000,
+      completionTokens: 1_000_000,
+    });
+    expect(cost.estimatedCostUsd).toBe(35);
+    expect(cost.estimatedCredits).toBe(3500);
+  });
+  test('prices Anthropic cache reads and batch discounts', () => {
+    const cached = estimateAiUsageCost({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      promptTokens: 1_000_000,
+      cachedInputTokens: 1_000_000,
+      completionTokens: 1_000_000,
+    });
+    const batched = estimateAiUsageCost({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      promptTokens: 1_000_000,
+      completionTokens: 1_000_000,
+      batch: true,
+    });
+    expect(cached.estimatedCostUsd).toBeCloseTo(15.3, 5);
+    expect(batched.estimatedCostUsd).toBe(9);
+  });
+  test('supports OpenRouter-prefixed model ids', () => {
+    const cost = estimateAiUsageCost({
+      provider: 'openrouter',
+      model: 'openai/gpt-5-nano',
+      promptTokens: 1_000_000,
+      completionTokens: 1_000_000,
+    });
+    expect(cost.estimatedCostUsd).toBeCloseTo(0.725, 3);
   });
 });
 

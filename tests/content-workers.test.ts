@@ -80,7 +80,20 @@ test('embedding parsing restores provider order, records usage and rejects malfo
   };
   const result = await embedContent('owner', ['a', 'b'], undefined, fetcher, deps);
   expect(result.map((v) => v[0])).toEqual([0.1, 0.2]);
-  expect(usage[0][2].usage.input_tokens).toBe(20);
+  expect(usage[0][2].usage).toEqual({ input_tokens: 20, output_tokens: 0 });
+  // OpenRouter reports the real cost; the usage record carries it.
+  await embedContent(
+    'owner',
+    ['a'],
+    undefined,
+    (async () =>
+      Response.json({
+        data: [{ index: 0, embedding: Array(1536).fill(0.1) }],
+        usage: { prompt_tokens: 7, cost: 0.00000014 },
+      })) as unknown as typeof fetch,
+    deps,
+  );
+  expect(usage[1][2].usage).toEqual({ input_tokens: 7, output_tokens: 0, cost: 0.00000014 });
   expect(await embedContent('owner', [], undefined, fetcher, deps)).toEqual([]);
   await expect(
     embedContent(

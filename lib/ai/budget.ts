@@ -22,6 +22,11 @@ export interface AiUsageCostInput {
   cachedInputTokens?: number;
   cacheWriteTokens?: number;
   batch?: boolean;
+  /**
+   * The cost the provider reported for the call, in USD (OpenRouter
+   * `usage.cost`). When present it replaces the price-table estimate.
+   */
+  costUsd?: number;
 }
 
 export interface AiBudgetPolicyInput {
@@ -38,18 +43,43 @@ export function estimateAiUsageCost(input: AiUsageCostInput) {
   const cacheWriteTokens = Math.min(nonnegative(input.cacheWriteTokens), promptTokens - cachedInputTokens);
   const standardInputTokens = Math.max(0, promptTokens - cachedInputTokens - cacheWriteTokens);
   const discount = input.batch ? 0.5 : 1;
-  const estimatedCostUsd =
+  const tableCostUsd =
     ((standardInputTokens * rates.inputUsdPerMTok +
       cachedInputTokens * rates.cachedInputUsdPerMTok +
       cacheWriteTokens * rates.cacheWriteUsdPerMTok +
       completionTokens * rates.outputUsdPerMTok) /
       1_000_000) *
     discount;
+  const reported = reportedCost(input.costUsd);
+  const estimatedCostUsd = reported ?? tableCostUsd;
   return {
     estimatedCostUsd,
     estimatedCredits: roundCredits(estimatedCostUsd / AI_CREDIT_VALUE_USD),
     rates,
+    reported: reported !== undefined,
   };
+}
+
+/**
+ * The cost OpenRouter reported for a generateText or generateObject result,
+ * in USD: the sum of `usage.cost` in each step's raw response body.
+ * Undefined when a step has no reported cost (a direct vendor key, or a
+ * provider that sends no cost); the caller then uses the price table.
+ */
+export function providerReportedCostUsd(result: unknown): number | undefined {
+  const value = result as { steps?: unknown[]; response?: { body?: any } } | null | undefined;
+  const steps = Array.isArray(value?.steps) && value.steps.length ? value.steps : [value];
+  let total = 0;
+  for (const step of steps as Array<{ response?: { body?: any } } | null | undefined>) {
+    const cost = reportedCost(step?.response?.body?.usage?.cost);
+    if (cost === undefined) return undefined;
+    total += cost;
+  }
+  return total;
+}
+
+function reportedCost(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 export const BRIEF_GENERATION_FEATURES = new Set([
