@@ -31,7 +31,8 @@ const WEBHOOK_URI = `${PUBLIC_URL}/api/nylas/webhook`;
 
 // The corpus webhook handler is generic. Subscribe to message lifecycle (for
 // incremental sync, including deletes), event lifecycle (the primary calendar
-// sync path; the 15-minute resync is the safety net), and grant lifecycle.
+// sync path; the 15-minute resync is the safety net), contact changes (the
+// daily contact pass is the safety net), and grant lifecycle.
 // message.opened is left out: nothing reads it, and it adds 429 pressure.
 const WEBHOOK_TRIGGERS = [
   'message.created',
@@ -40,11 +41,23 @@ const WEBHOOK_TRIGGERS = [
   'event.created',
   'event.updated',
   'event.deleted',
+  'contact.updated',
+  'contact.deleted',
   'grant.created',
   'grant.updated',
   'grant.deleted',
   'grant.expired',
 ];
+
+// Contact scopes (lib/contacts/model.ts). Google: saved contacts, "Other
+// contacts", and the Workspace directory. Microsoft: Outlook contacts, and
+// the People API for people the user wrote to and the work directory.
+const GOOGLE_CONTACT_SCOPES = [
+  'https://www.googleapis.com/auth/contacts.readonly',
+  'https://www.googleapis.com/auth/contacts.other.readonly',
+  'https://www.googleapis.com/auth/directory.readonly',
+];
+const MICROSOFT_CONTACT_SCOPES = ['Contacts.Read', 'People.Read'];
 
 if (!API_KEY) {
   console.error('Set NYLAS_API_KEY (the key for the target Nylas application).');
@@ -96,7 +109,18 @@ async function ensureWebhook() {
   const listed = await nylas('/webhooks').catch(() => []);
   const existing: any[] = Array.isArray(listed) ? listed : [];
   const match = existing.find((w) => w.webhook_url === WEBHOOK_URI);
-  if (match) return { state: 'present', id: match.id };
+  if (match) {
+    // A destination made before a trigger was added keeps its old list; add
+    // the missing triggers and keep every other one.
+    const current: string[] = Array.isArray(match.trigger_types) ? match.trigger_types : [];
+    const missing = WEBHOOK_TRIGGERS.filter((trigger) => !current.includes(trigger));
+    if (!missing.length) return { state: 'present', id: match.id };
+    await nylas(`/webhooks/${match.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ trigger_types: [...current, ...missing] }),
+    });
+    return { state: `updated (+${missing.join(', ')})`, id: match.id };
+  }
   const created = await nylas('/webhooks', {
     method: 'POST',
     body: JSON.stringify({
@@ -123,8 +147,12 @@ async function ensureConnector(provider: 'google' | 'microsoft', clientId: strin
       // the upper bound. Keep these aligned with NYLAS_SCOPES_* in Railway.
       scope:
         provider === 'google'
-          ? ['https://www.googleapis.com/auth/gmail.modify', 'https://www.googleapis.com/auth/userinfo.email']
-          : ['Mail.ReadWrite', 'Mail.Send', 'offline_access', 'User.Read'],
+          ? [
+              'https://www.googleapis.com/auth/gmail.modify',
+              'https://www.googleapis.com/auth/userinfo.email',
+              ...GOOGLE_CONTACT_SCOPES,
+            ]
+          : ['Mail.ReadWrite', 'Mail.Send', 'offline_access', 'User.Read', ...MICROSOFT_CONTACT_SCOPES],
     }),
   });
   return 'created';
@@ -160,6 +188,28 @@ async function main() {
   console.log(`  callbacks:   ${(app.callback_uris || []).map((u: any) => u.url).join(', ') || '(none)'}`);
   console.log(`  connectors:  ${connectors.map((c) => c.provider).join(', ') || '(none)'}`);
   console.log(`  webhooks:    ${webhooks.map((w) => w.webhook_url).join(', ') || '(none)'}`);
+  const ours = webhooks.find((w) => w.webhook_url === WEBHOOK_URI);
+  if (ours) {
+    const triggers: string[] = Array.isArray(ours.trigger_types) ? ours.trigger_types : [];
+    const missing = WEBHOOK_TRIGGERS.filter((trigger) => !triggers.includes(trigger));
+    console.log(
+      `  triggers:    ${missing.length ? `missing ${missing.join(', ')} (run setup)` : 'complete'}`,
+    );
+  }
+  for (const connector of connectors) {
+    const wanted =
+      connector.provider === 'google'
+        ? GOOGLE_CONTACT_SCOPES
+        : connector.provider === 'microsoft'
+          ? MICROSOFT_CONTACT_SCOPES
+          : [];
+    const scopes: string[] = Array.isArray(connector.scope) ? connector.scope : [];
+    const absent = wanted.filter(
+      (scope) => !scopes.some((entry) => entry.toLowerCase().endsWith(scope.toLowerCase())),
+    );
+    if (absent.length)
+      console.log(`  ${connector.provider} connector lacks contact scopes: ${absent.join(', ')}`);
+  }
   console.log(`  grants:      ${grants.length}`);
   for (const g of grants) console.log(`    - ${g.provider} ${g.email} (${g.grant_status})`);
 

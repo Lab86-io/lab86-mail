@@ -5,6 +5,7 @@ import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { internalMutation, mutation, query } from './_generated/server';
+import { deleteContactRow } from './contacts';
 import { now, requireInternalSecret } from './lib';
 
 const providerValidator = v.union(
@@ -259,6 +260,44 @@ export const markGrantReconnectNeeded = mutation({
   },
 });
 
+/**
+ * Keeps the stored scopes equal to the grant's current scopes (Nylas
+ * `GET /v3/grants/{id}`). A re-auth that adds contact scopes then shows at
+ * once, and the contact sync reads the new list.
+ */
+export const updateGrantScopes = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    grantId: v.string(),
+    scopes: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const scopes = [...new Set(args.scopes.map((scope) => scope.trim()).filter(Boolean))].slice(0, 100);
+    const ts = now();
+    let updated = 0;
+    const account = await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .unique();
+    if (account && account.grantId === args.grantId) {
+      await ctx.db.patch(account._id, { scopes, updatedAt: ts });
+      updated += 1;
+    }
+    const grant = await ctx.db
+      .query('providerGrants')
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .unique();
+    if (grant && grant.grantId === args.grantId) {
+      await ctx.db.patch(grant._id, { scopes, updatedAt: ts });
+      updated += 1;
+    }
+    return { updated };
+  },
+});
+
 export const updateConnectedAccountAlias = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -299,6 +338,8 @@ export const ACCOUNT_BULK_TABLES = [
   'mailSnoozes',
   'calendarEvents',
   'areaArtifactLinks',
+  // Each contacts row takes its contactEmails rows with it (see below).
+  'contacts',
 ] as const;
 
 export const USER_BULK_TABLES = [
@@ -332,6 +373,8 @@ export const USER_BULK_TABLES = [
   'narrativeRuns',
   'contentItems',
   'briefPreparations',
+  // Recipient-search counts derived from the mail of every mailbox.
+  'correspondents',
 ] as const;
 
 const PURGE_BATCH = 250;
@@ -340,8 +383,16 @@ const PURGE_BATCH = 250;
 const CONTENT_ITEMS_PER_PASS = 5;
 // A document model row can be close to 1 MiB.
 const DOCUMENT_MODELS_PER_PASS = 8;
+// A contact has at most 20 address rows, so one pass stays small.
+const CONTACTS_PER_PASS = 50;
 // Tables expose one of these userId-prefixed indexes; try each in turn.
-export const USER_INDEXES = ['by_user', 'by_user_account', 'by_user_key', 'by_user_created'] as const;
+export const USER_INDEXES = [
+  'by_user',
+  'by_user_account',
+  'by_user_key',
+  'by_user_created',
+  'by_user_email',
+] as const;
 
 async function takeByUser(ctx: any, table: string, userId: string, limit: number) {
   let lastErr: unknown;
@@ -376,7 +427,9 @@ export const purgeUserDataBatch = internalMutation({
           ? Math.min(remaining, CONTENT_ITEMS_PER_PASS)
           : table === 'documentModels'
             ? Math.min(remaining, DOCUMENT_MODELS_PER_PASS)
-            : remaining,
+            : table === 'contacts'
+              ? Math.min(remaining, CONTACTS_PER_PASS)
+              : remaining,
       );
       for (const row of rows) {
         if ((table === 'officeVersions' || table === 'documentAssets') && 'storageId' in row) {
@@ -392,6 +445,11 @@ export const purgeUserDataBatch = internalMutation({
           for (const chunk of chunks) await ctx.db.delete(chunk._id);
           deleted += chunks.length;
         }
+        if (table === 'contacts') {
+          // 'contactEmails' has no userId index for the sweep; it hangs off its contact.
+          deleted += await deleteContactRow(ctx, row._id as Id<'contacts'>);
+          continue;
+        }
         await ctx.db.delete(row._id);
         deleted += 1;
       }
@@ -403,6 +461,13 @@ export const purgeUserDataBatch = internalMutation({
   },
 });
 
+// The (userId, accountId) prefix index of each account table. A table with no
+// `by_user_account` index names its own; a wrong name makes the pass throw and
+// roll back, which strands every row left in the last batch.
+export const ACCOUNT_PURGE_INDEX: Partial<Record<(typeof ACCOUNT_BULK_TABLES)[number], string>> = {
+  areaArtifactLinks: 'by_user_account_artifact',
+};
+
 export const purgeAccountDataBatch = internalMutation({
   args: { userId: v.string(), accountId: v.string() },
   handler: async (ctx, args) => {
@@ -411,11 +476,17 @@ export const purgeAccountDataBatch = internalMutation({
       if (deleted >= PURGE_BATCH) break;
       const rows = await ctx.db
         .query(table)
-        .withIndex('by_user_account' as any, (q: any) =>
+        .withIndex((ACCOUNT_PURGE_INDEX[table] ?? 'by_user_account') as any, (q: any) =>
           q.eq('userId', args.userId).eq('accountId', args.accountId),
         )
-        .take(PURGE_BATCH - deleted);
+        .take(
+          table === 'contacts' ? Math.min(PURGE_BATCH - deleted, CONTACTS_PER_PASS) : PURGE_BATCH - deleted,
+        );
       for (const row of rows) {
+        if (table === 'contacts') {
+          deleted += await deleteContactRow(ctx, row._id as Id<'contacts'>);
+          continue;
+        }
         await ctx.db.delete(row._id);
         deleted += 1;
       }
@@ -443,6 +514,7 @@ export const deleteConnectedAccount = mutation({
       'mailSyncStates',
       'calendars',
       'calendarSyncStates',
+      'contactSyncStates',
     ] as const;
     for (const table of smallTables) {
       const rows = await ctx.db
@@ -452,6 +524,11 @@ export const deleteConnectedAccount = mutation({
       for (const row of rows) await ctx.db.delete(row._id);
     }
     await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDataBatch, {
+      userId: args.userId,
+      accountId: args.accountId,
+    });
+    // The mailbox's share of the recipient-search counts goes too.
+    await ctx.scheduler.runAfter(0, internal.correspondents.purgeAccountCorrespondents, {
       userId: args.userId,
       accountId: args.accountId,
     });
@@ -571,6 +648,7 @@ export const USER_INLINE_TABLES = [
   'suggestions',
   'calendars',
   'calendarSyncStates',
+  'contactSyncStates',
   'albatrossDevRecords',
   'albatrossProjects',
   'albatrossProjectLinks',
@@ -620,6 +698,7 @@ export const CASCADE_SPECIAL_TABLES: Record<string, string> = {
   boardMembers: 'deleteUserCascade removes memberships on owned and foreign boards.',
   cards: 'deleteUserCascade removes cards on owned boards and cards the user wrote.',
   contentChunks: 'purgeUserDataBatch deletes the chunks of each contentItems row (by_item).',
+  contactEmails: 'Both purges delete the address rows of each contacts row (by_contact).',
 };
 
 // userId tables that stay after account deletion. Each entry must give the
@@ -669,6 +748,8 @@ export const hasDocuments = query({
 // Tables in the deletion cascade that the export leaves out, with the reason.
 export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
   contentChunks: 'Search chunks and embeddings derived from contentItems, which the export includes.',
+  contactEmails: 'Address lookup rows derived from contacts, which the export includes.',
+  correspondents: 'Recipient-search counts derived from mailCorpusMessages, which the export includes.',
   nylasOAuthStates: 'Short-lived sign-in state for a mailbox connection, not user content.',
   mcpOAuthStates: 'Short-lived sign-in state for a tool connection, not user content.',
   cloudFileOAuthStates: 'Short-lived sign-in state for a file connection, not user content.',

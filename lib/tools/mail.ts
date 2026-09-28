@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { withContactNames } from '../contacts/names';
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
 import { ATTENTION_VIEWS, isAttentionView } from '../jev/contract';
@@ -39,6 +40,19 @@ function withThreadSenderEmail<T extends { fromAddress?: string | null; from?: s
   // `||`, not `??`: some writers persist `fromAddress: ''`, which must still
   // fall back to the `from` header.
   return { ...thread, senderEmail: emailFromHeader(thread.fromAddress || thread.from || null) };
+}
+
+// `senderName`: the saved contact name for a sender whose header gives none.
+function withSenderNames<T extends { fromAddress?: string | null; from?: string | null }>(
+  userId: string | null | undefined,
+  items: T[],
+) {
+  return withContactNames(userId, items, (item) => item.fromAddress || item.from, 'senderName');
+}
+
+// `fromName`: the same for each message of an open thread.
+function withFromNames<T extends { from?: string | null }>(userId: string | null | undefined, messages: T[]) {
+  return withContactNames(userId, messages, (message) => message.from, 'fromName');
 }
 
 function withMessageFromEmail<T extends { from?: string | null }>(
@@ -166,7 +180,10 @@ export const searchThreads = defineTool({
         nylas.items.filter((item) => item._id).map((item) => upsertThread(account, item)),
       );
     }
-    return { ...nylas, items: nylas.items.map(withThreadSenderEmail) };
+    return {
+      ...nylas,
+      items: await withSenderNames(ctx.userId, nylas.items.map(withThreadSenderEmail)),
+    };
   },
 });
 
@@ -251,7 +268,7 @@ export const listSmartCategory = defineTool({
           account,
           category,
           query: query || '',
-          items: result.items,
+          items: await withSenderNames(ctx.userId, result.items),
           nextPageToken: result.nextCursor
             ? `jev:${result.nextCursor}`
             : result.nextBefore !== undefined
@@ -294,7 +311,7 @@ export const listSmartCategory = defineTool({
       account,
       category,
       query: candidateQuery,
-      items: matched.slice(0, max),
+      items: await withSenderNames(ctx.userId, matched.slice(0, max)),
       nextPageToken: nylas.nextPageToken,
     };
   },
@@ -439,7 +456,7 @@ export const getThread = defineTool({
           account,
           threadId,
           subject: bundle.subject,
-          messages: (bundle.messages || []).map(withMessageFromEmail),
+          messages: await withFromNames(ctx.userId, (bundle.messages || []).map(withMessageFromEmail)),
           summary: cachedThread?.summary ?? null,
           summaryAt: cachedThread?.summaryAt ?? null,
           summaryModel: cachedThread?.summaryModel ?? null,
@@ -478,7 +495,7 @@ export const getThread = defineTool({
     const cachedThread = await getThreadRecord(account, threadId).catch(() => null);
     return {
       ...nylas,
-      messages: nylas.messages.map(withMessageFromEmail),
+      messages: await withFromNames(ctx.userId, nylas.messages.map(withMessageFromEmail)),
       summary: cachedThread?.summary ?? null,
       summaryAt: cachedThread?.summaryAt ?? null,
       summaryModel: cachedThread?.summaryModel ?? null,
