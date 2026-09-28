@@ -39,6 +39,10 @@ if [[ "$platform" == ios ]]; then
   # to the test process without the prefix (EVIDENCE_DIR).
   mkdir -p native-evidence/screens
   export TEST_RUNNER_EVIDENCE_DIR="$PWD/native-evidence/screens"
+  # The screenshot tour (NativeTourTests) writes its PNG files and JSON
+  # sidecars here. Without TOUR_DIR the tour skips.
+  mkdir -p native-evidence/tour/ios
+  export TEST_RUNNER_TOUR_DIR="$PWD/native-evidence/tour/ios"
   xcodebuild "${common[@]}" -scheme Lab86Mail \
     -destination "platform=iOS Simulator,id=$native_simulator_id" \
     -only-testing:Lab86MailTests \
@@ -48,9 +52,17 @@ if [[ "$platform" == ios ]]; then
     -destination 'generic/platform=iOS' build \
     2>&1 | tee native-evidence/ios-device-build.log
 else
-  # The runner host cannot execute a macOS 27 application. Do not lower the
-  # deployment target to manufacture a green run: compile the app and tests.
+  # Compile the app and every Mac test. Do not lower the deployment target
+  # to manufacture a green run.
   xcodebuild "${common[@]}" -scheme Lab86MailMac \
     -destination 'generic/platform=macOS' build-for-testing \
     2>&1 | tee native-evidence/macos-build.log
+  # Then run the Mac screenshot tour on the host, which runs macOS 27.
+  mkdir -p native-evidence/tour/macos
+  export TEST_RUNNER_TOUR_DIR="$PWD/native-evidence/tour/macos"
+  xcodebuild "${common[@]}" -scheme Lab86MailMac \
+    -destination 'platform=macOS' \
+    -only-testing:Lab86MailMacTests/NativeTourMacTests \
+    -resultBundlePath native-evidence/macos-tour.xcresult test-without-building \
+    2>&1 | tee native-evidence/macos-tour.log
 fi
