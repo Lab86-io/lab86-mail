@@ -187,10 +187,13 @@ content has no second, app-level encryption.
     (`lib/mail/urgent-detectors.ts:58-74`, `lib/mail/suggestion-detectors.ts:90-101`);
   - the writing-voice profile from sent mail (`lib/mail/voice-profile.ts:170-184`).
 - **No training.** Every OpenRouter call sets `provider.data_collection` to
-  `deny` (after the casa-prep round, item: "OpenRouter `data_collection: deny`
-  on all model calls"). With this setting, OpenRouter sends the call only to
-  providers that do not keep or train on the data. Today the code does not set
-  the field.
+  `deny` (`lib/ai/openrouter-policy.ts`; after the casa-prep round, item:
+  "OpenRouter `data_collection: deny` on all model calls"). With this setting,
+  OpenRouter does not send the call to a provider that can train on the data
+  or store it for a long time. The setting is not zero data retention (ZDR). A
+  provider can keep a request for a short time, for example for abuse checks:
+  OpenAI and Anthropic keep requests for up to 30 days. The code does not set
+  the OpenRouter `zdr` field.
 - **Cost records.** Albatross keeps a usage record for each model call: user
   id, feature, model, tokens, and cost (`convex/schema.ts:273-288`). The record
   has no mail content. Failed calls also get a cost record (after the casa-prep

@@ -80,10 +80,26 @@ Then open Today and let the Daily Brief operate one time.
   cost. The per-user rate limits apply (`lib/rate-limit.ts`). Watch the model
   cost alarm (`lib/notifications/cost-alarm.ts`) during the scan.
 - The scan can send mail from the test mailbox through `/api/compose`. The
-  test mailbox has only synthetic contacts, so no live person gets mail.
+  route sends to each address in To, Cc, and Bcc, so synthetic contacts do
+  not stop mail to a live person. Stop the sends before the scan:
+  - On staging, set `LAB86_DISABLE_OUTBOUND_SEND=1` on service `web` in the
+    Railway environment `development` for the scan window. Then each mail
+    send (compose, reply, scheduled send, and the outbox) stops with an error
+    before it goes to the provider (`sendNylasMessage` calls
+    `assertOutboundSendEnabled`, `lib/hosted/controls.ts`). Remove the
+    variable after the scan.
+  - Do not set this variable on production: it stops the mail of all users.
+    For a production scan, put the test account in its own organizational
+    unit, and set Google Workspace Gmail > Compliance > Restrict delivery for
+    that unit to `lab86.io` only.
+  - The variable does not stop calendar invitations. A new event with
+    participants can make Google Calendar send an invitation
+    (`lib/calendar/mutate.ts`). Ask TAC to keep the calendar write routes out
+    of the active scan, or accept this risk.
 - Tell TAC that the staging host `mail-staging.lab86.io` has HTTP Basic auth.
-  Scan production with the test account, or give TAC the staging Basic auth
-  pair through the portal.
+  Scan production with the test account and the Workspace restriction above.
+  Or scan staging with the variable above, and give TAC the staging Basic
+  auth pair through the portal.
 
 ## Information for the TAC form
 

@@ -14,8 +14,10 @@ deployed. "Open item" identifies a problem that no workstream of this round owns
   connected and the user account is not deleted.
 - Disconnect of a mailbox deletes the mail, calendar, and contact data of that
   mailbox. Some derived rows stay until account deletion (see "Open items").
-- Disconnect of Google Drive revokes the Google token and deletes the Drive
-  index.
+- Disconnect of Google Drive deletes the Drive token and the Drive index. It
+  also asks Google to revoke the token. It does not ask when a direct Google
+  mailbox of the same address uses the same Google grant. A failed revoke
+  does not stop the disconnect.
 - Account deletion deletes all data of the user in Convex, and the Clerk user.
 - A mailbox that stays in an error state for 30 days loses its mail data.
 - Webhook rows, OAuth states, one-time codes, and rate-limit rows expire.
@@ -113,7 +115,11 @@ Entry point: Files > Google Drive > "Disconnect". The route is
 
 1. `disconnectCloudFileConnection` sends the refresh token (or the access
    token) to `https://oauth2.googleapis.com/revoke`. A `400` answer counts as
-   "already revoked" (`lib/files/connections.ts:342-386`).
+   "already revoked" (`lib/files/connections.ts:344-396`). It does not send
+   the revoke when a direct Google mailbox of the same user and address uses
+   the same Google grant (`lib/google/shared-grant.ts`). A Google revoke ends
+   the access of the whole Google Cloud project, so it would stop that
+   mailbox too.
 2. If the revoke fails, the code logs a warning and continues.
 3. `cloudFiles.disconnect` deletes the connection and the credentials
    (`convex/cloudFiles.ts:338-369`).
@@ -173,7 +179,7 @@ Open items for account deletion:
 |---|---|---|
 | Google | Albatross does not delete Google data. The user removes access at <https://myaccount.google.com/permissions>. | None |
 | Nylas | Today, Nylas holds the Google tokens and caches mail for its API. Disconnect destroys the grant. | Confirm the Nylas data retention terms. |
-| OpenRouter and model providers | With `data_collection: deny` (after the casa-prep round), OpenRouter uses only providers that do not keep or train on the data. | Turn on the same setting for the OpenRouter account. |
+| OpenRouter and model providers | With `data_collection: deny` (after the casa-prep round), OpenRouter does not use a provider that can train on the data or store it for a long time. This is not zero data retention: a provider can keep a request for a short time for abuse checks (up to 30 days for OpenAI and Anthropic). | Turn on the same setting for the OpenRouter account. |
 | Railway logs | Kept under the Railway plan. Logs do not hold mail intentionally (see `data-flow.md`, step 7). | Confirm the Railway log retention. |
 | Browserbase | Session recordings of the guided-work browser. | Confirm the Browserbase retention for recordings. |
 | Resend | The brief e-mail, if the user turned it on. | Confirm the Resend log retention. |

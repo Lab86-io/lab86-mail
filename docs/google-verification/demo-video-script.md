@@ -99,8 +99,8 @@ short. The full video is about 8 to 12 minutes.
 | # | Shot | Narration |
 |---|---|---|
 | G1 | Settings > Account. Show "Export my data" and "Delete account". | "The user can export all data or delete the account at any time." |
-| G2 | Settings > Mailboxes > the menu of the mailbox. Show "Remove account & data". Do not click it yet. | "Disconnect deletes the mail data of this mailbox from Albatross." |
-| G3 | Files > Google Drive > "Disconnect". Click it. | "Drive disconnect revokes the Google token and deletes the Drive index." |
+| G2 | Settings > Mailboxes > the menu of the mailbox. Show "Remove account & data". Do not click it yet. | "Disconnect deletes the stored mail, calendar events, contacts, attachment copies, and search index of this mailbox. Tasks and Work that the user made from a message, area notes, the activity log, and past briefs stay until the user deletes them or the account." |
+| G3 | Files > Google Drive > "Disconnect". Click it. | "Drive disconnect deletes the Drive token and the Drive index. Albatross also asks Google to revoke the token, unless a mailbox uses the same Google sign-in." |
 | G4 | Show `https://myaccount.google.com/permissions` with Albatross listed. | "The user can also remove Albatross access from the Google account." |
 | G5 | The privacy page, section "Google user data". | "Albatross uses Google user data only for the features shown here. We do not sell it, use it for ads, or use it to train models. Model calls go through OpenRouter with data collection turned off." |
 

@@ -81,6 +81,15 @@ gcloud pubsub topics add-iam-policy-binding gmail-push \
 gcloud iam service-accounts create gmail-push-invoker \
   --display-name="Gmail push invoker"
 
+# Pub/Sub makes the push token as its service agent. The service agent needs
+# the Token Creator role on the invoker service account. 452431903621 is the
+# project number. The person who makes the subscription needs the
+# iam.serviceAccounts.actAs permission on the invoker (a project owner has it).
+gcloud iam service-accounts add-iam-policy-binding \
+  gmail-push-invoker@lab86-mail-production.iam.gserviceaccount.com \
+  --member="serviceAccount:service-452431903621@gcp-sa-pubsub.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
+
 # Push subscription to Albatross. The route checks the OIDC token.
 gcloud pubsub subscriptions create gmail-push-albatross \
   --topic=gmail-push \
