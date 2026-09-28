@@ -263,6 +263,7 @@ describe('calendars', () => {
       },
     ]);
     expect(g.calls[0].url.searchParams.get('maxResults')).toBe('50');
+    expect(g.calls[0].url.searchParams.get('showHidden')).toBe('true');
     expect(g.calls[0].url.searchParams.has('pageToken')).toBe(false);
     expect(g.calls[0].url.origin + g.calls[0].url.pathname).toBe(`${API}/users/me/calendarList`);
 

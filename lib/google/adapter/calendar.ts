@@ -122,7 +122,10 @@ async function listCalendars(args: any) {
   const query = args?.queryParams || {};
   const page = await call<{ items?: GoogleCalendarListEntry[]; nextPageToken?: string }>(
     grantId,
-    googleUrl(calendarListUrl(), { maxResults: query.limit, pageToken: query.pageToken }),
+    // A calendar hidden in the Google sidebar is still listed. The sync prunes
+    // calendars that the list does not return, and a hidden calendar keeps
+    // its rows (the app has its own hide switch).
+    googleUrl(calendarListUrl(), { maxResults: query.limit, pageToken: query.pageToken, showHidden: 'true' }),
   );
   const items = (page?.items || []).filter((item) => item?.id && !item.deleted);
   for (const item of items) rememberAccessRole(grantId, item.id, item.accessRole);
