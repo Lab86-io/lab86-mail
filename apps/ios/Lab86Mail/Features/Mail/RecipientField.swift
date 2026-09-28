@@ -951,6 +951,9 @@ struct RecipientSuggestionDropdown: View {
                 .padding(RecipientDropdownMetrics.inset)
             }
             .scrollBounceBehavior(.basedOnSize)
+            // The system edge blur made the first row unreadable; the list's
+            // rounded edge and inset already mark where it ends.
+            .scrollEdgeEffectHidden()
             .frame(maxHeight: maxHeight)
             .onChange(of: highlightedIndex) { _, index in
                 // Arrow keys past the visible rows scroll the list.
