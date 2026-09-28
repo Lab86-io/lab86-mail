@@ -151,6 +151,13 @@ export const dailyReportPage = query({
   },
 });
 
+/** True when `next` has an older `generatedAt` than the stored insight. */
+function isOlderInsight(next: unknown, stored: unknown) {
+  const nextAt = Number((next as { generatedAt?: unknown } | null)?.generatedAt);
+  const storedAt = Number((stored as { generatedAt?: unknown } | null)?.generatedAt);
+  return Number.isFinite(nextAt) && Number.isFinite(storedAt) && nextAt < storedAt;
+}
+
 export const upsertDoc = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -175,6 +182,12 @@ export const upsertDoc = mutation({
       )
       .unique();
     if (existing) {
+      // Two brief runs can write the insight of one thread at the same time,
+      // and these writes skip the shared mutation queue. An older insight
+      // never replaces a newer one.
+      if (args.kind === 'threadInsight' && isOlderInsight(args.doc, existing.doc)) {
+        return { ok: true, created: false, stale: true };
+      }
       await ctx.db.patch(existing._id, { doc: args.doc, ref: args.ref, updatedAt: ts });
       await maybeScheduleReclassify(ctx, args.kind, args.userId);
       return { ok: true, created: false };
