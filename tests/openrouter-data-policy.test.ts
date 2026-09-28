@@ -88,7 +88,7 @@ if (process.env.OPENROUTER_POLICY_PLATFORM_CHILD === '1') {
       expect(
         withOpenRouterDataPolicy({ model: 'm', provider: { order: ['azure'], data_collection: 'allow' } }),
       ).toEqual({ model: 'm', provider: { order: ['azure'], data_collection: 'deny' } });
-      expect(withOpenRouterDataPolicy({ model: 'm', provider: 'bad' })).toEqual({
+      expect(withOpenRouterDataPolicy({ model: 'm', provider: 'bad' } as Record<string, unknown>)).toEqual({
         model: 'm',
         provider: { data_collection: 'deny' },
       });

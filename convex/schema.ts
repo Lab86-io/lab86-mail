@@ -2166,6 +2166,23 @@ export default defineSchema({
     .index('by_token', ['completionToken'])
     .index('by_expires', ['expiresAt']),
 
+  // A native mailbox or tool connection that the provider approved but the
+  // app did not redeem yet. The callback has no Clerk session, so it keeps
+  // the provider result here under a single-use token. Only the user who
+  // started the flow can redeem it, through an authenticated finalize route.
+  oauthCompletions: defineTable({
+    userId: v.string(),
+    kind: v.union(v.literal('mail'), v.literal('mcp')),
+    // SHA-256 of the completion token. The token itself is never stored.
+    tokenHash: v.string(),
+    payloadEncrypted: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_token', ['tokenHash'])
+    .index('by_expires', ['expiresAt']),
+
   // Provider-neutral, AI-editable office documents. The current snapshot is
   // optimized for open/list reads; immutable revisions preserve every user,
   // AI, restore, import, and provider-sync transition.

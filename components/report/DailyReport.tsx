@@ -16,6 +16,7 @@ import { PreparedWork } from '@/components/report/PreparedWork';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useFrameNonce } from '@/hooks/use-frame-nonce';
 import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { briefFreshness, briefIsStale, briefStaleNote } from '@/lib/albatross/today';
@@ -33,6 +34,7 @@ import { handleDailyReportNavigationAction, openBriefMailThread } from '@/lib/da
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
+import { withFrameNonce } from '@/lib/security/frame-nonce';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import { stripEmoji } from '@/lib/shared/format';
 import { postBriefTheme } from '@/lib/theme/brief-theme';
@@ -433,6 +435,8 @@ function ReportArtifact({
   autoHeight?: boolean;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
+  // The srcdoc frame inherits the page CSP; its scripts need the page nonce.
+  const frameNonce = useFrameNonce();
   const [artifactReady, setArtifactReady] = useState(false);
   const [artifactHeight, setArtifactHeight] = useState<number | null>(null);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
@@ -748,7 +752,10 @@ function ReportArtifact({
       title="The Daily Brief"
       // A frame that grows to its own height scrolls with the page, and the
       // page leaves the room; a frame that fills the pane leaves it inside.
-      srcDoc={withReportArtifactRuntime(html, albatrossContext, { launcherClearance: !autoHeight })}
+      srcDoc={withFrameNonce(
+        withReportArtifactRuntime(html, albatrossContext, { launcherClearance: !autoHeight }),
+        frameNonce,
+      )}
       aria-busy={!artifactReady}
       onLoad={() => {
         postTheme();

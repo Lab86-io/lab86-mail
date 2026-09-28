@@ -48,6 +48,7 @@ import {
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { useFrameNonce } from '@/hooks/use-frame-nonce';
 import { injectAreaArtifactRuntime, parseAreaArtifactMessage } from '@/lib/albatross/area-artifact-runtime';
 import {
   type AreaBriefState,
@@ -89,6 +90,7 @@ import { isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import { WORK_STATE_HINT, WORK_STATE_LABEL } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { withFrameNonce } from '@/lib/security/frame-nonce';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import {
   categoricalColor,
@@ -1477,7 +1479,12 @@ function AreaArtifactCanvas({
   const accent2Chroma = useClientStore((s) => s.accent2Chroma);
   const bgHue = useClientStore((s) => s.bgHue);
   const surfaceTint = useClientStore((s) => s.surfaceTint);
-  const srcDoc = useMemo(() => injectAreaArtifactRuntime(html), [html]);
+  // The srcdoc frame inherits the page CSP; its scripts need the page nonce.
+  const frameNonce = useFrameNonce();
+  const srcDoc = useMemo(
+    () => withFrameNonce(injectAreaArtifactRuntime(html), frameNonce),
+    [html, frameNonce],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new artifact must restart its own readiness handshake.
   useEffect(() => setArtifactReady(false), [html]);
   const areaId = area._id;

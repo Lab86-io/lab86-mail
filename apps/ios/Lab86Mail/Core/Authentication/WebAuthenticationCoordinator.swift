@@ -49,7 +49,9 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         try await authorize(
             response: response,
             successKey: "nylas_connected",
-            completionPath: "/api/google/connect/finalize"
+            completionPath: "/api/nylas/finalize",
+            // A direct Google sign-in keeps its own completion store.
+            otherCompletions: ["mail_completion": "/api/google/connect/finalize"]
         )
     }
 
@@ -58,7 +60,11 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         let response = try await backend.get(
             path: "/api/mcp/oauth/start?server=\(encoded)&native=1&format=json"
         )
-        try await authorize(response: response, successKey: "mcp_connected")
+        try await authorize(
+            response: response,
+            successKey: "mcp_connected",
+            completionPath: "/api/mcp/oauth/finalize"
+        )
     }
 
     func connectCloudFiles(provider: String) async throws {
@@ -76,7 +82,8 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
     private func authorize(
         response: JSONValue,
         successKey: String,
-        completionPath: String? = nil
+        completionPath: String? = nil,
+        otherCompletions: [String: String] = [:]
     ) async throws {
         guard let value = response["authorizationUrl"]?.stringValue,
               let authorizationURL = URL(string: value) else {
@@ -127,7 +134,20 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
             } ?? []
         )
         if values[successKey] != nil { return }
-        if let completionToken = values["files_completion"] ?? values["mail_completion"], let completionPath {
+        for (key, path) in otherCompletions {
+            guard let completionToken = values[key] else { continue }
+            _ = try await backend.post(
+                path: path,
+                body: .object(["completionToken": .string(completionToken)])
+            )
+            return
+        }
+        // The callback keeps the provider result for the signed-in app to
+        // redeem, so an approval in another person's browser never connects.
+        let completionToken = values["files_completion"]
+            ?? values["nylas_completion"]
+            ?? values["mcp_completion"]
+        if let completionToken, let completionPath {
             _ = try await backend.post(
                 path: completionPath,
                 body: .object(["completionToken": .string(completionToken)])

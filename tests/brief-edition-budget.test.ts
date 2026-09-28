@@ -18,6 +18,7 @@ import {
   meterGenerateOptions,
   parseBriefEditionBudget,
   runWithBriefMeter,
+  withMeteredModelCall,
 } from '../lib/brief/budget';
 import { withEditionBudget } from '../lib/mail/agent-report';
 import { runBriefJob } from '../lib/mail/brief-jobs';
@@ -57,8 +58,12 @@ describe('the edition meter', () => {
   test('counts steps, stops at the cost budget, and refuses new calls', () => {
     let now = 1_000;
     const meter = new BriefEditionMeter({ costBudgetUsd: 0.4, timeBudgetMs: 60_000, now: () => now });
+    meter.openCall();
     meter.addStep(runtime, { inputTokens: 1000, outputTokens: 500 });
     now += 2_000;
+    meter.closeCall();
+    // Time with no open model call is not writer time.
+    now += 30_000;
     expect(meter.exhausted).toBeNull();
     expect(meter.record(false)).toMatchObject({
       timeMs: 2_000,
@@ -105,20 +110,65 @@ describe('the edition meter', () => {
     expect(carried.record(false).timeMs).toBeGreaterThanOrEqual(1_000);
   });
 
-  test('the time budget stops a running edition', async () => {
+  test('the time budget stops a running model call', async () => {
     const meter = new BriefEditionMeter({ timeBudgetMs: 20 });
     await runWithBriefMeter(meter, async () => {
       expect(currentBriefMeter()).toBe(meter);
+      // The source refresh and the scan before the writers are not writer time.
       await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(meter.exhausted).toBeNull();
+      await withMeteredModelCall(() => new Promise((resolve) => setTimeout(resolve, 60)));
     });
     expect(meter.exhausted).toBe('time');
+    expect(meter.signal.aborted).toBe(true);
     expect(currentBriefMeter()).toBeUndefined();
     // The clock also stops a caller that asks after the budget, before the timer.
     let now = 0;
     const late = new BriefEditionMeter({ timeBudgetMs: 10, now: () => now });
+    late.openCall();
     now = 50;
     expect(() => late.assertOpen()).toThrow('writer time');
+    expect(() => late.openCall()).toThrow('writer time');
     expect(new BriefBudgetExhaustedError('cost').message).toContain('model budget');
+  });
+
+  test('writer time runs once while calls overlap and stops between calls', () => {
+    let now = 0;
+    const meter = new BriefEditionMeter({ timeBudgetMs: 60_000, now: () => now });
+    meter.closeCall(); // No open call: nothing to close.
+    now = 5_000;
+    meter.openCall();
+    now = 6_000;
+    meter.openCall();
+    now = 9_000;
+    meter.closeCall();
+    expect(meter.elapsedMs()).toBe(4_000);
+    now = 10_000;
+    meter.closeCall();
+    now = 100_000;
+    expect(meter.record(false).timeMs).toBe(5_000);
+    meter.openCall();
+    now = 101_000;
+    expect(meter.elapsedMs()).toBe(6_000);
+    meter.closeCall();
+    // A later attempt starts from the saved writer time.
+    const next = new BriefEditionMeter({ prior: meter.record(false), timeBudgetMs: 60_000, now: () => now });
+    expect(next.elapsedMs()).toBe(6_000);
+  });
+
+  test('a call outside an edition runs with no meter', async () => {
+    expect(await withMeteredModelCall(async () => 'plain')).toBe('plain');
+    const meter = new BriefEditionMeter({ timeBudgetMs: 60_000 });
+    await expect(
+      runWithBriefMeter(meter, () =>
+        withMeteredModelCall(async () => {
+          throw new Error('provider down');
+        }),
+      ),
+    ).rejects.toThrow('provider down');
+    // A failed call still closes, so the clock stops.
+    expect(meter.record(true).timeMs).toBeLessThan(1_000);
+    expect(meter.exhausted).toBeNull();
   });
 
   test('model options gain the edition signal and the step counter only inside an edition', async () => {
@@ -163,6 +213,28 @@ describe('the edition meter', () => {
       ).rejects.toBeInstanceOf(BriefBudgetExhaustedError);
     });
     expect(generateText).toHaveBeenCalledTimes(1);
+  });
+
+  test('the gateway runs the writer clock only while the model call is open', async () => {
+    let now = 0;
+    const meter = new BriefEditionMeter({ timeBudgetMs: 60_000, now: () => now });
+    const deps = {
+      resolveAiRuntime: async () => ({ ...runtime, userId: null, source: 'byok', model: 'm' }),
+      fallbackRuntimes: () => [],
+      recordUsage: async () => undefined,
+      generateText: async () => {
+        now += 5_000;
+        return { text: 'ok', finishReason: 'stop', usage: {} };
+      },
+    } as any;
+    await runWithBriefMeter(meter, async () => {
+      now += 400_000; // The source refresh and the scan.
+      await generateTextForCurrentUser({ feature: 'daily_report_insight' }, deps);
+      now += 100_000; // Saves between the writers.
+      await generateTextForCurrentUser({ feature: 'daily_brief_prose' }, deps);
+    });
+    expect(meter.record(false).timeMs).toBe(10_000);
+    expect(meter.exhausted).toBeNull();
   });
 });
 

@@ -2,6 +2,7 @@ import { afterEach, expect, spyOn, test } from 'bun:test';
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 import { MockLanguageModelV3 } from 'ai/test';
 import * as gateway from '../lib/ai/gateway';
+import * as generationCost from '../lib/ai/generation-cost';
 import { runAgent } from '../lib/ai/loop';
 import {
   type PresentationSession,
@@ -420,4 +421,63 @@ test('cancelling after partial content produces an abort, not a failure finish',
   expect(events).toContainEqual(expect.objectContaining({ type: 'text-delta', delta: 'Partial response' }));
   expect(events).toContainEqual({ type: 'abort' });
   expect(events).not.toContainEqual({ type: 'finish', finishReason: 'error' });
+});
+
+test('a failed or stopped turn records its cost from the generation ids of its requests', async () => {
+  const recorded = spyOn(generationCost, 'recordFailedModelCall');
+  restores.push(() => recorded.mockRestore());
+  // The model sends one OpenRouter request; its response header carries the id.
+  const note = generationCost.captureGenerationIdFetch(
+    async () => new Response('{}', { headers: { 'x-generation-id': 'gen-agent' } }),
+  );
+  const primary = new MockLanguageModelV3({
+    doStream: async () => {
+      await note('https://openrouter.ai/api/v1/chat/completions');
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            for (const part of textParts('Started the answer.')) controller.enqueue(part);
+            controller.enqueue({ type: 'error', error: new Error('provider disconnected') });
+            controller.close();
+          },
+        }),
+      };
+    },
+  });
+  const { usage } = await run([primary]);
+  expect(recorded.mock.calls[0][0]).toMatchObject({
+    feature: 'agent',
+    generationIds: ['gen-agent'],
+    message: 'provider disconnected',
+  });
+  expect(usage.mock.calls[0].slice(3)).toEqual([false, 'provider disconnected']);
+
+  const abort = new AbortController();
+  const stopped = new MockLanguageModelV3({
+    doStream: async () => ({
+      stream: new ReadableStream({
+        async start(controller) {
+          for (const chunk of textParts('Partial response')) controller.enqueue(chunk);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          abort.abort();
+          controller.close();
+        },
+      }),
+    }),
+  });
+  const second = await run([stopped], abort.signal);
+  expect(recorded.mock.calls[1][0]).toMatchObject({
+    message: 'The turn was stopped before it finished.',
+    generationIds: [],
+  });
+  expect(second.usage.mock.calls.at(-1)?.slice(3)).toEqual([
+    false,
+    'The turn was stopped before it finished.',
+  ]);
+});
+
+test('a turn with no runtime ends with an error and records nothing', async () => {
+  const { events, usage } = await run([]);
+  expect(events.some((event) => event.type === 'error')).toBe(true);
+  expect(usage).not.toHaveBeenCalled();
 });

@@ -107,7 +107,16 @@ test('usage records the returned version, actual tokens and failures without ema
   await recordClassifierUsage({ userId: 'owner', source: 'lab86' }, 'jev_mail', undefined, record);
   expect(record.mock.calls[1][3]).toBe(false);
   expect(record.mock.calls[1][4]).toBe('Classifier evaluation unavailable');
+  // A failed call has no served model: the row names the wire id that was sent.
   expect(record.mock.calls[1][0].modelName).toBe('typesafe/jev-1.13');
+  await recordClassifierUsage(
+    { userId: 'owner', source: 'lab86' },
+    'jev_mail',
+    undefined,
+    record,
+    'Classifier evaluation unavailable (timeout).',
+  );
+  expect(record.mock.calls.pop()?.[4]).toBe('Classifier evaluation unavailable (timeout).');
   await recordClassifierUsage(
     { userId: 'owner', source: 'lab86', model: TEV1 },
     'jev_mail',

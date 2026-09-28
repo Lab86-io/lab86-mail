@@ -6,7 +6,7 @@ import { isLab86AiDisabled, isUserOpenRouterKeyRequired } from '@/lib/hosted/con
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { aiCreditDefaults } from '@/lib/hosted/env';
 import { decryptSecret } from '@/lib/security/crypto';
-import { meterGenerateOptions } from '../brief/budget';
+import { meterGenerateOptions, withMeteredModelCall } from '../brief/budget';
 import {
   CLASSIFIER_MODELS,
   type ClassifierCredential,
@@ -25,6 +25,7 @@ import {
 } from './budget';
 import { anthropic, openai, openrouter } from './client';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
+import { newGenerationCapture, recordFailedModelCall, runWithGenerationCapture } from './generation-cost';
 import {
   type CatalogModel,
   defaultModelsFor,
@@ -278,11 +279,17 @@ export function resolveOpenRouterUtilityRuntime(userId: string, dependencies = c
   });
 }
 
+/**
+ * One classifier call. A result names the served model, with its date suffix
+ * (typesafe/jev-1.13-20260917). A failed call has no served model, so its row
+ * names the wire id that was sent (typesafe/jev-1.13) and gives the reason.
+ */
 export async function recordClassifierUsage(
   runtime: { userId: string; source: AiSource; model?: ClassifierModel },
   feature: string,
   result?: { model: string; usage: { input_tokens: number; output_tokens: number; cost?: number } },
   record = recordUsage,
+  failure = 'Classifier evaluation unavailable',
 ) {
   const model = runtime.model || defaultClassifier();
   return record(
@@ -303,7 +310,7 @@ export async function recordClassifierUsage(
         }
       : undefined,
     Boolean(result),
-    result ? undefined : 'Classifier evaluation unavailable',
+    result ? undefined : failure,
   );
 }
 
@@ -448,76 +455,88 @@ export async function generateTextForCurrentUser(
   return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, async () => {
     let lastErr: any;
     const runtimes = [runtime, ...dependencies.fallbackRuntimes(runtime, feature)];
-    try {
-      for (let runtimeIndex = 0; runtimeIndex < runtimes.length; runtimeIndex += 1) {
-        const activeRuntime = runtimes[runtimeIndex];
-        const maxAttempts = FAILOVER_FEATURES.has(feature) && runtimeIndex === 0 ? 2 : 1;
-        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-          try {
-            const result = await dependencies.generateText({
-              // Inside a Daily Brief edition the budget meter counts each step
-              // and can stop the call (FEATURES item 5).
-              ...meterGenerateOptions(rest, activeRuntime),
-              ...(toolsForAttempt ? { tools: toolsForAttempt() } : {}),
-              // Brief writers share one high ceiling; other features keep their budgets.
-              maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
-              model: activeRuntime.model,
-            });
-            if (BRIEF_GENERATION_FEATURES.has(feature) && result.finishReason === 'length') {
-              await dependencies.recordUsage(
-                activeRuntime,
-                feature,
-                withReportedCost(result.totalUsage ?? result.usage, result),
-                false,
-                'Incomplete brief response',
-              );
-              const incomplete = new Error('Brief provider exhausted its own output allowance');
-              incomplete.name = 'BriefIncompleteResponse';
-              throw incomplete;
-            }
+    for (let runtimeIndex = 0; runtimeIndex < runtimes.length; runtimeIndex += 1) {
+      const activeRuntime = runtimes[runtimeIndex];
+      const maxAttempts = FAILOVER_FEATURES.has(feature) && runtimeIndex === 0 ? 2 : 1;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        // Each attempt is its own paid call: a failed one records its own row.
+        const capture = newGenerationCapture();
+        let recorded = false;
+        try {
+          // Inside a Daily Brief edition the budget meter counts each step,
+          // runs the writer clock while the call is open, and can stop the
+          // call (FEATURES item 5).
+          const result = await runWithGenerationCapture(capture, () =>
+            withMeteredModelCall(() =>
+              dependencies.generateText({
+                ...meterGenerateOptions(rest, activeRuntime),
+                ...(toolsForAttempt ? { tools: toolsForAttempt() } : {}),
+                // Brief writers share one high ceiling; other features keep their budgets.
+                maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
+                model: activeRuntime.model,
+              }),
+            ),
+          );
+          if (BRIEF_GENERATION_FEATURES.has(feature) && result.finishReason === 'length') {
+            recorded = true;
             await dependencies.recordUsage(
               activeRuntime,
               feature,
               withReportedCost(result.totalUsage ?? result.usage, result),
-              true,
+              false,
+              'Incomplete brief response',
             );
-            return result;
-          } catch (err: any) {
-            lastErr = err;
-            const canRetrySameModel =
-              attempt < maxAttempts &&
-              (isTransientGenerateParseError(err) ||
-                (BRIEF_GENERATION_FEATURES.has(feature) && Number(err?.statusCode) === 429));
-            const canTryFallback =
-              runtimeIndex < runtimes.length - 1 && isAgentFallbackEligible(err, feature, activeRuntime);
-            if (canRetrySameModel) {
-              console.warn('[ai-gateway] agent model failed; retrying', {
-                provider: activeRuntime.provider,
-                model: activeRuntime.modelName,
-                attempt,
-                error: summarizeAiError(err),
-              });
-              await sleep(TRANSIENT_GENERATE_RETRY_DELAY_MS * attempt);
-              continue;
-            }
-            if (canTryFallback) {
-              console.warn('[ai-gateway] agent model failed; trying fallback', {
-                provider: activeRuntime.provider,
-                model: activeRuntime.modelName,
-                fallback: runtimes[runtimeIndex + 1]?.modelName,
-                error: summarizeAiError(err),
-              });
-              break;
-            }
-            throw err;
+            const incomplete = new Error('Brief provider exhausted its own output allowance');
+            incomplete.name = 'BriefIncompleteResponse';
+            throw incomplete;
           }
+          await dependencies.recordUsage(
+            activeRuntime,
+            feature,
+            withReportedCost(result.totalUsage ?? result.usage, result),
+            true,
+          );
+          return result;
+        } catch (err: any) {
+          lastErr = err;
+          if (!recorded)
+            await recordFailedModelCall({
+              runtime: activeRuntime,
+              feature,
+              error: err,
+              generationIds: capture.ids,
+              record: dependencies.recordUsage,
+            }).catch(() => undefined);
+          const canRetrySameModel =
+            attempt < maxAttempts &&
+            (isTransientGenerateParseError(err) ||
+              (BRIEF_GENERATION_FEATURES.has(feature) && Number(err?.statusCode) === 429));
+          const canTryFallback =
+            runtimeIndex < runtimes.length - 1 && isAgentFallbackEligible(err, feature, activeRuntime);
+          if (canRetrySameModel) {
+            console.warn('[ai-gateway] agent model failed; retrying', {
+              provider: activeRuntime.provider,
+              model: activeRuntime.modelName,
+              attempt,
+              error: summarizeAiError(err),
+            });
+            await sleep(TRANSIENT_GENERATE_RETRY_DELAY_MS * attempt);
+            continue;
+          }
+          if (canTryFallback) {
+            console.warn('[ai-gateway] agent model failed; trying fallback', {
+              provider: activeRuntime.provider,
+              model: activeRuntime.modelName,
+              fallback: runtimes[runtimeIndex + 1]?.modelName,
+              error: summarizeAiError(err),
+            });
+            break;
+          }
+          throw err;
         }
       }
-      throw lastErr;
-    } catch (err: any) {
-      await dependencies.recordUsage(runtime, feature, undefined, false, err?.message);
-      throw err;
     }
+    throw lastErr;
   });
 }
 
@@ -578,26 +597,37 @@ export async function generateObjectForCurrentUser<T>(
       throw new Error('Visual review requires an available model with verified image-input support.');
   }
   return runWithAiRequestContext({ userId: runtime.userId, agent: 'ai' }, async () => {
+    const capture = newGenerationCapture();
     try {
-      const result = await generateStructuredObject({
-        ...rest,
-        maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
-        model: runtime.model,
-        providerOptions:
-          providerOptions ??
-          (runtime.provider === 'openai' || runtime.provider === 'openrouter'
-            ? {
-                openai: {
-                  strictJsonSchema: true,
-                  ...(reasoningEffort ? { reasoningEffort } : {}),
-                },
-              }
-            : undefined),
-      });
+      const result = await runWithGenerationCapture(capture, () =>
+        generateStructuredObject({
+          ...rest,
+          maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
+          model: runtime.model,
+          providerOptions:
+            providerOptions ??
+            (runtime.provider === 'openai' || runtime.provider === 'openrouter'
+              ? {
+                  openai: {
+                    strictJsonSchema: true,
+                    ...(reasoningEffort ? { reasoningEffort } : {}),
+                  },
+                }
+              : undefined),
+        }),
+      );
       await recordStructuredUsage(runtime, feature, withReportedCost(result.usage, result), true);
       return { object: result.object as T };
     } catch (err: any) {
-      await recordStructuredUsage(runtime, feature, undefined, false, err?.message);
+      // A schema failure keeps the usage of its response; a stopped call
+      // records its real cost after the generation lookup.
+      await recordFailedModelCall({
+        runtime,
+        feature,
+        error: err,
+        generationIds: capture.ids,
+        record: recordStructuredUsage,
+      }).catch(() => undefined);
       throw err;
     }
   });
