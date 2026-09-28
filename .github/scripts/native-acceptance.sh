@@ -35,6 +35,10 @@ if [[ "$platform" == ios ]]; then
       process.stdout.write(device.udid);
     });
   ')"
+  # Rendering tests write PNG evidence here. xcodebuild passes TEST_RUNNER_*
+  # to the test process without the prefix (EVIDENCE_DIR).
+  mkdir -p native-evidence/screens
+  export TEST_RUNNER_EVIDENCE_DIR="$PWD/native-evidence/screens"
   xcodebuild "${common[@]}" -scheme Lab86Mail \
     -destination "platform=iOS Simulator,id=$native_simulator_id" \
     -only-testing:Lab86MailTests \

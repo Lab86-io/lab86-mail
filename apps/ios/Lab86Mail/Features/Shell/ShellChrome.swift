@@ -224,14 +224,9 @@ struct ShellToolbarModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .toolbar {
-                if environment.navigation.documentRoute == nil {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("All tools", systemImage: "rectangle.expand.vertical") {
-                            environment.navigation.sheet = .workspace(.current(environment.navigation))
-                        }
-                        .accessibilityIdentifier("workspace.allTools")
-                    }
-                }
+                // No button here opens the web copy of the screen you are on.
+                // Native screens do their own work; the web sheet is only for
+                // surfaces with no native form (see NativeWorkspaceDestination).
                 if includesCompose {
                     ToolbarItem(placement: composePlacement) {
                         Button {
