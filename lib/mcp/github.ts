@@ -166,6 +166,16 @@ export function normalizeGitHubCommit(
   };
 }
 
+/**
+ * True unless the commit names a different GitHub author. The API filter
+ * already asks for the viewer's commits; a commit with no linked GitHub user
+ * (an unlinked email) passes, because the API matched it by the viewer.
+ */
+export function isOwnCommit(row: GitHubCommitLike, viewerLogin: string): boolean {
+  const login = row.author?.login;
+  return !login || login.toLowerCase() === viewerLogin.toLowerCase();
+}
+
 export function normalizeGitHubProject(row: GitHubProjectLike): NormalizedMcpItem | null {
   if (!row.id || !row.title) return null;
   const organization = row.owner?.login;
@@ -429,7 +439,9 @@ export async function loadGitHubItems(
         optional(
           githubJson<GitHubCommitLike[]>(
             token,
-            `/repos/${encodedRepository}/commits?since=${encodeURIComponent(since)}&per_page=100`,
+            // Only the viewer's own commits. Commits by other authors made up
+            // most GitHub rows and each one was rewritten on every sync.
+            `/repos/${encodedRepository}/commits?author=${encodeURIComponent(viewer.login)}&since=${encodeURIComponent(since)}&per_page=100`,
             endpoints.rest,
             fetchImpl,
           ),
@@ -484,6 +496,7 @@ export async function loadGitHubItems(
       if (item) items.push(item);
     }
     for (const row of result.commits) {
+      if (!isOwnCommit(row, viewer.login)) continue;
       const item = normalizeGitHubCommit(row, result.repository);
       if (item) items.push(item);
     }
@@ -496,6 +509,7 @@ export async function loadGitHubItems(
     }
   });
   for (const row of authoredCommits.items || []) {
+    if (!isOwnCommit(row, viewer.login)) continue;
     const item = normalizeGitHubCommit(row);
     if (item) items.push(item);
   }
