@@ -36,7 +36,9 @@ export function repairFingerprint(message: RepairFingerprintInput): string {
     labels: [...new Set(message.labels ?? [])].sort(),
     unread: Boolean(message.unread),
     starred: Boolean(message.starred),
-    attachments: Array.isArray(message.attachments) ? message.attachments.length : 0,
+    // The writer stores the attachment list as it comes, so the whole list
+    // is in the fingerprint: a new id or file name at the same count counts.
+    attachments: Array.isArray(message.attachments) ? message.attachments : [],
   });
 }
 

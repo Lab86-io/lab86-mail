@@ -43,6 +43,20 @@ describe('repair fingerprint', () => {
     expect(repairFingerprint({ ...message, starred: true })).not.toBe(base);
     expect(repairFingerprint({ ...message, labels: ['TRASH'] })).not.toBe(base);
     expect(repairFingerprint({ ...message, attachments: [] })).not.toBe(base);
+    // Same count, different attachment: the stored metadata must change too.
+    expect(repairFingerprint({ ...message, attachments: [{ id: 'y' }] })).not.toBe(base);
+    const file = { id: 'x', filename: 'a.pdf', size: 10 };
+    const withFile = repairFingerprint({ ...message, attachments: [file] });
+    expect(repairFingerprint({ ...message, attachments: [{ ...file, filename: 'b.pdf' }] })).not.toBe(
+      withFile,
+    );
+    // Key order and undefined keys do not count (a stored row drops undefined).
+    expect(
+      repairFingerprint({
+        ...message,
+        attachments: [{ size: 10, filename: 'a.pdf', id: 'x', cid: undefined }],
+      }),
+    ).toBe(withFile);
     expect(repairFingerprint({})).toBe(repairFingerprint({ labels: [], unread: false }));
   });
 
