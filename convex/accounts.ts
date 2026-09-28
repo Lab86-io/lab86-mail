@@ -406,6 +406,16 @@ export const USER_BULK_TABLES = [
   'briefPreparations',
   // Recipient-search counts derived from the mail of every mailbox.
   'correspondents',
+  // Tables that grow with mail or with time. In production (2026-09-28) one
+  // user had more than 130 MB of userDocs and more than 8,000 rows in each of
+  // aiUsageEvents and notificationDeliveries. One inline sweep of them passes
+  // the Convex read limits, and the account deletion then fails.
+  'userDocs',
+  'aiUsageEvents',
+  'aiOperations',
+  'albatrossNotifications',
+  'notificationDeliveries',
+  'mcpItems',
 ] as const;
 
 const PURGE_BATCH = 250;
@@ -471,6 +481,14 @@ export const PURGE_ROW_BYTES: Record<string, number> = {
   briefEditionTelemetry: 16 * KiB,
   mobileSyncTombstones: 16 * KiB,
   nativePushDeliveries: 16 * KiB,
+  // Short fields and an error message with no limit. Production max 485 B.
+  notificationDeliveries: 16 * KiB,
+  // Production max 412 B.
+  aiUsageEvents: 32 * KiB,
+  // A summary and a target object. Production max 4.6 kB.
+  aiOperations: 64 * KiB,
+  // The raw provider item has no limit. Production max 29 kB.
+  mcpItems: 256 * KiB,
 };
 
 function purgeRowBytes(table: string) {
@@ -1206,12 +1224,9 @@ export const USER_INLINE_TABLES = [
   'aiProviderKeys',
   'aiEntitlements',
   'aiUsagePeriods',
-  'aiUsageEvents',
   'aiCostWatch',
   'mailSyncStates',
   'rateLimits',
-  'userDocs',
-  'aiOperations',
   'suggestions',
   'calendars',
   'calendarSyncStates',
@@ -1228,19 +1243,16 @@ export const USER_INLINE_TABLES = [
   'albatrossCaptures',
   'albatrossWorkQuestions',
   'albatrossAreaBriefs',
-  'albatrossNotifications',
   'albatrossNotificationPreferences',
   'webPushSubscriptions',
   'mobilePushDevices',
   'mobileSyncHeads',
-  'notificationDeliveries',
   'albatrossDailyCheckins',
   'albatrossBrowserSessions',
   'areas',
   'mcpConnections',
   'mcpCredentials',
   'mcpOAuthStates',
-  'mcpItems',
   'mcpSyncStates',
   'mcpTaskLinks',
   'cloudFileConnections',

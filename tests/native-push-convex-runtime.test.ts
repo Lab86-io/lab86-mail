@@ -693,9 +693,11 @@ describe('native push Convex receipts', () => {
     expect(receipts.filter((receipt) => receipt.userId === 'purge_user')).toHaveLength(1);
     expect(receipts.filter((receipt) => receipt.userId === 'other_user')).toHaveLength(1);
 
-    expect(await t.mutation(internal.accounts.purgeUserDataBatch, { userId: 'purge_user' })).toMatchObject({
-      deleted: 1,
-    });
+    // The second pass deletes the last receipt, then starts on the user's
+    // notifications, which are also in the batched purge.
+    expect(
+      (await t.mutation(internal.accounts.purgeUserDataBatch, { userId: 'purge_user' })).deleted,
+    ).toBeGreaterThan(0);
     receipts = await t.run((ctx) => ctx.db.query('nativePushDeliveries').collect());
     expect(receipts.map((receipt) => receipt.userId)).toEqual(['other_user']);
   });

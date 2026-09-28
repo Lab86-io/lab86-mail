@@ -354,3 +354,134 @@ describe('the preparation check resumes across passes', () => {
     expect(await t.run(async (ctx) => (await ctx.db.query('briefPreparations').collect()).length)).toBe(1);
   });
 });
+
+describe('account deletion with large, growing tables', () => {
+  test('the cascade leaves them to the batches, and each batch stays within the room', async () => {
+    const t = convexTest(schema, modules);
+    const ts = T0;
+    await t.run(async (ctx) => {
+      await ctx.db.insert('users', {
+        clerkUserId: USER,
+        email: 'big@example.com',
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      // Brief editions and message caches: about 20 MB of userDocs.
+      for (let index = 0; index < 28; index++)
+        await ctx.db.insert('userDocs', {
+          userId: USER,
+          kind: index % 2 ? 'dailyReport' : 'msgCache',
+          key: `doc-${index}`,
+          doc: { html: wide(230_000) },
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      for (let index = 0; index < 600; index++)
+        await ctx.db.insert('aiUsageEvents', {
+          userId: USER,
+          feature: 'jev_mail',
+          source: 'lab86',
+          provider: 'openrouter',
+          model: 'typesafe/jev-1.13',
+          estimatedCredits: 0,
+          ok: true,
+          createdAt: ts,
+        });
+      for (let index = 0; index < 300; index++) {
+        const notificationId = await ctx.db.insert('albatrossNotifications', {
+          userId: USER,
+          type: 'mail_message',
+          title: 'Ann',
+          body: 'Quarterly plan',
+          deepLink: '/mail',
+          dedupeKey: `mail-message:acct:m${index}`,
+          status: 'delivered',
+          scheduledFor: ts,
+          createdAt: ts,
+          updatedAt: ts,
+        });
+        await ctx.db.insert('notificationDeliveries', {
+          userId: USER,
+          notificationId,
+          channel: 'in_app',
+          status: 'sent',
+          attemptCount: 1,
+          scheduledFor: ts,
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      }
+      for (let index = 0; index < 30; index++) {
+        await ctx.db.insert('mcpItems', {
+          userId: USER,
+          connectionId: 'c1',
+          server: 'github',
+          externalId: `i${index}`,
+          kind: 'issue',
+          title: 'Issue',
+          searchText: 'issue',
+          raw: { body: wide(60_000) },
+          createdAt: ts,
+          updatedAt: ts,
+        });
+        await ctx.db.insert('aiOperations', {
+          userId: USER,
+          agent: 'user',
+          tool: 'archive',
+          surface: 'mail',
+          summary: 'Archived a thread',
+          target: { kind: 'thread', id: `t${index}` },
+          status: 'applied',
+          createdAt: ts,
+        });
+      }
+    });
+    const tables = [
+      'userDocs',
+      'aiUsageEvents',
+      'albatrossNotifications',
+      'notificationDeliveries',
+      'mcpItems',
+      'aiOperations',
+    ] as const;
+    const count = () =>
+      t.run(async (ctx) => {
+        const counts: Record<string, number> = {};
+        for (const table of tables) counts[table] = (await (ctx.db.query(table) as any).collect()).length;
+        return counts;
+      });
+    const cascade: any = await t.mutation(api.accounts.deleteUserCascade, {
+      internalSecret: SECRET,
+      userId: USER,
+    });
+    expect(cascade.ok).toBe(true);
+    // The cascade did not read these tables inline; the batches own them.
+    for (const table of tables) expect(cascade.counts[table]).toBeUndefined();
+    expect(await count()).toEqual({
+      userDocs: 28,
+      aiUsageEvents: 600,
+      albatrossNotifications: 300,
+      notificationDeliveries: 300,
+      mcpItems: 30,
+      aiOperations: 30,
+    });
+    expect(await t.run(async (ctx) => (await ctx.db.query('users').collect()).length)).toBe(0);
+
+    const passes: number[] = [];
+    for (let pass = 0; pass < 40; pass++) {
+      const result = await t.mutation(internal.accounts.purgeUserDataBatch, { userId: USER });
+      passes.push(result.bytes);
+      if (result.deleted === 0) break;
+    }
+    expect(passes.length).toBeGreaterThan(3);
+    for (const bytes of passes) expect(bytes).toBeLessThanOrEqual(PURGE_PASS_BYTES);
+    expect(await count()).toEqual({
+      userDocs: 0,
+      aiUsageEvents: 0,
+      albatrossNotifications: 0,
+      notificationDeliveries: 0,
+      mcpItems: 0,
+      aiOperations: 0,
+    });
+  }, 60_000);
+});

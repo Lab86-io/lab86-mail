@@ -2,15 +2,7 @@ import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
-import {
-  ACCOUNT_KEYED_ROWS,
-  CONTENT_ITEM_BYTES,
-  evidenceNamesAccount,
-  PURGE_PASS_BYTES,
-  PURGE_ROW_BYTES,
-  purgePassRoom,
-  storedBytes,
-} from '../convex/accounts';
+import { ACCOUNT_KEYED_ROWS, evidenceNamesAccount, PURGE_PASS_BYTES } from '../convex/accounts';
 import schema from '../convex/schema';
 
 // Disconnect and the 30-day dead-account purge delete one set of mailbox
