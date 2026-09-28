@@ -93,7 +93,7 @@ describe('mailRepair.messageFingerprints', () => {
       providerMessageIds: ['m1', 'm2', 'm3', 'm1'],
     });
     expect(result).toEqual({
-      m1: repairFingerprint({ ...message, providerMessageId: 'm1' }),
+      m1: repairFingerprint(message),
       m2: null,
       m3: null,
     });
