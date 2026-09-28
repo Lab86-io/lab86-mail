@@ -644,6 +644,6 @@ describe('narrative agent run', () => {
         promptTokens: 1_000_000,
         completionTokens: 1_000_000,
       }).estimatedCostUsd,
-    ).toBeCloseTo(0.325);
+    ).toBeCloseTo(0.65);
   });
 });

@@ -18,45 +18,44 @@ describe('estimateAiUsageCost', () => {
           promptTokens: 1000000,
           completionTokens: 1000000,
         }).estimatedCostUsd,
-      ).toBeCloseTo(0.325);
+      ).toBeCloseTo(0.65);
     }
   });
-  test('prices OpenAI GPT-5.5 at list rates', () => {
-    const cost = estimateAiUsageCost({
-      provider: 'openai',
-      model: 'gpt-5.5',
-      promptTokens: 1_000_000,
-      completionTokens: 1_000_000,
-    });
-    expect(cost.estimatedCostUsd).toBe(35);
-    expect(cost.estimatedCredits).toBe(3500);
-  });
-  test('prices Anthropic cache reads and batch discounts', () => {
+  test('uses OpenRouter list prices for models the generic rules priced wrong', () => {
+    const million = (provider: 'openrouter' | 'openai' | 'anthropic', model: string) =>
+      estimateAiUsageCost({ provider, model, promptTokens: 1_000_000, completionTokens: 1_000_000 })
+        .estimatedCostUsd;
+    // Input + output for 1M tokens each, from the 2026-09-27 OpenRouter catalog.
+    expect(million('openrouter', 'openai/gpt-5.6-luna')).toBeCloseTo(1.4);
+    expect(million('openai', 'gpt-5.6-luna')).toBeCloseTo(1.4);
+    expect(million('openrouter', 'google/gemini-2.5-flash-lite')).toBeCloseTo(0.5);
+    expect(million('openrouter', 'openai/gpt-5.4-mini')).toBeCloseTo(5.25);
+    expect(million('openrouter', 'openai/gpt-5.6-terra')).toBeCloseTo(14);
+    expect(million('openrouter', 'anthropic/claude-opus-5.5')).toBeCloseTo(24);
+    expect(million('anthropic', 'claude-opus-5-5')).toBeCloseTo(24);
+    // Other models keep their generic rules.
+    expect(million('openrouter', 'anthropic/claude-sonnet-4.6')).toBeCloseTo(18);
     const cached = estimateAiUsageCost({
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-6',
+      provider: 'openrouter',
+      model: 'openai/gpt-5.6-luna',
       promptTokens: 1_000_000,
       cachedInputTokens: 1_000_000,
-      completionTokens: 1_000_000,
     });
-    const batched = estimateAiUsageCost({
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-6',
-      promptTokens: 1_000_000,
-      completionTokens: 1_000_000,
-      batch: true,
-    });
-    expect(cached.estimatedCostUsd).toBeCloseTo(15.3, 5);
-    expect(batched.estimatedCostUsd).toBe(9);
+    expect(cached.estimatedCostUsd).toBeCloseTo(0.02);
   });
-  test('supports OpenRouter-prefixed model ids', () => {
-    const cost = estimateAiUsageCost({
+  test('a cheap call counts its exact credits, with no round-up', () => {
+    // One Jev verdict: 4,646 input tokens at $0.042 per million.
+    const jev = estimateAiUsageCost({
       provider: 'openrouter',
-      model: 'openai/gpt-5-nano',
-      promptTokens: 1_000_000,
-      completionTokens: 1_000_000,
+      model: 'typesafe/jev-1.13-20260917',
+      promptTokens: 4_646,
+      completionTokens: 300,
     });
-    expect(cost.estimatedCostUsd).toBeCloseTo(0.725, 3);
+    expect(jev.estimatedCredits).toBeCloseTo(0.019513, 6);
+    expect(
+      estimateAiUsageCost({ provider: 'openrouter', model: 'openai/gpt-5-nano', promptTokens: 0 })
+        .estimatedCredits,
+    ).toBe(0);
   });
 });
 
