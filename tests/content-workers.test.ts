@@ -68,8 +68,11 @@ test('embedding parsing restores provider order, records usage and rejects malfo
     resolveOpenRouterUtilityRuntime: async () => ({ apiKey: 'fake' }),
     recordClassifierUsage: async (...args: any[]) => usage.push(args),
   };
-  const fetcher: any = async (_url: string, args: any) => {
+  const fetcher: any = async (url: string, args: any) => {
+    expect(url).toBe('https://openrouter.ai/api/v1/embeddings');
     expect(JSON.parse(args.body).dimensions).toBe(1536);
+    // Embeddings go only to endpoints that do not train on the data.
+    expect(JSON.parse(args.body).provider).toEqual({ data_collection: 'deny' });
     return Response.json({
       data: [
         { index: 1, embedding: Array(1536).fill(0.2) },

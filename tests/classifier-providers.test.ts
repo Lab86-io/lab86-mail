@@ -61,6 +61,7 @@ describe('System One protocol', () => {
     );
     expect(url).toBe(JEV.endpoint);
     expect(body.model).toBe(JEV.wireModel);
+    expect(body.provider).toEqual({ data_collection: 'deny' });
     expect(result.answers.q).toEqual({ type: 'noul', noul: 0.9 });
     await expect(
       evaluateClassifier({ apiKey: 'k', model: JEV, state: {}, questions }, ok('typesafe/jev-2.0')),
@@ -124,6 +125,8 @@ describe('Together choice protocol', () => {
     for (const { url, body, auth } of requests) {
       expect(url).toBe('https://api.together.ai/v1/chat/completions');
       expect(auth).toBe('Bearer together-key');
+      // The OpenRouter provider preference is not sent to another vendor.
+      expect(body.provider).toBeUndefined();
       expect(body).toMatchObject({
         model: 'together/Tev1-4B-experimental',
         temperature: 0,

@@ -34,6 +34,7 @@ import {
   staticModelCatalog,
 } from './model-catalog';
 import { classifyModel, toDirectModelId, toOpenRouterModelId } from './model-router';
+import { createOpenRouterProvider } from './openrouter-policy';
 
 type AiProvider = 'openrouter' | 'openai' | 'anthropic';
 type AiSource = 'lab86' | 'byok';
@@ -132,7 +133,6 @@ type PlatformPreference = {
   modelName?: string;
 };
 
-const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 // 'nano' is the bulk-classification tier: high-volume single-shot labeling
 // (one LLM verdict per corpus thread) where per-token cost dominates. It
 // always resolves to the platform default — user model preferences only steer
@@ -798,17 +798,10 @@ function platformRuntime(speed: AiSpeed, preference?: PlatformPreference): Route
   return routePlatformModel(modelName);
 }
 
-function modelFromKey(provider: AiProvider, apiKey: string, modelName: string) {
-  if (provider === 'openrouter') {
-    return createOpenAI({
-      apiKey,
-      baseURL: OPENROUTER_BASE_URL,
-      headers: {
-        'HTTP-Referer': process.env.LAB86_MAIL_PUBLIC_URL || 'https://mail.lab86.io',
-        'X-Title': 'lab86-mail',
-      },
-    }).chat(toOpenRouterModelId(modelName));
-  }
+/** The model for a user's own key. Exported for the data-policy test. */
+export function modelFromKey(provider: AiProvider, apiKey: string, modelName: string) {
+  // A user's own OpenRouter key gets the same no-training data policy.
+  if (provider === 'openrouter') return createOpenRouterProvider(apiKey).chat(toOpenRouterModelId(modelName));
   if (provider === 'openai') return createOpenAI({ apiKey })(directModelIdFor(modelName));
   return createAnthropic({ apiKey })(directModelIdFor(modelName));
 }

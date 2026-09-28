@@ -1,7 +1,7 @@
 /** Synthetic-only history/retrieval acceptance. No external provider writes. */
 import { randomUUID } from 'node:crypto';
-import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
+import { createOpenRouterProvider } from '../lib/ai/openrouter-policy';
 import { api, convexMutation, convexQuery } from '../lib/hosted/convex';
 import {
   __setNarrativeDepsForTest,
@@ -18,10 +18,7 @@ if (!process.env.OPENROUTER_API_KEY) throw new Error('OpenRouter key missing');
 const userId = `narrative-spine-smoke-${randomUUID()}`;
 process.env.LAB86_NARRATIVE_ENABLED = 'true';
 process.env.LAB86_NARRATIVE_USER_IDS = userId;
-const client = createOpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: 'https://openrouter.ai/api/v1',
-});
+const client = createOpenRouterProvider(process.env.OPENROUTER_API_KEY);
 let semanticCalls = 0;
 __setNarrativeDepsForTest({
   runtime: (async () => ({ modelName: 'z-ai/glm-5.3-flash', provider: 'openrouter' })) as any,

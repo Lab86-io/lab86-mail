@@ -3,6 +3,7 @@ import {
   resolveClassifierRuntime,
   resolveOpenRouterUtilityRuntime,
 } from '../ai/gateway';
+import { withOpenRouterDataPolicy } from '../ai/openrouter-policy';
 import { type ClassifierQuestion, evaluateClassifier } from '../classifier/client';
 import { api, convexArgs, convexQuery, requireConvexClient } from '../hosted/convex';
 import { truncateText } from '../shared/text';
@@ -105,12 +106,14 @@ export async function embedContent(
   const response = await fetcher('https://openrouter.ai/api/v1/embeddings', {
     method: 'POST',
     headers: { Authorization: `Bearer ${runtime.apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: EMBEDDING_MODEL,
-      input,
-      dimensions: EMBEDDING_DIMENSIONS,
-      encoding_format: 'float',
-    }),
+    body: JSON.stringify(
+      withOpenRouterDataPolicy({
+        model: EMBEDDING_MODEL,
+        input,
+        dimensions: EMBEDDING_DIMENSIONS,
+        encoding_format: 'float',
+      }),
+    ),
     signal: signal || AbortSignal.timeout(12_000),
   });
   if (!response.ok) throw new Error('Semantic indexing is temporarily unavailable.');
