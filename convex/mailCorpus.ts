@@ -16,6 +16,7 @@ import { internal } from './_generated/api';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { recordInsertedMessages } from './correspondents';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
+import { deleteMessageAttachmentData, enqueueMessageAttachments } from './mailAttachments';
 import {
   deleteMessageBody,
   deleteThreadBodies,
@@ -512,6 +513,12 @@ async function upsertCorpusMessage(
     bodyHashHasBody(plan.bodyHash)
   )
     await moveMessageBody(ctx, bodyInput, ts);
+  // New mail, and mail whose attachment list changed, enters the attachment
+  // file queue. A message with no attachments costs no read.
+  const attachmentsChanged =
+    !existing || stableContent(existing.attachments) !== stableContent(next.attachments);
+  if (attachmentsChanged)
+    await enqueueMessageAttachments(ctx, scope, next as Parameters<typeof enqueueMessageAttachments>[2], ts);
   if (!existing) {
     await ctx.db.insert('mailCorpusMessages', { ...next, createdAt: ts, updatedAt: ts });
     return { inserted: true, wrote: true, contentChanged: false };
@@ -679,6 +686,7 @@ export const deleteCorpusMessage = mutation({
     if (row && row.userId === args.userId) {
       await ctx.db.delete(row._id);
       await deleteMessageBody(ctx, args.userId, args.accountId, args.providerMessageId);
+      await deleteMessageAttachmentData(ctx, args.userId, args.accountId, args.providerMessageId);
       await upsertSyncState(ctx, {
         userId: args.userId,
         accountId: args.accountId,
@@ -718,6 +726,7 @@ export const deleteCorpusThread = mutation({
     for (const message of messages) {
       if (message.userId === args.userId) {
         await ctx.db.delete(message._id);
+        await deleteMessageAttachmentData(ctx, args.userId, args.accountId, message.providerMessageId);
         deleted += 1;
       }
     }

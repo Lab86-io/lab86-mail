@@ -4,6 +4,7 @@ import { bodyHashHasBody } from '../lib/mail/corpus-body';
 import { internal } from './_generated/api';
 import { internalMutation, internalQuery } from './_generated/server';
 import { now } from './lib';
+import { deleteAttachmentFileRow } from './mailAttachments';
 import schema from './schema';
 
 // Dead-account purge (connections audit, section 4 item 2). A mailbox whose
@@ -32,6 +33,10 @@ export const DEAD_ACCOUNT_TABLES = [
   { table: 'mailWebhookEvents', index: 'by_user_account', cap: 50 },
   { table: 'mailSnoozes', index: 'by_user_account', cap: 250 },
   { table: 'mailOneTimeCodes', index: 'by_user_account', cap: 250 },
+  // A file row takes its stored file when no other row shares it.
+  { table: 'mailAttachmentFiles', index: 'by_user_account', cap: 100 },
+  { table: 'mailAttachmentQueue', index: 'by_user_account', cap: 250 },
+  { table: 'mailAttachmentBackfills', index: 'by_user_account', cap: 250 },
 ] as const;
 
 /** Small per-account state rows. They go first, so a reconnect during the purge backfills fresh. */
@@ -138,7 +143,9 @@ export const purgeDeadAccountBatch = internalMutation({
       const rows = await byAccount(ctx, entry.table, entry.index, args.userId, args.accountId).take(
         Math.min(entry.cap, PASS_LIMIT - deleted),
       );
-      for (const row of rows) await ctx.db.delete(row._id);
+      for (const row of rows)
+        if (entry.table === 'mailAttachmentFiles') await deleteAttachmentFileRow(ctx, row);
+        else await ctx.db.delete(row._id);
       note(entry.table, rows.length);
     }
 

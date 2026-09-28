@@ -7,6 +7,7 @@ import type { Id } from './_generated/dataModel';
 import { internalMutation, mutation, query } from './_generated/server';
 import { deleteContactRow } from './contacts';
 import { now, requireInternalSecret } from './lib';
+import { deleteAttachmentFileRow } from './mailAttachments';
 import schema from './schema';
 
 const providerValidator = v.union(
@@ -351,6 +352,10 @@ export const ACCOUNT_BULK_TABLES = [
   'mailOneTimeCodes',
   // Snooze rows would otherwise keep waking threads of a removed mailbox.
   'mailSnoozes',
+  // Attachment files: each row takes its stored file when no row shares it.
+  'mailAttachmentFiles',
+  'mailAttachmentQueue',
+  'mailAttachmentBackfills',
   'calendarEvents',
   'areaArtifactLinks',
   // Each contacts row takes its contactEmails rows with it (see below).
@@ -447,6 +452,11 @@ export const purgeUserDataBatch = internalMutation({
       const remaining = PURGE_BATCH - deleted;
       const rows = await takeByUser(ctx, table, args.userId, purgePassLimit(table, remaining));
       for (const row of rows) {
+        if (table === 'mailAttachmentFiles') {
+          await deleteAttachmentFileRow(ctx, row as any);
+          deleted += 1;
+          continue;
+        }
         if ((table === 'officeVersions' || table === 'documentAssets') && 'storageId' in row) {
           // Metadata must not be deleted before its private binary.
           await ctx.storage.delete(row.storageId as Id<'_storage'>);
@@ -500,7 +510,8 @@ export const purgeAccountDataBatch = internalMutation({
           deleted += await deleteContactRow(ctx, row._id as Id<'contacts'>);
           continue;
         }
-        await ctx.db.delete(row._id);
+        if (table === 'mailAttachmentFiles') await deleteAttachmentFileRow(ctx, row as any);
+        else await ctx.db.delete(row._id);
         deleted += 1;
       }
     }
