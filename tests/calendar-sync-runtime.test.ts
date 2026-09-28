@@ -323,6 +323,30 @@ describe('syncCalendarAccount', () => {
     });
   });
 
+  test('a hot pass on a state from before lastFullSyncAt records the old full-pass time', async () => {
+    await withHarness(async (h) => {
+      const before = Date.now();
+      const legacyFullAt = before - 60 * 60_000;
+      h.onConvex('accounts:getConnectedAccount', () => account());
+      h.onConvex('calendarData:claimCalendarSync', () => ({
+        claimed: true,
+        state: { lastSyncedAt: legacyFullAt, windowEnd: before + 300 * DAY_MS },
+      }));
+      h.onConvex('calendarData:upsertCalendarBatch', () => ({ ok: true }));
+      h.onConvex('calendarData:markSyncState', () => ({ ok: true }));
+      h.onNylas('GET', /\/v3\/grants\/grant_1\/calendars$/, () => ({
+        json: { request_id: 'req_c', data: [] },
+      }));
+      await syncCalendarAccount({ userId: 'user_1', accountId: 'acct_1', window: 'auto' });
+      const ready = h.convexCalls.find(
+        (call) => call.path === 'calendarData:markSyncState' && call.args.status === 'ready',
+      );
+      expect(ready?.args.progress).toMatchObject({ window: 'hot' });
+      expect(ready?.args.lastFullSyncAt).toBe(legacyFullAt);
+      expect(ready?.args.lastSyncedAt).toBeGreaterThanOrEqual(before);
+    });
+  });
+
   test('a full pass records lastFullSyncAt', async () => {
     await withHarness(async (h) => {
       h.onConvex('accounts:getConnectedAccount', () => account());

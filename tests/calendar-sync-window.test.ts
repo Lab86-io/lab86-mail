@@ -4,6 +4,8 @@ import {
   calendarCronStartDelayMs,
   calendarWindowBounds,
   FULL_WINDOW_INTERVAL_MS,
+  lastFullCalendarSyncAt,
+  legacyLastFullSyncAt,
   resolveCalendarWindow,
   spreadOffsetMs,
 } from '../lib/calendar/sync';
@@ -33,6 +35,27 @@ describe('calendar sync window', () => {
     ).toBe('hot');
     // lastSyncedAt without a stored window is not a full pass.
     expect(resolveCalendarWindow('auto', { lastSyncedAt: NOW - 60_000 }, NOW, 'a')).toBe('full');
+  });
+
+  test('a hot pass on a legacy state keeps its last full pass, so the daily pass comes due', () => {
+    const legacy = { lastSyncedAt: NOW - 3 * DAY, windowEnd: NOW + DAY };
+    expect(lastFullCalendarSyncAt(legacy)).toBe(NOW - 3 * DAY);
+    expect(legacyLastFullSyncAt(legacy)).toBe(NOW - 3 * DAY);
+    // The field is on record, or there is no full pass: nothing to keep.
+    expect(legacyLastFullSyncAt({ lastFullSyncAt: NOW, lastSyncedAt: NOW, windowEnd: NOW })).toBeUndefined();
+    expect(legacyLastFullSyncAt({ lastSyncedAt: NOW })).toBeUndefined();
+    expect(legacyLastFullSyncAt(null)).toBeUndefined();
+    // A legacy state whose last full pass was recent: the poll is hot, and the
+    // hot pass writes lastFullSyncAt, so its own lastSyncedAt does not hide the
+    // due date of the next full pass.
+    const recent = { lastSyncedAt: NOW - 60_000, windowEnd: NOW + DAY };
+    expect(resolveCalendarWindow('auto', recent, NOW, 'a')).toBe('hot');
+    const afterHot = {
+      ...recent,
+      lastSyncedAt: NOW + 15 * 60_000,
+      lastFullSyncAt: legacyLastFullSyncAt(recent),
+    };
+    expect(resolveCalendarWindow('auto', afterHot, NOW + 2 * DAY, 'a')).toBe('full');
   });
 
   test('hot bounds are −1 to +14 days with a reconcile read bound', () => {

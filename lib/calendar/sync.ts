@@ -53,20 +53,40 @@ export function calendarCronStartDelayMs(userId: string): number {
   return spreadOffsetMs(`calendar-cron:${userId}`, CRON_START_SPREAD_MS);
 }
 
+type CalendarWindowState = { lastFullSyncAt?: number; lastSyncedAt?: number; windowEnd?: number };
+
 /**
- * The window that one sync covers. `auto` picks the full window when the
- * account has no full pass on record or its daily pass is due. A state from
+ * The time of the last full pass, or 0 when none is on record. A state from
  * before `lastFullSyncAt` existed counts `lastSyncedAt`, because every old
  * sync covered the full window.
  */
+export function lastFullCalendarSyncAt(state: CalendarWindowState | null | undefined): number {
+  return Number(state?.lastFullSyncAt) || (state?.windowEnd ? Number(state?.lastSyncedAt) || 0 : 0);
+}
+
+/**
+ * The `lastFullSyncAt` that a hot pass must write for a state from before the
+ * field existed. A hot pass moves `lastSyncedAt`, so without this value the
+ * legacy fallback would move with it and the daily full pass would never be
+ * due. Undefined when the state already has the field or has no full pass.
+ */
+export function legacyLastFullSyncAt(state: CalendarWindowState | null | undefined): number | undefined {
+  if (Number(state?.lastFullSyncAt)) return undefined;
+  return lastFullCalendarSyncAt(state) || undefined;
+}
+
+/**
+ * The window that one sync covers. `auto` picks the full window when the
+ * account has no full pass on record or its daily pass is due.
+ */
 export function resolveCalendarWindow(
   mode: CalendarWindowMode,
-  state: { lastFullSyncAt?: number; lastSyncedAt?: number; windowEnd?: number } | null | undefined,
+  state: CalendarWindowState | null | undefined,
   nowMs: number,
   accountKey: string,
 ): 'hot' | 'full' {
   if (mode === 'full') return 'full';
-  const lastFull = Number(state?.lastFullSyncAt) || (state?.windowEnd ? Number(state?.lastSyncedAt) || 0 : 0);
+  const lastFull = lastFullCalendarSyncAt(state);
   if (!lastFull) return 'full';
   if (mode === 'hot') return 'hot';
   const interval =
@@ -264,12 +284,18 @@ export async function syncCalendarAccount({
     }
 
     const syncedAt = Date.now();
+    const legacyFull = full ? undefined : legacyLastFullSyncAt(claim.state);
     await markSync(row, {
       status: 'ready',
       calendarsSynced: calendars.length,
       lastSyncedAt: syncedAt,
-      // The stored window and event count describe the last full pass.
-      ...(full ? { eventsSynced: totalEvents, windowStart, windowEnd, lastFullSyncAt: syncedAt } : {}),
+      // The stored window and event count describe the last full pass. A hot
+      // pass on a legacy state keeps the time of its last full pass.
+      ...(full
+        ? { eventsSynced: totalEvents, windowStart, windowEnd, lastFullSyncAt: syncedAt }
+        : legacyFull
+          ? { lastFullSyncAt: legacyFull }
+          : {}),
       progress: { stage: 'ready', reason, window },
     });
     if (full) maybeKickCalendarHistoryBackfill(row);
@@ -886,6 +912,7 @@ async function markSync(
     windowStart?: number;
     windowEnd?: number;
     lastSyncedAt?: number;
+    lastFullSyncAt?: number;
     lastIncrementalSyncAt?: number;
     lastWebhookAt?: number;
     lastHistoryBackfillAt?: number;
