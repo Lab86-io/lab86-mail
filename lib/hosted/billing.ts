@@ -220,6 +220,9 @@ export function entitlementFromSnapshot(
   // A trial proves Pro only until it ends; after that the user is Free until a
   // signed-in request stores the next plan.
   const trialEndsAt = finite(snapshot.trialEndsAt);
+  // A trial of a plan with no usage limit needs an end date. Without one it
+  // would be unlimited use for all time, so it proves nothing.
+  if (snapshot.status === 'trialing' && trialEndsAt === null && planHasNoCreditLimit(plan)) return null;
   const trialing = snapshot.status === 'trialing' && trialEndsAt !== null;
   if (trialing && trialEndsAt <= now) return null;
   const credits = Number(snapshot.monthlyCredits);

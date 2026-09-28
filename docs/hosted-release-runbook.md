@@ -261,12 +261,16 @@ Narrative memory:
 The loop alarm. Each hour a Convex cron calls `/api/cron/cost-alarm`. When one user's background model
 cost (chat and own-key calls left out) passes the threshold in 24 hours, the owner gets one plain-text email
 for that user in that UTC day. It never stops or limits a user. It also needs `RESEND_API_KEY` and
-`LAB86_NOTIFICATION_FROM`:
+`LAB86_NOTIFICATION_FROM` (see the email list below). Production sets `LAB86_OWNER_ALERT_EMAIL` to
+`jakob@lab86.io`:
 
 - `LAB86_OWNER_ALERT_EMAIL` (no address, no alarm; the app logs one warning)
 - `LAB86_COST_ALARM_USD` (optional, default 5)
 
-Email and web push notifications. Production does not set these yet, so email and web push do not send:
+Email and web push notifications. Production and staging set these since 2026-09-27. The cost alarm
+and the Brief by email need the Resend pair. `RESEND_API_KEY` is a send-only key for the verified
+domain `lab86.io`, and `LAB86_NOTIFICATION_FROM` is `Albatross <brief@lab86.io>`. If either one is
+missing, no email sends:
 
 - `LAB86_NOTIFICATION_LINK_SECRET`
 - `RESEND_API_KEY`

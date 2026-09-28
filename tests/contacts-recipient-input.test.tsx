@@ -112,12 +112,12 @@ describe('RecipientInput', () => {
     },
   ];
 
-  async function mount(initial = '') {
+  async function mount(initial = '', respond?: (url: string) => Promise<unknown[]>) {
     const requests: string[] = [];
     const values: string[] = [];
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       requests.push(String(input));
-      return Response.json({ ok: true, items: people });
+      return Response.json({ ok: true, items: respond ? await respond(String(input)) : people });
     }) as unknown as typeof fetch;
     let setOutside: (value: string) => void = () => undefined;
     function Harness() {
@@ -178,11 +178,36 @@ describe('RecipientInput', () => {
     await field.type('ja');
     expect(field.requests.at(-1)).toContain('q=ja');
     await field.key('Enter');
+    // Enter picks the first row for "ja" as soon as those rows are in.
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
     expect(field.values.at(-1)).toBe('Jakob Langtry <jakob@lab86.io>');
     expect(field.chips()).toEqual(['Jakob Langtry <jakob@lab86.io>']);
     // Picked addresses are excluded from the next search.
     await field.type('j');
     expect(field.requests.at(-1)).toContain('exclude=jakob%40lab86.io');
+  });
+
+  test('Enter does not pick a row of an older query; it waits for the rows of the typed text', async () => {
+    const julia = { ...people[0], email: 'julia@x.io', name: 'Julia Lopez', score: 50 };
+    let release: () => void = () => undefined;
+    const field = await mount('', async (url) => {
+      if (!url.includes('q=jul')) return people;
+      // The rows for "jul" arrive only when the test lets them.
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return [julia];
+    });
+    await act(async () => field.input().props.onFocus());
+    await field.type('ja');
+    expect(field.options()).toHaveLength(2);
+    // New text; the old "ja" rows still show while "jul" loads.
+    await field.type('jul');
+    await field.key('Enter');
+    expect(field.values).not.toContain('Jakob Langtry <jakob@lab86.io>');
+    await act(async () => release());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(field.values.at(-1)).toBe('Julia Lopez <julia@x.io>');
   });
 
   test('arrows move the selection; Tab picks; Escape closes; Backspace removes the last chip', async () => {

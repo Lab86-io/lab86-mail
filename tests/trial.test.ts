@@ -138,6 +138,9 @@ describe('the 14-day trial', () => {
       unlimited: true,
     });
     expect(entitlementFromSnapshot(snapshot, NOW + 1000)).toBeNull();
+    // A trial with no end date, or one that is not a number, grants nothing.
+    expect(entitlementFromSnapshot({ ...snapshot, trialEndsAt: undefined }, NOW)).toBeNull();
+    expect(entitlementFromSnapshot({ ...snapshot, trialEndsAt: 'soon' as any }, NOW)).toBeNull();
     // A paid row keeps its history fields but is not a trial.
     expect(
       entitlementFromSnapshot(

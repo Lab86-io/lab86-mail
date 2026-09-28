@@ -24,6 +24,7 @@ import type { Highlight, RecipientSuggestion } from '@/lib/contacts/recipients';
 import { cn } from '@/lib/utils';
 
 const SEARCH_DEBOUNCE_MS = 80;
+const PICK_WAIT_MS = 700;
 
 async function fetchRecipients(
   query: string,
@@ -107,6 +108,11 @@ export function RecipientInput({
     placeholderData: (previous) => previous,
   });
   const items = open ? people.data || [] : [];
+  // The list shows the previous query's rows while a new one loads. Only rows
+  // for the text now in the field may be picked by Enter or Tab.
+  const fresh = people.isSuccess && !people.isPlaceholderData && query === draft.trim();
+  // Enter or Tab before the rows for the typed text arrive waits for them.
+  const awaitingPick = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // A new query starts at the first row.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the query change is the trigger.
@@ -140,6 +146,36 @@ export function RecipientInput({
     inputRef.current?.focus();
   };
 
+  const stopAwaiting = () => {
+    if (awaitingPick.current) clearTimeout(awaitingPick.current);
+    awaitingPick.current = null;
+  };
+
+  const pickWhenFresh = () => {
+    stopAwaiting();
+    // After 0.7 s with no rows, the typed text becomes a chip as it is.
+    awaitingPick.current = setTimeout(() => {
+      awaitingPick.current = null;
+      commitDraft();
+    }, PICK_WAIT_MS);
+  };
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fresh rows are the trigger.
+  useEffect(() => {
+    if (!awaitingPick.current || !fresh) return;
+    stopAwaiting();
+    if (items.length) pick(items[0]);
+    else commitDraft();
+  }, [fresh, items]);
+
+  // A wait still open when the field unmounts must not commit later.
+  useEffect(
+    () => () => {
+      if (awaitingPick.current) clearTimeout(awaitingPick.current);
+    },
+    [],
+  );
+
   const remove = (index: number) => {
     const next = chips.filter((_, position) => position !== index);
     setChips(next);
@@ -161,22 +197,30 @@ export function RecipientInput({
       setNavigated(true);
       return;
     }
+    // A row the arrow keys moved to is a choice the user can see. Without
+    // one, Enter and Tab pick only rows for the text now in the field.
+    const choice = hasItems && (navigated || (draft.trim() && fresh));
+    const waits = open && !fresh && Boolean(draft.trim()) && !isCompleteAddress(draft);
     if (event.key === 'Enter') {
-      if (hasItems && (draft.trim() || navigated)) {
+      if (choice) {
         event.preventDefault();
         pick(items[Math.min(active, items.length - 1)]);
         return;
       }
       if (draft.trim()) {
         event.preventDefault();
-        commitDraft();
+        if (waits) pickWhenFresh();
+        else commitDraft();
       }
       return;
     }
     if (event.key === 'Tab' && draft.trim()) {
-      if (hasItems) {
+      if (choice) {
         event.preventDefault();
         pick(items[Math.min(active, items.length - 1)]);
+      } else if (waits) {
+        event.preventDefault();
+        pickWhenFresh();
       } else {
         commitDraft();
       }

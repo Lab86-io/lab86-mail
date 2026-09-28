@@ -200,6 +200,67 @@ describe('backfill migration', () => {
   });
 });
 
+describe('backfill continuation', () => {
+  test('a mailbox removed between pages: the walk goes on after it and counts nothing twice', async () => {
+    const t = convexTest(schema, modules);
+    await connect(t, 'grant_work', 'me@lab86.io');
+    await connect(t, 'grant_home', 'me@gmail.com');
+    await t.run(async (ctx) => {
+      const base = {
+        userId: USER,
+        grantId: 'g',
+        provider: 'google' as const,
+        subject: 's',
+        snippet: '',
+        searchText: 's',
+        labels: ['INBOX'],
+        yearMonth: '2026-09',
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const insert = (accountId: string, id: string, from: string, receivedAt: number) =>
+        ctx.db.insert('mailCorpusMessages', {
+          ...base,
+          accountId,
+          providerMessageId: id,
+          providerThreadId: id,
+          from,
+          to: 'me@lab86.io',
+          receivedAt,
+        });
+      await insert('grant_work', 'w1', 'Ann <ann@acme.com>', NOW - 3 * DAY);
+      await insert('grant_work', 'w2', 'Bo <bo@acme.com>', NOW - 2 * DAY);
+      await insert('grant_work', 'w3', 'Cy <cy@acme.com>', NOW - DAY);
+      await insert('grant_home', 'h1', 'Mom <mom@gmail.com>', NOW - DAY);
+    });
+    // convex-test gives creation times that only go up, so after the earlier
+    // tests they can run ahead of the clock. The backfill counts mail made
+    // before its cutoff, so wait until the clock passes the newest message.
+    const newest = await t.run(async (ctx) =>
+      Math.max(...(await ctx.db.query('mailCorpusMessages').collect()).map((row) => row._creationTime)),
+    );
+    while (Date.now() <= newest) await new Promise((resolve) => setTimeout(resolve, 2));
+    // The first page reads two work messages and schedules the next page.
+    const first = await t.mutation(internal.correspondents.backfillCorrespondents, { limit: 2 });
+    expect(first.done).toBe(false);
+    // The user removes the work mailbox before the next page runs.
+    await t.run(async (ctx) => {
+      const work = await ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_grant', (q) => q.eq('grantId', 'grant_work'))
+        .first();
+      if (work) await ctx.db.delete(work._id);
+    });
+    await drain(t);
+    const index = await rows(t);
+    // Work mail of the first page counts once; the rest of work is skipped;
+    // home starts at its own first page and counts once.
+    expect(index['ann@acme.com'].receivedCount).toBe(1);
+    expect(index['cy@acme.com']).toBeUndefined();
+    expect(index['mom@gmail.com'].receivedCount).toBe(1);
+  });
+});
+
 describe('account removal', () => {
   test('rows of only that mailbox go; shared rows lose its counts', async () => {
     const t = convexTest(schema, modules);

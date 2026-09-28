@@ -178,6 +178,9 @@ export const backfillCorrespondents = internalMutation({
     limit: v.optional(v.number()),
     // Continuation state. The scheduler sets these; a caller leaves them out.
     accountRowId: v.optional(v.id('connectedAccounts')),
+    // The creation time of that mailbox, so the walk goes on after it even
+    // when its row is gone.
+    accountCreationTime: v.optional(v.number()),
     cursor: v.optional(v.string()),
     totals: v.optional(totalsValidator),
   },
@@ -198,8 +201,18 @@ export const backfillCorrespondents = internalMutation({
     let account: Doc<'connectedAccounts'> | null = args.accountRowId
       ? await ctx.db.get(args.accountRowId)
       : null;
+    // The page cursor belongs to the mailbox in accountRowId only.
+    let cursor = args.cursor ?? null;
     if (!account || account.status !== 'connected') {
-      account = await nextLiveAccount(ctx, account, args.userId);
+      // A removed or paused mailbox: go on after it, never from the first
+      // mailbox again, and start the next mailbox at its first page.
+      const after =
+        account ??
+        (args.accountCreationTime !== undefined
+          ? ({ _creationTime: args.accountCreationTime } as Doc<'connectedAccounts'>)
+          : null);
+      account = await nextLiveAccount(ctx, after, args.userId);
+      cursor = null;
       if (account && args.accountRowId !== account._id) totals.accounts += 1;
     }
     const finish = async () => {
@@ -228,7 +241,7 @@ export const backfillCorrespondents = internalMutation({
         q.eq('userId', current.userId).eq('accountId', current.accountId),
       )
       .paginate({
-        cursor: args.cursor ?? null,
+        cursor,
         numItems: Math.min(Math.max(Math.floor(args.limit ?? 50), 1), 200),
       });
     const self = await selfEmails(ctx, current.userId);
@@ -240,13 +253,19 @@ export const backfillCorrespondents = internalMutation({
     if (dryRun) totals.rows += groupEventsByEmail(events).size;
     else totals.rows += await writeEvents(ctx, current.userId, events);
 
-    let next: { accountRowId: Id<'connectedAccounts'>; cursor?: string } | null = null;
-    if (!page.isDone) next = { accountRowId: current._id, cursor: page.continueCursor };
+    let next: { accountRowId: Id<'connectedAccounts'>; accountCreationTime: number; cursor?: string } | null =
+      null;
+    if (!page.isDone)
+      next = {
+        accountRowId: current._id,
+        accountCreationTime: current._creationTime,
+        cursor: page.continueCursor,
+      };
     else {
       const following = await nextLiveAccount(ctx, current, args.userId);
       if (following) {
         totals.accounts += 1;
-        next = { accountRowId: following._id };
+        next = { accountRowId: following._id, accountCreationTime: following._creationTime };
       }
     }
     if (!next) return await finish();

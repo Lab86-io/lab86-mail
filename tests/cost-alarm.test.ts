@@ -3,6 +3,12 @@ import { getFunctionName } from 'convex/server';
 import { convexTest } from 'convex-test';
 import { NextRequest } from 'next/server';
 import { createCostAlarmPost } from '../app/api/cron/cost-alarm/route';
+
+// Route tests run outside a request scope, where Next.js after() throws.
+const runNow = ((task: () => unknown) => {
+  void task();
+}) as unknown as typeof import('next/server').after;
+
 import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
 import {
@@ -572,7 +578,7 @@ describe('the cost alarm route', () => {
     const info = console.info;
     console.info = () => undefined;
     try {
-      const post = createCostAlarmPost({ runCostAlarm: run });
+      const post = createCostAlarmPost({ runCostAlarm: run, after: runNow });
       expect((await post(request())).status).toBe(401);
       expect((await post(request({ 'x-lab86-internal-secret': 'wrong' }))).status).toBe(401);
       expect(run).not.toHaveBeenCalled();
@@ -593,6 +599,7 @@ describe('the cost alarm route', () => {
     console.error = (...args: unknown[]) => logged.push(args);
     try {
       const post = createCostAlarmPost({
+        after: runNow,
         runCostAlarm: async () => {
           throw new Error('Convex is down');
         },
