@@ -41,10 +41,11 @@ function apiError(statusCode: number, message: string, headers: Record<string, s
 }
 
 type Page = { data: any[]; nextCursor?: string };
-type SourceReply = Page[] | Error | ((pageToken?: string) => Page | Error);
+type SourceReply = Page[] | Error | ((pageToken?: string, limit?: number) => Page | Error);
 
 interface FakeNylas {
   calls: Array<{ source?: string; pageToken?: string }>;
+  limits?: number[];
   finds: string[];
   sources: Partial<Record<string, SourceReply>>;
   grantScopes?: string[] | Error;
@@ -63,11 +64,12 @@ function fakeNylas(fake: FakeNylas) {
       contacts: {
         list: async ({ queryParams }: any) => {
           fake.calls.push({ source: queryParams.source, pageToken: queryParams.pageToken });
+          fake.limits?.push(queryParams.limit);
           const reply = fake.sources[queryParams.source];
           if (!reply) return { data: [] };
           if (reply instanceof Error) throw reply;
           if (typeof reply === 'function') {
-            const page = reply(queryParams.pageToken);
+            const page = reply(queryParams.pageToken, queryParams.limit);
             if (page instanceof Error) throw page;
             return page;
           }
@@ -402,6 +404,46 @@ describe('full pass', () => {
     const result = await syncAccountContacts({ userId: USER, accountId: grantId, force: true });
     expect(result.sources?.[0]).toMatchObject({ source: 'address_book', state: 'error' });
     expect(result.status).toBe('needs_reconnect');
+  });
+
+  test('an unreadable iCloud card: smaller pages save every contact before it, and nothing is pruned', async () => {
+    const t = convexTest(schema, modules);
+    const grantId = await connect(t, { provider: 'icloud', email: 'me@icloud.com', scopes: [] });
+    // 25 good cards, then card 25 cannot be read. The token is the index of the
+    // next card; any page that reaches card 25 fails with the provider's 504.
+    const cards = Array.from({ length: 40 }, (_, i) => person(`c${i}`, `p${i}@x.io`));
+    const bad = 25;
+    const invalid = () => apiError(504, 'The contact provider returned an invalid contact.');
+    // The first pass is complete and stores an older card; then card 25 breaks.
+    let broken = false;
+    const fake: FakeNylas = {
+      calls: [],
+      finds: [],
+      limits: [],
+      sources: {
+        address_book: (token, limit = 100) => {
+          if (!broken) return { data: [person('old-card', 'old@x.io')] };
+          const start = token ? Number(token) : 0;
+          const end = Math.min(start + limit, cards.length);
+          if (start <= bad && bad < end) return invalid();
+          return { data: cards.slice(start, end), nextCursor: end < cards.length ? String(end) : undefined };
+        },
+      },
+    };
+    restore = wire(t, fake);
+    await syncAccountContacts({ userId: USER, accountId: grantId, force: true });
+    expect(await stored(t)).toEqual(['address_book:old-card']);
+    broken = true;
+    fake.limits = [];
+    const result = await syncAccountContacts({ userId: USER, accountId: grantId, force: true });
+    const saved = (await stored(t)).filter((key) => key.startsWith('address_book:c'));
+    expect(saved).toHaveLength(bad);
+    // The pass was not complete, so the row it did not see stays.
+    expect(await stored(t)).toContain('address_book:old-card');
+    expect(result.sources?.[0]).toMatchObject({ source: 'address_book', state: 'error', count: bad });
+    expect(result.sources?.[0]?.error).toContain('25 contacts before it are synced');
+    // 100 fails, 10 reads 0-19 then fails at 20, 1 reads 20-24 then fails at 25.
+    expect(fake.limits).toEqual([100, 10, 10, 10, 1, 1, 1, 1, 1, 1]);
   });
 });
 

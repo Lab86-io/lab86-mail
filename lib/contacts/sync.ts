@@ -135,19 +135,51 @@ interface SourcePass {
   capped: boolean;
 }
 
+// iCloud CardDAV fails a whole page with 504 "The contact provider returned an
+// invalid contact" when one card in it cannot be read. The page token names
+// the next card, so a pass cannot step past the bad one. Smaller pages save
+// every contact up to it; the pass then stops as partial and does not prune.
+export function isInvalidContactError(err: unknown): boolean {
+  return nylasErrorStatus(err) === 504 && /invalid contact/i.test(String((err as any)?.message || ''));
+}
+
+export class PartialSourceError extends Error {
+  constructor(
+    readonly ids: string[],
+    readonly cause: unknown,
+  ) {
+    super(describeNylasError(cause, 'contact sync failed'));
+  }
+}
+
 async function readSource(row: NylasAccountRow, source: ContactSource): Promise<SourcePass> {
   const cap = CONTACT_SOURCE_CAPS[source];
   const ids: string[] = [];
   const seen = new Set<string>();
   let pageToken: string | undefined;
-  do {
+  let limit = PAGE_LIMIT;
+  // A for loop, not do/while: `continue` must retry the same page, and a
+  // do/while would test the (still empty) token and end the pass.
+  for (;;) {
     const token = pageToken;
-    const page = await deps.retry(() =>
-      deps.nylas().contacts.list({
-        identifier: row.grantId,
-        queryParams: { source, limit: PAGE_LIMIT, ...(token ? { pageToken: token } : {}) } as any,
-      }),
-    );
+    const pageLimit = limit;
+    let page: Awaited<ReturnType<ReturnType<typeof deps.nylas>['contacts']['list']>>;
+    try {
+      page = await deps.retry(() =>
+        deps.nylas().contacts.list({
+          identifier: row.grantId,
+          queryParams: { source, limit: pageLimit, ...(token ? { pageToken: token } : {}) } as any,
+        }),
+      );
+    } catch (err) {
+      if (!isInvalidContactError(err)) throw err;
+      // Read the same position again in smaller pages, down to one card.
+      if (limit > 1) {
+        limit = Math.max(1, Math.floor(limit / 10));
+        continue;
+      }
+      throw new PartialSourceError(ids, err);
+    }
     const contacts = (page.data || [])
       .map((raw) => normalizeNylasContact(raw, source))
       .filter((contact): contact is ContactInput => Boolean(contact))
@@ -167,8 +199,9 @@ async function readSource(row: NylasAccountRow, source: ContactSource): Promise<
     }
     for (const contact of contacts) ids.push(contact.providerContactId);
     pageToken = (page as any).nextCursor || undefined;
-    if (pageToken && ids.length >= cap) return { ids, capped: true };
-  } while (pageToken);
+    if (!pageToken) break;
+    if (ids.length >= cap) return { ids, capped: true };
+  }
   return { ids, capped: false };
 }
 
@@ -289,6 +322,18 @@ export async function syncAccountContacts({
           syncedAt: deps.now(),
         });
       } catch (err) {
+        if (err instanceof PartialSourceError) {
+          // The rows read before the bad card are stored. The pass is not
+          // complete, so nothing is pruned.
+          results.push({
+            source,
+            state: 'error',
+            count: Math.max(err.ids.length, kept?.count ?? 0),
+            syncedAt: deps.now(),
+            error: `One contact in this address book cannot be read. ${err.ids.length} contacts before it are synced.`,
+          });
+          continue;
+        }
         const detail = describeNylasError(err, 'contact sync failed');
         if (isGrantGoneError(err)) {
           grantGone = true;
