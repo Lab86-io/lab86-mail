@@ -448,9 +448,14 @@ export const CONTENT_ITEM_BYTES = 384 * KiB;
 export const PURGE_ROW_BYTES: Record<string, number> = {
   // Short provider fields and verdict objects. Production max 5.9 kB.
   mailCorpusThreads: 64 * KiB,
-  // Split rows: a 1,500-character header line and a body excerpt. The body
-  // split is complete in production and staging. Production max 9.1 kB.
-  mailCorpusMessages: 128 * KiB,
+  // A split row (a 1,500-character header line and a body excerpt) is at most
+  // 9.1 kB in production. A row from before the body split (IO-1) still holds
+  // its HTML and text bodies, and a searchText with the whole text body; its
+  // address fields have no limit, so the bound is the document limit. On
+  // 2026-09-28 the oldest 8,000 production rows all held inline bodies (max
+  // 266 kB, 980 rows over 128 KiB); staging had none. When
+  // mailBodies:migrateMessageBodies is done in production, 128 KiB is enough.
+  mailCorpusMessages: MiB,
   // 32,000 text and 200,000 HTML characters.
   mailCorpusBodies: 700 * KiB,
   mailLabelMembership: 16 * KiB,

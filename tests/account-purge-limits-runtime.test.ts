@@ -188,6 +188,52 @@ describe('a purge of large rows runs in passes within the byte room', () => {
     expect(left).toEqual({ docs: 0, webhooks: 0, items: 0, chunks: 0 });
   }, 60_000);
 
+  test('message rows from before the body split drain within the byte room', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      // Legacy rows at the old writer limits: 200,000 HTML and 32,000 text
+      // characters, and a searchText with the whole text body.
+      for (let index = 0; index < 24; index++)
+        await ctx.db.insert('mailCorpusMessages', {
+          userId: USER,
+          accountId: GONE,
+          grantId: GONE,
+          provider: 'google',
+          providerMessageId: `legacy-${index}`,
+          providerThreadId: `thread-${index}`,
+          subject: 'Legacy',
+          from: 'a@example.com',
+          to: 'b@example.com',
+          receivedAt: T0,
+          snippet: 'legacy',
+          textBody: wide(32_000),
+          htmlBody: wide(200_000),
+          searchText: wide(33_000),
+          labels: ['INBOX'],
+          yearMonth: '2026-09',
+          createdAt: T0,
+          updatedAt: T0,
+        });
+    });
+    const seeded = await t.run(async (ctx) =>
+      storedBytes(await ctx.db.query('mailCorpusMessages').collect()),
+    );
+    expect(seeded).toBeGreaterThan(16 * 1024 * KiB);
+
+    const passes: number[] = [];
+    for (let pass = 0; pass < 20; pass++) {
+      const result: any = await t.mutation(internal.accounts.purgeAccountDataBatch, {
+        userId: USER,
+        accountId: GONE,
+      });
+      passes.push(result.bytes);
+      if (result.done) break;
+    }
+    for (const bytes of passes) expect(bytes).toBeLessThanOrEqual(PURGE_PASS_BYTES);
+    expect(passes.length).toBeGreaterThan(3);
+    expect(await t.run(async (ctx) => (await ctx.db.query('mailCorpusMessages').collect()).length)).toBe(0);
+  }, 60_000);
+
   test('the dead-account purge uses the same room and stops only when done', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(api.accounts.upsertConnectedAccount, {
