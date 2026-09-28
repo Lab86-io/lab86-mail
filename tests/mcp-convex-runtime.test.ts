@@ -311,7 +311,7 @@ describe('item ingest', () => {
   test('upsertItems dedupes per external id and records evidence rows', async () => {
     const t = newHarness();
     await connect(t);
-    expect(await upsert(t, [item()])).toEqual({ ok: true, count: 1 });
+    expect(await upsert(t, [item()])).toEqual({ ok: true, count: 1, skipped: 0 });
     await upsert(t, [item({ title: 'Fix the flaky test v2' })]);
     const items = await t.run((ctx) => ctx.db.query('mcpItems').collect());
     expect(items).toHaveLength(1);

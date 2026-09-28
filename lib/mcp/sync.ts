@@ -344,8 +344,12 @@ export async function syncAllMcpConnections(
   deps: SyncConnectionDeps = defaultDeps,
 ): Promise<{ connections: number; items: number }> {
   // A reconnect-needed (`error`) row is still tried: a good sync heals it.
+  // A connection with the Brief and search toggles both off is not polled
+  // (X8): nothing reads its items.
   const connections = (await deps.listUserConnections(userId)).filter(
-    (c): c is McpConnectionRow => c.status === 'connected' || c.status === 'error',
+    (c): c is McpConnectionRow =>
+      (c.status === 'connected' || c.status === 'error') &&
+      (c.includeInBrief !== false || c.includeInSearch !== false),
   );
   let items = 0;
   for (const connection of connections) {

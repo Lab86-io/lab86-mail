@@ -7,11 +7,20 @@ import { isMcpReconnectMessage } from '../lib/mcp/connection-health';
 import { detachedMcpSource } from '../lib/mcp/disconnect';
 import { mcpConnectionSyncPatch, mcpSyncStateFields } from '../lib/mcp/sync-state';
 import { truncateText } from '../lib/shared/text';
+import { contentHash, sameFields } from '../lib/sync/content-hash';
 import { internal } from './_generated/api';
 import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 const DISCONNECT_BATCH_SIZE = 100;
+const DAY_MS = 86_400_000;
+// An unchanged item moves its lastSeenAt at most this often.
+export const MCP_SEEN_REFRESH_MS = DAY_MS;
+
+/** The change hash of one synced item and the area inputs it was matched with. */
+export function mcpItemSyncHash(server: string, item: Record<string, unknown>, areaDigest: string) {
+  return contentHash({ server, item, areaDigest });
+}
 
 const serverValidator = v.union(
   v.literal('github'),
@@ -566,6 +575,16 @@ export const upsertItems = mutation({
       value: fact.value,
       status: fact.status,
     }));
+    const matchAreas = activeAreas.map((area) => ({
+      _id: String(area._id),
+      name: area.name,
+      kind: area.kind,
+      description: area.description,
+      primaryDomain: area.primaryDomain,
+    }));
+    // A change to the areas or their facts makes each item match again once.
+    const areaDigest = contentHash({ areas: matchAreas, facts: matchFacts });
+    let skipped = 0;
     for (const item of args.items) {
       const existing = await ctx.db
         .query('mcpItems')
@@ -573,15 +592,31 @@ export const upsertItems = mutation({
           q.eq('connectionId', args.connectionId).eq('externalId', item.externalId),
         )
         .unique();
+      const syncHash = mcpItemSyncHash(args.server, item, areaDigest);
+      if (existing && existing.syncHash === syncHash) {
+        // Unchanged: no item, evidence, or area write. Only the prune clock
+        // moves, and at most once a day.
+        if (!existing.lastSeenAt || ts - existing.lastSeenAt >= MCP_SEEN_REFRESH_MS) {
+          await ctx.db.patch(existing._id, { lastSeenAt: ts });
+        }
+        skipped += 1;
+        continue;
+      }
       const row = {
         userId: args.userId,
         connectionId: args.connectionId,
         server: args.server,
         ...item,
+        syncHash,
+        lastSeenAt: ts,
         updatedAt: ts,
       };
-      if (existing) await ctx.db.patch(existing._id, row);
-      else await ctx.db.insert('mcpItems', { ...row, createdAt: ts });
+      if (!existing) await ctx.db.insert('mcpItems', { ...row, createdAt: ts });
+      else if (sameFields(existing, row, Object.keys(item))) {
+        // Only the area inputs changed. Keep updatedAt, so the content
+        // index does not read the item again.
+        await ctx.db.patch(existing._id, { syncHash, lastSeenAt: ts });
+      } else await ctx.db.patch(existing._id, row);
 
       const evidenceKey = `mcp:${args.server}:${args.connectionId}:${item.externalId}`;
       const existingEvidence = await ctx.db
@@ -594,13 +629,7 @@ export const upsertItems = mutation({
         text: [item.searchText, item.repository, item.organization, item.title, item.summary]
           .filter(Boolean)
           .join(' '),
-        areas: activeAreas.map((area) => ({
-          _id: String(area._id),
-          name: area.name,
-          kind: area.kind,
-          description: area.description,
-          primaryDomain: area.primaryDomain,
-        })),
+        areas: matchAreas,
         facts: matchFacts,
       });
       const artifactId = areaMcpArtifactId(args.connectionId, item.externalId);
@@ -649,8 +678,11 @@ export const upsertItems = mutation({
         },
         updatedAt: ts,
       };
-      if (existingEvidence) await ctx.db.patch(existingEvidence._id, evidenceRow);
-      else await ctx.db.insert('albatrossEvidence', { ...evidenceRow, createdAt: ts });
+      if (existingEvidence) {
+        const evidenceKeys = Object.keys(evidenceRow).filter((key) => key !== 'updatedAt');
+        if (!sameFields(existingEvidence, evidenceRow, evidenceKeys))
+          await ctx.db.patch(existingEvidence._id, evidenceRow);
+      } else await ctx.db.insert('albatrossEvidence', { ...evidenceRow, createdAt: ts });
 
       if (areaMatch) {
         const areaId = ctx.db.normalizeId('areas', areaMatch.areaId);
@@ -710,7 +742,7 @@ export const upsertItems = mutation({
         }
       }
     }
-    return { ok: true, count: args.items.length };
+    return { ok: true, count: args.items.length, skipped };
   },
 });
 
@@ -847,15 +879,151 @@ export const searchItems = query({
 // rate-limit 403 can self-heal: the next good sync sets `connected` again.
 // internalQuery: called only from the sync action via runQuery, so no
 // internal-secret gate (internal functions aren't client-exposed).
+// A connection with both the Brief and search toggles off is not polled (X8):
+// nothing reads its items, so a sync only costs reads and writes.
+export function mcpConnectionWantsSync(row: {
+  status?: string;
+  includeInBrief?: boolean;
+  includeInSearch?: boolean;
+}) {
+  if (row.status !== 'connected' && row.status !== 'error') return false;
+  return row.includeInBrief !== false || row.includeInSearch !== false;
+}
+
 export const listSyncTargetUserIds = internalQuery({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query('mcpConnections').collect();
-    return [
-      ...new Set(
-        rows.filter((row) => row.status === 'connected' || row.status === 'error').map((row) => row.userId),
-      ),
-    ];
+    return [...new Set(rows.filter(mcpConnectionWantsSync).map((row) => row.userId))];
+  },
+});
+
+// ---- Prune (X2) ------------------------------------------------------------
+
+/** An item that no sync returned for this long is deleted, unless a task links it. */
+export const MCP_ITEM_STALE_MS = 14 * DAY_MS;
+export const MCP_PRUNE_BATCH = 25;
+
+async function deleteMcpItemRows(ctx, item) {
+  const evidence = await ctx.db
+    .query('albatrossEvidence')
+    .withIndex('by_user_dedupe', (q) =>
+      q
+        .eq('userId', item.userId)
+        .eq('dedupeKey', `mcp:${item.server}:${item.connectionId}:${item.externalId}`),
+    )
+    .collect();
+  for (const row of evidence) await ctx.db.delete(row._id);
+  // Candidate area links go with the item. A link the user confirmed or
+  // rejected is a decision, so it stays.
+  const links = await ctx.db
+    .query('areaArtifactLinks')
+    .withIndex('by_user_account_artifact', (q) =>
+      q
+        .eq('userId', item.userId)
+        .eq('accountId', item.connectionId)
+        .eq('artifactKind', 'mcpItem')
+        .eq('artifactId', areaMcpArtifactId(item.connectionId, item.externalId)),
+    )
+    .collect();
+  for (const link of links) if (link.status === 'candidate') await ctx.db.delete(link._id);
+  // The connected-content row and its vectors (key format: convex/content.ts).
+  const content = await ctx.db
+    .query('contentItems')
+    .withIndex('by_user_key', (q) =>
+      q.eq('userId', item.userId).eq('key', `${item.server}:${item.connectionId}:${item.externalId}`),
+    )
+    .unique();
+  if (content) {
+    const chunks = await ctx.db
+      .query('contentChunks')
+      .withIndex('by_item', (q) => q.eq('itemId', content._id))
+      .collect();
+    for (const chunk of chunks) await ctx.db.delete(chunk._id);
+    await ctx.db.delete(content._id);
+  }
+  await ctx.db.delete(item._id);
+}
+
+/**
+ * One bounded prune page for one connection. An item that no sync returned
+ * for 14 days goes with its evidence, candidate area links, and content row.
+ * An item that a task links stays, and its clock starts again. Rows from
+ * before lastSeenAt existed use updatedAt, which the old sync moved on every
+ * pass. The page schedules the next one while it finds work.
+ */
+export const pruneStaleItems = internalMutation({
+  args: {
+    connectionId: v.string(),
+    now: v.optional(v.number()),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const ts = args.now ?? now();
+    const cutoff = ts - MCP_ITEM_STALE_MS;
+    const legacy = await ctx.db
+      .query('mcpItems')
+      .withIndex('by_connection_seen', (q) =>
+        q.eq('connectionId', args.connectionId).eq('lastSeenAt', undefined),
+      )
+      .take(MCP_PRUNE_BATCH);
+    const stale = await ctx.db
+      .query('mcpItems')
+      .withIndex('by_connection_seen', (q) =>
+        q.eq('connectionId', args.connectionId).gte('lastSeenAt', 0).lt('lastSeenAt', cutoff),
+      )
+      .take(MCP_PRUNE_BATCH);
+    let deleted = 0;
+    let kept = 0;
+    let dated = 0;
+    for (const item of [...legacy, ...stale]) {
+      const seenAt = item.lastSeenAt ?? item.updatedAt;
+      if (seenAt >= cutoff) {
+        // A legacy row that is not old yet gets its date, so it leaves the
+        // legacy page and waits in the range.
+        dated += 1;
+        if (!args.dryRun) await ctx.db.patch(item._id, { lastSeenAt: seenAt });
+        continue;
+      }
+      const link = await ctx.db
+        .query('mcpTaskLinks')
+        .withIndex('by_connection_external', (q) =>
+          q.eq('connectionId', item.connectionId).eq('externalId', item.externalId),
+        )
+        .first();
+      if (link) {
+        kept += 1;
+        if (!args.dryRun) await ctx.db.patch(item._id, { lastSeenAt: ts });
+        continue;
+      }
+      deleted += 1;
+      if (!args.dryRun) await deleteMcpItemRows(ctx, item);
+    }
+    const more = legacy.length === MCP_PRUNE_BATCH || stale.length === MCP_PRUNE_BATCH;
+    if (more && !args.dryRun) {
+      await ctx.scheduler.runAfter(0, internal.mcp.pruneStaleItems, {
+        connectionId: args.connectionId,
+        now: args.now,
+      });
+    }
+    return { deleted, kept, dated, more, dryRun: Boolean(args.dryRun) };
+  },
+});
+
+/** Daily: one prune chain for each connection that still has items. */
+export const pruneStaleItemsTick = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const connections = await ctx.db.query('mcpConnections').collect();
+    let scheduled = 0;
+    for (const connection of connections) {
+      if (connection.status === 'disconnected') continue;
+      await ctx.scheduler.runAfter(0, internal.mcp.pruneStaleItems, {
+        connectionId: connection.connectionId,
+      });
+      scheduled += 1;
+    }
+    return { scheduled };
   },
 });
 

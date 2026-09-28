@@ -140,6 +140,9 @@ crons.interval('connected content and Brief preparation', { minutes: 2 }, intern
 // Disconnect normally schedules its own bounded cleanup chain. This sweep is
 // the recovery path if a deploy interrupts that chain between batches.
 crons.interval('mcp disconnect cleanup', { minutes: 30 }, internal.mcp.sweepDisconnectedConnections, {});
+// Connector items that no sync returned for 14 days, and that no task links,
+// go with their evidence and content rows. Bounded pages, once a day.
+crons.daily('mcp stale item prune', { hourUTC: 9, minuteUTC: 7 }, internal.mcp.pruneStaleItemsTick, {});
 
 // Mail repair (SYNC-3): retry failed Nylas webhook events with backoff, and
 // sweep each connected mailbox's recent mail for changes a lost event missed.

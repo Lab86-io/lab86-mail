@@ -2862,10 +2862,17 @@ export default defineSchema({
     updatedAtSource: v.optional(v.number()),
     raw: v.optional(v.any()),
     searchText: v.string(),
+    // Hash of the synced item and the area inputs that matched it. A sync
+    // skips every write for the item when the hash is equal.
+    syncHash: v.optional(v.string()),
+    // The last sync that returned this item. It moves at most once a day, and
+    // the daily prune deletes items that no sync returned for 14 days.
+    lastSeenAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
+    .index('by_connection_seen', ['connectionId', 'lastSeenAt'])
     .index('by_user_external', ['userId', 'externalId'])
     .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_user_connection_updated', ['userId', 'connectionId', 'updatedAtSource'])
