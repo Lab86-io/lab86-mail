@@ -49,6 +49,7 @@ final class RecipientFieldMacRenderingTests: XCTestCase {
                 Harness(to: scenario.to, presentation: scenario.presentation, theme: theme)
                     .environment(\.colorScheme, scenario.scheme)
             )
+            host.safeAreaRegions = []
             let frame = NSRect(x: 0, y: 0, width: 720, height: 480)
             host.frame = frame
             let window = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)

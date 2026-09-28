@@ -114,9 +114,14 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
                     textField
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(alignment: .bottomLeading) {
+                .overlay(alignment: .topLeading) {
                     if listVisible, placement == .dropdown {
-                        dropdownList
+                        // The reader has the size of the chip area; the list
+                        // hangs under its last line and draws past its bottom.
+                        GeometryReader { proxy in
+                            dropdownList(width: proxy.size.width)
+                                .offset(y: proxy.size.height + RecipientDropdownMetrics.gap)
+                        }
                     }
                 }
                 accessory()
@@ -283,7 +288,7 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
     }
     #endif
 
-    private var dropdownList: some View {
+    private func dropdownList(width: CGFloat) -> some View {
         RecipientSuggestionDropdown(
             suggestions: displayedSuggestions,
             highlightedIndex: displayedHighlight,
@@ -296,9 +301,7 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
             onHoverRow: rowHoverHandler,
             onPointerInside: pointerInsideList
         )
-        .frame(maxWidth: RecipientDropdownMetrics.maxWidth, alignment: .leading)
-        // Hang the list under the text line, not over it.
-        .alignmentGuide(.bottom) { dimensions in dimensions[.top] - RecipientDropdownMetrics.gap }
+        .frame(width: min(width, RecipientDropdownMetrics.maxWidth), alignment: .leading)
         .transition(.opacity)
     }
 

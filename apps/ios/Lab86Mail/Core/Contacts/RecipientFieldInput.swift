@@ -169,7 +169,9 @@ enum RecipientDropdownMetrics {
     /// Room kept free under the list, above the bottom of the scroll view
     /// (the compose tool strip sits there).
     static let bottomMargin: CGFloat = 72
-    static let maxWidth: CGFloat = 480
+    /// Room for a long name and address; not the full row width (Superhuman
+    /// and Attio keep the list narrower than the compose field too).
+    static let maxWidth: CGFloat = 400
     /// The space between the field's text line and the top of the list.
     static let gap: CGFloat = 4
     static let cornerRadius: CGFloat = 10

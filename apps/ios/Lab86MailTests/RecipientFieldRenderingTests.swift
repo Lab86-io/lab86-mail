@@ -125,9 +125,11 @@ final class RecipientFieldRenderingTests: XCTestCase {
                     // at the leading edge and the scale draws it inside the window.
                     .frame(width: window.bounds.width, height: window.bounds.height, alignment: .topLeading)
                     .background(theme.paperColor)
-                    .ignoresSafeArea()
                     .onAppear { appeared.fulfill() }
             )
+            // No safe area: the 720 pt scene lies under the phone's status bar
+            // in layout, and fills that touch a safe area grow into it.
+            controller.safeAreaRegions = []
             window.overrideUserInterfaceStyle = scenario.scheme == .dark ? .dark : .light
             window.rootViewController = controller
             window.makeKeyAndVisible()
