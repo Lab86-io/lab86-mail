@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { NextRequest } from 'next/server';
-import { createSuggestionActPost, safeSuggestedEvent } from '../app/api/suggestions/act/route';
+import { createSuggestionActPost, ICS_MAX_BYTES, safeSuggestedEvent } from '../app/api/suggestions/act/route';
+import { AttachmentTooLargeError } from '../lib/attachments/mail-files';
 import { parseIcsEvents } from '../lib/calendar/ics';
 
 const VALID_ICS = [
@@ -157,7 +158,7 @@ describe('suggestion event acceptance', () => {
     expect(reads).toEqual([
       {
         ref: { userId: 'user_1', account: 'account_1', messageId: 'message_1', attachmentId: 'attachment_1' },
-        options: { fill: 'always' },
+        options: { fill: 'always', maxBytes: ICS_MAX_BYTES },
       },
     ]);
   });
@@ -174,6 +175,28 @@ describe('suggestion event acceptance', () => {
 
     expect(response.status).toBe(422);
     expect(created).toEqual([]);
+  });
+
+  test('an ICS file over the small limit gives 422 and no event', async () => {
+    const { deps, created } = routeDependencies({
+      accountId: 'account_1',
+      messageId: 'message_1',
+      attachmentId: 'attachment_1',
+    });
+    const unexpected: unknown[] = [];
+    deps.reportUnexpectedError = (error: unknown) => {
+      unexpected.push(error);
+    };
+    deps.readMailAttachmentBytes = async (_ref: unknown, options: Record<string, unknown>) => {
+      throw new AttachmentTooLargeError(Number(options.maxBytes));
+    };
+
+    const response = await createSuggestionActPost(deps as any)(request());
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ ok: false, error: 'The calendar file is too large.' });
+    expect(created).toEqual([]);
+    expect(unexpected).toEqual([]);
   });
 
   test('passes a validated embedded event to the provider mutation path', async () => {

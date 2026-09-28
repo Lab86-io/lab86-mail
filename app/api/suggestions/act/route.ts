@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readMailAttachmentBytes } from '@/lib/attachments/mail-files';
+import { AttachmentTooLargeError, readMailAttachmentBytes } from '@/lib/attachments/mail-files';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { parseIcsEvents } from '@/lib/calendar/ics';
 import { createCalendarEvent } from '@/lib/calendar/mutate';
@@ -10,6 +10,9 @@ import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+/** An ICS invitation is small. The route reads no larger file into memory. */
+export const ICS_MAX_BYTES = 1024 * 1024;
 
 const suggestionsApi = api.suggestions;
 const accountsApi = api.accounts;
@@ -128,7 +131,7 @@ export function createSuggestionActPost(deps: SuggestionActDependencies = defaul
           // Our encrypted storage first; else the provider, and the file is stored.
           const file = await deps.readMailAttachmentBytes(
             { userId: user.userId, account: accountId, messageId, attachmentId },
-            { fill: 'always' },
+            { fill: 'always', maxBytes: ICS_MAX_BYTES },
           );
           const ics = file ? new TextDecoder().decode(file.bytes) : '';
           const [parsed] = parseIcsEvents(ics, { timezone: userTimezone });
@@ -170,6 +173,9 @@ export function createSuggestionActPost(deps: SuggestionActDependencies = defaul
       if (err instanceof RateLimitError) return rateLimitJson(err);
       if (err instanceof AuthRequiredError) {
         return NextResponse.json({ ok: false, error: err.message }, { status: 401 });
+      }
+      if (err instanceof AttachmentTooLargeError) {
+        return NextResponse.json({ ok: false, error: 'The calendar file is too large.' }, { status: 422 });
       }
       deps.reportUnexpectedError(err);
       return NextResponse.json({ ok: false, error: 'Action failed.' }, { status: 500 });
