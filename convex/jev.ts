@@ -239,24 +239,28 @@ async function threadWindow(ctx: any, row: any, knownAccounts?: any[]): Promise<
   };
   const newest = recent[0];
   // A thread with open obligations goes to the body stage at once: the
-  // first stage cannot keep or close evidence that it does not read.
-  const facts: JevFactsView | undefined = evidenceIds.length
-    ? undefined
-    : {
-        messages: [
-          {
-            ...bodyMessage(newest),
-            body: truncateText(String(newest.snippet || ''), JEV_BODY_CHARS),
+  // first stage cannot keep or close evidence that it does not read. So does
+  // a thread of more than one message whose body window is complete: the
+  // first stage sees one message, so its verdict could only be `uncertain`
+  // where the body stage can give `accepted`.
+  const facts: JevFactsView | undefined =
+    evidenceIds.length || (input.contextComplete && messageCount > 1)
+      ? undefined
+      : {
+          messages: [
+            {
+              ...bodyMessage(newest),
+              body: truncateText(String(newest.snippet || ''), JEV_BODY_CHARS),
+            },
+          ],
+          contextComplete: messageCount <= 1,
+          threadFacts: {
+            labels: (row.labels || []).slice(0, 20),
+            messageCount,
+            ruleCategory: row.smartCategory?.primary,
+            ruleSignals: (row.smartCategory?.signals || []).slice(0, 12),
           },
-        ],
-        contextComplete: messageCount <= 1,
-        threadFacts: {
-          labels: (row.labels || []).slice(0, 20),
-          messageCount,
-          ruleCategory: row.smartCategory?.primary,
-          ruleSignals: (row.smartCategory?.signals || []).slice(0, 12),
-        },
-      };
+        };
   return { input, facts, newest };
 }
 

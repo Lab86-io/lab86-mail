@@ -272,6 +272,19 @@ describe('the claim and the store', () => {
     expect(item.facts?.contextComplete).toBe(false);
   });
 
+  test('a short thread whose bodies all fit goes to the body stage at once', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t, 2);
+    const item = (await t.mutation(api.jev.claimPending, { ...scope, limit: 12 })).items[0];
+    // The first stage would see one of two messages, so its verdict could
+    // only be uncertain; the body stage sees both.
+    expect(item.contextComplete).toBe(true);
+    expect(item.facts).toBeUndefined();
+    expect(item.messages.map((message: any) => message.id)).toEqual(['m0', 'm1']);
+    const bulk = { purpose: 'newsletter', subject_kind: 'general', reply: 0.02, reply_evidence: 'none' };
+    expect(assessmentFromResponse(item, responseFor(item, bulk), NOW).status).toBe('accepted');
+  });
+
   test('a first-stage verdict stores against the same revision', async () => {
     const t = convexTest(schema, modules);
     await seed(t);
@@ -410,5 +423,7 @@ describe('the claim and the store', () => {
     const next = (await t.mutation(api.jev.claimPending, { ...scope, limit: 12 })).items[0];
     expect(next.messageId).toBe('m5');
     expect(next.contextComplete).toBe(true);
+    // The window continues the verdict, so the snippet stage does not run.
+    expect(next.facts).toBeUndefined();
   });
 });
