@@ -77,6 +77,25 @@ describe('the edition meter', () => {
     expect(meter.record(true).calls).toBe(3);
   });
 
+  test('the default budget lets a normal premium edition finish and still stops a runaway loop', () => {
+    expect(DEFAULT_BRIEF_COST_BUDGET_USD).toBe(2);
+    // A normal edition on gpt-5.5 with no cache hits: the prose call, then
+    // eight layout steps that each send the modules again.
+    const normal = new BriefEditionMeter({ timeBudgetMs: 60_000 });
+    normal.addStep(runtime, { inputTokens: 30_000, outputTokens: 6_000 });
+    for (let step = 0; step < 8; step += 1)
+      normal.addStep(runtime, { inputTokens: 20_000, outputTokens: 2_000 });
+    expect(normal.exhausted).toBeNull();
+    // The old $0.40 budget stopped the same edition in its layout loop.
+    expect(normal.record(false).costUsd).toBeGreaterThan(0.4);
+    // A layout loop that never finishes still stops at the budget.
+    const runaway = new BriefEditionMeter({ timeBudgetMs: 60_000 });
+    for (let step = 0; step < 40 && !runaway.exhausted; step += 1)
+      runaway.addStep(runtime, { inputTokens: 20_000, outputTokens: 2_000 });
+    expect(runaway.exhausted).toBe('cost');
+    expect(runaway.record(true).costUsd).toBeLessThan(DEFAULT_BRIEF_COST_BUDGET_USD + 0.2);
+  });
+
   test('a spent budget from an earlier attempt stops the next one at once', () => {
     const spentTime = new BriefEditionMeter({ prior: { timeMs: 700_000 }, timeBudgetMs: 600_000 });
     expect(spentTime.exhausted).toBe('time');

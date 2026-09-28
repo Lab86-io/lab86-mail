@@ -3,14 +3,20 @@ import { type AiUsageCostInput, estimateAiUsageCost } from '../ai/budget';
 
 // The edition budget (FEATURES item 5). Each edition gets a time budget
 // (default 10 minutes of writer time, summed over its attempts) and a cost
-// budget (default $0.40 of model cost). The meter counts every model step
-// that runs inside the edition. When a budget runs out, the meter stops the
-// running model call and refuses new ones, so the writers fall back and the
-// edition publishes what exists. The record goes onto the edition and into
-// the telemetry table.
+// budget (default $2.00 of model cost, also summed over its attempts). The
+// meter counts every model step that runs inside the edition. When a budget
+// runs out, the meter stops the running model call and refuses new ones, so
+// the writers fall back and the edition publishes what exists. The record
+// goes onto the edition and into the telemetry table.
+//
+// The cost budget is a safety stop for a runaway writer (the layout loop has
+// no step limit), not a limit on a normal edition. Briefs keep the user's
+// model (owner decision, 2026-09-27). On gpt-5.5 or opus-5.5 a normal edition
+// (the prose call plus the layout loop) costs about $0.40 to $1.60 at list
+// prices, so the old $0.40 stopped normal editions and their retries.
 
 export const DEFAULT_BRIEF_TIME_BUDGET_MS = 10 * 60_000;
-export const DEFAULT_BRIEF_COST_BUDGET_USD = 0.4;
+export const DEFAULT_BRIEF_COST_BUDGET_USD = 2;
 
 export type BriefBudgetLimit = 'time' | 'cost';
 
