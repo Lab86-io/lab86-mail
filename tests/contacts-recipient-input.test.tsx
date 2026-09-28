@@ -210,6 +210,23 @@ describe('RecipientInput', () => {
     expect(field.values.at(-1)).toBe('Julia Lopez <julia@x.io>');
   });
 
+  test('new typing cancels a waiting Enter; the old text never comes back', async () => {
+    const field = await mount('', async (url) => {
+      if (url.includes('q=jul')) await new Promise(() => undefined); // never answers
+      return people;
+    });
+    await act(async () => field.input().props.onFocus());
+    await field.type('ja');
+    await field.type('jul');
+    await field.key('Enter');
+    // The user keeps typing a full address before the wait ends.
+    await field.type('new@else.io');
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 800)));
+    // Typing reports each keystroke; nothing comes after the new text.
+    expect(field.values).toEqual(['ja', 'jul', 'new@else.io']);
+    expect(field.chips()).toEqual([]);
+  });
+
   test('arrows move the selection; Tab picks; Escape closes; Backspace removes the last chip', async () => {
     const field = await mount();
     await act(async () => field.input().props.onFocus());

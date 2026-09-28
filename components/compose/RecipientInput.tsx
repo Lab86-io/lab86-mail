@@ -85,16 +85,27 @@ export function RecipientInput({
   const [navigated, setNavigated] = useState(false);
   const [query, setQuery] = useState('');
   const lastEmitted = useRef(value);
+  // Enter or Tab before the rows for the typed text arrive waits for them. The
+  // wait belongs to the text that started it; any other change cancels it.
+  const awaitingPick = useRef<{ timer: ReturnType<typeof setTimeout>; draft: string } | null>(null);
+  const stopAwaiting = () => {
+    if (awaitingPick.current) clearTimeout(awaitingPick.current.timer);
+    awaitingPick.current = null;
+  };
 
   // A new value from outside (a prefill, a reset after send) replaces the chips.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the value change is the trigger.
   useEffect(() => {
     if (value === lastEmitted.current) return;
+    stopAwaiting();
     lastEmitted.current = value;
     setChips(parseRecipientText(value));
     setDraft('');
   }, [value]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the draft change is the trigger.
   useEffect(() => {
+    if (awaitingPick.current && awaitingPick.current.draft !== draft.trim()) stopAwaiting();
     const timer = setTimeout(() => setQuery(draft.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [draft]);
@@ -111,8 +122,6 @@ export function RecipientInput({
   // The list shows the previous query's rows while a new one loads. Only rows
   // for the text now in the field may be picked by Enter or Tab.
   const fresh = people.isSuccess && !people.isPlaceholderData && query === draft.trim();
-  // Enter or Tab before the rows for the typed text arrive waits for them.
-  const awaitingPick = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // A new query starts at the first row.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the query change is the trigger.
@@ -138,6 +147,7 @@ export function RecipientInput({
   };
 
   const pick = (item: RecipientSuggestion) => {
+    stopAwaiting();
     const next = addChips(chips, [{ email: item.email, name: item.name, valid: true }]);
     setChips(next);
     setDraft('');
@@ -146,18 +156,18 @@ export function RecipientInput({
     inputRef.current?.focus();
   };
 
-  const stopAwaiting = () => {
-    if (awaitingPick.current) clearTimeout(awaitingPick.current);
-    awaitingPick.current = null;
-  };
+  // The timer runs after later renders, so it calls the newest commitDraft.
+  const commitLatest = useRef(commitDraft);
+  commitLatest.current = commitDraft;
 
   const pickWhenFresh = () => {
     stopAwaiting();
     // After 0.7 s with no rows, the typed text becomes a chip as it is.
-    awaitingPick.current = setTimeout(() => {
+    const timer = setTimeout(() => {
       awaitingPick.current = null;
-      commitDraft();
+      commitLatest.current();
     }, PICK_WAIT_MS);
+    awaitingPick.current = { timer, draft: draft.trim() };
   };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: fresh rows are the trigger.
@@ -171,7 +181,7 @@ export function RecipientInput({
   // A wait still open when the field unmounts must not commit later.
   useEffect(
     () => () => {
-      if (awaitingPick.current) clearTimeout(awaitingPick.current);
+      if (awaitingPick.current) clearTimeout(awaitingPick.current.timer);
     },
     [],
   );
@@ -318,6 +328,7 @@ export function RecipientInput({
             setOpen(true);
           }}
           onBlur={() => {
+            stopAwaiting();
             setFocused(false);
             setOpen(false);
             if (draft.trim()) commitDraft();
