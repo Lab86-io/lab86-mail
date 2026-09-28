@@ -69,8 +69,10 @@ export async function outboxPayloadFromSendRequest(
   credentials: Pick<GoogleGrantCredentials, 'userId' | 'accountId'>,
   requestBody: any,
 ): Promise<OutboxPayload & { userId: string }> {
-  // Nylas treats a body as HTML unless isPlaintext is true.
-  const plain = requestBody?.isPlaintext === true;
+  // Nylas treats a body as HTML unless isPlaintext is true. The adapter send
+  // takes both casings of these fields, so the held payload does too.
+  const plain = requestBody?.isPlaintext === true || requestBody?.is_plaintext === true;
+  const replyToMessageId = requestBody?.replyToMessageId ?? requestBody?.reply_to_message_id;
   const body = String(requestBody?.body ?? '');
   const attachments = [];
   for (const attachment of requestBody?.attachments || []) {
@@ -92,7 +94,7 @@ export async function outboxPayloadFromSendRequest(
     subject: String(requestBody?.subject ?? ''),
     body,
     ...(plain ? {} : { html: body }),
-    ...(requestBody?.replyToMessageId ? { replyToMessageId: String(requestBody.replyToMessageId) } : {}),
+    ...(replyToMessageId ? { replyToMessageId: String(replyToMessageId) } : {}),
     ...(attachments.length ? { attachments: attachments as any } : {}),
   };
 }

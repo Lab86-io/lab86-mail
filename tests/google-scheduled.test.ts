@@ -91,6 +91,16 @@ describe('outbox payload of a scheduled send', () => {
     });
     expect(payload.html).toBeUndefined();
     expect(payload.to).toBe('');
+    // The snake_case fields that the adapter send takes hold the same way.
+    const snake = await outboxPayloadFromSendRequest(CREDENTIALS, {
+      to: [{ email: 'a@x.org' }],
+      body: 'line one\nline two',
+      is_plaintext: true,
+      reply_to_message_id: 'parent-2',
+    });
+    expect(snake.html).toBeUndefined();
+    expect(snake.body).toBe('line one\nline two');
+    expect(snake.replyToMessageId).toBe('parent-2');
     await expect(
       outboxPayloadFromSendRequest(CREDENTIALS, { attachments: [{ filename: 'x', content: 42 }] }),
     ).rejects.toThrow('cannot be held');
