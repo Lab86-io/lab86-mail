@@ -121,11 +121,11 @@ final class NativeTourTests: XCTestCase {
     }
 
     func testTour16WorkDetail() async throws {
-        var screen = Screen(id: "work-detail", title: "One Albatross (Work detail)", section: "Tasks and Work", tab: .work)
-        screen.setUp = { environment in
+        // The Work list pushes the detail when the route changes, so the route
+        // is set after the list is on screen.
+        try await tour(Screen(id: "work-detail", title: "One Albatross (Work detail)", section: "Tasks and Work", tab: .work) { environment in
             environment.navigation.openWork(id: "w-passport", title: "Renew my passport before the Denver trip")
-        }
-        try await tour(screen)
+        })
     }
 
     func testTour17Files() async throws {
@@ -301,8 +301,9 @@ final class NativeTourTests: XCTestCase {
 
         let configuration = AppConfiguration(bundle: Bundle(for: NativeTourTests.self), defaults: defaults)
         let environment = AppEnvironment(configuration: configuration, inMemoryPersistence: true, backend: backend.client)
+        let ownerID = await TourSession.signIn(environment)
         environment.navigation.selectPrimary(screen.tab)
-        await environment.store.bootstrap()
+        await environment.store.bootstrap(cacheOwner: ownerID)
         if let setUp = screen.setUp { await setUp(environment) }
 
         let controller = UIHostingController(rootView: AnyView(
@@ -327,7 +328,12 @@ final class NativeTourTests: XCTestCase {
             window.isHidden = true
             window.rootViewController = nil
         }
-        if let afterAppear = screen.afterAppear { await afterAppear(environment) }
+        if let afterAppear = screen.afterAppear {
+            // A change made before the first frame is the initial value, and
+            // onChange and navigation destinations do not react to it.
+            try? await Task.sleep(for: .milliseconds(500))
+            await afterAppear(environment)
+        }
         await settle(window, backend: backend)
 
         let screenBounds = scene.screen.bounds.size
@@ -387,6 +393,8 @@ final class NativeTourTests: XCTestCase {
             uncovered: log.filter { !$0.covered }.map { "\($0.method) \($0.path)" }
         )
         try TourOutput.write(png: png, record: record, to: directory)
+        // Removes the owner's cache and search index entries.
+        await environment.store.clearForSignOut()
     }
 
     /// Waits until the screen stops asking the backend for data, then gives
@@ -397,7 +405,6 @@ final class NativeTourTests: XCTestCase {
         var lastCount = -1
         var quietSince = start
         while clock.now - start < .seconds(6) {
-            window.layoutIfNeeded()
             try? await Task.sleep(for: .milliseconds(100))
             let count = backend.requestCount
             if count != lastCount {

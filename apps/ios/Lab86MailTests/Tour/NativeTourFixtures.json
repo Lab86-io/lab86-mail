@@ -246,8 +246,8 @@
         "artifactSource": "document-v2",
         "art": {
           "imageUrl": "@art",
-          "credit": "Wheat Field with Cypresses, Vincent van Gogh, 1889",
-          "source": "The Met"
+          "credit": "Fallback edition art",
+          "source": "Albatross"
         },
         "services": ["gmail", "google-calendar"],
         "stats": {

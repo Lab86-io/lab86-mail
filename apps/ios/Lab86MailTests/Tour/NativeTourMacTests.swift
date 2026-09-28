@@ -75,7 +75,9 @@ final class NativeTourMacTests: XCTestCase {
 
     func testMacTour08WorkDetail() async throws {
         var screen = Screen(id: "mac-work-detail", title: "One Albatross (Work detail)", section: "Tasks and Work", tab: .work)
-        screen.setUp = { environment in
+        // The Work list pushes the detail when the route changes, so the route
+        // is set after the list is on screen.
+        screen.afterAppear = { environment in
             environment.navigation.openWork(id: "w-passport", title: "Renew my passport before the Denver trip")
         }
         try await tour(screen)
@@ -111,6 +113,7 @@ final class NativeTourMacTests: XCTestCase {
         var tab: PrimaryTab = .today
         var calendarMode: String?
         var setUp: (@MainActor (AppEnvironment) async -> Void)?
+        var afterAppear: (@MainActor (AppEnvironment) async -> Void)?
 
         init(id: String, title: String, section: String, tab: PrimaryTab) {
             self.id = id
@@ -168,8 +171,9 @@ final class NativeTourMacTests: XCTestCase {
 
         let configuration = AppConfiguration(bundle: Bundle(for: NativeTourMacTests.self), defaults: defaults)
         let environment = AppEnvironment(configuration: configuration, inMemoryPersistence: true, backend: backend.client)
+        let ownerID = await TourSession.signIn(environment)
         environment.navigation.selectPrimary(screen.tab)
-        await environment.store.bootstrap()
+        await environment.store.bootstrap(cacheOwner: ownerID)
         if let setUp = screen.setUp { await setUp(environment) }
 
         let controller = NSHostingController(rootView: AnyView(
@@ -199,6 +203,12 @@ final class NativeTourMacTests: XCTestCase {
             if let sheet = window.attachedSheet { window.endSheet(sheet) }
             window.orderOut(nil)
             window.contentViewController = nil
+        }
+        if let afterAppear = screen.afterAppear {
+            // A change made before the first frame is the initial value, and
+            // navigation destinations do not react to it.
+            try? await Task.sleep(for: .milliseconds(500))
+            await afterAppear(environment)
         }
         await settle(window, backend: backend)
 
@@ -242,6 +252,8 @@ final class NativeTourMacTests: XCTestCase {
             uncovered: log.filter { !$0.covered }.map { "\($0.method) \($0.path)" }
         )
         try TourOutput.write(png: png, record: record, to: directory)
+        // Removes the owner's cache and search index entries.
+        await environment.store.clearForSignOut()
     }
 
     /// The window's frame view holds the title bar and the toolbar as well

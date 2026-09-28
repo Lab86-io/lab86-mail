@@ -396,6 +396,19 @@ struct TourRecord: Codable, Sendable {
     let uncovered: [String]
 }
 
+/// A signed-in session for each scenario, as in the app. Mail actions go
+/// through the command outbox, which needs an owner. Each scenario has its
+/// own owner, so no scenario reads another scenario's cache.
+@MainActor
+enum TourSession {
+    static func signIn(_ environment: AppEnvironment) async -> String {
+        let ownerID = "tour-owner-\(UUID().uuidString.lowercased())"
+        let snapshot = SessionSnapshot(isLoaded: true, userID: ownerID, sessionID: "tour-session", isActive: true)
+        await environment.sessionStore.synchronize(snapshot: snapshot) { "tour-token" }
+        return ownerID
+    }
+}
+
 enum TourOutput {
     /// Where the tour writes. CI sets `TEST_RUNNER_TOUR_DIR`, which reaches
     /// the test process as `TOUR_DIR`. Without it the tour skips.
