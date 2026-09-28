@@ -71,7 +71,9 @@ final class StubBackendServer: @unchecked Sendable {
         let bufferSize = 16_384
         let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
         defer { buffer.deallocate() }
-        while stream.hasBytesAvailable {
+        // Read until the stream ends. `hasBytesAvailable` can be false before
+        // the first bytes are ready, which recorded an empty body at random.
+        while true {
             let read = stream.read(buffer, maxLength: bufferSize)
             guard read > 0 else { break }
             data.append(buffer, count: read)
