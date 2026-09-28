@@ -64,8 +64,34 @@ test('an older thread insight does not replace a newer one', async () => {
   expect(await stored(t, 'threadInsight')).toEqual({ reason: 'newer', generatedAt: 300 });
   await write(t, 'threadInsight', { reason: 'same time', generatedAt: 300 });
   expect(await stored(t, 'threadInsight')).toEqual({ reason: 'same time', generatedAt: 300 });
-  // A row with no time is replaced as before.
-  await write(t, 'threadInsight', { reason: 'no time' });
+  // An insight with no time does not replace a timed one, so a later older write cannot either.
+  expect(await write(t, 'threadInsight', { reason: 'no time' })).toEqual({
+    ok: true,
+    created: false,
+    stale: true,
+  });
+  expect(await write(t, 'threadInsight', { reason: 'timed', generatedAt: 1 })).toEqual({
+    ok: true,
+    created: false,
+    stale: true,
+  });
+  expect(await stored(t, 'threadInsight')).toEqual({ reason: 'same time', generatedAt: 300 });
+});
+
+test('a stored insight with no time takes any write', async () => {
+  const t = harness();
+  await t.run((ctx) =>
+    ctx.db.insert('userDocs', {
+      userId: USER,
+      kind: 'threadInsight',
+      key: 'acct:t1',
+      doc: { reason: 'old row' },
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+  );
+  await write(t, 'threadInsight', { reason: 'still no time' });
+  expect(await stored(t, 'threadInsight')).toEqual({ reason: 'still no time' });
   await write(t, 'threadInsight', { reason: 'timed', generatedAt: 1 });
   expect(await stored(t, 'threadInsight')).toEqual({ reason: 'timed', generatedAt: 1 });
 });

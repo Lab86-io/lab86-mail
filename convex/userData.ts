@@ -151,11 +151,14 @@ export const dailyReportPage = query({
   },
 });
 
-/** True when `next` has an older `generatedAt` than the stored insight. */
+/**
+ * True when `next` must not replace the stored insight: the stored insight
+ * has a `generatedAt`, and `next` has none or an older one.
+ */
 function isOlderInsight(next: unknown, stored: unknown) {
   const nextAt = Number((next as { generatedAt?: unknown } | null)?.generatedAt);
   const storedAt = Number((stored as { generatedAt?: unknown } | null)?.generatedAt);
-  return Number.isFinite(nextAt) && Number.isFinite(storedAt) && nextAt < storedAt;
+  return Number.isFinite(storedAt) && (!Number.isFinite(nextAt) || nextAt < storedAt);
 }
 
 export const upsertDoc = mutation({
