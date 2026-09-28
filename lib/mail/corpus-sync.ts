@@ -14,6 +14,7 @@ import { withFolderRoleLabels } from './search/folders';
 import { keptMessageHeaders } from './sender-cleanup';
 import { detectMailSuggestions } from './suggestion-detectors';
 import { scanIngestedMail } from './urgent-detectors';
+import { webhookPayloadForStorage } from './webhook-storage';
 
 const mailCorpusApi = api.mailCorpus;
 const mailRepairApi = api.mailRepair;
@@ -481,7 +482,9 @@ export async function ingestNylasWebhookPayload(payload: unknown) {
     accountId: row?.accountId,
     grantId: metadata.grantId,
     provider: row?.provider,
-    payload,
+    // M5: the row keeps ids only. This call uses the full payload in memory,
+    // and a retry refetches the current object from the provider.
+    payload: webhookPayloadForStorage(payload),
   });
   if (event.duplicate) {
     return { ok: true, duplicate: true, eventId: metadata.eventId };

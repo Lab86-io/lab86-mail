@@ -1,3 +1,5 @@
+import { v } from 'convex/values';
+import { isStoredWebhookPayload, webhookPayloadForStorage } from '../lib/mail/webhook-storage';
 import { internal } from './_generated/api';
 import type { MutationCtx } from './_generated/server';
 import { internalMutation } from './_generated/server';
@@ -6,8 +8,18 @@ import { purgeExpiredCodes } from './mailOneTimeCodes';
 
 const DAY_MS = 86_400_000;
 
-/** Processed webhook rows hold full mail payloads; keep them this long. */
+/** Processed webhook rows are kept this long. */
 export const WEBHOOK_EVENT_RETENTION_MS = 14 * DAY_MS;
+
+/**
+ * The TTL of each webhook status (M5). Error and received rows stay longer
+ * for diagnosis and for the durable retry, but no row stays forever.
+ */
+export const WEBHOOK_EVENT_TTL_MS = {
+  processed: WEBHOOK_EVENT_RETENTION_MS,
+  error: 30 * DAY_MS,
+  received: 30 * DAY_MS,
+} as const;
 
 // Per-run batch sizes. Webhook rows carry mail payloads, so their batch is
 // small enough that one run stays far below the Convex transaction limits.
@@ -43,15 +55,18 @@ export const sweep = internalMutation({
     counts.mailOneTimeCodesExpired = codes.expired;
     more ||= codes.more;
 
-    // Only processed rows go. Received and error rows stay for diagnosis.
-    const webhookEvents = await ctx.db
-      .query('mailWebhookEvents')
-      .withIndex('by_status', (q) =>
-        q.eq('status', 'processed').lt('_creationTime', ts - WEBHOOK_EVENT_RETENTION_MS),
-      )
-      .take(RETENTION_BATCH.webhookEvents);
-    counts.mailWebhookEvents = await deleteAll(ctx, webhookEvents);
-    more ||= webhookEvents.length === RETENTION_BATCH.webhookEvents;
+    // Each status has its own TTL; error and received rows stay longer.
+    counts.mailWebhookEvents = 0;
+    for (const status of ['processed', 'error', 'received'] as const) {
+      const webhookEvents = await ctx.db
+        .query('mailWebhookEvents')
+        .withIndex('by_status', (q) =>
+          q.eq('status', status).lt('_creationTime', ts - WEBHOOK_EVENT_TTL_MS[status]),
+        )
+        .take(RETENTION_BATCH.webhookEvents);
+      counts.mailWebhookEvents += await deleteAll(ctx, webhookEvents);
+      more ||= webhookEvents.length === RETENTION_BATCH.webhookEvents;
+    }
 
     const rateLimits = await ctx.db
       .query('rateLimits')
@@ -83,5 +98,55 @@ export const sweep = internalMutation({
 
     if (more) await ctx.scheduler.runAfter(0, internal.retention.sweep, {});
     return { counts, more };
+  },
+});
+
+/** Rows per page of the one-time webhook payload cleanup. Old rows are large. */
+export const WEBHOOK_SLIM_BATCH = 10;
+
+/**
+ * One-time cleanup (M5): cut the payload of each stored webhook row to ids.
+ * New rows store ids only; this handles the rows from before. Error rows go
+ * first, because they are the large rows that stay longest. Each page
+ * schedules the next one. A dry run reports one page and changes nothing.
+ */
+export const slimWebhookPayloads = internalMutation({
+  args: {
+    status: v.optional(v.union(v.literal('processed'), v.literal('error'), v.literal('received'))),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const status = args.status ?? 'error';
+    const page = await ctx.db
+      .query('mailWebhookEvents')
+      .withIndex('by_status', (q) => q.eq('status', status))
+      .paginate({ cursor: args.cursor ?? null, numItems: WEBHOOK_SLIM_BATCH });
+    let slimmed = 0;
+    let bytesBefore = 0;
+    let bytesAfter = 0;
+    for (const row of page.page) {
+      if (isStoredWebhookPayload(row.payload)) continue;
+      const stored = webhookPayloadForStorage(row.payload);
+      bytesBefore += JSON.stringify(row.payload ?? null).length;
+      bytesAfter += JSON.stringify(stored).length;
+      slimmed += 1;
+      if (!args.dryRun) await ctx.db.patch(row._id, { payload: stored });
+    }
+    if (!args.dryRun && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.retention.slimWebhookPayloads, {
+        status,
+        cursor: page.continueCursor,
+      });
+    }
+    return {
+      status,
+      scanned: page.page.length,
+      slimmed,
+      bytesBefore,
+      bytesAfter,
+      dryRun: Boolean(args.dryRun),
+      isDone: page.isDone,
+    };
   },
 });

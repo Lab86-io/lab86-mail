@@ -142,6 +142,14 @@ describe('webhook ingest (SYNC-1, SYNC-2, SYNC-4)', () => {
         providerThreadId: 't1',
         starred: true,
       });
+      // M5: the durable row keeps ids, not the mail.
+      const recorded = h.convexCalls.find((c) => c.path === 'mailCorpus:recordWebhookEvent');
+      expect(recorded?.args.payload).toEqual({
+        stored: 'ids',
+        id: 'evt-1',
+        type: 'message.updated',
+        data: { object: { id: 'm1', grant_id: 'grant_1', thread_id: 't1' } },
+      });
     });
   });
 
