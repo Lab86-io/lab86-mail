@@ -1508,6 +1508,92 @@ describe('unclassified discovery reads', () => {
     }));
 });
 
+describe('recordAreaFailures', () => {
+  test('failed routing waits, stops after three failures, and a new message starts again', () =>
+    withSecret(async () => {
+      const t = convexTest(schema, convexModules);
+      const userId = 'area_failure_user';
+      await t.run(async (ctx) => {
+        await ctx.db.insert(
+          'mailCorpusThreads',
+          corpusThread(userId, 'af_thread', { areaRoutingPending: true, latestMessageId: 'af_m1' }) as any,
+        );
+        await ctx.db.insert('mailCorpusMessages', corpusMessage(userId, 'af_thread', 'af_m1') as any);
+      });
+      const failure = { artifactId: 'af_thread', accountId: 'account_1', messageId: 'af_m1' };
+      const record = (messageId = 'af_m1') =>
+        t.mutation(api.albatross.recordAreaFailures, {
+          ...caller(userId),
+          failures: [{ ...failure, messageId }],
+        });
+      const queue = () => t.query(api.albatross.unclassifiedThreads, { ...caller(userId), limit: 10 });
+      const readThread = () =>
+        t.run((ctx) =>
+          ctx.db
+            .query('mailCorpusThreads')
+            .withIndex('by_user_account_thread', (q) =>
+              q.eq('userId', userId).eq('accountId', 'account_1').eq('providerThreadId', 'af_thread'),
+            )
+            .unique(),
+        );
+      const clearRetry = async () => {
+        const row = await readThread();
+        await t.run((ctx) => ctx.db.patch(row!._id, { areaRetryAt: 0 }));
+      };
+
+      expect((await queue()).map((row) => row.providerThreadId)).toEqual(['af_thread']);
+      const before = Date.now();
+      expect(await record()).toEqual({ retried: 1, stopped: 0 });
+      let row = await readThread();
+      expect(row?.areaAttempts).toBe(1);
+      expect(row?.areaRetryAt).toBeGreaterThanOrEqual(before + 30 * 60_000);
+      // The thread waits for its retry time.
+      expect(await queue()).toEqual([]);
+      await clearRetry();
+      expect(await record()).toEqual({ retried: 1, stopped: 0 });
+      row = await readThread();
+      expect(row?.areaAttempts).toBe(2);
+      expect(row?.areaRetryAt).toBeGreaterThanOrEqual(before + 2 * 60 * 60_000);
+      await clearRetry();
+      // A failure for an older message does not count.
+      expect(await record('af_old')).toEqual({ retried: 0, stopped: 0 });
+      expect(await record()).toEqual({ retried: 0, stopped: 1 });
+      row = await readThread();
+      expect(row?.areaRoutingPending).toBeUndefined();
+      expect(row?.areaAttempts).toBeUndefined();
+      expect(row?.areaClassifiedMessageId).toBe('af_m1');
+      expect(row?.areaError).toBe('Area routing failed 3 times.');
+      expect(await queue()).toEqual([]);
+
+      // A new message resets the count and asks again.
+      await t.run((ctx) =>
+        ctx.db.insert(
+          'mailCorpusMessages',
+          corpusMessage(userId, 'af_thread', 'af_m2', { receivedAt: Date.now() + 1 }) as any,
+        ),
+      );
+      const verdict = await t.mutation(api.albatross.recordAreaVerdicts, {
+        ...caller(userId),
+        verdicts: [{ artifactId: 'af_thread', accountId: 'account_1', messageId: 'af_m1', links: [] }],
+      });
+      expect(verdict.classified).toBe(0);
+      row = await readThread();
+      expect(row?.areaRoutingPending).toBe(true);
+      expect(row?.areaError).toBeUndefined();
+      expect((await queue()).map((next) => next.messageId)).toEqual(['af_m2']);
+      await record('af_m2');
+      await clearRetry();
+      await t.mutation(api.albatross.recordAreaVerdicts, {
+        ...caller(userId),
+        verdicts: [{ artifactId: 'af_thread', accountId: 'account_1', messageId: 'af_m2', links: [] }],
+      });
+      row = await readThread();
+      expect(row?.areaAttempts).toBeUndefined();
+      expect(row?.areaRetryAt).toBeUndefined();
+      expect(row?.areaClassifiedMessageId).toBe('af_m2');
+    }));
+});
+
 describe('recordAreaVerdicts', () => {
   test('accepts the real deterministic classifier payload and retains the enclosing account identity', () =>
     withSecret(async () => {

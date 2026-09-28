@@ -313,6 +313,11 @@ export default defineSchema({
     areaClassifiedAt: v.optional(v.number()),
     areaClassifiedMessageId: v.optional(v.string()),
     areaRoutingPending: v.optional(v.boolean()),
+    // Failed routing calls for the current message. The sweep waits until
+    // areaRetryAt; after 3 failures it records areaError and stops asking.
+    areaAttempts: v.optional(v.number()),
+    areaRetryAt: v.optional(v.number()),
+    areaError: v.optional(v.string()),
     yearMonth: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),

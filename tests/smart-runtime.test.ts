@@ -139,6 +139,8 @@ describe('classifyCorpusThread precedence', () => {
     expect(classificationFreshnessPatch('m1', 'm1')).toEqual({});
     const reset = classificationFreshnessPatch('m1', 'm2');
     expect(reset).toMatchObject({ llmCategory: undefined, areaRoutingPending: true });
+    // A new message also clears failed Area routing attempts (undefined removes the field).
+    expect(Object.keys(reset)).toEqual(expect.arrayContaining(['areaAttempts', 'areaRetryAt', 'areaError']));
   });
 });
 

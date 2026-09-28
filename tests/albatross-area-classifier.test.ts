@@ -27,6 +27,7 @@ const apiMock = {
     listUserAreaFacts: 'albatross.listUserAreaFacts',
     unclassifiedThreads: 'albatross.unclassifiedThreads',
     recordAreaVerdicts: 'albatross.recordAreaVerdicts',
+    recordAreaFailures: 'albatross.recordAreaFailures',
   },
 };
 
@@ -445,12 +446,21 @@ describe('sparse classifier orchestration', () => {
     expect(mutationCalls[0].args.verdicts[0].links).toEqual([]);
   });
 
-  test('model failures stay pending by omitting a persisted verdict', async () => {
+  test('model failures persist no verdict and count one failed attempt for each thread', async () => {
     fixtures[apiMock.albatross.unclassifiedThreads] = [thread()];
     modelResult = new Error('provider unavailable');
     const result = await classifyThreads({ userId: USER });
     expect(result.failed).toBe(1);
-    expect(mutationCalls).toHaveLength(0);
+    expect(mutationCalls).toEqual([
+      {
+        fn: apiMock.albatross.recordAreaFailures,
+        args: {
+          userId: USER,
+          classifierVersion: AREA_CLASSIFIER_VERSION,
+          failures: [{ artifactId: 'thread_banjo', accountId: 'account_1', messageId: 'message_banjo' }],
+        },
+      },
+    ]);
   });
 
   test('zero active Areas settles pending threads without spending a model call', async () => {
@@ -510,6 +520,10 @@ describe('sparse classifier orchestration', () => {
       expect(verdict.links[0].reason).toBe(`message ${index}`);
     }
     expect(persisted.some((verdict: any) => verdict.messageId === 'message_2')).toBe(false);
+    expect(mutationCalls[1]).toMatchObject({
+      fn: apiMock.albatross.recordAreaFailures,
+      args: { failures: [{ artifactId: 'thread_2', messageId: 'message_2' }] },
+    });
   });
 });
 
