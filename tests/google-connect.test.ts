@@ -460,7 +460,7 @@ describe('kicks after a connection', () => {
     return calls;
   }
 
-  test('a new account backfills; a switched account reconciles; both force calendar and contacts', async () => {
+  test('every connection asks for a backfill; a switched account also reconciles; both force calendar and contacts', async () => {
     const created = kicks();
     await kickAfterConnect({ userId: USER, accountId: 'acct-new', outcome: 'created' });
     expect(created).toEqual([
@@ -471,6 +471,7 @@ describe('kicks after a connection', () => {
     const switched = kicks();
     await kickAfterConnect({ userId: USER, accountId: 'acct-1', outcome: 'switched' });
     expect(switched).toEqual([
+      'backfill:acct-1',
       'reconcile:acct-1',
       'calendar:acct-1:true:oauth_callback',
       'contacts:acct-1:true:oauth_callback',

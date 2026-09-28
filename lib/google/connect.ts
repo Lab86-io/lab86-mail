@@ -108,12 +108,13 @@ export function kickAfterConnect({
   outcome: GoogleMailOutcome;
 }) {
   const kick = { userId, accountId };
-  // The same kicks as the Nylas callback. A new account needs its corpus; a
-  // switched one has it and only catches up the newest page, in case mail came
-  // in during the switch. Returned for tests; callers do not wait for it.
+  // The same kicks as the Nylas callback. The backfill claim does nothing for
+  // a ready corpus, so it only runs for a new account or a purged one. An
+  // existing account also catches up the newest page, in case mail came in
+  // during the switch. Returned for tests; callers do not wait for it.
   return (async () => {
-    if (outcome === 'created') deps.maybeKickCorpusBackfill(kick);
-    else await deps.reconcileMailCorpusAccount(kick).catch(() => undefined);
+    deps.maybeKickCorpusBackfill(kick);
+    if (outcome !== 'created') await deps.reconcileMailCorpusAccount(kick).catch(() => undefined);
     await deps.syncCalendarAccount({ ...kick, force: true, reason: 'oauth_callback' }).catch(() => undefined);
     deps.maybeKickContactSync(kick, { force: true, reason: 'oauth_callback' });
   })();
