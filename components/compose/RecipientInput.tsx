@@ -209,7 +209,10 @@ export function RecipientInput({
     }
     // A row the arrow keys moved to is a choice the user can see. Without
     // one, Enter and Tab pick only rows for the text now in the field.
-    const choice = hasItems && (navigated || (draft.trim() && fresh));
+    // A complete address typed in full is the user's choice: it commits as
+    // typed unless the arrow keys moved to a row.
+    const typedAddress = !navigated && isCompleteAddress(draft);
+    const choice = hasItems && !typedAddress && (navigated || (draft.trim() && fresh));
     const waits = open && !fresh && Boolean(draft.trim()) && !isCompleteAddress(draft);
     if (event.key === 'Enter') {
       if (choice) {
