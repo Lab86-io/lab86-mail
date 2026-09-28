@@ -1,7 +1,7 @@
 /** Synthetic live-model evaluation. Explicit opt-in; no customer data or application writes. */
 import { readFile, writeFile } from 'node:fs/promises';
-import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
+import { createOpenRouterProvider } from '../lib/ai/openrouter-policy';
 import { writeDailyEditorial } from '../lib/mail/brief-editorial';
 import { editorialFixture } from '../tests/fixtures/editorial';
 
@@ -14,7 +14,7 @@ const env = Object.fromEntries(
   }),
 );
 if (!env.OPENROUTER_API_KEY) throw new Error('An OpenRouter key is required for this evaluation.');
-const provider = createOpenAI({ apiKey: env.OPENROUTER_API_KEY, baseURL: 'https://openrouter.ai/api/v1' });
+const provider = createOpenRouterProvider(env.OPENROUTER_API_KEY);
 const model = env.LAB86_MAIL_OPENAI_MODEL || 'openai/gpt-5.5';
 const { edition, letter } = editorialFixture();
 const started = Date.now();

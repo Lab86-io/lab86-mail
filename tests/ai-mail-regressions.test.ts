@@ -568,7 +568,7 @@ describe('compliance readiness', () => {
 
     expect(privacy).toContain('Google API Services User Data Policy');
     expect(privacy).toContain('Limited Use requirements');
-    expect(privacyText).toContain('Disconnecting a provider');
+    expect(privacyText).toContain('When you disconnect a mailbox');
     expect(privacyText).toContain('Account deletion removes');
     expect(support).toContain('security@lab86.io');
   });

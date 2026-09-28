@@ -1,3 +1,4 @@
+import { withOpenRouterDataPolicy } from '../ai/openrouter-policy';
 import { type ClassifierModel, defaultClassifier } from './catalog';
 
 export type ClassifierQuestion =
@@ -85,13 +86,14 @@ export async function evaluateClassifier(
   const model = input.model || defaultClassifier();
   const timeout = AbortSignal.timeout(input.timeoutMs ?? 5_000);
   const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
-  const post = async (body: unknown) => {
+  const post = async (body: Record<string, unknown>) => {
     let response: Response;
     try {
       response = await fetcher(model.endpoint, {
         method: 'POST',
         headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        // A model reached through OpenRouter gets the no-training data policy.
+        body: JSON.stringify(model.credential === 'openrouter' ? withOpenRouterDataPolicy(body) : body),
         signal,
       });
     } catch {
@@ -123,7 +125,7 @@ const CHOICE_SYSTEM =
 async function evaluateByChoice(
   input: ClassifierRequest,
   model: ClassifierModel,
-  post: (body: unknown) => Promise<any>,
+  post: (body: Record<string, unknown>) => Promise<any>,
 ) {
   const state = typeof input.state === 'string' ? input.state : JSON.stringify(input.state);
   let served = '';

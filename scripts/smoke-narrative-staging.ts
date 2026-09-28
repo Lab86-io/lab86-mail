@@ -2,9 +2,9 @@
  * Run with the Railway development web environment injected.
  */
 import { randomUUID } from 'node:crypto';
-import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 import { getFunctionName } from 'convex/server';
+import { createOpenRouterProvider } from '../lib/ai/openrouter-policy';
 import { api, convexMutation, convexQuery } from '../lib/hosted/convex';
 import { __setNarrativeDepsForTest, refreshNarrative } from '../lib/narrative/service';
 
@@ -15,10 +15,7 @@ if (
   throw new Error('This smoke only permits the verified staging environment');
 if (!process.env.OPENROUTER_API_KEY) throw new Error('OpenRouter key missing');
 const userId = `narrative-smoke-${randomUUID()}`;
-const model = createOpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: 'https://openrouter.ai/api/v1',
-}).chat('z-ai/glm-5.3-flash');
+const model = createOpenRouterProvider(process.env.OPENROUTER_API_KEY).chat('z-ai/glm-5.3-flash');
 process.env.LAB86_NARRATIVE_ENABLED = 'true';
 process.env.LAB86_NARRATIVE_USER_IDS = userId;
 // Exercise the deployed memory + actual research loop without provisioning
