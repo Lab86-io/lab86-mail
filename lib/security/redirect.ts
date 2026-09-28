@@ -9,7 +9,10 @@ export function sanitizeInternalPath(value: string | null | undefined): string {
   if (!value) return '/';
   // The URL parser drops tab and newline characters, so "/<TAB>/evil.com"
   // becomes "//evil.com". A path with any control character is refused.
-  if (/[\u0000-\u001f\u007f]/.test(value)) return '/';
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return '/';
+  }
   if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\')) {
     return '/';
   }

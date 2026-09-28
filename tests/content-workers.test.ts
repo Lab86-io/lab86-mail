@@ -431,7 +431,7 @@ test('content cycle independently commits successful classifications when embedd
 
 test('agent content search requires identity and returns bounded excerpts with exact provenance', async () => {
   const tool = createContentSearch(async () => ({
-    items: [{ ...item, text: 'x'.repeat(9000) + ' Signed approval required.' }],
+    items: [{ ...item, text: `${'x'.repeat(9000)} Signed approval required.` }],
     semanticUnavailable: false,
   }));
   await expect(tool.handler({ query: 'approval', semantic: true }, { agent: 'ai' })).rejects.toThrow(
