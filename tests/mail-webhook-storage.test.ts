@@ -64,8 +64,36 @@ describe('webhook payload storage (M5)', () => {
     expect(webhookPayloadForStorage({ type: 'grant.expired', data: { grant_id: 'g' } })).toMatchObject({
       data: { grant_id: 'g', object: { grant_id: 'g' } },
     });
-    expect(webhookPayloadForStorage(null)).toEqual({ stored: 'ids', data: { object: {} } });
-    expect(webhookPayloadForStorage('text')).toEqual({ stored: 'ids', data: { object: {} } });
+    // Junk keeps only the synthesized event id, so a retry reads the same id.
+    const junk = webhookPayloadForStorage(null);
+    expect(junk).toEqual({
+      stored: 'ids',
+      id: extractNylasWebhookMetadata(null).eventId,
+      data: { object: {} },
+    });
+    expect(Object.keys(webhookPayloadForStorage('text')).sort()).toEqual(['data', 'id', 'stored']);
     expect(isStoredWebhookPayload({ stored: 'other' })).toBe(false);
+  });
+
+  test('a stored copy gives the same metadata for every id and type shape', () => {
+    const shapes: unknown[] = [
+      // The event id under event_id, and the type on data only.
+      { event_id: 'evt-9', data: { type: 'message.created', object: { id: 'm9', grant_id: 'g' } } },
+      { eventId: 'evt-8', trigger: 'thread.replied', data: { object: { thread_id: 't8', grant_id: 'g' } } },
+      // The message and thread ids on data, not on the object.
+      {
+        type: 'message.updated',
+        data: { message_id: 'm7', thread_id: 't7', grant_id: 'g', object: { body: 'x'.repeat(5_000) } },
+      },
+      { type: 'message.updated', data: { messageId: 'm6', threadId: 't6', grantId: 'g', object: {} } },
+      // No explicit id: the id is made from a hash of the full payload.
+      { type: 'message.created', data: { object: { id: 'm5', grant_id: 'g', body: 'long body' } } },
+      { data: { object: { grant_id: 'g' } } },
+    ];
+    for (const payload of shapes) {
+      const stored = webhookPayloadForStorage(payload);
+      expect(extractNylasWebhookMetadata(stored)).toEqual(extractNylasWebhookMetadata(payload));
+      expect(JSON.stringify(stored)).not.toContain('body');
+    }
   });
 });
