@@ -616,7 +616,7 @@ describe('deletion', () => {
     expect(await blobCount(t)).toBe(0);
   });
 
-  test('a deleted message takes all its files, also past one batch of 100', async () => {
+  test('a deleted message takes all its files: one batch at once, the rest in scheduled passes', async () => {
     const t = harness();
     await addAccount(t, 'acct');
     await t.run(async (ctx) => {
@@ -658,6 +658,10 @@ describe('deletion', () => {
       accountId: 'acct',
       providerMessageId: 'big',
     });
+    // The delete mutation does one bounded batch of each table.
+    expect(await rows(t, 'mailAttachmentFiles')).toHaveLength(30);
+    expect(await rows(t, 'mailAttachmentQueue')).toHaveLength(30);
+    await drain(t);
     expect(await rows(t, 'mailAttachmentFiles')).toEqual([]);
     expect(await rows(t, 'mailAttachmentQueue')).toEqual([]);
     expect(await blobCount(t)).toBe(0);

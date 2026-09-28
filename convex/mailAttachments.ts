@@ -185,9 +185,11 @@ export async function deleteAttachmentFileRow(
 const MESSAGE_DELETE_BATCH = 100;
 
 /**
- * Deletes all the file rows (and unshared files) and queue rows of one
- * message, in batches until none is left. The lazy fill has no cap for each
- * message, so one batch could leave rows and files behind.
+ * Deletes the file rows (and unshared files) and queue rows of one message:
+ * at most one batch of each in one call, so the work of one mutation stays
+ * within the Convex limits. The content index can store every file of a
+ * message, so a message can have more rows. Then a scheduled pass
+ * (deleteMessageAttachmentsPass) goes on until no row is left.
  */
 export async function deleteMessageAttachmentData(
   ctx: Ctx,
@@ -195,25 +197,31 @@ export async function deleteMessageAttachmentData(
   accountId: string,
   providerMessageId: string,
 ) {
-  let deleted = 0;
-  for (;;) {
-    const files = await byMessage(ctx, 'mailAttachmentFiles', userId, accountId, providerMessageId).take(
-      MESSAGE_DELETE_BATCH,
-    );
-    for (const row of files) await deleteAttachmentFileRow(ctx, row);
-    deleted += files.length;
-    if (files.length < MESSAGE_DELETE_BATCH) break;
+  const files = await byMessage(ctx, 'mailAttachmentFiles', userId, accountId, providerMessageId).take(
+    MESSAGE_DELETE_BATCH,
+  );
+  for (const row of files) await deleteAttachmentFileRow(ctx, row);
+  const queued = await byMessage(ctx, 'mailAttachmentQueue', userId, accountId, providerMessageId).take(
+    MESSAGE_DELETE_BATCH,
+  );
+  for (const row of queued) await ctx.db.delete(row._id);
+  if (files.length === MESSAGE_DELETE_BATCH || queued.length === MESSAGE_DELETE_BATCH) {
+    await ctx.scheduler.runAfter(0, internal.mailAttachments.deleteMessageAttachmentsPass, {
+      userId,
+      accountId,
+      providerMessageId,
+    });
   }
-  for (;;) {
-    const queued = await byMessage(ctx, 'mailAttachmentQueue', userId, accountId, providerMessageId).take(
-      MESSAGE_DELETE_BATCH,
-    );
-    for (const row of queued) await ctx.db.delete(row._id);
-    deleted += queued.length;
-    if (queued.length < MESSAGE_DELETE_BATCH) break;
-  }
-  return deleted;
+  return files.length + queued.length;
 }
+
+/** The next batch of the attachment rows of a deleted message. */
+export const deleteMessageAttachmentsPass = internalMutation({
+  args: { userId: v.string(), accountId: v.string(), providerMessageId: v.string() },
+  handler: async (ctx, args) => ({
+    deleted: await deleteMessageAttachmentData(ctx, args.userId, args.accountId, args.providerMessageId),
+  }),
+});
 
 async function clearQueueRow(ctx: Ctx, key: FileKey) {
   const row = await byKey(ctx, 'mailAttachmentQueue', key).first();
