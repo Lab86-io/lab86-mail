@@ -35,6 +35,9 @@ struct MailboxesSettingsView: View {
     @State private var disconnectTarget: Mailbox?
     @State private var aliasEdit: AliasEdit?
     @State private var aliasDraft = ""
+    // Contacts for each mailbox (GET /api/mobile/v1/contacts/status). A failed
+    // read hides the line; mail status does not depend on it.
+    @State private var contactStatuses: [String: ContactAccountStatus] = [:]
 
     var body: some View {
         List {
@@ -149,6 +152,11 @@ struct MailboxesSettingsView: View {
                     Button("Reconnect / update permissions", systemImage: "key") {
                         Task { await reconnect(mailbox) }
                     }
+                    if contactStatuses[mailbox.id].map({ !$0.needsReconnect && $0.state != .unsupported && $0.state != .paused }) == true {
+                        Button("Sync contacts", systemImage: "person.2") {
+                            Task { await resyncContacts(mailbox) }
+                        }
+                    }
                     Divider()
                     Button("Disconnect", systemImage: "trash", role: .destructive) {
                         disconnectTarget = mailbox
@@ -165,6 +173,16 @@ struct MailboxesSettingsView: View {
             Label(syncLabel(mailbox), systemImage: syncSymbol(mailbox))
                 .font(.caption)
                 .foregroundStyle(mailbox.syncStatus == "error" ? .red : .secondary)
+            if let contacts = contactStatuses[mailbox.id] {
+                MailboxContactLine(
+                    status: contacts,
+                    accountID: mailbox.id,
+                    accentColor: environment.theme.accentColor,
+                    isBusy: busyID != nil
+                ) {
+                    Task { await reconnect(mailbox) }
+                }
+            }
         }
         .padding(.vertical, 4)
     }
@@ -203,6 +221,28 @@ struct MailboxesSettingsView: View {
                     reason: row["reason"]?.stringValue
                 )
             }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        await loadContactStatus()
+    }
+
+    private func loadContactStatus() async {
+        guard let service = environment.contactStatus,
+              let page = try? await service.fetchContactStatus() else { return }
+        contactStatuses = Dictionary(
+            page.accounts.map { ($0.accountID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    private func resyncContacts(_ mailbox: Mailbox) async {
+        guard let service = environment.contactStatus else { return }
+        busyID = mailbox.id
+        defer { busyID = nil }
+        do {
+            _ = try await service.resyncContacts(accountID: mailbox.id)
+            await loadContactStatus()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -299,5 +339,42 @@ private extension String {
     var nilIfEmpty: String? {
         let value = trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+}
+
+/// One plain line for a mailbox's contacts in Settings > Mailboxes, and the
+/// reconnect action when the grant has no contact permission. Reconnect is
+/// the same mailbox connect flow; the server starts a contact pass when it
+/// completes. The two views go into the row's stack as two rows.
+struct MailboxContactLine: View {
+    let status: ContactAccountStatus
+    let accountID: String
+    let accentColor: Color
+    var isBusy = false
+    let onReconnect: () -> Void
+
+    var body: some View {
+        if let summary = status.summary() {
+            Text(summary)
+                .font(.caption)
+                .foregroundStyle(status.isProblem ? .red : .secondary)
+                .accessibilityIdentifier("mailboxes.contacts.\(accountID)")
+        }
+        if status.needsReconnect {
+            Button("Reconnect to add contacts", action: onReconnect)
+                .font(.caption.weight(.medium))
+                #if os(macOS)
+                // A text action in the accent: a Mac borderless button in a
+                // list row draws plain label text, which reads as a status line.
+                .buttonStyle(.plain)
+                .foregroundStyle(accentColor)
+                .opacity(isBusy ? 0.5 : 1)
+                .pointerStyle(.link)
+                #else
+                .buttonStyle(.borderless)
+                #endif
+                .disabled(isBusy)
+                .accessibilityIdentifier("mailboxes.contacts.reconnect.\(accountID)")
+        }
     }
 }

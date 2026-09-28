@@ -39,6 +39,10 @@ final class AppEnvironment {
     // "Prepared for you" under the Brief: GET/POST /api/content?view=brief.
     let preparedWork: PreparedWorkClient?
     let accountStore: AccountStore
+    // Recipient search for To, Cc, and Bcc, and each mailbox's contact status
+    // (mobile v1 contacts endpoints).
+    let recipientSearch: (any RecipientSearching)?
+    let contactStatus: (any ContactStatusServing)?
     // The plan, the trial note, and the optional Files surface (round 2).
     let trust: AccountTrustStore
     // The current Albatross conversation. Held here so switching destinations
@@ -89,6 +93,8 @@ final class AppEnvironment {
                 tokenProvider: tokenProvider
             )
             self.mobileClient = mobileClient
+            recipientSearch = mobileClient
+            contactStatus = mobileClient
             briefHydration = BriefHydrationClient(
                 baseURL: apiBaseURL,
                 tokenProvider: tokenProvider
@@ -104,6 +110,8 @@ final class AppEnvironment {
             )
         } else {
             mobileClient = nil
+            recipientSearch = nil
+            contactStatus = nil
             briefHydration = nil
             preparedWork = nil
             processor = nil

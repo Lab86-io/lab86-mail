@@ -593,3 +593,134 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MailPage
         }
     }
 }
+
+// MARK: - Contacts (mobile v1)
+
+// Recipient search for To, Cc, and Bcc, and each mailbox's contact status.
+// `lib/mobile/v1/contract.ts` ("contacts") is the source.
+extension MobileV1Client: RecipientSearching, ContactStatusServing {
+    func searchRecipients(_ request: RecipientSearchRequest) async throws -> RecipientSuggestionPage {
+        let output = try await client.getMobileRecipientSuggestions(
+            .init(
+                query: .init(
+                    q: request.query,
+                    fromAccountID: request.fromAccountID,
+                    limit: request.limit,
+                    exclude: request.exclude.isEmpty ? nil : request.exclude
+                )
+            )
+        )
+        switch output {
+        case .ok(let response):
+            return Self.recipientPage(from: try response.body.json)
+        case .badRequest(let response):
+            throw Self.error(from: try response.body.json, status: 400)
+        case .unauthorized(let response):
+            throw Self.error(from: try response.body.json, status: 401)
+        case .conflict(let response):
+            throw Self.error(from: try response.body.json, status: 409)
+        case .tooManyRequests(let response):
+            throw Self.error(from: try response.body.json, status: 429)
+        case .internalServerError(let response):
+            throw Self.error(from: try response.body.json, status: 500)
+        case .undocumented(let status, _):
+            throw MobileV1ClientError.undocumented(status: status)
+        }
+    }
+
+    func fetchContactStatus() async throws -> ContactStatusPage {
+        let output = try await client.getMobileContactStatus(.init())
+        switch output {
+        case .ok(let response):
+            return Self.contactStatusPage(from: try response.body.json)
+        case .badRequest(let response):
+            throw Self.error(from: try response.body.json, status: 400)
+        case .unauthorized(let response):
+            throw Self.error(from: try response.body.json, status: 401)
+        case .conflict(let response):
+            throw Self.error(from: try response.body.json, status: 409)
+        case .tooManyRequests(let response):
+            throw Self.error(from: try response.body.json, status: 429)
+        case .internalServerError(let response):
+            throw Self.error(from: try response.body.json, status: 500)
+        case .undocumented(let status, _):
+            throw MobileV1ClientError.undocumented(status: status)
+        }
+    }
+
+    func resyncContacts(accountID: String) async throws -> ContactResyncReceipt {
+        let output = try await client.postMobileContactResync(body: .json(.init(accountID: accountID)))
+        switch output {
+        case .ok(let response):
+            let receipt = try response.body.json
+            return ContactResyncReceipt(accountID: receipt.accountID, started: receipt.started)
+        case .badRequest(let response):
+            throw Self.error(from: try response.body.json, status: 400)
+        case .unauthorized(let response):
+            throw Self.error(from: try response.body.json, status: 401)
+        case .notFound(let response):
+            throw Self.error(from: try response.body.json, status: 404)
+        case .conflict(let response):
+            throw Self.error(from: try response.body.json, status: 409)
+        case .tooManyRequests(let response):
+            throw Self.error(from: try response.body.json, status: 429)
+        case .internalServerError(let response):
+            throw Self.error(from: try response.body.json, status: 500)
+        case .undocumented(let status, _):
+            throw MobileV1ClientError.undocumented(status: status)
+        }
+    }
+
+    static func recipientPage(from value: Components.Schemas.RecipientSuggestionPage) -> RecipientSuggestionPage {
+        RecipientSuggestionPage(
+            query: value.query,
+            items: value.items.map { item in
+                RecipientSuggestion(
+                    id: item.id,
+                    email: item.email,
+                    name: item.name,
+                    alternateEmails: item.alternateEmails ?? [],
+                    savedContact: item.savedContact,
+                    directory: item.directory,
+                    sources: item.sources.compactMap { RecipientSource(rawValue: $0.rawValue) },
+                    company: item.company,
+                    jobTitle: item.jobTitle,
+                    photoURL: item.photoURL.flatMap(RecipientSuggestion.photoURL(from:)),
+                    lastContactedAt: item.lastContactedAt.map { Date(timeIntervalSince1970: Double($0) / 1_000) },
+                    sentCount: item.sentCount,
+                    receivedCount: item.receivedCount,
+                    highlights: item.highlights.compactMap { highlight in
+                        RecipientHighlightField(rawValue: highlight.field.rawValue).map {
+                            RecipientHighlight(field: $0, start: highlight.start, length: highlight.length)
+                        }
+                    },
+                    score: item.score
+                )
+            }
+        )
+    }
+
+    static func contactStatusPage(from value: Components.Schemas.ContactStatusPage) -> ContactStatusPage {
+        ContactStatusPage(
+            accounts: value.accounts.map { account in
+                ContactAccountStatus(
+                    accountID: account.accountID,
+                    email: account.email,
+                    provider: account.provider.rawValue,
+                    state: ContactSyncState(rawValue: account.state.rawValue) ?? .error,
+                    needsReconnect: account.needsReconnect,
+                    contactCount: account.contactCount,
+                    lastSyncedAt: account.lastSyncedAt.map { Date(timeIntervalSince1970: Double($0) / 1_000) },
+                    sources: account.sources.map { source in
+                        ContactSourceStatus(
+                            source: source.source.rawValue,
+                            state: source.state.rawValue,
+                            count: source.count
+                        )
+                    },
+                    message: account.message?.nilIfBlank
+                )
+            }
+        )
+    }
+}

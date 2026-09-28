@@ -6,6 +6,16 @@ import UniformTypeIdentifiers
 // hairline recipient rows, the subject as the page's display-face headline,
 // and a borderless body. The send contract is unchanged.
 struct ComposeView: View {
+    // On the Mac a confirmation action in a sheet is the default button, and
+    // Return would press it from any field. Send is the primary action there.
+    private static var sendPlacement: ToolbarItemPlacement {
+        #if os(macOS)
+        .primaryAction
+        #else
+        .confirmationAction
+        #endif
+    }
+
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
     @State private var accountID = ""
@@ -90,7 +100,7 @@ struct ComposeView: View {
                         }
                     }
                 }
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: Self.sendPlacement) {
                     Button {
                         Task { await send() }
                     } label: {
@@ -109,6 +119,9 @@ struct ComposeView: View {
                         }
                     }
                     .disabled(!canSend || isSending)
+                    // Command-Return sends. Plain Return never does: in the
+                    // address fields it picks a person or makes a chip.
+                    .keyboardShortcut(.return, modifiers: .command)
                     .accessibilityLabel(sendsLater ? "Schedule" : "Send")
                 }
             }
@@ -272,56 +285,65 @@ struct ComposeView: View {
         environment.store.accounts.first(where: { $0.id == accountID })?.email ?? "Choose account"
     }
 
+    // To, Cc, and Bcc are chip fields with recipient search. Each binds to
+    // the same comma-separated string as before, so drafts, reply prefill,
+    // and the send path are unchanged.
     @ViewBuilder private var recipientRows: some View {
-        HStack(spacing: 8) {
-            Text("To")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            TextField("", text: $to)
-                .textContentType(.emailAddress)
-                .textInputAutocapitalization(.never)
-                .keyboardType(.emailAddress)
-                .focused($focusedField, equals: .to)
+        recipientField("To", text: $to, field: .to) {
             if !showsCopyFields {
                 Button("Cc, Bcc") {
                     showsCopyFields = true
                     focusedField = .cc
                 }
-                .font(.subheadline)
+                .font(RecipientFieldMetrics.font)
                 .foregroundStyle(.secondary)
                 .buttonStyle(.plain)
+                .modifier(RecipientLinkPointer())
+                .padding(.vertical, RecipientChipMetrics.verticalInset)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
         hairline
         if showsCopyFields {
-            HStack(spacing: 8) {
-                Text("Cc")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                TextField("", text: $cc)
-                    .textContentType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.emailAddress)
-                    .focused($focusedField, equals: .cc)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            recipientField("Cc", text: $cc, field: .cc) { EmptyView() }
             hairline
-            HStack(spacing: 8) {
-                Text("Bcc")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                TextField("", text: $bcc)
-                    .textContentType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.emailAddress)
-                    .focused($focusedField, equals: .bcc)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            recipientField("Bcc", text: $bcc, field: .bcc) { EmptyView() }
             hairline
+        }
+    }
+
+    private func recipientField<Accessory: View>(
+        _ title: String,
+        text: Binding<String>,
+        field: Field,
+        @ViewBuilder accessory: @escaping () -> Accessory
+    ) -> some View {
+        RecipientField(
+            title: title,
+            value: text,
+            focus: $focusedField,
+            focusValue: field,
+            isFocused: focusedField == field,
+            theme: environment.theme,
+            searcher: environment.recipientSearch,
+            fromAccountID: accountID.nilIfBlank,
+            excluding: addresses(outside: field),
+            onSubmitEmpty: { focusedField = nextField(after: field) },
+            accessory: accessory
+        )
+    }
+
+    /// Addresses in the other recipient fields, so a person is not suggested twice.
+    private func addresses(outside field: Field) -> [String] {
+        [(Field.to, to), (Field.cc, cc), (Field.bcc, bcc)]
+            .filter { $0.0 != field }
+            .flatMap { RecipientAddressParser.addresses(in: $0.1) }
+    }
+
+    private func nextField(after field: Field) -> Field {
+        switch field {
+        case .to: showsCopyFields ? .cc : .subject
+        case .cc: .bcc
+        default: .subject
         }
     }
 
@@ -600,6 +622,10 @@ struct ComposeView: View {
     }
 
     private func send() async {
+        if let problem = RecipientAddressParser.firstInvalidEntry(in: [to, cc, bcc]) {
+            errorMessage = Self.invalidRecipientMessage(problem)
+            return
+        }
         isSending = true
         defer { isSending = false }
         do {
@@ -658,6 +684,11 @@ struct ComposeView: View {
             }
             dismiss()
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    /// The send check names the first entry that is not an address.
+    static func invalidRecipientMessage(_ entry: String) -> String {
+        "“\(entry)” is not a complete email address. Correct it or remove it, then send."
     }
 
     private func loadSendingPreferences() async {
