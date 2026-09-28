@@ -1,12 +1,31 @@
 import { api, convexMutation } from '../hosted/convex';
 import { callMcpTool, connectMcp } from '../mcp/client';
 import { getConnectionToken, listUserConnections } from '../mcp/connections';
-import { granolaMeetingDetailArgs, mergeGranolaMeetingDetails } from '../mcp/granola';
-import { getServerDef, normalizeItems } from '../mcp/servers';
+import { granolaMeetingDetailBatches, mergeGranolaMeetingDetails } from '../mcp/granola';
+import { getServerDef, type NormalizedMcpItem, normalizeItems } from '../mcp/servers';
 
 /** Expand beyond the Brief's small recent-item feed, but only with pagination
  * parameters the connected server actually advertises. Never report full
- * coverage when the server only exposes a limited search window. */
+ * coverage when the server only exposes a limited search window.
+ *
+ * The history walk ends. When it reaches the last page it records
+ * `complete` in the cursor. After that, the pass runs at most once an hour
+ * and takes only new or changed items. Before, the walk started again at the
+ * first page, so it indexed the same items again with no end. */
+export const HISTORY_RECHECK_MS = 3_600_000;
+/** Granola meeting ids the pass keeps after the walk, to detail new meetings only. */
+const GRANOLA_KNOWN_CAP = 1_000;
+// A source clock and ours can differ, so a recheck also takes items from a
+// short time before the last check.
+const CHANGE_MARGIN_MS = 10 * 60_000;
+
+interface HistoryCursor {
+  offset?: number;
+  complete?: boolean;
+  checkedAt?: number;
+  known?: string[];
+}
+
 const defaults = { convexMutation, callMcpTool, connectMcp, getConnectionToken, listUserConnections };
 export async function syncMcpContent(userId: string, deps = defaults) {
   for (const connection of await deps.listUserConnections(userId)) {
@@ -21,6 +40,20 @@ export async function syncMcpContent(userId: string, deps = defaults) {
     const connectionId = `__history:${connection.connectionId}`;
     const claim = await deps.convexMutation<any>(api.content.claimSync, { userId, connectionId });
     if (!claim) continue;
+    const saved: HistoryCursor = claim.cursor && typeof claim.cursor === 'object' ? claim.cursor : {};
+    const now = Date.now();
+    if (saved.complete && now - (saved.checkedAt || 0) < HISTORY_RECHECK_MS) {
+      // The walk is complete and the last check is recent: no source call.
+      await deps.convexMutation(api.content.finishSync, {
+        userId,
+        connectionId,
+        lease: claim.lease,
+        indexed: 0,
+        skipped: 0,
+        status: 'provider_limited',
+      });
+      continue;
+    }
     let handle: Awaited<ReturnType<typeof connectMcp>> | undefined;
     try {
       const credentials = await deps.getConnectionToken(userId, connection.connectionId);
@@ -30,31 +63,46 @@ export async function syncMcpContent(userId: string, deps = defaults) {
       const tool = definition.syncQueries[0].tool;
       if (!handle.toolNames.has(tool)) throw new Error('Source listing tool unavailable.');
       const properties = (handle.toolSchemas?.get(tool) as any)?.properties || {};
-      let items: ReturnType<typeof normalizeItems> = [];
-      let cursor: any = null;
+      let items: NormalizedMcpItem[] = [];
+      let cursor: HistoryCursor;
       let status = 'provider_limited';
       if (connection.server === 'granola') {
         const listed = normalizeItems(
           { tool, args: {}, kind: 'meeting' },
           await deps.callMcpTool(handle, tool, {}),
         );
-        const start = Number(claim.cursor?.offset || 0) % Math.max(1, listed.length);
-        const selected = listed.slice(start, start + 20);
-        const detail = granolaMeetingDetailArgs(
-          handle.toolSchemas?.get('get_meetings'),
-          selected.map((item) => item.externalId),
-        );
-        if (detail && handle.toolNames.has('get_meetings')) {
-          items = mergeGranolaMeetingDetails(
-            selected,
-            normalizeItems(
-              { tool: 'get_meetings', args: detail, kind: 'meeting' },
-              await deps.callMcpTool(handle, 'get_meetings', detail),
-            ),
-          );
-          cursor = { offset: start + selected.length < listed.length ? start + selected.length : 0 };
-          status = cursor.offset ? 'indexing' : 'provider_limited';
-        } else items = selected;
+        const known = new Set(saved.known || []);
+        const start = saved.complete ? 0 : Number(saved.offset || 0) % Math.max(1, listed.length);
+        // After the walk, only meetings the pass has not seen get details.
+        const selected = saved.complete
+          ? listed.filter((item) => !known.has(item.externalId)).slice(0, 20)
+          : listed.slice(start, start + 20);
+        items = selected;
+        const batches = handle.toolNames.has('get_meetings')
+          ? granolaMeetingDetailBatches(
+              handle.toolSchemas?.get('get_meetings'),
+              selected.map((item) => item.externalId),
+            )
+          : [];
+        if (batches.length) {
+          const detailed: NormalizedMcpItem[] = [];
+          for (const detail of batches)
+            detailed.push(
+              ...normalizeItems(
+                { tool: 'get_meetings', args: detail, kind: 'meeting' },
+                await deps.callMcpTool(handle, 'get_meetings', detail),
+              ),
+            );
+          items = mergeGranolaMeetingDetails(selected, detailed);
+        }
+        const next = start + selected.length;
+        if (!saved.complete && next < listed.length) {
+          cursor = { offset: next };
+          status = 'indexing';
+        } else {
+          for (const item of saved.complete ? selected : listed) known.add(item.externalId);
+          cursor = { complete: true, checkedAt: now, known: [...known].slice(-GRANOLA_KNOWN_CAP) };
+        }
       } else {
         const slack = connection.server === 'slack';
         const pageKey = slack ? 'page' : 'startAt';
@@ -64,19 +112,32 @@ export async function syncMcpContent(userId: string, deps = defaults) {
           : { jql: 'updated >= "1970-01-01" ORDER BY updated DESC', maxResults: 100 };
         if (slack && properties.sort) base.sort = 'timestamp';
         if (slack && properties.sort_dir) base.sort_dir = 'desc';
-        const current = Number(claim.cursor?.offset || (slack ? 1 : 0));
-        const offsets = canPage && current > (slack ? 1 : 0) ? [slack ? 1 : 0, current] : [current];
-        for (const offset of offsets) {
+        const first = slack ? 1 : 0;
+        const read = async (offset: number) => {
           const args = { ...base, ...(canPage ? { [pageKey]: offset } : {}) };
-          const page = normalizeItems(
+          return normalizeItems(
             { tool, args, kind: slack ? 'message' : 'ticket' },
-            await deps.callMcpTool(handle, tool, args),
+            await deps.callMcpTool(handle!, tool, args),
           );
+        };
+        if (saved.complete) {
+          // The first page holds the newest items. Keep only the items that
+          // changed since the last check (or that carry no time).
+          const since = (saved.checkedAt || 0) - CHANGE_MARGIN_MS;
+          items = (await read(first)).filter(
+            (item) => item.updatedAtSource === undefined || item.updatedAtSource > since,
+          );
+          cursor = { offset: first, complete: true, checkedAt: now };
+        } else {
+          const current = Number(saved.offset || first);
+          // While the walk runs, the first page is read again for new items.
+          if (canPage && current > first) items.push(...(await read(first)));
+          const page = await read(current);
           items.push(...page);
-          if (offset === current && canPage) {
-            cursor = { offset: page.length ? current + (slack ? 1 : page.length) : slack ? 1 : 0 };
-            status = page.length ? 'indexing' : 'provider_limited';
-          }
+          if (canPage && page.length) {
+            cursor = { offset: current + (slack ? 1 : page.length) };
+            status = 'indexing';
+          } else cursor = { offset: first, complete: true, checkedAt: now };
         }
       }
       items = [...new Map(items.map((item) => [item.externalId, item])).values()];
