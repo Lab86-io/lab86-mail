@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexMutation } from '@/lib/hosted/convex';
+import { resolveBriefTimezone } from '@/lib/mail/brief-timezone';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,6 +12,7 @@ interface EvidenceReconcileDependencies {
   isInternalCronRequest: typeof isInternalCronRequest;
   advanceWork: typeof advanceWork;
   convexMutation: typeof convexMutation;
+  resolveTimezone: typeof resolveBriefTimezone;
   reportError: typeof console.error;
 }
 
@@ -18,6 +20,7 @@ const defaults: EvidenceReconcileDependencies = {
   isInternalCronRequest,
   advanceWork,
   convexMutation,
+  resolveTimezone: resolveBriefTimezone,
   reportError: console.error,
 };
 
@@ -37,7 +40,10 @@ export function createEvidenceReconcilePost(deps: EvidenceReconcileDependencies 
       );
     }
     try {
-      const result = await deps.advanceWork({ userId, workId, trigger: 'evidence' });
+      // The cron has no browser zone. Without one the planner reads the work
+      // hours in UTC, so use the stored zone, as the work conductor does.
+      const timezone = await deps.resolveTimezone(userId, undefined);
+      const result = await deps.advanceWork({ userId, workId, trigger: 'evidence', timezone });
       // Dormant Work keeps its unreconciled evidence. The wake makes it a
       // candidate again, and the proof is read then.
       if (result.status !== 'dormant') {
