@@ -111,25 +111,27 @@ export default function PricingPage() {
           <h2 id="budget" className="text-xl font-semibold">
             What {PAID_PLANS.pro.name} pays for
           </h2>
+          <p className="max-w-2xl text-[14px] leading-relaxed">
+            {PAID_PLANS.pro.name} has no usage limit. Nothing stops at a monthly limit, and nothing changes to
+            a lower-cost model.
+          </p>
           <dl className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-xl border border-[var(--color-border)] p-4">
               <dt className="font-medium">Every morning</dt>
               <dd className="mt-1 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
-                The Brief is written each morning. The monthly budget never stops it.
+                {PRODUCT_NAME} writes the Brief each morning with the model that you choose.
               </dd>
             </div>
             <div className="rounded-xl border border-[var(--color-border)] p-4">
               <dt className="font-medium">All day</dt>
               <dd className="mt-1 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
-                Sorting and drafts run on every new message. Near the end of the budget they use lower-cost
-                models, and they do not stop.
+                Sorting and drafts run on every new message.
               </dd>
             </div>
             <div className="rounded-xl border border-[var(--color-border)] p-4">
               <dt className="font-medium">When you ask</dt>
               <dd className="mt-1 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
-                Chat uses a monthly model budget. When it is used up, chat waits for the next month, or you
-                can add your own key. Sorting, drafts, and the Brief keep running.
+                Chat has no usage limit. Ask as much as you need.
               </dd>
             </div>
           </dl>

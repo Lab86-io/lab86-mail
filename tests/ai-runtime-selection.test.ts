@@ -36,10 +36,11 @@ if (process.env.CHAT_RUNTIME_SELECTION_TEST !== '1') {
     convexMutation: async () => ({}),
   }));
   const billingCalls: any[] = [];
+  let entitlementFixture: Record<string, unknown> = { plan: 'pro', status: 'active', monthlyCredits: 100000 };
   mock.module('../lib/hosted/billing', () => ({
     getAiBillingEntitlement: async (options?: unknown) => {
       billingCalls.push(options);
-      return { plan: 'pro', status: 'active', monthlyCredits: 100000 };
+      return entitlementFixture;
     },
   }));
   const controls = await import('../lib/hosted/controls');
@@ -139,6 +140,36 @@ if (process.env.CHAT_RUNTIME_SELECTION_TEST !== '1') {
       billingCalls.length = 0;
       await resolveAiRuntime({ userId: 'fixture-user', speed: 'primary', feature: 'daily_brief_layout' });
       expect(billingCalls).toEqual([{ userId: 'fixture-user', snapshot: null }]);
+    });
+    test('Pro has no credit limit: far over the old limit, chat and background work keep the chosen model', async () => {
+      const { AiAccessError } = await import('../lib/ai/gateway');
+      state = {
+        settings: {
+          enabled: true,
+          mode: 'lab86',
+          provider: 'openrouter',
+          model: 'anthropic/claude-sonnet-4.6',
+          fastModel: 'openai/gpt-5.4-mini',
+        },
+        lab86Usage: { creditsUsed: 50_000 },
+      };
+      entitlementFixture = { plan: 'pro', status: 'active', monthlyCredits: 500, unlimited: true };
+      for (const feature of ['agent', 'chat', 'classify_threads', 'daily_brief_layout']) {
+        const result = await resolveAiRuntime({ userId: 'fixture-user', speed: 'primary', feature });
+        expect(result).toMatchObject({ source: 'lab86', modelName: 'anthropic/claude-sonnet-4.6' });
+      }
+      // A limited plan at the same use stops chat and moves other work to the fast model.
+      entitlementFixture = { plan: 'admin', status: 'active', monthlyCredits: 500, unlimited: false };
+      await expect(
+        resolveAiRuntime({ userId: 'fixture-user', speed: 'primary', feature: 'agent' }),
+      ).rejects.toBeInstanceOf(AiAccessError);
+      const background = await resolveAiRuntime({
+        userId: 'fixture-user',
+        speed: 'primary',
+        feature: 'classify_threads',
+      });
+      expect(background.modelName).toBe('openai/gpt-5.4-mini');
+      entitlementFixture = { plan: 'pro', status: 'active', monthlyCredits: 100000 };
     });
     test('required OpenRouter mode uses the key route despite stale direct-provider settings', async () => {
       required = true;

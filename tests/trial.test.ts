@@ -43,7 +43,12 @@ describe('the 14-day trial', () => {
     const endsAt = NOW + TRIAL_DAYS * DAY_MS;
     const d = deps([], null, { granted: true, trialStartedAt: NOW, trialEndsAt: endsAt });
     const entitlement = await getAiBillingEntitlement({}, d.deps);
-    expect(entitlement).toMatchObject({ plan: 'pro', monthlyCredits: 500, trialEndsAt: endsAt });
+    expect(entitlement).toMatchObject({
+      plan: 'pro',
+      monthlyCredits: 500,
+      unlimited: true,
+      trialEndsAt: endsAt,
+    });
     expect(d.grantTrial).toHaveBeenCalledWith('user-1', { days: 14, monthlyCredits: 500 });
     expect(d.persist.mock.calls[0][1]).toMatchObject({ plan: 'pro', trialEndsAt: endsAt });
   });
@@ -126,7 +131,12 @@ describe('the 14-day trial', () => {
 
   test('background work reads a trial only until it ends', () => {
     const snapshot = { plan: 'pro', status: 'trialing', monthlyCredits: 500, trialEndsAt: NOW + 1000 };
-    expect(entitlementFromSnapshot(snapshot, NOW)).toMatchObject({ plan: 'pro', trialEndsAt: NOW + 1000 });
+    // The trial is Pro, with no credit limit.
+    expect(entitlementFromSnapshot(snapshot, NOW)).toMatchObject({
+      plan: 'pro',
+      trialEndsAt: NOW + 1000,
+      unlimited: true,
+    });
     expect(entitlementFromSnapshot(snapshot, NOW + 1000)).toBeNull();
     // A paid row keeps its history fields but is not a trial.
     expect(
@@ -134,7 +144,7 @@ describe('the 14-day trial', () => {
         { plan: 'pro', status: 'active', monthlyCredits: 500, trialEndsAt: NOW - 5 },
         NOW,
       ),
-    ).toEqual({ plan: 'pro', status: 'active', monthlyCredits: 500, source: 'snapshot' });
+    ).toEqual({ plan: 'pro', status: 'active', monthlyCredits: 500, unlimited: true, source: 'snapshot' });
   });
 });
 

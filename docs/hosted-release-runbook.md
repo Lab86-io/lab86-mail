@@ -52,7 +52,8 @@ Create separate development and production resources for:
 Clerk Billing plan shape:
 
 - Free/default: no Lab86-hosted AI budget
-- Pro: $15/month or $120/year with a 500-credit internal AI budget
+- Pro: $29/month or $290/year, with no credit limit (the entitlement is `unlimited`)
+- Own key: $12/month or $120/year, plan slug `mail_byok`
 - Pro plan slug: `mail_pro`
 - Pro feature slug: `b2c_mail`
 
@@ -235,7 +236,9 @@ Models and credits:
 - `LAB86_MAIL_OPENAI_NANO_MODEL`
 - `LAB86_MAIL_AGENT_FALLBACK_MODEL`
 - `LAB86_AI_FREE_MONTHLY_CREDITS=0`
-- `LAB86_AI_PRO_MONTHLY_CREDITS=500`
+- `LAB86_AI_PRO_MONTHLY_CREDITS=500` (stored with the Pro row for rollback only; Pro has no credit limit)
+- `LAB86_AI_ADMIN_MONTHLY_CREDITS` (optional; set it only to give admin a limit)
+- `LAB86_BRIEF_COST_BUDGET_USD` (optional; the per-edition safety stop, default 2)
 - `LAB86_REQUIRE_USER_OPENROUTER_KEY`
 - `LAB86_DISABLE_SUBSCRIPTIONS`
 

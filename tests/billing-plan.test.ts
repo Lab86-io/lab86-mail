@@ -39,7 +39,7 @@ test('the free plan shows prices and Upgrade', () => {
     byokAnnualUsd: PAID_PLANS.byok.annualUsd,
   };
   expect(billingSummary({ plan: 'free', paidPlan: real }).line).toBe(
-    'Plan: Free. Pro (hosted models) is $15/mo or $150/yr. Own key is $12/mo or $120/yr.',
+    'Plan: Free. Pro (hosted models) is $29/mo or $290/yr. Own key is $12/mo or $120/yr.',
   );
   expect(billingSummary({}).line).toBe(
     'Plan: Free. Upgrade for hosted models, or bring your own key for less.',

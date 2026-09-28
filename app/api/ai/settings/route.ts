@@ -64,6 +64,8 @@ export async function GET() {
     monthlyCredits,
     creditsUsed,
     feature: 'agent',
+    // Pro has no credit limit, so its status is always 'available'.
+    unlimited: !requireOpenRouter && entitlement.unlimited,
   });
   return NextResponse.json({
     ok: true,

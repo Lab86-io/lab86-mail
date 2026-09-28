@@ -22,14 +22,15 @@ export interface PaidPlan {
 }
 
 // Clerk Billing (production) charges these amounts. Change them here and in
-// the Clerk dashboard together.
+// the Clerk dashboard together. Pro has no credit limit (owner decision,
+// 2026-09-27): see resolveAiBudgetPolicy in lib/ai/budget.ts.
 export const PAID_PLANS: Readonly<Record<PaidPlanId, PaidPlan>> = {
   pro: {
     id: 'pro',
     name: 'Pro',
-    monthlyUsd: 15,
-    annualUsd: 150,
-    summary: 'Everything, with hosted models and a monthly budget included.',
+    monthlyUsd: 29,
+    annualUsd: 290,
+    summary: 'Everything, with hosted models and no usage limit.',
   },
   byok: {
     id: 'byok',
@@ -48,18 +49,18 @@ export const TRIAL_DAYS = 14;
 export const TRIAL_NOTE_DAYS = 5;
 export const DAY_MS = 86_400_000;
 
-/** "$15" or "$4.20": whole dollars drop the cents. */
+/** "$29" or "$4.20": whole dollars drop the cents. */
 export function formatUsd(amount: number): string {
   return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`;
 }
 
-/** "$15/month or $150/year". */
+/** "$29/month or $290/year". */
 export function planPriceLine(id: PaidPlanId): string {
   const plan = PAID_PLANS[id];
   return `${formatUsd(plan.monthlyUsd)}/month or ${formatUsd(plan.annualUsd)}/year`;
 }
 
-/** "$15/mo or $150/yr", for tight rows. */
+/** "$29/mo or $290/yr", for tight rows. */
 export function planPriceShort(id: PaidPlanId): string {
   const plan = PAID_PLANS[id];
   return `${formatUsd(plan.monthlyUsd)}/mo or ${formatUsd(plan.annualUsd)}/yr`;
@@ -170,7 +171,7 @@ export function planTableRows(): PlanTableRow[] {
     {
       feature: 'Chat and Albatrosses',
       free: 'Not included',
-      pro: 'Included, with a monthly budget',
+      pro: 'Included, with no usage limit',
       byok: 'Included, paid to your provider',
     },
     {
@@ -200,6 +201,10 @@ export function pricingFaq(): Array<{ question: string; answer: string }> {
     {
       question: 'What happens when the trial ends?',
       answer: `A new account gets ${TRIAL_DAYS} days of ${PAID_PLANS.pro.name} with no card. When the trial ends, the account moves to ${FREE_PLAN_NAME}. Nothing is charged, and nothing is deleted.`,
+    },
+    {
+      question: `Does ${PAID_PLANS.pro.name} have a usage limit?`,
+      answer: `No. Chat, sorting, drafts, and the Brief do not stop at a monthly limit, and they do not change to a lower-cost model. The Terms still let ${COMPANY_NAME} stop abuse.`,
     },
     {
       question: 'Can I cancel at any time?',

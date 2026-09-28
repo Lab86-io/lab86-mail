@@ -6,6 +6,7 @@ import {
   isAiChatFeature,
   providerReportedCostUsd,
   resolveAiBudgetPolicy,
+  resolveEntitlementBudgetPolicy,
   shouldDepleteLab86Budget,
 } from '../lib/ai/budget';
 
@@ -151,6 +152,71 @@ describe('resolveAiBudgetPolicy', () => {
     });
     expect(classify.hardStopped).toBe(false);
     expect(classify.forceFastModel).toBe(true);
+  });
+
+  test('an unlimited plan (Pro) never stops a call or forces a cheaper model', () => {
+    for (const feature of ['agent', 'chat', 'classify_threads', 'daily_brief_layout', 'jev_mail']) {
+      for (const creditsUsed of [0, B2C_INTERNAL_MONTHLY_CREDITS, B2C_INTERNAL_MONTHLY_CREDITS * 100]) {
+        for (const monthlyCredits of [0, B2C_INTERNAL_MONTHLY_CREDITS]) {
+          expect(resolveAiBudgetPolicy({ feature, monthlyCredits, creditsUsed, unlimited: true })).toEqual({
+            subscribed: true,
+            unlimited: true,
+            ratio: 0,
+            softLimited: false,
+            exhausted: false,
+            forceFastModel: false,
+            hardStopped: false,
+            chat: isAiChatFeature(feature),
+          });
+        }
+      }
+    }
+    // A plan with a limit keeps it: no flag, or false, is the old policy.
+    for (const unlimited of [undefined, false]) {
+      const chat = resolveAiBudgetPolicy({
+        feature: 'agent',
+        monthlyCredits: B2C_INTERNAL_MONTHLY_CREDITS,
+        creditsUsed: B2C_INTERNAL_MONTHLY_CREDITS,
+        unlimited,
+      });
+      expect(chat).toMatchObject({ unlimited: false, exhausted: true, hardStopped: true });
+      expect(
+        resolveAiBudgetPolicy({ feature: 'agent', monthlyCredits: 0, creditsUsed: 0, unlimited }),
+      ).toMatchObject({ subscribed: false, hardStopped: true });
+    }
+  });
+});
+
+describe('resolveEntitlementBudgetPolicy', () => {
+  const base = { freeMonthlyCredits: 25, creditsUsed: 1000, feature: 'agent' };
+
+  test('a current Pro entitlement has no limit, trial included', () => {
+    for (const status of ['active', 'trialing'])
+      expect(
+        resolveEntitlementBudgetPolicy({
+          ...base,
+          entitlement: { status, monthlyCredits: 500, unlimited: true },
+        }),
+      ).toMatchObject({ unlimited: true, hardStopped: false, forceFastModel: false });
+  });
+
+  test('a lapsed entitlement, no entitlement, or a row with no flag keeps a limit', () => {
+    const lapsed = resolveEntitlementBudgetPolicy({
+      ...base,
+      entitlement: { status: 'canceled', monthlyCredits: 500, unlimited: true },
+    });
+    expect(lapsed).toMatchObject({ unlimited: false, exhausted: true, hardStopped: true });
+    expect(lapsed.ratio).toBe(1000 / 25);
+    expect(resolveEntitlementBudgetPolicy({ ...base, entitlement: null })).toMatchObject({
+      unlimited: false,
+      hardStopped: true,
+    });
+    const stored = resolveEntitlementBudgetPolicy({
+      ...base,
+      creditsUsed: 100,
+      entitlement: { status: 'active', monthlyCredits: 500 },
+    });
+    expect(stored).toMatchObject({ unlimited: false, ratio: 0.2, hardStopped: false });
   });
 });
 

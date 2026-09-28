@@ -51,6 +51,10 @@ export function aiCreditDefaults() {
   };
   return {
     freeMonthlyCredits: numberFromEnv(process.env.LAB86_AI_FREE_MONTHLY_CREDITS, 0),
+    // Pro has no credit limit (the entitlement's `unlimited` flag), so the
+    // budget never reads this number for Pro. The entitlement row still
+    // stores it, so that an older build with no `unlimited` flag reads a paid
+    // plan after a rollback, not an empty budget.
     proMonthlyCredits: numberFromEnv(process.env.LAB86_AI_PRO_MONTHLY_CREDITS, 500),
   };
 }

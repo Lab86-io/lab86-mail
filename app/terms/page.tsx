@@ -14,7 +14,7 @@ export default function TermsPage() {
       <article className="mx-auto max-w-3xl space-y-5">
         <h1 className="text-2xl font-semibold">Terms of Service</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
-          Effective June 1, 2026. Updated September 26, 2026.
+          Effective June 1, 2026. Updated September 27, 2026.
         </p>
         <p>
           {PRODUCT_NAME} is hosted email and personal operations software from {COMPANY_NAME}. You are
@@ -36,8 +36,8 @@ export default function TermsPage() {
           Paid plans are managed through Clerk Billing with Stripe payment processing. {PAID_PLANS.pro.name}{' '}
           costs {planPriceLine('pro')}. {PAID_PLANS.byok.name} costs {planPriceLine('byok')}. A new account
           gets {TRIAL_DAYS} days of {PAID_PLANS.pro.name} with no card; when the trial ends, the account moves
-          to {FREE_PLAN_NAME} and nothing is charged. Hosted model use is protected by internal safeguards and
-          may route to lower-cost models or pause chat when a billing period&apos;s budget is used up.
+          to {FREE_PLAN_NAME} and nothing is charged. {PAID_PLANS.pro.name} includes hosted model use with no
+          usage limit.
         </p>
         <p>
           The service may be suspended or limited to protect users, providers, infrastructure, or billing
