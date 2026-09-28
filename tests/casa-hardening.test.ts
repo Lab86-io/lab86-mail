@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { assertPublicHttpUrl, ipv6Groups } from '../lib/attachments/fetch-store';
 import { decryptSecret, encryptSecret } from '../lib/security/crypto';
 import { sanitizeInternalPath } from '../lib/security/redirect';
@@ -90,12 +90,26 @@ describe('encrypted secrets need the full GCM tag (S6)', () => {
 });
 
 describe('constantTimeEqual (S11)', () => {
-  test('matches equal strings only', () => {
-    expect(constantTimeEqual('user:pass', 'user:pass')).toBe(true);
-    expect(constantTimeEqual('user:pass', 'user:pasS')).toBe(false);
-    expect(constantTimeEqual('user:pass', 'user:pas')).toBe(false);
-    expect(constantTimeEqual('', '')).toBe(true);
-    expect(constantTimeEqual('', 'x')).toBe(false);
+  test('matches equal strings only', async () => {
+    expect(await constantTimeEqual('user:pass', 'user:pass')).toBe(true);
+    expect(await constantTimeEqual('user:pass', 'user:pasS')).toBe(false);
+    expect(await constantTimeEqual('user:pass', 'user:pas')).toBe(false);
+    expect(await constantTimeEqual('user:pas', 'user:pass')).toBe(false);
+    expect(await constantTimeEqual('', '')).toBe(true);
+    expect(await constantTimeEqual('', 'x')).toBe(false);
+    expect(await constantTimeEqual('user:p\u00e4ss', 'user:p\u00e4ss')).toBe(true);
+  });
+
+  test('compares fixed-length digests, not the strings', async () => {
+    const digest = spyOn(crypto.subtle, 'digest');
+    try {
+      await constantTimeEqual('a', `${'long configured secret '.repeat(20)}`);
+      // Both sides become 32-byte digests, so the loop has the same length for every input.
+      expect(digest).toHaveBeenCalledTimes(2);
+      for (const call of digest.mock.calls) expect(call[0]).toBe('SHA-256');
+    } finally {
+      digest.mockRestore();
+    }
   });
 });
 

@@ -75,7 +75,7 @@ export default async function proxy(req: NextRequest, event: NextFetchEvent) {
     req.nextUrl.origin,
     process.env.LAB86_CONVEX_INTERNAL_SECRET,
   );
-  const basicAuth = nativeBrowser ? NextResponse.next() : basicAuthOrNext(req);
+  const basicAuth = nativeBrowser ? NextResponse.next() : await basicAuthOrNext(req);
   if (basicAuth.status !== 200) return basicAuth;
 
   // Staging basic auth makes browsers attach `Authorization: Basic ...` to every
@@ -134,15 +134,25 @@ export const config = {
   ],
 };
 
-/** Compares two strings in time that does not depend on where they differ. */
-export function constantTimeEqual(a: string, b: string) {
-  let diff = a.length ^ b.length;
-  const length = Math.max(a.length, b.length);
-  for (let i = 0; i < length; i += 1) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+/**
+ * Compares the SHA-256 digests of two strings, byte by byte through all 32
+ * bytes. The time depends on neither where the strings differ nor the length
+ * of the configured value, so a caller cannot learn the secret or its length.
+ */
+export async function constantTimeEqual(a: string, b: string) {
+  const encoder = new TextEncoder();
+  const [left, right] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(a)),
+    crypto.subtle.digest('SHA-256', encoder.encode(b)),
+  ]);
+  const x = new Uint8Array(left);
+  const y = new Uint8Array(right);
+  let diff = 0;
+  for (let i = 0; i < x.length; i += 1) diff |= x[i] ^ y[i];
   return diff === 0;
 }
 
-function basicAuthOrNext(req: Request) {
+async function basicAuthOrNext(req: Request) {
   const url = new URL(req.url);
   if (!shouldRequireBasicAuth(req, url.pathname)) return NextResponse.next();
 
@@ -156,7 +166,7 @@ function basicAuthOrNext(req: Request) {
   const [scheme, encoded] = authHeader.split(/\s+/, 2);
   if (scheme?.toLowerCase() === 'basic' && encoded) {
     const decoded = decodeBase64(encoded);
-    if (constantTimeEqual(decoded, `${user}:${password}`)) return NextResponse.next();
+    if (await constantTimeEqual(decoded, `${user}:${password}`)) return NextResponse.next();
   }
 
   return new NextResponse('Authentication required.', {
