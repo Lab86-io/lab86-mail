@@ -2,8 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { convexTest } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import type { Doc } from '../convex/_generated/dataModel';
+import { planBodyWrite } from '../convex/mailBodies';
 import schema from '../convex/schema';
-import { bodyPartHash, joinBodyHash } from '../lib/mail/corpus-body';
+import { ABSENT_BODY_PART, bodyPartHash, joinBodyHash } from '../lib/mail/corpus-body';
 
 // IO-1: the body split of the mail corpus. Small documents in
 // mailCorpusMessages, bodies in mailCorpusBodies, a hash skip on each write,
@@ -472,6 +473,25 @@ describe('the live reads', () => {
   });
 });
 
+describe('the body write plan', () => {
+  test('an empty legacy text body is no body; an empty legacy HTML body means no HTML', () => {
+    const emptyText = planBodyWrite({ textBody: '' } as any, {});
+    expect(emptyText).toMatchObject({ write: true, textChanged: false, excerpt: '' });
+    expect(emptyText.textBody).toBeUndefined();
+    expect(emptyText.bodyHash).toBe(joinBodyHash({ text: ABSENT_BODY_PART, html: ABSENT_BODY_PART }));
+
+    const emptyHtml = planBodyWrite({ textBody: '', htmlBody: '' } as any, {});
+    expect(emptyHtml.textBody).toBeUndefined();
+    expect(emptyHtml.htmlBody).toBe('');
+    expect(emptyHtml.bodyHash).toBe(joinBodyHash({ text: ABSENT_BODY_PART, html: bodyPartHash('') }));
+
+    // A real legacy text body still moves.
+    const withText = planBodyWrite({ textBody: 'Hello' } as any, {});
+    expect(withText.textBody).toBe('Hello');
+    expect(withText.bodyHash).toBe(joinBodyHash({ text: bodyPartHash('Hello'), html: ABSENT_BODY_PART }));
+  });
+});
+
 describe('the migration', () => {
   test('a dry run counts and writes nothing', async () => {
     const t = harness();
@@ -494,6 +514,8 @@ describe('the migration', () => {
     await insertLegacy(t, { accountId: 'dead', providerMessageId: 'dead_1' });
     // A document with no inline body gets its hash and no body document.
     await insertLegacy(t, { providerMessageId: 'empty', textBody: undefined, htmlBody: undefined });
+    // The old writer stored '' for a missing text body: that is no body too.
+    await insertLegacy(t, { providerMessageId: 'empty-text', textBody: '', htmlBody: undefined });
     let result = await t.mutation(internal.mailBodies.migrateMessageBodies, { limit: 2 });
     let pages = 1;
     while (!result.done && pages < 20) {
@@ -506,7 +528,7 @@ describe('the migration', () => {
       pages++;
     }
     expect(result.done).toBe(true);
-    expect(result.totals).toMatchObject({ accounts: 1, scanned: 6, split: 6, bodies: 5 });
+    expect(result.totals).toMatchObject({ accounts: 1, scanned: 7, split: 7, bodies: 5 });
     const docs = await all(t, 'mailCorpusMessages');
     const live = docs.filter((doc) => doc.accountId === scope.accountId);
     expect(
@@ -516,11 +538,12 @@ describe('the migration', () => {
     expect(docs.find((doc) => doc.providerMessageId === 'dead_1')?.textBody).toBeDefined();
     expect((await all(t, 'mailCorpusBodies')).length).toBe(5);
     expect(docs.find((doc) => doc.providerMessageId === 'empty')?.bodyHash).toBe('-.-');
+    expect(docs.find((doc) => doc.providerMessageId === 'empty-text')?.bodyHash).toBe('-.-');
     const migration = await t.run((ctx) => ctx.db.query('dataMigrations').first());
     expect(migration?.name).toBe('mailCorpusBodySplit');
 
     const again = await t.mutation(internal.mailBodies.migrateMessageBodies, {});
-    expect(again.totals).toMatchObject({ scanned: 6, split: 0, alreadySplit: 6 });
+    expect(again.totals).toMatchObject({ scanned: 7, split: 0, alreadySplit: 7 });
     const withDead = await t.mutation(internal.mailBodies.migrateMessageBodies, {
       includeDisconnected: true,
       accountIndex: 1,

@@ -150,8 +150,11 @@ export function planBodyWrite(
   incoming: { textBody?: string; htmlBody?: string },
 ): BodyPlan {
   const legacy = Boolean(existing) && isLegacyCorpusMessage(existing);
+  // The old writer stored '' for a missing text body; it is not a body. An
+  // empty HTML body stays: there '' means "no HTML", not "not hydrated".
+  const legacyText = legacy && existing?.textBody ? existing.textBody : undefined;
   const stored = legacy
-    ? { text: bodyPartHash(existing?.textBody), html: bodyPartHash(existing?.htmlBody) }
+    ? { text: bodyPartHash(legacyText), html: bodyPartHash(existing?.htmlBody) }
     : existing
       ? splitBodyHash(existing.bodyHash)
       : { text: ABSENT_BODY_PART, html: ABSENT_BODY_PART };
@@ -163,7 +166,7 @@ export function planBodyWrite(
   };
   const textChanged = next.text !== stored.text;
   const write = legacy || textChanged || next.html !== stored.html;
-  const resolvedText = text ?? (legacy ? (existing?.textBody ?? undefined) : undefined);
+  const resolvedText = text ?? (legacy ? legacyText : undefined);
   const resolvedHtml = html ?? (legacy ? (existing?.htmlBody ?? undefined) : undefined);
   return {
     bodyHash: joinBodyHash(next),
