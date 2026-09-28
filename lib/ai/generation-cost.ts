@@ -14,6 +14,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 const OPENROUTER_GENERATION_URL = 'https://openrouter.ai/api/v1/generation';
 /** Waits before each lookup round. The provider needs a few seconds after a call. */
 export const GENERATION_LOOKUP_DELAYS_MS = [3_000, 10_000, 30_000];
+/** The time limit of one lookup request. A request that hangs must not stop the usage record. */
+export const GENERATION_LOOKUP_TIMEOUT_MS = 10_000;
 
 /** The OpenRouter generation ids of the requests that one model call sent. */
 export interface GenerationCapture {
@@ -57,13 +59,18 @@ interface LookupOptions {
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   delaysMs?: readonly number[];
+  /** The time limit of each lookup request. Default GENERATION_LOOKUP_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
 
 /** The cost of one generation, or null when OpenRouter has no record of it yet. */
 export async function readGenerationCost(id: string, options: LookupOptions): Promise<GenerationCost | null> {
   const response = await (options.fetch ?? globalThis.fetch)(
     `${OPENROUTER_GENERATION_URL}?id=${encodeURIComponent(id)}`,
-    { headers: { Authorization: `Bearer ${options.apiKey}` } },
+    {
+      headers: { Authorization: `Bearer ${options.apiKey}` },
+      signal: AbortSignal.timeout(options.timeoutMs ?? GENERATION_LOOKUP_TIMEOUT_MS),
+    },
   );
   if (!response.ok) return null;
   const data = ((await response.json().catch(() => null)) as { data?: Record<string, unknown> } | null)?.data;

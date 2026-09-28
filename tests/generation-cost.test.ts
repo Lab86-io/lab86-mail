@@ -131,6 +131,33 @@ describe('the generation cost lookup', () => {
     });
   });
 
+  test('a lookup request that hangs stops at its time limit, and the round goes on', async () => {
+    const signals: Array<AbortSignal | null | undefined> = [];
+    const hang = (async (url: string, init?: RequestInit) => {
+      signals.push(init?.signal);
+      if (url.endsWith('gen-ok')) return generation({ total_cost: 0.1 });
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    }) as unknown as typeof fetch;
+    const error = (await readGenerationCost('gen-hang', { apiKey: 'k', fetch: hang, timeoutMs: 5 }).catch(
+      (e: unknown) => e,
+    )) as Error;
+    expect(error.name).toBe('TimeoutError');
+    expect(
+      await lookupGenerationCosts(['gen-hang', 'gen-ok'], {
+        apiKey: 'k',
+        fetch: hang,
+        sleep: async () => {},
+        delaysMs: [0],
+        timeoutMs: 5,
+      }),
+    ).toEqual({ costUsd: 0.1, inputTokens: 0, outputTokens: 0 });
+    // Without an option, each request still has a limit.
+    await readGenerationCost('gen-ok', { apiKey: 'k', fetch: hang });
+    expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
+  });
+
   test('waits, reads again the ids with no record yet, and sums them', async () => {
     const waits: number[] = [];
     let round = 0;
@@ -204,14 +231,19 @@ describe('recording a failed call', () => {
     // No key for the lookup: at once too.
     const saved = process.env.OPENROUTER_API_KEY;
     process.env.OPENROUTER_API_KEY = '';
-    await recordFailedModelCall({
-      runtime: hosted,
-      feature: 'f',
-      error: 'text',
-      generationIds: ['g'],
-      record,
-    });
-    process.env.OPENROUTER_API_KEY = saved;
+    try {
+      await recordFailedModelCall({
+        runtime: hosted,
+        feature: 'f',
+        error: 'text',
+        generationIds: ['g'],
+        record,
+      });
+    } finally {
+      // An assigned undefined becomes the string "undefined", a key for later files.
+      if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = saved;
+    }
     expect(rows[3].slice(2)).toEqual([undefined, false, undefined]);
   });
 
