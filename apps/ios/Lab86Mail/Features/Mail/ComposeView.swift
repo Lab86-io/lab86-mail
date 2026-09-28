@@ -6,6 +6,16 @@ import UniformTypeIdentifiers
 // hairline recipient rows, the subject as the page's display-face headline,
 // and a borderless body. The send contract is unchanged.
 struct ComposeView: View {
+    // On the Mac a confirmation action in a sheet is the default button, and
+    // Return would press it from any field. Send is the primary action there.
+    private static var sendPlacement: ToolbarItemPlacement {
+        #if os(macOS)
+        .primaryAction
+        #else
+        .confirmationAction
+        #endif
+    }
+
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
     @State private var accountID = ""
@@ -90,7 +100,7 @@ struct ComposeView: View {
                         }
                     }
                 }
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: Self.sendPlacement) {
                     Button {
                         Task { await send() }
                     } label: {
@@ -109,6 +119,9 @@ struct ComposeView: View {
                         }
                     }
                     .disabled(!canSend || isSending)
+                    // Command-Return sends. Plain Return never does: in the
+                    // address fields it picks a person or makes a chip.
+                    .keyboardShortcut(.return, modifiers: .command)
                     .accessibilityLabel(sendsLater ? "Schedule" : "Send")
                 }
             }
