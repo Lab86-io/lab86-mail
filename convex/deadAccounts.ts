@@ -23,7 +23,7 @@ export const DEAD_ACCOUNT_PURGE_AFTER_MS = 30 * DAY_MS;
  * branch) is purged as soon as it exists, with a `by_user_account` index.
  */
 export const DEAD_ACCOUNT_TABLES = [
-  { table: 'mailCorpusBodies', index: 'by_user_account', cap: 40 },
+  { table: 'mailCorpusBodies', index: 'by_user_account', cap: 25 },
   { table: 'mailCorpusMessages', index: 'by_user_account', cap: 40 },
   { table: 'mailCorpusThreads', index: 'by_user_account', cap: 200 },
   { table: 'mailLabelMembership', index: 'by_user_account', cap: 250 },

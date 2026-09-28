@@ -1,4 +1,6 @@
+import { truncateText } from '../shared/text';
 import { contentHash } from '../sync/content-hash';
+import { CORPUS_SNIPPET_MAX_CHARS } from './corpus-body';
 
 // The repair sweep (M6) re-reads the newest mail of each mailbox every 30
 // minutes to catch read, folder, and star changes that a lost webhook missed.
@@ -28,7 +30,9 @@ export function repairFingerprint(message: RepairFingerprintInput): string {
     from: message.from ?? '',
     to: message.to ?? '',
     receivedAt: Number(message.receivedAt) || 0,
-    snippet: message.snippet ?? '',
+    // The corpus writer stores the snippet cut to this length; cut the provider
+    // snippet the same way, or every long snippet looks changed.
+    snippet: truncateText(message.snippet ?? '', CORPUS_SNIPPET_MAX_CHARS),
     labels: [...new Set(message.labels ?? [])].sort(),
     unread: Boolean(message.unread),
     starred: Boolean(message.starred),

@@ -228,8 +228,8 @@ describe('dead-account purge', () => {
       deadDays: 31,
       counts: { mailCorpusMessages: 45, mailCorpusThreads: 1, calendarEvents: 1, contentItems: 1 },
     });
-    // The body table does not exist here, so the report skips it.
-    expect(report.accounts[0].counts.mailCorpusBodies).toBeUndefined();
+    // The body table exists; this account has no body rows yet.
+    expect(report.accounts[0].counts.mailCorpusBodies).toBe(0);
 
     const dry = await t.mutation(internal.deadAccounts.purgeDeadAccountsTick, { now: later, dryRun: true });
     expect(dry).toMatchObject({ dryRun: true, scheduled: 0, accounts: [{ accountId: 'grant_1' }] });

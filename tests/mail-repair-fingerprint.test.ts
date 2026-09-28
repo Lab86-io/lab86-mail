@@ -106,4 +106,12 @@ describe('mailRepair.messageFingerprints', () => {
       }),
     ).rejects.toThrow('Too many message ids');
   });
+
+  test('a long provider snippet matches the stored snippet that the writer cut', () => {
+    const long = 'x'.repeat(900);
+    const base = { providerThreadId: 't', subject: 's', from: 'a@b.io', receivedAt: 1 };
+    expect(repairFingerprint({ ...base, snippet: long })).toBe(
+      repairFingerprint({ ...base, snippet: long.slice(0, 500) }),
+    );
+  });
 });
