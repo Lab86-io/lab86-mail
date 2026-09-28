@@ -185,6 +185,17 @@ describe('the sweep runs the stages', () => {
     ]);
     expect(run.stored[0].error).toBe('unavailable');
   });
+  test('an answer that cannot become a verdict is stored as unavailable', async () => {
+    const item = claimItem();
+    const run = sweepDeps(item, () => ({
+      model: 'typesafe/jev-1.13',
+      answers: {},
+      usage: { input_tokens: 1, output_tokens: 0 },
+    }));
+    await runJevSweep('u', run.deps);
+    expect(run.calls).toHaveLength(2);
+    expect(run.stored[0]).toMatchObject({ error: 'unavailable', leaseId: 'lease' });
+  });
 });
 
 describe('the claim and the store', () => {
