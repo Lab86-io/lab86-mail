@@ -532,8 +532,8 @@ describe('the disconnect purge chain', () => {
     // Five content items with their chunks, then as many thread-cache rows as
     // the byte room of the pass allows (a 64 KiB bound each).
     expect(first.byTable).toMatchObject({ contentItems: 5, contentChunks: 15 });
-    expect(first.byTable.userDocs).toBeGreaterThan(100);
-    expect(first.byTable.userDocs).toBeLessThanOrEqual(PURGE_PASS_BYTES / (64 * 1024));
+    expect(first.byTable?.userDocs).toBeGreaterThan(100);
+    expect(first.byTable?.userDocs).toBeLessThanOrEqual(PURGE_PASS_BYTES / (64 * 1024));
     expect(first.bytes).toBeLessThanOrEqual(PURGE_PASS_BYTES);
     await drain(t);
     const left = await t.run(async (ctx) => ({
