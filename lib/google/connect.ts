@@ -77,8 +77,7 @@ const defaults = {
   fetchGmailProfile: (accessToken: string) => fetchGmailProfile(accessToken),
   fetchGoogleUserInfo: (accessToken: string) => fetchGoogleUserInfo(accessToken),
   requireCurrentUser,
-  saveOAuthCompletion: (input: { userId: string; kind: 'mail'; payload: GoogleMailCompletionPayload }) =>
-    saveOAuthCompletion(input),
+  saveOAuthCompletion: saveOAuthCompletion<GoogleMailCompletionPayload>,
   randomState: () => randomBytes(32).toString('base64url'),
   randomUUID: (): string => randomUUID(),
   now: () => Date.now(),
