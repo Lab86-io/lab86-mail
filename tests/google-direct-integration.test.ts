@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { __setGoogleMailAdapterDepsForTest } from '../lib/google/adapter/mail';
 import { encodeAttachmentId } from '../lib/google/gmail-message';
+import { __setGoogleHistoryDepsForTest, syncGoogleHistory } from '../lib/google/history-sync';
 import { __setGoogleHttpDepsForTest } from '../lib/google/http';
 import { __setGoogleTokenDepsForTest } from '../lib/google/tokens';
 import {
@@ -36,6 +37,7 @@ afterEach(() => {
   __setGoogleHttpDepsForTest();
   __setGoogleTokenDepsForTest();
   __setGoogleMailAdapterDepsForTest();
+  __setGoogleHistoryDepsForTest();
   __setWebhookIngestDepsForTest();
   __setMailClassifierLoadersForTest();
 });
@@ -84,6 +86,48 @@ describe('a real caller with a google: grant goes to Gmail', () => {
           size: 42076,
         }),
       });
+    });
+  });
+});
+
+describe('History sync end to end', () => {
+  test('a History page is read through the router and written by the webhook ingest path', async () => {
+    await withHttpHarness(async (h) => {
+      h.onConvex('accounts:getConnectedAccount', () => accountRow({ grantId: GRANT }));
+      h.onConvex('mailCorpus:getSyncState', () => ({ historyId: '100', grantId: GRANT }));
+      h.onConvex('mailCorpus:upsertCorpusBatch', () => ({ ok: true }));
+      h.onConvex('mailCorpus:markSyncState', () => ({ ok: true }));
+      h.onConvex('mailCorpus:deleteCorpusMessage', () => ({ ok: true }));
+      h.convexFallback = () => null;
+      h.onNylas('GET', /\/gmail\/v1\/users\/me\/history$/, () => ({
+        json: {
+          history: [
+            {
+              id: '101',
+              messagesAdded: [{ message: { id: 'new-1', threadId: 'thread-new', labelIds: ['INBOX'] } }],
+            },
+            { id: '102', messagesDeleted: [{ message: { id: 'old-1', threadId: 'thread-old' } }] },
+          ],
+          historyId: '102',
+        },
+      }));
+      h.onNylas('GET', /\/gmail\/v1\/users\/me\/messages\/new-1$/, () => ({
+        json: receiptMessage({ id: 'new-1', threadId: 'thread-new' }),
+      }));
+      const result = await syncGoogleHistory({ userId: 'user_1', accountId: 'acct_1' });
+      expect(result).toMatchObject({ ok: true, added: 1, deleted: 1, historyId: '102' });
+      const read = h.nylasCalls.find((call) => call.path.endsWith('/messages/new-1'));
+      expect(new URLSearchParams(read?.search).get('format')).toBe('full');
+      const batch = h.convexCalls.find((call) => call.path === 'mailCorpus:upsertCorpusBatch');
+      expect(batch?.args.messages[0]).toMatchObject({
+        providerMessageId: 'new-1',
+        providerThreadId: 'thread-new',
+      });
+      expect(batch?.args.messages[0].headers).toEqual({ 'list-unsubscribe': '<https://example.com/unsub>' });
+      const deleted = h.convexCalls.find((call) => call.path === 'mailCorpus:deleteCorpusMessage');
+      expect(deleted?.args.providerMessageId).toBe('old-1');
+      const saved = h.convexCalls.filter((call) => call.path === 'mailCorpus:markSyncState').at(-1);
+      expect(saved?.args).toMatchObject({ historyId: '102', grantId: GRANT });
     });
   });
 });

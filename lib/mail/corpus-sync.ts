@@ -1,5 +1,6 @@
 import { applyCalendarWebhookDelta, isCalendarWebhookType } from '@/lib/calendar/sync';
 import { applyContactWebhookDelta, isContactWebhookType } from '@/lib/contacts/sync';
+import { isGoogleDirectGrant } from '@/lib/google/transport';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import { isGrantGoneError, markGrantNeedsReconnect, noteGrantFailure } from '@/lib/nylas/grant-health';
@@ -710,9 +711,11 @@ async function processWebhookEvent(
 
 async function isSwitchedNylasGrant(grantId: string) {
   const switched = await webhookDeps
-    .query<{ accountId: string } | null>(api.googleDirect.accountForPreviousNylasGrant, { grantId })
+    .query<{ accountId: string; grantId?: string } | null>(api.googleDirect.accountForPreviousNylasGrant, {
+      grantId,
+    })
     .catch(() => null);
-  return Boolean(switched);
+  return isGoogleDirectGrant(switched?.grantId);
 }
 
 /** Messages of one upsert batch: small, so one Convex mutation stays small. */

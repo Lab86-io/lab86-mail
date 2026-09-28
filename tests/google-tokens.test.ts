@@ -154,6 +154,16 @@ describe('getGoogleAccessToken', () => {
     expect(await getGoogleAccessToken(GRANT)).toBe('fresh');
   });
 
+  test('the memory cache keeps at most 1000 grants', async () => {
+    const { calls } = harness(row({ accessTokenEncrypted: 'enc(stored)', expiresAt: NOW + 30 * 60_000 }));
+    for (let index = 0; index <= 1000; index += 1) await getGoogleAccessToken(`google:acct-${index}`);
+    expect(calls.queries).toBe(1001);
+    await getGoogleAccessToken('google:acct-1000');
+    expect(calls.queries).toBe(1001);
+    await getGoogleAccessToken('google:acct-0');
+    expect(calls.queries).toBe(1002);
+  });
+
   test('a Nylas grant id is refused', async () => {
     const error = (await getGoogleAccessToken('d502cbfc-grant').catch((e) => e)) as GoogleApiError;
     expect(error.statusCode).toBe(400);

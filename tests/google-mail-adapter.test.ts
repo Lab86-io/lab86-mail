@@ -120,6 +120,7 @@ beforeEach(() => {
     }) as any,
     boundary: () => 'UPLOAD',
     now: () => 1_800_000_000_000,
+    sleep: async () => {},
   });
 });
 
@@ -215,6 +216,18 @@ describe('messages', () => {
         .filter((c) => c.path.includes('/messages/'))
         .every((c) => c.search.get('format') === 'full'),
     ).toBe(true);
+  });
+
+  test('a message read that fails for another reason than 404 fails the list', async () => {
+    gmail.on('GET', /\/messages$/, () => ({ json: { messages: [{ id: 'm1' }] } }));
+    gmail.on('GET', /\/messages\/m1$/, () => ({
+      status: 500,
+      json: { error: { message: 'Backend Error' } },
+    }));
+    const error = (await messages
+      .list({ identifier: GRANT, queryParams: {} })
+      .catch((e: unknown) => e)) as GoogleApiError;
+    expect(error.statusCode).toBe(500);
   });
 
   test('a bad page token names page_token, so the backfill restarts', async () => {
@@ -390,6 +403,29 @@ describe('send', () => {
     expect(result.data.folders).toEqual(['SENT']);
   });
 
+  test('attachment content can be a stream; other content is refused', async () => {
+    gmail.on('POST', /\/messages\/send$/, () => ({ json: { id: 's1', threadId: 's1' } }));
+    async function* chunks() {
+      yield 'str';
+      yield Buffer.from('eam');
+    }
+    await messages.send({
+      identifier: GRANT,
+      requestBody: {
+        to: [{ email: 'a@x.org' }],
+        subject: 's',
+        body: 'b',
+        isPlaintext: true,
+        attachments: [{ filename: 's.txt', contentType: 'text/plain', content: chunks() }],
+      },
+    });
+    expect(gmail.calls[0].raw).toContain(Buffer.from('stream').toString('base64'));
+    const refused = (await messages
+      .send({ identifier: GRANT, requestBody: { to: [], attachments: [{ filename: 'x', content: 7 }] } })
+      .catch((e: unknown) => e)) as GoogleApiError;
+    expect(refused.statusCode).toBe(400);
+  });
+
   test('without a token row the send needs a reconnect', async () => {
     __setGoogleMailAdapterDepsForTest({ loadCredentials: async () => null });
     const error = (await messages
@@ -526,6 +562,16 @@ describe('folders', () => {
     );
   });
 
+  test('the label cache keeps at most 500 mailboxes', async () => {
+    gmail.on('GET', /\/labels$/, () => ({ json: { labels: [] } }));
+    for (let index = 0; index <= 500; index += 1) await folders.list({ identifier: `google:acct-${index}` });
+    expect(gmail.calls).toHaveLength(501);
+    // The first mailbox left the cache, so it is read again; the last one is cached.
+    await folders.list({ identifier: 'google:acct-0' });
+    await folders.list({ identifier: 'google:acct-500' });
+    expect(gmail.calls).toHaveLength(502);
+  });
+
   test('a label that exists gives the 409 that the callers look for', async () => {
     gmail.on('POST', /\/labels$/, () => ({
       status: 409,
@@ -658,10 +704,73 @@ describe('grants', () => {
       destroyNylasGrant: async () => {
         throw new Error('nylas down');
       },
+      sleep: async () => {},
     });
     expect(await googleMailAdapter.grants!.destroy({ grantId: GRANT })).toEqual({
       requestId: 'google-direct',
     });
+  });
+
+  test('a transient revoke failure is retried; a refusal is not', async () => {
+    let attempts = 0;
+    let failures = 2;
+    const waits: number[] = [];
+    __setGoogleMailAdapterDepsForTest({
+      loadCredentials: async () => CREDENTIALS,
+      decryptSecret: (value: string) => value,
+      revokeGoogleToken: async () => {
+        attempts += 1;
+        if (failures-- > 0) throw new GoogleApiError(503, 'unavailable');
+        return true;
+      },
+      mutate: (async () => ({ removed: 1, previousNylasGrantIds: [] })) as any,
+      sleep: async (ms: number) => {
+        waits.push(ms);
+      },
+    });
+    await googleMailAdapter.grants!.destroy({ grantId: GRANT });
+    expect(attempts).toBe(3);
+    expect(waits).toEqual([250, 500]);
+    attempts = 0;
+    let removed = 0;
+    __setGoogleMailAdapterDepsForTest({
+      loadCredentials: async () => CREDENTIALS,
+      decryptSecret: (value: string) => value,
+      revokeGoogleToken: async () => {
+        attempts += 1;
+        throw new GoogleApiError(403, 'forbidden');
+      },
+      mutate: (async () => {
+        removed += 1;
+        return { removed: 1, previousNylasGrantIds: [] };
+      }) as any,
+      sleep: async () => {},
+    });
+    await googleMailAdapter.grants!.destroy({ grantId: GRANT });
+    expect(attempts).toBe(1);
+    expect(removed).toBe(1);
+  });
+
+  test('a token that cannot be read is not revoked, and the row still goes', async () => {
+    let revoked = 0;
+    let removed = 0;
+    __setGoogleMailAdapterDepsForTest({
+      loadCredentials: async () => CREDENTIALS,
+      decryptSecret: () => {
+        throw new Error('bad key');
+      },
+      revokeGoogleToken: async () => {
+        revoked += 1;
+        return true;
+      },
+      mutate: (async () => {
+        removed += 1;
+        return { removed: 1, previousNylasGrantIds: [] };
+      }) as any,
+    });
+    await googleMailAdapter.grants!.destroy({ grantId: GRANT });
+    expect(revoked).toBe(0);
+    expect(removed).toBe(1);
   });
 });
 

@@ -8,6 +8,7 @@ import {
   GoogleConnectError,
   handleGoogleMailCallback,
   isGoogleDirectSwitchAllowed,
+  kickAfterConnect,
   startGoogleMailConnect,
 } from '../lib/google/connect';
 import { GMAIL_MODIFY_SCOPE } from '../lib/google/oauth';
@@ -54,6 +55,7 @@ function setup(
     consumeState?: any;
     consumeCompletion?: any;
     activation?: any;
+    defaultAfterConnect?: boolean;
   } = {},
 ): Harness {
   const harness: Harness = { mutations: [], afterConnect: [], exchanges: [] };
@@ -103,9 +105,19 @@ function setup(
     randomUUID: () => 'uuid-new',
     now: () => 1_800_000_000_000,
     env: () => overrides.env ?? {},
-    afterConnect: (input) => {
-      harness.afterConnect.push(input);
-    },
+    ...(overrides.defaultAfterConnect
+      ? {
+          maybeKickCorpusBackfill: ((input: any) =>
+            harness.afterConnect.push({ kick: 'backfill', ...input })) as any,
+          reconcileMailCorpusAccount: (async () => ({ ok: true })) as any,
+          syncCalendarAccount: (async () => ({ ok: true })) as any,
+          maybeKickContactSync: (() => undefined) as any,
+        }
+      : {
+          afterConnect: (input: any) => {
+            harness.afterConnect.push(input);
+          },
+        }),
   });
   return harness;
 }
@@ -290,6 +302,17 @@ describe('completeGoogleMailConnect', () => {
     expect(((await completeGoogleMailConnect(input).catch((e) => e)) as GoogleConnectError).status).toBe(503);
   });
 
+  test('the default hook runs the kicks after the connection is stored', async () => {
+    const harness = setup({
+      defaultAfterConnect: true,
+      tokens: { access_token: 'a', refresh_token: 'r', scope: GMAIL_MODIFY_SCOPE },
+      profile: { emailAddress: 'new@example.com', historyId: '9' },
+    });
+    await completeGoogleMailConnect({ userId: USER, mode: 'new', code: 'c', codeVerifier: 'v' });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(harness.afterConnect).toEqual([{ kick: 'backfill', userId: USER, accountId: 'uuid-new' }]);
+  });
+
   test('new creates an account without an address check and a default expiry', async () => {
     const harness = setup({
       tokens: { access_token: 'a', refresh_token: 'r', scope: GMAIL_MODIFY_SCOPE },
@@ -413,6 +436,43 @@ describe('handleGoogleMailCallback', () => {
     const response = await handleGoogleMailCallback({ state: 's', code: 'c' });
     expect(response?.headers.get('location')).toContain('Could+not+complete+the+Google+connection');
     expect(response?.headers.get('location')).not.toContain('internal');
+  });
+});
+
+describe('kicks after a connection', () => {
+  function kicks() {
+    const calls: string[] = [];
+    __setGoogleConnectDepsForTest({
+      maybeKickCorpusBackfill: ((input: any) => calls.push(`backfill:${input.accountId}`)) as any,
+      reconcileMailCorpusAccount: (async (input: any) => {
+        calls.push(`reconcile:${input.accountId}`);
+        throw new Error('reconcile failed');
+      }) as any,
+      syncCalendarAccount: (async (input: any) => {
+        calls.push(`calendar:${input.accountId}:${input.force}:${input.reason}`);
+        throw new Error('calendar failed');
+      }) as any,
+      maybeKickContactSync: ((input: any, options: any) =>
+        calls.push(`contacts:${input.accountId}:${options.force}:${options.reason}`)) as any,
+    });
+    return calls;
+  }
+
+  test('a new account backfills; a switched account reconciles; both force calendar and contacts', async () => {
+    const created = kicks();
+    await kickAfterConnect({ userId: USER, accountId: 'acct-new', outcome: 'created' });
+    expect(created).toEqual([
+      'backfill:acct-new',
+      'calendar:acct-new:true:oauth_callback',
+      'contacts:acct-new:true:oauth_callback',
+    ]);
+    const switched = kicks();
+    await kickAfterConnect({ userId: USER, accountId: 'acct-1', outcome: 'switched' });
+    expect(switched).toEqual([
+      'reconcile:acct-1',
+      'calendar:acct-1:true:oauth_callback',
+      'contacts:acct-1:true:oauth_callback',
+    ]);
   });
 });
 

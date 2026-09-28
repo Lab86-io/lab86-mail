@@ -674,21 +674,29 @@ const REVOKE_ATTEMPTS = 3;
  * Revokes a token at Google. A network error, a 429, or a 5xx gets another
  * try. The caller deletes the token row after this whatever the result.
  */
-async function revokeWithRetry(token: string): Promise<boolean> {
-  for (let attempt = 1; attempt <= REVOKE_ATTEMPTS; attempt += 1) {
-    try {
-      return await deps.revokeGoogleToken(token);
-    } catch (err: any) {
-      const status = statusOf(err);
-      const transient = !Number.isFinite(status) || status === 0 || status === 429 || status >= 500;
-      if (!transient || attempt === REVOKE_ATTEMPTS) {
-        console.warn('[google-mail] token revoke failed', status || err?.message || err);
-        return false;
-      }
-      await deps.sleep(250 * 2 ** (attempt - 1));
+async function revokeWithRetry(token: string, attempt = 1): Promise<boolean> {
+  try {
+    return await deps.revokeGoogleToken(token);
+  } catch (err: any) {
+    const status = statusOf(err);
+    const transient = !Number.isFinite(status) || status === 0 || status === 429 || status >= 500;
+    if (!transient || attempt >= REVOKE_ATTEMPTS) {
+      console.warn('[google-mail] token revoke failed', status || err?.message || err);
+      return false;
     }
+    await deps.sleep(250 * 2 ** (attempt - 1));
+    return await revokeWithRetry(token, attempt + 1);
   }
-  return false;
+}
+
+/** The stored token in plain text, or null when it cannot be read. */
+function readStoredToken(encrypted: string): string | null {
+  try {
+    return deps.decryptSecret(encrypted);
+  } catch (err: any) {
+    console.warn('[google-mail] could not read the stored token to revoke it', err?.message || err);
+    return null;
+  }
 }
 
 /**
@@ -701,15 +709,8 @@ async function destroyGrant(args: any) {
   const grantId = String(args?.grantId);
   const credentials = await deps.loadCredentials(grantId).catch(() => null);
   const token = credentials?.refreshTokenEncrypted || credentials?.accessTokenEncrypted;
-  if (token) {
-    let plain: string | null = null;
-    try {
-      plain = deps.decryptSecret(token);
-    } catch (err: any) {
-      console.warn('[google-mail] could not read the stored token to revoke it', err?.message || err);
-    }
-    if (plain) await revokeWithRetry(plain);
-  }
+  const plain = token ? readStoredToken(token) : null;
+  if (plain) await revokeWithRetry(plain);
   forgetGoogleAccessToken(grantId);
   labelCache.delete(grantId);
   const removed = await deps.mutate<{ removed: number; previousNylasGrantIds: string[] }>(

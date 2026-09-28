@@ -287,14 +287,11 @@ export function decodeAttachmentId(
 ): { filename: string; contentType: string; size: number | null } | null {
   const parts = String(id || '').split(':');
   if (parts[0] !== 'v0' || parts.length < 3) return null;
-  try {
-    const filename = Buffer.from(parts[1], 'base64url').toString('utf8');
-    const contentType = Buffer.from(parts[2], 'base64url').toString('utf8');
-    const size = parts.length > 3 && /^\d+$/.test(parts[3]) ? Number(parts[3]) : null;
-    return { filename, contentType, size };
-  } catch {
-    return null;
-  }
+  // Buffer decoding skips characters that are not base64url; it does not throw.
+  const filename = Buffer.from(parts[1], 'base64url').toString('utf8');
+  const contentType = Buffer.from(parts[2], 'base64url').toString('utf8');
+  const size = parts.length > 3 && /^\d+$/.test(parts[3]) ? Number(parts[3]) : null;
+  return { filename, contentType, size };
 }
 
 export function attachmentIdForPart(part: GmailPart): string {
