@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
+import { ACCOUNT_BULK_TABLES, EXPORT_TABLES } from '../convex/accounts';
+import { DEAD_ACCOUNT_TABLES } from '../convex/deadAccounts';
 import {
   BACKFILL_PAGE,
   hexToBase64,
@@ -473,6 +475,17 @@ describe('getStoredFile', () => {
 });
 
 describe('deletion', () => {
+  test('every attachment table is in each purge, and the export keeps the file rows only', () => {
+    const tables = ['mailAttachmentFiles', 'mailAttachmentQueue', 'mailAttachmentBackfills'];
+    for (const table of tables) {
+      expect(ACCOUNT_BULK_TABLES as readonly string[]).toContain(table);
+      expect(DEAD_ACCOUNT_TABLES.map((entry) => entry.table as string)).toContain(table);
+    }
+    expect(EXPORT_TABLES).toContain('mailAttachmentFiles');
+    expect(EXPORT_TABLES).not.toContain('mailAttachmentQueue');
+    expect(EXPORT_TABLES).not.toContain('mailAttachmentBackfills');
+  });
+
   test('a shared file stays until its last row goes with its mailbox', async () => {
     const t = harness();
     await addAccount(t, 'acct');

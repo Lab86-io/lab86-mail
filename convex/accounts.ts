@@ -780,6 +780,8 @@ export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
   cloudFileOAuthCompletions: 'Short-lived sign-in state for a file connection, not user content.',
   rateLimits: 'Request counters that protect the service, not user content.',
   aiCostWatch: 'Cost samples for the owner alarm that protect the service, not user content.',
+  mailAttachmentQueue: 'Work rows of the attachment file queue; mailAttachmentFiles has the stored files.',
+  mailAttachmentBackfills: 'The page cursor of the attachment file queue, not user content.',
 };
 
 /**
