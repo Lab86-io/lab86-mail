@@ -7,7 +7,7 @@ import { loadGitHubItems } from './github';
 import {
   granolaAccountInfo,
   granolaMeetingCountHint,
-  granolaMeetingDetailArgs,
+  granolaMeetingDetailBatches,
   mergeGranolaMeetingDetails,
 } from './granola';
 import { getServerDef, type NormalizedMcpItem, normalizeItems, resolveMcpConnectionConfig } from './servers';
@@ -272,8 +272,9 @@ export async function syncConnection(
         .filter((item) => item.kind === 'meeting')
         .map((item) => item.externalId)
         .slice(0, 30);
-      const detailArgs = granolaMeetingDetailArgs(handle.toolSchemas?.get('get_meetings'), ids);
-      if (detailArgs) {
+      // get_meetings takes at most 10 ids, so 30 ids go in 3 calls. A failed
+      // batch is noted, and the other batches still add their details.
+      for (const detailArgs of granolaMeetingDetailBatches(handle.toolSchemas?.get('get_meetings'), ids)) {
         try {
           const result = await callSyncTool(deps, handle, 'get_meetings', detailArgs);
           const detailed = normalizeItems(

@@ -95,6 +95,34 @@ export function granolaMeetingDetailArgs(
   return { [name]: schema?.type === 'string' ? meetingIds[0] : meetingIds };
 }
 
+/** Granola's get_meetings accepts at most 10 ids in one call. */
+export const GRANOLA_MEETING_DETAIL_BATCH = 10;
+
+/**
+ * The get_meetings arguments for all ids, one entry for each batch. The batch
+ * size is 10, or a smaller `maxItems` that the tool schema declares.
+ */
+export function granolaMeetingDetailBatches(
+  inputSchema: unknown,
+  meetingIds: string[],
+): Array<Record<string, unknown>> {
+  const properties = (inputSchema as { properties?: Record<string, any> } | null)?.properties;
+  const field = properties
+    ? Object.entries(properties).find(([name]) => /^(meeting_?ids?|ids?)$/iu.test(name.replace(/-/gu, '_')))
+    : undefined;
+  const declared = Number(field?.[1]?.maxItems);
+  const size =
+    Number.isInteger(declared) && declared > 0
+      ? Math.min(declared, GRANOLA_MEETING_DETAIL_BATCH)
+      : GRANOLA_MEETING_DETAIL_BATCH;
+  const batches: Array<Record<string, unknown>> = [];
+  for (let start = 0; start < meetingIds.length; start += size) {
+    const args = granolaMeetingDetailArgs(inputSchema, meetingIds.slice(start, start + size));
+    if (args) batches.push(args);
+  }
+  return batches;
+}
+
 export function mergeGranolaMeetingDetails(
   listed: NormalizedMcpItem[],
   detailed: NormalizedMcpItem[],
