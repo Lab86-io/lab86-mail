@@ -405,6 +405,73 @@ describe('the readers', () => {
   });
 });
 
+describe('the live reads', () => {
+  test('mailboxes list with their sync state; dead ones are left out', async () => {
+    const t = harness();
+    await connect(t);
+    await connect(t, 'account_dead', 'error');
+    await t.run((ctx) =>
+      ctx.db.insert('mailSyncStates', {
+        userId: USER,
+        accountId: scope.accountId,
+        grantId: scope.grantId,
+        provider: 'google',
+        status: 'ready',
+        corpusReady: true,
+        messagesSynced: 12,
+        lastIncrementalSyncAt: TS,
+        createdAt: TS,
+        updatedAt: TS,
+      } as any),
+    );
+    const { accounts } = await t.withIdentity({ subject: USER }).query(api.liveMail.listAccounts, {});
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({
+      accountId: scope.accountId,
+      authed: true,
+      sync: { status: 'ready', corpusReady: true, messagesSynced: 12, lastSyncAt: TS },
+    });
+    await expect(t.query(api.liveMail.listAccounts, {})).rejects.toThrow('Not authenticated');
+  });
+
+  test('search groups messages by thread; the other list paths read thread rows', async () => {
+    const t = harness();
+    await ingest(t, [
+      message(),
+      message({ providerMessageId: 'message_1b', receivedAt: TS + 10, unread: false, labels: ['STARRED'] }),
+      message({
+        providerMessageId: 'message_2',
+        providerThreadId: 'thread_2',
+        subject: 'Giraffe budget',
+        receivedAt: TS + 20,
+      }),
+    ]);
+    const user = t.withIdentity({ subject: USER });
+    const found = await user.query(api.liveMail.listThreads, { query: 'giraffe', limit: 10 });
+    expect(found.items.map((item: any) => item._id).sort()).toEqual(['thread_1', 'thread_2']);
+    const grouped = found.items.find((item: any) => item._id === 'thread_1');
+    // Either order of the hits gives the same count, flags and labels.
+    expect(grouped).toMatchObject({ messageCount: 2, unread: true, starred: false });
+    expect(grouped.labels).toEqual(expect.arrayContaining(['INBOX', 'STARRED']));
+    // Only the requested mailbox counts.
+    const other = await user.query(api.liveMail.listThreads, { query: 'giraffe', accountIds: ['account_x'] });
+    expect(other.items).toEqual([]);
+    const sorted = await user.query(api.liveMail.listThreads, { query: 'giraffe', category: 'main' });
+    expect(Array.isArray(sorted.items)).toBe(true);
+    // An explicit empty mailbox list asks for nothing.
+    expect(await user.query(api.liveMail.listThreads, { accountIds: [] })).toEqual({
+      items: [],
+      nextPageToken: undefined,
+    });
+    const one = await user.query(api.liveMail.listThreads, { accountIds: [scope.accountId] });
+    expect(one.items.map((item: any) => item._id)).toEqual(['thread_2', 'thread_1']);
+    const every = await user.query(api.liveMail.listThreads, {});
+    expect(every.items.map((item: any) => item._id)).toEqual(['thread_2', 'thread_1']);
+    const counts = await user.query(api.liveMail.categoryCounts, {});
+    expect(typeof counts.cap).toBe('number');
+  });
+});
+
 describe('the migration', () => {
   test('a dry run counts and writes nothing', async () => {
     const t = harness();

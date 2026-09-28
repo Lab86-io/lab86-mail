@@ -132,6 +132,9 @@ export const listThreads = query({
         const key = `${message.accountId}:${message.providerThreadId}`;
         const existing = byThread.get(key);
         if (!existing || message.receivedAt > existing.lastDate) {
+          // A newer message leads the entry. The counts and flags of the
+          // messages already seen stay, so the result does not depend on
+          // the order of the search hits.
           byThread.set(key, {
             userId,
             accountId: message.accountId,
@@ -141,11 +144,15 @@ export const listThreads = query({
             lastDate: message.receivedAt,
             snippet: message.snippet,
             labels: message.labels || [],
-            unread: Boolean(message.unread),
-            starred: Boolean(message.starred),
-            messageCount: 1,
+            unread: Boolean(message.unread) || Boolean(existing?.unread),
+            starred: Boolean(message.starred) || Boolean(existing?.starred),
+            messageCount: (existing?.messageCount || 0) + 1,
             updatedAt: message.updatedAt,
           });
+          if (existing) {
+            const entry = byThread.get(key);
+            entry.labels = [...new Set([...(existing.labels || []), ...(entry.labels || [])])];
+          }
         } else {
           existing.messageCount = (existing.messageCount || 1) + 1;
           existing.labels = [...new Set([...(existing.labels || []), ...(message.labels || [])])];
