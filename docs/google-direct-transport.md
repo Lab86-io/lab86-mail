@@ -1,6 +1,6 @@
 # Direct Google transport
 
-Status: in progress (branch `claude/casa-prep`, 2026-09-28). Owner: Claude.
+Status: in progress (branch `claude/casa-prep`; Gmail on `claude/google-gmail`, 2026-09-28). Owner: Claude.
 
 ## Goal
 
@@ -59,8 +59,8 @@ system. The Google scopes do not change.
   2. New Google connections use the direct flow when `LAB86_GOOGLE_DIRECT=1`.
 - **Sync.** A cron polls the Gmail History API every 2 minutes for each direct
   account (`history.list` from the stored `historyId`). A `404` (history too
-  old) runs the normal reconcile path. A Pub/Sub push route exists behind env
-  configuration and is off until a subscription exists.
+  old) runs the normal reconcile path. Pub/Sub push is not built (see "Not in
+  this change").
 - **Scheduled send.** Gmail has no scheduled send. A direct account holds a
   scheduled message in the mail outbox (`mailOutbox`) with a future fire time.
   The list and cancel calls read the outbox.
@@ -102,6 +102,99 @@ system. The Google scopes do not change.
   no calendar or contact push. The 15-minute poll, the daily full pass, and
   the sync after each write keep the mirror current.
 
+## Gmail
+
+These rules add to the decisions above or make them exact.
+
+- **Switch gate.** `/api/google/connect?mode=switch&account=<email or
+  accountId>` works on staging (`RAILWAY_ENVIRONMENT_NAME=development` or
+  `staging`) with no change of variables. In production it needs
+  `LAB86_GOOGLE_DIRECT=1` or `LAB86_GOOGLE_DIRECT_SWITCH=1`. The Gmail address
+  of the sign-in must equal the account address; the flow refuses another
+  address and stores nothing.
+- **Modes.** `switch` moves a Nylas account in place. `reconnect` renews the
+  sign-in of a direct account. `new` connects a Google account; when the user
+  has an account with the same address, `new` switches or reconnects it.
+  After a switch or a new connection, the calendar sync and the contact sync
+  start at once (forced), as after a Nylas sign-in.
+- **Reconnect with the flag off.** The Nylas connect route sends a Google
+  connection to the direct flow when a direct account of the user needs a
+  reconnect. Thus the Reconnect button does not move a switched account back
+  to Nylas.
+- **Native.** The app sends `finalize=1` to `/api/nylas/connect`. Only such a
+  request goes to the direct flow, so an older build stays on Nylas. The
+  callback opens `lab86://oauth/mail?mail_completion=<token>`, and the app
+  posts the token to `/api/google/connect/finalize`.
+- **Tokens.** An `invalid_grant` answer, or a missing token row, puts every
+  account on the grant in the reconnect state (`markGrantReconnectNeeded`,
+  the same state as a dead Nylas grant).
+- **Message shape.** `folders` are the Gmail label ids, as Nylas gives them.
+  A message with only a text part gets that text as `body`, not escaped HTML:
+  Nylas does the same, and the stored rows must stay equal. The corpus writer
+  compares subject, addresses, attachments, and text; a difference clears the
+  thread verdict, and Jev reads the thread again.
+- **Attachment ids.** `<n>` in `v0:<name>:<content type>:<n>` is the decoded
+  byte size (Gmail `body.size`). The content type is the whole `Content-Type`
+  value of the part, with its parameters (for example
+  `application/pdf; name=invoice.pdf`). A part without a name has an empty
+  name. A download reads the message again and finds the part by name, type,
+  and size, then by name and size, then by name and type, then by a single
+  name. A raw Gmail attachment id also works.
+- **Lists.** A plain list includes Spam and Trash, as Nylas does, so the
+  repair sweep sees mail that moved there. A native search keeps Gmail's own
+  search rules. Drafts are not messages.
+- **Label changes.** A folder set replaces the labels, but UNREAD and STARRED
+  change only through the `unread` and `starred` flags. DRAFT, SENT, and CHAT
+  never change. A thread's labels are the union of its message labels.
+- **Send.** The adapter sends RFC 2822 MIME through the upload endpoint (up
+  to 35 MB) with the thread id of the parent message. A 5xx answer is not
+  retried, because Gmail can send the message and still answer 5xx. Gmail
+  writes the From header.
+- **Scheduled send.** A held send is a `mailOutbox` row with `scheduled` and
+  `accountId`. Its outbox key is the schedule id. A disconnect cancels the
+  held sends of the mailbox and deletes their stored messages.
+- **History sync.** The cron runs every 2 minutes and reads at most 400
+  changed messages in a run; the rest comes in the next run. New mail is read
+  with its headers. A label change is read without headers, so the stored
+  headers stay. Nylas webhooks for the Nylas grant of a switched account are
+  marked `processed` and ignored.
+- **Disconnect.** The revoke comes before the account rows go, because the
+  refresh token is in the `providerGrants` row. A network error, a 429, or a
+  5xx gets two more tries. A failed revoke is logged, and the token row goes
+  anyway. The Nylas grant of a switched account is destroyed at this time.
+- **Rollback.** `googleDirect:rollbackToNylas` does not revoke the Google
+  token. Google can revoke the whole project grant, and the production Nylas
+  connector is in the same Google Cloud project. The token row is deleted.
+
+### Runbook: switch one account
+
+1. Deploy the branch to staging. No variable change is necessary on staging.
+2. Sign in to the staging web app as the account owner.
+3. Open `/api/google/connect?mode=switch&account=<email>` in that browser.
+4. On the Google screen, choose the same Google account and allow all access.
+5. The app opens `/settings?nylas_connected=1&google_mail=switched`.
+6. Check: in the Convex dashboard, `connectedAccounts.grantId` is
+   `google:<accountId>`, and `mailSyncStates.historyId` has a value.
+7. Send a message to the account. It must show in the inbox within about
+   2 minutes (the History cron).
+
+### Runbook: roll back one account
+
+1. In the Convex dashboard, run `googleDirect:rollbackToNylas` with
+   `{ "userId": "<userId>", "accountId": "<accountId>" }`.
+2. The result must be `{ ok: true, grantId: "<Nylas grant id>" }`.
+3. Nylas webhooks for that grant are processed again. The corpus stays.
+4. The Google access stays in the Google account permissions until the owner
+   removes it there.
+
+### Variables
+
+- `GOOGLE_MAIL_CLIENT_ID`, `GOOGLE_MAIL_CLIENT_SECRET` (optional; the Drive
+  client is the fallback).
+- `LAB86_GOOGLE_DIRECT=1`: new Google connections go direct.
+- `LAB86_GOOGLE_DIRECT_SWITCH=1`: the switch works in production without the
+  flag above.
+
 ## Workstreams
 
 - Gmail (messages, threads, labels, attachments, drafts, send, grants, tokens,
@@ -112,5 +205,6 @@ system. The Google scopes do not change.
 
 ## Not in this change
 
-Microsoft and iCloud stay on Nylas. Pub/Sub push needs a subscription on the
-topic in `lab86-mail-production` (a `gcloud` step for the owner).
+Microsoft and iCloud stay on Nylas. Pub/Sub push is not built: the History
+sync polls. A push route needs a topic and a subscription in
+`lab86-mail-production` (a `gcloud` step for the owner).
