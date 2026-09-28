@@ -11,7 +11,7 @@ import {
   backfillMailCorpusAccount,
   ingestNylasWebhookPayload,
 } from '../lib/mail/corpus-sync';
-import { deleteNylasAccount } from '../lib/nylas/provider';
+import { deleteNylasAccount, downloadNylasAttachment } from '../lib/nylas/provider';
 import { encryptSecret } from '../lib/security/crypto';
 import { plainMessage, receiptMessage } from './google-gmail-fixtures';
 import { accountRow, withHttpHarness } from './tools/http-harness';
@@ -84,6 +84,28 @@ describe('a real caller with a google: grant goes to Gmail', () => {
           size: 42076,
         }),
       });
+    });
+  });
+});
+
+describe('attachment download of a direct account', () => {
+  test('downloadNylasAttachment resolves a stored v0 id against a fresh Gmail read', async () => {
+    await withHttpHarness(async (h) => {
+      h.onConvex('accounts:getConnectedAccount', () => accountRow({ grantId: GRANT }));
+      h.onNylas('GET', /\/gmail\/v1\/users\/me\/messages\/1a0e656c36a59a89$/, () => ({
+        json: receiptMessage(),
+      }));
+      h.onNylas('GET', /\/messages\/1a0e656c36a59a89\/attachments\/ANGjdJ_volatile_1$/, () => ({
+        json: { size: 8, data: Buffer.from('%PDF-1.7').toString('base64url') },
+      }));
+      const stream = await downloadNylasAttachment({
+        userId: 'user_1',
+        account: 'acct_1',
+        messageId: '1a0e656c36a59a89',
+        attachmentId: 'v0:SW52b2ljZS1WS0hYUlktMDAwMjgucGRm:YXBwbGljYXRpb24vb2N0ZXQtc3RyZWFt:42076',
+      });
+      expect(await new Response(stream as ReadableStream).text()).toBe('%PDF-1.7');
+      expect(h.nylasCalls.some((call) => call.path.startsWith('/v3/'))).toBe(false);
     });
   });
 });

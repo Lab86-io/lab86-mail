@@ -450,11 +450,48 @@ describe('token row', () => {
     ).toEqual({
       removed: 0,
       previousNylasGrantIds: [],
+      cancelledSends: 0,
+    });
+    // A held scheduled send of this mailbox goes with the grant; others stay.
+    const payloadId = await t.run(async (ctx) => ctx.storage.store(new Blob(['{"to":"x"}'])));
+    const otherPayload = await t.run(async (ctx) => ctx.storage.store(new Blob(['{}'])));
+    const heldKey = 'outbox:00000000-0000-4000-8000-00000000000a';
+    const otherKey = 'outbox:00000000-0000-4000-8000-00000000000b';
+    const fireAt = Date.now() + 3_600_000;
+    await t.mutation(api.googleDirect.enqueueScheduledSend, {
+      internalSecret: SECRET,
+      userId: USER,
+      accountId: ACCOUNT,
+      key: heldKey,
+      payloadId,
+      fireAt,
+    });
+    await t.mutation(api.googleDirect.enqueueScheduledSend, {
+      internalSecret: SECRET,
+      userId: USER,
+      accountId: 'another-account',
+      key: otherKey,
+      payloadId: otherPayload,
+      fireAt,
     });
     expect(await t.mutation(api.googleDirect.removeGrant, { internalSecret: SECRET, grantId })).toEqual({
       removed: 1,
       previousNylasGrantIds: [NYLAS_GRANT],
+      cancelledSends: 1,
     });
+    const held = await t.query(api.googleDirect.getScheduledSend, {
+      internalSecret: SECRET,
+      userId: USER,
+      key: heldKey,
+    });
+    expect(held?.status).toBe('cancelled');
+    expect(await t.run(async (ctx) => ctx.storage.get(payloadId))).toBeNull();
+    const other = await t.query(api.googleDirect.getScheduledSend, {
+      internalSecret: SECRET,
+      userId: USER,
+      key: otherKey,
+    });
+    expect(other?.status).toBe('pending');
     expect((await snapshot(t)).grant).toBeNull();
     expect(
       await t.query(api.googleDirect.accountForPreviousNylasGrant, {

@@ -216,17 +216,32 @@ export const removeGrant = mutation({
   args: { internalSecret: v.optional(v.string()), grantId: v.string() },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    if (!isDirectGrant(args.grantId)) return { removed: 0, previousNylasGrantIds: [] as string[] };
+    if (!isDirectGrant(args.grantId)) {
+      return { removed: 0, previousNylasGrantIds: [] as string[], cancelledSends: 0 };
+    }
     const rows = await ctx.db
       .query('providerGrants')
       .withIndex('by_grant', (q) => q.eq('grantId', args.grantId))
       .collect();
     const previous = new Set<string>();
+    let cancelledSends = 0;
     for (const row of rows) {
       if (row.previousNylasGrantId) previous.add(row.previousNylasGrantId);
+      // A held scheduled send of this mailbox goes with the grant: the
+      // message must not stay stored after a disconnect.
+      const held = await ctx.db
+        .query('mailOutbox')
+        .withIndex('by_user', (q) => q.eq('userId', row.userId))
+        .collect();
+      for (const send of held) {
+        if (!send.scheduled || send.accountId !== row.accountId || send.status !== 'pending') continue;
+        if (send.payloadId) await ctx.storage.delete(send.payloadId);
+        await ctx.db.patch(send._id, { status: 'cancelled', payloadId: undefined, updatedAt: now() });
+        cancelledSends += 1;
+      }
       await ctx.db.delete(row._id);
     }
-    return { removed: rows.length, previousNylasGrantIds: [...previous] };
+    return { removed: rows.length, previousNylasGrantIds: [...previous], cancelledSends };
   },
 });
 

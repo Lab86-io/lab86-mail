@@ -65,6 +65,7 @@ const defaults = {
   cancelGoogleScheduledSend,
   boundary: () => `lab86_upload_${randomBytes(12).toString('hex')}`,
   now: () => Date.now(),
+  sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
 };
 let deps = defaults;
 const labelCache = new Map<string, { at: number; labels: GmailLabel[] }>();
@@ -667,19 +668,47 @@ async function findGrant(args: any) {
   };
 }
 
+const REVOKE_ATTEMPTS = 3;
+
 /**
- * Removes a direct grant: revokes the Google token, deletes the token row, and
- * destroys the Nylas grant that the account used before the switch. Each step
- * is best effort after the first, as a Nylas grant destroy is.
+ * Revokes a token at Google. A network error, a 429, or a 5xx gets another
+ * try. The caller deletes the token row after this whatever the result.
+ */
+async function revokeWithRetry(token: string): Promise<boolean> {
+  for (let attempt = 1; attempt <= REVOKE_ATTEMPTS; attempt += 1) {
+    try {
+      return await deps.revokeGoogleToken(token);
+    } catch (err: any) {
+      const status = statusOf(err);
+      const transient = !Number.isFinite(status) || status === 0 || status === 429 || status >= 500;
+      if (!transient || attempt === REVOKE_ATTEMPTS) {
+        console.warn('[google-mail] token revoke failed', status || err?.message || err);
+        return false;
+      }
+      await deps.sleep(250 * 2 ** (attempt - 1));
+    }
+  }
+  return false;
+}
+
+/**
+ * Removes a direct grant: revokes the Google token, deletes the token row
+ * (and the scheduled sends of the account), and destroys the Nylas grant that
+ * the account used before the switch. A failed revoke is logged; the token
+ * row goes anyway, so no copy of the token stays with us.
  */
 async function destroyGrant(args: any) {
   const grantId = String(args?.grantId);
   const credentials = await deps.loadCredentials(grantId).catch(() => null);
   const token = credentials?.refreshTokenEncrypted || credentials?.accessTokenEncrypted;
   if (token) {
-    await deps.revokeGoogleToken(deps.decryptSecret(token)).catch((err: any) => {
-      console.warn('[google-mail] token revoke failed', err?.message || err);
-    });
+    let plain: string | null = null;
+    try {
+      plain = deps.decryptSecret(token);
+    } catch (err: any) {
+      console.warn('[google-mail] could not read the stored token to revoke it', err?.message || err);
+    }
+    if (plain) await revokeWithRetry(plain);
   }
   forgetGoogleAccessToken(grantId);
   labelCache.delete(grantId);
