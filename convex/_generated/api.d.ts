@@ -47,6 +47,7 @@ import type * as fileLibrary from "../fileLibrary.js";
 import type * as jev from "../jev.js";
 import type * as lib from "../lib.js";
 import type * as liveMail from "../liveMail.js";
+import type * as mailBodies from "../mailBodies.js";
 import type * as mailCorpus from "../mailCorpus.js";
 import type * as mailOneTimeCodes from "../mailOneTimeCodes.js";
 import type * as mailOutbox from "../mailOutbox.js";
@@ -113,6 +114,7 @@ declare const fullApi: ApiFromModules<{
   jev: typeof jev;
   lib: typeof lib;
   liveMail: typeof liveMail;
+  mailBodies: typeof mailBodies;
   mailCorpus: typeof mailCorpus;
   mailOneTimeCodes: typeof mailOneTimeCodes;
   mailOutbox: typeof mailOutbox;

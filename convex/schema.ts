@@ -314,6 +314,10 @@ export default defineSchema({
     llmPending: v.optional(v.boolean()),
     jev: v.optional(v.any()),
     jevEvidenceMessageIds: v.optional(v.array(v.string())),
+    // The latest message of the last stored verdict. A new message does not
+    // clear it. Jev reads the newest three messages (IO-1); when this message
+    // is among them, the window holds the whole open state of the thread.
+    jevAssessedMessageId: v.optional(v.string()),
     jevVersion: v.optional(v.number()),
     jevStatus: v.optional(v.string()),
     jevAttempts: v.optional(v.number()),
@@ -406,12 +410,21 @@ export default defineSchema({
     bcc: v.optional(v.string()),
     receivedAt: v.number(),
     snippet: v.string(),
+    // Legacy inline bodies. The body split (IO-1) moves them to
+    // mailCorpusBodies. The writer and the migration
+    // (mailBodies:migrateMessageBodies) clear them. Remove these two fields
+    // when the migration is complete in every deployment.
     textBody: v.optional(v.string()),
-    // Full HTML body, stored at sync time so opening a thread never has to
-    // round-trip to the provider. Missing on rows synced before this existed;
-    // the read path hydrates those lazily.
     htmlBody: v.optional(v.string()),
+    // The header line, then a body excerpt (lib/mail/corpus-body.ts). The
+    // excerpt starts at excerptAt. Documents from before the split have no
+    // excerptAt and a search text of up to 32,000 characters.
     searchText: v.string(),
+    excerptAt: v.optional(v.number()),
+    // "<text hash>.<html hash>" of the body in mailCorpusBodies; "-" is an
+    // absent part. Set on every split document. The writer compares it and
+    // writes the body document only when a part changes.
+    bodyHash: v.optional(v.string()),
     labels: v.array(v.string()),
     unread: v.optional(v.boolean()),
     starred: v.optional(v.boolean()),
@@ -431,6 +444,26 @@ export default defineSchema({
       searchField: 'searchText',
       filterFields: ['userId', 'accountId', 'grantId', 'provider', 'yearMonth'],
     }),
+
+  // The bodies of mailCorpusMessages (IO-1). One document for each message
+  // that has a body. Only the thread reader and the full-message tools read
+  // it. See lib/mail/corpus-body.ts.
+  mailCorpusBodies: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    providerMessageId: v.string(),
+    providerThreadId: v.string(),
+    // Plain text, at most 32,000 characters.
+    textBody: v.optional(v.string()),
+    // Full HTML, at most 200,000 characters, so opening a thread never goes
+    // to the provider. Absent = not hydrated yet; '' = the message has no HTML.
+    htmlBody: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_account_message', ['userId', 'accountId', 'providerMessageId'])
+    .index('by_user_account_thread', ['userId', 'accountId', 'providerThreadId']),
 
   // Generic per-user document store backing all server-side app state that
   // previously lived in the single-tenant NeDB files (memories, smart labels,

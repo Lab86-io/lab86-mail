@@ -1,4 +1,5 @@
 import { convexToJson, v } from 'convex/values';
+import { storedBodyText } from '../lib/mail/corpus-body';
 import {
   COMPACTION_POLICY_VERSION,
   compactionBucket,
@@ -435,7 +436,7 @@ export const read = query({
             detail.messages = messages.map((m) => ({
               from: m.from,
               at: m.receivedAt,
-              text: cleanNarrativeText(m.textBody || m.snippet, 2_000),
+              text: cleanNarrativeText(storedBodyText(m) || m.snippet, 2_000),
             }));
           }
           if (evidence.sourceTable === 'mcpItems') {

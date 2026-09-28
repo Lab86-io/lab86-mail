@@ -6,6 +6,7 @@ import {
   isAttentionView,
 } from '../lib/jev/contract';
 import { smartCategoryFromJev } from '../lib/jev/mail';
+import { isLegacyCorpusMessage, storedBodyText } from '../lib/mail/corpus-body';
 import { labelsHaveRole } from '../lib/mail/search/folders';
 import { pageEndsInTie, pageThroughTies } from '../lib/mail/search/page-ties';
 import {
@@ -121,8 +122,13 @@ function headerValue(headers: unknown, name: string) {
 }
 
 export function classifierContent(message: any): ClassifierContent {
+  // The small document keeps the body excerpt that this clip makes (IO-1). A
+  // document from before the split with no text body falls back to its old
+  // search text, as it did before.
+  const body =
+    storedBodyText(message) || (isLegacyCorpusMessage(message) ? String(message?.searchText || '') : '');
   return {
-    bodyText: clipClassifierBody(String(message?.textBody || message?.searchText || '')) || undefined,
+    bodyText: clipClassifierBody(body) || undefined,
     listId: headerValue(message?.headers, 'list-id'),
     listUnsubscribe: headerValue(message?.headers, 'list-unsubscribe'),
   };
@@ -567,9 +573,9 @@ export async function queryCategoryThreads(ctx: any, args: CategoryQueryArgs) {
 export const classifyBacklog = internalMutation({
   args: {},
   handler: async (ctx) => {
-    // 100/batch (was 200): each row now also reads its latest message body,
-    // and message docs carry full bodies — keep the per-mutation read volume
-    // well under Convex limits.
+    // 100/batch: each row also reads the small document of its latest
+    // message (IO-1: the body is not in it). Documents from before the body
+    // split can still be large, so the batch stays at 100.
     const BATCH = 100;
     const rows = await ctx.db
       .query('mailCorpusThreads')
@@ -846,7 +852,8 @@ export const reclassifyUserThreads = internalMutation({
       }
     }
     const context = await loadSmartContext(ctx, args.userId);
-    // 50/page (was 100): the body lookup per row reads full message docs.
+    // 50/page: the lookup for each row reads the small document of the
+    // latest message. Documents from before the body split can be large.
     const page = await ctx.db
       .query('mailCorpusThreads')
       .withIndex('by_user', (q: any) => q.eq('userId', args.userId))

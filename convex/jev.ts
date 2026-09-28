@@ -8,7 +8,15 @@ import {
   jevPreferencesSchema,
   normalizeJevPreferences,
 } from '../lib/jev/contract';
-import { type JevMailInput, type JevMailMessage, mailSourceRevision } from '../lib/jev/mail';
+import {
+  JEV_BODY_CHARS,
+  JEV_BODY_MESSAGES,
+  type JevFactsView,
+  type JevMailInput,
+  type JevMailMessage,
+  mailSourceRevision,
+} from '../lib/jev/mail';
+import { storedBodyText } from '../lib/mail/corpus-body';
 import { labelsHaveRole } from '../lib/mail/search/folders';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
@@ -16,8 +24,8 @@ import { internalAction, internalMutation, mutation, query } from './_generated/
 import { nextConnectedUsers } from './content';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 import {
+  classifierContent,
   classifyCorpusThread,
-  latestThreadContent,
   loadSmartContext,
   normalizeCorpusThread,
   noteSavedContactSender,
@@ -118,7 +126,55 @@ export const saveSettings = mutation({
   },
 });
 
-async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<JevMailInput | null> {
+// The ids of the messages that hold the evidence of the stored obligations.
+function evidenceMessageIds(row: any): string[] {
+  return (
+    row.jevEvidenceMessageIds ||
+    row.jev?.obligations?.map((obligation: any) => obligation.evidence.messageId) ||
+    []
+  );
+}
+
+// One message as the body stage sees it: the start of the plain text (IO-1:
+// the small document keeps it, so no body document is read).
+function bodyMessage(message: any): JevMailMessage {
+  return {
+    id: message.providerMessageId,
+    from: message.from,
+    to: message.to,
+    cc: message.cc || '',
+    subject: message.subject,
+    body: truncateText(String(storedBodyText(message) || message.snippet || ''), JEV_BODY_CHARS),
+    date: message.receivedAt,
+    headers: Object.fromEntries(
+      Object.entries(message.headers || {})
+        .filter(
+          ([key, value]) =>
+            typeof value === 'string' && /^(list-id|list-unsubscribe|precedence|auto-submitted)$/i.test(key),
+        )
+        .map(([key, value]) => [key.toLowerCase(), truncateText(String(value), 500)]),
+    ),
+    attachments: (message.attachments || [])
+      .slice(0, 10)
+      .map((attachment: any) => String(attachment.filename || attachment.name || 'attachment')),
+  };
+}
+
+interface JevThreadWindow {
+  input: JevMailInput;
+  /** The first-stage view, or undefined when the claim must read the bodies first. */
+  facts?: JevFactsView;
+  /** The newest small document of the thread. */
+  newest: any;
+}
+
+/**
+ * The Jev input of one thread (IO-1). It reads the small documents of the
+ * newest JEV_BODY_MESSAGES messages and of the messages that hold open
+ * evidence, never a body document. The source revision covers exactly these
+ * messages, so the claim and the store compute the same value.
+ */
+async function threadWindow(ctx: any, row: any, knownAccounts?: any[]): Promise<JevThreadWindow | null> {
   const [recent, accounts] = await Promise.all([
     ctx.db
       .query('mailCorpusMessages')
@@ -129,7 +185,7 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
           .eq('providerThreadId', row.providerThreadId),
       )
       .order('desc')
-      .take(17),
+      .take(JEV_BODY_MESSAGES + 1),
     knownAccounts
       ? Promise.resolve(knownAccounts)
       : ctx.db
@@ -139,15 +195,11 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
   ]);
   if (!recent.length) return null;
   const byId = new Map<string, any>(
-    recent.slice(0, 16).map((message: any) => [message.providerMessageId, message]),
+    recent.slice(0, JEV_BODY_MESSAGES).map((message: any) => [message.providerMessageId, message]),
   );
   // Retain evidence of older open obligations when the recent window moves.
-  for (const id of [
-    row.latestMessageId,
-    ...(row.jevEvidenceMessageIds ||
-      row.jev?.obligations?.map((obligation: any) => obligation.evidence.messageId) ||
-      []),
-  ]) {
+  const evidenceIds = evidenceMessageIds(row);
+  for (const id of [row.latestMessageId, ...evidenceIds]) {
     if (!id || byId.has(id)) continue;
     const message = await ctx.db
       .query('mailCorpusMessages')
@@ -159,30 +211,21 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
       byId.set(id, message);
   }
   if (row.latestMessageId && !byId.has(row.latestMessageId)) return null;
-  const messages: JevMailMessage[] = [...byId.values()]
-    .sort((a, b) => a.receivedAt - b.receivedAt || a.providerMessageId.localeCompare(b.providerMessageId))
-    .map((message) => ({
-      id: message.providerMessageId,
-      from: message.from,
-      to: message.to,
-      cc: message.cc || '',
-      subject: message.subject,
-      body: truncateText(String(message.textBody || message.snippet || ''), 2400),
-      date: message.receivedAt,
-      headers: Object.fromEntries(
-        Object.entries(message.headers || {})
-          .filter(
-            ([key, value]) =>
-              typeof value === 'string' &&
-              /^(list-id|list-unsubscribe|precedence|auto-submitted)$/i.test(key),
-          )
-          .map(([key, value]) => [key.toLowerCase(), truncateText(String(value), 500)]),
-      ),
-      attachments: (message.attachments || [])
-        .slice(0, 10)
-        .map((attachment: any) => String(attachment.filename || attachment.name || 'attachment')),
-    }));
-  return {
+  const docs = [...byId.values()].sort(
+    (a, b) => a.receivedAt - b.receivedAt || a.providerMessageId.localeCompare(b.providerMessageId),
+  );
+  const messages = docs.map(bodyMessage);
+  const messageCount = Math.max(Number(row.messageCount) || 0, recent.length);
+  // Jev judges a thread one new message at a time. When the message of the
+  // last verdict is among the newest messages, every later message is in the
+  // window, and the evidence messages of its open obligations are too. The
+  // window then holds the open state of the thread.
+  const continuesVerdict =
+    Boolean(row.jevAssessedMessageId) &&
+    recent
+      .slice(0, JEV_BODY_MESSAGES)
+      .some((message: any) => message.providerMessageId === row.jevAssessedMessageId);
+  const input: JevMailInput = {
     accountId: row.accountId,
     threadId: row.providerThreadId,
     messageId: row.latestMessageId || recent[0].providerMessageId,
@@ -190,10 +233,31 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
     selfAddresses: accounts.map((account: any) => account.email.toLowerCase()),
     messages,
     // Context is complete when the message window holds the whole thread. A
-    // long body is cut to 2400 characters, but that does not hide a message:
-    // most marketing mail is longer, and a body-length test sent it to Review.
-    contextComplete: recent.length <= 16 && (!row.messageCount || row.messageCount <= messages.length),
+    // long body is cut to 2400 characters, but that does not hide a message.
+    contextComplete:
+      (recent.length <= JEV_BODY_MESSAGES && messageCount <= messages.length) || continuesVerdict,
   };
+  const newest = recent[0];
+  // A thread with open obligations goes to the body stage at once: the
+  // first stage cannot keep or close evidence that it does not read.
+  const facts: JevFactsView | undefined = evidenceIds.length
+    ? undefined
+    : {
+        messages: [
+          {
+            ...bodyMessage(newest),
+            body: truncateText(String(newest.snippet || ''), JEV_BODY_CHARS),
+          },
+        ],
+        contextComplete: messageCount <= 1,
+        threadFacts: {
+          labels: (row.labels || []).slice(0, 20),
+          messageCount,
+          ruleCategory: row.smartCategory?.primary,
+          ruleSignals: (row.smartCategory?.signals || []).slice(0, 12),
+        },
+      };
+  return { input, facts, newest };
 }
 
 /** Jev classifies mail of the last 60 days only. Older mail keeps its rule-based category. */
@@ -243,6 +307,18 @@ function gatedPatch(row: any, gate: JevGate) {
   };
 }
 
+/** Pending thread rows that one claim reads. */
+export const JEV_CLAIM_SCAN = 40;
+
+// The evidence text that a stored assessment may carry for one message: the
+// body-stage text, or the snippet that the first stage read.
+function evidenceTexts(message: JevMailMessage, facts?: JevFactsView) {
+  const texts = [truncateText(message.body || message.subject, JEV_BODY_CHARS)];
+  const seen = facts?.messages.find((entry) => entry.id === message.id);
+  if (seen) texts.push(truncateText(seen.body || seen.subject, JEV_BODY_CHARS));
+  return texts;
+}
+
 export const claimPending = mutation({
   args: { internalSecret: v.optional(v.string()), userId: v.string(), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -250,11 +326,14 @@ export const claimPending = mutation({
     if (!(await loadJevSettings(ctx, args.userId)).preferences.enabled)
       return { items: [], moreRemaining: false };
     const limit = Math.max(1, Math.min(20, args.limit ?? 12));
+    // IO-1: thread rows are large (verdict, evidence). 40 rows cover three
+    // claims of 12; gated and settled rows leave the index, so the next claim
+    // reads further down.
     const rows = await ctx.db
       .query('mailCorpusThreads')
       .withIndex('by_user_llm_pending', (q) => q.eq('userId', args.userId).eq('llmPending', true))
       .order('desc')
-      .take(120);
+      .take(JEV_CLAIM_SCAN);
     const { accounts, live } = await userAccounts(ctx, args.userId);
     const items = [];
     const now = Date.now();
@@ -270,8 +349,20 @@ export const claimPending = mutation({
         continue;
       }
       if ((row.jevRetryAt || 0) > now || (row.jevAttempts || 0) >= 3) continue;
-      const input = await threadInput(ctx, row, accounts);
-      if (!input) {
+      // A verdict for the current latest message and Jev version is current
+      // without a message read: a content change clears the verdict at write
+      // time (classificationFreshnessPatch).
+      if (row.jevVersion === JEV_VERSION && assessmentIsCurrent(row.jev, row.latestMessageId)) {
+        await ctx.db.patch(row._id, {
+          llmPending: undefined,
+          jevStatus: row.jev.status,
+          jevError: undefined,
+        });
+        settled++;
+        continue;
+      }
+      const window = await threadWindow(ctx, row, accounts);
+      if (!window) {
         await ctx.db.patch(row._id, {
           llmPending: undefined,
           jevStatus: 'unavailable',
@@ -280,6 +371,7 @@ export const claimPending = mutation({
         settled++;
         continue;
       }
+      const { input, facts } = window;
       // One classification for each source revision. A queue flag on a row
       // whose verdict already covers this exact content costs no model call.
       // queueUser and a classifier switch set jevVersion to 0 to force a pass.
@@ -307,7 +399,7 @@ export const claimPending = mutation({
         // the row is claimed again forever.
         ...(row.latestMessageId ? {} : { latestMessageId: input.messageId }),
       });
-      items.push({ ...input, leaseId });
+      items.push({ ...input, leaseId, ...(facts ? { facts } : {}) });
       if (items.length === limit) break;
     }
     return { items, moreRemaining: items.length === limit || settled > 0 };
@@ -346,8 +438,9 @@ export const storeAssessments = mutation({
         )
         .unique();
       if (!row || row.latestMessageId !== item.messageId || row.jevLeaseId !== item.leaseId) continue;
-      const input = await threadInput(ctx, row, accounts);
-      if (!input || input.sourceRevision !== item.sourceRevision) {
+      const window = await threadWindow(ctx, row, accounts);
+      const input = window?.input;
+      if (!window || !input || input.sourceRevision !== item.sourceRevision) {
         // The content changed while the model ran. The attempt counts, so a
         // thread whose revision does not settle stops after three passes.
         const attempts = (row.jevAttempts || 0) + 1;
@@ -375,7 +468,7 @@ export const storeAssessments = mutation({
             !input.messages.some(
               (message) =>
                 message.id === evidence.messageId &&
-                truncateText(message.body || message.subject, 2400) === evidence.text,
+                evidenceTexts(message, window.facts).includes(evidence.text),
             ),
         )
       ) {
@@ -396,12 +489,13 @@ export const storeAssessments = mutation({
       const merged = classifyCorpusThread(
         { ...row, jev: assessment },
         context,
-        await latestThreadContent(ctx, row),
+        classifierContent(window.newest),
       );
       await ctx.db.patch(row._id, {
         ...merged,
         jev: assessment,
         jevEvidenceMessageIds: [...new Set(assessment.obligations.map((item) => item.evidence.messageId))],
+        jevAssessedMessageId: item.messageId,
         jevVersion: JEV_VERSION,
         jevStatus: assessment.status,
         jevAttempts: 0,
