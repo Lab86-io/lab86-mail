@@ -6,7 +6,9 @@ import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 // Direct Google transport (docs/google-direct-transport.md): the sign-in
 // state, the account switch and rollback, the token row, the History sync
 // targets, and scheduled sends for Google accounts that talk to Gmail without
-// Nylas. The grant id of such an account is `google:<accountId>`.
+// Nylas. The grant id of such an account is `google:<random UUID>`: one id for
+// each (userId, accountId) connection. Two users can share one accountId, so
+// the grant id never holds it, and no two rows may share a direct grant id.
 
 const GOOGLE_GRANT_PREFIX = 'google:';
 // The first string after every `google:...` id in index order (':' + 1).
@@ -15,12 +17,45 @@ const CLEANUP_BATCH_SIZE = 100;
 
 const modeValidator = v.union(v.literal('switch'), v.literal('new'), v.literal('reconnect'));
 
-function directGrantId(accountId: string) {
-  return `${GOOGLE_GRANT_PREFIX}${accountId}`;
+function isDirectGrant(grantId: string | undefined): grantId is string {
+  return typeof grantId === 'string' && grantId.startsWith(GOOGLE_GRANT_PREFIX);
 }
 
-function isDirectGrant(grantId: string | undefined) {
-  return typeof grantId === 'string' && grantId.startsWith(GOOGLE_GRANT_PREFIX);
+const SHARED_GRANT = 'Two connections share one direct Google grant id.';
+
+/**
+ * The one token row of a direct grant id, or null. Two rows with one id is a
+ * broken state; the call refuses it, so one user never gets another user's
+ * token.
+ */
+async function soleGrantRow(ctx: any, grantId: string) {
+  const rows = await ctx.db
+    .query('providerGrants')
+    .withIndex('by_grant', (q: any) => q.eq('grantId', grantId))
+    .take(2);
+  if (rows.length > 1) throw new Error(SHARED_GRANT);
+  const row = rows[0] ?? null;
+  if (!row) return null;
+  // The account row of the same connection must name the same grant.
+  const account = await ctx.db
+    .query('connectedAccounts')
+    .withIndex('by_user_account', (q: any) => q.eq('userId', row.userId).eq('accountId', row.accountId))
+    .unique();
+  return account && account.grantId === grantId ? row : null;
+}
+
+/** True when a row other than `keep` uses this grant id. */
+async function grantIdInUse(ctx: any, grantId: string, keep: { userId: string; accountId: string }) {
+  const other = (row: { userId: string; accountId: string }) =>
+    row.userId !== keep.userId || row.accountId !== keep.accountId;
+  for (const table of ['connectedAccounts', 'providerGrants'] as const) {
+    const rows = await ctx.db
+      .query(table)
+      .withIndex('by_grant', (q: any) => q.eq('grantId', grantId))
+      .take(5);
+    if (rows.some(other)) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,10 +136,7 @@ export const getGrantCredentials = query({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     if (!isDirectGrant(args.grantId)) return null;
-    const row = await ctx.db
-      .query('providerGrants')
-      .withIndex('by_grant', (q) => q.eq('grantId', args.grantId))
-      .first();
+    const row = await soleGrantRow(ctx, args.grantId);
     if (!row) return null;
     return {
       userId: row.userId,
@@ -119,10 +151,15 @@ export const getGrantCredentials = query({
   },
 });
 
-/** Stores a refreshed access token (and a rotated refresh token, if any). */
+/**
+ * Stores a refreshed access token (and a rotated refresh token, if any) on the
+ * token row of one connection. The row must still hold this grant id.
+ */
 export const saveGrantAccessToken = mutation({
   args: {
     internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
     grantId: v.string(),
     accessTokenEncrypted: v.string(),
     expiresAt: v.number(),
@@ -131,57 +168,64 @@ export const saveGrantAccessToken = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     if (!isDirectGrant(args.grantId)) return { updated: 0 };
-    const rows = await ctx.db
+    const row = await ctx.db
       .query('providerGrants')
-      .withIndex('by_grant', (q) => q.eq('grantId', args.grantId))
-      .collect();
-    for (const row of rows) {
-      await ctx.db.patch(row._id, {
-        accessTokenEncrypted: args.accessTokenEncrypted,
-        expiresAt: args.expiresAt,
-        ...(args.refreshTokenEncrypted ? { refreshTokenEncrypted: args.refreshTokenEncrypted } : {}),
-        updatedAt: now(),
-      });
-    }
-    return { updated: rows.length };
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .unique();
+    if (!row || row.grantId !== args.grantId) return { updated: 0 };
+    await ctx.db.patch(row._id, {
+      accessTokenEncrypted: args.accessTokenEncrypted,
+      expiresAt: args.expiresAt,
+      ...(args.refreshTokenEncrypted ? { refreshTokenEncrypted: args.refreshTokenEncrypted } : {}),
+      updatedAt: now(),
+    });
+    return { updated: 1 };
   },
 });
 
 /**
- * Deletes the token row of a direct grant (grants.destroy). Returns the Nylas
- * grant that the account used before the switch, so the caller can destroy it
- * too. The connected account row is not touched here.
+ * Deletes the token row of one direct grant (grants.destroy), and cancels the
+ * held scheduled sends of that connection. Returns the Nylas grant that the
+ * connection used before the switch, so the caller can destroy it too, but
+ * only when no other connection still uses that Nylas grant. The connected
+ * account row is not touched here.
  */
 export const removeGrant = mutation({
   args: { internalSecret: v.optional(v.string()), grantId: v.string() },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    if (!isDirectGrant(args.grantId)) {
-      return { removed: 0, previousNylasGrantIds: [] as string[], cancelledSends: 0 };
-    }
-    const rows = await ctx.db
-      .query('providerGrants')
-      .withIndex('by_grant', (q) => q.eq('grantId', args.grantId))
-      .collect();
-    const previous = new Set<string>();
+    const none = { removed: 0, previousNylasGrantIds: [] as string[], cancelledSends: 0 };
+    if (!isDirectGrant(args.grantId)) return none;
+    const row = await soleGrantRow(ctx, args.grantId);
+    if (!row) return none;
+    // A held scheduled send of this mailbox goes with the grant: the message
+    // must not stay stored after a disconnect.
     let cancelledSends = 0;
-    for (const row of rows) {
-      if (row.previousNylasGrantId) previous.add(row.previousNylasGrantId);
-      // A held scheduled send of this mailbox goes with the grant: the
-      // message must not stay stored after a disconnect.
-      const held = await ctx.db
-        .query('mailOutbox')
-        .withIndex('by_user', (q) => q.eq('userId', row.userId))
-        .collect();
-      for (const send of held) {
-        if (!send.scheduled || send.accountId !== row.accountId || send.status !== 'pending') continue;
-        if (send.payloadId) await ctx.storage.delete(send.payloadId);
-        await ctx.db.patch(send._id, { status: 'cancelled', payloadId: undefined, updatedAt: now() });
-        cancelledSends += 1;
-      }
-      await ctx.db.delete(row._id);
+    const held = await ctx.db
+      .query('mailOutbox')
+      .withIndex('by_user', (q) => q.eq('userId', row.userId))
+      .collect();
+    for (const send of held) {
+      if (!send.scheduled || send.accountId !== row.accountId || send.status !== 'pending') continue;
+      if (send.payloadId) await ctx.storage.delete(send.payloadId);
+      await ctx.db.patch(send._id, { status: 'cancelled', payloadId: undefined, updatedAt: now() });
+      cancelledSends += 1;
     }
-    return { removed: rows.length, previousNylasGrantIds: [...previous], cancelledSends };
+    await ctx.db.delete(row._id);
+    const previousNylasGrantIds: string[] = [];
+    const previous = row.previousNylasGrantId;
+    if (previous) {
+      const stillUsed =
+        (await grantIdInUse(ctx, previous, row)) ||
+        (
+          await ctx.db
+            .query('providerGrants')
+            .withIndex('by_previous_nylas_grant', (q) => q.eq('previousNylasGrantId', previous))
+            .take(5)
+        ).some((other) => other._id !== row._id);
+      if (!stillUsed) previousNylasGrantIds.push(previous);
+    }
+    return { removed: 1, previousNylasGrantIds, cancelledSends };
   },
 });
 
@@ -252,8 +296,10 @@ export const activateGoogleAccount = mutation({
     userId: v.string(),
     mode: modeValidator,
     accountId: v.optional(v.string()),
-    // The account id for a new account. The app makes it (a UUID).
+    // The account id for a new account and the grant id for a new direct
+    // connection. The app makes both (random UUIDs).
     newAccountId: v.string(),
+    newGrantId: v.string(),
     email: v.string(),
     displayName: v.optional(v.string()),
     scopes: v.array(v.string()),
@@ -282,8 +328,12 @@ export const activateGoogleAccount = mutation({
     }
 
     const accountId = existing?.accountId ?? args.newAccountId;
-    const grantId = directGrantId(accountId);
     const priorGrantId = existing?.grantId;
+    // A reconnect keeps the grant id of the connection; a switch or a new
+    // connection gets the new one. Either way no other row may use it.
+    const grantId = isDirectGrant(priorGrantId) ? priorGrantId : args.newGrantId;
+    if (!isDirectGrant(grantId)) throw new Error('A direct Google grant id is required.');
+    if (await grantIdInUse(ctx, grantId, { userId: args.userId, accountId })) throw new Error(SHARED_GRANT);
     const grant = await ctx.db
       .query('providerGrants')
       .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', accountId))
@@ -423,6 +473,52 @@ export const listDirectMailAccounts = internalQuery({
     return rows
       .filter((row) => row.status === 'connected')
       .map((row) => ({ userId: row.userId, accountId: row.accountId }));
+  },
+});
+
+/** History ids are unsigned 64-bit decimal strings. Null when a value is not one. */
+function historyNumber(value: string | undefined): bigint | null {
+  if (typeof value !== 'string' || !/^\d{1,20}$/.test(value)) return null;
+  return BigInt(value);
+}
+
+/**
+ * Moves the stored History id of one direct connection forward. Two runs can
+ * overlap (two app instances); the slower one must not write back an older
+ * id, so an id that is not newer than the stored one is not written. A
+ * connection that has left the grant (a rollback or a new sign-in) is not
+ * written either.
+ */
+export const advanceHistoryId = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    grantId: v.string(),
+    historyId: v.string(),
+    progress: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const next = historyNumber(args.historyId);
+    if (next === null) throw new Error('A History id is a decimal number.');
+    const state = await ctx.db
+      .query('mailSyncStates')
+      .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+      .unique();
+    if (!state || state.grantId !== args.grantId) return { saved: false, reason: 'grant_changed' as const };
+    const stored = historyNumber(state.historyId);
+    if (stored !== null && next <= stored) {
+      return { saved: false, reason: 'not_newer' as const, historyId: state.historyId };
+    }
+    const ts = now();
+    await ctx.db.patch(state._id, {
+      historyId: args.historyId,
+      ...(args.progress !== undefined ? { progress: args.progress } : {}),
+      lastIncrementalSyncAt: ts,
+      updatedAt: ts,
+    });
+    return { saved: true, historyId: args.historyId };
   },
 });
 

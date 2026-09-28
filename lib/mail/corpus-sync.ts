@@ -726,35 +726,83 @@ const PROVIDER_CHANGE_BATCH = 20;
  * sync, lib/google/history-sync.ts). Deletes use the webhook delete path and
  * upserts the webhook upsert path, with the same suggestion, alert, and
  * classifier steps, so a direct account ingests like a Nylas account.
+ *
+ * One bad message must not stop the rest: a failed delete is counted and
+ * skipped, and a failed batch is written again one message at a time, so only
+ * the message that fails is left out. The result counts what failed.
  */
 export async function applyProviderMessageChanges(
   row: NylasAccountRow,
   changes: { upserts: unknown[]; deletes: string[]; progress?: Record<string, unknown> },
 ) {
+  let deleted = 0;
+  let failed = 0;
   for (const providerMessageId of changes.deletes) {
-    await convexMutation(mailCorpusApi.deleteCorpusMessage, {
-      userId: row.userId,
-      accountId: row.accountId,
-      providerMessageId,
-    });
+    try {
+      await convexMutation(mailCorpusApi.deleteCorpusMessage, {
+        userId: row.userId,
+        accountId: row.accountId,
+        providerMessageId,
+      });
+      deleted += 1;
+    } catch (err: any) {
+      failed += 1;
+      console.warn('[mail-corpus] provider delete failed', err?.message || err);
+    }
   }
+  const progress = { stage: 'provider_changes', ...(changes.progress || {}) };
   let upserted = 0;
   for (let start = 0; start < changes.upserts.length; start += PROVIDER_CHANGE_BATCH) {
-    const messages = changes.upserts
-      .slice(start, start + PROVIDER_CHANGE_BATCH)
-      .map((message) => corpusMessageFromNylas(row, message));
+    const messages: CorpusMessageInput[] = [];
+    for (const raw of changes.upserts.slice(start, start + PROVIDER_CHANGE_BATCH)) {
+      try {
+        messages.push(corpusMessageFromNylas(row, raw));
+      } catch (err: any) {
+        failed += 1;
+        console.warn('[mail-corpus] provider message could not be read', err?.message || err);
+      }
+    }
+    if (!messages.length) continue;
     detectMailSuggestions(row, messages);
-    await scanIngestedMail(row, messages);
+    // Alerts are best effort here: a failed scan must not keep mail out.
+    await scanIngestedMail(row, messages).catch((err: any) =>
+      console.warn('[mail-corpus] urgent scan failed', err?.message || err),
+    );
+    const result = await upsertProviderMessages(row, messages, progress);
+    upserted += result.upserted;
+    failed += result.failed;
+  }
+  if (upserted || deleted) void kickMailClassifiers(row.userId);
+  return { upserted, deleted, failed };
+}
+
+async function upsertProviderMessages(
+  row: NylasAccountRow,
+  messages: CorpusMessageInput[],
+  progress: Record<string, unknown>,
+): Promise<{ upserted: number; failed: number }> {
+  try {
     await upsertCorpus(row, {
       messages,
       threads: corpusThreadsFromMessages(messages),
-      progress: { stage: 'provider_changes', ...(changes.progress || {}) },
+      progress,
       incremental: true,
     });
-    upserted += messages.length;
+    return { upserted: messages.length, failed: 0 };
+  } catch (err: any) {
+    if (messages.length === 1) {
+      console.warn('[mail-corpus] provider upsert failed', err?.message || err);
+      return { upserted: 0, failed: 1 };
+    }
+    let upserted = 0;
+    let failed = 0;
+    for (const message of messages) {
+      const one = await upsertProviderMessages(row, [message], progress);
+      upserted += one.upserted;
+      failed += one.failed;
+    }
+    return { upserted, failed };
   }
-  if (upserted || changes.deletes.length) void kickMailClassifiers(row.userId);
-  return { upserted, deleted: changes.deletes.length };
 }
 
 async function applyWebhookDelta(

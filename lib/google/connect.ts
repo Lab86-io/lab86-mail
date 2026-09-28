@@ -37,7 +37,7 @@ import {
   pkcePair,
 } from './oauth';
 import { forgetGoogleAccessToken } from './tokens';
-import { googleDirectGrantId, isGoogleDirectEnabled, isGoogleDirectGrant } from './transport';
+import { isGoogleDirectEnabled, isGoogleDirectGrant, newGoogleDirectGrantId } from './transport';
 
 export type GoogleMailMode = 'switch' | 'new' | 'reconnect';
 export type GoogleMailOutcome = 'switched' | 'reconnected' | 'created';
@@ -195,20 +195,25 @@ export async function startGoogleMailConnect(input: StartInput) {
  * Which direct flow a "connect Google" request of the Nylas connect route
  * takes, or null for Nylas. A native app that redeems a Nylas completion
  * token also redeems a Google one, so web and native take the same choice.
+ *
+ * A request that names a direct Google account (accountId, grant id, or
+ * email) reconnects that account directly, also with the flag off, so its
+ * Reconnect button does not move it back to Nylas. A request that names no
+ * account is a new connection: direct with the flag on, Nylas with it off.
  */
 export async function directGoogleConnectChoice(input: {
   userId: string;
+  account?: string | null;
 }): Promise<{ mode: GoogleMailMode; account?: string } | null> {
   if (!deps.googleOAuthClient()) return null;
-  if (isGoogleDirectEnabled(deps.env())) return { mode: 'new' };
-  // With the flag off, a direct account that needs a reconnect still
-  // reconnects to Gmail, so the Reconnect button does not undo a switch.
-  const accounts = await listAccounts(input.userId);
-  const dead = accounts.find(
-    (account) =>
-      account.provider === 'google' && isGoogleDirectGrant(account.grantId) && account.status !== 'connected',
-  );
-  return dead ? { mode: 'reconnect', account: dead.accountId } : null;
+  const ref = String(input.account || '').trim();
+  if (ref) {
+    const named = findAccount(await listAccounts(input.userId), ref);
+    if (named?.provider === 'google' && isGoogleDirectGrant(named.grantId)) {
+      return { mode: 'reconnect', account: named.accountId };
+    }
+  }
+  return isGoogleDirectEnabled(deps.env()) ? { mode: 'new' } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +269,7 @@ export async function completeGoogleMailConnect(input: CompleteInput) {
     mode: input.mode,
     accountId: input.accountId,
     newAccountId: deps.randomUUID(),
+    newGrantId: newGoogleDirectGrantId(deps.randomUUID),
     email,
     displayName: userInfo?.name || undefined,
     scopes,
@@ -272,7 +278,7 @@ export async function completeGoogleMailConnect(input: CompleteInput) {
     expiresAt: deps.now() + Math.max(60, Number(tokens.expires_in) || 3600) * 1000,
     historyId: profile.historyId,
   });
-  forgetGoogleAccessToken(googleDirectGrantId(result.accountId));
+  forgetGoogleAccessToken(result.grantId);
   void Promise.resolve(
     deps.afterConnect({ userId: input.userId, accountId: result.accountId, outcome: result.outcome }),
   ).catch(() => undefined);

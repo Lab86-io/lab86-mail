@@ -78,7 +78,6 @@ export function buildGoogleMailAuthorizationUrl(input: {
   url.searchParams.set('scope', GOOGLE_MAIL_SCOPES.join(' '));
   url.searchParams.set('access_type', 'offline');
   url.searchParams.set('prompt', 'consent');
-  url.searchParams.set('include_granted_scopes', 'true');
   url.searchParams.set('state', input.state);
   url.searchParams.set('code_challenge', input.codeChallenge);
   url.searchParams.set('code_challenge_method', 'S256');

@@ -126,8 +126,13 @@ describe('History sync end to end', () => {
       expect(batch?.args.messages[0].headers).toEqual({ 'list-unsubscribe': '<https://example.com/unsub>' });
       const deleted = h.convexCalls.find((call) => call.path === 'mailCorpus:deleteCorpusMessage');
       expect(deleted?.args.providerMessageId).toBe('old-1');
-      const saved = h.convexCalls.filter((call) => call.path === 'mailCorpus:markSyncState').at(-1);
-      expect(saved?.args).toMatchObject({ historyId: '102', grantId: GRANT });
+      const saved = h.convexCalls.filter((call) => call.path === 'googleDirect:advanceHistoryId').at(-1);
+      expect(saved?.args).toMatchObject({
+        historyId: '102',
+        grantId: GRANT,
+        userId: 'user_1',
+        accountId: 'acct_1',
+      });
     });
   });
 });
@@ -232,7 +237,7 @@ describe('applyProviderMessageChanges', () => {
         deletes: ['gone-1'],
         progress: { source: 'google_history' },
       });
-      expect(result).toEqual({ upserted: 21, deleted: 1 });
+      expect(result).toEqual({ upserted: 21, deleted: 1, failed: 0 });
       const paths = h.convexCalls.map((call) => call.path);
       expect(paths[0]).toBe('mailCorpus:deleteCorpusMessage');
       expect(h.convexCalls[0].args).toEqual({
@@ -246,7 +251,43 @@ describe('applyProviderMessageChanges', () => {
       expect(await applyProviderMessageChanges(row, { upserts: [], deletes: [] })).toEqual({
         upserted: 0,
         deleted: 0,
+        failed: 0,
       });
+    });
+  });
+
+  test('a failed batch is written again one message at a time; only the bad message is left out', async () => {
+    await withHttpHarness(async (h) => {
+      h.onConvex('mailCorpus:deleteCorpusMessage', (args) => {
+        if (args.providerMessageId === 'stuck') throw new Error('delete failed');
+        return { ok: true };
+      });
+      h.onConvex('mailCorpus:upsertCorpusBatch', (args) => {
+        if (args.messages.some((message: any) => message.providerMessageId === 'bad')) {
+          throw new Error('Value is too large');
+        }
+        return { ok: true };
+      });
+      h.onConvex('mailCorpus:markSyncState', () => ({ ok: true }));
+      h.convexFallback = () => null;
+      const row = accountRow({ grantId: GRANT });
+      const message = (id: string) => ({
+        ...plainMessage({ id, threadId: `t-${id}` }),
+        grantId: GRANT,
+        folders: ['INBOX'],
+        from: [{ name: 'Bob', email: 'bob@example.com' }],
+        body: 'hello',
+        date: 1_789_000_000,
+      });
+      const result = await applyProviderMessageChanges(row, {
+        upserts: [message('ok-1'), message('bad'), message('ok-2')],
+        deletes: ['stuck', 'gone'],
+      });
+      expect(result).toEqual({ upserted: 2, deleted: 1, failed: 2 });
+      const batches = h.convexCalls
+        .filter((call) => call.path === 'mailCorpus:upsertCorpusBatch')
+        .map((call) => call.args.messages.map((m: any) => m.providerMessageId));
+      expect(batches).toEqual([['ok-1', 'bad', 'ok-2'], ['ok-1'], ['bad'], ['ok-2']]);
     });
   });
 });

@@ -40,6 +40,8 @@ function setup(options: {
   pages?: Array<any | Error>;
   profileHistoryId?: string;
   missing?: string[];
+  broken?: Record<string, Error>;
+  applyFailed?: number;
 }): Recorded {
   const recorded: Recorded = { history: [], finds: [], applied: [], saved: [], reconciled: [], failures: [] };
   let page = 0;
@@ -51,8 +53,8 @@ function setup(options: {
         return options.state === undefined ? { historyId: '100' } : options.state;
       return null;
     }) as any,
-    mutate: (async (_fn: unknown, args: any) => {
-      recorded.saved.push(args);
+    mutate: (async (fn: unknown, args: any) => {
+      recorded.saved.push({ fn: getFunctionName(fn as any), ...args });
       return null;
     }) as any,
     googleJson: (async (_grant: string, url: string) => {
@@ -66,11 +68,16 @@ function setup(options: {
     findMessage: async (_grant: string, id: string, withHeaders: boolean) => {
       recorded.finds.push({ id, withHeaders });
       if (options.missing?.includes(id)) throw new GoogleApiError(404, 'Not Found');
+      if (options.broken?.[id]) throw options.broken[id];
       return { id, threadId: `t-${id}`, folders: id.startsWith('draft') ? ['DRAFT'] : ['INBOX'] };
     },
     applyProviderMessageChanges: (async (_row: any, changes: any) => {
       recorded.applied.push(changes);
-      return { upserted: changes.upserts.length, deleted: changes.deletes.length };
+      return {
+        upserted: changes.upserts.length - (options.applyFailed ?? 0),
+        deleted: changes.deletes.length,
+        failed: options.applyFailed ?? 0,
+      };
     }) as any,
     reconcileMailCorpusAccount: (async (input: any) => {
       recorded.reconciled.push(input);
@@ -142,10 +149,11 @@ describe('syncGoogleHistory', () => {
     expect(recorded.applied[0].upserts.map((m: any) => m.id)).toEqual(['new-1']);
     expect(recorded.applied[0].deletes).toEqual(['old-2', 'old-1']);
     expect(recorded.saved[0]).toMatchObject({
+      // The id moves only forward (googleDirect:advanceHistoryId).
+      fn: 'googleDirect:advanceHistoryId',
       userId: USER,
       accountId: ACCOUNT,
       grantId: GRANT,
-      provider: 'google',
       historyId: '105',
       progress: { stage: 'google_history', added: 2, relabeled: 1, deleted: 1 },
     });
@@ -209,27 +217,53 @@ describe('syncGoogleHistory', () => {
     expect(recorded.saved).toEqual([]);
   });
 
-  test('a read failure other than 404 goes up and saves nothing', async () => {
+  test('one message that cannot be read is skipped and counted; the id moves forward', async () => {
     const recorded = setup({
-      pages: [{ history: [{ id: '101', messagesAdded: [ref('x')] }], historyId: '101' }],
+      pages: [
+        {
+          history: [
+            { id: '101', messagesAdded: [ref('bad'), ref('good')] },
+            { id: '102', labelsAdded: [ref('old')] },
+          ],
+          historyId: '102',
+        },
+      ],
+      broken: { bad: new GoogleApiError(500, 'backend'), old: new Error('socket hang up') },
     });
-    __setGoogleHistoryDepsForTest({
-      query: (async (fn: unknown) =>
-        getFunctionName(fn as any) === 'accounts:getConnectedAccount'
-          ? account()
-          : { historyId: '100' }) as any,
-      googleJson: (async () => ({
-        history: [{ id: '101', messagesAdded: [ref('x')] }],
-        historyId: '101',
-      })) as any,
-      findMessage: async () => {
-        throw new GoogleApiError(500, 'backend');
-      },
-      mutate: (async (_fn: unknown, args: any) => recorded.saved.push(args)) as any,
-      noteGrantFailure: async () => false,
+    const result = await syncGoogleHistory({ userId: USER, accountId: ACCOUNT });
+    expect(result).toMatchObject({ ok: true, added: 2, relabeled: 1, failed: 2, historyId: '102' });
+    expect(recorded.applied[0].upserts.map((m: any) => m.id)).toEqual(['good']);
+    expect(recorded.saved.at(-1)).toMatchObject({
+      historyId: '102',
+      progress: { stage: 'google_history', failed: 2 },
     });
-    await expect(syncGoogleHistory({ userId: USER, accountId: ACCOUNT })).rejects.toThrow('backend');
+    expect(recorded.failures).toEqual([]);
+  });
+
+  test('a write failure of the ingest path is counted, and the id still moves forward', async () => {
+    const recorded = setup({
+      pages: [{ history: [{ id: '101', messagesAdded: [ref('a'), ref('b')] }], historyId: '101' }],
+      applyFailed: 1,
+    });
+    const result = await syncGoogleHistory({ userId: USER, accountId: ACCOUNT });
+    expect(result).toMatchObject({ ok: true, failed: 1, historyId: '101' });
+    expect(recorded.saved.at(-1)?.historyId).toBe('101');
+  });
+
+  test('a dead grant while messages are read stops the run and keeps the stored id', async () => {
+    const dead = new GoogleApiError(
+      401,
+      'invalid_grant: the Google sign-in expired or was revoked.',
+      'invalid_grant',
+    );
+    const recorded = setup({
+      pages: [{ history: [{ id: '101', messagesAdded: [ref('a')] }], historyId: '101' }],
+      broken: { a: dead },
+    });
+    await expect(syncGoogleHistory({ userId: USER, accountId: ACCOUNT })).rejects.toBe(dead);
+    expect(recorded.failures).toEqual([{ grantId: GRANT, err: dead }]);
     expect(recorded.saved).toEqual([]);
+    expect(recorded.applied).toEqual([]);
   });
 
   test('skips accounts that are not connected, not direct, or already running', async () => {

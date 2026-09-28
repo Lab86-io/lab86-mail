@@ -1,6 +1,6 @@
 // Direct Google transport: mail sync through the Gmail History API.
 //
-// A direct account (grant id `google:<accountId>`) gets no Nylas webhooks.
+// A direct account (grant id `google:<UUID>`) gets no Nylas webhooks.
 // Every 2 minutes the Convex cron (googleDirect:historyTick) asks the app to
 // read `users.history.list` from the stored History id of each such account
 // (mailSyncStates.historyId). Added and relabeled messages are read through
@@ -11,7 +11,7 @@
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { applyProviderMessageChanges, reconcileMailCorpusAccount } from '@/lib/mail/corpus-sync';
 import { requireNylas } from '@/lib/nylas/client';
-import { noteGrantFailure } from '@/lib/nylas/grant-health';
+import { isGrantGoneError, noteGrantFailure } from '@/lib/nylas/grant-health';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import { GMAIL_API, googleJson, googleUrl } from './http';
 import { isGoogleDirectGrant } from './transport';
@@ -51,6 +51,8 @@ export interface HistorySyncResult {
   relabeled: number;
   deleted: number;
   historyId?: string;
+  /** Changed messages that could not be read or written in this run. */
+  failed?: number;
   more?: boolean;
 }
 
@@ -126,15 +128,18 @@ async function currentHistoryId(grantId: string) {
   return String(profile.historyId);
 }
 
+/**
+ * Moves the stored History id forward. The mutation does not write an id that
+ * is not newer than the stored one, so an overlapping slower run cannot move
+ * the sync back.
+ */
 async function saveHistoryId(row: NylasAccountRow, historyId: string, progress: Record<string, unknown>) {
-  await deps.mutate(api.mailCorpus.markSyncState, {
+  await deps.mutate(api.googleDirect.advanceHistoryId, {
     userId: row.userId,
     accountId: row.accountId,
     grantId: row.grantId,
-    provider: row.provider,
     historyId,
     progress: { stage: 'google_history', ...progress },
-    lastIncrementalSyncAt: Date.now(),
   });
 }
 
@@ -228,6 +233,7 @@ async function runHistoryPass(row: NylasAccountRow, maxChanges: number): Promise
     ...[...relabeled].map((id) => ({ id, withHeaders: false })),
   ];
   const gone: string[] = [];
+  const unread: string[] = [];
   const fetched = await mapLimit(reads, READ_CONCURRENCY, async (read) => {
     try {
       // New mail keeps the list headers (unsubscribe, the classifier). A
@@ -238,18 +244,33 @@ async function runHistoryPass(row: NylasAccountRow, maxChanges: number): Promise
         gone.push(read.id);
         return null;
       }
-      throw err;
+      // A dead grant stops the run: the stored id stays, and the reconnect
+      // path takes over. Any other failure skips this one message, so one bad
+      // message cannot stop all new mail. The repair sweep reads recent mail
+      // again every 30 minutes.
+      if (isGrantGoneError(err)) throw err;
+      unread.push(read.id);
+      return null;
     }
   });
   const upserts = fetched.filter(
     (message: any) => message && !(Array.isArray(message.folders) && message.folders.includes('DRAFT')),
   );
-  await deps.applyProviderMessageChanges(row, {
+  const applied = await deps.applyProviderMessageChanges(row, {
     upserts,
     deletes: [...deleted, ...gone],
     progress: { source: 'google_history', historyId: latest },
   });
-  await saveHistoryId(row, latest, { added: added.size, relabeled: relabeled.size, deleted: deleted.size });
+  const failed = unread.length + (applied?.failed ?? 0);
+  if (failed) {
+    console.warn(`[google-history] ${failed} changed messages were skipped for ${row.accountId}`);
+  }
+  await saveHistoryId(row, latest, {
+    added: added.size,
+    relabeled: relabeled.size,
+    deleted: deleted.size,
+    ...(failed ? { failed } : {}),
+  });
   return {
     ok: true,
     accountId: row.accountId,
@@ -257,6 +278,7 @@ async function runHistoryPass(row: NylasAccountRow, maxChanges: number): Promise
     relabeled: relabeled.size,
     deleted: deleted.size + gone.length,
     historyId: latest,
+    ...(failed ? { failed } : {}),
     ...(more ? { more: true } : {}),
   };
 }

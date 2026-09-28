@@ -92,7 +92,10 @@ export function createNylasConnectGet(deps: NylasConnectDependencies = defaultDe
     if (provider === 'google' && deps.directGoogleConnectChoice && deps.startGoogleMailConnect) {
       // LAB86_GOOGLE_DIRECT=1 sends Google connections to Gmail directly
       // (docs/google-direct-transport.md).
-      const choice = await deps.directGoogleConnectChoice({ userId: user.userId });
+      const choice = await deps.directGoogleConnectChoice({
+        userId: user.userId,
+        account: url.searchParams.get('account'),
+      });
       if (choice) {
         try {
           const started = await deps.startGoogleMailConnect({
