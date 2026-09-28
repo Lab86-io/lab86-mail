@@ -85,9 +85,9 @@ Then open Today and let the Daily Brief operate one time.
   - On staging, set `LAB86_DISABLE_OUTBOUND_SEND=1` on service `web` in the
     Railway environment `development` for the scan window. Then each mail
     send (compose, reply, scheduled send, and the outbox) stops with an error
-    before it goes to the provider (`sendNylasMessage` calls
-    `assertOutboundSendEnabled`, `lib/hosted/controls.ts`). Remove the
-    variable after the scan.
+    before it goes to the provider. `sendNylasMessage` and the direct Google
+    adapter send both call `assertOutboundSendEnabled`
+    (`lib/hosted/controls.ts`). Remove the variable after the scan.
   - Do not set this variable on production: it stops the mail of all users.
     For a production scan, put the test account in its own organizational
     unit, and set Google Workspace Gmail > Compliance > Restrict delivery for

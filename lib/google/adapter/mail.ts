@@ -6,6 +6,7 @@
 // Query parameters come in camelCase or snake_case (callers pass both).
 
 import { randomBytes } from 'node:crypto';
+import { assertOutboundSendEnabled } from '@/lib/hosted/controls';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { decryptSecret } from '@/lib/security/crypto';
 import { GoogleApiError } from '../errors';
@@ -452,6 +453,9 @@ async function updateMessage(args: any) {
 }
 
 async function sendMessage(args: any) {
+  // sendNylasMessage checks this too. The check here also covers a caller of
+  // the routed client that does not go through it (LAB86_DISABLE_OUTBOUND_SEND).
+  assertOutboundSendEnabled();
   const grantId = String(args?.identifier);
   const body = args?.requestBody || {};
   const credentials = await requireCredentials(grantId);

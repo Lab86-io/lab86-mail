@@ -472,6 +472,26 @@ describe('send', () => {
     }
   });
 
+  test('the outbound switch stops a send and a scheduled send before Gmail or the outbox', async () => {
+    const saved = process.env.LAB86_DISABLE_OUTBOUND_SEND;
+    process.env.LAB86_DISABLE_OUTBOUND_SEND = '1';
+    try {
+      for (const extra of [{}, { send_at: 1_900_000_000 }]) {
+        await expect(
+          messages.send({
+            identifier: GRANT,
+            requestBody: { to: [{ email: 'a@x.org' }], subject: 's', body: 'b', ...extra },
+          }),
+        ).rejects.toThrow('Outbound sending is temporarily disabled.');
+      }
+      expect(gmail.calls).toEqual([]);
+      expect(adapterCalls.schedule).toEqual([]);
+    } finally {
+      if (saved === undefined) delete process.env.LAB86_DISABLE_OUTBOUND_SEND;
+      else process.env.LAB86_DISABLE_OUTBOUND_SEND = saved;
+    }
+  });
+
   test('a send time in the past sends at once', async () => {
     gmail.on('POST', /\/messages\/send$/, () => ({ json: { id: 'now-1', threadId: 'now-1' } }));
     const result = await messages.send({
