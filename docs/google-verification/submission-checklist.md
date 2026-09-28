@@ -54,7 +54,8 @@ folder describe them as "(after the casa-prep round)".
       Google gives the letter only when critical and high findings are fixed
       (<https://support.google.com/cloud/answer/13463817>).
 - [ ] Update `app/privacy/page.tsx`. The list of service providers must also
-      name Browserbase, Apple (push), and the favicon services. The
+      name Browserbase, Apple (push), the favicon services (DuckDuckGo and
+      Google), Open-Meteo, and OpenStreetMap Nominatim. The
       disconnect text must match `retention-and-deletion.md`.
 
 ## Step 3: Google Cloud setup for the direct transport
