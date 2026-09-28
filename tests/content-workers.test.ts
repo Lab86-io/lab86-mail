@@ -155,9 +155,9 @@ test('attachment sync deduplicates metadata, downloads in the owner account, and
   const deps: any = {
     convexQuery: async () => ({}),
     convexMutation: async (_ref: any, args: any) => writes.push(args),
-    downloadNylasAttachment: async (args: any) => {
-      reads.push(args);
-      return new Response('Signed approval').body;
+    readMailAttachmentBytes: async (ref: any, options: any) => {
+      reads.push({ ref, options });
+      return { bytes: new TextEncoder().encode('Signed approval'), source: 'store' };
     },
     extractContent: async (bytes: Uint8Array) => ({ text: new TextDecoder().decode(bytes), partial: false }),
   };
@@ -166,8 +166,16 @@ test('attachment sync deduplicates metadata, downloads in the owner account, and
     [file, file, { ...file, attachmentId: 'video', filename: 'video.mp4', mimeType: 'video/mp4' }],
     deps,
   );
+  // Storage first, 8 MB read cap, and a provider file is stored by the queue policy.
   expect(reads).toEqual([
-    { userId: 'owner', account: 'mail', messageId: 'message', attachmentId: 'attachment' },
+    {
+      ref: { userId: 'owner', account: 'mail', messageId: 'message', attachmentId: 'attachment' },
+      options: {
+        maxBytes: 8 * 1024 * 1024,
+        fill: 'policy',
+        hint: { filename: 'approval.txt', mimeType: 'text/plain', size: undefined, receivedAt: 1 },
+      },
+    },
   ]);
   expect(writes[0].items[0].text).toContain('Signed approval');
   expect(writes[1].items[0].partial).toBe(true);
@@ -176,7 +184,7 @@ test('attachment sync deduplicates metadata, downloads in the owner account, and
   await syncMailAttachments('owner', [file], deps);
   expect(reads).toHaveLength(1);
   deps.convexQuery = async () => ({});
-  deps.downloadNylasAttachment = async () => {
+  deps.readMailAttachmentBytes = async () => {
     throw new Error('transient');
   };
   await syncMailAttachments('owner', [file], deps);
@@ -492,10 +500,10 @@ test('permanent attachment failures become partial records and stop starving lat
         versions[`attachment:mail:${item.externalId}`] = item.version;
       }
     },
-    downloadNylasAttachment: async ({ attachmentId }: any) => {
+    readMailAttachmentBytes: async ({ attachmentId }: any) => {
       if (attachmentId === '0') return null;
       if (attachmentId === '1') throw Object.assign(new Error('gone'), { statusCode: 404 });
-      return new Response(attachmentId).body;
+      return { bytes: new TextEncoder().encode(attachmentId), source: 'provider' };
     },
     extractContent: async (bytes: Uint8Array) => {
       if (new TextDecoder().decode(bytes) !== '8')

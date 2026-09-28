@@ -150,6 +150,9 @@ crons.interval('mail corpus repair', { minutes: 30 }, internal.mailCorpus.repair
 // Direct Google accounts (grant id google:<accountId>) have no Nylas
 // webhooks. The app reads the Gmail History of each one every 2 minutes.
 crons.interval('google mail history sync', { minutes: 2 }, internal.googleDirect.historyTick, {});
+// Attachment files in our own encrypted storage: move each unfinished backfill
+// one page, then ask the app to store a few queued files for each user.
+crons.interval('mail attachment files', { minutes: 5 }, internal.mailAttachments.tick, {});
 // Snoozed threads come back to the inbox when due (MUT-1).
 crons.interval('mail snooze wake', { minutes: 5 }, internal.mailCorpus.snoozeTick, {});
 

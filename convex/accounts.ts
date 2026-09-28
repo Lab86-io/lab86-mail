@@ -7,6 +7,7 @@ import type { Id } from './_generated/dataModel';
 import { internalMutation, mutation, query } from './_generated/server';
 import { deleteContactRow } from './contacts';
 import { now, requireInternalSecret } from './lib';
+import { deleteAttachmentFileRow } from './mailAttachments';
 import schema from './schema';
 
 const providerValidator = v.union(
@@ -362,6 +363,10 @@ export const ACCOUNT_BULK_TABLES = [
   'mailOneTimeCodes',
   // Snooze rows would otherwise keep waking threads of a removed mailbox.
   'mailSnoozes',
+  // Attachment files: each row takes its stored file when no row shares it.
+  'mailAttachmentFiles',
+  'mailAttachmentQueue',
+  'mailAttachmentBackfills',
   'calendarEvents',
   'areaArtifactLinks',
   // Each contacts row takes its contactEmails rows with it (see below).
@@ -417,6 +422,8 @@ const MAIL_BODIES_PER_PASS = 25;
 const MAIL_MESSAGES_PER_PASS = 40;
 // A webhook row from before the ids-only change can hold a mail payload.
 const WEBHOOK_EVENTS_PER_PASS = 50;
+// Each attachment file row can also delete its stored file.
+const ATTACHMENT_FILES_PER_PASS = 100;
 
 // The most rows of one table that one purge pass takes.
 function purgePassLimit(table: string, remaining: number) {
@@ -426,6 +433,7 @@ function purgePassLimit(table: string, remaining: number) {
   if (table === 'mailCorpusBodies') return Math.min(remaining, MAIL_BODIES_PER_PASS);
   if (table === 'mailCorpusMessages') return Math.min(remaining, MAIL_MESSAGES_PER_PASS);
   if (table === 'mailWebhookEvents') return Math.min(remaining, WEBHOOK_EVENTS_PER_PASS);
+  if (table === 'mailAttachmentFiles') return Math.min(remaining, ATTACHMENT_FILES_PER_PASS);
   return remaining;
 }
 // Tables expose one of these userId-prefixed indexes; try each in turn.
@@ -464,6 +472,11 @@ export const purgeUserDataBatch = internalMutation({
       const remaining = PURGE_BATCH - deleted;
       const rows = await takeByUser(ctx, table, args.userId, purgePassLimit(table, remaining));
       for (const row of rows) {
+        if (table === 'mailAttachmentFiles') {
+          await deleteAttachmentFileRow(ctx, row as any);
+          deleted += 1;
+          continue;
+        }
         if ((table === 'officeVersions' || table === 'documentAssets') && 'storageId' in row) {
           // Metadata must not be deleted before its private binary.
           await ctx.storage.delete(row.storageId as Id<'_storage'>);
@@ -624,6 +637,10 @@ async function deleteAccountRow(ctx: any, table: string, row: any): Promise<numb
   // 'contactEmails' has no userId index for the sweep; it hangs off its contact.
   if (table === 'contacts') return deleteContactRow(ctx, row._id as Id<'contacts'>);
   if (table === 'albatrossNotifications') return deleteNotificationRow(ctx, row._id);
+  if (table === 'mailAttachmentFiles') {
+    await deleteAttachmentFileRow(ctx, row);
+    return 1;
+  }
   let deleted = 0;
   if (table === 'suggestions') {
     // The in-app notice of an event suggestion repeats its title.
@@ -1065,6 +1082,8 @@ export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
   googleMailOAuthCompletions: 'Short-lived sign-in state for a mailbox connection, not user content.',
   rateLimits: 'Request counters that protect the service, not user content.',
   aiCostWatch: 'Cost samples for the owner alarm that protect the service, not user content.',
+  mailAttachmentQueue: 'Work rows of the attachment file queue; mailAttachmentFiles has the stored files.',
+  mailAttachmentBackfills: 'The page cursor of the attachment file queue, not user content.',
 };
 
 /**

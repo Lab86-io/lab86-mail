@@ -24,6 +24,7 @@ function request(headers: Record<string, string> = {}) {
 
 function routeDependencies(payload: Record<string, unknown>) {
   const created: Array<Record<string, unknown>> = [];
+  const reads: Array<Record<string, unknown>> = [];
   let queryCount = 0;
   return {
     deps: {
@@ -40,11 +41,10 @@ function routeDependencies(payload: Record<string, unknown>) {
           : { status: 'connected', grantId: 'grant_1' };
       },
       convexMutation: async () => ({ ok: true }),
-      requireNylas: () => ({
-        attachments: {
-          download: async () => VALID_ICS,
-        },
-      }),
+      readMailAttachmentBytes: async (ref: Record<string, unknown>, options: Record<string, unknown>) => {
+        reads.push({ ref, options });
+        return { bytes: new TextEncoder().encode(VALID_ICS), source: 'store' as const };
+      },
       createCalendarEvent: async (input: Record<string, unknown>) => {
         created.push(input);
         return { eventId: 'event_1' };
@@ -52,8 +52,14 @@ function routeDependencies(payload: Record<string, unknown>) {
       reportUnexpectedError: () => undefined,
     },
     created,
+    reads,
   };
 }
+
+const icsFile = (text: string) => async () => ({
+  bytes: new TextEncoder().encode(text),
+  source: 'provider' as const,
+});
 
 describe('suggestion event acceptance', () => {
   test('applies the same bounds to an attachment-backed event', () => {
@@ -120,7 +126,7 @@ describe('suggestion event acceptance', () => {
   });
 
   test('passes a validated attachment event to the provider mutation path', async () => {
-    const { deps, created } = routeDependencies({
+    const { deps, created, reads } = routeDependencies({
       accountId: 'account_1',
       messageId: 'message_1',
       attachmentId: 'attachment_1',
@@ -147,6 +153,27 @@ describe('suggestion event acceptance', () => {
         notifyParticipants: false,
       },
     ]);
+    // The ICS goes through the shared attachment read: storage first, then store.
+    expect(reads).toEqual([
+      {
+        ref: { userId: 'user_1', account: 'account_1', messageId: 'message_1', attachmentId: 'attachment_1' },
+        options: { fill: 'always' },
+      },
+    ]);
+  });
+
+  test('a missing attachment file gives 422 and no event', async () => {
+    const { deps, created } = routeDependencies({
+      accountId: 'account_1',
+      messageId: 'message_1',
+      attachmentId: 'attachment_1',
+    });
+    deps.readMailAttachmentBytes = async () => null as any;
+
+    const response = await createSuggestionActPost(deps as any)(request());
+
+    expect(response.status).toBe(422);
+    expect(created).toEqual([]);
   });
 
   test('passes a validated embedded event to the provider mutation path', async () => {
@@ -179,12 +206,9 @@ describe('suggestion event acceptance', () => {
       messageId: 'message_1',
       attachmentId: 'attachment_1',
     });
-    deps.requireNylas = () =>
-      ({
-        attachments: {
-          download: async () => VALID_ICS.replace('DTEND:20260724T150000Z', 'DTEND:20260924T150000Z'),
-        },
-      }) as any;
+    deps.readMailAttachmentBytes = icsFile(
+      VALID_ICS.replace('DTEND:20260724T150000Z', 'DTEND:20260924T150000Z'),
+    ) as any;
 
     const response = await createSuggestionActPost(deps as any)(request());
 
@@ -209,16 +233,12 @@ describe('suggestion event acceptance', () => {
       messageId: 'message_1',
       attachmentId: 'attachment_1',
     });
-    invited.deps.requireNylas = () =>
-      ({
-        attachments: {
-          download: async () =>
-            VALID_ICS.replace(
-              'DTSTART:20260724T140000Z',
-              'DTSTART;TZID=Europe/Berlin:20260724T140000',
-            ).replace('DTEND:20260724T150000Z', 'DTEND;TZID=Europe/Berlin:20260724T150000'),
-        },
-      }) as any;
+    invited.deps.readMailAttachmentBytes = icsFile(
+      VALID_ICS.replace('DTSTART:20260724T140000Z', 'DTSTART;TZID=Europe/Berlin:20260724T140000').replace(
+        'DTEND:20260724T150000Z',
+        'DTEND;TZID=Europe/Berlin:20260724T150000',
+      ),
+    ) as any;
     await createSuggestionActPost(invited.deps as any)(request({ 'x-user-timezone': 'America/Chicago' }));
     expect(invited.created[0]).toMatchObject({
       startAt: Date.parse('2026-07-24T12:00:00Z'),

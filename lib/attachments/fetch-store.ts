@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import net from 'node:net';
+import { AttachmentTooLargeError, readMailAttachmentBytes } from '@/lib/attachments/mail-files';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { downloadNylasAttachment } from '@/lib/nylas/provider';
 import { normalizeUrl } from '@/lib/shared/url';
 
 const boardsApi = api.boards;
@@ -150,27 +150,29 @@ export async function fetchWebFile(rawUrl: string, fallbackName?: string): Promi
   return { bytes: buffer, contentType, name };
 }
 
-// Download an attachment off a synced email message.
+// Read an attachment off a synced email message: our encrypted storage first,
+// else the provider, and a provider file is stored (mail-files.ts).
 export async function fetchEmailAttachment(
   userId: string,
   accountRef: string,
   attachmentId: string,
   messageId: string,
   fallbackName?: string,
+  deps = { readMailAttachmentBytes },
 ): Promise<FetchedBlob> {
-  const stream = await downloadNylasAttachment({
-    userId,
-    account: accountRef,
-    attachmentId,
-    messageId,
-  });
-  if (!stream) throw new Error('Email account not connected, or attachment not found.');
-  const buffer = new Uint8Array(await new Response(stream as any).arrayBuffer());
-  if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`Attachment is too large (${Math.round(buffer.byteLength / 1e6)} MB; max 25 MB).`);
+  let file: Awaited<ReturnType<typeof readMailAttachmentBytes>>;
+  try {
+    file = await deps.readMailAttachmentBytes(
+      { userId, account: accountRef, attachmentId, messageId },
+      { fill: 'always', maxBytes: MAX_ATTACHMENT_BYTES },
+    );
+  } catch (error) {
+    if (error instanceof AttachmentTooLargeError) throw new Error('Attachment is too large (max 25 MB).');
+    throw error;
   }
+  if (!file) throw new Error('Email account not connected, or attachment not found.');
   return {
-    bytes: buffer,
+    bytes: file.bytes,
     contentType: 'application/octet-stream',
     name: fallbackName || 'attachment',
   };

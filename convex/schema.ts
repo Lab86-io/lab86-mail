@@ -480,6 +480,64 @@ export default defineSchema({
     .index('by_user_account_message', ['userId', 'accountId', 'providerMessageId'])
     .index('by_user_account_thread', ['userId', 'accountId', 'providerThreadId']),
 
+  // Mail attachment files in Convex file storage, which encrypts them at rest
+  // (convex/mailAttachments.ts, policy in lib/attachments/store-policy.ts).
+  // One row for each message attachment. Rows of one user with the same
+  // sha256 share one stored file. The file is deleted with its last row.
+  mailAttachmentFiles: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    providerMessageId: v.string(),
+    attachmentId: v.string(),
+    filename: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+    sha256: v.string(),
+    storageId: v.id('_storage'),
+    createdAt: v.number(),
+  })
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_account_message', ['userId', 'accountId', 'providerMessageId', 'attachmentId'])
+    .index('by_user_sha256', ['userId', 'sha256'])
+    .index('by_storage', ['storageId']),
+
+  // The work queue of mailAttachmentFiles. A `queued` row waits for `dueAt`;
+  // a claim leases it and counts the attempt. A `failed` row records a
+  // permanent error (or too many attempts), so the queue does not try again.
+  mailAttachmentQueue: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    providerMessageId: v.string(),
+    attachmentId: v.string(),
+    filename: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+    receivedAt: v.number(),
+    state: v.union(v.literal('queued'), v.literal('failed')),
+    attempts: v.number(),
+    dueAt: v.number(),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_account_message', ['userId', 'accountId', 'providerMessageId', 'attachmentId'])
+    .index('by_user_state_due', ['userId', 'state', 'dueAt']),
+
+  // One row for each mailbox: how far the queue read the stored mail of the
+  // time window. New mail enters the queue when the corpus stores it; this
+  // cursor adds the mail that the corpus held before the queue existed.
+  mailAttachmentBackfills: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    // The Convex page cursor over mailCorpusMessages.by_user_account_received.
+    cursor: v.optional(v.string()),
+    doneAt: v.optional(v.number()),
+    queued: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_user_account', ['userId', 'accountId']),
+
   // Generic per-user document store backing all server-side app state that
   // previously lived in the single-tenant NeDB files (memories, smart labels,
   // tracked threads, drafts, chat, prefs, caches, ...). `kind` namespaces the

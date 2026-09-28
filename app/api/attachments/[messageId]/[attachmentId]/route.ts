@@ -1,6 +1,6 @@
-import type { NextRequest } from 'next/server';
+import { after, type NextRequest } from 'next/server';
+import { openMailAttachment } from '@/lib/attachments/mail-files';
 import { requireCurrentUser } from '@/lib/auth/current-user';
-import { downloadNylasAttachment } from '@/lib/nylas/provider';
 import { sanitizeFilename } from '@/lib/shared/files';
 
 export const runtime = 'nodejs';
@@ -66,7 +66,12 @@ export function attachmentResponseHeaders(input: {
   return headers;
 }
 
-const defaultDependencies = { requireCurrentUser, downloadNylasAttachment };
+const defaultDependencies = {
+  requireCurrentUser,
+  openMailAttachment,
+  // The stored copy of a provider file is written after the response.
+  defer: (task: () => Promise<unknown>) => after(task),
+};
 
 export function createAttachmentGet(overrides: Partial<typeof defaultDependencies> = {}) {
   const deps = { ...defaultDependencies, ...overrides };
@@ -77,7 +82,8 @@ export function createAttachmentGet(overrides: Partial<typeof defaultDependencie
     const { messageId, attachmentId } = await params;
     const url = new URL(req.url);
     const account = url.searchParams.get('account') || '';
-    const filename = sanitizeFilename(url.searchParams.get('name') || 'attachment');
+    const name = url.searchParams.get('name');
+    const mime = url.searchParams.get('mime');
 
     if (!account || !messageId || !attachmentId) {
       return new Response('account, messageId and attachmentId are required', { status: 400 });
@@ -85,19 +91,22 @@ export function createAttachmentGet(overrides: Partial<typeof defaultDependencie
 
     try {
       const user = await deps.requireCurrentUser();
-      const stream = await deps.downloadNylasAttachment({
-        userId: user.userId,
-        account,
-        messageId,
-        attachmentId,
-      });
-      if (!stream)
+      // Our encrypted storage first; else the provider, and the file is stored.
+      const file = await deps.openMailAttachment(
+        { userId: user.userId, account, messageId, attachmentId },
+        {
+          fill: 'always',
+          hint: { filename: name ? sanitizeFilename(name) : undefined, mimeType: mime || undefined },
+          defer: deps.defer,
+        },
+      );
+      if (!file)
         return new Response('attachment fetch failed: Nylas account is not connected', { status: 404 });
 
-      return new Response(stream, {
+      return new Response(file.stream, {
         headers: attachmentResponseHeaders({
-          mime: url.searchParams.get('mime'),
-          filename,
+          mime: mime || file.mimeType,
+          filename: sanitizeFilename(name || file.filename || 'attachment'),
           preview: url.searchParams.get('preview') === '1',
         }),
       });
