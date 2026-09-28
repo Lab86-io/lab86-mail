@@ -393,6 +393,17 @@ describe('recordFile', () => {
       file.storageId,
     ]);
     expect(await blobCount(t)).toBe(1);
+    // A record that names a file in use never deletes it.
+    expect(await record(t, 'acct', 'att_pdf', file, { storageId: file.storageId })).toEqual({
+      status: 'stored',
+      deduplicated: true,
+    });
+    const other = await upload(t, 'other bytes');
+    await expect(record(t, 'acct2', 'att_pdf', other, { storageId: file.storageId })).rejects.toThrow(
+      'does not match',
+    );
+    expect(await blobCount(t)).toBe(2);
+    expect(await t.run((ctx) => ctx.storage.getUrl(file.storageId))).toBeString();
   });
 
   test('refuses bad hashes, missing or mismatched uploads, big files, and mailboxes that are not live', async () => {

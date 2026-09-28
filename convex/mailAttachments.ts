@@ -277,9 +277,16 @@ export const recordFile = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     if (!/^[a-f0-9]{64}$/.test(args.sha256)) throw new Error('A file hash is a hex SHA-256.');
+    // `storageId` must be a fresh upload of this call. It is deleted when it
+    // is not kept, but never while a file row points at it.
     const upload = args.storageId;
     const dropUpload = async () => {
-      if (upload) await ctx.storage.delete(upload).catch(() => undefined);
+      if (!upload) return;
+      const used = await ctx.db
+        .query('mailAttachmentFiles')
+        .withIndex('by_storage', (q) => q.eq('storageId', upload))
+        .first();
+      if (!used) await ctx.storage.delete(upload).catch(() => undefined);
     };
     const key = {
       userId: args.userId,
