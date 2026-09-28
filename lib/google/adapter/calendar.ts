@@ -232,7 +232,9 @@ async function createEvent(args: any) {
       sendUpdates: sendUpdatesFor(query.notifyParticipants),
       conferenceDataVersion: wantsConferenceCreate(args?.requestBody) ? 1 : undefined,
     }),
-    { method: 'POST', json: body, ...timeoutInit(args?.overrides) },
+    // One attempt: an insert is not idempotent, and a 5xx can come after
+    // Google made the event. The caller finds such an event by its metadata.
+    { method: 'POST', json: body, attempts: 1, ...timeoutInit(args?.overrides) },
   );
   return {
     data: googleEventToNylas(created, {

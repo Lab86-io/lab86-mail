@@ -738,6 +738,20 @@ describe('events.create', () => {
     expect(g.calls[1].url.searchParams.get('sendUpdates')).toBe('all');
   });
 
+  test('does not send an insert again after a 5xx', async () => {
+    const g = google();
+    g.on('POST', /\/events$/, { status: 503, json: { error: { code: 503, message: 'Backend Error' } } });
+    const error = (await adapter.events
+      .create({
+        identifier: GRANT,
+        requestBody: { when: { date: '2026-01-01' } },
+        queryParams: { calendarId: CAL },
+      })
+      .catch((e: unknown) => e)) as GoogleApiError;
+    expect(error.statusCode).toBe(503);
+    expect(g.calls).toHaveLength(1);
+  });
+
   test('passes a Google 400 through with its status', async () => {
     const g = google();
     g.on('POST', /\/events$/, {

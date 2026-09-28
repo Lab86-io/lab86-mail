@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
-import { deleteCalendarEvent, rsvpCalendarEvent, unsubscribeCalendar } from '../lib/calendar/mutate';
+import {
+  createCalendarEvent,
+  deleteCalendarEvent,
+  rsvpCalendarEvent,
+  unsubscribeCalendar,
+} from '../lib/calendar/mutate';
 import { syncCalendarAccount } from '../lib/calendar/sync';
 import { setContactSyncDependenciesForTest, syncAccountContacts } from '../lib/contacts/sync';
 import { __resetCalendarAdapterCacheForTest } from '../lib/google/adapter/calendar';
@@ -261,6 +266,56 @@ describe('calendar callers with a direct Google grant', () => {
       expect(holiday).toMatchObject({ allDay: true, busy: false, startAt: Date.UTC(2026, 8, 30) });
       const reconciles = s.convex.filter((call) => call.path === 'calendarData:reconcileWindow');
       expect(reconciles[0].args.keepProviderEventIds).toEqual(['plain1', 'series1_20260929T133000Z']);
+    });
+  });
+
+  test('createCalendarEvent finds its event by metadata after a Google 5xx', async () => {
+    await withStubs(async (s) => {
+      s.onConvex('accounts:listConnectedAccounts', () => [account()]);
+      s.onConvex('calendarData:listCalendars', () => [
+        {
+          accountId: 'acct-1',
+          providerCalendarId: 'ann@work.example.test',
+          readOnly: false,
+          isPrimary: true,
+        },
+      ]);
+      let sent: any;
+      s.onGoogle('POST', /\/events$/, (call) => {
+        sent = call.body;
+        return { status: 503, json: { error: { code: 503, message: 'Backend Error' } } };
+      });
+      s.onGoogle('GET', /\/events$/, () => ({
+        json: {
+          items: [
+            {
+              ...sent,
+              id: 'made1',
+              organizer: { email: 'ann@work.example.test', self: true },
+              htmlLink: 'https://www.google.com/calendar/event?eid=bWFkZTE',
+            },
+          ],
+        },
+      }));
+      const result = await createCalendarEvent({
+        userId: 'user_1',
+        accountId: 'acct-1',
+        calendarId: 'ann@work.example.test',
+        title: 'Plan',
+        startAt: Date.UTC(2026, 9, 1, 14),
+        endAt: Date.UTC(2026, 9, 1, 15),
+        timezone: 'America/New_York',
+      });
+      expect(result.eventId).toBe('made1');
+      expect(result.htmlLink).toBe('https://www.google.com/calendar/event?eid=bWFkZTE');
+      const requestId = sent.extendedProperties.private.lab86CreateRequestId;
+      const lookup = s.google.find((call) => call.method === 'GET' && call.url.pathname.endsWith('/events'))!;
+      expect(lookup.url.searchParams.get('privateExtendedProperty')).toBe(
+        `lab86CreateRequestId=${requestId}`,
+      );
+      expect(s.google.filter((call) => call.method === 'POST')).toHaveLength(1);
+      const mirrored = s.convex.find((call) => call.path === 'calendarData:upsertEventBatch')!.args.events[0];
+      expect(mirrored).toMatchObject({ providerEventId: 'made1', startTimezone: 'America/New_York' });
     });
   });
 
