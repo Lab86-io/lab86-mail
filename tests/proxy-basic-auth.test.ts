@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { isLocalBasicAuthBypassHost, isOfficeServerRoute, shouldRequireBasicAuth } from '../proxy';
+import type { NextFetchEvent } from 'next/server';
+import { NextRequest } from 'next/server';
+import proxy, { isLocalBasicAuthBypassHost, isOfficeServerRoute, shouldRequireBasicAuth } from '../proxy';
 import { setProcessEnv } from './tools/env';
 
 const ENV_KEYS = [
@@ -7,6 +9,8 @@ const ENV_KEYS = [
   'LAB86_MAIL_REQUIRE_BASIC_AUTH',
   'RAILWAY_ENVIRONMENT_NAME',
   'NODE_ENV',
+  'STAGING_BASIC_AUTH_USER',
+  'STAGING_BASIC_AUTH_PASSWORD',
 ] as const;
 
 const previousEnv = new Map<string, string | undefined>();
@@ -104,6 +108,31 @@ describe('proxy basic-auth bypass guard', () => {
       RAILWAY_ENVIRONMENT_NAME: 'development',
     });
     expect(shouldRequireBasicAuth(req('localhost:3000'), '/inbox')).toBe(false);
+  });
+
+  test('the proxy lets the right pair through and challenges a wrong or short one', async () => {
+    setEnv({
+      LAB86_MAIL_REQUIRE_BASIC_AUTH: '1',
+      NODE_ENV: 'test',
+      STAGING_BASIC_AUTH_USER: 'review',
+      STAGING_BASIC_AUTH_PASSWORD: 'a-long-staging-password',
+    });
+    const call = (credential?: string) =>
+      proxy(
+        new NextRequest('https://mail-staging.lab86.io/api/mail/corpus/backfill', {
+          headers: {
+            host: 'mail-staging.lab86.io',
+            ...(credential ? { authorization: `Basic ${btoa(credential)}` } : {}),
+          },
+        }),
+        {} as NextFetchEvent,
+      );
+    expect((await call('review:a-long-staging-password')).status).toBe(200);
+    for (const credential of [undefined, 'review:wrong', 'review:a', 'review:a-long-staging-password!']) {
+      const response = await call(credential);
+      expect(response.status).toBe(401);
+      expect(response.headers.get('www-authenticate')).toContain('Basic');
+    }
   });
 
   test('keeps public health checks outside basic auth', () => {
