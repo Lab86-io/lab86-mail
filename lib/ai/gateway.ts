@@ -6,7 +6,7 @@ import { isLab86AiDisabled, isUserOpenRouterKeyRequired } from '@/lib/hosted/con
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { aiCreditDefaults } from '@/lib/hosted/env';
 import { decryptSecret } from '@/lib/security/crypto';
-import { meterGenerateOptions } from '../brief/budget';
+import { meterGenerateOptions, withMeteredModelCall } from '../brief/budget';
 import {
   CLASSIFIER_MODELS,
   type ClassifierCredential,
@@ -454,15 +454,18 @@ export async function generateTextForCurrentUser(
         const maxAttempts = FAILOVER_FEATURES.has(feature) && runtimeIndex === 0 ? 2 : 1;
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
           try {
-            const result = await dependencies.generateText({
-              // Inside a Daily Brief edition the budget meter counts each step
-              // and can stop the call (FEATURES item 5).
-              ...meterGenerateOptions(rest, activeRuntime),
-              ...(toolsForAttempt ? { tools: toolsForAttempt() } : {}),
-              // Brief writers share one high ceiling; other features keep their budgets.
-              maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
-              model: activeRuntime.model,
-            });
+            // Inside a Daily Brief edition the budget meter counts each step,
+            // runs the writer clock while the call is open, and can stop the
+            // call (FEATURES item 5).
+            const result = await withMeteredModelCall(() =>
+              dependencies.generateText({
+                ...meterGenerateOptions(rest, activeRuntime),
+                ...(toolsForAttempt ? { tools: toolsForAttempt() } : {}),
+                // Brief writers share one high ceiling; other features keep their budgets.
+                maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
+                model: activeRuntime.model,
+              }),
+            );
             if (BRIEF_GENERATION_FEATURES.has(feature) && result.finishReason === 'length') {
               await dependencies.recordUsage(
                 activeRuntime,

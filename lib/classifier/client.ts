@@ -203,6 +203,52 @@ export function letterDistribution(
   return Object.fromEntries(options.map((option) => [option.label, (mass[option.label] || 0) / total]));
 }
 
+/**
+ * A gate that runs at most `concurrency` tasks at once. A task that waits
+ * starts when a running task ends, in the order the tasks arrived.
+ */
+export function concurrencyLimit(concurrency: number) {
+  const limit = Math.max(1, Math.floor(concurrency) || 1);
+  let running = 0;
+  const waiting: Array<() => void> = [];
+  return async function run<R>(task: () => Promise<R>): Promise<R> {
+    if (running < limit) running += 1;
+    // The ending task gives its place directly to this one.
+    else await new Promise<void>((resolve) => waiting.push(resolve));
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else running -= 1;
+    }
+  };
+}
+
+/**
+ * Starts `run` now for each item that has a key, `concurrency` at a time, and
+ * gives each promise by its key. An item with a null key does not start. The
+ * caller awaits the promises in its own order; a rejection that the caller
+ * does not reach is not reported as unhandled.
+ */
+export function startConcurrent<T, R>(
+  items: readonly T[],
+  keyOf: (item: T) => string | null,
+  run: (item: T) => Promise<R>,
+  concurrency: number,
+): Map<string, Promise<R>> {
+  const gate = concurrencyLimit(concurrency);
+  const started = new Map<string, Promise<R>>();
+  for (const item of items) {
+    const key = keyOf(item);
+    if (key === null || started.has(key)) continue;
+    const pending = gate(() => run(item));
+    pending.catch(() => undefined);
+    started.set(key, pending);
+  }
+  return started;
+}
+
 export async function mapConcurrent<T, R>(
   items: readonly T[],
   concurrency: number,
