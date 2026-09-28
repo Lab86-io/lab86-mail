@@ -3,8 +3,9 @@ import { getFunctionName } from 'convex/server';
 import { classifyContent, embedContent, searchContent } from '../lib/content/intelligence';
 import { syncMailAttachments } from '../lib/content/mail-attachments';
 import { syncMcpContent } from '../lib/content/mcp-sync';
-import { runContentCycle } from '../lib/content/sync';
+import { localContentVersion, runContentCycle } from '../lib/content/sync';
 import { createContentSearch } from '../lib/tools/content';
+import { assessment as jevAssessment } from './fixtures/jev';
 
 const item: any = {
   _id: 'item',
@@ -396,4 +397,54 @@ test('permanent attachment failures become partial records and stop starving lat
   expect(writes).toHaveLength(9);
   expect(writes[8].text).toContain('Useful final file');
   expect(writes[8].partial).toBe(false);
+});
+
+test('a new Jev pass on unchanged mail keeps the content version; a new category changes it', async () => {
+  const mail = { title: 'Budget approval', text: 'Please confirm the budget.', deleted: false };
+  const verdict = jevAssessment();
+  const version = localContentVersion(mail, verdict);
+  // Time of the pass, model, and raw probabilities do not change the meaning.
+  expect(
+    localContentVersion(mail, {
+      ...verdict,
+      evaluatedAt: verdict.evaluatedAt + 60_000,
+      model: 'typesafe/jev-1.13-20261001',
+      probabilities: { ...verdict.probabilities, reply: 0.97 },
+      confidence: 0.91,
+    }),
+  ).toBe(version);
+  expect(localContentVersion(mail, { ...verdict, purpose: 'promotion' })).not.toBe(version);
+  expect(localContentVersion(mail, { ...verdict, obligations: [] })).not.toBe(version);
+  expect(localContentVersion({ ...mail, text: 'The budget is approved.' }, verdict)).not.toBe(version);
+  // Items with no verdict (documents, connector items) keep their old version.
+  expect(localContentVersion(mail)).toBe(localContentVersion(mail, undefined));
+
+  // The content cycle writes this version for a mail item.
+  const upserts: any[] = [];
+  const deps: any = {
+    convexMutation: async (ref: any, args: any) => {
+      const name = getFunctionName(ref);
+      if (name.endsWith(':claimSync')) return { lease: 'lease' };
+      if (name.endsWith(':upsert')) upserts.push(...args.items);
+      if (name.endsWith(':claimItems')) return [];
+      return { changed: args.items?.length || 0 };
+    },
+    convexQuery: async (ref: any, args: any) => {
+      if (getFunctionName(ref).endsWith(':workCandidates')) return [];
+      const items =
+        args.source === 'mail'
+          ? [{ ...mail, source: 'mail', connectionId: 'a', externalId: 't', mailAssessment: verdict }]
+          : [];
+      return { items, cursor: null, attachments: [] };
+    },
+    syncCloudContent: async () => {},
+    syncMailAttachments: async () => {},
+    syncMcpContent: async () => {},
+    loadJevPolicy: async () => ({ preferences: { enabled: true } }),
+    prepareBriefWork: async () => {},
+  };
+  await runContentCycle('owner', deps);
+  expect(upserts).toHaveLength(1);
+  expect(upserts[0].version).toBe(version);
+  expect(upserts[0].mailAssessment).toBeUndefined();
 });
