@@ -79,9 +79,6 @@ final class AppEnvironment {
         trust = AccountTrustStore(backend: backend)
         documents = DocumentStore(backend: backend)
         webAuthentication = WebAuthenticationCoordinator(backend: backend)
-        let contacts = configuration.apiBaseURL.map { _ in ContactsHTTPClient(backend: backend) }
-        recipientSearch = contacts
-        contactStatus = contacts
         pendingSends = PendingSendCoordinator(backend: backend, tools: tools)
         self.mobileContainer = mobileContainer
         let commandOutbox = CommandOutbox(modelContainer: mobileContainer)
@@ -96,6 +93,8 @@ final class AppEnvironment {
                 tokenProvider: tokenProvider
             )
             self.mobileClient = mobileClient
+            recipientSearch = mobileClient
+            contactStatus = mobileClient
             briefHydration = BriefHydrationClient(
                 baseURL: apiBaseURL,
                 tokenProvider: tokenProvider
@@ -111,6 +110,8 @@ final class AppEnvironment {
             )
         } else {
             mobileClient = nil
+            recipientSearch = nil
+            contactStatus = nil
             briefHydration = nil
             preparedWork = nil
             processor = nil

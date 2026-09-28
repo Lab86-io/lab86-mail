@@ -4,7 +4,8 @@ import Testing
 
 // Recipient search for To, Cc, and Bcc: the address parser, the chip rules,
 // the value string the composer sends, stale-answer dropping, the exclude
-// list, and the contacts contract JSON (`lib/mobile/v1/contract.ts`).
+// list, and the contacts contract JSON (`lib/mobile/v1/contract.ts`) through
+// the generated MobileAPI client.
 @MainActor
 struct RecipientFieldTests {
     // MARK: - Address parsing
@@ -289,49 +290,76 @@ struct RecipientFieldTests {
     }
 
     @Test
-    func theRequestPathCarriesEveryParameter() throws {
-        let request = RecipientSearchRequest(
-            query: "jl",
-            fromAccountID: "acct-1",
-            limit: 8,
-            exclude: ["a@b.com", "c+x@d.com"]
-        )
-        let path = ContactsHTTPClient.recipientsPath(for: request)
-        #expect(path.hasPrefix("/api/mobile/v1/contacts/recipients?"))
-        #expect(path.contains("%2B"))
-        let items = try #require(URLComponents(string: path)?.queryItems)
-        #expect(items.first { $0.name == "q" }?.value == "jl")
-        #expect(items.first { $0.name == "fromAccountID" }?.value == "acct-1")
-        #expect(items.first { $0.name == "limit" }?.value == "8")
-        #expect(items.filter { $0.name == "exclude" }.map(\.value) == ["a@b.com", "c+x@d.com"])
-    }
-
-    @Test
-    func theHTTPClientReadsTheContractOverTheBackend() async throws {
+    func theRequestCarriesTheQueryTheMailboxTheLimitAndEachExcludedAddress() async throws {
         let server = StubBackendServer()
         defer { server.tearDown() }
         let recipients = try Self.json(Self.recipientFixture)
+        server.routes = ["/api/mobile/v1/contacts/recipients": recipients]
+        let client = Self.mobileClient(server)
+        _ = try await client.searchRecipients(
+            RecipientSearchRequest(query: "jl", fromAccountID: "b70d7463", limit: 8, exclude: ["a@b.com", "c+x@d.com"])
+        )
+        _ = try await client.searchRecipients(RecipientSearchRequest(query: "", fromAccountID: nil))
+        let requests = server.recorded
+        #expect(requests.count == 2)
+        let first = try #require(requests.first)
+        #expect(first.method == "GET")
+        #expect(first.path.hasPrefix("/api/mobile/v1/contacts/recipients?"))
+        let items = try #require(URLComponents(string: first.path)?.queryItems)
+        #expect(items.first { $0.name == "q" }?.value == "jl")
+        #expect(items.first { $0.name == "fromAccountID" }?.value == "b70d7463")
+        #expect(items.first { $0.name == "limit" }?.value == "8")
+        #expect(items.filter { $0.name == "exclude" }.map(\.value) == ["a@b.com", "c+x@d.com"])
+
+        // A focused empty field asks for the top people, with no exclude.
+        let second = try #require(URLComponents(string: requests[1].path)?.queryItems)
+        #expect(second.first { $0.name == "q" }?.value == "")
+        #expect(second.contains { $0.name == "exclude" } == false)
+        #expect(second.contains { $0.name == "fromAccountID" } == false)
+    }
+
+    @Test
+    func contactStatusAndResyncGoThroughTheGeneratedClient() async throws {
+        let server = StubBackendServer()
+        defer { server.tearDown() }
         let status = try Self.json(Self.statusFixture)
         server.routes = [
-            "/api/mobile/v1/contacts/recipients": recipients,
             "/api/mobile/v1/contacts/status": status,
             "/api/mobile/v1/contacts/resync": .object(["accountID": .string("b70d7463"), "started": .bool(true)]),
         ]
-        let client = ContactsHTTPClient(backend: server.backend)
-        let page = try await client.searchRecipients(
-            RecipientSearchRequest(query: "jl", fromAccountID: "b70d7463", exclude: ["sam@example.com"])
-        )
-        #expect(page.query == "jl")
-        #expect(page.items.first?.name == "Jakob Langtry")
-        let statusPage = try await client.fetchContactStatus()
-        #expect(statusPage.accounts.first?.needsReconnect == true)
+        let client = Self.mobileClient(server)
+        let page = try await client.fetchContactStatus()
+        #expect(page.accounts.count == 2)
         let receipt = try await client.resyncContacts(accountID: "b70d7463")
         #expect(receipt == ContactResyncReceipt(accountID: "b70d7463", started: true))
-
-        #expect(server.requests.first == "/api/mobile/v1/contacts/recipients?q=jl&fromAccountID=b70d7463&limit=8&exclude=sam@example.com")
         let resync = try #require(server.recorded.last)
         #expect(resync.method == "POST")
+        #expect(resync.path == "/api/mobile/v1/contacts/resync")
         #expect(resync.body == .object(["accountID": .string("b70d7463")]))
+    }
+
+    @Test
+    func aServerErrorBecomesAMobileClientError() async throws {
+        let server = StubBackendServer()
+        defer { server.tearDown() }
+        server.routes = [
+            "/api/mobile/v1/contacts/resync": .object([
+                "ok": .bool(false),
+                "requestID": .string("req-1"),
+                "error": .object([
+                    "code": .string("needs_reconnect"),
+                    "message": .string("Reconnect this mailbox first."),
+                    "retryable": .bool(false),
+                ]),
+            ]),
+        ]
+        server.statuses = ["/api/mobile/v1/contacts/resync": 409]
+        let client = Self.mobileClient(server)
+        await #expect(throws: MobileV1ClientError.server(
+            status: 409, code: "needs_reconnect", message: "Reconnect this mailbox first.", retryable: false
+        )) {
+            _ = try await client.resyncContacts(accountID: "b70d7463")
+        }
     }
 
     // MARK: - Stale answers
@@ -451,8 +479,14 @@ struct RecipientFieldTests {
     // MARK: - Contract JSON
 
     @Test
-    func theRecipientPageDecodes() throws {
-        let page = try #require(RecipientSuggestionPage(json: try Self.json(Self.recipientFixture)))
+    func theRecipientPageDecodes() async throws {
+        let server = StubBackendServer()
+        defer { server.tearDown() }
+        let recipients = try Self.json(Self.recipientFixture)
+        server.routes = ["/api/mobile/v1/contacts/recipients": recipients]
+        let page = try await Self.mobileClient(server).searchRecipients(
+            RecipientSearchRequest(query: "jl", fromAccountID: nil)
+        )
         #expect(page.query == "jl")
         #expect(page.items.count == 3)
         let jakob = page.items[0]
@@ -474,11 +508,11 @@ struct RecipientFieldTests {
         ])
         #expect(jakob.score == 187.4)
 
-        // Optional keys are absent, an unknown source is dropped, and an
-        // http photo is not a usable hint.
+        // Optional keys are absent, and an http photo is not a usable hint.
         let bare = page.items[1]
         #expect(bare.name == nil)
         #expect(bare.displayName == "jl@example.com")
+        #expect(bare.alternateEmails.isEmpty)
         #expect(bare.sources == [.inbox])
         #expect(bare.photoURL == nil)
         #expect(bare.lastContactedAt == nil)
@@ -488,9 +522,13 @@ struct RecipientFieldTests {
     }
 
     @Test
-    func theStatusPageAndReceiptDecode() throws {
-        let page = try #require(ContactStatusPage(json: try Self.json(Self.statusFixture)))
-        #expect(page.accounts.count == 3)
+    func theStatusPageDecodes() async throws {
+        let server = StubBackendServer()
+        defer { server.tearDown() }
+        let status = try Self.json(Self.statusFixture)
+        server.routes = ["/api/mobile/v1/contacts/status": status]
+        let page = try await Self.mobileClient(server).fetchContactStatus()
+        #expect(page.accounts.count == 2)
         let reconnect = page.accounts[0]
         #expect(reconnect.accountID == "b70d7463")
         #expect(reconnect.provider == "google")
@@ -499,6 +537,7 @@ struct RecipientFieldTests {
         #expect(reconnect.sources.map(\.state) == ["missingScope", "missingScope", "ok"])
         #expect(reconnect.sources.last?.count == 120)
         #expect(reconnect.summary == "Reconnect this mailbox to add its contacts.")
+        #expect(reconnect.lastSyncedAt == nil)
 
         let ready = page.accounts[1]
         #expect(ready.state == .ready)
@@ -506,12 +545,27 @@ struct RecipientFieldTests {
         #expect(ready.lastSyncedAt == Date(timeIntervalSince1970: 1_790_550_000))
         #expect(ready.summary.hasPrefix("Contacts: 1"))
         #expect(ready.summary.hasSuffix(" people"))
+        #expect(!ready.isProblem)
+    }
 
-        // A state this build does not know reads as an error, not a crash.
-        #expect(page.accounts[2].state == .error)
-
-        let receipt = try #require(ContactResyncReceipt(json: .object(["accountID": .string("a"), "started": .bool(false)])))
-        #expect(receipt.started == false)
+    @Test
+    func statusLinesUsePlainCopy() {
+        func status(_ state: ContactSyncState, count: Int = 0, reconnect: Bool = false, message: String? = nil) -> ContactAccountStatus {
+            ContactAccountStatus(
+                accountID: "a", email: "a@b.com", provider: "google", state: state,
+                needsReconnect: reconnect, contactCount: count, lastSyncedAt: nil, sources: [], message: message
+            )
+        }
+        #expect(status(.ready, count: 1).summary == "Contacts: 1 person")
+        #expect(status(.pending).summary == "Adding contacts")
+        #expect(status(.syncing, count: 5).summary == "Adding contacts: 5 so far")
+        #expect(status(.unsupported).summary == "This mailbox has no contacts to add.")
+        #expect(status(.paused).isProblem)
+        #expect(status(.ready, reconnect: true).summary == "Reconnect this mailbox to add its contacts.")
+        #expect(status(.error, message: "Server message").summary == "Server message")
+        for line in [status(.ready, count: 3), status(.error), status(.paused)].map(\.summary) {
+            #expect(!line.contains("AI"))
+        }
     }
 
     // MARK: - Fixtures
@@ -531,7 +585,8 @@ struct RecipientFieldTests {
     static let julia = RecipientSuggestion(email: "julia@example.com", name: "Julia Lopez", sources: [.mail])
 
     // The contract doc's example, as JSON, with an item that omits every
-    // optional key and a typed address.
+    // optional key and a typed address. The generated decoder rejects unknown
+    // keys and enum values, so the fixtures hold only contract values.
     static let recipientFixture = """
     {
       "version": 1,
@@ -562,7 +617,7 @@ struct RecipientFieldTests {
           "email": "jl@example.com",
           "savedContact": false,
           "directory": false,
-          "sources": ["inbox", "carrierPigeon"],
+          "sources": ["inbox"],
           "photoURL": "http://insecure.example.com/p.png",
           "sentCount": 0,
           "receivedCount": 3,
@@ -612,15 +667,6 @@ struct RecipientFieldTests {
           "contactCount": 1214,
           "lastSyncedAt": 1790550000000,
           "sources": [{ "source": "addressBook", "state": "ok", "count": 1214 }]
-        },
-        {
-          "accountID": "d92f",
-          "email": "old@example.com",
-          "provider": "imap",
-          "state": "somethingNew",
-          "needsReconnect": false,
-          "contactCount": 0,
-          "sources": []
         }
       ],
       "serverTime": "2026-09-27T22:40:00.000Z"
@@ -636,6 +682,17 @@ struct RecipientFieldTests {
             state.edit(typed)
             typed = state.draft
         }
+    }
+
+    /// The real generated client over the stub server's URL protocol.
+    static func mobileClient(_ server: StubBackendServer) -> MobileV1Client {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        return MobileV1Client(
+            baseURL: URL(string: "https://\(server.host)")!,
+            session: URLSession(configuration: configuration),
+            tokenProvider: { "test-token" }
+        )
     }
 
     static func json(_ text: String) throws -> JSONValue {

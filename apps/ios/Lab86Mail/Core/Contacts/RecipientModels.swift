@@ -2,8 +2,8 @@ import Foundation
 
 // Recipient search and contact status, in the app's own shapes. The mobile v1
 // contract (`lib/mobile/v1/contract.ts`, "contacts") is the source of the
-// wire format; the transports map it into these types, so the views never
-// see a generated schema type.
+// wire format; `MobileV1Client` maps the generated types into these, so the
+// views never see a generated schema type.
 
 enum RecipientSource: String, Hashable, Sendable {
     case addressBook
@@ -197,89 +197,12 @@ protocol ContactStatusServing: Sendable {
     func resyncContacts(accountID: String) async throws -> ContactResyncReceipt
 }
 
-// MARK: - Contract JSON
-
-// The contract's JSON, read field by field. Unknown enum values are dropped
-// and a missing optional key stays nil, so a newer server never breaks the
-// field. Timestamps are epoch milliseconds.
-extension RecipientSuggestionPage {
-    init?(json: JSONValue) {
-        guard let items = json["items"]?.arrayValue else { return nil }
-        query = json["query"]?.stringValue ?? ""
-        self.items = items.compactMap(RecipientSuggestion.init(json:))
-    }
-}
+// MARK: - Contract values
 
 extension RecipientSuggestion {
-    init?(json: JSONValue) {
-        guard let email = json["email"]?.stringValue?.nilIfBlank else { return nil }
-        self.init(
-            id: json["id"]?.stringValue?.nilIfBlank,
-            email: email,
-            name: json["name"]?.stringValue,
-            alternateEmails: (json["alternateEmails"]?.arrayValue ?? []).compactMap { $0.stringValue?.nilIfBlank },
-            savedContact: json["savedContact"]?.boolValue ?? false,
-            directory: json["directory"]?.boolValue ?? false,
-            sources: (json["sources"]?.arrayValue ?? []).compactMap { $0.stringValue.flatMap(RecipientSource.init(rawValue:)) },
-            company: json["company"]?.stringValue,
-            jobTitle: json["jobTitle"]?.stringValue,
-            photoURL: json["photoURL"]?.stringValue.flatMap(RecipientSuggestion.photoURL(from:)),
-            lastContactedAt: json["lastContactedAt"]?.doubleValue.map { Date(timeIntervalSince1970: $0 / 1_000) },
-            sentCount: json["sentCount"]?.doubleValue.map { Int($0) } ?? 0,
-            receivedCount: json["receivedCount"]?.doubleValue.map { Int($0) } ?? 0,
-            highlights: (json["highlights"]?.arrayValue ?? []).compactMap(RecipientHighlight.init(json:)),
-            score: json["score"]?.doubleValue ?? 0
-        )
-    }
-
     /// The contract sends `https` photo URLs only; anything else is not a usable hint.
     static func photoURL(from value: String) -> URL? {
         guard let url = URL(string: value), url.scheme?.lowercased() == "https" else { return nil }
         return url
-    }
-}
-
-extension RecipientHighlight {
-    init?(json: JSONValue) {
-        guard let field = json["field"]?.stringValue.flatMap(RecipientHighlightField.init(rawValue:)),
-              let start = json["start"]?.doubleValue,
-              let length = json["length"]?.doubleValue,
-              start >= 0, length > 0 else { return nil }
-        self.init(field: field, start: Int(start), length: Int(length))
-    }
-}
-
-extension ContactStatusPage {
-    init?(json: JSONValue) {
-        guard let accounts = json["accounts"]?.arrayValue else { return nil }
-        self.accounts = accounts.compactMap(ContactAccountStatus.init(json:))
-    }
-}
-
-extension ContactAccountStatus {
-    init?(json: JSONValue) {
-        guard let accountID = json["accountID"]?.stringValue?.nilIfBlank else { return nil }
-        let state = json["state"]?.stringValue.flatMap(ContactSyncState.init(rawValue:)) ?? .error
-        self.init(
-            accountID: accountID,
-            email: json["email"]?.stringValue ?? "",
-            provider: json["provider"]?.stringValue ?? "",
-            state: state,
-            needsReconnect: json["needsReconnect"]?.boolValue ?? (state == .needsReconnect),
-            contactCount: json["contactCount"]?.doubleValue.map { Int($0) } ?? 0,
-            lastSyncedAt: json["lastSyncedAt"]?.doubleValue.map { Date(timeIntervalSince1970: $0 / 1_000) },
-            sources: (json["sources"]?.arrayValue ?? []).compactMap { row in
-                guard let source = row["source"]?.stringValue, let state = row["state"]?.stringValue else { return nil }
-                return ContactSourceStatus(source: source, state: state, count: row["count"]?.doubleValue.map { Int($0) })
-            },
-            message: json["message"]?.stringValue?.nilIfBlank
-        )
-    }
-}
-
-extension ContactResyncReceipt {
-    init?(json: JSONValue) {
-        guard let accountID = json["accountID"]?.stringValue else { return nil }
-        self.init(accountID: accountID, started: json["started"]?.boolValue ?? false)
     }
 }
