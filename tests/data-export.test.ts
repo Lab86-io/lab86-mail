@@ -7,6 +7,7 @@ import {
   CASCADE_SPECIAL_TABLES,
   EXPORT_SKIPPED_TABLES,
   EXPORT_TABLES,
+  exportUserIndex,
   USER_BULK_TABLES,
   USER_INLINE_TABLES,
 } from '../convex/accounts';
@@ -27,7 +28,7 @@ async function collect(stream: NodeJS.ReadableStream): Promise<ArrayBuffer> {
 }
 
 describe('what the export leaves out', () => {
-  test('secrets are removed at any depth, and derived data and mail bodies are dropped', () => {
+  test('secrets are removed at any depth, derived data is dropped, and mail bodies stay', () => {
     expect(
       redactExportRow('mcpCredentials', {
         accessTokenEncrypted: 'x',
@@ -50,8 +51,15 @@ describe('what the export leaves out', () => {
       code: REDACTED,
       issuer: 'Bank',
     });
+    // A message from before the body split keeps its inline body.
     expect(redactExportRow('mailCorpusMessages', { subject: 'Hi', textBody: 'x', htmlBody: 'y' })).toEqual({
       subject: 'Hi',
+      textBody: 'x',
+      htmlBody: 'y',
+    });
+    expect(redactExportRow('mailCorpusBodies', { textBody: 'x', htmlBody: '<p>x</p>' })).toEqual({
+      textBody: 'x',
+      htmlBody: '<p>x</p>',
     });
     // The same field name is not a secret elsewhere.
     expect(redactExportRow('briefJobs', { state: 'done' })).toEqual({ state: 'done' });
@@ -60,6 +68,7 @@ describe('what the export leaves out', () => {
     expect(exportPageSize('userDocs')).toBe(10);
     expect(exportPageSize('albatrossIntents')).toBe(50);
     expect(exportPageSize('mailCorpusMessages')).toBe(100);
+    expect(exportPageSize('mailCorpusBodies')).toBe(10);
   });
 
   test('the export follows the deletion cascade, and every skip has a reason', () => {
@@ -76,9 +85,29 @@ describe('what the export leaves out', () => {
       expect(cascade.has(table)).toBe(true);
       expect(reason.length).toBeGreaterThan(20);
     }
-    for (const table of ['users', 'boards', 'boardColumns', 'cards', 'albatrossIntents', 'userDocs', 'areas'])
+    for (const table of [
+      'users',
+      'boards',
+      'boardColumns',
+      'cards',
+      'albatrossIntents',
+      'userDocs',
+      'areas',
+      'mailCorpusMessages',
+      'mailCorpusBodies',
+    ])
       expect(EXPORT_TABLES).toContain(table);
     expect(new Set(EXPORT_TABLES).size).toBe(EXPORT_TABLES.length);
+  });
+
+  test('each exported table has one user index for its single paginated read', () => {
+    // users, boards, and boardColumns have their own read paths.
+    const special = new Set(['users', 'boards', 'boardColumns']);
+    const missing = EXPORT_TABLES.filter((table) => !special.has(table) && !exportUserIndex(table));
+    expect(missing).toEqual([]);
+    expect(exportUserIndex('mailCorpusBodies')).toBe('by_user_account');
+    expect(exportUserIndex('aiProviderKeys')).toBe('by_user');
+    expect(exportUserIndex('not_a_table')).toBeUndefined();
   });
 });
 
@@ -136,6 +165,21 @@ describe('Convex export pages', () => {
         updatedAt: 1,
       } as any);
       await ctx.db.insert('boardColumns', { boardId, name: 'Now', order: 0, createdAt: 1, updatedAt: 1 });
+      for (const [userId, index] of [
+        [USER, 0],
+        [USER, 1],
+        ['someone_else', 2],
+      ] as const)
+        await ctx.db.insert('mailCorpusBodies', {
+          userId,
+          accountId: 'acct',
+          providerMessageId: `m${index}`,
+          providerThreadId: 't',
+          textBody: `Body ${index}`,
+          htmlBody: `<p>Body ${index}</p>`,
+          createdAt: 1,
+          updatedAt: 1,
+        });
     });
     const page = (table: string, cursor: string | null = null, numItems = 100) =>
       t.query(api.accounts.exportUserTablePage, {
@@ -155,6 +199,16 @@ describe('Convex export pages', () => {
     expect(first.isDone).toBe(false);
     const rest = await page('userDocs', first.continueCursor, 2);
     expect(rest.page).toHaveLength(1);
+
+    // Mail bodies come from their own table, in bounded pages, for this user only.
+    const bodies = await page('mailCorpusBodies', null, 1);
+    expect(bodies.page).toEqual([
+      expect.objectContaining({ providerMessageId: 'm0', textBody: 'Body 0', htmlBody: '<p>Body 0</p>' }),
+    ]);
+    expect(bodies.isDone).toBe(false);
+    const moreBodies = await page('mailCorpusBodies', bodies.continueCursor, 10);
+    expect(moreBodies.page.map((row: any) => row.providerMessageId)).toEqual(['m1']);
+    expect(moreBodies.isDone).toBe(true);
 
     expect((await page('users')).page).toEqual([expect.objectContaining({ email: 'u@example.test' })]);
     expect((await page('boards')).page).toEqual([expect.objectContaining({ title: 'Home' })]);
@@ -216,6 +270,7 @@ describe('the ZIP', () => {
     expect(readme).toContain('Albatross data export');
     expect(readme).toContain(REDACTED);
     expect(readme).not.toMatch(/\bAI\b/);
+    expect(readme).toContain('data/mailCorpusBodies.json');
     expect(exportFileName(new Date('2031-01-02T00:00:00Z'))).toBe('albatross-export-2031-01-02.zip');
   });
 

@@ -7,6 +7,7 @@ import type { Id } from './_generated/dataModel';
 import { internalMutation, mutation, query } from './_generated/server';
 import { deleteContactRow } from './contacts';
 import { now, requireInternalSecret } from './lib';
+import schema from './schema';
 
 const providerValidator = v.union(
   v.literal('google'),
@@ -759,7 +760,6 @@ export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
   contentChunks: 'Search chunks and embeddings derived from contentItems, which the export includes.',
   contactEmails: 'Address lookup rows derived from contacts, which the export includes.',
   correspondents: 'Recipient-search counts derived from mailCorpusMessages, which the export includes.',
-  mailCorpusBodies: 'Mail bodies; the mail provider keeps the original, as for the dropped body fields.',
   nylasOAuthStates: 'Short-lived sign-in state for a mailbox connection, not user content.',
   mcpOAuthStates: 'Short-lived sign-in state for a tool connection, not user content.',
   cloudFileOAuthStates: 'Short-lived sign-in state for a file connection, not user content.',
@@ -782,6 +782,15 @@ export const EXPORT_TABLES: readonly string[] = [
     'boardColumns',
   ]),
 ].filter((table) => !(table in EXPORT_SKIPPED_TABLES));
+
+/** The first userId-prefixed index of a table, read from the schema. */
+export function exportUserIndex(table: string): string | undefined {
+  const definition = (schema.tables as Record<string, any>)[table];
+  const names = new Set<string>(
+    (definition?.[' indexes']?.() ?? []).map((index: { indexDescriptor: string }) => index.indexDescriptor),
+  );
+  return USER_INDEXES.find((index) => names.has(index));
+}
 
 export const exportTableList = query({
   args: { internalSecret: v.optional(v.string()) },
@@ -841,19 +850,14 @@ export const exportUserTablePage = query({
         .withIndex('by_owner', (q) => q.eq('ownerUserId', args.userId))
         .paginate(opts);
     } else {
-      let lastErr: unknown;
-      for (const index of USER_INDEXES) {
-        try {
-          result = await ctx.db
-            .query(args.table as any)
-            .withIndex(index as any, (q: any) => q.eq('userId', args.userId))
-            .paginate(opts);
-          break;
-        } catch (err) {
-          lastErr = err;
-        }
-      }
-      if (!result) throw lastErr;
+      // One paginated read only: Convex allows one `.paginate()` in each
+      // function, so a failed try on a missing index cannot fall through.
+      const index = exportUserIndex(args.table);
+      if (!index) throw new Error('This table has no user index.');
+      result = await ctx.db
+        .query(args.table as any)
+        .withIndex(index as any, (q: any) => q.eq('userId', args.userId))
+        .paginate(opts);
     }
     return {
       page: result.page.map((row: any) => redactExportRow(args.table, row)),
