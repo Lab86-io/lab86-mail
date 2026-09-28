@@ -1,9 +1,9 @@
 /** Explicit, synthetic-only live model smoke. Never reads or writes a user's memory.
  * OPENROUTER_API_KEY=... bun scripts/eval-narrative.ts
  */
-import { createOpenAI } from '@ai-sdk/openai';
 import { generateText, Output, stepCountIs, tool } from 'ai';
 import { z } from 'zod';
+import { createOpenRouterProvider } from '../lib/ai/openrouter-policy';
 import { NARRATIVE_SKILL } from '../lib/narrative/core';
 import { NARRATIVE_GENERATION_SCHEMA, parseNarrativeGeneration } from '../lib/narrative/service';
 
@@ -33,7 +33,7 @@ const evidence = [
 ];
 let reads = 0;
 const result = await generateText({
-  model: createOpenAI({ apiKey: key, baseURL: 'https://openrouter.ai/api/v1' }).chat('z-ai/glm-5.3-flash'),
+  model: createOpenRouterProvider(key).chat('z-ai/glm-5.3-flash'),
   system: `${NARRATIVE_SKILL}\nWrite a brief using only the synthetic evidence. First use narrative_sources. Return JSON {"text":string,"sourceIds":string[]}. Explain what changed and what remains uncertain. Under 200 words.`,
   prompt: 'It is September 8. What matters today for Alex?',
   output: Output.object({ schema: NARRATIVE_GENERATION_SCHEMA }),

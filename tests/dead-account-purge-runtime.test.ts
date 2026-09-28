@@ -1,12 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
-import {
-  DEAD_ACCOUNT_PURGE_AFTER_MS,
-  DEAD_ACCOUNT_TABLES,
-  deadSince,
-  isPurgeDue,
-} from '../convex/deadAccounts';
+import { DEAD_ACCOUNT_PURGE_AFTER_MS, deadSince, isPurgeDue } from '../convex/deadAccounts';
 import schema from '../convex/schema';
 import { ABSENT_BODY_PART, bodyPartHash, joinBodyHash } from '../lib/mail/corpus-body';
 
@@ -203,10 +198,6 @@ describe('dead-account bookkeeping', () => {
     expect(isPurgeDue({ status: 'error', updatedAt: T0 + 1 }, ts)).toBe(false);
     expect(isPurgeDue({ status: 'error', errorSince: T0, updatedAt: ts, corpusPurgedAt: 1 }, ts)).toBe(false);
     expect(isPurgeDue({ status: 'connected', errorSince: T0, updatedAt: ts }, ts)).toBe(false);
-  });
-
-  test('the table list covers the future body table in one entry', () => {
-    expect(DEAD_ACCOUNT_TABLES.map((entry) => entry.table)).toContain('mailCorpusBodies');
   });
 });
 

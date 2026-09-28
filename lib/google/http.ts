@@ -42,6 +42,18 @@ function retryable(status: number, serverErrors: boolean) {
   return status === 429 || (serverErrors && status >= 500);
 }
 
+// Gmail and Calendar answer a rate limit with 403 and one of these reasons.
+// Callers read a 403 as a missing scope, so a rate-limit 403 is retried and,
+// when the attempts run out, reported as 429.
+const RATE_LIMIT_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded']);
+
+function backoff(attempt: number, response: Response) {
+  const retryAfter = Number(response.headers.get('retry-after'));
+  return Number.isFinite(retryAfter) && retryAfter > 0
+    ? retryAfter * 1000
+    : Math.min(8000, 250 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 200);
+}
+
 async function errorFrom(response: Response): Promise<GoogleApiError> {
   let message = `Google API request failed with status ${response.status}.`;
   let reason: string | undefined;
@@ -61,7 +73,7 @@ async function errorFrom(response: Response): Promise<GoogleApiError> {
   return new GoogleApiError(response.status, message, reason);
 }
 
-/** One authorized request. Refreshes the token once on 401. Retries 429 and 5xx. */
+/** One authorized request. Refreshes the token once on 401. Retries 429, 5xx, and rate-limit 403. */
 export async function googleFetch(
   grantId: string,
   url: string,
@@ -86,15 +98,18 @@ export async function googleFetch(
       continue;
     }
     if (retryable(response.status, retryServerErrors) && attempt < attempts) {
-      const retryAfter = Number(response.headers.get('retry-after'));
-      const wait =
-        Number.isFinite(retryAfter) && retryAfter > 0
-          ? retryAfter * 1000
-          : Math.min(8000, 250 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 200);
-      await deps.sleep(wait);
+      await deps.sleep(backoff(attempt, response));
       continue;
     }
-    throw await errorFrom(response);
+    const error = await errorFrom(response);
+    if (response.status === 403 && error.reason && RATE_LIMIT_REASONS.has(error.reason)) {
+      if (attempt < attempts) {
+        await deps.sleep(backoff(attempt, response));
+        continue;
+      }
+      throw new GoogleApiError(429, error.message, error.reason);
+    }
+    throw error;
   }
 }
 
