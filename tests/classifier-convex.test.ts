@@ -101,7 +101,13 @@ describe('deployment classifier selection', () => {
     const rows = await t.run((ctx) => ctx.db.query('mailCorpusThreads').collect());
     const byId = Object.fromEntries(rows.map((row: any) => [row.providerThreadId, row]));
     for (const id of ['recent', 'old-open-reply']) {
-      expect(byId[id]).toMatchObject({ llmPending: true, jevStatus: 'pending', jevAttempts: 0 });
+      // Version 0 forces a pass: the claim skips a verdict that is current for its version.
+      expect(byId[id]).toMatchObject({
+        llmPending: true,
+        jevStatus: 'pending',
+        jevAttempts: 0,
+        jevVersion: 0,
+      });
       expect(byId[id].jevRetryAt).toBeUndefined();
       expect(byId[id].jev).toEqual({ purpose: 'conversation' });
     }

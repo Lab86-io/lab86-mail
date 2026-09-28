@@ -616,4 +616,35 @@ describe('Jev spends model calls only on live, recent mail', () => {
     );
     expect(pending.map((thread) => thread.providerThreadId)).toEqual(['live']);
   });
+
+  test('a verdict for the same revision settles a queue flag; reprocessing still forces a pass', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const input = (await claim(t)).items[0];
+    await save(t, input);
+    await patchThread(t, 't', { llmPending: true, jevStatus: 'pending' });
+    const page = await claim(t);
+    expect(page.items).toEqual([]);
+    expectOffQueue(await row(t), 'accepted');
+    await t.mutation((internal as any).jev.queueUser, { userId: 'owner' });
+    expect((await claim(t)).items).toHaveLength(1);
+  });
+
+  test('a stale revision result counts an attempt and stops the loop after three', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const input = (await claim(t)).items[0];
+      expect(input).toBeDefined();
+      // The body changes while the model runs, so the result is stale.
+      await t.run(async (ctx) => {
+        const message = await ctx.db.query('mailCorpusMessages').first();
+        await ctx.db.patch(message!._id, { textBody: `Revised body ${attempt}.` });
+      });
+      expect((await save(t, input)).stored).toBe(0);
+      expect((await row(t))?.jevAttempts).toBe(attempt);
+    }
+    expectOffQueue(await row(t), 'unavailable', 'Message content changed during classification.');
+    expect((await claim(t)).items).toEqual([]);
+  });
 });

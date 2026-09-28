@@ -279,6 +279,22 @@ export const claimPending = mutation({
         settled++;
         continue;
       }
+      // One classification for each source revision. A queue flag on a row
+      // whose verdict already covers this exact content costs no model call.
+      // queueUser and a classifier switch set jevVersion to 0 to force a pass.
+      if (
+        row.jevVersion === JEV_VERSION &&
+        assessmentIsCurrent(row.jev, input.messageId, input.sourceRevision)
+      ) {
+        await ctx.db.patch(row._id, {
+          llmPending: undefined,
+          jevStatus: row.jev.status,
+          jevError: undefined,
+          ...(row.latestMessageId ? {} : { latestMessageId: input.messageId }),
+        });
+        settled++;
+        continue;
+      }
       const leaseId = `${row._id}:${now}`;
       await ctx.db.patch(row._id, {
         jevLeaseId: leaseId,
@@ -331,7 +347,18 @@ export const storeAssessments = mutation({
       if (!row || row.latestMessageId !== item.messageId || row.jevLeaseId !== item.leaseId) continue;
       const input = await threadInput(ctx, row, accounts);
       if (!input || input.sourceRevision !== item.sourceRevision) {
-        await ctx.db.patch(row._id, { jevLeaseId: undefined, jevLeaseUntil: undefined, llmPending: true });
+        // The content changed while the model ran. The attempt counts, so a
+        // thread whose revision does not settle stops after three passes.
+        const attempts = (row.jevAttempts || 0) + 1;
+        await ctx.db.patch(row._id, {
+          jevAttempts: attempts,
+          jevLeaseId: undefined,
+          jevLeaseUntil: undefined,
+          llmPending: attempts < 3 ? true : undefined,
+          ...(attempts < 3
+            ? {}
+            : { jevStatus: 'unavailable', jevError: 'Message content changed during classification.' }),
+        });
         continue;
       }
       const parsed = jevAssessmentSchema.safeParse(item.assessment);
@@ -559,6 +586,7 @@ export const queueUnassessed = internalMutation({
     if (rows.length === 100) await ctx.scheduler.runAfter(1_000, internal.jev.queueUnassessed, {});
   },
 });
+
 export const usersWithMail = internalMutation({
   args: {},
   // 24 users / 3 workers * 55 seconds remains inside the action execution budget.

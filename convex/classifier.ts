@@ -93,6 +93,9 @@ export const requeueAfterSwitch = internalMutation({
       for (const row of rows.values())
         await ctx.db.patch(row._id, {
           llmPending: true,
+          // Version 0 forces the new classifier to run: claimPending skips a
+          // row whose current-version verdict already covers its content.
+          jevVersion: 0,
           jevStatus: 'pending',
           jevAttempts: 0,
           jevRetryAt: undefined,
