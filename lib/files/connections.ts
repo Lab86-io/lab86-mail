@@ -358,11 +358,14 @@ export async function disconnectCloudFileConnection(userId: string, connectionId
   const sharedWithMail =
     row?.connection?.provider === 'google_drive' &&
     (await dependencies.mailUsesDriveGrant({ userId, email: row.connection.accountEmail }));
-  // Outside production, or while a Nylas grant uses the address, a Google
-  // revoke would end other access of the same Google project.
+  // Outside production, or while another Google connection of any user uses
+  // the address, a Google revoke would end other access of the same project.
   const blocked =
     row?.connection?.provider === 'google_drive' && !sharedWithMail
-      ? await dependencies.googleRevokeBlockedReason({ email: row.connection.accountEmail })
+      ? await dependencies.googleRevokeBlockedReason({
+          email: row.connection.accountEmail,
+          exceptConnectionId: connectionId,
+        })
       : null;
   if (sharedWithMail) {
     // Direct Google mail of the same address uses this OAuth client, and a

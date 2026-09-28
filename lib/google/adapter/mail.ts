@@ -717,8 +717,9 @@ function readStoredToken(encrypted: string): string | null {
  * row goes anyway, so no copy of the token stays with us. When a Drive
  * connection of the same user and address uses the same OAuth client, the
  * revoke would end it too (lib/google/shared-grant.ts), so it is left out.
- * The revoke is also left out outside the production deployment, and while a
- * Nylas grant in this deployment uses the same address.
+ * The revoke is also left out outside the production deployment, and while
+ * another Google connection of any user in this deployment (a mail account
+ * or a Drive connection) uses the same address.
  */
 async function destroyGrant(args: any) {
   const grantId = String(args?.grantId);
@@ -728,7 +729,7 @@ async function destroyGrant(args: any) {
   if (plain && credentials) {
     const reason = (await deps.driveUsesMailGrant({ userId: credentials.userId, email: credentials.email }))
       ? 'a Drive connection shares this Google grant'
-      : await deps.googleRevokeBlockedReason({ email: credentials.email });
+      : await deps.googleRevokeBlockedReason({ email: credentials.email, exceptGrantId: grantId });
     if (reason) console.warn(`[google-mail] no revoke: ${reason}; the token row goes`);
     else await revokeWithRetry(plain);
   }

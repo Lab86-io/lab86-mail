@@ -117,20 +117,31 @@ export function googleRevokeEnvironmentAllowed(env: Env = deps.env()): boolean {
 
 /**
  * The reason not to revoke a Google token of this address, or null when a
- * revoke is safe. A failed check is a reason, so a doubt never ends another
- * grant.
+ * revoke is safe. Another live Google connection of any user in this
+ * deployment (a mail account other than `exceptGrantId`, or a Drive
+ * connection other than `exceptConnectionId`) is a reason: the revoke would
+ * end it too. A failed check is a reason, so a doubt never ends another grant.
  */
-export async function googleRevokeBlockedReason(input: { email?: string }): Promise<string | null> {
+export async function googleRevokeBlockedReason(input: {
+  email?: string;
+  exceptGrantId?: string;
+  exceptConnectionId?: string;
+}): Promise<string | null> {
   if (!googleRevokeEnvironmentAllowed()) return 'this deployment shares the production Google project';
-  if (!input.email?.trim()) return 'the Google address is not known';
+  const email = input.email?.trim();
+  if (!email) return 'the Google address is not known';
   try {
-    const used = await deps.query<boolean>(api.googleDirect.nylasGrantUsesAddress, { email: input.email });
-    return used ? 'a Nylas grant in this deployment uses the same address' : null;
+    const used = await deps.query<boolean>(api.googleDirect.googleAccessUsesAddress, {
+      email,
+      ...(input.exceptGrantId ? { exceptGrantId: input.exceptGrantId } : {}),
+      ...(input.exceptConnectionId ? { exceptConnectionId: input.exceptConnectionId } : {}),
+    });
+    return used ? 'another Google connection in this deployment uses the same address' : null;
   } catch (err: any) {
     console.warn(
-      '[google-shared-grant] Nylas grant check failed; the token is not revoked',
+      '[google-shared-grant] Google connection check failed; the token is not revoked',
       err?.message || err,
     );
-    return 'the Nylas grant check failed';
+    return 'the Google connection check failed';
   }
 }

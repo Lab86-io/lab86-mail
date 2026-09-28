@@ -132,25 +132,47 @@ export const sweepExpiredOAuthStates = internalMutation({
 
 /** The encrypted Google tokens of one direct grant. */
 /**
- * True when a Nylas Google grant of any user in this deployment still uses
- * the address. A Google revoke ends the access of the whole Google Cloud
- * project for that address, so it would end that grant too
+ * True when another live Google connection of any user in this deployment
+ * uses the address: a mail account (Nylas or direct) other than
+ * `exceptGrantId`, or a Google Drive connection other than
+ * `exceptConnectionId`. A Google revoke ends the access of the whole Google
+ * Cloud project for that address, so it would end those connections too
  * (lib/google/shared-grant.ts).
  */
-export const nylasGrantUsesAddress = query({
-  args: { internalSecret: v.optional(v.string()), email: v.string() },
+export const googleAccessUsesAddress = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    email: v.string(),
+    exceptGrantId: v.optional(v.string()),
+    exceptConnectionId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const email = args.email.trim();
     if (!email) return false;
     for (const value of new Set([email, email.toLowerCase()])) {
-      const rows = await ctx.db
+      const accounts = await ctx.db
         .query('connectedAccounts')
         .withIndex('by_email', (q) => q.eq('email', value))
         .take(50);
       if (
-        rows.some(
-          (row) => row.provider === 'google' && row.status !== 'disconnected' && !isDirectGrant(row.grantId),
+        accounts.some(
+          (row) =>
+            row.provider === 'google' && row.status !== 'disconnected' && row.grantId !== args.exceptGrantId,
+        )
+      ) {
+        return true;
+      }
+      const drives = await ctx.db
+        .query('cloudFileConnections')
+        .withIndex('by_account_email', (q) => q.eq('accountEmail', value))
+        .take(50);
+      if (
+        drives.some(
+          (row) =>
+            row.provider === 'google_drive' &&
+            row.status !== 'disconnected' &&
+            row.connectionId !== args.exceptConnectionId,
         )
       ) {
         return true;

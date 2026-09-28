@@ -872,7 +872,8 @@ describe('grants', () => {
     await googleMailAdapter.grants!.destroy({ grantId: GRANT });
     expect(attempts).toBe(0);
     expect(removed).toBe(1);
-    expect(reasons).toEqual([{ email: CREDENTIALS.email }]);
+    // The grant that goes is left out of the check for other connections.
+    expect(reasons).toEqual([{ email: CREDENTIALS.email, exceptGrantId: GRANT }]);
   });
   test('a token that cannot be read is not revoked, and the row still goes', async () => {
     let revoked = 0;

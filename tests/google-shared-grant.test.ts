@@ -122,8 +122,8 @@ describe('googleRevokeBlockedReason', () => {
     const asked: unknown[] = [];
     __setGoogleSharedGrantDepsForTest({
       env: () => env,
-      query: (async (_fn: unknown, args: any) => {
-        asked.push(args.email);
+      query: (async (fn: unknown, args: any) => {
+        asked.push(`${getFunctionName(fn as any)}:${JSON.stringify(args)}`);
         if (answer === 'fail') throw new Error('convex down');
         return answer;
       }) as any,
@@ -146,12 +146,21 @@ describe('googleRevokeBlockedReason', () => {
     expect(asked).toEqual([]);
   });
 
-  test('production revokes only when no Nylas grant uses the address', async () => {
+  test('production revokes only when no other Google connection uses the address', async () => {
     gate({ RAILWAY_ENVIRONMENT_NAME: 'production' }, false);
     expect(await googleRevokeBlockedReason({ email: 'ann@example.com' })).toBeNull();
     const asked = gate({ RAILWAY_ENVIRONMENT_NAME: 'production' }, true);
-    expect(await googleRevokeBlockedReason({ email: 'ann@example.com' })).toContain('Nylas grant');
-    expect(asked).toEqual(['ann@example.com']);
+    expect(await googleRevokeBlockedReason({ email: ' ann@example.com ' })).toContain(
+      'another Google connection',
+    );
+    // The connection that goes is left out of the check.
+    await googleRevokeBlockedReason({ email: 'ann@example.com', exceptGrantId: 'google:g1' });
+    await googleRevokeBlockedReason({ email: 'ann@example.com', exceptConnectionId: 'drive-1' });
+    expect(asked).toEqual([
+      'googleDirect:googleAccessUsesAddress:{"email":"ann@example.com"}',
+      'googleDirect:googleAccessUsesAddress:{"email":"ann@example.com","exceptGrantId":"google:g1"}',
+      'googleDirect:googleAccessUsesAddress:{"email":"ann@example.com","exceptConnectionId":"drive-1"}',
+    ]);
   });
 
   test('an unknown address or a failed check blocks the revoke', async () => {

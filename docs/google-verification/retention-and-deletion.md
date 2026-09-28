@@ -15,9 +15,9 @@ deployed. "Open item" identifies a problem that no workstream of this round owns
 - Disconnect of a mailbox deletes the mail, calendar, and contact data of that
   mailbox. Some derived rows stay until account deletion (see "Open items").
 - Disconnect of Google Drive deletes the Drive token and the Drive index. It
-  also asks Google to revoke the token. It does not ask when a direct Google
-  mailbox of the same address uses the same Google grant. A failed revoke
-  does not stop the disconnect.
+  also asks Google to revoke the token. It does not ask when another Google
+  connection of the same address uses the same Google project. A failed
+  revoke does not stop the disconnect.
 - Account deletion deletes all data of the user in Convex, and the Clerk user.
 - A mailbox that stays in an error state for 30 days loses its mail data.
 - Webhook rows, OAuth states, one-time codes, and rate-limit rows expire.
@@ -109,9 +109,10 @@ After the casa-prep round:
   (`lib/google/adapter/mail.ts`, `destroyGrant`). A Google revoke ends the
   access of the whole Google Cloud project for that address. So the disconnect
   does not send the revoke in three cases, and deletes only our token row:
-  a Google Drive connection of the same user and address shares the grant; a
-  Nylas grant in the same deployment uses the address; or the deployment is
-  not production (staging uses the production Google project).
+  a Google Drive connection of the same user and address shares the grant;
+  another live Google connection of any user in the deployment (a Nylas or
+  direct mailbox, or a Google Drive connection) uses the address; or the
+  deployment is not production (staging uses the production Google project).
   `lib/google/shared-grant.ts` has these rules.
 
 ## Google Drive disconnect
@@ -126,7 +127,8 @@ Entry point: Files > Google Drive > "Disconnect". The route is
    the same Google grant (`lib/google/shared-grant.ts`). A Google revoke ends
    the access of all the Google Cloud project, so it can stop that mailbox
    too. For the same reason it does not send the revoke outside the
-   production deployment, or while a Nylas grant uses the address.
+   production deployment, or while another live Google connection of any
+   user in the deployment uses the address.
 2. If the revoke fails, the code logs a warning and continues.
 3. `cloudFiles.disconnect` deletes the connection and the credentials
    (`convex/cloudFiles.ts:338-369`).

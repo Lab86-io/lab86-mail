@@ -202,8 +202,10 @@ These rules add to the decisions above or make them exact.
   and local development use the production Google Cloud project, so a revoke
   there would end the production access for that address. Only a deployment
   with `RAILWAY_ENVIRONMENT_NAME=production` (or `LAB86_GOOGLE_REVOKE=1`)
-  revokes. Production also skips the revoke while a Nylas Google grant of any
-  user in the deployment uses the address (`googleDirect:nylasGrantUsesAddress`).
+  revokes. Production also skips the revoke while another live Google
+  connection of any user in the deployment uses the address: a Nylas or
+  direct mail account, or a Google Drive connection, other than the one that
+  goes (`googleDirect:googleAccessUsesAddress`).
   In each case only our token row goes (`googleRevokeBlockedReason` in
   `lib/google/shared-grant.ts`).
 - **Rollback.** `googleDirect:rollbackToNylas` does not revoke the Google

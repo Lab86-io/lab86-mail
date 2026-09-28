@@ -166,7 +166,7 @@ describe('disconnect of a direct account', () => {
     try {
       await withHttpHarness(async (h) => {
         const order: string[] = [];
-        h.onConvex('googleDirect:nylasGrantUsesAddress', () => false);
+        h.onConvex('googleDirect:googleAccessUsesAddress', () => false);
         h.onConvex('googleDirect:getGrantCredentials', () => {
           order.push('credentials');
           return {

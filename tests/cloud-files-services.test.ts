@@ -490,6 +490,7 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
 
   test('a blocked Google revoke keeps the grant at Google: the rows go, no revoke call', async () => {
     const order: string[] = [];
+    const guardInputs: unknown[] = [];
     const fetchMock = mock(async () => new Response('', { status: 200 }));
     __setCloudFileConnectionDepsForTest({
       convexQuery: (async () => stored('google_drive')) as any,
@@ -499,9 +500,14 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
       decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
       fetch: fetchMock as any,
       mailUsesDriveGrant: async () => false,
-      googleRevokeBlockedReason: async () => 'this deployment shares the production Google project',
+      googleRevokeBlockedReason: async (input: any) => {
+        guardInputs.push(input);
+        return 'this deployment shares the production Google project';
+      },
     });
     await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
+    // The Drive connection that goes is left out of the check for other connections.
+    expect(guardInputs).toEqual([expect.objectContaining({ exceptConnectionId: 'conn-1' })]);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(order).toEqual(['disconnect']);
   });

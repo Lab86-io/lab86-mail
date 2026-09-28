@@ -2093,7 +2093,9 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_user_provider_account', ['userId', 'provider', 'accountKey'])
-    .index('by_status', ['status']),
+    .index('by_status', ['status'])
+    // The Google revoke guard looks for other connections of one address.
+    .index('by_account_email', ['accountEmail']),
 
   cloudFileCredentials: defineTable({
     userId: v.string(),

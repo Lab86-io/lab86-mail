@@ -791,48 +791,64 @@ describe('History cron', () => {
   });
 });
 
-describe('nylasGrantUsesAddress', () => {
+describe('googleAccessUsesAddress', () => {
+  const ask = (t: ReturnType<typeof newHarness>, args: Record<string, string>) =>
+    t.query(api.googleDirect.googleAccessUsesAddress, {
+      internalSecret: SECRET,
+      email: 'ann@example.com',
+      ...args,
+    });
+
+  async function seedDrive(t: ReturnType<typeof newHarness>, connectionId: string, overrides = {}) {
+    await t.run((ctx) =>
+      ctx.db.insert('cloudFileConnections', {
+        userId: USER_B,
+        connectionId,
+        provider: 'google_drive',
+        accountKey: 'ann',
+        accountEmail: 'ann@example.com',
+        status: 'connected',
+        scopes: [],
+        createdAt: 1,
+        updatedAt: 1,
+        ...overrides,
+      }),
+    );
+  }
+
   test('finds a Nylas Google grant of any user for the address, in either letter case', async () => {
     const t = newHarness();
     await seedNylasAccount(t, { status: 'connected', email: 'Ann@Example.com' }, USER_B);
-    expect(
-      await t.query(api.googleDirect.nylasGrantUsesAddress, {
-        internalSecret: SECRET,
-        email: 'Ann@Example.com',
-      }),
-    ).toBe(true);
-    expect(
-      await t.query(api.googleDirect.nylasGrantUsesAddress, {
-        internalSecret: SECRET,
-        email: 'other@example.com',
-      }),
-    ).toBe(false);
-    expect(
-      await t.query(api.googleDirect.nylasGrantUsesAddress, { internalSecret: SECRET, email: '  ' }),
-    ).toBe(false);
+    expect(await ask(t, { email: 'Ann@Example.com' })).toBe(true);
+    expect(await ask(t, { email: 'other@example.com' })).toBe(false);
+    expect(await ask(t, { email: '  ' })).toBe(false);
   });
 
   test('a lower-case stored address matches a mixed-case question', async () => {
     const t = newHarness();
     await seedNylasAccount(t, { status: 'connected' });
-    expect(
-      await t.query(api.googleDirect.nylasGrantUsesAddress, {
-        internalSecret: SECRET,
-        email: 'Ann@Example.com',
-      }),
-    ).toBe(true);
+    expect(await ask(t, { email: 'Ann@Example.com' })).toBe(true);
   });
 
-  test('a direct account, a disconnected row, and another provider do not count', async () => {
+  test('a direct account of another user counts; the grant that goes, a disconnected row, and another provider do not', async () => {
     const t = newHarness();
     await seedNylasAccount(t, { status: 'disconnected' });
-    await seedNylasAccount(t, { status: 'connected', grantId: 'google:direct-1' }, USER_B);
     await seedNylasAccount(t, { status: 'connected', provider: 'microsoft' }, 'user_c');
-    expect(
-      await t.query(api.googleDirect.nylasGrantUsesAddress, {
-        internalSecret: SECRET,
-        email: 'ann@example.com',
-      }),
-    ).toBe(false);
+    await seedNylasAccount(t, { status: 'connected', grantId: 'google:direct-a' }, USER);
+    expect(await ask(t, { exceptGrantId: 'google:direct-a' })).toBe(false);
+    // Another user connected the same Google address directly: a revoke would end that grant.
+    await seedNylasAccount(t, { status: 'error', grantId: GRANT_B }, USER_B);
+    expect(await ask(t, { exceptGrantId: 'google:direct-a' })).toBe(true);
+    expect(await ask(t, { exceptGrantId: GRANT_B })).toBe(true);
+  });
+
+  test('a Google Drive connection of any user counts, but not the one that goes', async () => {
+    const t = newHarness();
+    await seedDrive(t, 'drive-b');
+    await seedDrive(t, 'onedrive-b', { provider: 'onedrive' });
+    await seedDrive(t, 'drive-gone', { status: 'disconnected' });
+    expect(await ask(t, {})).toBe(true);
+    expect(await ask(t, { exceptConnectionId: 'drive-b' })).toBe(false);
+    expect(await ask(t, { email: 'ANN@example.com', exceptConnectionId: 'drive-b' })).toBe(false);
   });
 });
