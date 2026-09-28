@@ -69,6 +69,8 @@ describe('what the export leaves out', () => {
     expect(exportPageSize('albatrossIntents')).toBe(50);
     expect(exportPageSize('mailCorpusMessages')).toBe(100);
     expect(exportPageSize('mailCorpusBodies')).toBe(10);
+    for (const table of ['documents', 'contentItems']) expect(exportPageSize(table)).toBe(10);
+    expect(exportPageSize('briefPreparations')).toBe(50);
   });
 
   test('the export follows the deletion cascade, and every skip has a reason', () => {
