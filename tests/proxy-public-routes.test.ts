@@ -65,6 +65,10 @@ describe('Clerk public routes', () => {
     expect(isPublic('/api/account')).toBe(false);
     expect(isPublic('/api/mcp/oauth/start')).toBe(false);
     expect(isPublic('/api/files/oauth/start')).toBe(false);
+    // Finalize routes redeem an OAuth completion for the signed-in user only.
+    expect(isPublic('/api/files/oauth/finalize')).toBe(false);
+    expect(isPublic('/api/nylas/finalize')).toBe(false);
+    expect(isPublic('/api/mcp/oauth/finalize')).toBe(false);
     expect(isPublic('/api/mobile/one-time-codes')).toBe(false);
   });
 });

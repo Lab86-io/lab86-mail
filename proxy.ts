@@ -3,6 +3,17 @@ import type { NextFetchEvent } from 'next/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { isStagingRuntime } from './lib/hosted/controls';
 import { NATIVE_BROWSER_COOKIE, verifyNativeBrowserAccess } from './lib/native/browser-access';
+import {
+  buildContentSecurityPolicy,
+  CSP_NONCE_HEADER,
+  continuesToPage,
+  createCspNonce,
+  cspHeaderName,
+  cspMode,
+  isDocumentCspPath,
+  isLoopbackHost,
+  withMiddlewareRequestHeaders,
+} from './lib/security/csp';
 
 const hasClerkKeys = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
 
@@ -81,7 +92,38 @@ export default async function proxy(req: NextRequest, event: NextFetchEvent) {
     >[1]);
   }
 
-  return hasClerkKeys ? protectedProxy(forwarded, event) : passthroughProxy(forwarded);
+  const response =
+    (hasClerkKeys ? await protectedProxy(forwarded, event) : passthroughProxy(forwarded)) ??
+    NextResponse.next();
+  return applyDocumentCsp(forwarded, response);
+}
+
+// A fresh nonce and policy for each page request (lib/security/csp.ts). The
+// page render gets both through request headers: Next.js reads the nonce from
+// the policy for its own scripts, and the root layout reads x-nonce.
+export function applyDocumentCsp(req: NextRequest, response: Response) {
+  const mode = cspMode();
+  if (mode === 'off' || !isDocumentCspPath(req.nextUrl.pathname)) return response;
+  const nonce = createCspNonce();
+  const policy = buildContentSecurityPolicy({
+    nonce,
+    development: process.env.NODE_ENV !== 'production',
+    upgradeInsecureRequests: !isLoopbackHost(req.nextUrl.hostname),
+  });
+  const header = cspHeaderName(mode);
+  try {
+    response.headers.set(header, policy);
+    if (continuesToPage(response)) {
+      withMiddlewareRequestHeaders(response, req.headers, {
+        [CSP_NONCE_HEADER]: nonce,
+        [header.toLowerCase()]: policy,
+      });
+    }
+  } catch {
+    // Response.redirect() and Response.error() have read-only headers; a
+    // redirect renders no page, so it needs no policy.
+  }
+  return response;
 }
 
 export const config = {

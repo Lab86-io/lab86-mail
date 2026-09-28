@@ -93,6 +93,14 @@ describe('retention sweep', () => {
         expiresAt: START + 600_000,
         createdAt: START,
       });
+      await ctx.db.insert('oauthCompletions', {
+        userId: 'u',
+        kind: 'mail',
+        tokenHash: 'old',
+        payloadEncrypted: 'x',
+        expiresAt: START + 300_000,
+        createdAt: START,
+      });
       await ctx.db.insert('mailOneTimeCodes', code({ code: 'dead', expiresAt: START + 60_000 }));
     });
 
@@ -138,6 +146,7 @@ describe('retention sweep', () => {
       mcpOAuthStates: 1,
       cloudFileOAuthStates: 1,
       cloudFileOAuthCompletions: 1,
+      oauthCompletions: 1,
     });
 
     await t.run(async (ctx) => {
@@ -152,6 +161,7 @@ describe('retention sweep', () => {
       expect((await ctx.db.query('mcpOAuthStates').collect()).map((row) => row.state)).toEqual(['live']);
       expect(await ctx.db.query('cloudFileOAuthStates').collect()).toHaveLength(0);
       expect(await ctx.db.query('cloudFileOAuthCompletions').collect()).toHaveLength(0);
+      expect(await ctx.db.query('oauthCompletions').collect()).toHaveLength(0);
       const codes = await ctx.db.query('mailOneTimeCodes').collect();
       expect(codes.map((row) => [row.code, row.status]).sort()).toEqual([
         ['lapsed', 'expired'],

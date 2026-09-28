@@ -44,7 +44,11 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         let response = try await backend.get(
             path: "/api/nylas/connect?provider=\(encoded)&native=1&format=json"
         )
-        try await authorize(response: response, successKey: "nylas_connected")
+        try await authorize(
+            response: response,
+            successKey: "nylas_connected",
+            completionPath: "/api/nylas/finalize"
+        )
     }
 
     func connectOAuthSource(server: String) async throws {
@@ -52,7 +56,11 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         let response = try await backend.get(
             path: "/api/mcp/oauth/start?server=\(encoded)&native=1&format=json"
         )
-        try await authorize(response: response, successKey: "mcp_connected")
+        try await authorize(
+            response: response,
+            successKey: "mcp_connected",
+            completionPath: "/api/mcp/oauth/finalize"
+        )
     }
 
     func connectCloudFiles(provider: String) async throws {
@@ -121,7 +129,12 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
             } ?? []
         )
         if values[successKey] != nil { return }
-        if let completionToken = values["files_completion"], let completionPath {
+        // The callback keeps the provider result for the signed-in app to
+        // redeem, so an approval in another person's browser never connects.
+        let completionToken = values["files_completion"]
+            ?? values["nylas_completion"]
+            ?? values["mcp_completion"]
+        if let completionToken, let completionPath {
             _ = try await backend.post(
                 path: completionPath,
                 body: .object(["completionToken": .string(completionToken)])
