@@ -1018,6 +1018,8 @@ private struct RecipientListPointer: ViewModifier {
                 if !inside { tracker.filter.reset() }
                 onPointerInside?(inside)
             }
+            // A list that closes under the pointer sends no hover exit.
+            .onDisappear { onPointerInside?(false) }
         #else
         content
         #endif

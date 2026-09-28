@@ -174,40 +174,17 @@ struct MailboxesSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(mailbox.syncStatus == "error" ? .red : .secondary)
             if let contacts = contactStatuses[mailbox.id] {
-                contactLine(mailbox, contacts)
+                MailboxContactLine(
+                    status: contacts,
+                    accountID: mailbox.id,
+                    accentColor: environment.theme.accentColor,
+                    isBusy: busyID != nil
+                ) {
+                    Task { await reconnect(mailbox) }
+                }
             }
         }
         .padding(.vertical, 4)
-    }
-
-    // One plain line for the mailbox's contacts, and the reconnect action when
-    // the grant has no contact permission. Reconnect is the same mailbox
-    // connect flow; the server starts a contact pass when it completes.
-    @ViewBuilder private func contactLine(_ mailbox: Mailbox, _ contacts: ContactAccountStatus) -> some View {
-        if let summary = contacts.summary() {
-            Text(summary)
-                .font(.caption)
-                .foregroundStyle(contacts.isProblem ? .red : .secondary)
-                .accessibilityIdentifier("mailboxes.contacts.\(mailbox.id)")
-        }
-        if contacts.needsReconnect {
-            Button("Reconnect to add contacts") {
-                Task { await reconnect(mailbox) }
-            }
-            .font(.caption.weight(.medium))
-            #if os(macOS)
-            // A text action in the accent: a Mac borderless button in a list
-            // row draws plain label text, which reads as a status line.
-            .buttonStyle(.plain)
-            .foregroundStyle(environment.theme.accentColor)
-            .opacity(busyID == nil ? 1 : 0.5)
-            .pointerStyle(.link)
-            #else
-            .buttonStyle(.borderless)
-            #endif
-            .disabled(busyID != nil)
-            .accessibilityIdentifier("mailboxes.contacts.reconnect.\(mailbox.id)")
-        }
     }
 
     private func load() async {
@@ -362,5 +339,42 @@ private extension String {
     var nilIfEmpty: String? {
         let value = trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+}
+
+/// One plain line for a mailbox's contacts in Settings > Mailboxes, and the
+/// reconnect action when the grant has no contact permission. Reconnect is
+/// the same mailbox connect flow; the server starts a contact pass when it
+/// completes. The two views go into the row's stack as two rows.
+struct MailboxContactLine: View {
+    let status: ContactAccountStatus
+    let accountID: String
+    let accentColor: Color
+    var isBusy = false
+    let onReconnect: () -> Void
+
+    var body: some View {
+        if let summary = status.summary() {
+            Text(summary)
+                .font(.caption)
+                .foregroundStyle(status.isProblem ? .red : .secondary)
+                .accessibilityIdentifier("mailboxes.contacts.\(accountID)")
+        }
+        if status.needsReconnect {
+            Button("Reconnect to add contacts", action: onReconnect)
+                .font(.caption.weight(.medium))
+                #if os(macOS)
+                // A text action in the accent: a Mac borderless button in a
+                // list row draws plain label text, which reads as a status line.
+                .buttonStyle(.plain)
+                .foregroundStyle(accentColor)
+                .opacity(isBusy ? 0.5 : 1)
+                .pointerStyle(.link)
+                #else
+                .buttonStyle(.borderless)
+                #endif
+                .disabled(isBusy)
+                .accessibilityIdentifier("mailboxes.contacts.reconnect.\(accountID)")
+        }
     }
 }

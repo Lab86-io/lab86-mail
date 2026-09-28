@@ -45,32 +45,89 @@ final class RecipientFieldMacRenderingTests: XCTestCase {
             let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
             defer { defaults.removePersistentDomain(forName: suite) }
             let theme = ThemeStore(defaults: defaults)
-            let host = NSHostingView(rootView:
-                Harness(to: scenario.to, presentation: scenario.presentation, theme: theme)
-                    .environment(\.colorScheme, scenario.scheme)
+            try await render(
+                Harness(to: scenario.to, presentation: scenario.presentation, theme: theme),
+                name: scenario.name,
+                size: NSSize(width: 720, height: 480),
+                scheme: scenario.scheme
             )
-            host.safeAreaRegions = []
-            let frame = NSRect(x: 0, y: 0, width: 720, height: 480)
-            host.frame = frame
-            let window = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false
-            window.appearance = NSAppearance(named: scenario.scheme == .dark ? .darkAqua : .aqua)
-            window.contentView = host
-            defer { window.contentView = nil }
-            for _ in 0..<3 {
-                host.layoutSubtreeIfNeeded()
-                try await Task.sleep(for: .milliseconds(60))
-            }
-            let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: rep)
-            let data = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
-            XCTAssertGreaterThan(Set(data).count, 16, "A blank image is not evidence")
-            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
-            attachment.name = scenario.name
-            attachment.lifetime = .keepAlways
-            add(attachment)
-            writeEvidence(data, name: scenario.name)
         }
+    }
+
+    /// Settings > Mailboxes on the Mac: the contact line and the reconnect action.
+    func testTheMailboxContactLineRendersOnTheMac() async throws {
+        let suite = "RecipientFieldMacRenderingTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let theme = ThemeStore(defaults: defaults)
+        let needsPermission = ContactAccountStatus(
+            accountID: "work",
+            email: "jakob@statpearls.com",
+            provider: "google",
+            state: .needsReconnect,
+            needsReconnect: true,
+            contactCount: 0,
+            lastSyncedAt: nil,
+            sources: [],
+            message: nil
+        )
+        let ready = ContactAccountStatus(
+            accountID: "home",
+            email: "jakob@lab86.io",
+            provider: "icloud",
+            state: .ready,
+            needsReconnect: false,
+            contactCount: 214,
+            lastSyncedAt: Date.now.addingTimeInterval(-300),
+            sources: [],
+            message: nil
+        )
+        let rows = List {
+            Section("Connected") {
+                ForEach([needsPermission, ready]) { status in
+                    VStack(alignment: .leading, spacing: 7) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(verbatim: status.email).font(.headline)
+                            Text(verbatim: "\(status.email) · \(status.provider.capitalized)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Label("Indexed · 12,408 messages", systemImage: "checkmark.shield")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        MailboxContactLine(status: status, accountID: status.accountID, accentColor: theme.accentColor) {}
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        try await render(rows, name: "settings-macos-mailbox-contacts", size: NSSize(width: 620, height: 320), scheme: .light)
+    }
+
+    /// Hosts the view in an offscreen window, renders it, and keeps the PNG.
+    private func render(_ view: some View, name: String, size: NSSize, scheme: ColorScheme) async throws {
+        let host = NSHostingView(rootView: view.environment(\.colorScheme, scheme))
+        host.safeAreaRegions = []
+        let frame = NSRect(origin: .zero, size: size)
+        host.frame = frame
+        let window = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+        window.contentView = host
+        defer { window.contentView = nil }
+        for _ in 0..<3 {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(60))
+        }
+        let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: rep)
+        let data = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+        XCTAssertGreaterThan(Set(data).count, 16, "A blank image is not evidence")
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        writeEvidence(data, name: name)
     }
 
     private struct Harness: View {

@@ -143,6 +143,28 @@ final class RecipientFieldRenderingTests: XCTestCase {
         }
     }
 
+    /// Settings > Mailboxes: the contact line under the mail status, and the
+    /// reconnect action for a mailbox with no contact permission.
+    func testTheMailboxContactLineRenders() async throws {
+        let suite = "RecipientFieldRenderingTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let theme = ThemeStore(defaults: defaults)
+        let appeared = expectation(description: "Rendered: settings contact line")
+        let controller = UIHostingController(rootView:
+            MailboxRowsHarness(theme: theme).onAppear { appeared.fulfill() }
+        )
+        let window = try makeWindow()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        await fulfillment(of: [appeared], timeout: 5)
+        controller.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        controller.view.layoutIfNeeded()
+        capture(window, name: "settings-mailbox-contacts", height: 420)
+    }
+
     func testTheFieldTurnsTypedTextIntoChipsInTheRealTextField() async throws {
         let suite = "RecipientFieldRenderingTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -294,6 +316,57 @@ final class RecipientFieldRenderingTests: XCTestCase {
                 Spacer(minLength: 0)
             }
             .background(theme.paperColor)
+        }
+    }
+
+    /// Two Mailboxes rows as Settings draws them: one mailbox that needs a
+    /// contact permission, and one with synced contacts.
+    private struct MailboxRowsHarness: View {
+        let theme: ThemeStore
+
+        var body: some View {
+            List {
+                Section("Connected") {
+                    row(
+                        title: "Work",
+                        detail: "jakob@statpearls.com · Google",
+                        status: Self.status(.needsReconnect, email: "jakob@statpearls.com", count: 0)
+                    )
+                    row(
+                        title: "jakob@lab86.io",
+                        detail: "jakob@lab86.io · Icloud",
+                        status: Self.status(.ready, email: "jakob@lab86.io", count: 214)
+                    )
+                }
+            }
+        }
+
+        private func row(title: String, detail: String, status: ContactAccountStatus) -> some View {
+            VStack(alignment: .leading, spacing: 7) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.headline)
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+                Label("Indexed · 12,408 messages", systemImage: "checkmark.shield")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                MailboxContactLine(status: status, accountID: status.accountID, accentColor: theme.accentColor) {}
+            }
+            .padding(.vertical, 4)
+        }
+
+        private static func status(_ state: ContactSyncState, email: String, count: Int) -> ContactAccountStatus {
+            ContactAccountStatus(
+                accountID: email,
+                email: email,
+                provider: "google",
+                state: state,
+                needsReconnect: state == .needsReconnect,
+                contactCount: count,
+                lastSyncedAt: state == .ready ? Date.now.addingTimeInterval(-300) : nil,
+                sources: [],
+                message: nil
+            )
         }
     }
 
