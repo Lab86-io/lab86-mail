@@ -8,6 +8,7 @@ on:
       - '.github/workflows/native-acceptance.yml'
       - '.github/scripts/native-acceptance.sh'
       - '.github/scripts/native-tour-gallery.mjs'
+      - '.github/scripts/native-tour-gallery.test.mjs'
   workflow_dispatch:
 
 permissions:
