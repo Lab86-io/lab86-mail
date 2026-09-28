@@ -22,17 +22,44 @@ if (clerkProxyUrl.startsWith('http') && publicUrl.startsWith('http')) {
   }
 }
 
+// Browser features the app uses: the microphone (voice capture) and the
+// location (a capture can send it with consent). Clipboard, fullscreen,
+// payment, and passkeys keep their browser defaults, because the Collabora,
+// live-view, Stripe, and Clerk frames get them through their allow attribute.
+export const PERMISSIONS_POLICY = [
+  'camera=()',
+  'microphone=(self)',
+  'geolocation=(self)',
+  'display-capture=()',
+  'usb=()',
+  'serial=()',
+  'hid=()',
+  'midi=()',
+  'magnetometer=()',
+  'gyroscope=()',
+  'accelerometer=()',
+  'browsing-topics=()',
+].join(', ');
+
 // Response security headers for production builds (staging and production).
-// The CSP holds frame-ancestors only: a script policy would break Clerk,
-// Convex, and the Collabora host. Only this origin may frame the app; the app
-// itself frames Collabora and sandboxed srcdoc documents, which this does not
-// affect. The native apps load the app as a top-level page.
+// The page Content-Security-Policy comes from proxy.ts, because it needs a
+// fresh nonce for each request (lib/security/csp.ts). X-Frame-Options keeps
+// the framing rule when LAB86_CSP_MODE is report-only or off. The native apps
+// load the app as a top-level page.
 export const SECURITY_HEADERS = [
   { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
-  { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
+  { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  { key: 'Permissions-Policy', value: PERMISSIONS_POLICY },
 ];
+
+// API responses get no page policy from proxy.ts. This one only limits
+// framing. Next.js keeps a header that is already on the response and drops
+// the route's own copy, so the routes that serve HTML with a complete policy
+// of their own (attachments, plan artifacts) must not match this source.
+export const API_SECURITY_HEADERS_SOURCE = '/api/:path((?!attachments/|albatross/plan/).*)';
+export const API_SECURITY_HEADERS = [{ key: 'Content-Security-Policy', value: "frame-ancestors 'self'" }];
 
 const config: NextConfig = {
   reactStrictMode: true,
@@ -56,7 +83,10 @@ const config: NextConfig = {
   async headers() {
     // `next dev` previews (localhost, tailnet) keep no HSTS or frame rules.
     if (process.env.NODE_ENV !== 'production') return [];
-    return [{ source: '/:path*', headers: SECURITY_HEADERS }];
+    return [
+      { source: '/:path*', headers: SECURITY_HEADERS },
+      { source: API_SECURITY_HEADERS_SOURCE, headers: API_SECURITY_HEADERS },
+    ];
   },
 };
 
