@@ -162,20 +162,36 @@ describe('retention sweep', () => {
 
   test('error and received webhook rows leave after their own TTL (M5)', async () => {
     const t = convexTest(schema, modules);
-    await t.run(async (ctx) => {
-      for (const status of ['received', 'error'] as const)
-        await ctx.db.insert('mailWebhookEvents', {
-          eventId: `old-${status}`,
+    const insert = (eventId: string, status: 'processed' | 'received' | 'error') =>
+      t.run((ctx) =>
+        ctx.db.insert('mailWebhookEvents', {
+          eventId,
           type: 'message.updated',
           payload: {},
           status,
-          receivedAt: START,
-        });
-    });
+          receivedAt: Date.now(),
+        }),
+      );
+    for (const status of ['received', 'error'] as const) await insert(`old-${status}`, status);
+    await insert('old-processed', 'processed');
+    const ids = async () =>
+      t.run(async (ctx) =>
+        (await ctx.db.query('mailWebhookEvents').collect()).map((row) => row.eventId).sort(),
+      );
+
+    // Past the processed TTL, before their own: only the processed row goes.
+    expect(WEBHOOK_EVENT_TTL_MS.processed).toBeLessThan(WEBHOOK_EVENT_TTL_MS.error);
+    expect(WEBHOOK_EVENT_TTL_MS.processed).toBeLessThan(WEBHOOK_EVENT_TTL_MS.received);
+    setSystemTime(new Date(START + WEBHOOK_EVENT_TTL_MS.processed + DAY));
+    expect((await t.mutation(internal.retention.sweep, {})).counts.mailWebhookEvents).toBe(1);
+    expect(await ids()).toEqual(['old-error', 'old-received']);
+
+    // A newer error row of the same kind stays after the old rows go.
+    await insert('new-error', 'error');
     setSystemTime(new Date(START + WEBHOOK_EVENT_TTL_MS.error + DAY));
     const result = await t.mutation(internal.retention.sweep, {});
     expect(result.counts.mailWebhookEvents).toBe(2);
-    await t.run(async (ctx) => expect(await ctx.db.query('mailWebhookEvents').collect()).toHaveLength(0));
+    expect(await ids()).toEqual(['new-error']);
   });
 
   test('slimWebhookPayloads cuts old payloads to ids, page by page', async () => {
