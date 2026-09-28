@@ -235,12 +235,16 @@ describe('the Nylas connect route with the direct Google flow', () => {
       ok: true,
       authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=g',
     });
-    expect(calls.choices).toEqual([{ userId: 'user-1' }]);
+    expect(calls.choices).toEqual([{ userId: 'user-1', account: null }]);
     expect(calls.starts[0]).toMatchObject({ userId: 'user-1', mode: 'new', native: true });
     expect(calls.nylasStates).toBe(0);
     const redirect = await createNylasConnectGet(d as any)(
-      new NextRequest('http://localhost/api/nylas/connect?provider=google&redirectTo=%2Fsettings'),
+      new NextRequest(
+        'http://localhost/api/nylas/connect?provider=google&account=acct-2&redirectTo=%2Fsettings',
+      ),
     );
+    // The Settings Reconnect link names the account.
+    expect(calls.choices[1]).toEqual({ userId: 'user-1', account: 'acct-2' });
     expect(redirect.headers.get('location')).toContain('accounts.google.com');
     expect(calls.starts[1].redirectTo).toBe('/settings');
   });

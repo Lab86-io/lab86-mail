@@ -32,6 +32,7 @@ import {
   nylasScheduledMessage,
   scheduleGoogleSend,
 } from '../scheduled';
+import { driveUsesMailGrant } from '../shared-grant';
 import { forgetGoogleAccessToken, type GoogleGrantCredentials, loadGoogleGrantCredentials } from '../tokens';
 import type { GoogleNylasAdapter } from './types';
 
@@ -54,6 +55,7 @@ const defaults = {
   mutate: convexMutation,
   decryptSecret,
   revokeGoogleToken: (token: string) => revokeGoogleToken(token),
+  driveUsesMailGrant,
   destroyNylasGrant: async (grantId: string) => {
     // A dynamic import: lib/nylas/client.ts imports this adapter.
     const { requireNylas } = await import('@/lib/nylas/client');
@@ -247,7 +249,8 @@ async function requireCredentials(grantId: string): Promise<GoogleGrantCredentia
 /**
  * Label changes for Nylas `{ unread, starred, folders }`. A folder set
  * replaces the labels, but UNREAD and STARRED follow only the two flags, and
- * DRAFT, SENT, and CHAT cannot change.
+ * DRAFT, SENT, and CHAT cannot change. A true flag adds its label and a false
+ * flag removes it, whatever the current labels are.
  */
 export function labelDelta(
   current: string[],
@@ -264,12 +267,15 @@ export function labelDelta(
     [body.unread, 'UNREAD'],
     [body.starred, 'STARRED'],
   ] as const) {
+    // The current labels are read only for a folder set, so a flag never
+    // depends on them: Gmail accepts adding a label that is there and
+    // removing one that is not.
     if (flag === true) {
       remove.delete(label);
-      if (!current.includes(label)) add.add(label);
+      add.add(label);
     } else if (flag === false) {
       add.delete(label);
-      if (current.includes(label)) remove.add(label);
+      remove.add(label);
     }
   }
   for (const id of FIXED_LABELS) {
@@ -703,14 +709,22 @@ function readStoredToken(encrypted: string): string | null {
  * Removes a direct grant: revokes the Google token, deletes the token row
  * (and the scheduled sends of the account), and destroys the Nylas grant that
  * the account used before the switch. A failed revoke is logged; the token
- * row goes anyway, so no copy of the token stays with us.
+ * row goes anyway, so no copy of the token stays with us. When a Drive
+ * connection of the same user and address uses the same OAuth client, the
+ * revoke would end it too (lib/google/shared-grant.ts), so it is left out.
  */
 async function destroyGrant(args: any) {
   const grantId = String(args?.grantId);
   const credentials = await deps.loadCredentials(grantId).catch(() => null);
   const token = credentials?.refreshTokenEncrypted || credentials?.accessTokenEncrypted;
   const plain = token ? readStoredToken(token) : null;
-  if (plain) await revokeWithRetry(plain);
+  if (plain && credentials) {
+    if (await deps.driveUsesMailGrant({ userId: credentials.userId, email: credentials.email })) {
+      console.warn(
+        '[google-mail] a Drive connection shares this Google grant; the token row goes, no revoke',
+      );
+    } else await revokeWithRetry(plain);
+  }
   forgetGoogleAccessToken(grantId);
   labelCache.delete(grantId);
   const removed = await deps.mutate<{ removed: number; previousNylasGrantIds: string[] }>(

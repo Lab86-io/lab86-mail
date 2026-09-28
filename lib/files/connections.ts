@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { mailUsesDriveGrant } from '@/lib/google/shared-grant';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { decryptSecret, encryptSecret } from '@/lib/security/crypto';
 import {
@@ -49,6 +50,7 @@ const defaultDependencies = {
   encryptSecret,
   fetch,
   now: Date.now,
+  mailUsesDriveGrant,
 };
 
 let dependencies = defaultDependencies;
@@ -352,7 +354,15 @@ export async function disconnectCloudFileConnection(userId: string, connectionId
     })
     .catch(() => null);
   let revoked = false;
-  if (row?.connection && row.credentials) {
+  const sharedWithMail =
+    row?.connection?.provider === 'google_drive' &&
+    (await dependencies.mailUsesDriveGrant({ userId, email: row.connection.accountEmail }));
+  if (sharedWithMail) {
+    // Direct Google mail of the same address uses this OAuth client, and a
+    // revoke would end it too (lib/google/shared-grant.ts). The rows go; the
+    // Google grant stays for mail.
+    console.warn('[cloud-files] a mail connection shares this Google grant; the rows go, no revoke');
+  } else if (row?.connection && row.credentials) {
     revoked = await revokeCloudFileGrant(row).catch((error) => {
       console.warn('[cloud-files] token revoke failed', {
         provider: row.connection.provider,

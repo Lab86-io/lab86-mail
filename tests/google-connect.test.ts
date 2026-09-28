@@ -73,7 +73,7 @@ function setup(
         return (
           overrides.activation ?? {
             accountId: args.accountId ?? args.newAccountId,
-            grantId: `google:${args.accountId ?? args.newAccountId}`,
+            grantId: args.newGrantId,
             outcome: args.accountId ? 'switched' : 'created',
           }
         );
@@ -227,16 +227,39 @@ describe('directGoogleConnectChoice', () => {
     expect(await directGoogleConnectChoice({ userId: USER })).toEqual({ mode: 'new' });
   });
 
-  test('with the flag off, only a dead direct account reconnects directly', async () => {
+  test('with the flag off, a request that names no account stays on Nylas', async () => {
+    // The user has a dead direct account (acct-2), but a plain "Connect
+    // Google" can add another Google account through Nylas.
     setup({ env: {} });
-    expect(await directGoogleConnectChoice({ userId: USER })).toEqual({
+    expect(await directGoogleConnectChoice({ userId: USER })).toBeNull();
+    expect(await directGoogleConnectChoice({ userId: USER, account: '  ' })).toBeNull();
+  });
+
+  test('a request that names a direct account reconnects it, by id or by email, flag on or off', async () => {
+    setup({ env: {} });
+    expect(await directGoogleConnectChoice({ userId: USER, account: 'acct-2' })).toEqual({
       mode: 'reconnect',
       account: 'acct-2',
     });
-    setup({ env: {}, accounts: [NYLAS_ACCOUNT] });
-    expect(await directGoogleConnectChoice({ userId: USER })).toBeNull();
+    expect(await directGoogleConnectChoice({ userId: USER, account: 'BO@example.com' })).toEqual({
+      mode: 'reconnect',
+      account: 'acct-2',
+    });
+    setup({ env: { LAB86_GOOGLE_DIRECT: '1' } });
+    expect(await directGoogleConnectChoice({ userId: USER, account: 'acct-2' })).toEqual({
+      mode: 'reconnect',
+      account: 'acct-2',
+    });
+  });
+
+  test('a named Nylas or unknown account is not a direct reconnect', async () => {
+    setup({ env: {} });
+    expect(await directGoogleConnectChoice({ userId: USER, account: 'acct-1' })).toBeNull();
+    expect(await directGoogleConnectChoice({ userId: USER, account: 'nobody@example.com' })).toBeNull();
+    setup({ env: { LAB86_GOOGLE_DIRECT: '1' } });
+    expect(await directGoogleConnectChoice({ userId: USER, account: 'acct-1' })).toEqual({ mode: 'new' });
     setup({ env: { LAB86_GOOGLE_DIRECT: '1' }, client: null });
-    expect(await directGoogleConnectChoice({ userId: USER })).toBeNull();
+    expect(await directGoogleConnectChoice({ userId: USER, account: 'acct-2' })).toBeNull();
   });
 });
 
@@ -258,6 +281,8 @@ describe('completeGoogleMailConnect', () => {
       mode: 'switch',
       accountId: 'acct-1',
       newAccountId: 'uuid-new',
+      // A new random id for the connection, never the account id.
+      newGrantId: 'google:uuid-new',
       email: 'ann@example.com',
       displayName: 'Ann Lee',
       scopes: ['openid', GMAIL_MODIFY_SCOPE, 'https://www.googleapis.com/auth/calendar'],

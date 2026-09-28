@@ -13,6 +13,9 @@ const SECRET = 'google-direct-runtime-secret';
 const USER = 'user_google';
 const NYLAS_GRANT = 'd502cbfc-98b3-49f4-93a7-d0a5d825d7fa';
 const ACCOUNT = 'dc636c8d-1660-4cfb-b7ab-8c10811f98a8';
+const GRANT = 'google:11111111-1111-4111-8111-111111111111';
+const USER_B = 'user_google_b';
+const GRANT_B = 'google:22222222-2222-4222-8222-222222222222';
 let previousSecret: string | undefined;
 
 beforeAll(() => {
@@ -30,11 +33,15 @@ function newHarness() {
 }
 
 /** A Google account on Nylas, with a ready corpus and calendar and contact sync rows. */
-async function seedNylasAccount(t: ReturnType<typeof newHarness>, overrides: Record<string, unknown> = {}) {
+async function seedNylasAccount(
+  t: ReturnType<typeof newHarness>,
+  overrides: Record<string, unknown> = {},
+  userId = USER,
+) {
   await t.run(async (ctx) => {
     const ts = Date.now();
     await ctx.db.insert('connectedAccounts', {
-      userId: USER,
+      userId,
       accountId: ACCOUNT,
       email: 'ann@example.com',
       provider: 'google',
@@ -50,7 +57,7 @@ async function seedNylasAccount(t: ReturnType<typeof newHarness>, overrides: Rec
       ...overrides,
     } as any);
     await ctx.db.insert('providerGrants', {
-      userId: USER,
+      userId,
       accountId: ACCOUNT,
       provider: 'google',
       grantId: NYLAS_GRANT,
@@ -61,7 +68,7 @@ async function seedNylasAccount(t: ReturnType<typeof newHarness>, overrides: Rec
       updatedAt: ts,
     });
     await ctx.db.insert('mailSyncStates', {
-      userId: USER,
+      userId,
       accountId: ACCOUNT,
       grantId: NYLAS_GRANT,
       provider: 'google',
@@ -73,7 +80,7 @@ async function seedNylasAccount(t: ReturnType<typeof newHarness>, overrides: Rec
       updatedAt: ts,
     });
     await ctx.db.insert('calendarSyncStates', {
-      userId: USER,
+      userId,
       accountId: ACCOUNT,
       grantId: NYLAS_GRANT,
       provider: 'google',
@@ -82,7 +89,7 @@ async function seedNylasAccount(t: ReturnType<typeof newHarness>, overrides: Rec
       updatedAt: ts,
     });
     await ctx.db.insert('contactSyncStates', {
-      userId: USER,
+      userId,
       accountId: ACCOUNT,
       grantId: NYLAS_GRANT,
       provider: 'google',
@@ -99,6 +106,7 @@ const activation = (overrides: Record<string, unknown> = {}) => ({
   mode: 'switch' as const,
   accountId: ACCOUNT,
   newAccountId: 'new-account-id',
+  newGrantId: GRANT,
   email: 'Ann@Example.com',
   displayName: 'Ann G',
   scopes: ['openid', 'https://www.googleapis.com/auth/gmail.modify'],
@@ -172,7 +180,7 @@ describe('switch, reconnect, and rollback', () => {
     const result = await t.mutation(api.googleDirect.activateGoogleAccount, activation());
     expect(result).toEqual({
       accountId: ACCOUNT,
-      grantId: `google:${ACCOUNT}`,
+      grantId: GRANT,
       outcome: 'switched',
       previousNylasGrantId: NYLAS_GRANT,
     });
@@ -180,7 +188,7 @@ describe('switch, reconnect, and rollback', () => {
     expect(after.accounts).toHaveLength(1);
     expect(after.account).toMatchObject({
       accountId: ACCOUNT,
-      grantId: `google:${ACCOUNT}`,
+      grantId: GRANT,
       status: 'connected',
       email: 'ann@example.com',
       displayName: 'Ann',
@@ -189,33 +197,33 @@ describe('switch, reconnect, and rollback', () => {
     expect(after.account?.error).toBeUndefined();
     expect(after.account?.errorSince).toBeUndefined();
     expect(after.grant).toMatchObject({
-      grantId: `google:${ACCOUNT}`,
+      grantId: GRANT,
       refreshTokenEncrypted: 'enc-refresh',
       accessTokenEncrypted: 'enc-access',
       previousNylasGrantId: NYLAS_GRANT,
     });
     expect(after.mail).toMatchObject({
-      grantId: `google:${ACCOUNT}`,
+      grantId: GRANT,
       status: 'ready',
       corpusReady: true,
       cursor: 'keep-me',
       historyId: '1000',
     });
-    expect(after.calendar?.grantId).toBe(`google:${ACCOUNT}`);
-    expect(after.contacts?.grantId).toBe(`google:${ACCOUNT}`);
+    expect(after.calendar?.grantId).toBe(GRANT);
+    expect(after.contacts?.grantId).toBe(GRANT);
 
     expect(
       await t.query(api.googleDirect.accountForPreviousNylasGrant, {
         internalSecret: SECRET,
         grantId: NYLAS_GRANT,
       }),
-    ).toEqual({ userId: USER, accountId: ACCOUNT, grantId: `google:${ACCOUNT}` });
+    ).toEqual({ userId: USER, accountId: ACCOUNT, grantId: GRANT });
     expect(await t.query(internal.googleDirect.listDirectMailAccounts, {})).toEqual([
       { userId: USER, accountId: ACCOUNT },
     ]);
     const credentials = await t.query(api.googleDirect.getGrantCredentials, {
       internalSecret: SECRET,
-      grantId: `google:${ACCOUNT}`,
+      grantId: GRANT,
     });
     expect(credentials).toMatchObject({
       userId: USER,
@@ -240,9 +248,16 @@ describe('switch, reconnect, and rollback', () => {
     });
     const result = await t.mutation(
       api.googleDirect.activateGoogleAccount,
-      activation({ mode: 'reconnect', historyId: '5000', refreshTokenEncrypted: 'enc-refresh-2' }),
+      activation({
+        mode: 'reconnect',
+        historyId: '5000',
+        refreshTokenEncrypted: 'enc-refresh-2',
+        newGrantId: 'google:not-used',
+      }),
     );
     expect(result.outcome).toBe('reconnected');
+    // A reconnect keeps the grant id of the connection.
+    expect(result.grantId).toBe(GRANT);
     expect(result.previousNylasGrantId).toBe(NYLAS_GRANT);
     const after = await snapshot(t);
     expect(after.account?.status).toBe('connected');
@@ -283,11 +298,12 @@ describe('switch, reconnect, and rollback', () => {
         accountId: undefined,
         email: 'second@example.com',
         newAccountId: 'acct-second',
+        newGrantId: 'google:grant-second',
       }),
     );
     expect(created).toEqual({
       accountId: 'acct-second',
-      grantId: 'google:acct-second',
+      grantId: 'google:grant-second',
       outcome: 'created',
       previousNylasGrantId: undefined,
     });
@@ -302,7 +318,7 @@ describe('switch, reconnect, and rollback', () => {
         .unique(),
     }));
     expect(rows.account).toMatchObject({
-      grantId: 'google:acct-second',
+      grantId: 'google:grant-second',
       displayName: 'Ann G',
       status: 'connected',
     });
@@ -362,10 +378,12 @@ describe('token row', () => {
     const t = newHarness();
     await seedNylasAccount(t);
     await t.mutation(api.googleDirect.activateGoogleAccount, activation());
-    const grantId = `google:${ACCOUNT}`;
+    const grantId = GRANT;
     expect(
       await t.mutation(api.googleDirect.saveGrantAccessToken, {
         internalSecret: SECRET,
+        userId: USER,
+        accountId: ACCOUNT,
         grantId,
         accessTokenEncrypted: 'enc-access-2',
         expiresAt: 42,
@@ -380,6 +398,8 @@ describe('token row', () => {
     expect(
       await t.mutation(api.googleDirect.saveGrantAccessToken, {
         internalSecret: SECRET,
+        userId: USER,
+        accountId: ACCOUNT,
         grantId: NYLAS_GRANT,
         accessTokenEncrypted: 'x',
         expiresAt: 1,
@@ -439,6 +459,225 @@ describe('token row', () => {
         grantId: NYLAS_GRANT,
       }),
     ).toBeNull();
+  });
+});
+
+describe('two users who share one accountId', () => {
+  // One mailbox connected under two users: Nylas gives both the same grant id,
+  // and the first grant id is the accountId of each account row.
+  async function seedBoth(t: ReturnType<typeof newHarness>) {
+    await seedNylasAccount(t);
+    await seedNylasAccount(t, {}, USER_B);
+    await t.mutation(api.googleDirect.activateGoogleAccount, activation());
+    await t.mutation(
+      api.googleDirect.activateGoogleAccount,
+      activation({ userId: USER_B, newGrantId: GRANT_B, refreshTokenEncrypted: 'enc-refresh-b' }),
+    );
+  }
+
+  async function holdSend(t: ReturnType<typeof newHarness>, userId: string, key: string) {
+    const payloadId = await t.run(async (ctx) => ctx.storage.store(new Blob(['{}'])));
+    await t.mutation(api.googleDirect.enqueueScheduledSend, {
+      internalSecret: SECRET,
+      userId,
+      accountId: ACCOUNT,
+      key,
+      payloadId,
+      fireAt: Date.now() + 3_600_000,
+    });
+  }
+
+  test('each user gets a direct grant id of their own and only their own tokens', async () => {
+    const t = newHarness();
+    await seedBoth(t);
+    const a = await t.query(api.googleDirect.getGrantCredentials, { internalSecret: SECRET, grantId: GRANT });
+    const b = await t.query(api.googleDirect.getGrantCredentials, {
+      internalSecret: SECRET,
+      grantId: GRANT_B,
+    });
+    expect(a).toMatchObject({ userId: USER, accountId: ACCOUNT, refreshTokenEncrypted: 'enc-refresh' });
+    expect(b).toMatchObject({ userId: USER_B, accountId: ACCOUNT, refreshTokenEncrypted: 'enc-refresh-b' });
+    // A token refresh of A writes A's row only.
+    expect(
+      await t.mutation(api.googleDirect.saveGrantAccessToken, {
+        internalSecret: SECRET,
+        userId: USER,
+        accountId: ACCOUNT,
+        grantId: GRANT,
+        accessTokenEncrypted: 'enc-access-a2',
+        expiresAt: 1,
+      }),
+    ).toEqual({ updated: 1 });
+    expect(
+      await t.mutation(api.googleDirect.saveGrantAccessToken, {
+        internalSecret: SECRET,
+        userId: USER_B,
+        accountId: ACCOUNT,
+        grantId: GRANT,
+        accessTokenEncrypted: 'enc-wrong',
+        expiresAt: 1,
+      }),
+    ).toEqual({ updated: 0 });
+    const bAfter = await t.query(api.googleDirect.getGrantCredentials, {
+      internalSecret: SECRET,
+      grantId: GRANT_B,
+    });
+    expect(bAfter?.accessTokenEncrypted).toBe('enc-access');
+    expect(await t.query(internal.googleDirect.listDirectMailAccounts, {})).toHaveLength(2);
+  });
+
+  test("A's disconnect does not touch B's token, held sends, account, or shared Nylas grant", async () => {
+    const t = newHarness();
+    await seedBoth(t);
+    const keyA = 'outbox:00000000-0000-4000-8000-0000000000a1';
+    const keyB = 'outbox:00000000-0000-4000-8000-0000000000b1';
+    await holdSend(t, USER, keyA);
+    await holdSend(t, USER_B, keyB);
+    expect(
+      await t.mutation(api.googleDirect.removeGrant, { internalSecret: SECRET, grantId: GRANT }),
+    ).toEqual({
+      removed: 1,
+      // B's connection still keeps this Nylas grant for its rollback.
+      previousNylasGrantIds: [],
+      cancelledSends: 1,
+    });
+    const b = await t.query(api.googleDirect.getGrantCredentials, {
+      internalSecret: SECRET,
+      grantId: GRANT_B,
+    });
+    expect(b).toMatchObject({ userId: USER_B, refreshTokenEncrypted: 'enc-refresh-b' });
+    expect(
+      (
+        await t.query(api.googleDirect.getScheduledSend, {
+          internalSecret: SECRET,
+          userId: USER_B,
+          key: keyB,
+        })
+      )?.status,
+    ).toBe('pending');
+    expect(
+      (await t.query(api.googleDirect.getScheduledSend, { internalSecret: SECRET, userId: USER, key: keyA }))
+        ?.status,
+    ).toBe('cancelled');
+    const bAccount = await t.run(async (ctx) =>
+      ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user_account', (q) => q.eq('userId', USER_B).eq('accountId', ACCOUNT))
+        .unique(),
+    );
+    expect(bAccount).toMatchObject({ grantId: GRANT_B, status: 'connected' });
+    // When the last connection leaves, the Nylas grant can go.
+    expect(
+      await t.mutation(api.googleDirect.removeGrant, { internalSecret: SECRET, grantId: GRANT_B }),
+    ).toEqual({
+      removed: 1,
+      previousNylasGrantIds: [NYLAS_GRANT],
+      cancelledSends: 1,
+    });
+  });
+
+  test('a Nylas grant that another user still uses on Nylas is not destroyed', async () => {
+    const t = newHarness();
+    await seedNylasAccount(t);
+    await seedNylasAccount(t, { status: 'connected' }, USER_B);
+    await t.mutation(api.googleDirect.activateGoogleAccount, activation());
+    expect(
+      await t.mutation(api.googleDirect.removeGrant, { internalSecret: SECRET, grantId: GRANT }),
+    ).toEqual({
+      removed: 1,
+      previousNylasGrantIds: [],
+      cancelledSends: 0,
+    });
+  });
+
+  test('a direct grant id that another connection holds is refused', async () => {
+    const t = newHarness();
+    await seedNylasAccount(t);
+    await seedNylasAccount(t, {}, USER_B);
+    await t.mutation(api.googleDirect.activateGoogleAccount, activation());
+    await expect(
+      t.mutation(api.googleDirect.activateGoogleAccount, activation({ userId: USER_B, newGrantId: GRANT })),
+    ).rejects.toThrow('share one direct Google grant id');
+    await expect(
+      t.mutation(
+        api.googleDirect.activateGoogleAccount,
+        activation({ newGrantId: 'nylas-looking-id', mode: 'new' }),
+      ),
+    ).resolves.toMatchObject({ grantId: GRANT });
+    const fresh = newHarness();
+    await expect(
+      fresh.mutation(
+        api.googleDirect.activateGoogleAccount,
+        activation({ mode: 'new', accountId: undefined, newGrantId: 'not-direct' }),
+      ),
+    ).rejects.toThrow('direct Google grant id is required');
+  });
+
+  test('two token rows with one direct grant id are refused, not read or deleted', async () => {
+    const t = newHarness();
+    await seedBoth(t);
+    await t.run(async (ctx) => {
+      const rowB = await ctx.db
+        .query('providerGrants')
+        .withIndex('by_user_account', (q) => q.eq('userId', USER_B).eq('accountId', ACCOUNT))
+        .unique();
+      await ctx.db.patch(rowB!._id, { grantId: GRANT });
+    });
+    await expect(
+      t.query(api.googleDirect.getGrantCredentials, { internalSecret: SECRET, grantId: GRANT }),
+    ).rejects.toThrow('share one direct Google grant id');
+    await expect(
+      t.mutation(api.googleDirect.removeGrant, { internalSecret: SECRET, grantId: GRANT }),
+    ).rejects.toThrow('share one direct Google grant id');
+    // A token row whose account row names another grant is not returned.
+    expect(
+      await t.query(api.googleDirect.getGrantCredentials, { internalSecret: SECRET, grantId: GRANT_B }),
+    ).toBeNull();
+  });
+});
+
+describe('History id', () => {
+  test('moves only forward, compares as numbers, and stops when the grant changed', async () => {
+    const t = newHarness();
+    await seedNylasAccount(t);
+    await t.mutation(api.googleDirect.activateGoogleAccount, activation({ historyId: '1000' }));
+    const advance = (historyId: string, grantId = GRANT) =>
+      t.mutation(api.googleDirect.advanceHistoryId, {
+        internalSecret: SECRET,
+        userId: USER,
+        accountId: ACCOUNT,
+        grantId,
+        historyId,
+        progress: { stage: 'google_history' },
+      });
+    // '999' is after '1000' as text, but not as a number.
+    expect(await advance('999')).toEqual({ saved: false, reason: 'not_newer', historyId: '1000' });
+    expect(await advance('1000')).toMatchObject({ saved: false, reason: 'not_newer' });
+    expect(await advance('1001')).toEqual({ saved: true, historyId: '1001' });
+    expect(await advance('2000', NYLAS_GRANT)).toEqual({ saved: false, reason: 'grant_changed' });
+    await expect(advance('12a')).rejects.toThrow('decimal number');
+    const state = await t.run(async (ctx) => ctx.db.query('mailSyncStates').first());
+    expect(state).toMatchObject({ historyId: '1001', progress: { stage: 'google_history' } });
+    expect(state?.lastIncrementalSyncAt).toBeGreaterThan(0);
+  });
+
+  test('a connection with no stored id takes the first one', async () => {
+    const t = newHarness();
+    await seedNylasAccount(t);
+    await t.mutation(api.googleDirect.activateGoogleAccount, activation());
+    await t.run(async (ctx) => {
+      const state = await ctx.db.query('mailSyncStates').first();
+      await ctx.db.patch(state!._id, { historyId: undefined });
+    });
+    expect(
+      await t.mutation(api.googleDirect.advanceHistoryId, {
+        internalSecret: SECRET,
+        userId: USER,
+        accountId: ACCOUNT,
+        grantId: GRANT,
+        historyId: '5',
+      }),
+    ).toEqual({ saved: true, historyId: '5' });
   });
 });
 

@@ -1003,8 +1003,9 @@ function MailboxCard({
   const connected = account.status === 'connected';
   // Re-running OAuth on the same address upserts the existing grant with the
   // connector's current scope list — this is how an account picks up newly
-  // added scopes (e.g. calendar) without being removed first.
-  const reconnectHref = `/api/nylas/connect?provider=${account.provider}&redirectTo=/settings`;
+  // added scopes (e.g. calendar) without being removed first. The account id
+  // lets a direct Google account reconnect directly (lib/google/connect.ts).
+  const reconnectHref = `/api/nylas/connect?provider=${account.provider}&account=${encodeURIComponent(account.accountId)}&redirectTo=/settings`;
 
   return (
     <div className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]">

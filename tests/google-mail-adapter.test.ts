@@ -89,7 +89,14 @@ let adapterCalls: Record<string, any[]>;
 
 beforeEach(() => {
   gmail = fakeGmail();
-  adapterCalls = { schedule: [], cancel: [], revoke: [], removeGrant: [], destroyNylas: [] };
+  adapterCalls = {
+    schedule: [],
+    cancel: [],
+    revoke: [],
+    removeGrant: [],
+    destroyNylas: [],
+    sharedChecks: [],
+  };
   __setGoogleMailAdapterDepsForTest({
     loadCredentials: async () => CREDENTIALS,
     decryptSecret: (value: string) => value.replace(/^enc\((.*)\)$/, '$1'),
@@ -121,6 +128,10 @@ beforeEach(() => {
     boundary: () => 'UPLOAD',
     now: () => 1_800_000_000_000,
     sleep: async () => {},
+    driveUsesMailGrant: async (input: any) => {
+      adapterCalls.sharedChecks.push(input);
+      return false;
+    },
   });
 });
 
@@ -182,6 +193,11 @@ describe('list query mapping', () => {
       addLabelIds: ['UNREAD'],
       removeLabelIds: [],
     });
+    // Without a folder set the current labels are not read: flags alone decide.
+    expect(labelDelta([], { unread: false })).toEqual({ addLabelIds: [], removeLabelIds: ['UNREAD'] });
+    expect(labelDelta([], { starred: false })).toEqual({ addLabelIds: [], removeLabelIds: ['STARRED'] });
+    expect(labelDelta([], { unread: true })).toEqual({ addLabelIds: ['UNREAD'], removeLabelIds: [] });
+    expect(labelDelta([], { starred: true })).toEqual({ addLabelIds: ['STARRED'], removeLabelIds: [] });
     expect(labelDelta(['STARRED'], { starred: false, folders: ['STARRED'] })).toEqual({
       addLabelIds: [],
       removeLabelIds: ['STARRED'],
@@ -305,16 +321,43 @@ describe('messages', () => {
     expect(result.data.folders).toEqual(['TRASH']);
   });
 
-  test('an update that changes nothing sends no modify', async () => {
+  test('an update with no flag and no folder set sends no modify', async () => {
     gmail.on('GET', /\/messages\/m1$/, () => ({ json: { id: 'm1', threadId: 't1', labelIds: ['INBOX'] } }));
-    const result = await messages.update({
-      identifier: GRANT,
-      messageId: 'm1',
-      requestBody: { unread: false },
-    });
+    const result = await messages.update({ identifier: GRANT, messageId: 'm1', requestBody: {} });
     expect(gmail.calls.some((call) => call.path.endsWith('/modify'))).toBe(false);
     expect(result.data.unread).toBe(false);
   });
+
+  for (const [flags, body] of [
+    [{ unread: false }, { addLabelIds: [], removeLabelIds: ['UNREAD'] }],
+    [{ unread: true }, { addLabelIds: ['UNREAD'], removeLabelIds: [] }],
+    [{ starred: false }, { addLabelIds: [], removeLabelIds: ['STARRED'] }],
+    [{ starred: true }, { addLabelIds: ['STARRED'], removeLabelIds: [] }],
+  ] as const) {
+    test(`messages.update ${JSON.stringify(flags)} sends one modify with the flag label`, async () => {
+      gmail.on('POST', /\/messages\/m1\/modify$/, () => ({
+        json: { id: 'm1', threadId: 't1', labelIds: ['INBOX', ...body.addLabelIds] },
+      }));
+      const result = await messages.update({ identifier: GRANT, messageId: 'm1', requestBody: flags });
+      // No label read first: a flag alone decides the change.
+      expect(gmail.calls.map((call) => `${call.method} ${call.path.split('/').slice(-2).join('/')}`)).toEqual(
+        ['POST m1/modify'],
+      );
+      expect(gmail.calls[0].body).toEqual(body);
+      expect(result.data.folders).toEqual(['INBOX', ...body.addLabelIds]);
+    });
+
+    test(`threads.update ${JSON.stringify(flags)} sends one modify with the flag label`, async () => {
+      gmail.on('POST', /\/threads\/t1\/modify$/, () => ({
+        json: { id: 't1', messages: [{ id: 'a', threadId: 't1', labelIds: ['INBOX', ...body.addLabelIds] }] },
+      }));
+      await threads.update({ identifier: GRANT, threadId: 't1', requestBody: flags });
+      expect(gmail.calls.map((call) => `${call.method} ${call.path.split('/').slice(-2).join('/')}`)).toEqual(
+        ['POST t1/modify'],
+      );
+      expect(gmail.calls[0].body).toEqual(body);
+    });
+  }
 });
 
 describe('send', () => {
@@ -521,11 +564,7 @@ describe('threads', () => {
     const modify = gmail.calls.find((call) => call.path.endsWith('/threads/t1/modify'));
     expect(modify?.body).toEqual({ addLabelIds: [], removeLabelIds: ['INBOX'] });
     expect(updated.data.folders).toEqual(['Label_7']);
-    const unchanged = await threads.update({
-      identifier: GRANT,
-      threadId: 't1',
-      requestBody: { starred: false },
-    });
+    const unchanged = await threads.update({ identifier: GRANT, threadId: 't1', requestBody: {} });
     expect(unchanged.data.id).toBe('t1');
   });
 });
@@ -684,6 +723,7 @@ describe('grants', () => {
 
   test('destroy revokes the token, removes the row, and destroys the old Nylas grant', async () => {
     await googleMailAdapter.grants!.destroy({ grantId: GRANT });
+    expect(adapterCalls.sharedChecks).toEqual([{ userId: 'user-1', email: 'ann@example.com' }]);
     expect(adapterCalls.revoke).toEqual(['refresh']);
     expect(adapterCalls.removeGrant).toEqual([{ grantId: GRANT }]);
     expect(adapterCalls.destroyNylas).toEqual(['nylas-grant-1']);
@@ -709,6 +749,25 @@ describe('grants', () => {
     expect(await googleMailAdapter.grants!.destroy({ grantId: GRANT })).toEqual({
       requestId: 'google-direct',
     });
+  });
+
+  test('a Drive connection on the same Google grant keeps the grant: the row goes, no revoke', async () => {
+    __setGoogleMailAdapterDepsForTest({
+      loadCredentials: async () => CREDENTIALS,
+      decryptSecret: (value: string) => value,
+      revokeGoogleToken: async (token: string) => {
+        adapterCalls.revoke.push(token);
+        return true;
+      },
+      driveUsesMailGrant: async () => true,
+      mutate: (async (_fn: unknown, args: any) => {
+        adapterCalls.removeGrant.push(args);
+        return { removed: 1, previousNylasGrantIds: [] };
+      }) as any,
+    });
+    await googleMailAdapter.grants!.destroy({ grantId: GRANT });
+    expect(adapterCalls.revoke).toEqual([]);
+    expect(adapterCalls.removeGrant).toEqual([{ grantId: GRANT }]);
   });
 
   test('a transient revoke failure is retried; a refusal is not', async () => {

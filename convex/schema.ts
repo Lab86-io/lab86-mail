@@ -187,7 +187,7 @@ export default defineSchema({
     expiresAt: v.optional(v.number()),
     scopes: v.array(v.string()),
     // The Nylas grant of a Google account that now talks to Google directly
-    // (grantId `google:<accountId>`). A rollback puts it back. It is
+    // (grantId `google:<UUID>`). A rollback puts it back. It is
     // destroyed only when the user removes the account.
     previousNylasGrantId: v.optional(v.string()),
     createdAt: v.number(),

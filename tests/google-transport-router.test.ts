@@ -6,28 +6,24 @@ import {
   googleJson,
   googleUrl,
 } from '../lib/google/http';
-import {
-  accountIdFromGoogleGrant,
-  googleDirectGrantId,
-  isGoogleDirectEnabled,
-  isGoogleDirectGrant,
-} from '../lib/google/transport';
+import { isGoogleDirectEnabled, isGoogleDirectGrant, newGoogleDirectGrantId } from '../lib/google/transport';
 import { routeNylasClient } from '../lib/nylas/client';
 
 describe('direct Google grant ids', () => {
-  test('round-trip an account id', () => {
-    const grant = googleDirectGrantId('acct-1');
-    expect(grant).toBe('google:acct-1');
-    expect(isGoogleDirectGrant(grant)).toBe(true);
-    expect(accountIdFromGoogleGrant(grant)).toBe('acct-1');
+  test('each connection gets a new random id that does not hold the account id', () => {
+    const first = newGoogleDirectGrantId();
+    const second = newGoogleDirectGrantId();
+    expect(first).toMatch(/^google:[0-9a-f-]{36}$/);
+    expect(first).not.toBe(second);
+    expect(isGoogleDirectGrant(first)).toBe(true);
+    expect(newGoogleDirectGrantId(() => 'fixed')).toBe('google:fixed');
   });
 
   test('reject Nylas grants and empty values', () => {
     expect(isGoogleDirectGrant('d502cbfc-98b3-49f4-93a7-d0a5d825d7fa')).toBe(false);
     expect(isGoogleDirectGrant('google:')).toBe(false);
     expect(isGoogleDirectGrant(undefined)).toBe(false);
-    expect(() => googleDirectGrantId(' ')).toThrow();
-    expect(() => accountIdFromGoogleGrant('nylas-grant')).toThrow();
+    expect(() => newGoogleDirectGrantId(() => ' ')).toThrow();
   });
 
   test('the flag is off unless it is exactly 1', () => {

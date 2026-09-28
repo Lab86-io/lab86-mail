@@ -16,7 +16,7 @@ function grantOf(args: any): unknown {
 
 /**
  * Wraps the Nylas client so that each call on a routed resource goes to the
- * direct Google adapter when its grant id is `google:<accountId>`, and to
+ * direct Google adapter when its grant id is `google:<UUID>`, and to
  * Nylas otherwise. Callers keep one API for both transports.
  */
 export function routeNylasClient<T extends object>(

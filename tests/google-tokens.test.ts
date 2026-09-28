@@ -90,8 +90,11 @@ describe('getGoogleAccessToken', () => {
     const [a, b] = await Promise.all([getGoogleAccessToken(GRANT), getGoogleAccessToken(GRANT)]);
     expect([a, b]).toEqual(['fresh', 'fresh']);
     expect(calls.refreshes).toEqual(['refresh-1']);
+    // The save names the connection, so it writes one user's row only.
     expect(calls.saved).toEqual([
       {
+        userId: 'user-1',
+        accountId: 'acct-1',
         grantId: GRANT,
         accessTokenEncrypted: 'enc(fresh)',
         expiresAt: NOW + 3599 * 1000,
@@ -221,7 +224,8 @@ describe('Google OAuth client', () => {
     expect(url.searchParams.get('scope')?.split(' ')).toHaveLength(8);
     expect(url.searchParams.get('access_type')).toBe('offline');
     expect(url.searchParams.get('prompt')).toBe('consent');
-    expect(url.searchParams.get('include_granted_scopes')).toBe('true');
+    // No incremental grant: mail and Drive can share one OAuth client.
+    expect(url.searchParams.has('include_granted_scopes')).toBe(false);
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(url.searchParams.get('code_challenge')).toBe(codeChallenge);
     expect(url.searchParams.get('login_hint')).toBe('ann@example.com');

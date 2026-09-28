@@ -1,7 +1,7 @@
 // Direct Google transport: access tokens.
 //
 // - The refresh token lives encrypted in `providerGrants.refreshTokenEncrypted`
-//   for the row whose `grantId` is `google:<accountId>`.
+//   on the one row whose `grantId` is the direct grant id (`google:<UUID>`).
 // - `getGoogleAccessToken` returns a live access token. It caches the token in
 //   memory until shortly before it expires, and it refreshes through
 //   https://oauth2.googleapis.com/token with the Google OAuth client.
@@ -109,6 +109,8 @@ async function load(grantId: string): Promise<string> {
   // refresh there, so it does not fail this call.
   await deps
     .mutate(api.googleDirect.saveGrantAccessToken, {
+      userId: credentials.userId,
+      accountId: credentials.accountId,
       grantId,
       accessTokenEncrypted: deps.encryptSecret(refreshed.access_token),
       expiresAt,
