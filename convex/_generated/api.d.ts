@@ -49,6 +49,7 @@ import type * as liveMail from "../liveMail.js";
 import type * as mailCorpus from "../mailCorpus.js";
 import type * as mailOneTimeCodes from "../mailOneTimeCodes.js";
 import type * as mailOutbox from "../mailOutbox.js";
+import type * as mailRepair from "../mailRepair.js";
 import type * as mcp from "../mcp.js";
 import type * as mcpSync from "../mcpSync.js";
 import type * as mobile from "../mobile.js";
@@ -113,6 +114,7 @@ declare const fullApi: ApiFromModules<{
   mailCorpus: typeof mailCorpus;
   mailOneTimeCodes: typeof mailOneTimeCodes;
   mailOutbox: typeof mailOutbox;
+  mailRepair: typeof mailRepair;
   mcp: typeof mcp;
   mcpSync: typeof mcpSync;
   mobile: typeof mobile;
