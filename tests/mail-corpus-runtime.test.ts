@@ -442,10 +442,13 @@ describe('corpus reads', () => {
     const t = newHarness();
     await ingest(t, [
       message(),
+      // The server builds the search text from the fields (IO-1).
       message({
         providerMessageId: 'message_2',
         providerThreadId: 'thread_2',
-        searchText: 'unrelated topic',
+        subject: 'Quarterly report',
+        snippet: 'An unrelated topic',
+        textBody: 'An unrelated topic.',
       }),
     ]);
     expect(
@@ -468,17 +471,19 @@ describe('corpus reads', () => {
 
   test('mail counts stop at a byte budget and mark incomplete text/date scans approximate', async () => {
     const runtime = newHarness();
-    for (let batch = 0; batch < 4; batch += 1) {
-      await ingest(
-        runtime,
-        Array.from({ length: 10 }, (_, index) =>
-          message({
-            providerMessageId: `large-${batch}-${index}`,
-            htmlBody: 'x'.repeat(150_000),
-          }),
-        ),
-      );
-    }
+    // Documents from before the body split (IO-1) still hold their inline
+    // HTML until the migration moves it. They fill the byte budget.
+    await ingest(runtime, [message()]);
+    await runtime.run(async (ctx) => {
+      const template: any = await ctx.db.query('mailCorpusMessages').first();
+      const { _id, _creationTime, bodyHash: _hash, excerptAt: _at, ...legacy } = template;
+      for (let index = 0; index < 40; index += 1)
+        await ctx.db.insert('mailCorpusMessages', {
+          ...legacy,
+          providerMessageId: `large-${index}`,
+          htmlBody: 'x'.repeat(150_000),
+        });
+    });
     const args = { internalSecret: SECRET, userId: USER, accountId: scope.accountId };
     const result = await runtime.query(api.mailCorpus.countCorpusMessages, args);
     expect(result.approximate).toBe(true);

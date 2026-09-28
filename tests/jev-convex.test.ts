@@ -439,7 +439,10 @@ test('metadata sync retains hydrated body boundaries, recipients and full-text e
     ],
   });
   const message = await t.run((ctx) => ctx.db.query('mailCorpusMessages').first());
-  expect(message?.textBody).toContain('\n>');
+  // The body lives in its own table after the split (IO-1).
+  const body = await t.run((ctx) => ctx.db.query('mailCorpusBodies').first());
+  expect(message?.textBody).toBeUndefined();
+  expect(body?.textBody).toContain('\n>');
   expect(message?.searchText).toContain('irreplaceable-reference');
   expect((await row(t))?.jev?.sourceRevision).toBe(input.sourceRevision);
 });

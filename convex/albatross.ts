@@ -31,6 +31,7 @@ import {
 } from '../lib/albatross/area-reindex';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
 import { isTerminalWork } from '../lib/albatross/work-lifecycle';
+import { storedBodyText } from '../lib/mail/corpus-body';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -2238,7 +2239,10 @@ export const unclassifiedThreads = query({
         toAddress: latest?.to,
         lastDate: row.lastDate,
         snippet: row.snippet,
-        bodyText: latest?.textBody ? truncateText(latest.textBody, CLASSIFY_BODY_CHARS) : undefined,
+        // IO-1: the small document keeps the start and the end of the body.
+        bodyText: storedBodyText(latest)
+          ? truncateText(storedBodyText(latest), CLASSIFY_BODY_CHARS)
+          : undefined,
         messageId,
       });
     }

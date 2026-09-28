@@ -12,6 +12,7 @@ import {
 } from './_generated/server';
 import { documentModel } from './documents';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
+import { readThreadBodies, resolvedBody } from './mailBodies';
 
 const caller = { internalSecret: v.optional(v.string()), userId: v.string() };
 export async function contentPreferences(ctx: any, userId: string) {
@@ -381,35 +382,10 @@ export const localPage = query({
       let text = row.searchText || '';
       let partial = false;
       if (args.source === 'mail') {
-        const messages = await ctx.db
-          .query('mailCorpusMessages')
-          .withIndex('by_user_account_thread_received', (q) =>
-            q
-              .eq('userId', args.userId)
-              .eq('accountId', row.accountId)
-              .eq('providerThreadId', row.providerThreadId),
-          )
-          .order('desc')
-          .take(17);
-        partial = messages.length > 16;
-        text = messages
-          .slice(0, 16)
-          .reverse()
-          .filter((m) => m.userId === args.userId)
-          .map((m) => `${m.from}\n${m.subject}\n${m.textBody || m.snippet || ''}`)
-          .join('\n\n');
-        for (const message of messages.slice(0, 16))
-          if (message.userId === args.userId)
-            for (const file of message.attachments || [])
-              attachments.push({
-                connectionId: row.accountId,
-                messageId: message.providerMessageId,
-                attachmentId: file.attachmentId || file.id,
-                filename: file.filename || file.name || 'attachment',
-                mimeType: file.mimeType || file.content_type || file.contentType || '',
-                size: file.size || 0,
-                modifiedAt: message.receivedAt,
-              });
+        const mail = await mailThreadContent(ctx, args.userId, row);
+        text = mail.text;
+        partial = mail.partial;
+        attachments.push(...mail.attachments);
       } else if (args.source === 'document') text = documentText(await documentModel(ctx, row));
       else {
         text = [
@@ -439,6 +415,46 @@ export const localPage = query({
     return { items, attachments, cursor: page.isDone ? null : page.continueCursor };
   },
 });
+// The content of one mail thread for the content index: the newest 16
+// messages, oldest first, as "from, subject, body". The body comes from the
+// body table (IO-1), so the text and its version are the same as before the
+// body split.
+async function mailThreadContent(ctx: any, userId: string, row: any) {
+  const messages = await ctx.db
+    .query('mailCorpusMessages')
+    .withIndex('by_user_account_thread_received', (q: any) =>
+      q.eq('userId', userId).eq('accountId', row.accountId).eq('providerThreadId', row.providerThreadId),
+    )
+    .order('desc')
+    .take(MAIL_CONTENT_MESSAGES + 1);
+  const window = messages.slice(0, MAIL_CONTENT_MESSAGES).filter((m: any) => m.userId === userId);
+  const bodies = await readThreadBodies(ctx, userId, row.accountId, row.providerThreadId, window);
+  let bodyChars = 0;
+  const text = [...window]
+    .reverse()
+    .map((m: any) => {
+      const body = resolvedBody(m, bodies.get(m.providerMessageId));
+      bodyChars += body.textBody.length + (body.htmlBody?.length ?? 0);
+      return `${m.from}\n${m.subject}\n${body.textBody || m.snippet || ''}`;
+    })
+    .join('\n\n');
+  const attachments = [];
+  for (const message of window)
+    for (const file of message.attachments || [])
+      attachments.push({
+        connectionId: row.accountId,
+        messageId: message.providerMessageId,
+        attachmentId: file.attachmentId || file.id,
+        filename: file.filename || file.name || 'attachment',
+        mimeType: file.mimeType || file.content_type || file.contentType || '',
+        size: file.size || 0,
+        modifiedAt: message.receivedAt,
+      });
+  return { text, partial: messages.length > MAIL_CONTENT_MESSAGES, attachments, bodyChars };
+}
+
+// Messages of one thread in its content item.
+const MAIL_CONTENT_MESSAGES = 16;
 export const versions = query({
   args: { ...caller, keys: v.array(v.string()) },
   handler: async (ctx, args) => {

@@ -2,6 +2,7 @@ import { paginationOptsValidator } from 'convex/server';
 import { ConvexError, v } from 'convex/values';
 import { isReplyCandidate, mailAddresses, type ReplyWatch } from '../lib/albatross/reply-watch';
 import { isTerminalWork, workLifecycle } from '../lib/albatross/work-lifecycle';
+import { storedBodyText } from '../lib/mail/corpus-body';
 import { truncateText } from '../lib/shared/text';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
@@ -273,7 +274,8 @@ export const messages = query({
         snippet: row.snippet,
         labels: row.labels,
         headers: row.headers,
-        textBody: truncateText(row.textBody, 4_000),
+        // IO-1: the small document keeps the start of the body.
+        textBody: truncateText(storedBodyText(row), 4_000),
       })),
     };
   },

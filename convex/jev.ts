@@ -9,6 +9,7 @@ import {
   normalizeJevPreferences,
 } from '../lib/jev/contract';
 import { type JevMailInput, type JevMailMessage, mailSourceRevision } from '../lib/jev/mail';
+import { storedBodyText } from '../lib/mail/corpus-body';
 import { labelsHaveRole } from '../lib/mail/search/folders';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
@@ -167,7 +168,8 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
       to: message.to,
       cc: message.cc || '',
       subject: message.subject,
-      body: truncateText(String(message.textBody || message.snippet || ''), 2400),
+      // IO-1: the small document keeps the start of the body.
+      body: truncateText(String(storedBodyText(message) || message.snippet || ''), 2400),
       date: message.receivedAt,
       headers: Object.fromEntries(
         Object.entries(message.headers || {})

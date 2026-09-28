@@ -6,6 +6,7 @@ import {
 } from '../lib/mail/smart-categories';
 import type { QueryCtx } from './_generated/server';
 import { query } from './_generated/server';
+import { readThreadBodies, resolvedBody } from './mailBodies';
 import {
   CATEGORY_COUNT_CAP,
   computeCategoryUnreadCounts,
@@ -13,6 +14,9 @@ import {
   normalizeCorpusThread,
   queryCategoryThreads,
 } from './smart';
+
+// Message hits that one live search reads at most.
+const SEARCH_MESSAGE_CAP = 400;
 
 const SmartCategoryValidator = v.union(...SMART_CATEGORY_IDS.map((id) => v.literal(id)), v.string());
 
@@ -34,7 +38,8 @@ function normalizeAccount(row: any) {
   };
 }
 
-function normalizeMessage(row: any) {
+function normalizeMessage(row: any, body?: { textBody?: string; htmlBody?: string } | null) {
+  const resolved = resolvedBody(row, body);
   return {
     _id: row.providerMessageId,
     threadId: row.providerThreadId,
@@ -46,10 +51,10 @@ function normalizeMessage(row: any) {
     bcc: row.bcc || '',
     date: row.receivedAt || 0,
     snippet: row.snippet || '',
-    textBody: row.textBody || '',
+    textBody: resolved.textBody,
     // null = body not yet hydrated into the corpus; '' = synced and empty.
     // The reader uses the distinction to decide whether to hydrate.
-    htmlBody: row.htmlBody ?? null,
+    htmlBody: resolved.htmlBody,
     labels: row.labels || [],
     unread: Boolean(row.unread),
     starred: Boolean(row.starred),
@@ -117,7 +122,9 @@ export const listThreads = query({
       const search = ctx.db.query('mailCorpusMessages').withSearchIndex('by_search_text', (q) => {
         return q.search('searchText', text).eq('userId', userId);
       });
-      const messages = await search.take(limit * 6);
+      // Search documents are small after the body split (IO-1). The cap keeps
+      // one keystroke under ~2 MB even for the largest page size.
+      const messages = await search.take(Math.min(limit * 6, SEARCH_MESSAGE_CAP));
       const accountSet = requestedAccounts.length ? new Set(requestedAccounts) : null;
       const byThread = new Map<string, any>();
       for (const message of messages) {
@@ -234,10 +241,12 @@ export const getThread = query({
       .order('asc')
       .collect();
     if (!messages.length) return null;
+    // The bodies live in their own table (IO-1). Only the open thread reads them.
+    const bodies = await readThreadBodies(ctx, userId, args.account, args.threadId, messages);
     return {
       threadId: args.threadId,
       subject: thread.subject || messages[0]?.subject || '(no subject)',
-      messages: messages.map(normalizeMessage),
+      messages: messages.map((message) => normalizeMessage(message, bodies.get(message.providerMessageId))),
       summary: null,
       summaryAt: null,
       jev: normalizeCorpusThread(thread).jev,
