@@ -4,6 +4,8 @@ import {
   __setGoogleSharedGrantDepsForTest,
   driveUsesMailGrant,
   googleClientProject,
+  googleRevokeBlockedReason,
+  googleRevokeEnvironmentAllowed,
   mailSharesDriveProject,
   mailUsesDriveGrant,
 } from '../lib/google/shared-grant';
@@ -112,5 +114,51 @@ describe('mailUsesDriveGrant (before a Drive revoke)', () => {
     expect(await mailUsesDriveGrant({ userId: 'u1', email: 'ann@example.com' })).toBe(true);
     setup(DRIVE_ONLY, { fail: true });
     expect(await mailUsesDriveGrant({ userId: 'u1', email: 'ann@example.com' })).toBe(true);
+  });
+});
+
+describe('googleRevokeBlockedReason', () => {
+  function gate(env: Record<string, string>, answer: boolean | 'fail') {
+    const asked: unknown[] = [];
+    __setGoogleSharedGrantDepsForTest({
+      env: () => env,
+      query: (async (_fn: unknown, args: any) => {
+        asked.push(args.email);
+        if (answer === 'fail') throw new Error('convex down');
+        return answer;
+      }) as any,
+    });
+    return asked;
+  }
+
+  test('only production, or the explicit switch, may revoke', () => {
+    expect(googleRevokeEnvironmentAllowed({ RAILWAY_ENVIRONMENT_NAME: 'production' })).toBe(true);
+    expect(googleRevokeEnvironmentAllowed({ RAILWAY_ENVIRONMENT_NAME: 'development' })).toBe(false);
+    expect(googleRevokeEnvironmentAllowed({})).toBe(false);
+    expect(googleRevokeEnvironmentAllowed({ LAB86_GOOGLE_REVOKE: '1' })).toBe(true);
+  });
+
+  test('staging never revokes and does not ask Convex', async () => {
+    const asked = gate({ RAILWAY_ENVIRONMENT_NAME: 'development' }, false);
+    expect(await googleRevokeBlockedReason({ email: 'ann@example.com' })).toContain(
+      'production Google project',
+    );
+    expect(asked).toEqual([]);
+  });
+
+  test('production revokes only when no Nylas grant uses the address', async () => {
+    gate({ RAILWAY_ENVIRONMENT_NAME: 'production' }, false);
+    expect(await googleRevokeBlockedReason({ email: 'ann@example.com' })).toBeNull();
+    const asked = gate({ RAILWAY_ENVIRONMENT_NAME: 'production' }, true);
+    expect(await googleRevokeBlockedReason({ email: 'ann@example.com' })).toContain('Nylas grant');
+    expect(asked).toEqual(['ann@example.com']);
+  });
+
+  test('an unknown address or a failed check blocks the revoke', async () => {
+    gate({ RAILWAY_ENVIRONMENT_NAME: 'production' }, false);
+    expect(await googleRevokeBlockedReason({ email: ' ' })).toContain('not known');
+    expect(await googleRevokeBlockedReason({})).toContain('not known');
+    gate({ RAILWAY_ENVIRONMENT_NAME: 'production' }, 'fail');
+    expect(await googleRevokeBlockedReason({ email: 'ann@example.com' })).toContain('check failed');
   });
 });

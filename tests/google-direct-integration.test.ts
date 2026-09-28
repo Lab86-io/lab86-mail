@@ -161,44 +161,86 @@ describe('attachment download of a direct account', () => {
 
 describe('disconnect of a direct account', () => {
   test('revokes the token and destroys the old Nylas grant before the account rows go', async () => {
-    await withHttpHarness(async (h) => {
-      const order: string[] = [];
-      h.onConvex('googleDirect:getGrantCredentials', () => {
-        order.push('credentials');
-        return {
+    const savedEnv = process.env.RAILWAY_ENVIRONMENT_NAME;
+    process.env.RAILWAY_ENVIRONMENT_NAME = 'production';
+    try {
+      await withHttpHarness(async (h) => {
+        const order: string[] = [];
+        h.onConvex('googleDirect:nylasGrantUsesAddress', () => false);
+        h.onConvex('googleDirect:getGrantCredentials', () => {
+          order.push('credentials');
+          return {
+            userId: 'user_1',
+            accountId: 'acct_1',
+            email: 'ann@example.com',
+            scopes: [],
+            refreshTokenEncrypted: encryptSecret('refresh-token-1'),
+            previousNylasGrantId: 'nylas_old',
+          };
+        });
+        h.onConvex('googleDirect:removeGrant', () => {
+          order.push('removeGrant');
+          return { removed: 1, previousNylasGrantIds: ['nylas_old'] };
+        });
+        h.onConvex('accounts:deleteConnectedAccount', () => {
+          order.push('deleteAccount');
+          return { ok: true };
+        });
+        h.onNylas('POST', /^\/revoke$/, ({ body }) => {
+          order.push(`revoke:${body}`);
+          return { json: {} };
+        });
+        h.onNylas('DELETE', /\/v3\/grants\/nylas_old$/, () => {
+          order.push('destroyNylas');
+          return { json: { request_id: 'r' } };
+        });
+        expect(await deleteNylasAccount('user_1', 'acct_1', GRANT)).toEqual({ ok: true });
+        expect(order).toEqual([
+          'credentials',
+          'revoke:token=refresh-token-1',
+          'removeGrant',
+          'destroyNylas',
+          'deleteAccount',
+        ]);
+      });
+    } finally {
+      if (savedEnv === undefined) delete process.env.RAILWAY_ENVIRONMENT_NAME;
+      else process.env.RAILWAY_ENVIRONMENT_NAME = savedEnv;
+    }
+  });
+
+  test('a staging disconnect deletes the token row but does not revoke at Google', async () => {
+    const savedEnv = process.env.RAILWAY_ENVIRONMENT_NAME;
+    process.env.RAILWAY_ENVIRONMENT_NAME = 'development';
+    try {
+      await withHttpHarness(async (h) => {
+        const order: string[] = [];
+        h.onConvex('googleDirect:getGrantCredentials', () => ({
           userId: 'user_1',
           accountId: 'acct_1',
           email: 'ann@example.com',
           scopes: [],
           refreshTokenEncrypted: encryptSecret('refresh-token-1'),
-          previousNylasGrantId: 'nylas_old',
-        };
+        }));
+        h.onConvex('googleDirect:removeGrant', () => {
+          order.push('removeGrant');
+          return { removed: 1, previousNylasGrantIds: [] };
+        });
+        h.onConvex('accounts:deleteConnectedAccount', () => {
+          order.push('deleteAccount');
+          return { ok: true };
+        });
+        h.onNylas('POST', /^\/revoke$/, () => {
+          order.push('revoke');
+          return { json: {} };
+        });
+        expect(await deleteNylasAccount('user_1', 'acct_1', GRANT)).toEqual({ ok: true });
+        expect(order).toEqual(['removeGrant', 'deleteAccount']);
       });
-      h.onConvex('googleDirect:removeGrant', () => {
-        order.push('removeGrant');
-        return { removed: 1, previousNylasGrantIds: ['nylas_old'] };
-      });
-      h.onConvex('accounts:deleteConnectedAccount', () => {
-        order.push('deleteAccount');
-        return { ok: true };
-      });
-      h.onNylas('POST', /^\/revoke$/, ({ body }) => {
-        order.push(`revoke:${body}`);
-        return { json: {} };
-      });
-      h.onNylas('DELETE', /\/v3\/grants\/nylas_old$/, () => {
-        order.push('destroyNylas');
-        return { json: { request_id: 'r' } };
-      });
-      expect(await deleteNylasAccount('user_1', 'acct_1', GRANT)).toEqual({ ok: true });
-      expect(order).toEqual([
-        'credentials',
-        'revoke:token=refresh-token-1',
-        'removeGrant',
-        'destroyNylas',
-        'deleteAccount',
-      ]);
-    });
+    } finally {
+      if (savedEnv === undefined) delete process.env.RAILWAY_ENVIRONMENT_NAME;
+      else process.env.RAILWAY_ENVIRONMENT_NAME = savedEnv;
+    }
   });
 
   test('a failed revoke still removes the token row and the account', async () => {

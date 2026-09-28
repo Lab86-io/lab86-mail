@@ -790,3 +790,49 @@ describe('History cron', () => {
     }
   });
 });
+
+describe('nylasGrantUsesAddress', () => {
+  test('finds a Nylas Google grant of any user for the address, in either letter case', async () => {
+    const t = newHarness();
+    await seedNylasAccount(t, { status: 'connected', email: 'Ann@Example.com' }, USER_B);
+    expect(
+      await t.query(api.googleDirect.nylasGrantUsesAddress, {
+        internalSecret: SECRET,
+        email: 'Ann@Example.com',
+      }),
+    ).toBe(true);
+    expect(
+      await t.query(api.googleDirect.nylasGrantUsesAddress, {
+        internalSecret: SECRET,
+        email: 'other@example.com',
+      }),
+    ).toBe(false);
+    expect(
+      await t.query(api.googleDirect.nylasGrantUsesAddress, { internalSecret: SECRET, email: '  ' }),
+    ).toBe(false);
+  });
+
+  test('a lower-case stored address matches a mixed-case question', async () => {
+    const t = newHarness();
+    await seedNylasAccount(t, { status: 'connected' });
+    expect(
+      await t.query(api.googleDirect.nylasGrantUsesAddress, {
+        internalSecret: SECRET,
+        email: 'Ann@Example.com',
+      }),
+    ).toBe(true);
+  });
+
+  test('a direct account, a disconnected row, and another provider do not count', async () => {
+    const t = newHarness();
+    await seedNylasAccount(t, { status: 'disconnected' });
+    await seedNylasAccount(t, { status: 'connected', grantId: 'google:direct-1' }, USER_B);
+    await seedNylasAccount(t, { status: 'connected', provider: 'microsoft' }, 'user_c');
+    expect(
+      await t.query(api.googleDirect.nylasGrantUsesAddress, {
+        internalSecret: SECRET,
+        email: 'ann@example.com',
+      }),
+    ).toBe(false);
+  });
+});

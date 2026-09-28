@@ -133,6 +133,7 @@ beforeEach(() => {
       adapterCalls.sharedChecks.push(input);
       return false;
     },
+    googleRevokeBlockedReason: async () => null,
   });
 });
 
@@ -812,6 +813,7 @@ describe('grants', () => {
     __setGoogleMailAdapterDepsForTest({
       loadCredentials: async () => CREDENTIALS,
       decryptSecret: (value: string) => value,
+      googleRevokeBlockedReason: async () => null,
       revokeGoogleToken: async () => {
         attempts += 1;
         if (failures-- > 0) throw new GoogleApiError(503, 'unavailable');
@@ -830,6 +832,7 @@ describe('grants', () => {
     __setGoogleMailAdapterDepsForTest({
       loadCredentials: async () => CREDENTIALS,
       decryptSecret: (value: string) => value,
+      googleRevokeBlockedReason: async () => null,
       revokeGoogleToken: async () => {
         attempts += 1;
         throw new GoogleApiError(403, 'forbidden');
@@ -845,6 +848,32 @@ describe('grants', () => {
     expect(removed).toBe(1);
   });
 
+  test('a blocked revoke skips Google and still removes the row', async () => {
+    let attempts = 0;
+    let removed = 0;
+    const reasons: unknown[] = [];
+    __setGoogleMailAdapterDepsForTest({
+      loadCredentials: async () => CREDENTIALS,
+      decryptSecret: (value: string) => value,
+      driveUsesMailGrant: async () => false,
+      googleRevokeBlockedReason: async (input: any) => {
+        reasons.push(input);
+        return 'this deployment shares the production Google project';
+      },
+      revokeGoogleToken: async () => {
+        attempts += 1;
+        return true;
+      },
+      mutate: (async () => {
+        removed += 1;
+        return { removed: 1, previousNylasGrantIds: [] };
+      }) as any,
+    });
+    await googleMailAdapter.grants!.destroy({ grantId: GRANT });
+    expect(attempts).toBe(0);
+    expect(removed).toBe(1);
+    expect(reasons).toEqual([{ email: CREDENTIALS.email }]);
+  });
   test('a token that cannot be read is not revoked, and the row still goes', async () => {
     let revoked = 0;
     let removed = 0;

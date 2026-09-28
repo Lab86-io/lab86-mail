@@ -104,3 +104,33 @@ export async function mailUsesDriveGrant(input: { userId: string; email?: string
     return true;
   }
 }
+
+/**
+ * Only the production deployment revokes at Google. Staging and local
+ * development use the production Google Cloud project, so a revoke there
+ * would also end the production access for the same address.
+ * `LAB86_GOOGLE_REVOKE=1` allows it for a deployment with its own project.
+ */
+export function googleRevokeEnvironmentAllowed(env: Env = deps.env()): boolean {
+  return env.RAILWAY_ENVIRONMENT_NAME === 'production' || env.LAB86_GOOGLE_REVOKE === '1';
+}
+
+/**
+ * The reason not to revoke a Google token of this address, or null when a
+ * revoke is safe. A failed check is a reason, so a doubt never ends another
+ * grant.
+ */
+export async function googleRevokeBlockedReason(input: { email?: string }): Promise<string | null> {
+  if (!googleRevokeEnvironmentAllowed()) return 'this deployment shares the production Google project';
+  if (!input.email?.trim()) return 'the Google address is not known';
+  try {
+    const used = await deps.query<boolean>(api.googleDirect.nylasGrantUsesAddress, { email: input.email });
+    return used ? 'a Nylas grant in this deployment uses the same address' : null;
+  } catch (err: any) {
+    console.warn(
+      '[google-shared-grant] Nylas grant check failed; the token is not revoked',
+      err?.message || err,
+    );
+    return 'the Nylas grant check failed';
+  }
+}

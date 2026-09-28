@@ -131,6 +131,35 @@ export const sweepExpiredOAuthStates = internalMutation({
 // ---------------------------------------------------------------------------
 
 /** The encrypted Google tokens of one direct grant. */
+/**
+ * True when a Nylas Google grant of any user in this deployment still uses
+ * the address. A Google revoke ends the access of the whole Google Cloud
+ * project for that address, so it would end that grant too
+ * (lib/google/shared-grant.ts).
+ */
+export const nylasGrantUsesAddress = query({
+  args: { internalSecret: v.optional(v.string()), email: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const email = args.email.trim();
+    if (!email) return false;
+    for (const value of new Set([email, email.toLowerCase()])) {
+      const rows = await ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_email', (q) => q.eq('email', value))
+        .take(50);
+      if (
+        rows.some(
+          (row) => row.provider === 'google' && row.status !== 'disconnected' && !isDirectGrant(row.grantId),
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  },
+});
+
 export const getGrantCredentials = query({
   args: { internalSecret: v.optional(v.string()), grantId: v.string() },
   handler: async (ctx, args) => {

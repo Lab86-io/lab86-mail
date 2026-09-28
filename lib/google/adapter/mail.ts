@@ -32,7 +32,7 @@ import {
   nylasScheduledMessage,
   scheduleGoogleSend,
 } from '../scheduled';
-import { driveUsesMailGrant } from '../shared-grant';
+import { driveUsesMailGrant, googleRevokeBlockedReason } from '../shared-grant';
 import { forgetGoogleAccessToken, type GoogleGrantCredentials, loadGoogleGrantCredentials } from '../tokens';
 import type { GoogleNylasAdapter } from './types';
 
@@ -58,6 +58,7 @@ const defaults = {
   decryptSecret,
   revokeGoogleToken: (token: string) => revokeGoogleToken(token),
   driveUsesMailGrant,
+  googleRevokeBlockedReason,
   destroyNylasGrant: async (grantId: string) => {
     // A dynamic import: lib/nylas/client.ts imports this adapter.
     const { requireNylas } = await import('@/lib/nylas/client');
@@ -716,6 +717,8 @@ function readStoredToken(encrypted: string): string | null {
  * row goes anyway, so no copy of the token stays with us. When a Drive
  * connection of the same user and address uses the same OAuth client, the
  * revoke would end it too (lib/google/shared-grant.ts), so it is left out.
+ * The revoke is also left out outside the production deployment, and while a
+ * Nylas grant in this deployment uses the same address.
  */
 async function destroyGrant(args: any) {
   const grantId = String(args?.grantId);
@@ -723,11 +726,11 @@ async function destroyGrant(args: any) {
   const token = credentials?.refreshTokenEncrypted || credentials?.accessTokenEncrypted;
   const plain = token ? readStoredToken(token) : null;
   if (plain && credentials) {
-    if (await deps.driveUsesMailGrant({ userId: credentials.userId, email: credentials.email })) {
-      console.warn(
-        '[google-mail] a Drive connection shares this Google grant; the token row goes, no revoke',
-      );
-    } else await revokeWithRetry(plain);
+    const reason = (await deps.driveUsesMailGrant({ userId: credentials.userId, email: credentials.email }))
+      ? 'a Drive connection shares this Google grant'
+      : await deps.googleRevokeBlockedReason({ email: credentials.email });
+    if (reason) console.warn(`[google-mail] no revoke: ${reason}; the token row goes`);
+    else await revokeWithRetry(plain);
   }
   forgetGoogleAccessToken(grantId);
   labelCache.delete(grantId);

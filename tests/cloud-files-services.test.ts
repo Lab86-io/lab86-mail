@@ -457,6 +457,7 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
       decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
       fetch: fetchMock as any,
       mailUsesDriveGrant: async () => false,
+      googleRevokeBlockedReason: async () => null,
     });
     await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: true });
     expect(order).toEqual(['revoke', 'disconnect']);
@@ -487,6 +488,24 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
     expect(order).toEqual(['disconnect']);
   });
 
+  test('a blocked Google revoke keeps the grant at Google: the rows go, no revoke call', async () => {
+    const order: string[] = [];
+    const fetchMock = mock(async () => new Response('', { status: 200 }));
+    __setCloudFileConnectionDepsForTest({
+      convexQuery: (async () => stored('google_drive')) as any,
+      convexMutation: (async () => {
+        order.push('disconnect');
+      }) as any,
+      decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
+      fetch: fetchMock as any,
+      mailUsesDriveGrant: async () => false,
+      googleRevokeBlockedReason: async () => 'this deployment shares the production Google project',
+    });
+    await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(order).toEqual(['disconnect']);
+  });
+
   test('a failed revoke still disconnects; OneDrive has no revoke call', async () => {
     const mutation = mock(async (..._args: unknown[]) => undefined);
     __setCloudFileConnectionDepsForTest({
@@ -495,6 +514,7 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
       decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
       fetch: (async () => new Response('', { status: 503 })) as any,
       mailUsesDriveGrant: async () => false,
+      googleRevokeBlockedReason: async () => null,
     });
     await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
     expect(mutation).toHaveBeenCalledTimes(1);
