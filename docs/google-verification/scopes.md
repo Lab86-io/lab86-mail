@@ -14,7 +14,7 @@ Albatross has two Google consent flows. Both flows use OAuth clients in project
 452431903621, so the consent screen shows the name "Albatross".
 
 1. **Mailbox connect** (Gmail, Google Calendar, Google contacts). The user
-   starts it from Settings > Mailboxes > "Connect Google"
+   starts it from Settings > Mailboxes > "Connect Gmail"
    (`app/settings/page.tsx:948-962`).
    - Today, the flow goes through Nylas hosted OAuth
      (`app/api/nylas/connect/route.ts:94-108`). The Nylas Google connector

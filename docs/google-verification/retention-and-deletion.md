@@ -12,7 +12,8 @@ deployed. "Open item" identifies a problem that no workstream of this round owns
 
 - Albatross keeps Google data while the mailbox or the Drive connection stays
   connected and the user account is not deleted.
-- Disconnect of a mailbox deletes the data of that mailbox.
+- Disconnect of a mailbox deletes the mail, calendar, and contact data of that
+  mailbox. Some derived rows stay until account deletion (see "Open items").
 - Disconnect of Google Drive revokes the Google token and deletes the Drive
   index.
 - Account deletion deletes all data of the user in Convex, and the Clerk user.

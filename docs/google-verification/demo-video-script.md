@@ -48,7 +48,7 @@ short. The full video is about 8 to 12 minutes.
 
 | # | Shot | Narration |
 |---|---|---|
-| B1 | Settings > Mailboxes. Click "Connect Google". | "I connect a Google account. Albatross gets Gmail, Calendar, and contacts access in one step." |
+| B1 | Settings > Mailboxes. Click "Connect Gmail". | "I connect a Google account. Albatross gets Gmail, Calendar, and contacts access in one step." |
 | B2 | The Google account chooser. Pick the test account. Show the address bar. | "The address bar shows the Albatross OAuth client of project lab86-mail-production." |
 | B3 | The consent screen. Show the app name "Albatross". Scroll slowly through all scopes. Leave all boxes checked. | "Google shows the app name, Albatross, and each scope: Gmail read, compose, send, and label; Google Calendar; contacts; other contacts; and the directory." |
 | B4 | Click "Continue". Albatross opens Settings with the new mailbox. | "Albatross now shows the connected address. We use the e-mail scope only to name and identify this mailbox." |

@@ -259,7 +259,9 @@ Browserbase directly. Three features use Browserbase:
 
 See `retention-and-deletion.md`. In short:
 
-- Disconnect deletes the mailbox data in Convex and destroys the Nylas grant.
+- Disconnect deletes the mail, calendar, and contact data of the mailbox in
+  Convex and destroys the Nylas grant. Some derived rows stay until account
+  deletion (see the open items in `retention-and-deletion.md`).
   After the casa-prep round, disconnect also deletes the index rows and the
   attachment files of that mailbox.
 - Account deletion deletes all Convex data of the user and the Clerk user.
