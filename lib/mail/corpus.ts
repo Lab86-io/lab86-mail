@@ -87,14 +87,23 @@ export function extractNylasWebhookMetadata(payload: unknown): NylasWebhookMetad
     `${type}:${grantId || 'unknown-grant'}:${sourceId}:${
       firstString(root.time, root.created_at) || 'no-time'
     }:${hashPayload(payload)}`;
+  // One length policy for every id: the stored copy of a payload keeps the
+  // same cut values, so a retry reads the same event identity.
   return {
-    eventId,
-    type,
-    grantId,
-    providerMessageId,
-    providerThreadId,
+    eventId: capWebhookId(eventId) as string,
+    type: capWebhookId(type) as string,
+    grantId: capWebhookId(grantId),
+    providerMessageId: capWebhookId(providerMessageId),
+    providerThreadId: capWebhookId(providerThreadId),
     truncated: /\.truncated$/.test(type),
   };
+}
+
+/** The longest id or type that a webhook row keeps. */
+export const WEBHOOK_ID_MAX_CHARS = 500;
+
+export function capWebhookId(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : truncateText(value, WEBHOOK_ID_MAX_CHARS);
 }
 
 function hashPayload(payload: unknown) {

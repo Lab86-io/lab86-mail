@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { extractNylasWebhookMetadata } from '../lib/mail/corpus';
+import { extractNylasWebhookMetadata, WEBHOOK_ID_MAX_CHARS } from '../lib/mail/corpus';
 import {
   isStoredWebhookPayload,
   WEBHOOK_STORED_IDS,
@@ -95,5 +95,23 @@ describe('webhook payload storage (M5)', () => {
       expect(extractNylasWebhookMetadata(stored)).toEqual(extractNylasWebhookMetadata(payload));
       expect(JSON.stringify(stored)).not.toContain('body');
     }
+  });
+
+  test('a long id or type is cut the same way on read and in storage', () => {
+    const long = `evt_${'x'.repeat(900)}`;
+    const payload = {
+      id: long,
+      type: `message.updated${'y'.repeat(900)}`,
+      data: { object: { id: 'm1', grant_id: 'g1' } },
+    };
+    const first = extractNylasWebhookMetadata(payload);
+    expect(first.eventId).toHaveLength(WEBHOOK_ID_MAX_CHARS);
+    expect(first.type).toHaveLength(WEBHOOK_ID_MAX_CHARS);
+    const stored = webhookPayloadForStorage(payload);
+    expect(String(stored.id)).toHaveLength(WEBHOOK_ID_MAX_CHARS);
+    // A retry reads the stored copy and finds the same event identity.
+    const again = extractNylasWebhookMetadata(stored);
+    expect(again.eventId).toBe(first.eventId);
+    expect(again.type).toBe(first.type);
   });
 });

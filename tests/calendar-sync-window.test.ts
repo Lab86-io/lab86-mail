@@ -55,7 +55,13 @@ describe('calendar sync window', () => {
       lastSyncedAt: NOW + 15 * 60_000,
       lastFullSyncAt: legacyLastFullSyncAt(recent),
     };
-    expect(resolveCalendarWindow('auto', afterHot, NOW + 2 * DAY, 'a')).toBe('full');
+    // The due time comes from the recent state's last pass plus the interval
+    // and this account's spread. At that time the newer lastSyncedAt of the
+    // hot pass alone would still say hot; the kept timestamp says full.
+    const due =
+      recent.lastSyncedAt + FULL_WINDOW_INTERVAL_MS + spreadOffsetMs('calendar-full:a', 2 * 60 * 60_000);
+    expect(resolveCalendarWindow('auto', { ...afterHot, lastFullSyncAt: undefined }, due, 'a')).toBe('hot');
+    expect(resolveCalendarWindow('auto', afterHot, due, 'a')).toBe('full');
   });
 
   test('hot bounds are −1 to +14 days with a reconcile read bound', () => {

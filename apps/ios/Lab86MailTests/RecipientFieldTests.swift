@@ -385,6 +385,23 @@ struct RecipientFieldTests {
     }
 
     @Test
+    func aNewFromMailboxResetsTheChosenHighlight() {
+        let model = RecipientSearchModel(debounce: .zero)
+        let work = RecipientSearchRequest(query: "j", fromAccountID: "work")
+        let home = RecipientSearchRequest(query: "j", fromAccountID: "home")
+        model.search(work, using: nil)
+        #expect(model.receive(RecipientSuggestionPage(query: "j", items: [Self.jakob, Self.julia]), for: work))
+        model.moveHighlight(by: 1)
+        #expect(model.highlightedIndex == 1)
+        #expect(model.highlightChosen)
+        // The same query from another mailbox puts the rows in another order.
+        model.search(home, using: nil)
+        #expect(model.receive(RecipientSuggestionPage(query: "j", items: [Self.julia, Self.jakob]), for: home))
+        #expect(model.highlightedIndex == 0)
+        #expect(!model.highlightChosen)
+    }
+
+    @Test
     func aSlowOlderAnswerNeverReplacesTheNewerOne() async throws {
         let searcher = ScriptedSearcher(delays: ["j": .milliseconds(250), "jl": .milliseconds(10)])
         let model = RecipientSearchModel(debounce: .zero)

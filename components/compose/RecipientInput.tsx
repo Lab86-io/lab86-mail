@@ -106,6 +106,8 @@ export function RecipientInput({
   // biome-ignore lint/correctness/useExhaustiveDependencies: the draft change is the trigger.
   useEffect(() => {
     if (awaitingPick.current && awaitingPick.current.draft !== draft.trim()) stopAwaiting();
+    // New text means new rows; an arrow choice made on the old rows ends.
+    setNavigated(false);
     const timer = setTimeout(() => setQuery(draft.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [draft]);
@@ -212,7 +214,9 @@ export function RecipientInput({
     // A complete address typed in full is the user's choice: it commits as
     // typed unless the arrow keys moved to a row.
     const typedAddress = !navigated && isCompleteAddress(draft);
-    const choice = hasItems && !typedAddress && (navigated || (draft.trim() && fresh));
+    // Only rows for the text now in the field can be picked, also after the
+    // arrow keys: the rows of an older query may hold other people.
+    const choice = hasItems && fresh && !typedAddress && (navigated || Boolean(draft.trim()));
     const waits = open && !fresh && Boolean(draft.trim()) && !isCompleteAddress(draft);
     if (event.key === 'Enter') {
       if (choice) {

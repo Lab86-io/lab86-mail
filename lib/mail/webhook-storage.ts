@@ -3,7 +3,7 @@
 // payload in memory. The durable retry refetches the current object from the
 // provider, so the stored row needs only the ids that name that object.
 
-import { extractNylasWebhookMetadata } from './corpus';
+import { capWebhookId, extractNylasWebhookMetadata } from './corpus';
 
 /** The marker of a payload that holds ids only. */
 export const WEBHOOK_STORED_IDS = 'ids';
@@ -18,7 +18,7 @@ function pickStrings(source: JsonRecord, keys: readonly string[]) {
   const out: JsonRecord = {};
   for (const key of keys) {
     const value = source[key];
-    if (typeof value === 'string' && value) out[key] = value.slice(0, 500);
+    if (typeof value === 'string' && value) out[key] = capWebhookId(value) as string;
   }
   return out;
 }

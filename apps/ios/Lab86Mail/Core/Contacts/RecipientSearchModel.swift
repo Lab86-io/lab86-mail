@@ -12,6 +12,9 @@ final class RecipientSearchModel {
     private(set) var suggestions: [RecipientSuggestion] = []
     /// The query of the rows on screen (normalized). Nil before the first answer.
     private(set) var resultQuery: String?
+    /// The request of the rows on screen. A new From mailbox or exclude list
+    /// can reorder the rows while the query stays the same.
+    @ObservationIgnored private var resultRequest: RecipientSearchRequest?
     private(set) var isSearching = false
     private(set) var didFail = false
     /// The row that Return, Tab, or a separator picks. Arrow keys move it.
@@ -41,7 +44,7 @@ final class RecipientSearchModel {
         task?.cancel()
         task = nil
         if let cached = cache[request] {
-            apply(cached, query: request.query, exclude: request.exclude)
+            apply(cached, request: request)
             isSearching = false
             return
         }
@@ -74,7 +77,7 @@ final class RecipientSearchModel {
         remember(page.items, for: request)
         guard let current = currentRequest,
               Self.accepts(pageQuery: page.query, currentQuery: current.query) else { return false }
-        apply(page.items, query: current.query, exclude: current.exclude)
+        apply(page.items, request: current)
         isSearching = false
         didFail = false
         return true
@@ -94,6 +97,7 @@ final class RecipientSearchModel {
     func clearVisible() {
         suggestions = []
         resultQuery = nil
+        resultRequest = nil
         highlightedIndex = nil
         highlightChosen = false
     }
@@ -184,13 +188,17 @@ final class RecipientSearchModel {
         didFail = true
     }
 
-    private func apply(_ items: [RecipientSuggestion], query: String, exclude: [String]) {
-        let excluded = Set(exclude)
-        let normalizedQuery = Self.normalized(query)
-        let queryChanged = resultQuery != normalizedQuery
+    private func apply(_ items: [RecipientSuggestion], request: RecipientSearchRequest) {
+        let excluded = Set(request.exclude)
+        let normalizedQuery = Self.normalized(request.query)
+        // A new query, From mailbox, or exclude list can put other people in
+        // the rows. A highlight the person chose then points at nobody they
+        // chose, so it starts again at the first row.
+        let requestChanged = resultQuery != normalizedQuery || resultRequest != request
         suggestions = items.filter { !excluded.contains($0.email.lowercased()) }
         resultQuery = normalizedQuery
-        if queryChanged {
+        resultRequest = request
+        if requestChanged {
             highlightedIndex = normalizedQuery.isEmpty || suggestions.isEmpty ? nil : 0
             highlightChosen = false
         } else if let index = highlightedIndex, !suggestions.indices.contains(index) {
