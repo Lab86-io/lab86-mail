@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { contactNamesFor } from '@/lib/contacts/names';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { requireConnectedAccount } from '@/lib/nylas/provider';
 import { truncateText } from '@/lib/shared/text';
@@ -60,7 +61,31 @@ const defaults = {
   event: readMeetingRecord,
   context: getNarrativeTaskContext,
   generate: generateTextForCurrentUser,
+  names: (userId: string, emails: string[]) => contactNamesFor(userId, emails),
 };
+
+/**
+ * The people of a meeting, with a saved contact name for each attendee that
+ * the invite lists by address only. No model call; a failed lookup keeps the
+ * invite as it is.
+ */
+export async function meetingPeople(
+  userId: string,
+  event: MeetingRecord,
+  names: (userId: string, emails: string[]) => Promise<Map<string, string>>,
+) {
+  const people = [...(event.participants || []), ...(event.organizer ? [event.organizer] : [])].slice(0, 12);
+  const unnamed = people
+    .filter((person) => person.email && !person.name?.trim())
+    .map((person) => String(person.email).toLowerCase());
+  const saved = unnamed.length
+    ? await names(userId, unnamed).catch(() => new Map<string, string>())
+    : new Map();
+  return people.map((person) => ({
+    email: person.email,
+    name: person.name?.trim() || (person.email ? saved.get(String(person.email).toLowerCase()) : undefined),
+  }));
+}
 const outputSchema = z.object({
   points: z
     .array(z.object({ text: z.string().min(1).max(600), sourceIds: z.array(z.string()).min(1).max(4) }))
@@ -89,14 +114,13 @@ export async function prepareNarrativeMeeting(
   userId: string,
   selector: MeetingSelector,
   signal?: AbortSignal,
-  deps = defaults,
+  deps: Omit<typeof defaults, 'names'> & Partial<Pick<typeof defaults, 'names'>> = defaults,
 ): Promise<MeetingPrep> {
   if (signal?.aborted) throw new MeetingContextError('Meeting preparation cancelled.', 499);
   const event = await deps.event(userId, selector);
   if (!event || event.status === 'cancelled')
     throw new MeetingContextError('Meeting is unavailable or no longer connected.', 404);
-  const people = [...(event.participants || []), ...(event.organizer ? [event.organizer] : [])]
-    .slice(0, 12)
+  const people = (await meetingPeople(userId, event, deps.names ?? defaults.names))
     .flatMap((person) => [person.email, person.name])
     .filter(Boolean);
   const request = {
