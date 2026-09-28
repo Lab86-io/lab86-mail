@@ -104,9 +104,15 @@ After the casa-prep round:
   (item: "disconnect deletes the content index too").
 - The purge deletes the attachment files of the mailbox (item: "attachment
   files stored in Convex file storage").
-- For a direct Google account, the Gmail workstream must revoke the Google
-  refresh token at `https://oauth2.googleapis.com/revoke`. The design document
-  does not name this step. It is an open item for that workstream.
+- For a direct Google account, the disconnect sends the refresh token to
+  `https://oauth2.googleapis.com/revoke`, then deletes the token row
+  (`lib/google/adapter/mail.ts`, `destroyGrant`). A Google revoke ends the
+  access of the whole Google Cloud project for that address. So the disconnect
+  does not send the revoke in three cases, and deletes only our token row:
+  a Google Drive connection of the same user and address shares the grant; a
+  Nylas grant in the same deployment uses the address; or the deployment is
+  not production (staging uses the production Google project).
+  `lib/google/shared-grant.ts` has these rules.
 
 ## Google Drive disconnect
 
@@ -119,7 +125,8 @@ Entry point: Files > Google Drive > "Disconnect". The route is
    the revoke when a direct Google mailbox of the same user and address uses
    the same Google grant (`lib/google/shared-grant.ts`). A Google revoke ends
    the access of all the Google Cloud project, so it can stop that mailbox
-   too.
+   too. For the same reason it does not send the revoke outside the
+   production deployment, or while a Nylas grant uses the address.
 2. If the revoke fails, the code logs a warning and continues.
 3. `cloudFiles.disconnect` deletes the connection and the credentials
    (`convex/cloudFiles.ts:338-369`).

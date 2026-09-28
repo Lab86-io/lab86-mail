@@ -198,6 +198,14 @@ These rules add to the decisions above or make them exact.
   revoke is sent; the log says so. A failed check also skips the revoke. Only
   a mail OAuth client in another Google Cloud project ends the sharing. That
   project needs its own consent screen and verification (an owner decision).
+- **No revoke outside production, or while Nylas uses the address.** Staging
+  and local development use the production Google Cloud project, so a revoke
+  there would end the production access for that address. Only a deployment
+  with `RAILWAY_ENVIRONMENT_NAME=production` (or `LAB86_GOOGLE_REVOKE=1`)
+  revokes. Production also skips the revoke while a Nylas Google grant of any
+  user in the deployment uses the address (`googleDirect:nylasGrantUsesAddress`).
+  In each case only our token row goes (`googleRevokeBlockedReason` in
+  `lib/google/shared-grant.ts`).
 - **Rollback.** `googleDirect:rollbackToNylas` does not revoke the Google
   token. Google can revoke the whole project grant, and the production Nylas
   connector is in the same Google Cloud project. The token row is deleted.

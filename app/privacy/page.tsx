@@ -114,9 +114,9 @@ export default function PrivacyPage() {
           to it and delete its {COMPANY_NAME}-hosted grant records. Then we delete its stored mail, labels,
           calendar events, contacts, attachment copies, search index, and sync state. We also delete its
           provider webhook records and what we made from its mail: memory notes, Work receipts, notifications,
-          event suggestions, and prepared brief items. If your Google Drive connection uses the same Google
-          sign-in, we delete our copy of the mailbox access but do not revoke the sign-in, so that Drive keeps
-          working. The same rule applies when you disconnect Google Drive.
+          event suggestions, and prepared brief items. If another connection in {PRODUCT_NAME} uses the same
+          Google sign-in, for example your Google Drive connection, we delete our copy of the access but do
+          not revoke the sign-in, so that the other connection keeps working.
         </p>
         <p>
           If a mailbox needs a reconnect for 30 days, a daily job deletes the same mailbox data. It keeps the

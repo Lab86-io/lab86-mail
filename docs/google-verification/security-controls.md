@@ -180,12 +180,12 @@ False positives:
 | Gitleaks (history) | `generic-api-key` in `docs/albatross-work-v2-ui-prompt.md:135` (commit `15157326c4`) | Prose about design tokens. |
 | Gitleaks (history) | `generic-api-key` in `.env.example` (commit `15157326c4`, and one checkpoint blob) | Empty value; the same match across a line break as in the tree. |
 
-Other items from this review, owned by the workstreams of the casa-prep round:
+Other items from this review. The casa-prep round (PR #301) closed them:
 
-- Mailbox and tool OAuth callbacks do not check the session user
-  (`app/api/nylas/callback/route.ts:33-66`, `app/api/mcp/oauth/callback/route.ts:43-76`).
-  Item: "OAuth callbacks bound to the signed-in user".
-- Mailbox disconnect keeps the index rows. Item: "disconnect deletes the content
-  index too".
-- No OpenRouter call sets `data_collection: deny`. Item: "OpenRouter
-  `data_collection: deny` on all model calls".
+- The mailbox and tool OAuth callbacks now check the session user. A native
+  flow redeems a single-use completion token (`lib/security/oauth-completions.ts`).
+- A mailbox disconnect now deletes the index rows of the mailbox
+  (`purgeAccountPass` in `convex/accounts.ts`).
+- Every OpenRouter call now sets `data_collection: deny`
+  (`lib/ai/openrouter-policy.ts`). This setting removes providers that train
+  on the data. It is not zero data retention.
