@@ -195,7 +195,16 @@ struct MailboxesSettingsView: View {
                 Task { await reconnect(mailbox) }
             }
             .font(.caption.weight(.medium))
+            #if os(macOS)
+            // A text action in the accent: a Mac borderless button in a list
+            // row draws plain label text, which reads as a status line.
+            .buttonStyle(.plain)
+            .foregroundStyle(environment.theme.accentColor)
+            .opacity(busyID == nil ? 1 : 0.5)
+            .pointerStyle(.link)
+            #else
             .buttonStyle(.borderless)
+            #endif
             .disabled(busyID != nil)
             .accessibilityIdentifier("mailboxes.contacts.reconnect.\(mailbox.id)")
         }

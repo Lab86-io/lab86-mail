@@ -282,9 +282,10 @@ struct ComposeView: View {
                     showsCopyFields = true
                     focusedField = .cc
                 }
-                .font(.subheadline)
+                .font(RecipientFieldMetrics.font)
                 .foregroundStyle(.secondary)
                 .buttonStyle(.plain)
+                .modifier(RecipientLinkPointer())
                 .padding(.vertical, RecipientChipMetrics.verticalInset)
             }
         }

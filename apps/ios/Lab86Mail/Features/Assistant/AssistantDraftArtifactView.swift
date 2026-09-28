@@ -292,6 +292,9 @@ struct AssistantDraftArtifactContent: View {
             suggestionLimit: 5,
             horizontalPadding: 14,
             verticalPadding: 5,
+            // The card sits in a scrolling transcript under the chat input:
+            // the list goes in the card, not over the messages that follow.
+            listPlacement: .inline,
             onSubmitEmpty: { focusedField = field == .to ? .subject : (field == .cc ? .bcc : .subject) }
         )
         .frame(minHeight: 44)

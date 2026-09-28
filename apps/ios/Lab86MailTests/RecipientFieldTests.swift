@@ -581,6 +581,182 @@ struct RecipientFieldTests {
         #expect(!status(.needsReconnect, reconnect: true).isProblem)
     }
 
+    // MARK: - Mac keys
+
+    @Test
+    func macKeyCodesBecomeFieldKeys() {
+        typealias Code = RecipientKey.KeyCode
+        let plain: [(UInt16, RecipientKey)] = [
+            (Code.up, .up), (Code.down, .down), (Code.left, .left), (Code.right, .right),
+            (Code.returnKey, .returnKey), (Code.keypadEnter, .returnKey), (Code.tab, .tab),
+            (Code.escape, .escape), (Code.deleteBackward, .deleteBackward), (Code.deleteForward, .deleteForward),
+        ]
+        for (code, key) in plain {
+            #expect(RecipientKey(keyCode: code, modifiers: [], characters: nil) == key)
+        }
+        // A letter key is text for the field editor.
+        #expect(RecipientKey(keyCode: 0, modifiers: [], characters: "a") == nil)
+        // Shift-Tab goes to the previous field, Shift-arrows select text,
+        // Option-Delete deletes a word, Shift-Return is a new line elsewhere.
+        #expect(RecipientKey(keyCode: Code.tab, modifiers: .shift, characters: nil) == nil)
+        #expect(RecipientKey(keyCode: Code.left, modifiers: .shift, characters: nil) == nil)
+        #expect(RecipientKey(keyCode: Code.deleteBackward, modifiers: .option, characters: nil) == nil)
+        #expect(RecipientKey(keyCode: Code.returnKey, modifiers: .shift, characters: nil) == nil)
+        #expect(RecipientKey(keyCode: Code.down, modifiers: .command, characters: nil) == nil)
+    }
+
+    @Test
+    func onlyCommandCAndCommandXAreFieldKeysAmongTheShortcuts() {
+        // The characters name the shortcut, so the key code of another layout does not matter.
+        #expect(RecipientKey(keyCode: 34, modifiers: .command, characters: "c") == .copy)
+        #expect(RecipientKey(keyCode: 8, modifiers: .command, characters: "C") == .copy)
+        #expect(RecipientKey(keyCode: 7, modifiers: .command, characters: "x") == .cut)
+        // Select All, Paste, and Undo stay with the Edit menu and the field editor.
+        #expect(RecipientKey(keyCode: 0, modifiers: .command, characters: "a") == nil)
+        #expect(RecipientKey(keyCode: 9, modifiers: .command, characters: "v") == nil)
+        #expect(RecipientKey(keyCode: 6, modifiers: .command, characters: "z") == nil)
+        #expect(RecipientKey(keyCode: 8, modifiers: [.command, .shift], characters: "c") == nil)
+    }
+
+    @Test
+    func arrowsAndEscActOnTheListOnlyWhenItIsOpen() {
+        let open = RecipientKeyContext(listVisible: true, canPick: true, fieldIsEmpty: false, hasChips: false, hasSelectedChip: false)
+        let closed = RecipientKeyContext(listVisible: false, canPick: false, fieldIsEmpty: false, hasChips: false, hasSelectedChip: false)
+        #expect(RecipientKeyAction.resolve(.down, in: open) == .moveHighlight(1))
+        #expect(RecipientKeyAction.resolve(.up, in: open) == .moveHighlight(-1))
+        #expect(RecipientKeyAction.resolve(.escape, in: open) == .closeList)
+        #expect(RecipientKeyAction.resolve(.down, in: closed) == nil)
+        #expect(RecipientKeyAction.resolve(.up, in: closed) == nil)
+        // With no list and no chip selection, Esc goes on to the sheet's Cancel.
+        #expect(RecipientKeyAction.resolve(.escape, in: closed) == nil)
+    }
+
+    @Test
+    func returnAlwaysStaysInTheFieldAndTabMovesOnOnlyWithNothingToDo() {
+        let empty = RecipientKeyContext(listVisible: false, canPick: false, fieldIsEmpty: true, hasChips: true, hasSelectedChip: false)
+        // Return never reaches the sheet's default button (Send).
+        #expect(RecipientKeyAction.resolve(.returnKey, in: empty) == .submit)
+        // Nothing typed and nothing to pick: Tab goes to the next field.
+        #expect(RecipientKeyAction.resolve(.tab, in: empty) == nil)
+        var typed = empty
+        typed.fieldIsEmpty = false
+        #expect(RecipientKeyAction.resolve(.tab, in: typed) == .pickOrCommit)
+        var picking = empty
+        picking.listVisible = true
+        picking.canPick = true
+        #expect(RecipientKeyAction.resolve(.tab, in: picking) == .pickOrCommit)
+        // Top people with no highlight: Tab still moves on.
+        picking.canPick = false
+        #expect(RecipientKeyAction.resolve(.tab, in: picking) == nil)
+    }
+
+    @Test
+    func deleteArrowsAndCopyWorkOnChipsOnlyWhenNothingIsTyped() {
+        let chips = RecipientKeyContext(listVisible: false, canPick: false, fieldIsEmpty: true, hasChips: true, hasSelectedChip: false)
+        #expect(RecipientKeyAction.resolve(.deleteBackward, in: chips) == .deleteBackwardOverChips)
+        #expect(RecipientKeyAction.resolve(.left, in: chips) == .selectPreviousChip)
+        #expect(RecipientKeyAction.resolve(.right, in: chips) == nil)
+        #expect(RecipientKeyAction.resolve(.deleteForward, in: chips) == nil)
+        #expect(RecipientKeyAction.resolve(.copy, in: chips) == nil)
+
+        var selected = chips
+        selected.hasSelectedChip = true
+        #expect(RecipientKeyAction.resolve(.right, in: selected) == .selectNextChip)
+        #expect(RecipientKeyAction.resolve(.deleteForward, in: selected) == .removeSelectedChip)
+        #expect(RecipientKeyAction.resolve(.copy, in: selected) == .copySelectedChip)
+        #expect(RecipientKeyAction.resolve(.cut, in: selected) == .cutSelectedChip)
+        #expect(RecipientKeyAction.resolve(.escape, in: selected) == .clearChipSelection)
+
+        // Typed text keeps the text editing keys, and Copy copies the text.
+        var typed = selected
+        typed.fieldIsEmpty = false
+        for key in [RecipientKey.deleteBackward, .deleteForward, .left, .right, .copy, .cut] {
+            #expect(RecipientKeyAction.resolve(key, in: typed) == nil)
+        }
+        let noChips = RecipientKeyContext(listVisible: false, canPick: false, fieldIsEmpty: true, hasChips: false, hasSelectedChip: false)
+        #expect(RecipientKeyAction.resolve(.deleteBackward, in: noChips) == nil)
+        #expect(RecipientKeyAction.resolve(.left, in: noChips) == nil)
+    }
+
+    @Test
+    func arrowKeysWalkTheChipsAndForwardDeleteRemovesTheSelectedOne() {
+        var state = RecipientFieldState(value: "a@example.com, b@example.com, c@example.com")
+        let ids = state.tokens.map(\.id)
+        state.selectPreviousToken()
+        #expect(state.selectedTokenID == ids[2])
+        state.selectPreviousToken()
+        state.selectPreviousToken()
+        #expect(state.selectedTokenID == ids[0])
+        // The first chip stays selected.
+        state.selectPreviousToken()
+        #expect(state.selectedTokenID == ids[0])
+        state.selectNextToken()
+        #expect(state.selectedToken?.email == "b@example.com")
+        let removed = state.removeSelectedToken()
+        #expect(removed)
+        #expect(state.value == "a@example.com, c@example.com")
+        #expect(state.selectedTokenID == nil)
+        let removedAgain = state.removeSelectedToken()
+        #expect(!removedAgain)
+        // Past the last chip, the selection goes back to the text.
+        state.selectPreviousToken()
+        state.selectNextToken()
+        #expect(state.selectedTokenID == nil)
+        // Typed text: the arrows move the text cursor, not the chips.
+        state.edit("sa")
+        state.selectPreviousToken()
+        #expect(state.selectedTokenID == nil)
+    }
+
+    @Test
+    func copyingAChipGivesTextThatPastesBackAsTheSameChip() {
+        let state = RecipientFieldState(value: "Jakob Langtry <jakob@lab86.io>, sam@example.com, john")
+        #expect(state.tokens.map(\.pasteboardText) == ["Jakob Langtry <jakob@lab86.io>", "sam@example.com", "john"])
+        var other = RecipientFieldState()
+        other.edit(state.tokens[0].pasteboardText + ",")
+        #expect(other.tokens.first?.name == "Jakob Langtry")
+        #expect(other.tokens.first?.email == "jakob@lab86.io")
+    }
+
+    // MARK: - Mac pointer and floating list
+
+    @Test
+    func hoverMovesTheHighlightOnlyWhenThePointerMoves() {
+        var filter = RecipientHoverFilter()
+        func moved(_ x: CGFloat, _ y: CGFloat) -> Bool { filter.pointerMoved(to: CGPoint(x: x, y: y)) }
+        // The list opened under a still pointer: the keyboard keeps the highlight.
+        let opened = moved(40, 12)
+        let still = moved(40, 12)
+        let moving = moved(41, 12)
+        #expect(!opened)
+        #expect(!still)
+        #expect(moving)
+        filter.reset()
+        let reentered = moved(90, 30)
+        let movedAgain = moved(90, 31)
+        #expect(!reentered)
+        #expect(movedAgain)
+    }
+
+    @Test
+    func theFloatingListFitsAboveTheBottomOfTheScrollView() {
+        typealias Metrics = RecipientDropdownMetrics
+        #expect(Metrics.maxHeight(spaceBelow: .infinity) == Metrics.preferredMaxHeight)
+        #expect(Metrics.maxHeight(spaceBelow: 1_000) == Metrics.preferredMaxHeight)
+        #expect(Metrics.maxHeight(spaceBelow: 300) == 300 - Metrics.bottomMargin)
+        // Near the bottom the list keeps three rows and scrolls.
+        #expect(Metrics.maxHeight(spaceBelow: 90) == Metrics.minimumHeight)
+        #expect(Metrics.maxHeight(spaceBelow: -40) == Metrics.minimumHeight)
+
+        #expect(Metrics.spaceBelow(viewHeight: 40, scrollBounds: nil) == .infinity)
+        // The scroll view's visible rectangle in the row's coordinates.
+        let bounds = CGRect(x: -20, y: -60, width: 640, height: 452)
+        #expect(Metrics.spaceBelow(viewHeight: 40, scrollBounds: bounds) == 352)
+        // Whole steps of 8 points.
+        #expect(Metrics.spaceBelow(viewHeight: 45, scrollBounds: bounds) == 344)
+        #expect(Metrics.spaceBelow(viewHeight: 45, scrollBounds: bounds, step: 0) == 347)
+    }
+
     // MARK: - Fixtures
 
     static let jakob = RecipientSuggestion(

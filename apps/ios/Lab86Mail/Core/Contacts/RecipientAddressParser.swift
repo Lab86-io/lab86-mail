@@ -53,6 +53,10 @@ struct RecipientToken: Identifiable, Hashable, Sendable {
               name.lowercased() != email.lowercased() else { return email }
         return "\(name) <\(email)>"
     }
+
+    /// The text that Copy puts on the pasteboard. A paste into a recipient
+    /// field makes the same chip again; an invalid chip copies the text as typed.
+    var pasteboardText: String { isValid ? headerValue : email }
 }
 
 /// Reads and writes the comma-separated recipient strings that compose,
@@ -366,6 +370,37 @@ struct RecipientFieldState: Equatable, Sendable {
     mutating func remove(_ id: UUID) {
         tokens.removeAll { $0.id == id }
         if selectedTokenID == id { selectedTokenID = nil }
+    }
+
+    var selectedToken: RecipientToken? {
+        guard let selectedTokenID else { return nil }
+        return tokens.first { $0.id == selectedTokenID }
+    }
+
+    /// Left arrow with no typed text: select the last chip, then the chip
+    /// before it. The first chip stays selected.
+    mutating func selectPreviousToken() {
+        guard draft.isEmpty, !tokens.isEmpty else { return }
+        guard let selectedTokenID, let index = tokens.firstIndex(where: { $0.id == selectedTokenID }) else {
+            self.selectedTokenID = tokens.last?.id
+            return
+        }
+        self.selectedTokenID = tokens[max(index - 1, 0)].id
+    }
+
+    /// Right arrow on a selected chip: select the next chip. After the last
+    /// chip, the selection goes back to the text.
+    mutating func selectNextToken() {
+        guard let selectedTokenID, let index = tokens.firstIndex(where: { $0.id == selectedTokenID }) else { return }
+        self.selectedTokenID = index + 1 < tokens.count ? tokens[index + 1].id : nil
+    }
+
+    /// Forward Delete or Cut on a selected chip. Returns true when a chip was removed.
+    @discardableResult
+    mutating func removeSelectedToken() -> Bool {
+        guard let selectedTokenID, tokens.contains(where: { $0.id == selectedTokenID }) else { return false }
+        remove(selectedTokenID)
+        return true
     }
 
     /// Puts a chip back into the field as text, to correct it.

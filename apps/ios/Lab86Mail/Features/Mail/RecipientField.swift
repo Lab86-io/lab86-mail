@@ -8,6 +8,11 @@ import SwiftUI
 /// Focus: the parent owns the focus state. It passes the binding (to focus
 /// the text field) and `isFocused` as a plain value, so this view updates
 /// every time the focus moves.
+///
+/// Mac: the list floats under the text line (`RecipientListPlacement.dropdown`),
+/// the pointer and the arrow keys move one highlight, a key monitor reads
+/// Return, Tab, Esc, Delete, and the arrows before the field editor and the
+/// sheet's buttons (`RecipientKeyInterceptor`), and chips have a context menu.
 struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
     let title: String
     @Binding var value: String
@@ -23,6 +28,7 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
     var suggestionLimit: Int = 8
     var horizontalPadding: CGFloat = 20
     var verticalPadding: CGFloat = 8
+    var listPlacement: RecipientListPlacement = .platformDefault
     /// Return on an empty field: the parent moves focus to the next field.
     var onSubmitEmpty: (() -> Void)?
     /// A fixed state for rendering tests and previews. No search runs.
@@ -36,6 +42,13 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
     @State private var listDismissed = false
     @State private var detailTokenID: UUID? = nil
     @State private var isSubmitting = false
+    /// The pointer is over the suggestion list.
+    @State private var pointerInList = false
+    /// The field lost focus while the mouse button was down on the list: the
+    /// list stays until the click lands (or the pointer leaves the list).
+    @State private var holdsListForClick = false
+    /// The space from the row to the bottom of the scroll view (dropdown only).
+    @State private var dropdownSpace: CGFloat = .infinity
 
     init(
         title: String,
@@ -51,6 +64,7 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
         suggestionLimit: Int = 8,
         horizontalPadding: CGFloat = 20,
         verticalPadding: CGFloat = 8,
+        listPlacement: RecipientListPlacement = .platformDefault,
         onSubmitEmpty: (() -> Void)? = nil,
         presentation: RecipientFieldPresentation? = nil,
         @ViewBuilder accessory: @escaping () -> Accessory
@@ -68,6 +82,7 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
         self.suggestionLimit = suggestionLimit
         self.horizontalPadding = horizontalPadding
         self.verticalPadding = verticalPadding
+        self.listPlacement = listPlacement
         self.onSubmitEmpty = onSubmitEmpty
         self.presentation = presentation
         self.accessory = accessory
@@ -87,7 +102,7 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
                 Text(title)
-                    .font(.subheadline)
+                    .font(RecipientFieldMetrics.font)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, RecipientChipMetrics.verticalInset)
                     .fixedSize()
@@ -99,25 +114,32 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
                     textField
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .bottomLeading) {
+                    if listVisible, placement == .dropdown {
+                        dropdownList
+                    }
+                }
                 accessory()
             }
             .padding(.horizontal, horizontalPadding)
             .padding(.vertical, verticalPadding)
-            if listVisible {
+            .modifier(RecipientDropdownSpaceReader(isActive: placement == .dropdown, space: $dropdownSpace))
+            if listVisible, placement == .inline {
                 RecipientSuggestionList(
                     suggestions: displayedSuggestions,
                     highlightedIndex: displayedHighlight,
                     caption: listCaption,
                     theme: theme,
                     horizontalPadding: horizontalPadding,
-                    onPick: { suggestion in
-                        pick(suggestion)
-                        focus.wrappedValue = focusValue
-                    }
+                    onPick: pickFromList,
+                    onHoverRow: rowHoverHandler,
+                    onPointerInside: pointerInsideList
                 )
                 .transition(.opacity)
             }
         }
+        // The floating list draws over the rows that follow this field.
+        .zIndex(listVisible && placement == .dropdown ? 1 : 0)
         .accessibilityElement(children: .contain)
         .onChange(of: fieldText) { _, raw in handleFieldText(raw) }
         .onChange(of: value) { _, newValue in
@@ -128,8 +150,12 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
         }
         .onChange(of: isFocused) { _, focused in
             if focused {
+                holdsListForClick = false
                 listDismissed = false
                 refreshSearch()
+            } else if shouldHoldListForClick {
+                // The mouse button is down on a row; the click picks it.
+                holdsListForClick = true
             } else {
                 handleBlur()
             }
@@ -144,7 +170,7 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
     private var textField: some View {
         TextField("", text: $fieldText)
             .textFieldStyle(.plain)
-            .font(.subheadline)
+            .font(RecipientFieldMetrics.font)
             .textContentType(.emailAddress)
             .textInputAutocapitalization(.never)
             .keyboardType(.emailAddress)
@@ -167,6 +193,13 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
                 if state.backspaceOnEmptyDraft() { publish(); refreshSearch() }
                 return .handled
             }
+            // The key monitor sees the keys first; the handlers above stay as
+            // a fallback when the field editor is not an NSTextView.
+            .background(
+                RecipientKeyInterceptor(isActive: isFocused && isEnabled && presentation == nil) { key, text in
+                    handleMacKey(key, editorText: text)
+                }
+            )
             #endif
             .accessibilityLabel(title)
             .accessibilityValue(state.draft)
@@ -183,43 +216,24 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
     }
 
     private func chip(_ token: RecipientToken) -> some View {
-        RecipientChip(
+        let isPresented = Binding(
+            get: { detailTokenID == token.id },
+            set: { if !$0, detailTokenID == token.id { detailTokenID = nil } }
+        )
+        return RecipientChip(
             token: token,
             isSelected: state.selectedTokenID == token.id,
             theme: theme
         ) {
             detailTokenID = token.id
         }
-        .popover(isPresented: Binding(
-            get: { detailTokenID == token.id },
-            set: { if !$0, detailTokenID == token.id { detailTokenID = nil } }
-        )) {
-            RecipientTokenDetail(
-                token: token,
-                theme: theme,
-                isEnabled: isEnabled,
-                onRemove: {
-                    detailTokenID = nil
-                    state.remove(token.id)
-                    publish()
-                    refreshSearch()
-                },
-                onEdit: {
-                    detailTokenID = nil
-                    state.beginEditing(token.id)
-                    syncFieldText()
-                    publish()
-                    focus.wrappedValue = focusValue
-                },
-                onUseAlternate: { email in
-                    detailTokenID = nil
-                    state.useAlternate(email, for: token.id)
-                    publish()
-                    refreshSearch()
-                }
-            )
-            .presentationCompactAdaptation(.popover)
-        }
+        #if os(macOS)
+        // Under the chip: above it are the From row and the sheet's toolbar.
+        .popover(isPresented: isPresented, arrowEdge: .bottom) { tokenDetail(token) }
+        .contextMenu { chipMenu(token) }
+        #else
+        .popover(isPresented: isPresented) { tokenDetail(token) }
+        #endif
         .accessibilityAction(named: "Remove") {
             guard isEnabled else { return }
             state.remove(token.id)
@@ -227,7 +241,72 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
         }
     }
 
+    private func tokenDetail(_ token: RecipientToken) -> some View {
+        RecipientTokenDetail(
+            token: token,
+            theme: theme,
+            isEnabled: isEnabled,
+            onRemove: {
+                detailTokenID = nil
+                remove(token.id)
+            },
+            onEdit: {
+                detailTokenID = nil
+                edit(token.id)
+            },
+            onUseAlternate: { email in
+                detailTokenID = nil
+                useAlternate(email, for: token.id)
+            }
+        )
+        .presentationCompactAdaptation(.popover)
+    }
+
+    #if os(macOS)
+    /// Right-click on a chip: the same actions as the chip popover.
+    @ViewBuilder private func chipMenu(_ token: RecipientToken) -> some View {
+        if token.isValid {
+            Button("Copy address") { RecipientPasteboard.copy(token.email) }
+        } else {
+            Button("Copy text") { RecipientPasteboard.copy(token.email) }
+        }
+        if isEnabled {
+            if token.isValid {
+                ForEach(token.alternateEmails, id: \.self) { email in
+                    Button("Use \(email)") { useAlternate(email, for: token.id) }
+                }
+            }
+            Button("Edit") { edit(token.id) }
+            Divider()
+            Button("Remove", role: .destructive) { remove(token.id) }
+        }
+    }
+    #endif
+
+    private var dropdownList: some View {
+        RecipientSuggestionDropdown(
+            suggestions: displayedSuggestions,
+            highlightedIndex: displayedHighlight,
+            caption: listCaption,
+            theme: theme,
+            maxHeight: RecipientDropdownMetrics.maxHeight(
+                spaceBelow: dropdownSpace + verticalPadding - RecipientDropdownMetrics.gap
+            ),
+            onPick: pickFromList,
+            onHoverRow: rowHoverHandler,
+            onPointerInside: pointerInsideList
+        )
+        .frame(maxWidth: RecipientDropdownMetrics.maxWidth, alignment: .leading)
+        // Hang the list under the text line, not over it.
+        .alignmentGuide(.bottom) { dimensions in dimensions[.top] - RecipientDropdownMetrics.gap }
+        .transition(.opacity)
+    }
+
     // MARK: - Derived state
+
+    private var placement: RecipientListPlacement {
+        presentation?.placement ?? listPlacement
+    }
 
     private var displayedSuggestions: [RecipientSuggestion] {
         presentation?.suggestions ?? search.suggestions
@@ -237,14 +316,37 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
         presentation != nil ? presentation?.highlightedIndex : search.highlightedIndex
     }
 
+    /// Rows to show, apart from focus.
+    private var hasListContent: Bool {
+        isEnabled && !listDismissed && !search.suggestions.isEmpty
+    }
+
     private var listVisible: Bool {
         if let presentation { return presentation.showsList && !presentation.suggestions.isEmpty }
-        return isFocused && isEnabled && !listDismissed && !search.suggestions.isEmpty
+        return (isFocused || holdsListForClick) && hasListContent
     }
 
     private var listCaption: String? {
         let query = presentation?.draft ?? search.resultQuery ?? state.draft
         return query.nilIfBlank == nil ? "Suggested" : nil
+    }
+
+    /// The field lost focus during a click on the list (macOS).
+    private var shouldHoldListForClick: Bool {
+        #if os(macOS)
+        return presentation == nil && pointerInList && hasListContent && RecipientMouse.primaryButtonIsDown
+        #else
+        return false
+        #endif
+    }
+
+    /// The pointer moves the highlight on the Mac; iOS rows have no hover.
+    private var rowHoverHandler: ((Int) -> Void)? {
+        #if os(macOS)
+        return hoverRow
+        #else
+        return nil
+        #endif
     }
 
     // MARK: - Actions
@@ -356,6 +458,48 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
         refreshSearch()
     }
 
+    /// A click or tap on a row. The field takes focus back for the next person.
+    private func pickFromList(_ suggestion: RecipientSuggestion) {
+        holdsListForClick = false
+        pick(suggestion)
+        focus.wrappedValue = focusValue
+    }
+
+    /// The pointer moved over a row: it becomes the highlighted row, the same
+    /// highlight that the arrow keys move and that Return picks.
+    private func hoverRow(_ index: Int) {
+        guard presentation == nil, search.suggestions.indices.contains(index),
+              search.highlightedIndex != index else { return }
+        search.highlightedIndex = index
+    }
+
+    private func pointerInsideList(_ inside: Bool) {
+        pointerInList = inside
+        // A press on the list that did not end in a pick: close it now.
+        guard !inside, holdsListForClick else { return }
+        holdsListForClick = false
+        if !isFocused { handleBlur() }
+    }
+
+    private func remove(_ id: UUID) {
+        state.remove(id)
+        publish()
+        refreshSearch()
+    }
+
+    private func edit(_ id: UUID) {
+        state.beginEditing(id)
+        syncFieldText()
+        publish()
+        focus.wrappedValue = focusValue
+    }
+
+    private func useAlternate(_ email: String, for id: UUID) {
+        state.useAlternate(email, for: id)
+        publish()
+        refreshSearch()
+    }
+
     private func handleBlur() {
         // Return is waiting for an answer; it finishes the pick itself.
         guard !isSubmitting else { return }
@@ -394,6 +538,60 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
         lastPublished = newValue
         if value != newValue { value = newValue }
     }
+
+    #if os(macOS)
+    /// A key from the Mac key monitor. Returns true when the field used it,
+    /// so the field editor, the default button, and the cancel button do not
+    /// see it.
+    private func handleMacKey(_ key: RecipientKey, editorText: String) -> Bool {
+        // The field editor can be one keystroke ahead of the state.
+        if RecipientFieldText.strip(editorText) != state.draft {
+            handleFieldText(editorText)
+        }
+        let context = RecipientKeyContext(
+            listVisible: listVisible,
+            canPick: listVisible && search.pickable(for: state.draft) != nil,
+            fieldIsEmpty: state.draft.isEmpty,
+            hasChips: !state.tokens.isEmpty,
+            hasSelectedChip: state.selectedToken != nil
+        )
+        guard let action = RecipientKeyAction.resolve(key, in: context) else { return false }
+        perform(action)
+        return true
+    }
+
+    private func perform(_ action: RecipientKeyAction) {
+        switch action {
+        case .moveHighlight(let offset):
+            search.moveHighlight(by: offset)
+        case .submit:
+            submit()
+        case .pickOrCommit:
+            _ = commitFromTab()
+        case .closeList:
+            listDismissed = true
+        case .clearChipSelection:
+            state.selectedTokenID = nil
+        case .selectPreviousChip:
+            state.selectPreviousToken()
+        case .selectNextChip:
+            state.selectNextToken()
+        case .deleteBackwardOverChips:
+            guard isEnabled else { return }
+            if state.backspaceOnEmptyDraft() { publish(); refreshSearch() }
+        case .removeSelectedChip:
+            guard isEnabled else { return }
+            if state.removeSelectedToken() { publish(); refreshSearch() }
+        case .copySelectedChip:
+            if let token = state.selectedToken { RecipientPasteboard.copy(token.pasteboardText) }
+        case .cutSelectedChip:
+            guard let token = state.selectedToken else { return }
+            RecipientPasteboard.copy(token.pasteboardText)
+            guard isEnabled else { return }
+            if state.removeSelectedToken() { publish(); refreshSearch() }
+        }
+    }
+    #endif
 }
 
 extension RecipientField where Accessory == EmptyView {
@@ -411,6 +609,7 @@ extension RecipientField where Accessory == EmptyView {
         suggestionLimit: Int = 8,
         horizontalPadding: CGFloat = 20,
         verticalPadding: CGFloat = 8,
+        listPlacement: RecipientListPlacement = .platformDefault,
         onSubmitEmpty: (() -> Void)? = nil,
         presentation: RecipientFieldPresentation? = nil
     ) {
@@ -428,10 +627,28 @@ extension RecipientField where Accessory == EmptyView {
             suggestionLimit: suggestionLimit,
             horizontalPadding: horizontalPadding,
             verticalPadding: verticalPadding,
+            listPlacement: listPlacement,
             onSubmitEmpty: onSubmitEmpty,
             presentation: presentation,
             accessory: { EmptyView() }
         )
+    }
+}
+
+/// Where the suggestion list shows.
+enum RecipientListPlacement: Hashable, Sendable {
+    /// Under the row, in the layout: the rows below move down (iOS, and the
+    /// draft card in the chat, which sits in a scrolling transcript).
+    case inline
+    /// A floating list under the text line, over the rows below (Mac compose).
+    case dropdown
+
+    static var platformDefault: RecipientListPlacement {
+        #if os(macOS)
+        .dropdown
+        #else
+        .inline
+        #endif
     }
 }
 
@@ -442,6 +659,8 @@ struct RecipientFieldPresentation {
     var highlightedIndex: Int?
     var showsList = true
     var selectedTokenIndex: Int?
+    /// Nil keeps the field's own placement.
+    var placement: RecipientListPlacement?
 }
 
 /// The iOS software keyboard sends no event for Backspace in an empty text
@@ -467,9 +686,36 @@ enum RecipientFieldText {
     }
 }
 
+/// Text sizes and row sizes. The Mac sets text at 13 pt (`.body`), the size
+/// of the Mac's own text fields; iOS uses the phone's smaller compose size.
+enum RecipientFieldMetrics {
+    #if os(macOS)
+    static var font: Font { .body }
+    static var rowNameFont: Font { .body }
+    static var rowDetailFont: Font { .subheadline }
+    static var captionFont: Font { .subheadline }
+    static let rowAvatarSize: CGFloat = 26
+    static let rowMinHeight: CGFloat = 36
+    static let rowVerticalPadding: CGFloat = 4
+    #else
+    static var font: Font { .subheadline }
+    static var rowNameFont: Font { .subheadline }
+    static var rowDetailFont: Font { .footnote }
+    static var captionFont: Font { .footnote }
+    static let rowAvatarSize: CGFloat = 32
+    static let rowMinHeight: CGFloat = 44
+    static let rowVerticalPadding: CGFloat = 7
+    #endif
+}
+
 enum RecipientChipMetrics {
+    #if os(macOS)
+    static let verticalInset: CGFloat = 3
+    static let horizontalInset: CGFloat = 8
+    #else
     static let verticalInset: CGFloat = 4
     static let horizontalInset: CGFloat = 9
+    #endif
 }
 
 // MARK: - Chip
@@ -479,11 +725,12 @@ struct RecipientChip: View {
     let isSelected: Bool
     let theme: ThemeStore
     let onTap: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: onTap) {
             Text(token.displayName)
-                .font(.subheadline)
+                .font(RecipientFieldMetrics.font)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(token.isValid ? Color.primary : Color.red)
@@ -496,6 +743,10 @@ struct RecipientChip: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        #if os(macOS)
+        .onHover { isHovered = $0 }
+        .help(token.isValid ? token.email : "Not a valid address")
+        #endif
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
         .accessibilityHint("Shows the address and a remove action")
@@ -509,7 +760,9 @@ struct RecipientChip: View {
 
     private var stroke: Color {
         if !token.isValid { return Color.red.opacity(isSelected ? 0.8 : 0.45) }
-        return isSelected ? theme.accentColor : theme.hairlineColor
+        if isSelected { return theme.accentColor }
+        // Mac hover: a firmer hairline says the chip is a control.
+        return isHovered ? Color.primary.opacity(0.22) : theme.hairlineColor
     }
 
     private var accessibilityText: String {
@@ -544,8 +797,8 @@ struct RecipientTokenDetail: View {
                         Text(name)
                             .font(.headline)
                     }
-                    Text(token.email)
-                        .font(token.name == nil ? .headline : .subheadline)
+                    Text(verbatim: token.email)
+                        .font(token.name == nil ? .headline : RecipientFieldMetrics.font)
                         .foregroundStyle(token.name == nil ? .primary : .secondary)
                         .textSelection(.enabled)
                 }
@@ -562,9 +815,10 @@ struct RecipientTokenDetail: View {
                         .foregroundStyle(.secondary)
                     ForEach(token.alternateEmails, id: \.self) { email in
                         Button("Use \(email)") { onUseAlternate(email) }
-                            .font(.subheadline)
+                            .font(RecipientFieldMetrics.font)
                             .buttonStyle(.plain)
                             .foregroundStyle(theme.accentColor)
+                            .modifier(RecipientLinkPointer())
                     }
                 }
             }
@@ -573,11 +827,13 @@ struct RecipientTokenDetail: View {
                     Button("Edit", action: onEdit)
                         .buttonStyle(.plain)
                         .foregroundStyle(theme.accentColor)
+                        .modifier(RecipientLinkPointer())
                     Button("Remove", role: .destructive, action: onRemove)
                         .buttonStyle(.plain)
                         .foregroundStyle(.red)
+                        .modifier(RecipientLinkPointer())
                 }
-                .font(.subheadline.weight(.medium))
+                .font(RecipientFieldMetrics.font.weight(.medium))
             }
         }
         .padding(16)
@@ -585,8 +841,20 @@ struct RecipientTokenDetail: View {
     }
 }
 
+/// Text buttons that read as links show the Mac's link pointer.
+struct RecipientLinkPointer: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content.pointerStyle(.link)
+        #else
+        content
+        #endif
+    }
+}
+
 // MARK: - Suggestions
 
+/// The list inside the layout (iOS, and the chat draft card).
 struct RecipientSuggestionList: View {
     let suggestions: [RecipientSuggestion]
     let highlightedIndex: Int?
@@ -594,6 +862,9 @@ struct RecipientSuggestionList: View {
     let theme: ThemeStore
     var horizontalPadding: CGFloat = 20
     let onPick: (RecipientSuggestion) -> Void
+    var onHoverRow: ((Int) -> Void)? = nil
+    var onPointerInside: ((Bool) -> Void)? = nil
+    @State private var hover = RecipientHoverTracker()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -601,7 +872,7 @@ struct RecipientSuggestionList: View {
                 .overlay(theme.hairlineColor)
             if let caption {
                 Text(caption)
-                    .font(.footnote)
+                    .font(RecipientFieldMetrics.captionFont)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, horizontalPadding)
                     .padding(.top, 10)
@@ -620,11 +891,155 @@ struct RecipientSuggestionList: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .modifier(RecipientRowPointer(index: index, tracker: hover, onHoverRow: onHoverRow))
             }
         }
         .padding(.bottom, 4)
+        .modifier(RecipientListPointer(tracker: hover, onPointerInside: onPointerInside))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Suggested recipients")
+    }
+}
+
+/// The floating Mac list: an elevated surface under the text line, about
+/// eight rows high, that scrolls when it has more rows or less room.
+struct RecipientSuggestionDropdown: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let suggestions: [RecipientSuggestion]
+    let highlightedIndex: Int?
+    let caption: String?
+    let theme: ThemeStore
+    var maxHeight: CGFloat = RecipientDropdownMetrics.preferredMaxHeight
+    let onPick: (RecipientSuggestion) -> Void
+    var onHoverRow: ((Int) -> Void)? = nil
+    var onPointerInside: ((Bool) -> Void)? = nil
+    @State private var hover = RecipientHoverTracker()
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: RecipientDropdownMetrics.cornerRadius, style: .continuous)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if let caption {
+                        Text(caption)
+                            .font(RecipientFieldMetrics.captionFont)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 4)
+                            .padding(.bottom, 3)
+                            .accessibilityAddTraits(.isHeader)
+                    }
+                    ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
+                        Button {
+                            onPick(suggestion)
+                        } label: {
+                            RecipientSuggestionRow(
+                                suggestion: suggestion,
+                                isHighlighted: index == highlightedIndex,
+                                theme: theme,
+                                isMenuRow: true
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .modifier(RecipientRowPointer(index: index, tracker: hover, onHoverRow: onHoverRow))
+                        .id(suggestion.id)
+                    }
+                }
+                .padding(RecipientDropdownMetrics.inset)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxHeight: maxHeight)
+            .onChange(of: highlightedIndex) { _, index in
+                // Arrow keys past the visible rows scroll the list.
+                guard let index, suggestions.indices.contains(index) else { return }
+                proxy.scrollTo(suggestions[index].id)
+            }
+        }
+        // As tall as the rows, up to `maxHeight`.
+        .fixedSize(horizontal: false, vertical: true)
+        .background(theme.elevatedColor, in: shape)
+        .clipShape(shape)
+        .overlay {
+            shape.strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.14 : 0.10), lineWidth: 1)
+        }
+        // One raised layer: the layered soft shadow in light mode; dark mode
+        // raises by lightness and the hairline (Surface.swift).
+        .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.06), radius: 1, y: 1)
+        .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.12), radius: 16, y: 8)
+        .modifier(RecipientListPointer(tracker: hover, onPointerInside: onPointerInside))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Suggested recipients")
+    }
+}
+
+/// The last pointer location over one list, outside SwiftUI state, so a
+/// pointer move does not redraw the list.
+@MainActor
+final class RecipientHoverTracker {
+    var filter = RecipientHoverFilter()
+}
+
+/// Mac rows: the pointer moves the highlight, and a click does not take
+/// keyboard focus from the text field.
+private struct RecipientRowPointer: ViewModifier {
+    let index: Int
+    let tracker: RecipientHoverTracker
+    let onHoverRow: ((Int) -> Void)?
+
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content
+            .focusable(false)
+            .focusEffectDisabled()
+            .onContinuousHover { phase in
+                guard let onHoverRow, case .active(let location) = phase,
+                      tracker.filter.pointerMoved(to: location) else { return }
+                onHoverRow(index)
+            }
+        #else
+        content
+        #endif
+    }
+}
+
+private struct RecipientListPointer: ViewModifier {
+    let tracker: RecipientHoverTracker
+    let onPointerInside: ((Bool) -> Void)?
+
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content
+            // Arrow cursor over the list, also where it covers a text field.
+            .pointerStyle(.default)
+            .onHover { inside in
+                if !inside { tracker.filter.reset() }
+                onPointerInside?(inside)
+            }
+        #else
+        content
+        #endif
+    }
+}
+
+/// Reads the space from the row to the bottom of the scroll view, so the
+/// floating list does not run past it.
+private struct RecipientDropdownSpaceReader: ViewModifier {
+    let isActive: Bool
+    @Binding var space: CGFloat
+
+    func body(content: Content) -> some View {
+        if isActive {
+            content.onGeometryChange(for: CGFloat.self) { proxy in
+                RecipientDropdownMetrics.spaceBelow(
+                    viewHeight: proxy.size.height,
+                    scrollBounds: proxy.bounds(of: .scrollView)
+                )
+            } action: { newSpace in
+                space = newSpace
+            }
+        } else {
+            content
+        }
     }
 }
 
@@ -633,10 +1048,12 @@ struct RecipientSuggestionRow: View {
     let isHighlighted: Bool
     let theme: ThemeStore
     var horizontalPadding: CGFloat = 20
-    @ScaledMetric(relativeTo: .subheadline) private var avatarSize: CGFloat = 32
+    /// A row of the floating list: a rounded highlight inside the list's inset.
+    var isMenuRow = false
+    @ScaledMetric(relativeTo: .subheadline) private var avatarSize: CGFloat = RecipientFieldMetrics.rowAvatarSize
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: isMenuRow ? 10 : 12) {
             RecipientAvatar(
                 name: suggestion.displayName,
                 seed: suggestion.email.lowercased(),
@@ -647,17 +1064,17 @@ struct RecipientSuggestionRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 if let name = suggestion.name {
                     Text(RecipientHighlightText.attributed(name, highlights: suggestion.highlights(in: .name)))
-                        .font(.subheadline)
+                        .font(RecipientFieldMetrics.rowNameFont)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     Text(RecipientHighlightText.attributed(suggestion.email, highlights: suggestion.highlights(in: .email)))
-                        .font(.footnote)
+                        .font(RecipientFieldMetrics.rowDetailFont)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 } else {
                     Text(RecipientHighlightText.attributed(suggestion.email, highlights: suggestion.highlights(in: .email)))
-                        .font(.subheadline)
+                        .font(RecipientFieldMetrics.rowNameFont)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -665,10 +1082,18 @@ struct RecipientSuggestionRow: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, horizontalPadding)
-        .padding(.vertical, 7)
-        .frame(minHeight: 44)
-        .background(isHighlighted ? theme.accentSoftColor : Color.clear)
+        .padding(.horizontal, isMenuRow ? 8 : horizontalPadding)
+        .padding(.vertical, RecipientFieldMetrics.rowVerticalPadding)
+        .frame(minHeight: RecipientFieldMetrics.rowMinHeight)
+        .background {
+            if isHighlighted {
+                if isMenuRow {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous).fill(theme.accentSoftColor)
+                } else {
+                    theme.accentSoftColor
+                }
+            }
+        }
         .contentShape(.rect)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
