@@ -35,6 +35,7 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
     @State private var search = RecipientSearchModel()
     @State private var listDismissed = false
     @State private var detailTokenID: UUID? = nil
+    @State private var isSubmitting = false
 
     init(
         title: String,
@@ -257,8 +258,10 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
                 refreshSearch()
             }
         } else if stripped != state.draft {
+            // A separator after partial text picks the highlighted person,
+            // unless Esc closed the list.
+            let separatorPick = listDismissed ? nil : search.pickable(for: state.draft)
             listDismissed = false
-            let separatorPick = search.pickable(for: state.draft)
             if state.edit(stripped, pick: separatorPick) {
                 search.clearVisible()
             }
@@ -270,44 +273,73 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
 
     /// Return: pick the highlighted person, or make a chip of the typed text.
     /// On an empty field it moves on to the next field.
+    ///
+    /// On iOS a submitted text field gives up focus right after this call, and
+    /// leaving the field clears the list. So the pick happens here, at once,
+    /// when the answer is on screen; an answer still in flight holds the list
+    /// open (`isSubmitting`) for a short wait.
     private func submit() {
         let query = state.draft
-        Task {
-            let suggestion: RecipientSuggestion?
-            if query.nilIfBlank == nil {
-                suggestion = search.pickable(for: "")
+        guard query.nilIfBlank != nil else {
+            if !listDismissed, let suggestion = search.pickable(for: "") {
+                pick(suggestion)
+                refocus()
+            } else if let onSubmitEmpty {
+                onSubmitEmpty()
             } else {
-                suggestion = await search.settledPickable(for: query)
+                refocus()
             }
+            return
+        }
+        if !listDismissed, let suggestion = search.pickable(for: query) {
+            pick(suggestion)
+            refocus()
+            return
+        }
+        guard !listDismissed, search.isSearching else {
+            commitTypedText()
+            refocus()
+            return
+        }
+        isSubmitting = true
+        Task {
+            let suggestion = await search.settledPickable(for: query)
+            isSubmitting = false
             // The person typed on while the answer was in flight.
             guard state.draft == query else { return }
             if let suggestion {
                 pick(suggestion)
-            } else if query.nilIfBlank != nil {
-                state.commitDraft()
-                syncFieldText()
-                publish()
-                refreshSearch()
-            } else if let onSubmitEmpty {
-                onSubmitEmpty()
-                return
+            } else {
+                commitTypedText()
             }
-            // A submitted text field gives up focus; the person keeps adding people.
+            refocus()
+        }
+    }
+
+    private func commitTypedText() {
+        state.commitDraft()
+        syncFieldText()
+        publish()
+        refreshSearch()
+    }
+
+    /// Keeps the keyboard up after Return, so the person can add more people.
+    private func refocus() {
+        focus.wrappedValue = focusValue
+        Task {
+            await Task.yield()
             focus.wrappedValue = focusValue
         }
     }
 
     /// Tab picks or commits like Return; with nothing to do it moves focus on.
     private func commitFromTab() -> Bool {
-        if let suggestion = search.pickable(for: state.draft), listVisible {
+        if listVisible, let suggestion = search.pickable(for: state.draft) {
             pick(suggestion)
             return true
         }
         guard state.draft.nilIfBlank != nil else { return false }
-        state.commitDraft()
-        syncFieldText()
-        publish()
-        refreshSearch()
+        commitTypedText()
         return true
     }
 
@@ -325,6 +357,8 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
     }
 
     private func handleBlur() {
+        // Return is waiting for an answer; it finishes the pick itself.
+        guard !isSubmitting else { return }
         // Leaving the field keeps a complete address as a chip; partial text
         // stays as text, and the send check names it.
         if state.commitDraft(onlyValid: true) {
@@ -337,11 +371,13 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
 
     private func refreshSearch() {
         guard presentation == nil, isFocused, isEnabled else { return }
+        // The top people for an empty field are a short list; typed text gets the full limit.
+        let limit = state.draft.nilIfBlank == nil ? min(suggestionLimit, 5) : suggestionLimit
         search.search(
             RecipientSearchRequest(
                 query: state.draft,
                 fromAccountID: fromAccountID,
-                limit: suggestionLimit,
+                limit: limit,
                 exclude: state.addresses + excluding
             ),
             using: searcher
