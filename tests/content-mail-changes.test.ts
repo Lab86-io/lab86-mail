@@ -152,6 +152,49 @@ describe('the mail change feed', () => {
     expect(seen.sort()).toEqual(['a', 'b', 'c']);
   });
 
+  test('a thread that moves to spam or trash leaves the index', async () => {
+    const t = convexTest(schema, modules);
+    await connect(t, 'live', 'connected');
+    await ingest(t, 'live', 't1');
+    await ingest(t, 'live', 'never-indexed', { labels: ['TRASH'] });
+    const first = await changes(t, { updatedAt: 0, creationTime: 0 });
+    expect(first.items.map((item: any) => item.externalId)).toEqual(['t1']);
+    const scope = { internalSecret: SECRET, userId: USER };
+    await t.mutation(api.content.upsert, {
+      ...scope,
+      items: [{ ...first.items[0], version: 'v1' }],
+    });
+    await t.run(async (ctx) => {
+      const item = await ctx.db.query('contentItems').first();
+      await ctx.db.insert('contentChunks', {
+        userId: USER,
+        itemId: item!._id,
+        version: 'v1',
+        text: 'Full body of t1',
+        embedding: new Array(1536).fill(0),
+      });
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await ingest(t, 'live', 't1', { labels: ['TRASH'] });
+    const second = await changes(t, first.watermark);
+    expect(second.items).toEqual([
+      expect.objectContaining({ externalId: 't1', connectionId: 'live', deleted: true, text: '' }),
+    ]);
+    await t.mutation(api.content.upsert, { ...scope, items: [{ ...second.items[0], version: 'v2' }] });
+    const stored = await t.run(async (ctx) => ({
+      items: await ctx.db.query('contentItems').collect(),
+      chunks: await ctx.db.query('contentChunks').collect(),
+    }));
+    expect(stored.items).toEqual([expect.objectContaining({ externalId: 't1', deleted: true, text: '' })]);
+    expect(stored.chunks).toEqual([]);
+
+    // The tombstone is written once: a later change sends no item.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await ingest(t, 'live', 't1', { labels: ['TRASH'], unread: true });
+    expect((await changes(t, second.watermark)).items).toEqual([]);
+  });
+
   test('a changed thread comes back after the watermark', async () => {
     const t = convexTest(schema, modules);
     await connect(t, 'live', 'connected');

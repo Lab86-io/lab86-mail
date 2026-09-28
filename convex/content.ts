@@ -469,8 +469,9 @@ const MAIL_CHANGES_BODY_BUDGET = 4_000_000;
  * `by_narrative_updated`. The watermark is the position of the last thread
  * read, so a group of threads with the same updatedAt is never skipped.
  *
- * It skips threads of accounts that are not connected, spam and trash, and
- * mail older than `sinceLastDate`; the watermark still moves past them.
+ * It skips threads of accounts that are not connected and mail older than
+ * `sinceLastDate`; the watermark still moves past them. A spam or trash
+ * thread that has a live content row comes back as a deleted item.
  */
 export const mailChanges = query({
   args: {
@@ -520,12 +521,31 @@ export const mailChanges = query({
       if (budget <= 0) break;
       read++;
       watermark = { updatedAt: row.updatedAt, creationTime: row._creationTime };
-      if (
-        !live.has(row.accountId) ||
-        (row.labels || []).some((label: string) => ['TRASH', 'SPAM'].includes(label.toUpperCase())) ||
-        (args.sinceLastDate !== undefined && (row.lastDate || 0) < args.sinceLastDate)
-      )
+      if (!live.has(row.accountId)) continue;
+      if ((row.labels || []).some((label: string) => ['TRASH', 'SPAM'].includes(label.toUpperCase()))) {
+        // A thread that moved to spam or trash leaves the index: its content
+        // row gets a tombstone, so the upsert clears the text and chunks.
+        // Mail that was never indexed gets no row.
+        const indexed = await ctx.db
+          .query('contentItems')
+          .withIndex('by_user_key', (q) =>
+            q.eq('userId', args.userId).eq('key', `mail:${row.accountId}:${row.providerThreadId}`),
+          )
+          .unique();
+        if (indexed && !indexed.deleted)
+          items.push({
+            source: 'mail',
+            connectionId: row.accountId,
+            externalId: row.providerThreadId,
+            title: row.subject || '(untitled)',
+            text: '',
+            modifiedAt: row.lastDate || row.updatedAt,
+            partial: false,
+            deleted: true,
+          });
         continue;
+      }
+      if (args.sinceLastDate !== undefined && (row.lastDate || 0) < args.sinceLastDate) continue;
       const mail = await mailThreadContent(ctx, args.userId, row);
       budget -= mail.bodyChars;
       attachments.push(...mail.attachments);
