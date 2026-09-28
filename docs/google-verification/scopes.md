@@ -37,10 +37,9 @@ Albatross has two Google consent flows. Both flows use OAuth clients in project
    `access_type=offline`, and `prompt=consent`
    (`lib/files/providers.ts:88-113`).
 
-Albatross does not use any Google scope for sign-in to Albatross. Clerk hosts
-sign-in. A "Sign in with Google" at Clerk gives only the basic profile to
-Clerk. The app does not read Google data through Clerk
-(`lib/auth/current-user.ts:21-68`).
+Albatross does not use these scopes for sign-in to Albatross. Clerk hosts
+sign-in. The app reads only the Clerk profile and does not read Google data
+through Clerk (`lib/auth/current-user.ts:21-68`).
 
 ## Summary
 
@@ -56,9 +55,9 @@ Clerk. The app does not read Google data through Clerk
 | `directory.readonly` | Sensitive | Mailbox | Recipient autocomplete from the Workspace directory |
 | `drive.readonly` | Restricted | Drive | Browse, search, open, and index Drive files |
 | `drive.file` | Non-sensitive | Drive | Create Google files from Albatross documents |
-| `documents` | Sensitive | Drive | Import and edit Google Docs |
-| `spreadsheets` | Sensitive | Drive | Import and edit Google Sheets |
-| `presentations` | Sensitive | Drive | Import and edit Google Slides |
+| `documents` | Sensitive | Drive | Import Google Docs and save edits back to them |
+| `spreadsheets` | Sensitive | Drive | Import Google Sheets; write new Sheets that Albatross makes |
+| `presentations` | Sensitive | Drive | Import Google Slides; write new Slides files that Albatross makes |
 
 ## openid
 
