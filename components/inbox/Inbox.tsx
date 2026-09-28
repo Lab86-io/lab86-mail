@@ -105,6 +105,8 @@ export interface ThreadRow {
   subject?: string;
   from?: string;
   fromAddress?: string;
+  // The saved contact name when the header gives only an address.
+  senderName?: string;
   date?: number | string;
   lastDate?: number;
   snippet?: string;
@@ -1259,7 +1261,8 @@ export const InboxThreadRow = memo(function InboxThreadRow({
       : triage?.priority === 2
         ? 'bg-[var(--color-prio-2)]'
         : '';
-  const senderLabel = shortFrom(item.from || item.fromAddress || '');
+  // A saved contact name, when the header gives only an address.
+  const senderLabel = item.senderName || shortFrom(item.from || item.fromAddress || '');
   const displaySenderLabel = senderLabel || item.account || '';
   const preview = dedupeSnippet(item.subject, item.snippet);
   const date = (item.date as any) || item.lastDate || 0;

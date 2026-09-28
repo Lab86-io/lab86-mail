@@ -54,6 +54,7 @@ export function mailThreadSummaryFromCorpus(item: any) {
     subject: cap(item?.subject, 2_000, '(no subject)') || '(no subject)',
     fromHeader: cap(item?.fromAddress, 1_000),
     senderEmail: emailFromHeader(item?.fromAddress || null) ?? undefined,
+    senderName: cap(item?.senderName, 200) || undefined,
     snippet: cap(item?.snippet, 500),
     lastMessageAt: epochMs(item?.lastDate),
     unread: Boolean(item?.unread),
