@@ -163,66 +163,6 @@ describe('direct Google sign-in state', () => {
     await t.mutation(api.googleDirect.saveOAuthState, { ...base, state: 'swept', expiresAt: Date.now() - 1 });
     expect(await t.mutation(internal.googleDirect.sweepExpiredOAuthStates, {})).toEqual({ deleted: 1 });
   });
-
-  test('a completion token belongs to one user and is single use', async () => {
-    const t = newHarness();
-    const base = {
-      internalSecret: SECRET,
-      userId: USER,
-      mode: 'new' as const,
-      authorizationCodeEncrypted: 'enc-code',
-      codeVerifierEncrypted: 'enc-verifier',
-    };
-    await t.mutation(api.googleDirect.saveOAuthCompletion, {
-      ...base,
-      completionToken: 'tok',
-      expiresAt: Date.now() + 60_000,
-    });
-    expect(
-      await t.mutation(api.googleDirect.consumeOAuthCompletion, {
-        internalSecret: SECRET,
-        userId: 'someone-else',
-        completionToken: 'tok',
-      }),
-    ).toBeNull();
-    expect(
-      await t.mutation(api.googleDirect.consumeOAuthCompletion, {
-        internalSecret: SECRET,
-        userId: USER,
-        completionToken: 'tok',
-      }),
-    ).toEqual({
-      mode: 'new',
-      accountId: undefined,
-      authorizationCodeEncrypted: 'enc-code',
-      codeVerifierEncrypted: 'enc-verifier',
-    });
-    expect(
-      await t.mutation(api.googleDirect.consumeOAuthCompletion, {
-        internalSecret: SECRET,
-        userId: USER,
-        completionToken: 'tok',
-      }),
-    ).toBeNull();
-    await t.mutation(api.googleDirect.saveOAuthCompletion, {
-      ...base,
-      completionToken: 'late',
-      expiresAt: Date.now() - 1,
-    });
-    expect(
-      await t.mutation(api.googleDirect.consumeOAuthCompletion, {
-        internalSecret: SECRET,
-        userId: USER,
-        completionToken: 'late',
-      }),
-    ).toBeNull();
-    await t.mutation(api.googleDirect.saveOAuthCompletion, {
-      ...base,
-      completionToken: 'swept',
-      expiresAt: Date.now() - 1,
-    });
-    expect(await t.mutation(internal.googleDirect.sweepExpiredOAuthCompletions, {})).toEqual({ deleted: 1 });
-  });
 });
 
 describe('switch, reconnect, and rollback', () => {

@@ -2108,8 +2108,9 @@ export default defineSchema({
     .index('by_user_connection', ['userId', 'connectionId']),
 
   // Direct Google mail sign-in (convex/googleDirect.ts). The Google callback
-  // shares the Files redirect URI, so these rows are separate from the Files
-  // rows: the callback tries this store first.
+  // shares the Files redirect URI, so this state is separate from the Files
+  // state: the callback tries this store first. A native flow keeps its
+  // result in oauthCompletions, as the Nylas flow does.
   googleMailOAuthStates: defineTable({
     userId: v.string(),
     state: v.string(),
@@ -2123,20 +2124,6 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_state', ['state'])
-    .index('by_expires', ['expiresAt']),
-
-  googleMailOAuthCompletions: defineTable({
-    userId: v.string(),
-    completionToken: v.string(),
-    mode: v.union(v.literal('switch'), v.literal('new'), v.literal('reconnect')),
-    accountId: v.optional(v.string()),
-    authorizationCodeEncrypted: v.string(),
-    codeVerifierEncrypted: v.string(),
-    expiresAt: v.number(),
-    createdAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_token', ['completionToken'])
     .index('by_expires', ['expiresAt']),
 
   cloudFileOAuthStates: defineTable({

@@ -24,7 +24,7 @@ function isDirectGrant(grantId: string | undefined) {
 }
 
 // ---------------------------------------------------------------------------
-// Sign-in state and native completion tokens
+// Sign-in state
 // ---------------------------------------------------------------------------
 
 export const saveOAuthState = mutation({
@@ -86,66 +86,6 @@ export const sweepExpiredOAuthStates = internalMutation({
     for (const row of expired) await ctx.db.delete(row._id);
     if (expired.length === CLEANUP_BATCH_SIZE) {
       await ctx.scheduler.runAfter(0, internal.googleDirect.sweepExpiredOAuthStates, {});
-    }
-    return { deleted: expired.length };
-  },
-});
-
-export const saveOAuthCompletion = mutation({
-  args: {
-    internalSecret: v.optional(v.string()),
-    userId: v.string(),
-    completionToken: v.string(),
-    mode: modeValidator,
-    accountId: v.optional(v.string()),
-    authorizationCodeEncrypted: v.string(),
-    codeVerifierEncrypted: v.string(),
-    expiresAt: v.number(),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const { internalSecret: _secret, ...row } = args;
-    await ctx.db.insert('googleMailOAuthCompletions', { ...row, createdAt: now() });
-    await ctx.scheduler.runAfter(
-      Math.max(0, args.expiresAt - now()),
-      internal.googleDirect.sweepExpiredOAuthCompletions,
-      {},
-    );
-    return { ok: true };
-  },
-});
-
-// Only the signed-in owner of the flow can redeem its completion token.
-export const consumeOAuthCompletion = mutation({
-  args: { internalSecret: v.optional(v.string()), userId: v.string(), completionToken: v.string() },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const row = await ctx.db
-      .query('googleMailOAuthCompletions')
-      .withIndex('by_token', (q) => q.eq('completionToken', args.completionToken))
-      .unique();
-    if (!row || row.userId !== args.userId) return null;
-    await ctx.db.delete(row._id);
-    if (row.expiresAt < now()) return null;
-    return {
-      mode: row.mode,
-      accountId: row.accountId,
-      authorizationCodeEncrypted: row.authorizationCodeEncrypted,
-      codeVerifierEncrypted: row.codeVerifierEncrypted,
-    };
-  },
-});
-
-export const sweepExpiredOAuthCompletions = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const expired = await ctx.db
-      .query('googleMailOAuthCompletions')
-      .withIndex('by_expires', (q) => q.lte('expiresAt', now()))
-      .take(CLEANUP_BATCH_SIZE);
-    for (const row of expired) await ctx.db.delete(row._id);
-    if (expired.length === CLEANUP_BATCH_SIZE) {
-      await ctx.scheduler.runAfter(0, internal.googleDirect.sweepExpiredOAuthCompletions, {});
     }
     return { deleted: expired.length };
   },

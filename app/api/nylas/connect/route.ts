@@ -90,13 +90,9 @@ export function createNylasConnectGet(deps: NylasConnectDependencies = defaultDe
     });
     const isNative = url.searchParams.get('native') === '1';
     if (provider === 'google' && deps.directGoogleConnectChoice && deps.startGoogleMailConnect) {
-      // LAB86_GOOGLE_DIRECT=1 sends Google connections to Gmail directly. A
-      // native build says finalize=1 when it can redeem a completion token.
-      const choice = await deps.directGoogleConnectChoice({
-        userId: user.userId,
-        native: isNative,
-        finalize: url.searchParams.get('finalize') === '1',
-      });
+      // LAB86_GOOGLE_DIRECT=1 sends Google connections to Gmail directly
+      // (docs/google-direct-transport.md).
+      const choice = await deps.directGoogleConnectChoice({ userId: user.userId });
       if (choice) {
         try {
           const started = await deps.startGoogleMailConnect({

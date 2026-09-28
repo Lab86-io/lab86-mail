@@ -2,9 +2,9 @@ import { describe, expect, mock, test } from 'bun:test';
 import { NextRequest, NextResponse } from 'next/server';
 import { createGoogleHistoryPost } from '../app/api/cron/google-history/route';
 import { createCloudFileOAuthCallback } from '../app/api/files/oauth/callback/route';
-import { createGoogleConnectFinalize } from '../app/api/google/connect/finalize/route';
 import { createGoogleConnectGet } from '../app/api/google/connect/route';
 import { createNylasConnectGet } from '../app/api/nylas/connect/route';
+import { createNylasOAuthFinalize } from '../app/api/nylas/finalize/route';
 import { AuthRequiredError } from '../lib/auth/current-user';
 import { GoogleConnectError } from '../lib/google/connect';
 import { RateLimitError } from '../lib/rate-limit';
@@ -101,61 +101,59 @@ describe('GET /api/google/connect', () => {
   });
 });
 
-describe('POST /api/google/connect/finalize', () => {
+describe('POST /api/nylas/finalize with a Google completion', () => {
   const token = 'x'.repeat(43);
-  function route(overrides: Record<string, unknown> = {}) {
-    return createGoogleConnectFinalize({
+  function route(stored: unknown, overrides: Record<string, unknown> = {}) {
+    const calls: any = { consumed: [], google: [], nylas: [] };
+    const post = createNylasOAuthFinalize({
       requireCurrentUser: async () => user,
       enforceUserRateLimit: async () => ({ ok: true }),
-      finalizeGoogleMailConnect: async (input: any) => {
-        if (input.completionToken !== token || input.userId !== 'user-1')
-          throw new GoogleConnectError(409, 'expired');
-        return { accountId: 'acct-1', grantId: 'google:acct-1', outcome: 'created' };
+      consumeOAuthCompletion: async (input: any) => {
+        calls.consumed.push(input);
+        return stored;
+      },
+      completeNylasConnection: async (input: any) => {
+        calls.nylas.push(input);
+        return {};
+      },
+      finalizeGoogleMailCompletion: async (input: any) => {
+        calls.google.push(input);
+        return { accountId: 'acct-1', grantId: 'google:acct-1', outcome: 'switched' };
       },
       ...overrides,
     } as any);
+    return { post, calls };
   }
-  const post = (body: unknown) =>
-    new NextRequest('http://localhost/api/google/connect/finalize', {
+  const request = () =>
+    new NextRequest('http://localhost/api/nylas/finalize', {
       method: 'POST',
-      body: JSON.stringify(body),
+      body: JSON.stringify({ completionToken: token }),
     });
+  const google = { googleMail: { mode: 'switch', accountId: 'acct-1', code: 'c', codeVerifier: 'v' } };
 
-  test('the signed-in owner redeems the token', async () => {
-    const response = await route()(post({ completionToken: token }));
-    expect(await response.json()).toEqual({ ok: true, accountId: 'acct-1', outcome: 'created' });
+  test('a Google payload goes to the Google completion, for the signed-in user', async () => {
+    const { post, calls } = route(google);
+    const response = await post(request());
+    expect(await response.json()).toEqual({ ok: true, accountId: 'acct-1', outcome: 'switched' });
+    expect(calls.consumed).toEqual([{ userId: 'user-1', kind: 'mail', completionToken: token }]);
+    expect(calls.google).toEqual([{ userId: 'user-1', completion: google }]);
+    expect(calls.nylas).toEqual([]);
   });
 
-  test('errors: bad input, an expired token, signed out, rate limit, and a crash', async () => {
-    expect((await route()(post({ completionToken: 'short' }))).status).toBe(400);
-    expect((await route()(post({ completionToken: 'y'.repeat(43) }))).status).toBe(409);
-    expect(
-      (
-        await route({
-          requireCurrentUser: async () => {
-            throw new AuthRequiredError('Sign in required.');
-          },
-        })(post({ completionToken: token }))
-      ).status,
-    ).toBe(401);
-    expect(
-      (
-        await route({
-          enforceUserRateLimit: async () => {
-            throw new RateLimitError('slow', 10, 10);
-          },
-        })(post({ completionToken: token }))
-      ).status,
-    ).toBe(429);
-    expect(
-      (
-        await route({
-          finalizeGoogleMailConnect: async () => {
-            throw new Error('boom');
-          },
-        })(post({ completionToken: token }))
-      ).status,
-    ).toBe(500);
+  test('a Nylas payload still goes to Nylas; a refusal keeps its status', async () => {
+    const nylas = route({ code: 'nylas-code', provider: 'google' });
+    expect(await (await nylas.post(request())).json()).toEqual({ ok: true });
+    expect(nylas.calls.nylas).toEqual([{ userId: 'user-1', code: 'nylas-code', provider: 'google' }]);
+    expect(nylas.calls.google).toEqual([]);
+    const refused = route(google, {
+      finalizeGoogleMailCompletion: async () => {
+        throw new GoogleConnectError(409, 'Sign in to Google as ann@example.com.');
+      },
+    });
+    const response = await refused.post(request());
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain('Sign in to Google');
+    expect((await route(null).post(request())).status).toBe(409);
   });
 });
 
@@ -231,13 +229,13 @@ describe('the Nylas connect route with the direct Google flow', () => {
   test('with a direct choice, Google goes to Gmail and no Nylas state is made', async () => {
     const { deps: d, calls } = deps({ mode: 'new' });
     const response = await createNylasConnectGet(d as any)(
-      new NextRequest('http://localhost/api/nylas/connect?provider=google&native=1&finalize=1&format=json'),
+      new NextRequest('http://localhost/api/nylas/connect?provider=google&native=1&format=json'),
     );
     expect(await response.json()).toEqual({
       ok: true,
       authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=g',
     });
-    expect(calls.choices).toEqual([{ userId: 'user-1', native: true, finalize: true }]);
+    expect(calls.choices).toEqual([{ userId: 'user-1' }]);
     expect(calls.starts[0]).toMatchObject({ userId: 'user-1', mode: 'new', native: true });
     expect(calls.nylasStates).toBe(0);
     const redirect = await createNylasConnectGet(d as any)(

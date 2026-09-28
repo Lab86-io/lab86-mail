@@ -4,10 +4,11 @@ import {
   __setGoogleConnectDepsForTest,
   completeGoogleMailConnect,
   directGoogleConnectChoice,
-  finalizeGoogleMailConnect,
+  finalizeGoogleMailCompletion,
   GoogleConnectError,
   handleGoogleMailCallback,
   isGoogleDirectSwitchAllowed,
+  isGoogleMailCompletion,
   kickAfterConnect,
   startGoogleMailConnect,
 } from '../lib/google/connect';
@@ -42,6 +43,7 @@ interface Harness {
   mutations: Array<{ name: string; args: any }>;
   afterConnect: any[];
   exchanges: any[];
+  completions: any[];
 }
 
 function setup(
@@ -53,12 +55,11 @@ function setup(
     profile?: { emailAddress: string; historyId: string };
     session?: { userId: string } | null;
     consumeState?: any;
-    consumeCompletion?: any;
     activation?: any;
     defaultAfterConnect?: boolean;
   } = {},
 ): Harness {
-  const harness: Harness = { mutations: [], afterConnect: [], exchanges: [] };
+  const harness: Harness = { mutations: [], afterConnect: [], exchanges: [], completions: [] };
   __setGoogleConnectDepsForTest({
     query: (async () => overrides.accounts ?? [NYLAS_ACCOUNT, DIRECT_DEAD, OUTLOOK]) as any,
     mutate: (async (fn: unknown, args: any) => {
@@ -68,7 +69,6 @@ function setup(
         if (overrides.consumeState instanceof Error) throw overrides.consumeState;
         return overrides.consumeState ?? null;
       }
-      if (name === 'googleDirect:consumeOAuthCompletion') return overrides.consumeCompletion ?? null;
       if (name === 'googleDirect:activateGoogleAccount') {
         return (
           overrides.activation ?? {
@@ -102,6 +102,10 @@ function setup(
       return overrides.session ?? { userId: USER };
     }) as any,
     randomState: () => 'random-state-with-enough-length-for-tokens-000',
+    saveOAuthCompletion: (async (input: any) => {
+      harness.completions.push(input);
+      return 'completion-token-with-enough-length-000000000';
+    }) as any,
     randomUUID: () => 'uuid-new',
     now: () => 1_800_000_000_000,
     env: () => overrides.env ?? {},
@@ -218,13 +222,9 @@ describe('startGoogleMailConnect', () => {
 });
 
 describe('directGoogleConnectChoice', () => {
-  test('the flag sends Google connections to Gmail; an old native build stays on Nylas', async () => {
+  test('the flag sends Google connections to Gmail', async () => {
     setup({ env: { LAB86_GOOGLE_DIRECT: '1' } });
     expect(await directGoogleConnectChoice({ userId: USER })).toEqual({ mode: 'new' });
-    expect(await directGoogleConnectChoice({ userId: USER, native: true })).toBeNull();
-    expect(await directGoogleConnectChoice({ userId: USER, native: true, finalize: true })).toEqual({
-      mode: 'new',
-    });
   });
 
   test('with the flag off, only a dead direct account reconnects directly', async () => {
@@ -367,24 +367,26 @@ describe('handleGoogleMailCallback', () => {
     );
   });
 
-  test('a native callback stores a completion token and opens the app', async () => {
+  test('a native callback keeps the result in the shared completion store and opens the app', async () => {
     const harness = setup({
       consumeState: state({ nativeCallback: true, mode: 'new', accountId: undefined }),
     });
     const response = await handleGoogleMailCallback({ state: 's', code: 'code-9' });
     const location = new URL(response?.headers.get('location') || '');
     expect(`${location.protocol}//${location.host}${location.pathname}`).toBe('lab86://oauth/mail');
-    expect(location.searchParams.get('mail_completion')).toBe(
-      'random-state-with-enough-length-for-tokens-000',
+    // The app redeems it like a Nylas completion, at /api/nylas/finalize.
+    expect(location.searchParams.get('nylas_completion')).toBe(
+      'completion-token-with-enough-length-000000000',
     );
-    const saved = harness.mutations.find((m) => m.name === 'googleDirect:saveOAuthCompletion');
-    expect(saved?.args).toMatchObject({
-      userId: USER,
-      mode: 'new',
-      authorizationCodeEncrypted: 'enc(code-9)',
-      codeVerifierEncrypted: 'enc(verifier)',
-      expiresAt: 1_800_000_000_000 + 5 * 60_000,
-    });
+    expect(harness.completions).toEqual([
+      {
+        userId: USER,
+        kind: 'mail',
+        payload: {
+          googleMail: { mode: 'new', accountId: undefined, code: 'code-9', codeVerifier: 'verifier' },
+        },
+      },
+    ]);
     expect(harness.exchanges).toEqual([]);
   });
 
@@ -408,7 +410,7 @@ describe('handleGoogleMailCallback', () => {
     setup({ consumeState: state({ nativeCallback: true }), tokens: { access_token: 'a' } });
     // The native path saves a completion; exchange errors happen later, in finalize.
     expect((await handleGoogleMailCallback({ state: 's', code: 'c' }))?.headers.get('location')).toContain(
-      'mail_completion',
+      'nylas_completion',
     );
   });
 
@@ -476,30 +478,17 @@ describe('kicks after a connection', () => {
   });
 });
 
-describe('finalizeGoogleMailConnect', () => {
-  test('redeems a completion token of the same user once', async () => {
-    const harness = setup({
-      consumeCompletion: {
-        mode: 'switch',
-        accountId: 'acct-1',
-        authorizationCodeEncrypted: 'enc(code-5)',
-        codeVerifierEncrypted: 'enc(ver-5)',
-      },
-    });
-    const result = await finalizeGoogleMailConnect({ userId: USER, completionToken: 'tok' });
+describe('finalizeGoogleMailCompletion', () => {
+  test('completes a native Google sign-in from its stored payload', async () => {
+    const harness = setup();
+    const completion = {
+      googleMail: { mode: 'switch' as const, accountId: 'acct-1', code: 'code-5', codeVerifier: 'ver-5' },
+    };
+    expect(isGoogleMailCompletion(completion)).toBe(true);
+    expect(isGoogleMailCompletion({ code: 'nylas-code', provider: 'google' })).toBe(false);
+    expect(isGoogleMailCompletion(null)).toBe(false);
+    const result = await finalizeGoogleMailCompletion({ userId: USER, completion });
     expect(result.outcome).toBe('switched');
-    expect(harness.mutations[0]).toEqual({
-      name: 'googleDirect:consumeOAuthCompletion',
-      args: { userId: USER, completionToken: 'tok' },
-    });
     expect(harness.exchanges[0]).toMatchObject({ code: 'code-5', codeVerifier: 'ver-5' });
-    setup({ consumeCompletion: null });
-    expect(
-      (
-        (await finalizeGoogleMailConnect({ userId: USER, completionToken: 'tok' }).catch(
-          (e) => e,
-        )) as GoogleConnectError
-      ).status,
-    ).toBe(409);
   });
 });

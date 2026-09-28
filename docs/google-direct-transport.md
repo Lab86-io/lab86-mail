@@ -49,8 +49,8 @@ system. The Google scopes do not change.
   `access_type=offline`, `prompt=consent`, PKCE.
 - **Callback binding.** The web callback requires a signed-in session whose
   user id equals the state's user id. A native flow gets a single-use
-  completion token, and the signed-in app redeems it through an authenticated
-  finalize route. This is the Files pattern.
+  completion token in the shared completion store, and the signed-in app
+  redeems it through the authenticated `/api/nylas/finalize` route.
 - **Cutover.** Two paths:
   1. Switch an existing Nylas Google account in place. The OAuth email must
      equal the account email. The Nylas grant id is kept on the Google
@@ -121,10 +121,12 @@ These rules add to the decisions above or make them exact.
   connection to the direct flow when a direct account of the user needs a
   reconnect. Thus the Reconnect button does not move a switched account back
   to Nylas.
-- **Native.** The app sends `finalize=1` to `/api/nylas/connect`. Only such a
-  request goes to the direct flow, so an older build stays on Nylas. The
-  callback opens `lab86://oauth/mail?mail_completion=<token>`, and the app
-  posts the token to `/api/google/connect/finalize`.
+- **Native.** A native Google connection takes the same choice as a web one.
+  The callback keeps the Google result in the shared completion store
+  (`oauthCompletions`, kind `mail`) and opens
+  `lab86://oauth/mail?nylas_completion=<token>`. The app redeems it at
+  `/api/nylas/finalize`, as for Nylas; that route sends a Google result to
+  `finalizeGoogleMailCompletion`. So the app needs no change.
 - **Tokens.** An `invalid_grant` answer, or a missing token row, puts every
   account on the grant in the reconnect state (`markGrantReconnectNeeded`,
   the same state as a dead Nylas grant).

@@ -41,17 +41,13 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
 
     func connectMailbox(provider: String) async throws {
         let encoded = provider.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? provider
-        // `finalize=1` tells the server that this build can redeem the
-        // completion token of a direct Google sign-in (docs/google-direct-transport.md).
         let response = try await backend.get(
-            path: "/api/nylas/connect?provider=\(encoded)&native=1&format=json&finalize=1"
+            path: "/api/nylas/connect?provider=\(encoded)&native=1&format=json"
         )
         try await authorize(
             response: response,
             successKey: "nylas_connected",
-            completionPath: "/api/nylas/finalize",
-            // A direct Google sign-in keeps its own completion store.
-            otherCompletions: ["mail_completion": "/api/google/connect/finalize"]
+            completionPath: "/api/nylas/finalize"
         )
     }
 
@@ -82,8 +78,7 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
     private func authorize(
         response: JSONValue,
         successKey: String,
-        completionPath: String? = nil,
-        otherCompletions: [String: String] = [:]
+        completionPath: String? = nil
     ) async throws {
         guard let value = response["authorizationUrl"]?.stringValue,
               let authorizationURL = URL(string: value) else {
@@ -134,14 +129,6 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
             } ?? []
         )
         if values[successKey] != nil { return }
-        for (key, path) in otherCompletions {
-            guard let completionToken = values[key] else { continue }
-            _ = try await backend.post(
-                path: path,
-                body: .object(["completionToken": .string(completionToken)])
-            )
-            return
-        }
         // The callback keeps the provider result for the signed-in app to
         // redeem, so an approval in another person's browser never connects.
         let completionToken = values["files_completion"]

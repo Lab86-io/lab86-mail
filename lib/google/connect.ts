@@ -8,8 +8,10 @@
 //   address, it switches or reconnects that account instead of adding one.
 //
 // The web callback needs a signed-in session of the same user. A native flow
-// gets a single-use completion token, and the signed-in app redeems it
-// through the finalize route. This is the Files pattern.
+// keeps the Google result in the shared completion store
+// (lib/security/oauth-completions.ts) under a single-use token, as the Nylas
+// callback does. The app gets `nylas_completion=<token>` and redeems it at
+// /api/nylas/finalize, which sends a Google result to this module.
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
@@ -22,6 +24,7 @@ import { hostedPublicUrl } from '@/lib/hosted/env';
 import { maybeKickCorpusBackfill, reconcileMailCorpusAccount } from '@/lib/mail/corpus-sync';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import { decryptSecret, encryptSecret } from '@/lib/security/crypto';
+import { saveOAuthCompletion } from '@/lib/security/oauth-completions';
 import { sanitizeInternalPath } from '@/lib/security/redirect';
 import {
   buildGoogleMailAuthorizationUrl,
@@ -40,7 +43,6 @@ export type GoogleMailMode = 'switch' | 'new' | 'reconnect';
 export type GoogleMailOutcome = 'switched' | 'reconnected' | 'created';
 
 const STATE_TTL_MS = 10 * 60_000;
-const COMPLETION_TTL_MS = 5 * 60_000;
 const DEFAULT_REDIRECT = '/settings';
 export const NATIVE_MAIL_CALLBACK = 'lab86://oauth/mail';
 
@@ -75,6 +77,8 @@ const defaults = {
   fetchGmailProfile: (accessToken: string) => fetchGmailProfile(accessToken),
   fetchGoogleUserInfo: (accessToken: string) => fetchGoogleUserInfo(accessToken),
   requireCurrentUser,
+  saveOAuthCompletion: (input: { userId: string; kind: 'mail'; payload: GoogleMailCompletionPayload }) =>
+    saveOAuthCompletion(input),
   randomState: () => randomBytes(32).toString('base64url'),
   randomUUID: (): string => randomUUID(),
   now: () => Date.now(),
@@ -189,15 +193,12 @@ export async function startGoogleMailConnect(input: StartInput) {
 
 /**
  * Which direct flow a "connect Google" request of the Nylas connect route
- * takes, or null for Nylas. An old native build cannot redeem a completion
- * token, so a native request goes direct only when it says `finalize=1`.
+ * takes, or null for Nylas. A native app that redeems a Nylas completion
+ * token also redeems a Google one, so web and native take the same choice.
  */
 export async function directGoogleConnectChoice(input: {
   userId: string;
-  native?: boolean;
-  finalize?: boolean;
 }): Promise<{ mode: GoogleMailMode; account?: string } | null> {
-  if (input.native && !input.finalize) return null;
   if (!deps.googleOAuthClient()) return null;
   if (isGoogleDirectEnabled(deps.env())) return { mode: 'new' };
   // With the flag off, a direct account that needs a reconnect still
@@ -329,17 +330,20 @@ export async function handleGoogleMailCallback(input: {
   if (!input.code) return fail('Google did not return an authorization code.');
   try {
     if (native) {
-      const completionToken = deps.randomState();
-      await deps.mutate(api.googleDirect.saveOAuthCompletion, {
+      const payload: GoogleMailCompletionPayload = {
+        googleMail: {
+          mode: stored.mode,
+          accountId: stored.accountId,
+          code: input.code,
+          codeVerifier: deps.decryptSecret(stored.codeVerifierEncrypted),
+        },
+      };
+      const completionToken = await deps.saveOAuthCompletion({
         userId: stored.userId,
-        completionToken,
-        mode: stored.mode,
-        accountId: stored.accountId,
-        authorizationCodeEncrypted: deps.encryptSecret(input.code),
-        codeVerifierEncrypted: stored.codeVerifierEncrypted,
-        expiresAt: deps.now() + COMPLETION_TTL_MS,
+        kind: 'mail',
+        payload,
       });
-      return redirect(undefined, { mail_completion: completionToken }, true);
+      return redirect(undefined, { nylas_completion: completionToken }, true);
     }
     const sessionUser = await deps.requireCurrentUser().catch(() => null);
     if (!sessionUser || sessionUser.userId !== stored.userId) {
@@ -363,20 +367,35 @@ export async function handleGoogleMailCallback(input: {
   }
 }
 
-/** The authenticated finalize step of a native flow. */
-export async function finalizeGoogleMailConnect(input: { userId: string; completionToken: string }) {
-  const stored = await deps.mutate<{
+/** What a native Google callback keeps in the shared completion store. */
+export interface GoogleMailCompletionPayload {
+  googleMail: {
     mode: GoogleMailMode;
     accountId?: string;
-    authorizationCodeEncrypted: string;
-    codeVerifierEncrypted: string;
-  } | null>(api.googleDirect.consumeOAuthCompletion, input);
-  if (!stored) throw new GoogleConnectError(409, 'The Google connection is invalid or expired.');
+    code: string;
+    codeVerifier: string;
+  };
+}
+
+export function isGoogleMailCompletion(payload: unknown): payload is GoogleMailCompletionPayload {
+  const google = (payload as Partial<GoogleMailCompletionPayload> | null)?.googleMail;
+  return Boolean(google && typeof google.code === 'string' && typeof google.codeVerifier === 'string');
+}
+
+/**
+ * The finalize step of a native flow, for /api/nylas/finalize. That route has
+ * checked that the signed-in user redeemed a token of their own.
+ */
+export async function finalizeGoogleMailCompletion(input: {
+  userId: string;
+  completion: GoogleMailCompletionPayload;
+}) {
+  const google = input.completion.googleMail;
   return await completeGoogleMailConnect({
     userId: input.userId,
-    mode: stored.mode,
-    accountId: stored.accountId,
-    code: deps.decryptSecret(stored.authorizationCodeEncrypted),
-    codeVerifier: deps.decryptSecret(stored.codeVerifierEncrypted),
+    mode: google.mode,
+    accountId: google.accountId,
+    code: google.code,
+    codeVerifier: google.codeVerifier,
   });
 }
