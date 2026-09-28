@@ -347,13 +347,16 @@ describe('dead-account purge', () => {
       accountId: 'grant_1',
     });
     expect(first).toMatchObject({ done: false });
-    expect((await countFor(t, 'grant_1')).mailCorpusMessages).toBe(5);
+    // One pass takes a page that the byte room of message rows sets.
+    const left = (await countFor(t, 'grant_1')).mailCorpusMessages;
+    expect(left).toBeGreaterThan(0);
+    expect(left).toBeLessThan(45);
     // The account reconnects and fails again before the next pass runs.
     setSystemTime(new Date(T0 + 2 * DAY));
     await connect(t);
     await markDead(t);
     await drain(t);
-    expect((await countFor(t, 'grant_1')).mailCorpusMessages).toBe(5);
+    expect((await countFor(t, 'grant_1')).mailCorpusMessages).toBe(left);
     const row = await t.run((ctx) => ctx.db.query('connectedAccounts').first());
     expect(row).toMatchObject({ status: 'error', errorSince: T0 + 2 * DAY });
     expect(row?.corpusPurgedAt).toBeUndefined();
