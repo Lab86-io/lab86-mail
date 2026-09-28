@@ -127,7 +127,7 @@ The DAST scan ran against production.
 | OSV-Scanner (`ghcr.io/google/osv-scanner`) | 2.6.0 | `bun.lock`, iOS `Package.resolved` | `bun.lock` before the bumps: 69 advisory groups in 22 package versions (2 critical, 30 high, 31 moderate, 5 low, 1 not rated). iOS packages: no issues. |
 | Semgrep (`semgrep/semgrep`) | 1.177.0 | `app/`, `lib/`, `convex/`, `components/`, `proxy.ts`, `next.config.ts` with `p/owasp-top-ten`, `p/typescript`, `p/react`, `p/nextjs`, `p/secrets` | 1,164 files, 117 rules. 6 findings: 1 error, 5 warnings. |
 | Fluid Attacks SAST (`fluidattacks/sast`) | 1.0.0 (image of 2026-09-28) | same folders | 4 findings, all rule F188. Ran without an account. |
-| Gitleaks (`zricethezav/gitleaks`) | 8.30.1 | working tree; git history | Tree: 4 findings, all false positives. History: see the report of the integrator. |
+| Gitleaks (`zricethezav/gitleaks`) | 8.30.1 | working tree; git history | Tree: 4 findings, all false positives. History of all branches, remote branches, and tags (1,340 commits): 10 findings, all false positives. Local T3 Code checkpoint refs (1,520 snapshot commits): the 1,288 blobs that are not in the branch history, scanned as files: 1 finding, a false positive. |
 | OWASP ZAP baseline (`ghcr.io/zaproxy/zaproxy:stable`) | 2.17.0 | `https://mail.lab86.io/sign-in`, `/pricing`, `/privacy`, `/terms` (passive, no login) | 0 high. 5 medium alert types, 5 low, 5 informational. Each page: 0 FAIL, 8 or 9 WARN, 58 or 59 PASS. |
 
 ### ZAP alerts
@@ -175,6 +175,10 @@ False positives:
 | Gitleaks | `generic-api-key` at `.env.example:73` | The value is empty. The rule matched across the line break into the next variable name. |
 | Gitleaks | `generic-api-key` at `tests/albatross-notification-audit-fixes.test.ts:338` | The line is a list of environment variable names, not values. |
 | Gitleaks | `generic-api-key` at `tests/tools-calendar-sync-now.test.ts:209`, `:219` | Test idempotency keys, not secrets. |
+| Gitleaks (history) | `generic-api-key` in `apps/macos/Lab86Mail/Sources/App/Config.swift:6` (commits `aa57fbfd23`, `a8eb3678dc`) | A Clerk publishable key (`pk_live_…`). Clerk makes this key public; every client bundle holds it. |
+| Gitleaks (history) | `generic-api-key` in `apps/ios/ci_scripts/ci_post_clone_test.sh:55`, `:60`, `:62` (commits `c673c43830`, `9f3f48224b`) | The value is the Clerk frontend host name, not a secret. |
+| Gitleaks (history) | `generic-api-key` in `docs/albatross-work-v2-ui-prompt.md:135` (commit `15157326c4`) | Prose about design tokens. |
+| Gitleaks (history) | `generic-api-key` in `.env.example` (commit `15157326c4`, and one checkpoint blob) | Empty value; the same match across a line break as in the tree. |
 
 Other items from this review, owned by the workstreams of the casa-prep round:
 
