@@ -361,7 +361,23 @@ export const localPage = query({
           .paginate({ cursor: args.cursor || null, numItems: 20 });
     const items = [];
     const attachments: any[] = [];
+    // Mail of an account that is not connected is not read, labelled, or
+    // embedded. The cursor still moves past it. One read for each page.
+    const liveAccounts =
+      args.source === 'mail'
+        ? new Set(
+            (
+              await ctx.db
+                .query('connectedAccounts')
+                .withIndex('by_user', (q) => q.eq('userId', args.userId))
+                .collect()
+            )
+              .filter((account) => account.status === 'connected')
+              .map((account) => account.accountId),
+          )
+        : null;
     for (const row of page.page) {
+      if (liveAccounts && !liveAccounts.has(row.accountId)) continue;
       let text = row.searchText || '';
       let partial = false;
       if (args.source === 'mail') {
@@ -462,6 +478,10 @@ function documentText(model: any): string {
       .join('\n\n');
   return JSON.stringify(model || {});
 }
+/** Paid passes (labels and vectors) one content version gets before it stops as 'failed'. */
+export const CONTENT_MAX_ATTEMPTS = 5;
+const HOUR_MS = 3_600_000;
+
 export const claimItems = mutation({
   args: caller,
   handler: async (ctx, args) => {
@@ -500,13 +520,26 @@ export const claimItems = mutation({
     const result = [];
     for (const row of fair) {
       if ((row.leaseUntil || 0) > Date.now()) continue;
+      // The pass count is taken at claim time, so a pass that never reports
+      // back (a crash, a rejected result) also counts.
+      if (row.attempts >= CONTENT_MAX_ATTEMPTS) {
+        await ctx.db.patch(row._id, { status: 'failed', lease: undefined, leaseUntil: undefined });
+        continue;
+      }
       if (
         !(
           (await contentAccess(ctx, args.userId, row, 'brief')) ||
           (await contentAccess(ctx, args.userId, row))
         )
       ) {
-        await ctx.db.patch(row._id, { nextAttemptAt: Date.now() + 3600_000 });
+        // No model call occurs for an item the user cannot read now (a dead
+        // account, spam, a lost connection). The next check waits as long as
+        // the item is old, from 1 hour to 1 day, and never stops, so the item
+        // comes back when access returns.
+        const age = Date.now() - (row.indexedAt || 0);
+        await ctx.db.patch(row._id, {
+          nextAttemptAt: Date.now() + Math.min(24 * HOUR_MS, Math.max(HOUR_MS, age)),
+        });
         continue;
       }
       const lease = crypto.randomUUID();
@@ -514,8 +547,9 @@ export const claimItems = mutation({
         lease,
         leaseUntil: Date.now() + 120_000,
         nextAttemptAt: Date.now() + 120_000,
+        attempts: row.attempts + 1,
       });
-      result.push({ ...row, lease, ownerIdentities });
+      result.push({ ...row, attempts: row.attempts + 1, lease, ownerIdentities });
     }
     return result;
   },
@@ -563,12 +597,15 @@ export const completeItem = mutation({
         });
     }
     const complete = Boolean(labels && (args.vectors || row.embeddingVersion === row.version));
+    // claimItems already counted this pass. An incomplete item waits longer
+    // after each pass and stops as 'failed' after CONTENT_MAX_ATTEMPTS, until
+    // its content changes (upsert then resets the count).
+    const failed = !complete && row.attempts >= CONTENT_MAX_ATTEMPTS;
     await ctx.db.patch(row._id, {
       labels,
       embeddingVersion: args.vectors ? row.version : row.embeddingVersion,
-      status: complete ? 'ready' : 'pending',
-      attempts: row.attempts + 1,
-      nextAttemptAt: Date.now() + Math.min(3_600_000, 30_000 * 2 ** Math.min(row.attempts, 7)),
+      status: complete ? 'ready' : failed ? 'failed' : 'pending',
+      nextAttemptAt: Date.now() + Math.min(HOUR_MS, 30_000 * 2 ** Math.min(Math.max(row.attempts - 1, 0), 7)),
       lease: undefined,
       leaseUntil: undefined,
     });

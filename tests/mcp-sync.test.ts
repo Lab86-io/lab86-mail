@@ -608,6 +608,59 @@ describe('MCP syncConnection state transitions', () => {
     expect(mutations.at(-1)).not.toHaveProperty('outcome');
   });
 
+  test('sends Granola detail ids in batches of 10, and a failed batch keeps the other details', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    const detailCalls: string[][] = [];
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const granolaRow = {
+      ...bitbucketRow,
+      connectionId: 'granola_batches',
+      server: 'granola',
+      serverUrl: 'https://mcp.granola.ai/mcp',
+      authKind: 'oauth',
+      scopes: ['mcp'],
+    } as any;
+    const meetings = Array.from({ length: 35 }, (_, i) => ({ id: `meeting_${i}`, title: `Meeting ${i}` }));
+    const result = await syncConnection(
+      'user_1',
+      granolaRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: granolaRow, token: 'oauth-access' }),
+        connectMcp: async () =>
+          ({
+            toolNames: new Set(['list_meetings', 'get_meetings']),
+            toolSchemas: new Map([
+              ['get_meetings', { type: 'object', properties: { meeting_ids: { type: 'array' } } }],
+            ]),
+            close: async () => undefined,
+          }) as any,
+        callMcpTool: async (_handle, tool, args: any) => {
+          if (tool === 'list_meetings') return { structuredContent: { meetings } } as any;
+          detailCalls.push(args.meeting_ids);
+          if (detailCalls.length === 2) throw new Error('too_big');
+          return {
+            structuredContent: {
+              meetings: args.meeting_ids.map((id: string) => ({ id, title: `Detailed ${id}` })),
+            },
+          } as any;
+        },
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+      }),
+    );
+    // The overall cap stays 30 ids: 3 calls of 10.
+    expect(detailCalls.map((ids) => ids.length)).toEqual([10, 10, 10]);
+    expect(detailCalls.flat()).toEqual(meetings.slice(0, 30).map((meeting) => meeting.id));
+    expect(result).toEqual({ ok: false, count: 35, error: 'too_big' });
+    const items = mutations.filter((entry) => Array.isArray(entry.items)).flatMap((entry) => entry.items);
+    const titles = new Map(items.map((item: any) => [item.externalId, item.title]));
+    expect(titles.get('meeting_0')).toBe('Detailed meeting_0');
+    expect(titles.get('meeting_15')).toBe('Meeting 15');
+    expect(titles.get('meeting_25')).toBe('Detailed meeting_25');
+  });
+
   test('keeps a successful Granola listing when optional detail enrichment fails', async () => {
     const mutations: Array<Record<string, any>> = [];
     const { syncConnection } = await import('../lib/mcp/sync');

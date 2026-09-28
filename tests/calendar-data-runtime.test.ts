@@ -33,6 +33,28 @@ function newHarness() {
   return convexTest(schema, convexModules);
 }
 
+// Window reads show only events of connected accounts, so read tests seed
+// the user's accounts first.
+async function harnessWithAccounts(accounts: Record<string, 'connected' | 'error'> = {}) {
+  const t = newHarness();
+  const all = { account_1: 'connected', account_2: 'connected', ...accounts } as const;
+  await t.run(async (ctx) => {
+    for (const [accountId, status] of Object.entries(all))
+      await ctx.db.insert('connectedAccounts', {
+        userId: USER,
+        accountId,
+        email: `${accountId}@example.test`,
+        provider: 'google',
+        grantId: `grant_${accountId}`,
+        status,
+        scopes: [],
+        createdAt: BASE,
+        updatedAt: BASE,
+      });
+  });
+  return t;
+}
+
 const HOUR = 3_600_000;
 const BASE = Date.UTC(2026, 6, 20, 12, 0, 0); // 2026-07-20T12:00Z
 
@@ -318,7 +340,7 @@ describe('event reads', () => {
   });
 
   test('listEvents returns overlapping events and hides cancelled ones', async () => {
-    const t = newHarness();
+    const t = await harnessWithAccounts();
     await t.mutation(api.calendarData.upsertEventBatch, {
       ...scope,
       events: [
@@ -339,7 +361,7 @@ describe('event reads', () => {
   });
 
   test('listEvents returns the window even when old history exceeds the limit (CAL-1)', async () => {
-    const t = newHarness();
+    const t = await harnessWithAccounts();
     const DAY = 24 * HOUR;
     // Thirty old events in the 62-day span lookback, all over before the window.
     const history = Array.from({ length: 30 }, (_, index) =>
@@ -379,7 +401,7 @@ describe('event reads', () => {
   });
 
   test('listEventsPage marks a capped window as truncated (CAL-1)', async () => {
-    const t = newHarness();
+    const t = await harnessWithAccounts();
     await t.mutation(api.calendarData.upsertEventBatch, {
       ...scope,
       events: Array.from({ length: 4 }, (_, index) =>
@@ -426,7 +448,7 @@ describe('event reads', () => {
   });
 
   test('searchEvents window and unfiltered paths apply account/calendar filters', async () => {
-    const t = newHarness();
+    const t = await harnessWithAccounts();
     await t.mutation(api.calendarData.upsertEventBatch, {
       ...scope,
       events: [
@@ -458,7 +480,7 @@ describe('event reads', () => {
   });
 
   test('countEvents counts text and window matches without approximation on small data', async () => {
-    const t = newHarness();
+    const t = await harnessWithAccounts();
     await t.mutation(api.calendarData.upsertEventBatch, {
       ...scope,
       events: [
@@ -544,8 +566,40 @@ describe('user-facing calendar surface', () => {
     await expect(t.query(api.calendarData.liveCalendars, {})).rejects.toThrow(/Not authenticated/);
   });
 
+  test('window reads hide events of accounts that are not connected', async () => {
+    const t = await harnessWithAccounts({ account_2: 'error' });
+    const window = { internalSecret: SECRET, userId: USER, startAt: BASE - HOUR, endAt: BASE + 3 * HOUR };
+    for (const [accountId, providerEventId] of [
+      ['account_1', 'live_event'],
+      ['account_2', 'dead_event'],
+      ['account_gone', 'orphan_event'],
+    ])
+      await t.mutation(api.calendarData.upsertEventBatch, {
+        ...scope,
+        accountId,
+        grantId: `grant_${accountId}`,
+        events: [eventInput({ providerEventId })],
+      });
+    const ids = (rows: any[]) => rows.map((row) => row.providerEventId);
+    expect(ids(await t.query(api.calendarData.listEvents, window))).toEqual(['live_event']);
+    expect(ids((await t.query(api.calendarData.listEventsPage, window)).events)).toEqual(['live_event']);
+    expect(ids(await t.query(api.calendarData.searchEvents, window))).toEqual(['live_event']);
+    expect((await t.query(api.calendarData.countEvents, window)).count).toBe(1);
+    const asOwner = t.withIdentity({ subject: USER });
+    expect(
+      ids(await asOwner.query(api.calendarData.liveEvents, { startAt: window.startAt, endAt: window.endAt })),
+    ).toEqual(['live_event']);
+    // With no connected account, no event shows.
+    await t.run(async (ctx) => {
+      for (const account of await ctx.db.query('connectedAccounts').collect())
+        await ctx.db.patch(account._id, { status: 'error' });
+    });
+    expect(await t.query(api.calendarData.listEvents, window)).toEqual([]);
+    expect(await t.query(api.calendarData.listEventsPage, window)).toEqual({ events: [], truncated: false });
+  });
+
   test('liveEvents serves the identity user window', async () => {
-    const t = newHarness();
+    const t = await harnessWithAccounts();
     await t.mutation(api.calendarData.upsertEventBatch, { ...scope, events: [eventInput()] });
     const asOwner = t.withIdentity({ subject: USER });
     const rows = await asOwner.query(api.calendarData.liveEvents, {

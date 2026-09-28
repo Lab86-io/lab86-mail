@@ -319,6 +319,7 @@ describe('evidence reconciliation conductor', () => {
       isInternalCronRequest: () => false,
       advanceWork: mock(async () => ({ status: 'ready' })) as any,
       convexMutation: convexMutation as any,
+      resolveTimezone: async () => 'America/New_York',
       reportError: mock(() => undefined),
     });
     const response = await post(
@@ -340,6 +341,7 @@ describe('evidence reconciliation conductor', () => {
         isInternalCronRequest: () => true,
         advanceWork: mock(async () => ({ status: 'ready' })) as any,
         convexMutation: convexMutation as any,
+        resolveTimezone: async () => 'America/New_York',
         reportError: mock(() => undefined),
       });
       const response = await post(
@@ -362,6 +364,7 @@ describe('evidence reconciliation conductor', () => {
       isInternalCronRequest: () => true,
       advanceWork,
       convexMutation: convexMutation as any,
+      resolveTimezone: async () => 'America/New_York',
       reportError: mock(() => undefined),
     });
     const response = await post(
@@ -373,7 +376,13 @@ describe('evidence reconciliation conductor', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(advanceWork).toHaveBeenCalledWith({ userId: 'user-1', workId: 'work-1', trigger: 'evidence' });
+    // The cron passes the user's stored zone, so work hours are not read in UTC.
+    expect(advanceWork).toHaveBeenCalledWith({
+      userId: 'user-1',
+      workId: 'work-1',
+      trigger: 'evidence',
+      timezone: 'America/New_York',
+    });
     expect(convexMutation).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ workId: 'work-1', evidenceAt: 1_786_700_000_000 }),
@@ -387,6 +396,7 @@ describe('evidence reconciliation conductor', () => {
       isInternalCronRequest: () => true,
       advanceWork,
       convexMutation: convexMutation as any,
+      resolveTimezone: async () => 'America/New_York',
       reportError: mock(() => undefined),
     });
     const response = await post(

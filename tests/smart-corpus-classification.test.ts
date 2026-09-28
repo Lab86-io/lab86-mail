@@ -34,6 +34,9 @@ describe('per-message Smart Category model queue', () => {
       areaClassifiedAt: undefined,
       areaClassifiedMessageId: undefined,
       areaRoutingPending: true,
+      areaAttempts: undefined,
+      areaRetryAt: undefined,
+      areaError: undefined,
     });
   });
 

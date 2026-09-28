@@ -409,11 +409,17 @@ export async function classifyThreads({ userId }: { userId: string }): Promise<C
   const modelResults = await mapWithConcurrency(needsModel, MODEL_CONCURRENCY, (thread) =>
     classifyOne({ userId, thread, profiles, activeAreaIds, factsById }),
   );
+  const failures: Array<{ artifactId: string; accountId: string; messageId: string }> = [];
   for (let index = 0; index < modelResults.length; index += 1) {
     const result = modelResults[index];
     const thread = needsModel[index];
     if (result.status === 'rejected') {
       totals.failed += 1;
+      failures.push({
+        artifactId: thread.providerThreadId,
+        accountId: thread.accountId,
+        messageId: thread.messageId,
+      });
       console.warn('[area-classifier] structured verdict failed', thread.providerThreadId, result.reason);
       continue;
     }
@@ -455,6 +461,15 @@ export async function classifyThreads({ userId }: { userId: string }): Promise<C
       userId,
       classifierVersion: AREA_CLASSIFIER_VERSION,
       verdicts,
+    });
+  }
+  // A failed call stays pending, but it counts: the thread waits before the
+  // next call, and after 3 failures it leaves the queue (recordAreaFailures).
+  if (failures.length) {
+    await deps.convexMutation(albatross.recordAreaFailures, {
+      userId,
+      classifierVersion: AREA_CLASSIFIER_VERSION,
+      failures,
     });
   }
   return totals;

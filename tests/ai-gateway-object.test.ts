@@ -3,6 +3,8 @@ import {
   __setObjectGenerationDepsForTest,
   agentProviderOptions,
   generateObjectForCurrentUser,
+  generateTextForCurrentUser,
+  recordClassifierUsage,
 } from '../lib/ai/gateway';
 import { buildModelCatalog } from '../lib/ai/model-catalog';
 
@@ -173,5 +175,96 @@ describe('structured AI gateway', () => {
       providerOptions,
     });
     expect(usage[0].slice(1)).toEqual(['custom_structured', undefined, false, 'structured provider failed']);
+  });
+});
+
+describe('usage records the cost the provider reported', () => {
+  afterEach(() => __setObjectGenerationDepsForTest());
+  const runtime = {
+    userId: 'u',
+    source: 'lab86',
+    provider: 'openrouter',
+    modelName: 'z-ai/glm-5.3-flash',
+    model: 'glm',
+  } as any;
+  const body = (cost?: number) => ({ body: { usage: { prompt_tokens: 10, completion_tokens: 2, cost } } });
+
+  test('a tool loop sums the OpenRouter cost of each step', async () => {
+    const usage: any[] = [];
+    await generateTextForCurrentUser(
+      { feature: 'narrative_research' },
+      {
+        resolveAiRuntime: async () => runtime,
+        fallbackRuntimes: () => [],
+        recordUsage: (async (...args: any[]) => usage.push(args)) as any,
+        generateText: (async () => ({
+          text: 'done',
+          finishReason: 'stop',
+          totalUsage: { inputTokens: 20, outputTokens: 4 },
+          steps: [{ response: body(0.0012) }, { response: body(0.0003) }],
+        })) as any,
+      },
+    );
+    expect(usage[0][2].inputTokens).toBe(20);
+    expect(usage[0][2].costUsd).toBeCloseTo(0.0015);
+  });
+
+  test('a direct key with no reported cost keeps the plain usage for the price table', async () => {
+    const usage: any[] = [];
+    await generateTextForCurrentUser(
+      { feature: 'summarize_thread' },
+      {
+        resolveAiRuntime: async () => ({ ...runtime, provider: 'openai' }),
+        fallbackRuntimes: () => [],
+        recordUsage: (async (...args: any[]) => usage.push(args)) as any,
+        generateText: (async () => ({
+          text: 'done',
+          finishReason: 'stop',
+          usage: { inputTokens: 5, outputTokens: 1 },
+          response: { body: { usage: { prompt_tokens: 5 } } },
+        })) as any,
+      },
+    );
+    expect(usage[0][2]).toEqual({ inputTokens: 5, outputTokens: 1 });
+  });
+
+  test('a structured call records the cost from its response body', async () => {
+    const usage: any[] = [];
+    __setObjectGenerationDepsForTest({
+      resolveAiRuntime: async () => runtime,
+      generateObject: (async () => ({
+        object: {},
+        usage: { inputTokens: 10, outputTokens: 2 },
+        response: body(0.0004),
+      })) as any,
+      recordUsage: (async (...args: any[]) => usage.push(args)) as any,
+    });
+    await generateObjectForCurrentUser({ feature: 'albatross_area_route', schema: {}, prompt: '{}' });
+    expect(usage[0][2]).toEqual({ inputTokens: 10, outputTokens: 2, costUsd: 0.0004 });
+  });
+
+  test('a classifier result passes its reported cost; no cost keeps the plain token usage', async () => {
+    const recorded: any[] = [];
+    const record: any = async (...args: any[]) => {
+      recorded.push(args[2]);
+    };
+    const owner = { userId: 'owner', source: 'lab86' as const };
+    await recordClassifierUsage(
+      owner,
+      'jev_mail',
+      { model: 'typesafe/jev-1.13', usage: { input_tokens: 200, output_tokens: 0, cost: 0.0000084 } },
+      record,
+    );
+    await recordClassifierUsage(
+      owner,
+      'jev_mail',
+      { model: 'typesafe/jev-1.13', usage: { input_tokens: 200, output_tokens: 0 } },
+      record,
+    );
+    expect(recorded).toEqual([
+      { inputTokens: 200, outputTokens: 0, costUsd: 0.0000084 },
+      { inputTokens: 200, outputTokens: 0 },
+    ]);
+    expect('costUsd' in recorded[1]).toBe(false);
   });
 });

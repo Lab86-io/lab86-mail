@@ -2,9 +2,10 @@ import { expect, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { classifyContent, embedContent, searchContent } from '../lib/content/intelligence';
 import { syncMailAttachments } from '../lib/content/mail-attachments';
-import { syncMcpContent } from '../lib/content/mcp-sync';
-import { runContentCycle } from '../lib/content/sync';
+import { HISTORY_RECHECK_MS, syncMcpContent } from '../lib/content/mcp-sync';
+import { localContentVersion, runContentCycle } from '../lib/content/sync';
 import { createContentSearch } from '../lib/tools/content';
+import { assessment as jevAssessment } from './fixtures/jev';
 
 const item: any = {
   _id: 'item',
@@ -79,7 +80,20 @@ test('embedding parsing restores provider order, records usage and rejects malfo
   };
   const result = await embedContent('owner', ['a', 'b'], undefined, fetcher, deps);
   expect(result.map((v) => v[0])).toEqual([0.1, 0.2]);
-  expect(usage[0][2].usage.input_tokens).toBe(20);
+  expect(usage[0][2].usage).toEqual({ input_tokens: 20, output_tokens: 0 });
+  // OpenRouter reports the real cost; the usage record carries it.
+  await embedContent(
+    'owner',
+    ['a'],
+    undefined,
+    (async () =>
+      Response.json({
+        data: [{ index: 0, embedding: Array(1536).fill(0.1) }],
+        usage: { prompt_tokens: 7, cost: 0.00000014 },
+      })) as unknown as typeof fetch,
+    deps,
+  );
+  expect(usage[1][2].usage).toEqual({ input_tokens: 7, output_tokens: 0, cost: 0.00000014 });
   expect(await embedContent('owner', [], undefined, fetcher, deps)).toEqual([]);
   await expect(
     embedContent(
@@ -239,6 +253,103 @@ test('connected tools page only with advertised parameters and explicitly report
   expect(failed.closed()).toBe(1);
 });
 
+test('the connector history walk records completion and then stops walking', async () => {
+  // Slack: the page after the last one is empty, so the walk is complete.
+  const slack = mcpHarness('slack');
+  slack.deps.convexMutation = async (ref: any, args: any) => {
+    slack.writes.push({ name: getFunctionName(ref), ...args });
+    return { lease: 'lease', cursor: { offset: 3 } };
+  };
+  slack.deps.callMcpTool = async (_handle: any, name: string, args: any) => {
+    slack.calls.push({ name, args });
+    return { structuredContent: args.page === 3 ? [] : [{ id: 'new', text: 'Newest message' }] };
+  };
+  const before = Date.now();
+  await syncMcpContent('owner', slack.deps);
+  expect(slack.calls.map((c) => c.args.page)).toEqual([1, 3]);
+  const done = slack.writes.at(-1);
+  expect(done.status).toBe('provider_limited');
+  expect(done.cursor).toMatchObject({ offset: 1, complete: true });
+  expect(done.cursor.checkedAt).toBeGreaterThanOrEqual(before);
+
+  // A complete walk with a recent check makes no source call at all.
+  const quiet = mcpHarness('jira');
+  quiet.deps.convexMutation = async (ref: any, args: any) => {
+    quiet.writes.push({ name: getFunctionName(ref), ...args });
+    return { lease: 'lease', cursor: { offset: 0, complete: true, checkedAt: Date.now() - 60_000 } };
+  };
+  await syncMcpContent('owner', quiet.deps);
+  expect(quiet.calls).toEqual([]);
+  expect(quiet.closed()).toBe(0);
+  expect(quiet.writes.map((w) => w.name)).toEqual(['content:claimSync', 'content:finishSync']);
+  expect(quiet.writes.at(-1)).toMatchObject({ indexed: 0, status: 'provider_limited' });
+  // No cursor in the call: the saved cursor (and its check time) stays.
+  expect(quiet.writes.at(-1).cursor).toBeUndefined();
+
+  // An hour later it reads only the first page and keeps new or changed items.
+  const checkedAt = Date.now() - 2 * HISTORY_RECHECK_MS;
+  const recheck = mcpHarness('jira');
+  recheck.deps.convexMutation = async (ref: any, args: any) => {
+    recheck.writes.push({ name: getFunctionName(ref), ...args });
+    return { lease: 'lease', cursor: { offset: 0, complete: true, checkedAt } };
+  };
+  recheck.deps.callMcpTool = async (_handle: any, name: string, args: any) => {
+    recheck.calls.push({ name, args });
+    return {
+      structuredContent: [
+        { id: 'changed', title: 'Changed', updated: new Date(checkedAt + 60_000).toISOString() },
+        { id: 'old', title: 'Old', updated: new Date(checkedAt - 86_400_000).toISOString() },
+      ],
+    };
+  };
+  await syncMcpContent('owner', recheck.deps);
+  expect(recheck.calls.map((c) => c.args.startAt)).toEqual([0]);
+  const upserted = recheck.writes.find((w) => w.name === 'mcp:upsertItems');
+  expect(upserted.items.map((item: any) => item.externalId)).toEqual(['changed']);
+  expect(recheck.writes.at(-1)).toMatchObject({ indexed: 1, cursor: { offset: 0, complete: true } });
+  expect(recheck.writes.at(-1).cursor.checkedAt).toBeGreaterThan(checkedAt);
+});
+
+test('the Granola history walk details 10 ids at a time, ends, and later details only new meetings', async () => {
+  const meetings = Array.from({ length: 25 }, (_, i) => ({ id: `m${i}`, title: `Meeting ${i}` }));
+  const run = async (cursor: unknown, listed = meetings) => {
+    const h = mcpHarness('granola');
+    h.deps.convexMutation = async (ref: any, args: any) => {
+      h.writes.push({ name: getFunctionName(ref), ...args });
+      return { lease: 'lease', cursor };
+    };
+    h.deps.callMcpTool = async (_handle: any, name: string, args: any) => {
+      h.calls.push({ name, args });
+      if (name === 'list_meetings') return { structuredContent: { meetings: listed } };
+      return {
+        structuredContent: {
+          meetings: args.meeting_ids.map((id: string) => ({ id, title: `Detailed ${id}` })),
+        },
+      };
+    };
+    await syncMcpContent('owner', h.deps);
+    return h;
+  };
+  const details = (h: any) =>
+    h.calls.filter((c: any) => c.name === 'get_meetings').map((c: any) => c.args.meeting_ids);
+
+  const first = await run(null);
+  expect(details(first).map((ids: string[]) => ids.length)).toEqual([10, 10]);
+  expect(first.writes.at(-1)).toMatchObject({ status: 'indexing', cursor: { offset: 20 }, indexed: 20 });
+
+  const second = await run({ offset: 20 });
+  expect(details(second)).toEqual([['m20', 'm21', 'm22', 'm23', 'm24']]);
+  const complete = second.writes.at(-1);
+  expect(complete.status).toBe('provider_limited');
+  expect(complete.cursor.complete).toBe(true);
+  expect(complete.cursor.known).toHaveLength(25);
+
+  const later = await run({ ...complete.cursor, checkedAt: 0 }, [{ id: 'm25', title: 'New' }, ...meetings]);
+  expect(details(later)).toEqual([['m25']]);
+  expect(later.writes.at(-1).cursor.known).toContain('m25');
+  expect(later.writes.at(-1).indexed).toBe(1);
+});
+
 test('connected tools skip content history while the sign-in needs a reconnect (AI-7)', async () => {
   const h = mcpHarness('slack');
   const [row] = await h.deps.listUserConnections();
@@ -396,4 +507,54 @@ test('permanent attachment failures become partial records and stop starving lat
   expect(writes).toHaveLength(9);
   expect(writes[8].text).toContain('Useful final file');
   expect(writes[8].partial).toBe(false);
+});
+
+test('a new Jev pass on unchanged mail keeps the content version; a new category changes it', async () => {
+  const mail = { title: 'Budget approval', text: 'Please confirm the budget.', deleted: false };
+  const verdict = jevAssessment();
+  const version = localContentVersion(mail, verdict);
+  // Time of the pass, model, and raw probabilities do not change the meaning.
+  expect(
+    localContentVersion(mail, {
+      ...verdict,
+      evaluatedAt: verdict.evaluatedAt + 60_000,
+      model: 'typesafe/jev-1.13-20261001',
+      probabilities: { ...verdict.probabilities, reply: 0.97 },
+      confidence: 0.91,
+    }),
+  ).toBe(version);
+  expect(localContentVersion(mail, { ...verdict, purpose: 'promotion' })).not.toBe(version);
+  expect(localContentVersion(mail, { ...verdict, obligations: [] })).not.toBe(version);
+  expect(localContentVersion({ ...mail, text: 'The budget is approved.' }, verdict)).not.toBe(version);
+  // Items with no verdict (documents, connector items) keep their old version.
+  expect(localContentVersion(mail)).toBe(localContentVersion(mail, undefined));
+
+  // The content cycle writes this version for a mail item.
+  const upserts: any[] = [];
+  const deps: any = {
+    convexMutation: async (ref: any, args: any) => {
+      const name = getFunctionName(ref);
+      if (name.endsWith(':claimSync')) return { lease: 'lease' };
+      if (name.endsWith(':upsert')) upserts.push(...args.items);
+      if (name.endsWith(':claimItems')) return [];
+      return { changed: args.items?.length || 0 };
+    },
+    convexQuery: async (ref: any, args: any) => {
+      if (getFunctionName(ref).endsWith(':workCandidates')) return [];
+      const items =
+        args.source === 'mail'
+          ? [{ ...mail, source: 'mail', connectionId: 'a', externalId: 't', mailAssessment: verdict }]
+          : [];
+      return { items, cursor: null, attachments: [] };
+    },
+    syncCloudContent: async () => {},
+    syncMailAttachments: async () => {},
+    syncMcpContent: async () => {},
+    loadJevPolicy: async () => ({ preferences: { enabled: true } }),
+    prepareBriefWork: async () => {},
+  };
+  await runContentCycle('owner', deps);
+  expect(upserts).toHaveLength(1);
+  expect(upserts[0].version).toBe(version);
+  expect(upserts[0].mailAssessment).toBeUndefined();
 });

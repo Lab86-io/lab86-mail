@@ -296,6 +296,9 @@ export function classificationFreshnessPatch(
     areaClassifiedAt: undefined,
     areaClassifiedMessageId: undefined,
     areaRoutingPending: true,
+    areaAttempts: undefined,
+    areaRetryAt: undefined,
+    areaError: undefined,
   };
 }
 

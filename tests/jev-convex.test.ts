@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
@@ -16,8 +16,12 @@ let previous: string | undefined;
 beforeAll(() => {
   previous = process.env.LAB86_CONVEX_INTERNAL_SECRET;
   process.env.LAB86_CONVEX_INTERNAL_SECRET = secret;
+  // The claim gate reads the clock (60-day window). A fixed clock keeps the
+  // fixture mail recent on every date the suite runs.
+  setSystemTime(new Date(NOW + 3_600_000));
 });
 afterAll(() => {
+  setSystemTime();
   if (previous === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
   else process.env.LAB86_CONVEX_INTERNAL_SECRET = previous;
 });
@@ -525,4 +529,180 @@ test('reordered metadata preserves classification, and search pages omit HTML wh
   expect(result.items[0].textBody).toContain('budget approval matters');
   expect(result.items[0].textBody!.length).toBeLessThanOrEqual(1600);
   expect((result.items[0] as any).htmlBody).toBeUndefined();
+});
+
+describe('Jev spends model calls only on live, recent mail', () => {
+  const DAY = 86_400_000;
+  async function patchThread(t: TestConvex<typeof schema>, id: string, patch: any, account = 'a') {
+    const target = await row(t, account, id);
+    await t.run((ctx) => ctx.db.patch(target!._id, patch));
+  }
+  // Convex drops undefined fields, so a cleared flag is an absent key.
+  function expectOffQueue(thread: any, jevStatus: string, jevError?: string) {
+    expect(thread.llmPending).toBeUndefined();
+    expect(thread.jevStatus).toBe(jevStatus);
+    expect(thread.jevError).toBe(jevError);
+  }
+  // Each page schedules the next one with a zero delay. Let each timer fire,
+  // then wait for the page, until no scheduled page remains.
+  async function drainScheduled(t: TestConvex<typeof schema>) {
+    for (let i = 0; i < 50; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await t.finishInProgressScheduledFunctions();
+      const jobs = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+      if (!jobs.some((job) => job.state.kind === 'pending' || job.state.kind === 'inProgress')) return;
+    }
+    throw new Error('Scheduled pages did not finish.');
+  }
+  async function setAccountStatus(t: TestConvex<typeof schema>, account: string, status: 'error') {
+    await t.run(async (ctx) => {
+      const found = await ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user_account', (q) => q.eq('userId', 'owner').eq('accountId', account))
+        .unique();
+      await ctx.db.patch(found!._id, { status });
+    });
+  }
+
+  test('the claim takes dead-account, old, and spam or trash rows off the queue with no model input', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t, 'a', 'owner', 'live');
+    await seed(t, 'a', 'owner', 'old');
+    await seed(t, 'a', 'owner', 'junk');
+    await seed(t, 'a', 'owner', 'bin');
+    await seed(t, 'dead', 'owner', 'gone');
+    await setAccountStatus(t, 'dead', 'error');
+    await patchThread(t, 'old', { lastDate: NOW - 61 * DAY });
+    // Provider-neutral roles: an iCloud junk folder id ends in `:Junk`.
+    await patchThread(t, 'junk', { labels: ['v0:abc:Junk'] });
+    await patchThread(t, 'bin', { labels: ['TRASH'] });
+    const page = await claim(t);
+    expect(page.items.map((item: any) => item.threadId)).toEqual(['live']);
+    expect(page.moreRemaining).toBe(true);
+    const reasons = {
+      old: 'Mail older than 60 days is not classified.',
+      junk: 'Spam and trash are not classified.',
+      bin: 'Spam and trash are not classified.',
+    };
+    for (const [id, error] of Object.entries(reasons))
+      expectOffQueue(await row(t, 'a', id), 'unavailable', error);
+    expectOffQueue(await row(t, 'dead', 'gone'), 'unavailable', 'The account is not connected.');
+    expect((await claim(t)).items).toEqual([]);
+  });
+
+  test('a queue whose first 120 rows are all gated still reaches a live row', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t, 'a', 'owner', 'live');
+    await t.run(async (ctx) => {
+      // Newer rows of a dead account sort first in the descending claim read.
+      for (let i = 0; i < 125; i++)
+        await ctx.db.insert('mailCorpusThreads', {
+          userId: 'owner',
+          accountId: 'dead',
+          grantId: 'grant-dead',
+          provider: 'google',
+          providerThreadId: `dead-${i}`,
+          subject: 'Old mailbox',
+          fromAddress: 'sender@example.test',
+          lastDate: NOW + 1 + i,
+          snippet: '',
+          labels: ['INBOX'],
+          unread: false,
+          llmPending: true,
+          yearMonth: '2026-09',
+          createdAt: NOW,
+          updatedAt: NOW,
+        });
+    });
+    const first = await claim(t);
+    expect(first.items).toEqual([]);
+    expect(first.moreRemaining).toBe(true);
+    const second = await claim(t);
+    expect(second.items.map((item: any) => item.threadId)).toEqual(['live']);
+    const pending = await t.run((ctx) =>
+      ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_llm_pending', (q) => q.eq('userId', 'owner').eq('llmPending', true))
+        .collect(),
+    );
+    expect(pending.map((thread) => thread.providerThreadId)).toEqual(['live']);
+  });
+
+  test('a verdict for the same revision settles a queue flag; reprocessing still forces a pass', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const input = (await claim(t)).items[0];
+    await save(t, input);
+    await patchThread(t, 't', { llmPending: true, jevStatus: 'pending' });
+    const page = await claim(t);
+    expect(page.items).toEqual([]);
+    expectOffQueue(await row(t), 'accepted');
+    await t.mutation((internal as any).jev.queueUser, { userId: 'owner' });
+    expect((await claim(t)).items).toHaveLength(1);
+  });
+
+  test('a stale revision result counts an attempt and stops the loop after three', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const input = (await claim(t)).items[0];
+      expect(input).toBeDefined();
+      // The body changes while the model runs, so the result is stale.
+      await t.run(async (ctx) => {
+        const message = await ctx.db.query('mailCorpusMessages').first();
+        await ctx.db.patch(message!._id, { textBody: `Revised body ${attempt}.` });
+      });
+      expect((await save(t, input)).stored).toBe(0);
+      expect((await row(t))?.jevAttempts).toBe(attempt);
+    }
+    expectOffQueue(await row(t), 'unavailable', 'Message content changed during classification.');
+    expect((await claim(t)).items).toEqual([]);
+  });
+
+  test('the queue cleanup counts on a dry run, then clears gated rows for every user once', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      for (const clerkUserId of ['owner', 'other'])
+        await ctx.db.insert('users', {
+          clerkUserId,
+          email: `${clerkUserId}@example.test`,
+          createdAt: 0,
+          updatedAt: 0,
+        });
+    });
+    await seed(t, 'a', 'owner', 'live');
+    await seed(t, 'a', 'owner', 'old');
+    await seed(t, 'a', 'owner', 'junk');
+    await seed(t, 'dead', 'owner', 'gone');
+    await seed(t, 'x', 'other', 'foreign');
+    await setAccountStatus(t, 'dead', 'error');
+    await patchThread(t, 'old', { lastDate: NOW - 61 * DAY });
+    await patchThread(t, 'junk', { labels: ['SPAM'] });
+    await t.run(async (ctx) => {
+      const account = await ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user_account', (q) => q.eq('userId', 'other').eq('accountId', 'x'))
+        .unique();
+      await ctx.db.patch(account!._id, { status: 'error' });
+    });
+    const cleanup = (internal as any).jev.clearIneligiblePending;
+    const dry = await t.mutation(cleanup, { dryRun: true, userId: 'owner' });
+    expect(dry).toEqual({ scanned: 4, cleared: { account: 1, age: 1, spam: 1 }, done: true });
+    expect((await row(t, 'dead', 'gone'))?.llmPending).toBe(true);
+
+    // Pages of two rows: the pass schedules the next page, then the next user.
+    const first = await t.mutation(cleanup, { limit: 2 });
+    expect(first.done).toBe(false);
+    await drainScheduled(t);
+    const pending = await t.run((ctx) =>
+      ctx.db
+        .query('mailCorpusThreads')
+        .filter((q) => q.eq(q.field('llmPending'), true))
+        .collect(),
+    );
+    expect(pending.map((thread) => thread.providerThreadId)).toEqual(['live']);
+    expect(await row(t, 'dead', 'gone')).toMatchObject({ jevError: 'The account is not connected.' });
+    const again = await t.mutation(cleanup, {});
+    expect(again.cleared).toEqual({ account: 0, age: 0, spam: 0 });
+  });
 });

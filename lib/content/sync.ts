@@ -1,6 +1,7 @@
 import { runWithAiRequestContext } from '../ai/context';
 import { mapConcurrent } from '../classifier/client';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
+import type { JevAssessment } from '../jev/contract';
 import { loadJevPolicy } from '../jev/service';
 import { contentVersion, syncCloudContent } from './cloud-sync';
 import { type ContentItem } from './contract';
@@ -10,6 +11,33 @@ import { syncMcpContent } from './mcp-sync';
 import { prepareBriefWork } from './prepare';
 
 const ref = api.content;
+
+/**
+ * The part of a Jev verdict that changes what an indexed mail item means.
+ * The time of the pass, the model, and the raw probabilities stay out: a new
+ * Jev pass on unchanged mail must keep the same content version, or the item
+ * gets new labels and new vectors for the same text.
+ */
+export function mailAssessmentDigest(assessment: unknown) {
+  if (!assessment || typeof assessment !== 'object') return undefined;
+  const verdict = assessment as Partial<JevAssessment>;
+  return {
+    status: verdict.status,
+    purpose: verdict.purpose,
+    subjectKind: verdict.subjectKind,
+    obligations: (verdict.obligations || []).map((obligation) => obligation.kind).sort(),
+    meaningfulChange: Boolean(verdict.meaningfulChange),
+  };
+}
+
+/** Version of a local item (mail, connector item, document) for the content index. */
+export function localContentVersion(
+  item: { title: string; text: string; deleted?: boolean },
+  mailAssessment?: unknown,
+) {
+  return contentVersion([item.title, item.text, item.deleted, mailAssessmentDigest(mailAssessment)]);
+}
+
 const defaults = {
   convexMutation,
   convexQuery,
@@ -46,7 +74,7 @@ export async function runContentCycle(userId: string, deps = defaults) {
           return {
             ...item,
             text: `${item.title}\n${item.text}`,
-            version: contentVersion([item.title, item.text, item.deleted, mailAssessment]),
+            version: localContentVersion(item, mailAssessment),
           };
         });
         let changed = 0;

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Output, tool } from 'ai';
+import { Output, stepCountIs, tool } from 'ai';
 import { z } from 'zod';
 import { generateTextForCurrentUser, resolveAiRuntime } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
@@ -318,6 +318,18 @@ export function prepareBriefContext(userId: string) {
   return operation;
 }
 
+// A research pass sends each earlier tool result again on each step. With no
+// stop, a run sent 1.6M input tokens on average. The pass now stops after 6
+// steps, or after the step that takes the input to 200k tokens.
+export const NARRATIVE_RESEARCH_MAX_STEPS = 6;
+export const NARRATIVE_RESEARCH_MAX_INPUT_TOKENS = 200_000;
+export const narrativeResearchStop = [
+  stepCountIs(NARRATIVE_RESEARCH_MAX_STEPS),
+  ({ steps }: { steps: Array<{ usage?: { inputTokens?: number } }> }) =>
+    steps.reduce((total, step) => total + (Number(step.usage?.inputTokens) || 0), 0) >=
+    NARRATIVE_RESEARCH_MAX_INPUT_TOKENS,
+];
+
 export async function refreshNarrative(userId: string, kind = 'refresh') {
   if (!narrativeEnabled(userId)) return { status: 'disabled' };
   const runId = randomUUID();
@@ -428,7 +440,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
             system: RESEARCH_SYSTEM,
             prompt,
             tools: tracked,
-            stopWhen: () => false,
+            stopWhen: narrativeResearchStop,
             maxRetries: 0,
             abortSignal: researchSignal,
           });

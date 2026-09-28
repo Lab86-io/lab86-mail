@@ -2207,6 +2207,7 @@ export const unclassifiedThreads = query({
         rows.push(row);
       }
     }
+    const ts = now();
     const out: Array<{
       providerThreadId: string;
       accountId: string;
@@ -2219,6 +2220,8 @@ export const unclassifiedThreads = query({
       messageId: string;
     }> = [];
     for (const row of rows) {
+      // A thread whose last routing call failed waits for its retry time.
+      if ((row.areaRetryAt || 0) > ts) continue;
       // Latest message in the thread — the one the verdict is about.
       const latest = await latestCorpusMessage(ctx, {
         userId: args.userId,
@@ -2352,6 +2355,9 @@ export const recordAreaVerdicts = mutation({
                   areaClassifiedAt: undefined,
                   areaClassifiedMessageId: undefined,
                   areaRoutingPending: true,
+                  areaAttempts: undefined,
+                  areaRetryAt: undefined,
+                  areaError: undefined,
                 }
               : {}),
             updatedAt: ts,
@@ -2459,11 +2465,86 @@ export const recordAreaVerdicts = mutation({
         areaClassifiedAt: ts,
         areaClassifiedMessageId: latestMessageId,
         areaRoutingPending: undefined,
+        areaAttempts: undefined,
+        areaRetryAt: undefined,
+        areaError: undefined,
         updatedAt: ts,
       });
       classified += 1;
     }
     return { inserted, updated, superseded, skipped, classified };
+  },
+});
+
+/** Routing calls a thread gets for one message before the sweep stops asking. */
+export const AREA_ROUTING_MAX_ATTEMPTS = 3;
+/** Wait after the first failed routing call. Each later failure waits 4 times longer. */
+export const AREA_ROUTING_RETRY_MS = 30 * 60_000;
+
+/**
+ * Count a failed routing call (a provider error or an invalid response) for
+ * each thread. Before, a failed call left the thread pending with no count,
+ * and the 30-minute sweep sent the same threads again with no end.
+ *
+ * The sweep now waits before it asks again (30 minutes, then 2 hours). After
+ * the third failure the thread records areaError and leaves the queue with
+ * no Area, as an empty verdict does. A new message resets the count.
+ */
+export const recordAreaFailures = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    classifierVersion: v.optional(v.number()),
+    failures: v.array(v.object({ artifactId: v.string(), accountId: v.string(), messageId: v.string() })),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const userId = args.userId;
+    const version = args.classifierVersion ?? AREA_CLASSIFIER_VERSION;
+    const ts = now();
+    let retried = 0;
+    let stopped = 0;
+    for (const failure of args.failures.slice(0, 100)) {
+      const thread = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_account_thread', (q) =>
+          q
+            .eq('userId', userId)
+            .eq('accountId', failure.accountId)
+            .eq('providerThreadId', failure.artifactId),
+        )
+        .unique();
+      if (!thread || (thread.areaClassifierVersion ?? 0) > version) continue;
+      const latest = await latestCorpusMessage(ctx, {
+        userId,
+        accountId: failure.accountId,
+        providerThreadId: failure.artifactId,
+      });
+      // A newer message makes the failure stale; that message gets its own calls.
+      if (canonicalLatestMessageId(latest?.providerMessageId, thread.latestMessageId) !== failure.messageId)
+        continue;
+      const attempts = (thread.areaAttempts || 0) + 1;
+      if (attempts < AREA_ROUTING_MAX_ATTEMPTS) {
+        await ctx.db.patch(thread._id, {
+          areaAttempts: attempts,
+          areaRetryAt: ts + AREA_ROUTING_RETRY_MS * 4 ** (attempts - 1),
+        });
+        retried += 1;
+        continue;
+      }
+      await ctx.db.patch(thread._id, {
+        areaClassifierVersion: version,
+        areaClassifiedAt: ts,
+        areaClassifiedMessageId: failure.messageId,
+        areaRoutingPending: undefined,
+        areaAttempts: undefined,
+        areaRetryAt: undefined,
+        areaError: `Area routing failed ${AREA_ROUTING_MAX_ATTEMPTS} times.`,
+        updatedAt: ts,
+      });
+      stopped += 1;
+    }
+    return { retried, stopped };
   },
 });
 

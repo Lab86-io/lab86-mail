@@ -347,6 +347,30 @@ describe('Jev sweep orchestration', () => {
     expect(usage).toHaveBeenCalledTimes(1);
     expect(afterClassified).toHaveBeenCalledWith('u');
   });
+  test('an empty claim that cleared gated rows reads on and classifies the live row below them', async () => {
+    const input = { ...mailInput(), leaseId: 'lease' };
+    const pages = [
+      { items: [], moreRemaining: true },
+      { items: [input], moreRemaining: false },
+    ];
+    const evaluate = mock(async () => responseFor(input));
+    const deps = {
+      loadJevPolicy: async () => policy,
+      resolveClassifierRuntime: async () => ({
+        userId: 'u',
+        source: 'lab86',
+        apiKey: 'test-only',
+        model: JEV,
+      }),
+      evaluateClassifier: evaluate,
+      recordClassifierUsage: async () => undefined,
+      afterClassified: () => undefined,
+      convexMutation: async (_ref: unknown, args: any) => (args.items ? { stored: 1 } : pages.shift()),
+    } as any;
+    expect(await runJevSweep('u', deps)).toEqual({ classified: 1, moreRemaining: false });
+    expect(evaluate).toHaveBeenCalledTimes(1);
+    expect(pages).toEqual([]);
+  });
   test('disabled users make no model calls; failures are retriable and empty queues stop', async () => {
     const input = { ...mailInput(), leaseId: 'lease' };
     const writes: any[] = [];

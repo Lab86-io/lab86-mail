@@ -129,7 +129,12 @@ export async function embedContent(
     throw new Error('Invalid embeddings.');
   await deps.recordClassifierUsage(runtime, 'content_embeddings', {
     model: EMBEDDING_MODEL,
-    usage: { input_tokens: data.usage?.prompt_tokens || 0, output_tokens: 0 },
+    usage: {
+      input_tokens: data.usage?.prompt_tokens || 0,
+      output_tokens: 0,
+      // OpenRouter reports the real cost in USD; the price table is the fallback.
+      ...(typeof data.usage?.cost === 'number' ? { cost: data.usage.cost } : {}),
+    },
   });
   return sorted.map((r: any) => r.embedding as number[]);
 }

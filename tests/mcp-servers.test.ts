@@ -3,6 +3,7 @@ import {
   granolaAccountInfo,
   granolaMeetingCountHint,
   granolaMeetingDetailArgs,
+  granolaMeetingDetailBatches,
   mergeGranolaMeetingDetails,
 } from '../lib/mcp/granola';
 import { getServerDef, MCP_SERVERS, normalizeItems, resolveMcpConnectionConfig } from '../lib/mcp/servers';
@@ -43,6 +44,24 @@ describe('MCP server registry and normalizer', () => {
       { externalId: 'meeting_2', kind: 'meeting', title: 'Unseen', searchText: 'Unseen' },
     ];
     expect(mergeGranolaMeetingDetails(listed as any, detailed as any)).toEqual(detailed);
+  });
+  test('splits Granola meeting details into batches of at most 10 ids', () => {
+    const ids = Array.from({ length: 25 }, (_, i) => `meeting_${i}`);
+    const array = { properties: { meeting_ids: { type: 'array' } } };
+    expect(
+      granolaMeetingDetailBatches(array, ids).map((args) => (args.meeting_ids as string[]).length),
+    ).toEqual([10, 10, 5]);
+    expect(granolaMeetingDetailBatches(array, ids)[2]).toEqual({ meeting_ids: ids.slice(20) });
+    // A smaller declared limit wins; a larger one does not raise the batch.
+    const small = { properties: { meeting_ids: { type: 'array', maxItems: 4 } } };
+    expect(
+      granolaMeetingDetailBatches(small, ids.slice(0, 9)).map((a) => (a.meeting_ids as string[]).length),
+    ).toEqual([4, 4, 1]);
+    const large = { properties: { meeting_ids: { type: 'array', maxItems: 50 } } };
+    expect(granolaMeetingDetailBatches(large, ids)).toHaveLength(3);
+    expect(granolaMeetingDetailBatches(array, [])).toEqual([]);
+    expect(granolaMeetingDetailBatches({}, ids)).toEqual([]);
+    expect(granolaMeetingDetailBatches(null, ids)).toEqual([]);
   });
   test('declares direct GitHub/Bitbucket transports and hosted Jira/Slack transports', () => {
     expect(getServerDef('github')).toMatchObject({ transport: 'github-rest', authMode: 'bearer' });

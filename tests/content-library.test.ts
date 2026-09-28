@@ -601,3 +601,126 @@ test('content tombstones without text are accepted and malformed attachment iden
     });
   expect(await t.query(content.search, { ...scope, query: 'approval' })).toEqual([]);
 });
+
+test('the mail content page skips threads of accounts that are not connected', async () => {
+  const t = convexTest(schema, modules);
+  await t.run(async (ctx) => {
+    for (const [accountId, status] of [
+      ['live', 'connected'],
+      ['dead', 'error'],
+    ] as const)
+      await ctx.db.insert('connectedAccounts', {
+        userId: 'owner',
+        accountId,
+        email: `${accountId}@example.test`,
+        provider: 'google',
+        grantId: `grant-${accountId}`,
+        status,
+        scopes: [],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    // `gone` has no account row at all (a removed account).
+    for (const accountId of ['live', 'dead', 'gone']) {
+      await ctx.db.insert('mailCorpusThreads', {
+        userId: 'owner',
+        accountId,
+        grantId: `grant-${accountId}`,
+        provider: 'google',
+        providerThreadId: `thread-${accountId}`,
+        subject: `Subject ${accountId}`,
+        fromAddress: 'sender@example.test',
+        lastDate: 10,
+        snippet: '',
+        labels: ['INBOX'],
+        unread: false,
+        yearMonth: '1970-01',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert('mailCorpusMessages', {
+        userId: 'owner',
+        accountId,
+        grantId: `grant-${accountId}`,
+        provider: 'google',
+        providerMessageId: `message-${accountId}`,
+        providerThreadId: `thread-${accountId}`,
+        subject: `Subject ${accountId}`,
+        from: 'sender@example.test',
+        to: `${accountId}@example.test`,
+        receivedAt: 10,
+        snippet: 'Body',
+        textBody: 'Body',
+        searchText: 'body',
+        labels: ['INBOX'],
+        unread: false,
+        attachments: [{ attachmentId: `file-${accountId}`, filename: 'a.pdf' }],
+        yearMonth: '1970-01',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    }
+  });
+  for (const recent of [false, true]) {
+    const page = await t.query(content.localPage, { ...scope, source: 'mail', recent });
+    expect(page.items.map((item: any) => item.connectionId)).toEqual(['live']);
+    expect(page.attachments.map((file: any) => file.connectionId)).toEqual(['live']);
+  }
+});
+
+test('an item whose paid pass keeps failing stops after five passes; new content starts again', async () => {
+  const t = convexTest(schema, modules);
+  let row = await seed(t);
+  const readItem = () => t.run((ctx) => ctx.db.get(row._id as Id<'contentItems'>));
+  const due = () => t.run((ctx) => ctx.db.patch(row._id as Id<'contentItems'>, { nextAttemptAt: 0 }));
+  for (let pass = 1; pass <= 5; pass++) {
+    expect(row.attempts).toBe(pass);
+    // The labels work, but the vectors fail on each pass.
+    await t.mutation(content.completeItem, {
+      ...scope,
+      id: row._id,
+      version: row.version,
+      lease: row.lease,
+      labels,
+    });
+    const stored = await readItem();
+    expect(stored?.status).toBe(pass < 5 ? 'pending' : 'failed');
+    expect(stored!.nextAttemptAt - Date.now()).toBeLessThanOrEqual(3_600_000);
+    await due();
+    [row] = await t.mutation(content.claimItems, scope);
+    if (pass < 5) expect(row).toBeDefined();
+  }
+  expect(row).toBeUndefined();
+
+  // A pass that never reports back also counts, so a stuck item stops too.
+  await t.mutation(content.upsert, { ...scope, items: [{ ...source('2'), externalId: 'owner-stuck' }] });
+  const stuck = (await t.mutation(content.claimItems, scope))[0];
+  await t.run((ctx) =>
+    ctx.db.patch(stuck._id as Id<'contentItems'>, { attempts: 5, leaseUntil: 0, nextAttemptAt: 0 }),
+  );
+  expect(await t.mutation(content.claimItems, scope)).toEqual([]);
+  expect((await t.run((ctx) => ctx.db.get(stuck._id as Id<'contentItems'>)))?.status).toBe('failed');
+
+  // New content resets the count.
+  await t.mutation(content.upsert, { ...scope, items: [source('3')] });
+  const [fresh] = await t.mutation(content.claimItems, scope);
+  expect(fresh).toMatchObject({ externalId: 'owner-file', attempts: 1, status: 'pending' });
+});
+
+test('an item the user cannot read waits longer as it ages and does not count a paid pass', async () => {
+  const t = convexTest(schema, modules);
+  const row = await seed(t);
+  await classify(t, row);
+  await t.mutation(content.upsert, { ...scope, items: [source('2')] });
+  await t.run(async (ctx) => {
+    const connection = await ctx.db.query('cloudFileConnections').first();
+    await ctx.db.patch(connection!._id, { status: 'disconnected' });
+    await ctx.db.patch(row._id as Id<'contentItems'>, { indexedAt: Date.now() - 3 * 86_400_000 });
+  });
+  expect(await t.mutation(content.claimItems, scope)).toEqual([]);
+  const denied = await t.run((ctx) => ctx.db.get(row._id as Id<'contentItems'>));
+  expect(denied).toMatchObject({ status: 'pending', attempts: 0 });
+  // Three days old: the next check waits one day (the longest wait).
+  expect(denied!.nextAttemptAt - Date.now()).toBeGreaterThan(23 * 3_600_000);
+  expect(denied!.nextAttemptAt - Date.now()).toBeLessThanOrEqual(24 * 3_600_000);
+});

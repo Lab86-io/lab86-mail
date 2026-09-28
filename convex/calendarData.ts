@@ -688,10 +688,24 @@ async function windowPage(
   includeCancelled = false,
 ) {
   const cap = Math.min(Math.max(limit ?? 2000, 1), 5000);
+  // Events of an account that is not connected (a dead grant, or a removed
+  // account) do not show and do not count as busy time. The filter runs
+  // before take, so those rows never use up the cap.
+  const liveAccountIds = (
+    await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect()
+  )
+    .filter((account) => account.status === 'connected')
+    .map((account) => account.accountId);
+  if (!liveAccountIds.length) return { rows: [], sourceTruncated: false };
   const keep = (q: any) =>
-    includeCancelled
-      ? q.gt(q.field('endAt'), startAt)
-      : q.and(q.gt(q.field('endAt'), startAt), q.neq(q.field('status'), 'cancelled'));
+    q.and(
+      q.gt(q.field('endAt'), startAt),
+      ...(includeCancelled ? [] : [q.neq(q.field('status'), 'cancelled')]),
+      q.or(...liveAccountIds.map((accountId) => q.eq(q.field('accountId'), accountId))),
+    );
   const spanning = await ctx.db
     .query('calendarEvents')
     .withIndex('by_user_start', (q) =>

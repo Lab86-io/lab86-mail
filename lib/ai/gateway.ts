@@ -19,6 +19,7 @@ import { truncateText } from '../shared/text';
 import {
   BRIEF_GENERATION_FEATURES,
   estimateAiUsageCost,
+  providerReportedCostUsd,
   resolveAiBudgetPolicy,
   shouldDepleteLab86Budget,
 } from './budget';
@@ -280,7 +281,7 @@ export function resolveOpenRouterUtilityRuntime(userId: string, dependencies = c
 export async function recordClassifierUsage(
   runtime: { userId: string; source: AiSource; model?: ClassifierModel },
   feature: string,
-  result?: { model: string; usage: { input_tokens: number; output_tokens: number } },
+  result?: { model: string; usage: { input_tokens: number; output_tokens: number; cost?: number } },
   record = recordUsage,
 ) {
   const model = runtime.model || defaultClassifier();
@@ -293,7 +294,14 @@ export async function recordClassifierUsage(
       model: undefined,
     },
     feature,
-    result ? { inputTokens: result.usage.input_tokens, outputTokens: result.usage.output_tokens } : undefined,
+    result
+      ? {
+          inputTokens: result.usage.input_tokens,
+          outputTokens: result.usage.output_tokens,
+          // The Jev endpoint and OpenRouter embeddings report the real cost.
+          ...(result.usage.cost === undefined ? {} : { costUsd: result.usage.cost }),
+        }
+      : undefined,
     Boolean(result),
     result ? undefined : 'Classifier evaluation unavailable',
   );
@@ -459,7 +467,7 @@ export async function generateTextForCurrentUser(
               await dependencies.recordUsage(
                 activeRuntime,
                 feature,
-                result.totalUsage ?? result.usage,
+                withReportedCost(result.totalUsage ?? result.usage, result),
                 false,
                 'Incomplete brief response',
               );
@@ -467,7 +475,12 @@ export async function generateTextForCurrentUser(
               incomplete.name = 'BriefIncompleteResponse';
               throw incomplete;
             }
-            await dependencies.recordUsage(activeRuntime, feature, result.totalUsage ?? result.usage, true);
+            await dependencies.recordUsage(
+              activeRuntime,
+              feature,
+              withReportedCost(result.totalUsage ?? result.usage, result),
+              true,
+            );
             return result;
           } catch (err: any) {
             lastErr = err;
@@ -581,7 +594,7 @@ export async function generateObjectForCurrentUser<T>(
               }
             : undefined),
       });
-      await recordStructuredUsage(runtime, feature, result.usage, true);
+      await recordStructuredUsage(runtime, feature, withReportedCost(result.usage, result), true);
       return { object: result.object as T };
     } catch (err: any) {
       await recordStructuredUsage(runtime, feature, undefined, false, err?.message);
@@ -846,6 +859,12 @@ function assertLab86Budget(
   return policy;
 }
 
+/** Usage plus the cost OpenRouter reported in the response bodies, when it did. */
+function withReportedCost(usage: any, result: unknown) {
+  const costUsd = providerReportedCostUsd(result);
+  return costUsd === undefined ? usage : { ...usage, costUsd };
+}
+
 async function recordUsage(
   runtime: ResolvedAiRuntime,
   feature: string,
@@ -876,6 +895,7 @@ async function recordUsage(
     cachedInputTokens,
     cacheWriteTokens,
     batch: Boolean(usage?.batch || usage?.batchMode),
+    costUsd: usage?.costUsd,
   });
   await convexMutation(api.ai.recordUsage, {
     userId: runtime.userId,
