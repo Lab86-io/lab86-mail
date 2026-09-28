@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   __setGoogleHttpDepsForTest,
+  GOOGLE_MAX_RETRY_AFTER_MS,
   GoogleApiError,
   googleFetch,
   googleJson,
@@ -223,6 +224,49 @@ describe('googleFetch', () => {
     )) as GoogleApiError;
     expect(error.statusCode).toBe(403);
     expect(seen).toHaveLength(1);
+  });
+
+  test('a request that hangs stops at its time limit; a signal of the caller is kept', async () => {
+    const signals: Array<AbortSignal | null | undefined> = [];
+    const hang = async (_url: string, init?: RequestInit) => {
+      signals.push(init?.signal);
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    };
+    __setGoogleHttpDepsForTest({
+      fetch: hang,
+      getGoogleAccessToken: async () => 'tok',
+      sleep: async () => {},
+    });
+    const error = (await googleFetch('google:a', 'https://x.test', { timeoutMs: 5 }).catch(
+      (e: unknown) => e,
+    )) as Error;
+    expect(error.name).toBe('TimeoutError');
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    const own = new AbortController();
+    const pending = googleFetch('google:a', 'https://x.test', { signal: own.signal, timeoutMs: 1 }).catch(
+      (e: unknown) => e,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // The caller's signal replaces the time limit: the request still waits.
+    expect(signals[1]).toBe(own.signal);
+    own.abort(new Error('stopped by the caller'));
+    expect(((await pending) as Error).message).toBe('stopped by the caller');
+  });
+
+  test('a long Retry-After waits at most the cap', async () => {
+    const { fetch } = responder([{ status: 429, headers: { 'retry-after': '3600' } }, { status: 200 }]);
+    const waits: number[] = [];
+    __setGoogleHttpDepsForTest({
+      fetch,
+      getGoogleAccessToken: async () => 'tok',
+      sleep: async (ms: number) => {
+        waits.push(ms);
+      },
+    });
+    await googleFetch('google:a', 'https://x.test');
+    expect(waits).toEqual([GOOGLE_MAX_RETRY_AFTER_MS]);
   });
 
   test('googleJson returns undefined for 204', async () => {

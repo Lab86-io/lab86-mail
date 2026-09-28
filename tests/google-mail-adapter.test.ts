@@ -1,12 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import {
   __setGoogleMailAdapterDepsForTest,
   gmailListQuery,
   googleMailAdapter,
+  LARGE_BODY_TIMEOUT_MS,
   labelDelta,
 } from '../lib/google/adapter/mail';
 import { encodeAttachmentId } from '../lib/google/gmail-message';
-import { __setGoogleHttpDepsForTest, GoogleApiError } from '../lib/google/http';
+import { __setGoogleHttpDepsForTest, GOOGLE_REQUEST_TIMEOUT_MS, GoogleApiError } from '../lib/google/http';
 import { routeNylasClient } from '../lib/nylas/client';
 import {
   b64url,
@@ -434,6 +435,40 @@ describe('send', () => {
     expect(adapterCalls.schedule[0].credentials.accountId).toBe('acct-1');
     expect(result.data.scheduleId).toBe('outbox:00000000-0000-0000-0000-000000000001');
     expect(result.data.date).toBe(sendAt);
+  });
+
+  test('a send and an attachment read get the long time limit; other calls get the default', async () => {
+    const limits: number[] = [];
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const spy = spyOn(AbortSignal, 'timeout').mockImplementation((ms: number) => {
+      limits.push(ms);
+      return timeout(ms);
+    });
+    try {
+      gmail.on('POST', /\/messages\/send$/, () => ({ json: { id: 's1', threadId: 's1' } }));
+      await messages.send({
+        identifier: GRANT,
+        requestBody: { to: [{ email: 'a@x.org' }], subject: 's', body: 'b' },
+      });
+      expect(limits).toEqual([LARGE_BODY_TIMEOUT_MS]);
+      limits.length = 0;
+      gmail.on('GET', /\/messages\/m1$/, () => ({ json: receiptMessage({ id: 'm1' }) }));
+      gmail.on('GET', /\/messages\/m1\/attachments\/ANGjdJ_volatile_1$/, () => ({
+        json: { size: 5, data: b64url('%PDF!') },
+      }));
+      await googleMailAdapter.attachments!.download({
+        identifier: GRANT,
+        attachmentId: encodeAttachmentId({
+          filename: 'Invoice-VKHXRY-00028.pdf',
+          contentType: 'application/octet-stream',
+          size: 42076,
+        }),
+        queryParams: { messageId: 'm1' },
+      });
+      expect(limits).toEqual([GOOGLE_REQUEST_TIMEOUT_MS, LARGE_BODY_TIMEOUT_MS]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test('a send time in the past sends at once', async () => {

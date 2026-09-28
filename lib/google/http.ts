@@ -21,7 +21,17 @@ export interface GoogleRequestInit extends Omit<RequestInit, 'body'> {
    * deliver a message and still answer 5xx, and a retry would send it twice.
    */
   retryServerErrors?: boolean;
+  /**
+   * The time limit of each attempt, with its body read, in ms (default
+   * GOOGLE_REQUEST_TIMEOUT_MS). A `signal` of the caller replaces it.
+   */
+  timeoutMs?: number;
 }
+
+/** The time limit of one request. A request that hangs cannot hold a route or a History pass. */
+export const GOOGLE_REQUEST_TIMEOUT_MS = 30_000;
+/** The longest wait for a Retry-After value. A longer value from Google waits this long. */
+export const GOOGLE_MAX_RETRY_AFTER_MS = 30_000;
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -50,7 +60,7 @@ const RATE_LIMIT_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded'
 function backoff(attempt: number, response: Response) {
   const retryAfter = Number(response.headers.get('retry-after'));
   return Number.isFinite(retryAfter) && retryAfter > 0
-    ? retryAfter * 1000
+    ? Math.min(retryAfter * 1000, GOOGLE_MAX_RETRY_AFTER_MS)
     : Math.min(8000, 250 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 200);
 }
 
@@ -79,7 +89,14 @@ export async function googleFetch(
   url: string,
   init: GoogleRequestInit = {},
 ): Promise<Response> {
-  const { json, attempts = 4, retryServerErrors = true, headers, ...rest } = init;
+  const {
+    json,
+    attempts = 4,
+    retryServerErrors = true,
+    timeoutMs = GOOGLE_REQUEST_TIMEOUT_MS,
+    headers,
+    ...rest
+  } = init;
   let refreshed = false;
   for (let attempt = 1; ; attempt += 1) {
     const token = await deps.getGoogleAccessToken(grantId);
@@ -88,6 +105,7 @@ export async function googleFetch(
     if (json !== undefined) requestHeaders.set('content-type', 'application/json');
     const response = await deps.fetch(url, {
       ...rest,
+      signal: rest.signal ?? AbortSignal.timeout(timeoutMs),
       headers: requestHeaders,
       body: json !== undefined ? JSON.stringify(json) : rest.body,
     });

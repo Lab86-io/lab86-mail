@@ -42,6 +42,8 @@ const GET_CONCURRENCY = 5;
 const LABEL_CACHE_MS = 60_000;
 const LABEL_CACHE_MAX = 500;
 const UPLOAD_SEND_URL = 'https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send';
+/** The time limit of a request with a large body: a send (35 MB maximum) or an attachment read. */
+export const LARGE_BODY_TIMEOUT_MS = 120_000;
 /** A send with a send time further out than this is held in the outbox. */
 const SCHEDULE_THRESHOLD_MS = 5_000;
 /** Labels that `modify` cannot add or remove. */
@@ -342,6 +344,7 @@ async function sendRaw(grantId: string, mime: string, threadId?: string) {
     headers: { 'content-type': `multipart/related; boundary=${boundary}` },
     body,
     retryServerErrors: false,
+    timeoutMs: LARGE_BODY_TIMEOUT_MS,
   });
 }
 
@@ -643,6 +646,7 @@ async function downloadAttachment(args: any): Promise<ReadableStream<Uint8Array>
     const result = await googleJson<{ data?: string }>(
       grantId,
       `${GMAIL_API}/messages/${enc(messageId)}/attachments/${enc(part.body.attachmentId)}`,
+      { timeoutMs: LARGE_BODY_TIMEOUT_MS },
     );
     bytes = decodeBase64Url(result?.data);
   } else bytes = Buffer.alloc(0);
