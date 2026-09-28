@@ -401,7 +401,9 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
             refocus()
             return
         }
-        guard !listDismissed, search.isSearching else {
+        // A complete address commits as typed; it does not wait for rows.
+        guard !listDismissed, search.isSearching,
+              !RecipientAddressParser.isCompleteAddress(query) else {
             commitTypedText()
             refocus()
             return
@@ -473,7 +475,7 @@ struct RecipientField<FocusValue: Hashable, Accessory: View>: View {
     private func hoverRow(_ index: Int) {
         guard presentation == nil, search.suggestions.indices.contains(index),
               search.highlightedIndex != index else { return }
-        search.highlightedIndex = index
+        search.chooseHighlight(index)
     }
 
     private func pointerInsideList(_ inside: Bool) {

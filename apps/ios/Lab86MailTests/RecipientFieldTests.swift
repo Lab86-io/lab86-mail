@@ -454,6 +454,64 @@ struct RecipientFieldTests {
         #expect(model.pickable(for: "")?.email == "julia@example.com")
     }
 
+    @Test
+    func aCompleteTypedAddressCommitsAsTypedOnReturnAndTab() async {
+        let bob = RecipientSuggestion(email: "bob@acme.co.uk", name: "Bob Jones")
+        let exact = RecipientSuggestion(email: "Bob@Acme.com", name: "Bob Acme")
+        let model = RecipientSearchModel(debounce: .zero)
+        let request = RecipientSearchRequest(query: "bob@acme.com", fromAccountID: nil)
+        model.search(request, using: nil)
+        model.receive(RecipientSuggestionPage(query: "bob@acme.com", items: [bob, exact]), for: request)
+        // The first row is highlighted, but it is a different person.
+        #expect(model.highlightedIndex == 0)
+        #expect(model.highlightChosen == false)
+        #expect(model.pickable(for: "bob@acme.com") == nil)
+        #expect(model.pickable(for: " bob@acme.com ") == nil)
+        #expect(await model.settledPickable(for: "bob@acme.com") == nil)
+        #expect(RecipientSearchModel.keepsTypedAddress("bob@acme.com", over: bob))
+        #expect(!RecipientSearchModel.keepsTypedAddress("bob@acme.com", over: exact))
+        #expect(!RecipientSearchModel.keepsTypedAddress("bob", over: bob))
+
+        // The arrow keys moved to a row: that row is the person's choice.
+        #expect(model.moveHighlight(by: 1))
+        #expect(model.highlightChosen)
+        #expect(model.pickable(for: "bob@acme.com")?.email == "Bob@Acme.com")
+        model.moveHighlight(by: 1)
+        #expect(model.pickable(for: "bob@acme.com")?.email == "bob@acme.co.uk")
+
+        // The pointer choice counts the same way; a row off screen does not.
+        model.clearVisible()
+        #expect(model.highlightChosen == false)
+        #expect(model.chooseHighlight(0) == false)
+    }
+
+    @Test
+    func aRowWithTheTypedAddressIsPickedAndPartialTextStillPicksTheFirstRow() {
+        let exact = RecipientSuggestion(email: "bob@acme.com", name: "Bob Acme")
+        let model = RecipientSearchModel(debounce: .zero)
+        let full = RecipientSearchRequest(query: "BOB@acme.com", fromAccountID: nil)
+        model.search(full, using: nil)
+        model.receive(RecipientSuggestionPage(query: "BOB@acme.com", items: [exact]), for: full)
+        // The same address gives the chip the person's name.
+        #expect(model.pickable(for: "BOB@acme.com")?.name == "Bob Acme")
+
+        let partial = RecipientSearchRequest(query: "bo", fromAccountID: nil)
+        model.search(partial, using: nil)
+        model.receive(RecipientSuggestionPage(query: "bo", items: [Self.jakob, exact]), for: partial)
+        #expect(model.pickable(for: "bo")?.email == "jakob@lab86.io")
+
+        // A choice does not carry over to the rows of a new query.
+        model.moveHighlight(by: 1)
+        #expect(model.highlightChosen)
+        let next = RecipientSearchRequest(query: "julia@example.org", fromAccountID: nil)
+        model.search(next, using: nil)
+        model.receive(RecipientSuggestionPage(query: "julia@example.org", items: [Self.julia]), for: next)
+        #expect(model.highlightChosen == false)
+        #expect(model.pickable(for: "julia@example.org") == nil)
+        #expect(model.chooseHighlight(0))
+        #expect(model.pickable(for: "julia@example.org")?.email == "julia@example.com")
+    }
+
     // MARK: - Highlights
 
     @Test

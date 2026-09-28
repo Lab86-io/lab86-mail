@@ -16,6 +16,10 @@ final class RecipientSearchModel {
     private(set) var didFail = false
     /// The row that Return, Tab, or a separator picks. Arrow keys move it.
     var highlightedIndex: Int?
+    /// True when the person moved the highlight (arrow keys or the pointer)
+    /// since the rows for this query arrived. Only then can Return or Tab
+    /// replace a complete typed address with a different person.
+    private(set) var highlightChosen = false
 
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private(set) var currentRequest: RecipientSearchRequest?
@@ -91,6 +95,7 @@ final class RecipientSearchModel {
         suggestions = []
         resultQuery = nil
         highlightedIndex = nil
+        highlightChosen = false
     }
 
     /// The rows that belong to `query`: empty while the answer for an older
@@ -101,14 +106,30 @@ final class RecipientSearchModel {
     }
 
     /// The row that Return picks: the highlighted row, or the first row when
-    /// the person typed something.
+    /// the person typed something. A complete typed address commits as typed
+    /// (the same rule as the web field): the row is picked only when it has
+    /// that address, or when the person moved the highlight to it.
     func pickable(for query: String) -> RecipientSuggestion? {
         let rows = suggestions(matching: query)
+        let row: RecipientSuggestion?
         if let highlightedIndex, rows.indices.contains(highlightedIndex) {
-            return rows[highlightedIndex]
+            row = rows[highlightedIndex]
+        } else if !Self.normalized(query).isEmpty {
+            row = rows.first
+        } else {
+            row = nil
         }
-        guard !Self.normalized(query).isEmpty else { return nil }
-        return rows.first
+        guard let row else { return nil }
+        if !highlightChosen, Self.keepsTypedAddress(query, over: row) { return nil }
+        return row
+    }
+
+    /// True when `query` is a complete address and `row` has a different
+    /// address. Return and Tab then keep the typed address.
+    nonisolated static func keepsTypedAddress(_ query: String, over row: RecipientSuggestion) -> Bool {
+        let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard RecipientAddressParser.isCompleteAddress(typed) else { return false }
+        return RecipientAddressParser.token(from: typed).normalizedEmail != row.email.lowercased()
     }
 
     /// Like `pickable(for:)`, but first waits a short time for an answer that
@@ -134,6 +155,17 @@ final class RecipientSearchModel {
         let count = suggestions.count
         let start = highlightedIndex ?? (offset > 0 ? -1 : count)
         highlightedIndex = ((start + offset) % count + count) % count
+        highlightChosen = true
+        return true
+    }
+
+    /// The pointer moved to a row: it becomes the highlighted row, as a
+    /// choice of the person. Returns false for a row that is not on screen.
+    @discardableResult
+    func chooseHighlight(_ index: Int) -> Bool {
+        guard suggestions.indices.contains(index) else { return false }
+        highlightedIndex = index
+        highlightChosen = true
         return true
     }
 
@@ -160,6 +192,7 @@ final class RecipientSearchModel {
         resultQuery = normalizedQuery
         if queryChanged {
             highlightedIndex = normalizedQuery.isEmpty || suggestions.isEmpty ? nil : 0
+            highlightChosen = false
         } else if let index = highlightedIndex, !suggestions.indices.contains(index) {
             highlightedIndex = suggestions.isEmpty ? nil : suggestions.count - 1
         }
