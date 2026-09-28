@@ -5,7 +5,7 @@ const row = { userId: 'user_1', accountId: 'acct_1' };
 const other = { userId: 'user_1', accountId: 'acct_2' };
 
 interface Pending {
-  input: { userId: string; accountId: string; force?: boolean; reason?: string };
+  input: { userId: string; accountId: string; force?: boolean; reason?: string; window?: string };
   resolve: () => void;
   reject: (error: Error) => void;
 }
@@ -44,12 +44,23 @@ describe('createCalendarSyncKicker lazy kicks', () => {
     h.kicker.kick(row);
     h.kicker.kick(other);
     expect(h.started.map((p) => p.input)).toEqual([
-      { userId: 'user_1', accountId: 'acct_1', reason: 'lazy_kick' },
-      { userId: 'user_1', accountId: 'acct_2', reason: 'lazy_kick' },
+      { userId: 'user_1', accountId: 'acct_1', reason: 'lazy_kick', window: 'auto' },
+      { userId: 'user_1', accountId: 'acct_2', reason: 'lazy_kick', window: 'auto' },
     ]);
     h.advance(1_000);
     h.kicker.kick(row);
     expect(h.started).toHaveLength(3);
+  });
+
+  test('a lazy kick can ask for the full window', () => {
+    const h = harness();
+    h.kicker.kick(row, { window: 'full', reason: 'recurring_webhook' });
+    expect(h.started[0].input).toEqual({
+      userId: 'user_1',
+      accountId: 'acct_1',
+      reason: 'recurring_webhook',
+      window: 'full',
+    });
   });
 
   test('a custom reason is passed through and a failure reopens the window', async () => {
@@ -70,7 +81,7 @@ describe('createCalendarSyncKicker forced kicks', () => {
     h.kicker.kick(row);
     h.kicker.kick(row, { force: true, reason: 'post_mutation' });
     expect(h.started.map((p) => p.input)).toEqual([
-      { userId: 'user_1', accountId: 'acct_1', reason: 'lazy_kick' },
+      { userId: 'user_1', accountId: 'acct_1', reason: 'lazy_kick', window: 'auto' },
       { userId: 'user_1', accountId: 'acct_1', force: true, reason: 'post_mutation' },
     ]);
     expect(h.kicker.isForcedSyncInFlight(row)).toBe(true);

@@ -1780,6 +1780,9 @@ export default defineSchema({
     windowStart: v.optional(v.number()),
     windowEnd: v.optional(v.number()),
     lastSyncedAt: v.optional(v.number()),
+    // The last sync of the full window (−92 to +366 days). The 15-minute
+    // poll syncs a short window, and the full window runs once a day.
+    lastFullSyncAt: v.optional(v.number()),
     lastIncrementalSyncAt: v.optional(v.number()),
     lastWebhookAt: v.optional(v.number()),
     lastHistoryBackfillAt: v.optional(v.number()),

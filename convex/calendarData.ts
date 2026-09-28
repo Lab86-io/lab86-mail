@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { truncateText } from '../lib/shared/text';
+import { sameFields } from '../lib/sync/content-hash';
 import type { QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -50,6 +51,22 @@ const eventInput = v.object({
   providerUpdatedAt: v.optional(v.number()),
 });
 
+// The stored fields that a sync input writes. `updatedAt` is not one of them:
+// an equal input leaves the row, and its `updatedAt`, as they are.
+export const CALENDAR_INPUT_KEYS = Object.keys(calendarInput.fields);
+export const EVENT_INPUT_KEYS = Object.keys(eventInput.fields);
+
+/**
+ * The input with each absent input key set to undefined. A patch then clears
+ * a field that the provider no longer sends, so the stored row and the input
+ * become equal, and the next equal input skips the write.
+ */
+function withClearedKeys<T extends Record<string, unknown>>(input: T, keys: readonly string[]): T {
+  const next: Record<string, unknown> = { ...input };
+  for (const key of keys) if (!(key in next)) next[key] = undefined;
+  return next as T;
+}
+
 const accountScope = {
   internalSecret: v.optional(v.string()),
   userId: v.string(),
@@ -74,11 +91,15 @@ export const upsertCalendarBatch = mutation({
       .collect();
     const byProviderId = new Map(existing.map((row) => [row.providerCalendarId, row]));
     const seen = new Set<string>();
+    let skipped = 0;
     for (const cal of args.calendars) {
       seen.add(cal.providerCalendarId);
       const row = byProviderId.get(cal.providerCalendarId);
       if (row) {
-        await ctx.db.patch(row._id, { ...cal, updatedAt: ts });
+        // An unchanged calendar is not written again (C5).
+        const next = withClearedKeys(cal, CALENDAR_INPUT_KEYS);
+        if (sameFields(row, next, CALENDAR_INPUT_KEYS)) skipped += 1;
+        else await ctx.db.patch(row._id, { ...next, updatedAt: ts });
       } else {
         await ctx.db.insert('calendars', {
           ...cal,
@@ -108,7 +129,7 @@ export const upsertCalendarBatch = mutation({
         }
       }
     }
-    return { ok: true, count: args.calendars.length };
+    return { ok: true, count: args.calendars.length, skipped };
   },
 });
 
@@ -120,9 +141,10 @@ export const upsertEventBatch = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const ts = now();
+    let skipped = 0;
     for (const event of args.events) {
       const patch = {
-        ...event,
+        ...withClearedKeys(event, EVENT_INPUT_KEYS),
         searchText: normalizeCalendarCorpusText(event.searchText || buildEventSearchText(event)),
         yearMonth: event.yearMonth || yearMonth(event.startAt),
         updatedAt: ts,
@@ -140,6 +162,12 @@ export const upsertEventBatch = mutation({
         if (row.userId !== args.userId) {
           throw new Error(`Cross-user calendar event collision for ${event.providerEventId}.`);
         }
+        // Hash skip (C5): a poll returns every event in its window, and most
+        // did not change. An equal row costs one read and no write.
+        if (sameFields(row, patch, EVENT_INPUT_KEYS)) {
+          skipped += 1;
+          continue;
+        }
         await ctx.db.patch(row._id, patch);
       } else {
         await ctx.db.insert('calendarEvents', {
@@ -152,7 +180,7 @@ export const upsertEventBatch = mutation({
         });
       }
     }
-    return { ok: true, count: args.events.length };
+    return { ok: true, count: args.events.length, skipped };
   },
 });
 
@@ -252,6 +280,10 @@ export const reconcileWindow = mutation({
     keepProviderEventIds: v.array(v.string()),
     cursor: v.optional(v.string()),
     limit: v.optional(v.number()),
+    // A short window reads only rows that end before this bound, not every
+    // later event of the calendar. An event that ends after it waits for the
+    // daily full pass.
+    endBefore: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -259,13 +291,14 @@ export const reconcileWindow = mutation({
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 250), 25), 500);
     const page = await ctx.db
       .query('calendarEvents')
-      .withIndex('by_user_account_calendar_end', (q) =>
-        q
+      .withIndex('by_user_account_calendar_end', (q) => {
+        const range = q
           .eq('userId', args.userId)
           .eq('accountId', args.accountId)
           .eq('providerCalendarId', args.providerCalendarId)
-          .gt('endAt', args.windowStart),
-      )
+          .gt('endAt', args.windowStart);
+        return args.endBefore === undefined ? range : range.lt('endAt', args.endBefore);
+      })
       .paginate({ cursor: args.cursor ?? null, numItems: limit });
     let pruned = 0;
     for (const row of page.page) {
@@ -301,6 +334,7 @@ export const markSyncState = mutation({
     windowStart: v.optional(v.number()),
     windowEnd: v.optional(v.number()),
     lastSyncedAt: v.optional(v.number()),
+    lastFullSyncAt: v.optional(v.number()),
     lastIncrementalSyncAt: v.optional(v.number()),
     lastWebhookAt: v.optional(v.number()),
     lastHistoryBackfillAt: v.optional(v.number()),
@@ -324,6 +358,7 @@ export const markSyncState = mutation({
       'windowStart',
       'windowEnd',
       'lastSyncedAt',
+      'lastFullSyncAt',
       'lastIncrementalSyncAt',
       'lastWebhookAt',
       'lastHistoryBackfillAt',
@@ -354,6 +389,7 @@ export const markSyncState = mutation({
       windowStart: args.windowStart,
       windowEnd: args.windowEnd,
       lastSyncedAt: args.lastSyncedAt,
+      lastFullSyncAt: args.lastFullSyncAt,
       lastIncrementalSyncAt: args.lastIncrementalSyncAt,
       lastWebhookAt: args.lastWebhookAt,
       lastHistoryBackfillAt: args.lastHistoryBackfillAt,

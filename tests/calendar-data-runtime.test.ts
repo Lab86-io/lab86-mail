@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { convexTest } from 'convex-test';
-import { api } from '../convex/_generated/api';
+import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
 
 const convexModules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
   '../convex/calendarData.ts': () => import('../convex/calendarData'),
+  '../convex/calendarSync.ts': () => import('../convex/calendarSync'),
 };
 
 const SECRET = 'calendar-data-runtime-secret';
@@ -96,7 +97,7 @@ describe('calendar and event upserts', () => {
       calendars: [{ providerCalendarId: 'cal_1', name: 'Primary renamed' }],
       pruneMissing: true,
     });
-    expect(result).toEqual({ ok: true, count: 1 });
+    expect(result).toEqual({ ok: true, count: 1, skipped: 1 });
     calendars = await t.query(api.calendarData.listCalendars, { internalSecret: SECRET, userId: USER });
     expect(calendars.map((c) => c.providerCalendarId)).toEqual(['cal_1']);
     expect(await t.run((ctx) => ctx.db.query('calendarEvents').collect())).toHaveLength(0);
@@ -135,6 +136,49 @@ describe('calendar and event upserts', () => {
         events: [eventInput()],
       }),
     ).rejects.toThrow(/Cross-user calendar event collision/);
+  });
+
+  test('an equal event writes nothing, and a removed field clears', async () => {
+    const t = newHarness();
+    await t.mutation(api.calendarData.upsertEventBatch, {
+      ...scope,
+      events: [eventInput({ description: 'Deep dive' })],
+    });
+    const first = await t.run((ctx) => ctx.db.query('calendarEvents').unique());
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const again = await t.mutation(api.calendarData.upsertEventBatch, {
+      ...scope,
+      events: [eventInput({ description: 'Deep dive' })],
+    });
+    expect(again).toEqual({ ok: true, count: 1, skipped: 1 });
+    expect(await t.run((ctx) => ctx.db.query('calendarEvents').unique())).toEqual(first);
+
+    const changed = await t.mutation(api.calendarData.upsertEventBatch, {
+      ...scope,
+      events: [eventInput()],
+    });
+    expect(changed).toEqual({ ok: true, count: 1, skipped: 0 });
+    const cleared = await t.run((ctx) => ctx.db.query('calendarEvents').unique());
+    expect(cleared?.description).toBeUndefined();
+    expect(cleared?.updatedAt).toBeGreaterThan(first!.updatedAt);
+    expect(
+      await t.mutation(api.calendarData.upsertEventBatch, { ...scope, events: [eventInput()] }),
+    ).toMatchObject({ skipped: 1 });
+  });
+
+  test('an equal calendar keeps its row and user settings', async () => {
+    const t = newHarness();
+    const calendars = [{ providerCalendarId: 'cal_1', name: 'Work', hexColor: '#336699' }];
+    await t.mutation(api.calendarData.upsertCalendarBatch, { ...scope, calendars });
+    await t.run(async (ctx) => {
+      const row = await ctx.db.query('calendars').unique();
+      await ctx.db.patch(row!._id, { hidden: true, colorIndex: 3 });
+    });
+    const before = await t.run((ctx) => ctx.db.query('calendars').unique());
+    expect(await t.mutation(api.calendarData.upsertCalendarBatch, { ...scope, calendars })).toMatchObject({
+      skipped: 1,
+    });
+    expect(await t.run((ctx) => ctx.db.query('calendars').unique())).toEqual(before);
   });
 
   test('mutations reject a bad internal secret', async () => {
@@ -259,6 +303,62 @@ describe('reconcileWindow', () => {
   });
 });
 
+describe('reconcileWindow read bound', () => {
+  test('endBefore keeps the read to rows that end before it', async () => {
+    const t = newHarness();
+    await t.mutation(api.calendarData.upsertEventBatch, {
+      ...scope,
+      events: [
+        eventInput({ providerEventId: 'gone_soon', startAt: BASE + HOUR, endAt: BASE + 2 * HOUR }),
+        eventInput({ providerEventId: 'long_event', startAt: BASE + HOUR, endAt: BASE + 900 * HOUR }),
+      ],
+    });
+    const result = await t.mutation(api.calendarData.reconcileWindow, {
+      ...scope,
+      providerCalendarId: 'cal_1',
+      windowStart: BASE,
+      windowEnd: BASE + 10 * HOUR,
+      endBefore: BASE + 100 * HOUR,
+      keepProviderEventIds: [],
+    });
+    expect(result).toMatchObject({ pruned: 1, done: true });
+    const remaining = await t.run((ctx) => ctx.db.query('calendarEvents').collect());
+    // The long event ends past the bound, so the daily full pass owns it.
+    expect(remaining.map((row) => row.providerEventId)).toEqual(['long_event']);
+  });
+});
+
+describe('calendar cron targets', () => {
+  test('syncTargets lists each user with a connected account once', async () => {
+    const t = await harnessWithAccounts({ account_2: 'error' });
+    await t.run(async (ctx) => {
+      await ctx.db.insert('connectedAccounts', {
+        userId: USER,
+        accountId: 'account_3',
+        email: 'a3@example.test',
+        provider: 'google',
+        grantId: 'grant_3',
+        status: 'connected',
+        scopes: [],
+        createdAt: BASE,
+        updatedAt: BASE,
+      });
+      await ctx.db.insert('connectedAccounts', {
+        userId: 'dead_user',
+        accountId: 'dead_account',
+        email: 'dead@example.test',
+        provider: 'google',
+        grantId: 'grant_dead',
+        status: 'error',
+        scopes: [],
+        createdAt: BASE,
+        updatedAt: BASE,
+      });
+    });
+    expect(await t.query(internal.calendarSync.syncTargets, {})).toEqual([USER]);
+  });
+});
+
 describe('sync state machine', () => {
   test('markSyncState inserts, patches, and clears errors on healthy statuses', async () => {
     const t = newHarness();
@@ -275,13 +375,23 @@ describe('sync state machine', () => {
     });
     expect(state).toMatchObject({ status: 'error', error: 'boom', eventsSynced: 5 });
 
-    await t.mutation(api.calendarData.markSyncState, { ...scope, status: 'ready', calendarsSynced: 2 });
+    await t.mutation(api.calendarData.markSyncState, {
+      ...scope,
+      status: 'ready',
+      calendarsSynced: 2,
+      lastFullSyncAt: BASE,
+    });
     state = await t.query(api.calendarData.getSyncState, {
       internalSecret: SECRET,
       userId: USER,
       accountId: scope.accountId,
     });
-    expect(state).toMatchObject({ status: 'ready', calendarsSynced: 2, eventsSynced: 5 });
+    expect(state).toMatchObject({
+      status: 'ready',
+      calendarsSynced: 2,
+      eventsSynced: 5,
+      lastFullSyncAt: BASE,
+    });
     expect(state?.error).toBeUndefined();
 
     const states = await t.query(api.calendarData.getSyncStates, { internalSecret: SECRET, userId: USER });

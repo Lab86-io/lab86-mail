@@ -21,6 +21,75 @@ const ACTIVE_SYNC_CLAIM_MS = 10 * 60_000;
 const HISTORY_PAST_DAYS = 5 * 366;
 const HISTORY_CHUNK_DAYS = 350;
 const HISTORY_BACKFILL_KICK_DEBOUNCE_MS = 6 * 60 * 60_000;
+const DAY_MS = 86_400_000;
+
+// The 15-minute poll syncs a short hot window. The full window runs once a
+// day for each account (C5). New, changed, and deleted events inside the hot
+// window still arrive within one poll; webhooks carry the rest.
+export const HOT_WINDOW_PAST_DAYS = 1;
+export const HOT_WINDOW_FUTURE_DAYS = 14;
+export const FULL_WINDOW_INTERVAL_MS = DAY_MS;
+// Each account adds its own part of this span to the full-window interval, so
+// the daily full passes of the accounts do not all fall on one poll.
+const FULL_WINDOW_SPREAD_MS = 2 * 60 * 60_000;
+// The cron poll of each user starts after its own part of this span.
+export const CRON_START_SPREAD_MS = 5 * 60_000;
+// A hot-window reconcile reads rows that end before hot end plus this slack.
+const HOT_RECONCILE_END_SLACK_MS = 35 * DAY_MS;
+
+/** `full`: the whole window. `hot`: −1 to +14 days. `auto`: full when a daily pass is due. */
+export type CalendarWindowMode = 'hot' | 'full' | 'auto';
+
+/** A stable offset in [0, spanMs) for one key, so work of many keys spreads out. */
+export function spreadOffsetMs(key: string, spanMs: number): number {
+  if (spanMs <= 0) return 0;
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i += 1) hash = Math.imul(hash ^ key.charCodeAt(i), 16777619);
+  return (hash >>> 0) % Math.floor(spanMs);
+}
+
+/** How long the cron poll of one user waits before it starts. */
+export function calendarCronStartDelayMs(userId: string): number {
+  return spreadOffsetMs(`calendar-cron:${userId}`, CRON_START_SPREAD_MS);
+}
+
+/**
+ * The window that one sync covers. `auto` picks the full window when the
+ * account has no full pass on record or its daily pass is due. A state from
+ * before `lastFullSyncAt` existed counts `lastSyncedAt`, because every old
+ * sync covered the full window.
+ */
+export function resolveCalendarWindow(
+  mode: CalendarWindowMode,
+  state: { lastFullSyncAt?: number; lastSyncedAt?: number; windowEnd?: number } | null | undefined,
+  nowMs: number,
+  accountKey: string,
+): 'hot' | 'full' {
+  if (mode === 'full') return 'full';
+  const lastFull = Number(state?.lastFullSyncAt) || (state?.windowEnd ? Number(state?.lastSyncedAt) || 0 : 0);
+  if (!lastFull) return 'full';
+  if (mode === 'hot') return 'hot';
+  const interval =
+    FULL_WINDOW_INTERVAL_MS + spreadOffsetMs(`calendar-full:${accountKey}`, FULL_WINDOW_SPREAD_MS);
+  return nowMs - lastFull >= interval ? 'full' : 'hot';
+}
+
+/** The bounds of one window, and the reconcile read bound of a hot window. */
+export function calendarWindowBounds(window: 'hot' | 'full', nowMs: number) {
+  if (window === 'hot') {
+    const windowEnd = nowMs + HOT_WINDOW_FUTURE_DAYS * DAY_MS;
+    return {
+      windowStart: nowMs - HOT_WINDOW_PAST_DAYS * DAY_MS,
+      windowEnd,
+      endBefore: windowEnd + HOT_RECONCILE_END_SLACK_MS,
+    };
+  }
+  return {
+    windowStart: nowMs - WINDOW_PAST_DAYS * DAY_MS,
+    windowEnd: nowMs + WINDOW_FUTURE_DAYS * DAY_MS,
+    endBefore: undefined,
+  };
+}
 
 export interface CalendarSyncResult {
   ok: boolean;
@@ -99,15 +168,16 @@ export async function syncCalendarAccount({
   accountId,
   force = false,
   reason = 'active_window',
+  window: windowMode = 'full',
 }: {
   userId: string;
   accountId: string;
   force?: boolean;
   reason?: string;
+  window?: CalendarWindowMode;
 }): Promise<CalendarSyncResult> {
   const row = await getConnectedAccount(userId, accountId);
-  const windowStart = Date.now() - WINDOW_PAST_DAYS * 86_400_000;
-  const windowEnd = Date.now() + WINDOW_FUTURE_DAYS * 86_400_000;
+  const startedAt = Date.now();
   const claim = await convexMutation<{ claimed: boolean; reason?: string; state?: any }>(
     calendarApi.claimCalendarSync,
     {
@@ -130,6 +200,9 @@ export async function syncCalendarAccount({
       reason: claim.reason || 'not_claimed',
     };
   }
+  const window = resolveCalendarWindow(windowMode, claim.state, startedAt, `${userId}:${accountId}`);
+  const full = window === 'full';
+  const { windowStart, windowEnd, endBefore } = calendarWindowBounds(window, startedAt);
   try {
     const calendars = await listAllCalendars(row.grantId);
     await convexMutation(calendarApi.upsertCalendarBatch, {
@@ -145,18 +218,20 @@ export async function syncCalendarAccount({
     let calendarIndex = 0;
     for (const calendar of calendars) {
       calendarIndex += 1;
-      // Progress heartbeat: the surface shows "syncing · N events" live.
-      await markSync(row, {
-        status: 'syncing',
-        calendarsSynced: calendarIndex,
-        eventsSynced: totalEvents,
-        progress: {
-          stage: 'calendar_window',
-          calendarId: calendar.providerCalendarId,
-          calendarIndex,
-          calendars: calendars.length,
-        },
-      }).catch(() => undefined);
+      // Progress heartbeat: the surface shows "syncing · N events" live. A
+      // short poll ends fast, so it writes no heartbeat.
+      if (full)
+        await markSync(row, {
+          status: 'syncing',
+          calendarsSynced: calendarIndex,
+          eventsSynced: totalEvents,
+          progress: {
+            stage: 'calendar_window',
+            calendarId: calendar.providerCalendarId,
+            calendarIndex,
+            calendars: calendars.length,
+          },
+        }).catch(() => undefined);
       const events = await listCalendarEventsInWindow(
         row.grantId,
         calendar.providerCalendarId,
@@ -181,22 +256,23 @@ export async function syncCalendarAccount({
         providerCalendarId: calendar.providerCalendarId,
         windowStart,
         windowEnd,
+        ...(endBefore === undefined ? {} : { endBefore }),
         keepProviderEventIds: events.map((event) => event.providerEventId),
       });
       totalEvents += events.length;
-      await markSync(row, { eventsSynced: totalEvents }).catch(() => undefined);
+      if (full) await markSync(row, { eventsSynced: totalEvents }).catch(() => undefined);
     }
 
+    const syncedAt = Date.now();
     await markSync(row, {
       status: 'ready',
       calendarsSynced: calendars.length,
-      eventsSynced: totalEvents,
-      windowStart,
-      windowEnd,
-      lastSyncedAt: Date.now(),
-      progress: { stage: 'ready', reason },
+      lastSyncedAt: syncedAt,
+      // The stored window and event count describe the last full pass.
+      ...(full ? { eventsSynced: totalEvents, windowStart, windowEnd, lastFullSyncAt: syncedAt } : {}),
+      progress: { stage: 'ready', reason, window },
     });
-    maybeKickCalendarHistoryBackfill(row);
+    if (full) maybeKickCalendarHistoryBackfill(row);
     return { ok: true, accountId, calendars: calendars.length, events: totalEvents };
   } catch (err: any) {
     if (isGrantGoneError(err)) {
@@ -227,7 +303,7 @@ export async function syncCalendarAccount({
 
 export async function syncAllCalendarAccounts(
   userId: string,
-  options: { force?: boolean; reason?: string } = {},
+  options: { force?: boolean; reason?: string; window?: CalendarWindowMode } = {},
 ): Promise<CalendarSyncResult[]> {
   const accounts = await convexQuery<NylasAccountRow[]>(accountsApi.listConnectedAccounts, { userId });
   const results: CalendarSyncResult[] = [];
@@ -240,6 +316,7 @@ export async function syncAllCalendarAccounts(
           accountId: account.accountId,
           force: options.force,
           reason: options.reason,
+          ...(options.window ? { window: options.window } : {}),
         }),
       );
     } catch (err: any) {
@@ -261,12 +338,22 @@ export interface CalendarSyncKickOptions {
   // A forced kick skips the lazy debounce and overrides an active claim.
   force?: boolean;
   reason?: string;
+  // A lazy kick syncs the hot window unless the daily full pass is due. A
+  // change that can reach past the hot window (a recurring series) asks for
+  // the full window. A forced kick always syncs the full window.
+  window?: CalendarWindowMode;
 }
 
 type CalendarSyncKickRow = Pick<NylasAccountRow, 'userId' | 'accountId'>;
 
 interface CalendarSyncKickerDependencies {
-  sync: (input: { userId: string; accountId: string; force?: boolean; reason?: string }) => Promise<unknown>;
+  sync: (input: {
+    userId: string;
+    accountId: string;
+    force?: boolean;
+    reason?: string;
+    window?: CalendarWindowMode;
+  }) => Promise<unknown>;
   now?: () => number;
   debounceMs?: number;
   reportError?: (accountId: string, error: unknown) => void;
@@ -322,7 +409,12 @@ export function createCalendarSyncKicker(deps: CalendarSyncKickerDependencies) {
     if (now() - last < debounceMs) return;
     lazyKickAt.set(key, now());
     void deps
-      .sync({ userId: row.userId, accountId: row.accountId, reason: options.reason ?? 'lazy_kick' })
+      .sync({
+        userId: row.userId,
+        accountId: row.accountId,
+        reason: options.reason ?? 'lazy_kick',
+        window: options.window ?? 'auto',
+      })
       .catch((error) => {
         lazyKickAt.delete(key);
         reportError(row.accountId, error);
@@ -488,7 +580,7 @@ export async function backfillCalendarHistoryChunk({
 export async function applyCalendarWebhookDelta(row: NylasAccountRow, type: string, payload: unknown) {
   const object = extractWebhookObject(payload);
   if (/^calendar\./.test(type)) {
-    maybeKickCalendarSync(row);
+    maybeKickCalendarSync(row, { window: 'full', reason: 'calendar_webhook' });
     await markSync(row, {
       progress: { stage: 'calendar_webhook', type, calendarId: str(object.id) },
       lastWebhookAt: Date.now(),
@@ -519,13 +611,14 @@ export async function applyCalendarWebhookDelta(row: NylasAccountRow, type: stri
   const isRecurring =
     Array.isArray(object.recurrence) || str(object.master_event_id) || str(object.masterEventId);
   if (isRecurring) {
-    maybeKickCalendarSync(row);
+    // One series change can move instances far past the hot window.
+    maybeKickCalendarSync(row, { window: 'full', reason: 'recurring_webhook' });
     await markCalendarWebhookApplied(row, type, providerEventId, { recurring: true });
     return;
   }
   const event = toEventInput(object) || (await fetchWebhookEvent(row, providerEventId, providerCalendarId));
   if (!event) {
-    maybeKickCalendarSync(row);
+    maybeKickCalendarSync(row, { window: 'full', reason: 'event_webhook_resync' });
     await markSync(row, {
       progress: { stage: 'event_webhook_resync', type, eventId: providerEventId },
       lastWebhookAt: Date.now(),
