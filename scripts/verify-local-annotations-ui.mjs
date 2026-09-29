@@ -320,7 +320,7 @@ try {
   assert.equal(await draft.inputValue(), 'Keep this draft through layout changes');
   await snapshot('chat-full-1046');
   assert.deepEqual(errors, []);
-  console.log(`Staging annotation acceptance passed: ${artifacts}`);
+  console.log(`Local annotation acceptance passed: ${artifacts}`);
 } finally {
   await browser.close();
 }

@@ -10,6 +10,14 @@ and commit, starts the `Production App Store` Xcode Cloud workflow, verifies the
 signed export, and uploads it to TestFlight. Its manual dispatch input is a
 successful production deployment run ID. There is no staging distribution workflow.
 
+The separate `Albatross Mac` Xcode Cloud workflow archives production version tags
+(`v` prefix) and retains its existing TestFlight for Mac distribution. The release
+pipeline pushes those tags only after Railway deployment and the health check
+succeed. Its former `staging` branch trigger and unrestricted manual branch trigger
+are removed. The legacy `Albatross` iOS workflow is disabled; its configuration is
+retained for history. `Production App Store` no longer allows historical
+`ios-staging-*` manual tag targets.
+
 Every distributed iOS/macOS build uses `https://mail.lab86.io`, production Convex
 `https://proficient-viper-594.convex.cloud`, and Clerk `clerk.mail.lab86.io`.
 Xcode Cloud's post-clone script generates the project and embedded configuration;
