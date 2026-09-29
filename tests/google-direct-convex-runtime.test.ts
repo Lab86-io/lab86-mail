@@ -6,6 +6,7 @@ import schema from '../convex/schema';
 
 const convexModules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
+  '../convex/cloudFiles.ts': () => import('../convex/cloudFiles'),
   '../convex/googleDirect.ts': () => import('../convex/googleDirect'),
   '../convex/mailOutbox.ts': () => import('../convex/mailOutbox'),
 };
@@ -898,5 +899,25 @@ describe('googleAccessUsesAddress', () => {
     expect(await ask(t, {})).toBe(true);
     expect(await ask(t, { exceptConnectionId: 'drive-b' })).toBe(false);
     expect(await ask(t, { email: 'ANN@example.com', exceptConnectionId: 'drive-b' })).toBe(false);
+  });
+
+  test('a Drive connection saved with a mixed-case address counts for the disconnect of another one', async () => {
+    const t = newHarness();
+    const save = (userId: string, connectionId: string, accountEmail: string) =>
+      t.mutation(api.cloudFiles.upsertConnection, {
+        internalSecret: SECRET,
+        userId,
+        connectionId,
+        provider: 'google_drive',
+        accountKey: `key-${connectionId}`,
+        accountEmail,
+        scopes: [],
+        accessTokenEncrypted: 'enc',
+      });
+    await save(USER, 'drive-a', ' Ann@Example.COM ');
+    await save(USER_B, 'drive-b', 'ann@example.com');
+    // The disconnect of B asks with the address of B. A has the same address.
+    expect(await ask(t, { email: 'ann@example.com', exceptConnectionId: 'drive-b' })).toBe(true);
+    expect(await ask(t, { email: 'ann@example.com', exceptConnectionId: 'drive-a' })).toBe(true);
   });
 });

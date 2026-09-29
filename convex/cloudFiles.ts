@@ -6,6 +6,16 @@ import { now, requireInternalSecret } from './lib';
 const providerValidator = v.union(v.literal('google_drive'), v.literal('onedrive'));
 const CLEANUP_BATCH_SIZE = 100;
 
+/**
+ * The stored form of a Google Drive address: trimmed and in lower case, as
+ * googleDirect.activateGoogleAccount stores a mail address. The Google revoke
+ * guard (googleDirect.googleAccessUsesAddress) looks an address up in this
+ * form, so it finds every connection of the address.
+ */
+export function driveAccountEmail(email: string | undefined) {
+  return email?.trim().toLowerCase() || undefined;
+}
+
 export const saveOAuthState = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -186,7 +196,8 @@ export const upsertConnection = mutation({
       connectionId,
       provider: args.provider,
       accountKey: args.accountKey,
-      accountEmail: args.accountEmail,
+      accountEmail:
+        args.provider === 'google_drive' ? driveAccountEmail(args.accountEmail) : args.accountEmail,
       displayName: args.displayName,
       status: 'connected' as const,
       scopes: args.scopes,
@@ -222,6 +233,65 @@ export const upsertConnection = mutation({
       });
     }
     return { ok: true, connectionId };
+  },
+});
+
+const DRIVE_EMAIL_PAGE = 100;
+
+/**
+ * One-time fix: stores the address of each Google Drive connection in the
+ * form of driveAccountEmail, as upsertConnection does now. Before, a Drive
+ * address kept the letter case of the provider, so the Google revoke guard
+ * could miss a connection of the same address.
+ *
+ * Each call reads one page of the table (100 rows by default, at most 100)
+ * and schedules the next page. It is idempotent: a stored address in the
+ * correct form is skipped, so a second run changes nothing. `updatedAt` stays,
+ * because the connection did not change. A dry run reads and counts, and
+ * writes nothing. The totals are in the deployment logs.
+ * Run a dry run first, then the real pass:
+ *   CONVEX_DEPLOYMENT=prod:proficient-viper-594 npx convex run cloudFiles:normalizeDriveAccountEmails '{"dryRun": true}'
+ *   CONVEX_DEPLOYMENT=prod:proficient-viper-594 npx convex run cloudFiles:normalizeDriveAccountEmails '{}'
+ */
+export const normalizeDriveAccountEmails = internalMutation({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+    // Continuation state. The scheduler sets these; a caller leaves them out.
+    cursor: v.optional(v.string()),
+    scanned: v.optional(v.number()),
+    changed: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const dryRun = Boolean(args.dryRun);
+    let scanned = args.scanned ?? 0;
+    let changed = args.changed ?? 0;
+    const page = await ctx.db.query('cloudFileConnections').paginate({
+      cursor: args.cursor ?? null,
+      numItems: Math.min(Math.max(Math.floor(args.limit ?? DRIVE_EMAIL_PAGE), 1), DRIVE_EMAIL_PAGE),
+    });
+    for (const row of page.page) {
+      scanned += 1;
+      if (row.provider !== 'google_drive' || row.accountEmail === undefined) continue;
+      const accountEmail = driveAccountEmail(row.accountEmail);
+      if (accountEmail === row.accountEmail) continue;
+      changed += 1;
+      if (!dryRun) await ctx.db.patch(row._id, { accountEmail });
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.cloudFiles.normalizeDriveAccountEmails, {
+        dryRun: args.dryRun,
+        limit: args.limit,
+        cursor: page.continueCursor,
+        scanned,
+        changed,
+      });
+      return { scanned, changed, dryRun, done: false };
+    }
+    console.log(
+      `[drive address case] scanned ${scanned} connections, changed ${changed}${dryRun ? ' (dry run)' : ''}`,
+    );
+    return { scanned, changed, dryRun, done: true };
   },
 });
 

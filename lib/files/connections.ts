@@ -210,7 +210,9 @@ async function cloudFileAccountProfile(provider: CloudFileProvider, accessToken:
     const id = typeof payload.id === 'string' ? payload.id : email || 'google-account';
     return {
       accountKey: id,
-      accountEmail: email,
+      // Trimmed and in lower case, as Convex stores it (cloudFiles.driveAccountEmail):
+      // the Google revoke guard finds a shared address only in this form.
+      accountEmail: email?.trim().toLowerCase() || undefined,
       displayName: typeof payload.name === 'string' ? payload.name : email || 'Google Drive',
     };
   }
