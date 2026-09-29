@@ -32,6 +32,9 @@ const GOOD_COLORS = [
 
 const BAD_COLORS = [
   'red;} body{display:none',
+  // A comment opener inside calc() would hide the rest of the style element.
+  'oklch(from var(--x) calc(l/*) c h)',
+  'oklch(from var(--x) calc(l*/2) c h)',
   'red',
   'url(https://x)',
   'url(//evil.example/a.png)',
@@ -186,8 +189,28 @@ describe('ChartStyle rendering', () => {
       </ChartContainer>,
     );
 
-    expect(html).toContain('data-chart="chart-xbodydisplaynone"');
-    expect(html).toContain('[data-chart=chart-xbodydisplaynone] {');
+    const id = html.match(/data-chart="(chart-xbodydisplaynone-[A-Za-z0-9_-]+)"/)?.[1];
+    expect(id).toBeTruthy();
+    expect(html).toContain(`[data-chart=${id}] {`);
     expect(html).not.toContain('display:none');
+  });
+
+  test('two ids that clean to the same text keep separate selectors', () => {
+    const config = { count: { label: 'Count', color: '#123456' } };
+    const html = renderToStaticMarkup(
+      <>
+        <ChartContainer id="a.b" config={config}>
+          <div />
+        </ChartContainer>
+        <ChartContainer id="ab" config={config}>
+          <div />
+        </ChartContainer>
+      </>,
+    );
+    const ids = [...html.matchAll(/data-chart="([^"]+)"/g)].map((match) => match[1]);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe('chart-ab');
+    expect(ids[0]).toMatch(/^chart-ab-[A-Za-z0-9_-]+$/);
+    expect(new Set(ids).size).toBe(2);
   });
 });

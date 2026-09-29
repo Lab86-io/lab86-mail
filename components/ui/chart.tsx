@@ -54,7 +54,16 @@ function ChartContainer({
 }) {
   const uniqueId = React.useId();
   // The id goes into a CSS selector, so keep only the characters that are safe there.
-  const chartId = `chart-${(id ?? uniqueId).replace(/[^A-Za-z0-9_-]/g, '')}`;
+  const safe = (value: string) => value.replace(/[^A-Za-z0-9_-]/g, '');
+  const safeUniqueId = safe(uniqueId);
+  // A changed id gets the instance id too, so two ids that clean to the same text
+  // (for example `a.b` and `ab`) keep separate selectors.
+  const chartId =
+    id === undefined
+      ? `chart-${safeUniqueId}`
+      : safe(id) === id
+        ? `chart-${id}`
+        : `chart-${safe(id)}-${safeUniqueId}`;
 
   return (
     <ChartContext.Provider value={{ config }}>

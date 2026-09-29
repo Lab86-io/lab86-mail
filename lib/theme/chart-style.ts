@@ -41,6 +41,8 @@ export function isSafeChartColor(color: unknown): color is string {
   if (typeof color !== 'string') return false;
   const value = color.trim();
   if (!value || value.length > MAX_COLOR_LENGTH) return false;
+  // A CSS comment opener would hide the rest of the style element.
+  if (value.includes('/*') || value.includes('*/')) return false;
   return (
     HEX_PATTERN.test(value) ||
     NUMERIC_FUNCTION_PATTERN.test(value) ||
