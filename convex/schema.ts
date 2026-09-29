@@ -96,6 +96,10 @@ export default defineSchema({
     undoSeconds: v.number(),
     payloadId: v.optional(v.id('_storage')),
     messageId: v.optional(v.string()),
+    // A scheduled send of a direct Google account (Gmail has no scheduled
+    // send). The row holds the message until `fireAt` (convex/googleDirect.ts).
+    accountId: v.optional(v.string()),
+    scheduled: v.optional(v.boolean()),
     updatedAt: v.number(),
   })
     .index('by_user_key', ['userId', 'key'])
@@ -170,7 +174,8 @@ export default defineSchema({
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId'])
     .index('by_status', ['status'])
-    .index('by_status_user', ['status', 'userId']),
+    .index('by_status_user', ['status', 'userId'])
+    .index('by_email', ['email']),
 
   providerGrants: defineTable({
     userId: v.string(),
@@ -182,12 +187,17 @@ export default defineSchema({
     refreshTokenEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
     scopes: v.array(v.string()),
+    // The Nylas grant of a Google account that now talks to Google directly
+    // (grantId `google:<UUID>`). A rollback puts it back. It is
+    // destroyed only when the user removes the account.
+    previousNylasGrantId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
-    .index('by_grant', ['grantId']),
+    .index('by_grant', ['grantId'])
+    .index('by_previous_nylas_grant', ['previousNylasGrantId']),
 
   nylasOAuthStates: defineTable({
     state: v.string(),
@@ -470,6 +480,67 @@ export default defineSchema({
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_user_account_message', ['userId', 'accountId', 'providerMessageId'])
     .index('by_user_account_thread', ['userId', 'accountId', 'providerThreadId']),
+
+  // Mail attachment files in Convex file storage, which encrypts them at rest
+  // (convex/mailAttachments.ts, policy in lib/attachments/store-policy.ts).
+  // One row for each message attachment. Rows of one user with the same
+  // sha256 share one stored file. The file is deleted with its last row.
+  mailAttachmentFiles: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    providerMessageId: v.string(),
+    attachmentId: v.string(),
+    filename: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+    sha256: v.string(),
+    storageId: v.id('_storage'),
+    createdAt: v.number(),
+  })
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_account_message', ['userId', 'accountId', 'providerMessageId', 'attachmentId'])
+    .index('by_user_sha256', ['userId', 'sha256'])
+    .index('by_storage', ['storageId']),
+
+  // The work queue of mailAttachmentFiles. A `queued` row waits for `dueAt`;
+  // a claim leases it and counts the attempt. A `failed` row records a
+  // permanent error (or too many attempts), so the queue does not try again.
+  mailAttachmentQueue: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    providerMessageId: v.string(),
+    attachmentId: v.string(),
+    filename: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+    receivedAt: v.number(),
+    state: v.union(v.literal('queued'), v.literal('failed')),
+    attempts: v.number(),
+    dueAt: v.number(),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_account_message', ['userId', 'accountId', 'providerMessageId', 'attachmentId'])
+    .index('by_user_state_due', ['userId', 'state', 'dueAt'])
+    // The tick scan: one read for each user with queued rows gives the
+    // earliest dueAt of that user (convex/mailAttachments.ts usersWithDueWork).
+    .index('by_state_user_due', ['state', 'userId', 'dueAt']),
+
+  // One row for each mailbox: how far the queue read the stored mail of the
+  // time window. New mail enters the queue when the corpus stores it; this
+  // cursor adds the mail that the corpus held before the queue existed.
+  mailAttachmentBackfills: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    // The Convex page cursor over mailCorpusMessages.by_user_account_received.
+    cursor: v.optional(v.string()),
+    doneAt: v.optional(v.number()),
+    queued: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_user_account', ['userId', 'accountId']),
 
   // Generic per-user document store backing all server-side app state that
   // previously lived in the single-tenant NeDB files (memories, smart labels,
@@ -2025,7 +2096,9 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_user_provider_account', ['userId', 'provider', 'accountKey'])
-    .index('by_status', ['status']),
+    .index('by_status', ['status'])
+    // The Google revoke guard looks for other connections of one address.
+    .index('by_account_email', ['accountEmail']),
 
   cloudFileCredentials: defineTable({
     userId: v.string(),
@@ -2039,6 +2112,25 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId']),
+
+  // Direct Google mail sign-in (convex/googleDirect.ts). The Google callback
+  // shares the Files redirect URI, so this state is separate from the Files
+  // state: the callback tries this store first. A native flow keeps its
+  // result in oauthCompletions, as the Nylas flow does.
+  googleMailOAuthStates: defineTable({
+    userId: v.string(),
+    state: v.string(),
+    mode: v.union(v.literal('switch'), v.literal('new'), v.literal('reconnect')),
+    accountId: v.optional(v.string()),
+    redirectTo: v.optional(v.string()),
+    nativeCallback: v.optional(v.boolean()),
+    codeVerifierEncrypted: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_state', ['state'])
+    .index('by_expires', ['expiresAt']),
 
   cloudFileOAuthStates: defineTable({
     userId: v.string(),
@@ -2065,6 +2157,23 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_token', ['completionToken'])
+    .index('by_expires', ['expiresAt']),
+
+  // A native mailbox or tool connection that the provider approved but the
+  // app did not redeem yet. The callback has no Clerk session, so it keeps
+  // the provider result here under a single-use token. Only the user who
+  // started the flow can redeem it, through an authenticated finalize route.
+  oauthCompletions: defineTable({
+    userId: v.string(),
+    kind: v.union(v.literal('mail'), v.literal('mcp')),
+    // SHA-256 of the completion token. The token itself is never stored.
+    tokenHash: v.string(),
+    payloadEncrypted: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_token', ['tokenHash'])
     .index('by_expires', ['expiresAt']),
 
   // Provider-neutral, AI-editable office documents. The current snapshot is

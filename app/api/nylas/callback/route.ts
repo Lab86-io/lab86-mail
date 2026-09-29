@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireCurrentUser } from '@/lib/auth/current-user';
 import { syncCalendarAccount } from '@/lib/calendar/sync';
 import { maybeKickContactSync } from '@/lib/contacts/sync';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { hostedPublicUrl, nylasRedirectUri } from '@/lib/hosted/env';
 import { maybeKickCorpusBackfill } from '@/lib/mail/corpus-sync';
 import { requireNylas } from '@/lib/nylas/client';
+import { completeNylasConnection, type NylasOAuthCompletionPayload } from '@/lib/nylas/oauth-connection';
 import { encryptSecret } from '@/lib/security/crypto';
+import { saveOAuthCompletion } from '@/lib/security/oauth-completions';
 import { NATIVE_NYLAS_CALLBACK, sanitizeInternalPath } from '@/lib/security/redirect';
 
 export const runtime = 'nodejs';
@@ -15,11 +18,20 @@ const defaultDependencies = {
   convexMutation,
   requireNylas,
   encryptSecret,
+  nylasRedirectUri,
   syncCalendarAccount,
   maybeKickCorpusBackfill,
   maybeKickContactSync,
+  requireCurrentUser,
+  saveOAuthCompletion: (input: { userId: string; kind: 'mail'; payload: NylasOAuthCompletionPayload }) =>
+    saveOAuthCompletion(input),
 };
 
+// The OAuth state alone does not prove who approved the provider: a user can
+// start a connection and send the provider link to someone else. The web flow
+// therefore requires the Clerk session of the user who started it. The native
+// flow has no session in the system browser, so it keeps the provider result
+// for the app to redeem through the authenticated /api/nylas/finalize route.
 export function createNylasOAuthCallback(deps: typeof defaultDependencies = defaultDependencies) {
   return async function nylasOAuthCallback(req: NextRequest) {
     const url = new URL(req.url);
@@ -29,16 +41,19 @@ export function createNylasOAuthCallback(deps: typeof defaultDependencies = defa
     if (!state) return redirectWithStatus('/', 'nylas_error', 'Missing OAuth state.');
 
     let redirectTo = '/';
+    let nativeCallback = false;
     try {
       const stored = await deps.convexMutation<any>(api.accounts.consumeOAuthState, { state });
       if (!stored) return redirectWithStatus('/', 'nylas_error', 'OAuth state is invalid or expired.');
       redirectTo = stored.redirectTo || '/';
+      nativeCallback = stored.nativeCallback === true || redirectTo === NATIVE_NYLAS_CALLBACK;
       if (providerError) {
         console.warn('[nylas/callback] provider denied authorization', providerError);
         return redirectWithStatus(
           redirectTo,
           'nylas_error',
           'Authorization was not completed. Please try again.',
+          nativeCallback,
         );
       }
       if (!code) {
@@ -46,49 +61,22 @@ export function createNylasOAuthCallback(deps: typeof defaultDependencies = defa
           redirectTo,
           'nylas_error',
           'The provider did not return an authorization code.',
+          nativeCallback,
         );
       }
-      const token = await deps.requireNylas().auth.exchangeCodeForToken({
-        clientId: process.env.NYLAS_CLIENT_ID || '',
-        clientSecret: process.env.NYLAS_CLIENT_SECRET || undefined,
-        redirectUri: nylasRedirectUri(),
-        code,
-      });
-      const provider = normalizeProvider(token.provider || stored.provider);
-      const scopes = String(token.scope || '')
-        .split(/\s+/)
-        .map((scope) => scope.trim())
-        .filter(Boolean);
-      const upserted = await deps.convexMutation<{
-        accountId: string;
-        replacedGrantId?: string;
-      }>(api.accounts.upsertConnectedAccount, {
-        userId: stored.userId,
-        email: token.email,
-        provider,
-        grantId: token.grantId,
-        accessTokenEncrypted: token.accessToken ? deps.encryptSecret(token.accessToken) : undefined,
-        refreshTokenEncrypted: token.refreshToken ? deps.encryptSecret(token.refreshToken) : undefined,
-        expiresAt: token.expiresIn ? Date.now() + token.expiresIn * 1000 : undefined,
-        scopes,
-      });
-      if (upserted?.replacedGrantId) {
-        await deps
-          .requireNylas()
-          .grants.destroy({ grantId: upserted.replacedGrantId })
-          .catch(() => undefined);
+      if (nativeCallback) {
+        const completionToken = await deps.saveOAuthCompletion({
+          userId: stored.userId,
+          kind: 'mail',
+          payload: { code, provider: stored.provider },
+        });
+        return redirectWithStatus(redirectTo, 'nylas_completion', completionToken, true);
       }
-      if (upserted?.accountId) {
-        const kick = { userId: stored.userId, accountId: upserted.accountId };
-        void (async () => {
-          await deps
-            .syncCalendarAccount({ ...kick, force: true, reason: 'oauth_callback' })
-            .catch(() => undefined);
-          deps.maybeKickCorpusBackfill(kick);
-          // A reconnect that added contact scopes syncs contacts at once.
-          deps.maybeKickContactSync(kick, { force: true, reason: 'oauth_callback' });
-        })();
+      const sessionUser = await deps.requireCurrentUser().catch(() => null);
+      if (!sessionUser || sessionUser.userId !== stored.userId) {
+        return redirectWithStatus(redirectTo, 'nylas_error', 'Sign in again and retry the connection.');
       }
+      await completeNylasConnection({ userId: stored.userId, code, provider: stored.provider }, deps);
       return redirectWithStatus(redirectTo, 'nylas_connected', '1');
     } catch (err: any) {
       console.error('[nylas/callback] OAuth connection failed', err);
@@ -96,6 +84,7 @@ export function createNylasOAuthCallback(deps: typeof defaultDependencies = defa
         redirectTo,
         'nylas_error',
         'Could not complete authorization. Please try again.',
+        nativeCallback,
       );
     }
   };
@@ -103,13 +92,8 @@ export function createNylasOAuthCallback(deps: typeof defaultDependencies = defa
 
 export const GET = createNylasOAuthCallback();
 
-function normalizeProvider(provider: string) {
-  if (provider === 'google' || provider === 'microsoft' || provider === 'icloud') return provider;
-  return 'imap';
-}
-
-function redirectWithStatus(path: string, key: string, value: string) {
-  if (path === NATIVE_NYLAS_CALLBACK) {
+function redirectWithStatus(path: string, key: string, value: string, nativeCallback = false) {
+  if (nativeCallback || path === NATIVE_NYLAS_CALLBACK) {
     const target = new URL('lab86://oauth/mail');
     target.searchParams.set(key, value);
     return NextResponse.redirect(target);

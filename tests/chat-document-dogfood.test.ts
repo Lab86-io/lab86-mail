@@ -66,7 +66,7 @@ describe('dogfood regressions', () => {
       ] as any;
     const output = await hydrateChatAttachments(
       'owner',
-      message('data:text/plain;base64,' + Buffer.from('Saved notes').toString('base64')),
+      message(`data:text/plain;base64,${Buffer.from('Saved notes').toString('base64')}`),
     );
     expect((output[0].parts[0] as any).text).toContain('Saved notes');
     await expect(hydrateChatAttachments('owner', message('http://127.0.0.1/private'))).rejects.toThrow(

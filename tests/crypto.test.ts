@@ -7,7 +7,7 @@ describe('crypto helpers', () => {
     process.env.LAB86_MAIL_ENCRYPTION_KEY = 'test-passphrase-for-unit-tests';
     try {
       const payload = encryptSecret('super-secret-token');
-      expect(payload.startsWith('v1.')).toBe(true);
+      expect(payload.startsWith('v2.k1.')).toBe(true);
       expect(decryptSecret(payload)).toBe('super-secret-token');
     } finally {
       if (previous === undefined) delete process.env.LAB86_MAIL_ENCRYPTION_KEY;

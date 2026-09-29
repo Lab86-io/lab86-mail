@@ -2,8 +2,8 @@
  * The calendar record is a fixture, not a provider mutation. No email is sent.
  */
 import { randomUUID } from 'node:crypto';
-import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
+import { createOpenRouterProvider } from '../lib/ai/openrouter-policy';
 import { api, convexMutation, convexQuery } from '../lib/hosted/convex';
 import { prepareNarrativeMeeting } from '../lib/narrative/meeting-prep';
 import { getNarrativeTaskContext } from '../lib/narrative/service';
@@ -20,10 +20,7 @@ process.env.LAB86_NARRATIVE_USER_IDS = userId;
 const assert = (value: unknown, message: string) => {
   if (!value) throw new Error(message);
 };
-const model = createOpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: 'https://openrouter.ai/api/v1',
-}).chat('z-ai/glm-5.3-flash');
+const model = createOpenRouterProvider(process.env.OPENROUTER_API_KEY).chat('z-ai/glm-5.3-flash');
 const f = api.narrative;
 const event = { title: 'Planning', startAt: Date.now() + 86400000, endAt: Date.now() + 88200000 };
 const failures: unknown[] = [];

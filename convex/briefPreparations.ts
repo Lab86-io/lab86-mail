@@ -1,7 +1,12 @@
 import { v } from 'convex/values';
 import { questionDedupeKey } from '../lib/albatross/question-dedupe';
 import { SHAPE_POLICY } from '../lib/albatross/shape-policy';
-import { preparedDraftSchema, sourceLink, validatePreparedEvidence } from '../lib/content/contract';
+import {
+  preparationRetryDelayMs,
+  preparedDraftSchema,
+  sourceLink,
+  validatePreparedEvidence,
+} from '../lib/content/contract';
 import { briefAttention } from '../lib/jev/brief';
 import { assessmentIsCurrent, correctionForMail } from '../lib/jev/contract';
 import type { Id } from './_generated/dataModel';
@@ -286,6 +291,7 @@ export const complete = mutation({
       lease: undefined,
       leaseUntil: undefined,
       nextAttemptAt: 0,
+      failures: undefined,
       error: undefined,
     });
     return true;
@@ -297,10 +303,13 @@ export const fail = mutation({
     requireInternalSecret(args.internalSecret);
     const row = await owned(ctx, args);
     if (row.lease !== args.lease || row.status !== 'pending') return;
+    // A failure that repeats waits longer each time (lib/content/contract.ts).
+    const failures = (row.failures ?? 0) + 1;
     await ctx.db.patch(row._id, {
       lease: undefined,
       leaseUntil: undefined,
-      nextAttemptAt: Date.now() + 10 * 60_000,
+      nextAttemptAt: Date.now() + preparationRetryDelayMs(failures),
+      failures,
       error: 'Preparation could not finish. It will retry.',
       updatedAt: Date.now(),
     });
@@ -343,7 +352,7 @@ export const update = mutation({
       return { saved: true };
     }
     if (args.operation === 'refresh') {
-      await ctx.db.patch(row._id, { ...patch, needsRefresh: true, nextAttemptAt: 0 });
+      await ctx.db.patch(row._id, { ...patch, needsRefresh: true, nextAttemptAt: 0, failures: undefined });
       return { queued: true };
     }
     const policy = await loadJevSettings(ctx, args.userId);

@@ -11,17 +11,22 @@ function setNodeEnv(value: string) {
 }
 
 describe('security headers', () => {
-  test('production builds send HSTS, nosniff, frame-ancestors, and a referrer policy on every path', async () => {
+  test('production builds send HSTS, nosniff, framing, referrer, and permissions headers on every path', async () => {
     setNodeEnv('production');
     const rules = await config.headers!();
-    expect(rules).toHaveLength(1);
+    expect(rules).toHaveLength(2);
     expect(rules[0].source).toBe('/:path*');
     const headers = Object.fromEntries(rules[0].headers.map((header) => [header.key, header.value]));
     expect(headers['Strict-Transport-Security']).toMatch(/^max-age=\d{7,}/);
     expect(headers['X-Content-Type-Options']).toBe('nosniff');
+    expect(headers['X-Frame-Options']).toBe('SAMEORIGIN');
     expect(headers['Referrer-Policy']).toBe('strict-origin-when-cross-origin');
-    // Frame rules only: a script policy would break Clerk, Convex, and Collabora.
-    expect(headers['Content-Security-Policy']).toBe("frame-ancestors 'self'");
+    expect(headers['Permissions-Policy']).toContain('camera=()');
+    // The page policy needs a fresh nonce per request, so proxy.ts sends it.
+    expect(headers['Content-Security-Policy']).toBeUndefined();
+    // API responses keep the framing rule, apart from the routes with their own policy.
+    expect(rules[1].source).toBe('/api/:path((?!attachments/|albatross/plan/).*)');
+    expect(rules[1].headers).toEqual([{ key: 'Content-Security-Policy', value: "frame-ancestors 'self'" }]);
   });
 
   test('dev servers get no security headers', async () => {

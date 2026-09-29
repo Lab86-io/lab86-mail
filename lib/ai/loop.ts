@@ -25,6 +25,7 @@ import {
   recordAgentUsage,
   resolveAgentRuntimes,
 } from './gateway';
+import { newGenerationCapture, recordFailedModelCall, runWithGenerationCapture } from './generation-cost';
 import { newOperationBatchId } from './operations';
 import {
   buildSystemPrompt,
@@ -922,60 +923,72 @@ async function streamAgentTurn(
     let streamError: unknown;
     const toolNames = Object.keys(options.tools);
     const initialGroups = options.toolGroups ?? [];
-    const result = streamText({
-      model: runtime.model,
-      system: options.system,
-      messages: options.messages,
-      tools: options.tools,
-      activeTools: activeToolsForStep(toolNames, initialGroups, [], options.presentationSession),
-      prepareStep: ({ steps }) => ({
-        activeTools: activeToolsForStep(toolNames, initialGroups, steps, options.presentationSession),
-      }),
-      abortSignal: options.signal,
-      // Multi-step flows (fetch a file → store → attach → send) need headroom
-      // beyond the old 6-step cap.
-      stopWhen: ({ steps }) => steps.length >= agentStepLimit(steps) || hasPendingPresentationQuestion(steps),
-      // Tiered per-step ceiling (never unbounded → avoids the 65536 reservation
-      // that OpenRouter 402s on); leaves room for reasoning + a reply.
-      maxOutputTokens: maxOutputTokensForFeature(feature),
-      providerOptions: agentProviderOptions(runtime, promptCacheKey),
-      onError: ({ error }) => {
-        streamError = error;
-        console.error('[agent-stream]', {
-          runId: options.runId,
-          provider: runtime.provider,
-          model: runtime.modelName,
-          error: safeAuthErrorText(error),
-        });
-      },
+    // Each step of the turn is one OpenRouter request. The capture keeps their
+    // generation ids for the cost of a failed or stopped turn. Later steps
+    // start where the stream is read, so the read runs inside the capture too.
+    const capture = newGenerationCapture();
+    const { outcome, steps, usage, finishReason } = await runWithGenerationCapture(capture, async () => {
+      const result = streamText({
+        model: runtime.model,
+        system: options.system,
+        messages: options.messages,
+        tools: options.tools,
+        activeTools: activeToolsForStep(toolNames, initialGroups, [], options.presentationSession),
+        prepareStep: ({ steps }) => ({
+          activeTools: activeToolsForStep(toolNames, initialGroups, steps, options.presentationSession),
+        }),
+        abortSignal: options.signal,
+        // Multi-step flows (fetch a file → store → attach → send) need headroom
+        // beyond the old 6-step cap.
+        stopWhen: ({ steps }) =>
+          steps.length >= agentStepLimit(steps) || hasPendingPresentationQuestion(steps),
+        // Tiered per-step ceiling (never unbounded → avoids the 65536 reservation
+        // that OpenRouter 402s on); leaves room for reasoning + a reply.
+        maxOutputTokens: maxOutputTokensForFeature(feature),
+        providerOptions: agentProviderOptions(runtime, promptCacheKey),
+        onError: ({ error }) => {
+          streamError = error;
+          console.error('[agent-stream]', {
+            runId: options.runId,
+            provider: runtime.provider,
+            model: runtime.modelName,
+            error: safeAuthErrorText(error),
+          });
+        },
+      });
+      const uiStream = result.toUIMessageStream({
+        sendStart: false,
+        sendFinish: false,
+        sendReasoning: true,
+        sendSources: true,
+        // This formatter also runs for recoverable tool errors. Only streamText.onError owns fatal state.
+        onError: (error) => safeAuthErrorText(error),
+      });
+      const outcome = await forwardAgentStream(
+        writer,
+        uiStream as AsyncIterable<UiChunk>,
+        () => streamError,
+        resolveToolShape,
+        options.timezone,
+      );
+      const steps = await Promise.resolve(result.steps).catch(() => [] as any[]);
+      const usage = await Promise.resolve(result.totalUsage).catch(() => undefined);
+      const finishReason = await Promise.resolve(result.finishReason).catch(() => 'error');
+      return { outcome, steps, usage, finishReason };
     });
-    const uiStream = result.toUIMessageStream({
-      sendStart: false,
-      sendFinish: false,
-      sendReasoning: true,
-      sendSources: true,
-      // This formatter also runs for recoverable tool errors. Only streamText.onError owns fatal state.
-      onError: (error) => safeAuthErrorText(error),
-    });
-    const outcome = await forwardAgentStream(
-      writer,
-      uiStream as AsyncIterable<UiChunk>,
-      () => streamError,
-      resolveToolShape,
-      options.timezone,
-    );
-    const steps = await Promise.resolve(result.steps).catch(() => [] as any[]);
-    const usage = await Promise.resolve(result.totalUsage).catch(() => undefined);
-    const finishReason = await Promise.resolve(result.finishReason).catch(() => 'error');
 
     if (outcome.forwarded) {
-      await recordAgentUsage(
-        runtime,
-        feature,
-        usage,
-        !outcome.error,
-        outcome.error ? errorText(outcome.error) : undefined,
-      );
+      if (outcome.error || options.signal?.aborted)
+        // A failed or stopped turn records the real cost of its requests.
+        await recordFailedAgentTurn(
+          runtime,
+          feature,
+          usage,
+          outcome.error ?? options.signal?.reason,
+          capture.ids,
+          outcome.error ? errorText(outcome.error) : 'The turn was stopped before it finished.',
+        );
+      else await recordAgentUsage(runtime, feature, usage, true);
       console.info('[agent-run-finish]', {
         runId: options.runId,
         provider: runtime.provider,
@@ -988,7 +1001,7 @@ async function streamAgentTurn(
     }
 
     lastError = outcome.error ?? new Error(`empty completion (${finishReason})`);
-    await recordAgentUsage(runtime, feature, usage, false, errorText(lastError));
+    await recordFailedAgentTurn(runtime, feature, usage, lastError, capture.ids, errorText(lastError));
     if (options.signal?.aborted || isAuthError(lastError)) throw lastError;
     const hasNext = index < runtimes.length - 1;
     const eligible = outcome.error ? canFailOverAgentRuntime(outcome.error, feature, runtime) : true;
@@ -1004,6 +1017,27 @@ async function streamAgentTurn(
     throw lastError;
   }
   throw lastError ?? new Error('No agent runtime available');
+}
+
+/** One failed or stopped agent turn, with the real cost of its requests (lib/ai/generation-cost.ts). */
+function recordFailedAgentTurn(
+  runtime: Awaited<ReturnType<typeof resolveAgentRuntimes>>[number],
+  feature: string,
+  usage: any,
+  error: unknown,
+  generationIds: readonly string[],
+  message: string,
+) {
+  const hasTokens = Number(usage?.inputTokens) > 0 || Number(usage?.outputTokens) > 0;
+  return recordFailedModelCall({
+    runtime,
+    feature,
+    error,
+    generationIds,
+    message,
+    ...(hasTokens ? { usage } : {}),
+    record: recordAgentUsage,
+  }).catch(() => undefined);
 }
 
 export interface AgentRunOpts {

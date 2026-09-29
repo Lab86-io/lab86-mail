@@ -298,6 +298,55 @@ describe('content library and durable Brief preparations', () => {
     await classify(t, next);
     expect(await t.mutation(preparations.claim, scope)).toBeNull();
   });
+
+  test('a failure that repeats waits longer each time; success and a refresh start again', async () => {
+    const t = convexTest(schema, modules);
+    const row = await seed(t);
+    await classify(t, row);
+    const stored = async (id: string) => (await t.run((ctx) => ctx.db.get(id as Id<'briefPreparations'>)))!;
+    const failOnce = async () => {
+      const claim = await t.mutation(preparations.claim, scope);
+      expect(claim).toBeTruthy();
+      const before = Date.now();
+      await t.mutation(preparations.fail, { ...scope, id: claim._id, lease: claim.lease });
+      // The wait has passed: the next claim can take the row again.
+      const waited = (await stored(claim._id)).nextAttemptAt - before;
+      await t.run((ctx) => ctx.db.patch(claim._id, { nextAttemptAt: 0 }));
+      return { claim, waited };
+    };
+    const first = await failOnce();
+    const second = await failOnce();
+    expect((await stored(first.claim._id)).failures).toBe(2);
+    expect(first.waited).toBeGreaterThanOrEqual(10 * 60_000);
+    expect(first.waited).toBeLessThan(11 * 60_000);
+    expect(second.waited).toBeGreaterThanOrEqual(20 * 60_000);
+    expect(second.waited).toBeLessThan(21 * 60_000);
+    // A wrong lease records nothing.
+    await t.mutation(preparations.fail, { ...scope, id: first.claim._id, lease: 'other' });
+    expect((await stored(first.claim._id)).failures).toBe(2);
+    // A user refresh clears the count.
+    await t.mutation(preparations.update, {
+      ...scope,
+      id: first.claim._id,
+      revision: first.claim.revision,
+      operation: 'refresh',
+    });
+    expect((await stored(first.claim._id)).failures).toBeUndefined();
+    const again = await failOnce();
+    expect((await stored(again.claim._id)).failures).toBe(1);
+    // A completed draft clears the count.
+    const claim = await t.mutation(preparations.claim, scope);
+    await t.mutation(preparations.complete, {
+      ...scope,
+      id: claim._id,
+      lease: claim.lease,
+      revision: claim.revision,
+      seedVersion: row.version,
+      draft: draft(row._id),
+      sources: [{ id: row._id, version: row.version }],
+    });
+    expect((await stored(claim._id)).failures).toBeUndefined();
+  });
 });
 
 test('chunk overlap, typed classification and evidence validation preserve retrieval boundaries', () => {

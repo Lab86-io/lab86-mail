@@ -1,6 +1,13 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import { internalAction, internalMutation, mutation, type QueryCtx, query } from './_generated/server';
+import {
+  internalAction,
+  internalMutation,
+  type MutationCtx,
+  mutation,
+  type QueryCtx,
+  query,
+} from './_generated/server';
 import { requireInternalSecret } from './lib';
 
 const identity = { internalSecret: v.string(), userId: v.string(), key: v.string() };
@@ -16,6 +23,30 @@ const receipt = (row: { key: string; fireAt: number; undoSeconds: number; status
   undoSeconds: row.undoSeconds,
   status: row.status,
 });
+
+/**
+ * Cancels the held scheduled sends of one mailbox and deletes their stored
+ * messages. A direct Google account holds a scheduled send here until
+ * `fireAt` (Gmail has no scheduled send). Each disconnect path calls this:
+ * the grant removal (googleDirect.removeGrant) and the account removal
+ * (accounts.deleteConnectedAccount), so no message stays stored when one of
+ * them fails. A message that is gone already does not stop the disconnect.
+ * Returns the count of cancelled sends.
+ */
+export async function cancelHeldSends(ctx: MutationCtx, userId: string, accountId: string) {
+  const rows = await ctx.db
+    .query('mailOutbox')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .collect();
+  let cancelled = 0;
+  for (const send of rows) {
+    if (!send.scheduled || send.accountId !== accountId || send.status !== 'pending') continue;
+    await ctx.db.patch(send._id, { status: 'cancelled', payloadId: undefined, updatedAt: Date.now() });
+    if (send.payloadId) await ctx.storage.delete(send.payloadId).catch(() => undefined);
+    cancelled += 1;
+  }
+  return cancelled;
+}
 
 export const uploadUrl = mutation({
   args: { internalSecret: v.string() },

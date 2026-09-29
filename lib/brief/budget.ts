@@ -9,6 +9,12 @@ import { type AiUsageCostInput, estimateAiUsageCost } from '../ai/budget';
 // the writers fall back and the edition publishes what exists. The record
 // goes onto the edition and into the telemetry table.
 //
+// Writer time is the time while at least one model call of the edition is
+// open. The source refresh and the candidate scan before the writers do not
+// count. Before 2026-09-28 the clock ran from the start of the edition: on a
+// large account the scan used the full 10 minutes, and the Opus edition
+// published with no writer call at all (telemetry: 907 s, 0 calls).
+//
 // The cost budget is a safety stop for a runaway writer (the layout loop has
 // no step limit), not a limit on a normal edition. Briefs keep the user's
 // model (owner decision, 2026-09-27). On gpt-5.5 or opus-5.5 a normal edition
@@ -70,7 +76,6 @@ export class BriefEditionMeter {
   readonly timeBudgetMs: number;
   readonly costBudgetUsd: number;
   private readonly controller = new AbortController();
-  private readonly startedAt: number;
   private readonly prior: Pick<
     BriefEditionBudget,
     'timeMs' | 'costUsd' | 'inputTokens' | 'outputTokens' | 'calls'
@@ -81,6 +86,11 @@ export class BriefEditionMeter {
   private calls = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly now: () => number;
+  /** Model calls open now. The writer clock runs while this is above 0. */
+  private openCalls = 0;
+  private openSince = 0;
+  /** Writer time of this attempt from calls that closed. */
+  private closedMs = 0;
   exhausted: BriefBudgetLimit | null = null;
 
   constructor(
@@ -95,7 +105,6 @@ export class BriefEditionMeter {
     this.timeBudgetMs = options.timeBudgetMs ?? limits.timeBudgetMs;
     this.costBudgetUsd = options.costBudgetUsd ?? limits.costBudgetUsd;
     this.now = options.now ?? Date.now;
-    this.startedAt = this.now();
     this.prior = {
       timeMs: Math.max(0, Number(options.prior?.timeMs) || 0),
       costUsd: Math.max(0, Number(options.prior?.costUsd) || 0),
@@ -111,14 +120,27 @@ export class BriefEditionMeter {
     return this.controller.signal;
   }
 
-  /** Starts the clock that stops the edition at its time budget. */
-  start() {
-    if (this.exhausted || this.timer) return this;
-    const left = this.timeBudgetMs - this.prior.timeMs;
-    this.timer = setTimeout(() => this.stop('time'), Math.max(0, left));
+  /**
+   * Opens one model call. The first open call starts the writer clock and the
+   * timer that stops the edition when its writer time runs out.
+   */
+  openCall() {
+    this.assertOpen();
+    this.openCalls += 1;
+    if (this.openCalls > 1) return;
+    this.openSince = this.now();
+    this.timer = setTimeout(() => this.stop('time'), Math.max(0, this.timeBudgetMs - this.elapsedMs()));
     // A pending budget timer must never keep a finished process alive.
     (this.timer as { unref?: () => void }).unref?.();
-    return this;
+  }
+
+  /** Closes one model call. The last closed call stops the writer clock. */
+  closeCall() {
+    if (this.openCalls === 0) return;
+    this.openCalls -= 1;
+    if (this.openCalls > 0) return;
+    this.closedMs += Math.max(0, this.now() - this.openSince);
+    this.finish();
   }
 
   finish() {
@@ -139,8 +161,10 @@ export class BriefEditionMeter {
     if (this.exhausted) throw new BriefBudgetExhaustedError(this.exhausted);
   }
 
+  /** Writer time of all attempts: closed calls, plus the open interval. */
   elapsedMs() {
-    return this.prior.timeMs + Math.max(0, this.now() - this.startedAt);
+    const open = this.openCalls > 0 ? Math.max(0, this.now() - this.openSince) : 0;
+    return this.prior.timeMs + this.closedMs + open;
   }
 
   /** Counts one model step at the model's prices. */
@@ -180,7 +204,6 @@ const meterStorage = new AsyncLocalStorage<BriefEditionMeter>();
 
 /** Runs `fn` with the meter counting every model step inside it. */
 export async function runWithBriefMeter<T>(meter: BriefEditionMeter, fn: () => Promise<T>): Promise<T> {
-  meter.start();
   try {
     return await meterStorage.run(meter, fn);
   } finally {
@@ -190,6 +213,21 @@ export async function runWithBriefMeter<T>(meter: BriefEditionMeter, fn: () => P
 
 export function currentBriefMeter(): BriefEditionMeter | undefined {
   return meterStorage.getStore();
+}
+
+/**
+ * Runs one model call. Inside an edition, the writer clock runs while the call
+ * is open; outside an edition the call runs as it is.
+ */
+export async function withMeteredModelCall<T>(call: () => Promise<T>): Promise<T> {
+  const meter = currentBriefMeter();
+  if (!meter) return call();
+  meter.openCall();
+  try {
+    return await call();
+  } finally {
+    meter.closeCall();
+  }
 }
 
 /**

@@ -3,12 +3,14 @@ import { GeistMono } from 'geist/font/mono';
 import { GeistSans } from 'geist/font/sans';
 import type { Metadata, Viewport } from 'next';
 import localFont from 'next/font/local';
+import { headers } from 'next/headers';
 import type { CSSProperties } from 'react';
 import { Toaster } from 'sonner';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { ThemeProvider } from '@/components/shell/ThemeProvider';
 import { isStagingRuntime } from '@/lib/hosted/controls';
 import { isClerkConfigured } from '@/lib/hosted/env';
+import { CSP_NONCE_HEADER } from '@/lib/security/csp';
 import { GROTESK_FONT_FAMILY } from '@/lib/theme/font-families';
 import './globals.css';
 
@@ -73,13 +75,23 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // proxy.ts puts a fresh CSP nonce on each page request. Reading it makes
+  // every page render per request, which a nonce policy needs: a prerendered
+  // page has no nonce on its scripts, so the browser would block them.
+  const nonce = (await headers()).get(CSP_NONCE_HEADER) || undefined;
   const clerkEnabled = isClerkConfigured();
   const clerkProxyUrl =
     clerkEnabled && process.env.NEXT_PUBLIC_CLERK_PROXY_URL && isStagingRuntime() ? '/__clerk' : undefined;
   const content = (
     <>
-      <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+      <ThemeProvider
+        attribute="class"
+        defaultTheme="system"
+        enableSystem
+        disableTransitionOnChange
+        nonce={nonce}
+      >
         <QueryProvider clerkEnabled={clerkEnabled}>
           {children}
           <Toaster position="bottom-center" theme="system" closeButton richColors />
@@ -99,6 +111,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {clerkEnabled ? (
           <ClerkProvider
             {...(clerkProxyUrl ? { proxyUrl: clerkProxyUrl } : {})}
+            nonce={nonce}
             appearance={{
               variables: {
                 colorBackground: 'var(--color-bg-elevated)',

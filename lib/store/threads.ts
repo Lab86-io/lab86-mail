@@ -46,7 +46,9 @@ async function doUpsertThread(account: string, partial: Partial<Thread> & { _id:
     gmailLabelSync: partial.gmailLabelSync ?? existing?.gmailLabelSync ?? null,
     cachedAt: Date.now(),
   };
-  await kvUpsert('thread', threadKey(account, merged._id), merged, account);
+  // A cache row: the per-key chain above orders writes to the same thread, so
+  // it does not wait behind the other mutations of the process.
+  await kvUpsert('thread', threadKey(account, merged._id), merged, account, { skipQueue: true });
   return merged;
 }
 

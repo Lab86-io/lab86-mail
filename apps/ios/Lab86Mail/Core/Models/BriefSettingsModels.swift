@@ -170,6 +170,18 @@ struct BriefSource: Identifiable, Equatable, Sendable {
     /// A source the user must act on.
     var needsUser: Bool { status == .reconnect || status == .error }
 
+    /// The account id of a mail or calendar source id `<kind>:<accountId>`,
+    /// for a reconnect. Only the first ":" splits, so the account id can hold
+    /// ":". Nil when the id has no ":" or a part is empty: then the connect
+    /// flow names no account and adds a new one.
+    static func reconnectAccountID(fromSourceID id: String) -> String? {
+        guard let colon = id.firstIndex(of: ":") else { return nil }
+        let kind = id[..<colon]
+        let account = id[id.index(after: colon)...]
+        guard !kind.isEmpty, !account.isEmpty else { return nil }
+        return String(account)
+    }
+
     /// "Calendar (ann@example.com)" for a calendar, else the label.
     var displayName: String { kind == .calendar ? "Calendar (\(label))" : label }
 

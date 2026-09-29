@@ -76,6 +76,8 @@ export const contentTables = {
     lease: v.optional(v.string()),
     leaseUntil: v.optional(v.number()),
     nextAttemptAt: v.number(),
+    /** Failed attempts since the last success or refresh. Sets the retry wait. */
+    failures: v.optional(v.number()),
     error: v.optional(v.string()),
     needsRefresh: v.boolean(),
   })

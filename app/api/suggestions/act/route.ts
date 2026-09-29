@@ -1,15 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { AttachmentTooLargeError, readMailAttachmentBytes } from '@/lib/attachments/mail-files';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { parseIcsEvents } from '@/lib/calendar/ics';
 import { createCalendarEvent } from '@/lib/calendar/mutate';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { isUsableTimezone } from '@/lib/mail/brief-timezone';
-import { requireNylas } from '@/lib/nylas/client';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+/** An ICS invitation is small. The route reads no larger file into memory. */
+export const ICS_MAX_BYTES = 1024 * 1024;
 
 const suggestionsApi = api.suggestions;
 const accountsApi = api.accounts;
@@ -19,7 +22,7 @@ interface SuggestionActDependencies {
   enforceUserRateLimit: typeof enforceUserRateLimit;
   convexMutation: typeof convexMutation;
   convexQuery: typeof convexQuery;
-  requireNylas: typeof requireNylas;
+  readMailAttachmentBytes: typeof readMailAttachmentBytes;
   createCalendarEvent: typeof createCalendarEvent;
   reportUnexpectedError: (error: unknown) => void;
 }
@@ -29,7 +32,7 @@ const defaultDependencies: SuggestionActDependencies = {
   enforceUserRateLimit,
   convexMutation,
   convexQuery,
-  requireNylas,
+  readMailAttachmentBytes,
   createCalendarEvent,
   reportUnexpectedError: (error) => console.error('[suggestions] act failed:', error),
 };
@@ -125,12 +128,12 @@ export function createSuggestionActPost(deps: SuggestionActDependencies = defaul
         }
         let eventInput: SafeSuggestedEvent | null = null;
         if (attachmentId && messageId) {
-          const stream = await deps.requireNylas().attachments.download({
-            identifier: account.grantId,
-            attachmentId,
-            queryParams: { messageId } as any,
-          });
-          const ics = await new Response(stream as any).text();
+          // Our encrypted storage first; else the provider, and the file is stored.
+          const file = await deps.readMailAttachmentBytes(
+            { userId: user.userId, account: accountId, messageId, attachmentId },
+            { fill: 'always', maxBytes: ICS_MAX_BYTES },
+          );
+          const ics = file ? new TextDecoder().decode(file.bytes) : '';
           const [parsed] = parseIcsEvents(ics, { timezone: userTimezone });
           eventInput = safeSuggestedEvent(parsed as unknown as Record<string, unknown>);
         } else if (event) {
@@ -170,6 +173,9 @@ export function createSuggestionActPost(deps: SuggestionActDependencies = defaul
       if (err instanceof RateLimitError) return rateLimitJson(err);
       if (err instanceof AuthRequiredError) {
         return NextResponse.json({ ok: false, error: err.message }, { status: 401 });
+      }
+      if (err instanceof AttachmentTooLargeError) {
+        return NextResponse.json({ ok: false, error: 'The calendar file is too large.' }, { status: 422 });
       }
       deps.reportUnexpectedError(err);
       return NextResponse.json({ ok: false, error: 'Action failed.' }, { status: 500 });

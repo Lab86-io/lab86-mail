@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { googleRevokeBlockedReason, mailUsesDriveGrant } from '@/lib/google/shared-grant';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { decryptSecret, encryptSecret } from '@/lib/security/crypto';
 import {
@@ -49,6 +50,8 @@ const defaultDependencies = {
   encryptSecret,
   fetch,
   now: Date.now,
+  mailUsesDriveGrant,
+  googleRevokeBlockedReason,
 };
 
 let dependencies = defaultDependencies;
@@ -341,6 +344,8 @@ export async function getCloudFileAccess(input: { userId: string; connectionId: 
 
 const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 // Disconnect revokes the grant at the provider first, so the stored refresh
 // token stops working even if a copy of it exists (CAL-10). Convex then
 // deletes the rows and purges the indexed content of this connection.
@@ -352,7 +357,37 @@ export async function disconnectCloudFileConnection(userId: string, connectionId
     })
     .catch(() => null);
   let revoked = false;
-  if (row?.connection && row.credentials) {
+  // A failed check skips the revoke but never stops the disconnect: a
+  // failed mail check counts as shared access, and a failed blocker check
+  // counts as a reason. A doubt never ends other access of the project.
+  const sharedWithMail =
+    row?.connection?.provider === 'google_drive' &&
+    (await dependencies.mailUsesDriveGrant({ userId, email: row.connection.accountEmail }).catch((error) => {
+      console.warn('[cloud-files] mail grant check failed; no revoke', errorMessage(error));
+      return true;
+    }));
+  // Outside production, or while another Google connection of any user uses
+  // the address, a Google revoke would end other access of the same project.
+  const blocked =
+    row?.connection?.provider === 'google_drive' && !sharedWithMail
+      ? await dependencies
+          .googleRevokeBlockedReason({
+            email: row.connection.accountEmail,
+            exceptConnectionId: connectionId,
+          })
+          .catch((error) => {
+            console.warn('[cloud-files] Google connection check failed', errorMessage(error));
+            return 'the Google connection check failed';
+          })
+      : null;
+  if (sharedWithMail) {
+    // Direct Google mail of the same address uses this OAuth client, and a
+    // revoke would end it too (lib/google/shared-grant.ts). The rows go; the
+    // Google grant stays for mail.
+    console.warn('[cloud-files] a mail connection shares this Google grant; the rows go, no revoke');
+  } else if (blocked) {
+    console.warn(`[cloud-files] no Google revoke: ${blocked}; the rows go`);
+  } else if (row?.connection && row.credentials) {
     revoked = await revokeCloudFileGrant(row).catch((error) => {
       console.warn('[cloud-files] token revoke failed', {
         provider: row.connection.provider,

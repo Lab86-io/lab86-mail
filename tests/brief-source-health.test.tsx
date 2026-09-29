@@ -85,7 +85,7 @@ describe('brief source health', () => {
     expect(health.sources[0].lastSyncedAt).toBe(NOW - 4 * 60_000);
     expect(health.attention).toBe(3);
     expect(health.sources.find((source) => source.id === 'mail:work')?.reconnectPath).toBe(
-      '/api/nylas/connect?provider=microsoft&redirectTo=%2F%3Fview%3Dtoday',
+      '/api/nylas/connect?provider=microsoft&account=work&redirectTo=%2F%3Fview%3Dtoday',
     );
     expect(health.sources.find((source) => source.id === 'mcp:jira')?.reconnectPath).toBe(
       '/settings?tab=connections',
@@ -298,7 +298,9 @@ describe('the masthead source line', () => {
     const health = briefSourceHealth(rows(), { now: NOW });
     const html = renderToStaticMarkup(<BriefSourceLineView health={health} now={NOW} />);
     expect(html.indexOf('me@work.com needs you to sign in again')).toBeLessThan(html.indexOf('Sources:'));
-    expect(html).toContain('href="/api/nylas/connect?provider=microsoft&amp;redirectTo=%2F%3Fview%3Dtoday"');
+    expect(html).toContain(
+      'href="/api/nylas/connect?provider=microsoft&amp;account=work&amp;redirectTo=%2F%3Fview%3Dtoday"',
+    );
     expect(html).toContain('>Reconnect</a>');
     expect(html).toContain('me@gmail.com');
     expect(html).toContain('synced 4 min ago');

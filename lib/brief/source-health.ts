@@ -101,8 +101,10 @@ function freshness(lastSyncedAt: number | null, now: number): BriefSourceStatus 
   return lastSyncedAt !== null && now - lastSyncedAt > BRIEF_SOURCE_STALE_MS ? 'stale' : 'ok';
 }
 
-function mailReconnectPath(provider: string) {
-  return `/api/nylas/connect?provider=${encodeURIComponent(provider)}&redirectTo=${encodeURIComponent('/?view=today')}`;
+// The path names the account, so the connect route reconnects that mailbox
+// (a direct Google account stays direct) instead of adding a new one.
+function mailReconnectPath(provider: string, accountId: string) {
+  return `/api/nylas/connect?provider=${encodeURIComponent(provider)}&account=${encodeURIComponent(accountId)}&redirectTo=${encodeURIComponent('/?view=today')}`;
 }
 
 export function briefSourceHealth(
@@ -148,7 +150,8 @@ export function briefSourceHealth(
       status: mailStatus,
       lastSyncedAt: mailLast,
       inEdition: editionAccounts.has(account.accountId) || checked.has(`mail:${account.accountId}`),
-      reconnectPath: mailStatus === 'reconnect' ? mailReconnectPath(account.provider) : null,
+      reconnectPath:
+        mailStatus === 'reconnect' ? mailReconnectPath(account.provider, account.accountId) : null,
       detail: mailDetail,
     });
 
@@ -181,7 +184,8 @@ export function briefSourceHealth(
       status: calendarStatus,
       lastSyncedAt: calendarLast,
       inEdition: editionAccounts.has(account.accountId) || checked.has(`calendar:${account.accountId}`),
-      reconnectPath: calendarStatus === 'reconnect' ? mailReconnectPath(account.provider) : null,
+      reconnectPath:
+        calendarStatus === 'reconnect' ? mailReconnectPath(account.provider, account.accountId) : null,
       detail: calendarDetail,
     });
   }

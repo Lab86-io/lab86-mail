@@ -604,7 +604,7 @@ struct MailView: View {
         reconnectingID = account.id
         defer { reconnectingID = nil }
         do {
-            try await environment.webAuthentication.connectMailbox(provider: account.provider)
+            try await environment.webAuthentication.connectMailbox(provider: account.provider, accountId: account.id)
             await environment.store.refreshMail()
         } catch {
             // The sign-in sheet reports its own failure; the row stays.

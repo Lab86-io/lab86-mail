@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import net from 'node:net';
+import { AttachmentTooLargeError, readMailAttachmentBytes } from '@/lib/attachments/mail-files';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { downloadNylasAttachment } from '@/lib/nylas/provider';
 import { normalizeUrl } from '@/lib/shared/url';
 
 const boardsApi = api.boards;
@@ -50,11 +50,46 @@ function isBlockedIpv4(ip: string): boolean {
   );
 }
 
+/** The eight 16-bit groups of an IPv6 address, or null. Accepts a dotted IPv4 tail. */
+export function ipv6Groups(ip: string): number[] | null {
+  let addr = ip.toLowerCase().replace(/^\[|\]$/g, '');
+  const zone = addr.indexOf('%');
+  if (zone >= 0) addr = addr.slice(0, zone);
+  const tail = addr.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (tail) {
+    const v4 = ipv4ToInt(tail[1]);
+    if (v4 === null) return null;
+    addr = `${addr.slice(0, -tail[1].length)}${(v4 >>> 16).toString(16)}:${(v4 & 0xffff).toString(16)}`;
+  }
+  const halves = addr.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const rest = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const missing = 8 - head.length - rest.length;
+  if (halves.length === 1 ? missing !== 0 : missing < 1) return null;
+  const parts = [...head, ...Array(halves.length === 2 ? missing : 0).fill('0'), ...rest];
+  const groups = parts.map((part) => (/^[0-9a-f]{1,4}$/.test(part) ? Number.parseInt(part, 16) : Number.NaN));
+  return groups.length === 8 && groups.every((group) => Number.isInteger(group)) ? groups : null;
+}
+
 function isBlockedIpv6(ip: string): boolean {
-  const addr = ip.toLowerCase().replace(/^\[|\]$/g, '');
-  const mapped = addr.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped) return isBlockedIpv4(mapped[1]);
-  if (addr === '::1' || addr === '::') return true;
+  const groups = ipv6Groups(ip);
+  if (!groups) return true;
+  const v4 = `${groups[6] >> 8}.${groups[6] & 0xff}.${groups[7] >> 8}.${groups[7] & 0xff}`;
+  const zeroPrefix = groups.slice(0, 5).every((group) => group === 0);
+  // IPv4-mapped (::ffff:a.b.c.d), IPv4-compatible (::a.b.c.d), and NAT64
+  // (64:ff9b::a.b.c.d) addresses reach the IPv4 host, so they get the IPv4 rules.
+  if (zeroPrefix && groups[5] === 0xffff) return isBlockedIpv4(v4);
+  if (zeroPrefix && groups[5] === 0 && (groups[6] !== 0 || groups[7] > 1)) return isBlockedIpv4(v4);
+  if (groups[0] === 0x64 && groups[1] === 0xff9b && groups.slice(2, 6).every((group) => group === 0)) {
+    return isBlockedIpv4(v4);
+  }
+  // The local-use translation prefix 64:ff9b:1::/48 (RFC 8215). A network can
+  // put the IPv4 address at any RFC 6052 position in it, so all of it is blocked.
+  if (groups[0] === 0x64 && groups[1] === 0xff9b && groups[2] === 1) return true;
+  if (groups.every((group) => group === 0)) return true; // ::
+  if (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) return true; // ::1
+  const addr = groups.map((group) => group.toString(16).padStart(4, '0')).join(':');
   // Unique-local (fc00::/7 → fc/fd) and link-local (fe80::/10).
   return (
     addr.startsWith('fc') ||
@@ -62,7 +97,8 @@ function isBlockedIpv6(ip: string): boolean {
     addr.startsWith('fe8') ||
     addr.startsWith('fe9') ||
     addr.startsWith('fea') ||
-    addr.startsWith('feb')
+    addr.startsWith('feb') ||
+    addr.startsWith('ff') // multicast
   );
 }
 
@@ -150,27 +186,29 @@ export async function fetchWebFile(rawUrl: string, fallbackName?: string): Promi
   return { bytes: buffer, contentType, name };
 }
 
-// Download an attachment off a synced email message.
+// Read an attachment off a synced email message: our encrypted storage first,
+// else the provider, and a provider file is stored (mail-files.ts).
 export async function fetchEmailAttachment(
   userId: string,
   accountRef: string,
   attachmentId: string,
   messageId: string,
   fallbackName?: string,
+  deps = { readMailAttachmentBytes },
 ): Promise<FetchedBlob> {
-  const stream = await downloadNylasAttachment({
-    userId,
-    account: accountRef,
-    attachmentId,
-    messageId,
-  });
-  if (!stream) throw new Error('Email account not connected, or attachment not found.');
-  const buffer = new Uint8Array(await new Response(stream as any).arrayBuffer());
-  if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`Attachment is too large (${Math.round(buffer.byteLength / 1e6)} MB; max 25 MB).`);
+  let file: Awaited<ReturnType<typeof readMailAttachmentBytes>>;
+  try {
+    file = await deps.readMailAttachmentBytes(
+      { userId, account: accountRef, attachmentId, messageId },
+      { fill: 'always', maxBytes: MAX_ATTACHMENT_BYTES },
+    );
+  } catch (error) {
+    if (error instanceof AttachmentTooLargeError) throw new Error('Attachment is too large (max 25 MB).');
+    throw error;
   }
+  if (!file) throw new Error('Email account not connected, or attachment not found.');
   return {
-    bytes: buffer,
+    bytes: file.bytes,
     contentType: 'application/octet-stream',
     name: fallbackName || 'attachment',
   };

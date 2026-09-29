@@ -1,5 +1,6 @@
 import { applyCalendarWebhookDelta, isCalendarWebhookType } from '@/lib/calendar/sync';
 import { applyContactWebhookDelta, isContactWebhookType } from '@/lib/contacts/sync';
+import { isGoogleDirectGrant } from '@/lib/google/transport';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import { isGrantGoneError, markGrantNeedsReconnect, noteGrantFailure } from '@/lib/nylas/grant-health';
@@ -640,6 +641,13 @@ async function processWebhookEvent(
     await markWebhookProcessed(metadata, 'processed');
     return { ok: true, duplicate: false, eventId: metadata.eventId, reconnectNeeded: updated };
   }
+  if (metadata.grantId && !row && (await isSwitchedNylasGrant(metadata.grantId))) {
+    // The account moved to Gmail directly; its History sync owns the mailbox
+    // now. The Nylas grant stays alive only for a rollback, so its events are
+    // expected and are not errors.
+    await markWebhookProcessed(metadata, 'processed');
+    return { ok: true, duplicate: false, eventId: metadata.eventId, ignored: 'switched_to_google' };
+  }
   if (!metadata.grantId || !row) {
     // Loud on purpose. This branch returns ok:false without throwing, so it
     // never reached the queue's failure log, and it touches no sync state —
@@ -698,6 +706,100 @@ async function processWebhookEvent(
       progress: { stage: 'webhook_error', type: metadata.type, eventId: metadata.eventId },
     });
     throw err;
+  }
+}
+
+async function isSwitchedNylasGrant(grantId: string) {
+  const switched = await webhookDeps
+    .query<{ accountId: string; grantId?: string } | null>(api.googleDirect.accountForPreviousNylasGrant, {
+      grantId,
+    })
+    .catch(() => null);
+  return isGoogleDirectGrant(switched?.grantId);
+}
+
+/** Messages of one upsert batch: small, so one Convex mutation stays small. */
+const PROVIDER_CHANGE_BATCH = 20;
+
+/**
+ * Applies message changes that a direct transport read (the Gmail History
+ * sync, lib/google/history-sync.ts). Deletes use the webhook delete path and
+ * upserts the webhook upsert path, with the same suggestion, alert, and
+ * classifier steps, so a direct account ingests like a Nylas account.
+ *
+ * One bad message must not stop the rest: a failed delete is counted and
+ * skipped, and a failed batch is written again one message at a time, so only
+ * the message that fails is left out. The result counts what failed.
+ */
+export async function applyProviderMessageChanges(
+  row: NylasAccountRow,
+  changes: { upserts: unknown[]; deletes: string[]; progress?: Record<string, unknown> },
+) {
+  let deleted = 0;
+  let failed = 0;
+  for (const providerMessageId of changes.deletes) {
+    try {
+      await convexMutation(mailCorpusApi.deleteCorpusMessage, {
+        userId: row.userId,
+        accountId: row.accountId,
+        providerMessageId,
+      });
+      deleted += 1;
+    } catch (err: any) {
+      failed += 1;
+      console.warn('[mail-corpus] provider delete failed', err?.message || err);
+    }
+  }
+  const progress = { stage: 'provider_changes', ...(changes.progress || {}) };
+  let upserted = 0;
+  for (let start = 0; start < changes.upserts.length; start += PROVIDER_CHANGE_BATCH) {
+    const messages: CorpusMessageInput[] = [];
+    for (const raw of changes.upserts.slice(start, start + PROVIDER_CHANGE_BATCH)) {
+      try {
+        messages.push(corpusMessageFromNylas(row, raw));
+      } catch (err: any) {
+        failed += 1;
+        console.warn('[mail-corpus] provider message could not be read', err?.message || err);
+      }
+    }
+    if (!messages.length) continue;
+    detectMailSuggestions(row, messages);
+    // scanIngestedMail never rejects: a missed alert must not keep mail out.
+    await scanIngestedMail(row, messages);
+    const result = await upsertProviderMessages(row, messages, progress);
+    upserted += result.upserted;
+    failed += result.failed;
+  }
+  if (upserted || deleted) void kickMailClassifiers(row.userId);
+  return { upserted, deleted, failed };
+}
+
+async function upsertProviderMessages(
+  row: NylasAccountRow,
+  messages: CorpusMessageInput[],
+  progress: Record<string, unknown>,
+): Promise<{ upserted: number; failed: number }> {
+  try {
+    await upsertCorpus(row, {
+      messages,
+      threads: corpusThreadsFromMessages(messages),
+      progress,
+      incremental: true,
+    });
+    return { upserted: messages.length, failed: 0 };
+  } catch (err: any) {
+    if (messages.length === 1) {
+      console.warn('[mail-corpus] provider upsert failed', err?.message || err);
+      return { upserted: 0, failed: 1 };
+    }
+    let upserted = 0;
+    let failed = 0;
+    for (const message of messages) {
+      const one = await upsertProviderMessages(row, [message], progress);
+      upserted += one.upserted;
+      failed += one.failed;
+    }
+    return { upserted, failed };
   }
 }
 

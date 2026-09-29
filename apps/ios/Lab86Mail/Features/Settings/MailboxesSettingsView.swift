@@ -263,7 +263,7 @@ struct MailboxesSettingsView: View {
         busyID = mailbox.id
         defer { busyID = nil }
         do {
-            try await environment.webAuthentication.connectMailbox(provider: mailbox.provider)
+            try await environment.webAuthentication.connectMailbox(provider: mailbox.provider, accountId: mailbox.id)
             await load()
         } catch {
             errorMessage = error.localizedDescription

@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useFrameNonce } from '@/hooks/use-frame-nonce';
 import { useClientStore } from '@/lib/client-state';
 import { sanitizeEmailFrameHtml } from '@/lib/sanitize';
+import { withFrameNonce } from '@/lib/security/frame-nonce';
 import { readBriefTheme } from '@/lib/theme/brief-theme';
 
 const HEIGHTS = { compact: 180, medium: 300, tall: 460 } as const;
@@ -26,6 +28,8 @@ export function BriefCanvasLeaf({
   const [srcDoc, setSrcDoc] = useState('');
   const allowed = useMemo(() => new Set(allowedActions), [allowedActions]);
   const appFont = useClientStore((state) => state.appFont);
+  // The srcdoc frame inherits the page CSP; its bridge script needs the page nonce.
+  const frameNonce = useFrameNonce();
 
   useEffect(() => {
     const raw = sanitizeEmailFrameHtml(html);
@@ -54,9 +58,14 @@ document.addEventListener('click',function(event){
 </script>`;
     const bodyClose = clean.toLowerCase().lastIndexOf('</body>');
     setSrcDoc(
-      bodyClose >= 0 ? `${clean.slice(0, bodyClose)}${bridge}${clean.slice(bodyClose)}` : `${clean}${bridge}`,
+      withFrameNonce(
+        bodyClose >= 0
+          ? `${clean.slice(0, bodyClose)}${bridge}${clean.slice(bodyClose)}`
+          : `${clean}${bridge}`,
+        frameNonce,
+      ),
     );
-  }, [html, appFont]);
+  }, [html, appFont, frameNonce]);
 
   useEffect(() => {
     const receive = (event: MessageEvent) => {

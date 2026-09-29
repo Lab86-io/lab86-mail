@@ -456,9 +456,117 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
       }) as any,
       decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
       fetch: fetchMock as any,
+      mailUsesDriveGrant: async () => false,
+      googleRevokeBlockedReason: async () => null,
     });
     await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: true });
     expect(order).toEqual(['revoke', 'disconnect']);
+  });
+
+  test('keeps the Google grant when direct mail of the same address uses it: the rows go, no revoke', async () => {
+    const order: string[] = [];
+    const checks: unknown[] = [];
+    const fetchMock = mock(async () => new Response('', { status: 200 }));
+    __setCloudFileConnectionDepsForTest({
+      convexQuery: (async () => ({
+        ...stored('google_drive'),
+        connection: { ...stored('google_drive').connection, accountEmail: 'ann@example.com' },
+      })) as any,
+      convexMutation: (async () => {
+        order.push('disconnect');
+      }) as any,
+      decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
+      fetch: fetchMock as any,
+      mailUsesDriveGrant: async (input) => {
+        checks.push(input);
+        return true;
+      },
+    });
+    await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
+    expect(checks).toEqual([{ userId: 'user-1', email: 'ann@example.com' }]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(order).toEqual(['disconnect']);
+  });
+
+  test('a blocked Google revoke keeps the grant at Google: the rows go, no revoke call', async () => {
+    const order: string[] = [];
+    const guardInputs: unknown[] = [];
+    const fetchMock = mock(async () => new Response('', { status: 200 }));
+    __setCloudFileConnectionDepsForTest({
+      convexQuery: (async () => stored('google_drive')) as any,
+      convexMutation: (async () => {
+        order.push('disconnect');
+      }) as any,
+      decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
+      fetch: fetchMock as any,
+      mailUsesDriveGrant: async () => false,
+      googleRevokeBlockedReason: async (input: any) => {
+        guardInputs.push(input);
+        return 'this deployment shares the production Google project';
+      },
+    });
+    await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
+    // The Drive connection that goes is left out of the check for other connections.
+    expect(guardInputs).toEqual([expect.objectContaining({ exceptConnectionId: 'conn-1' })]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(order).toEqual(['disconnect']);
+  });
+
+  test('a failed shared-grant check skips the revoke and still disconnects', async () => {
+    const warn = mock((..._args: unknown[]) => undefined);
+    const original = console.warn;
+    console.warn = warn;
+    try {
+      // The mail check fails: it counts as shared access, and the blocker check does not run.
+      const blockerAfterMailFailure = mock(async () => null);
+      const failedMail = {
+        fetch: mock(async () => new Response('')),
+        mutation: mock(async (..._args: unknown[]) => undefined),
+      };
+      __setCloudFileConnectionDepsForTest({
+        convexQuery: (async () => stored('google_drive')) as any,
+        convexMutation: failedMail.mutation as any,
+        decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
+        fetch: failedMail.fetch as any,
+        mailUsesDriveGrant: async () => {
+          throw new Error('convex down');
+        },
+        googleRevokeBlockedReason: blockerAfterMailFailure,
+      });
+      await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
+      expect(failedMail.fetch).not.toHaveBeenCalled();
+      expect(blockerAfterMailFailure).not.toHaveBeenCalled();
+      expect(failedMail.mutation.mock.calls).toEqual([
+        [expect.anything(), { userId: 'user-1', connectionId: 'conn-1' }],
+      ]);
+
+      // The blocker check fails: it counts as a reason not to revoke.
+      const failedBlocker = {
+        fetch: mock(async () => new Response('')),
+        mutation: mock(async (..._args: unknown[]) => undefined),
+      };
+      __setCloudFileConnectionDepsForTest({
+        convexQuery: (async () => stored('google_drive')) as any,
+        convexMutation: failedBlocker.mutation as any,
+        decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
+        fetch: failedBlocker.fetch as any,
+        mailUsesDriveGrant: async () => false,
+        googleRevokeBlockedReason: async () => {
+          throw new Error('convex down');
+        },
+      });
+      await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
+      expect(failedBlocker.fetch).not.toHaveBeenCalled();
+      expect(failedBlocker.mutation).toHaveBeenCalledTimes(1);
+    } finally {
+      console.warn = original;
+    }
+    const logged = warn.mock.calls.map((call) => call.join(' '));
+    expect(logged).toContain('[cloud-files] mail grant check failed; no revoke convex down');
+    expect(logged).toContain('[cloud-files] Google connection check failed convex down');
+    expect(logged).toContain(
+      '[cloud-files] no Google revoke: the Google connection check failed; the rows go',
+    );
   });
 
   test('a failed revoke still disconnects; OneDrive has no revoke call', async () => {
@@ -468,6 +576,8 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
       convexMutation: mutation as any,
       decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
       fetch: (async () => new Response('', { status: 503 })) as any,
+      mailUsesDriveGrant: async () => false,
+      googleRevokeBlockedReason: async () => null,
     });
     await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
     expect(mutation).toHaveBeenCalledTimes(1);

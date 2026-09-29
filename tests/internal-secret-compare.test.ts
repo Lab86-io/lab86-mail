@@ -85,3 +85,12 @@ describe('corpus routes check the internal secret', () => {
     }
   });
 });
+
+describe('constantTimeEqual length rule', () => {
+  test('a shorter, longer, or empty value never matches', () => {
+    expect(constantTimeEqual('ab', 'abc')).toBe(false);
+    expect(constantTimeEqual('abcd', 'abc')).toBe(false);
+    expect(constantTimeEqual('', 'abc')).toBe(false);
+    expect(constantTimeEqual('', '')).toBe(true);
+  });
+});

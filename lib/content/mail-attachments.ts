@@ -1,9 +1,9 @@
+import { readMailAttachmentBytes } from '../attachments/mail-files';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
-import { downloadNylasAttachment } from '../nylas/provider';
 import { contentVersion } from './cloud-sync';
-import { boundedBytes, extractContent, MAX_DOWNLOAD_BYTES, supportedContent } from './extract';
+import { extractContent, MAX_DOWNLOAD_BYTES, supportedContent } from './extract';
 
-const defaults = { convexMutation, convexQuery, downloadNylasAttachment, extractContent };
+const defaults = { convexMutation, convexQuery, readMailAttachmentBytes, extractContent };
 export async function syncMailAttachments(userId: string, files: any[], deps = defaults) {
   const unique = [
     ...new Map(
@@ -29,18 +29,29 @@ export async function syncMailAttachments(userId: string, files: any[], deps = d
     let partial = true;
     if (Number(file.size || 0) <= MAX_DOWNLOAD_BYTES && supportedContent(file.mimeType, file.filename)) {
       try {
-        const stream = await deps.downloadNylasAttachment({
-          userId,
-          account: file.connectionId,
-          messageId: file.messageId,
-          attachmentId: file.attachmentId,
-        });
-        if (stream) {
-          const parsed = await deps.extractContent(
-            await boundedBytes(new Response(stream)),
-            file.mimeType,
-            file.filename,
-          );
+        // Our encrypted storage first, so the index does not download a
+        // stored file again. A provider file that the queue policy takes is
+        // stored on the way.
+        const read = await deps.readMailAttachmentBytes(
+          {
+            userId,
+            account: file.connectionId,
+            messageId: file.messageId,
+            attachmentId: file.attachmentId,
+          },
+          {
+            maxBytes: MAX_DOWNLOAD_BYTES,
+            fill: 'policy',
+            hint: {
+              filename: file.filename,
+              mimeType: file.mimeType,
+              size: Number(file.size) || undefined,
+              receivedAt: Number(file.modifiedAt) || undefined,
+            },
+          },
+        );
+        if (read) {
+          const parsed = await deps.extractContent(read.bytes, file.mimeType, file.filename);
           text = parsed.text;
           partial = parsed.partial;
         }

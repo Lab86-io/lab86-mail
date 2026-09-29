@@ -31,33 +31,176 @@ export interface ContentItem {
   labels?: ContentLabels;
   ownerIdentities?: string[];
 }
+/** The limits of a stored prepared draft. */
+export const PREPARED_DRAFT_LIMITS = {
+  title: 180,
+  situation: 1600,
+  background: 2400,
+  assessment: 2400,
+  recommendation: 1600,
+  questions: 5,
+  question: 500,
+  steps: 8,
+  step: 500,
+  files: 3,
+  fileName: 120,
+  fileContent: 30_000,
+  evidence: 12,
+  quote: 800,
+} as const;
+const L = PREPARED_DRAFT_LIMITS;
+const PREPARED_SHAPES = ['quick', 'list', 'project', 'practice', 'decision', 'monitor', 'recurring'] as const;
+const PREPARED_FILE_NAME = /^[A-Za-z0-9 _.-]+\.(md|txt|csv)$/;
+
 export const preparedDraftSchema = z.object({
-  title: z.string().min(1).max(180),
-  shape: z.enum(['quick', 'list', 'project', 'practice', 'decision', 'monitor', 'recurring']),
-  situation: z.string().min(1).max(1600),
-  background: z.string().max(2400),
-  assessment: z.string().max(2400),
-  recommendation: z.string().min(1).max(1600),
-  questions: z.array(z.string().min(1).max(500)).max(5),
-  steps: z.array(z.string().min(1).max(500)).max(8),
+  title: z.string().min(1).max(L.title),
+  shape: z.enum(PREPARED_SHAPES),
+  situation: z.string().min(1).max(L.situation),
+  background: z.string().max(L.background),
+  assessment: z.string().max(L.assessment),
+  recommendation: z.string().min(1).max(L.recommendation),
+  questions: z.array(z.string().min(1).max(L.question)).max(L.questions),
+  steps: z.array(z.string().min(1).max(L.step)).max(L.steps),
   files: z
     .array(
       z.object({
-        name: z
-          .string()
-          .min(1)
-          .max(120)
-          .regex(/^[A-Za-z0-9 _.-]+\.(md|txt|csv)$/),
-        content: z.string().min(1).max(30_000),
+        name: z.string().min(1).max(L.fileName).regex(PREPARED_FILE_NAME),
+        content: z.string().min(1).max(L.fileContent),
       }),
     )
-    .max(3),
+    .max(L.files),
   evidence: z
-    .array(z.object({ sourceId: z.string(), quote: z.string().min(1).max(800) }))
+    .array(z.object({ sourceId: z.string(), quote: z.string().min(1).max(L.quote) }))
     .min(1)
-    .max(12),
+    .max(L.evidence),
 });
 export type PreparedDraft = z.infer<typeof preparedDraftSchema>;
+
+// The schema the model receives. Anthropic structured output (also through
+// OpenRouter) does not enforce maxItems, maxLength, minLength or pattern, so
+// Opus returned longer lists than the stored draft allows and every
+// preparation failed after a paid call. The model reads the limits in the
+// descriptions; fitPreparedDraft applies them before the stored schema.
+export const preparedDraftModelSchema = z.object({
+  title: z.string().describe(`A short title, at most ${L.title} characters.`),
+  shape: z.enum(PREPARED_SHAPES),
+  situation: z.string().describe(`At most ${L.situation} characters.`),
+  background: z.string().describe(`At most ${L.background} characters.`),
+  assessment: z.string().describe(`At most ${L.assessment} characters.`),
+  recommendation: z.string().describe(`At most ${L.recommendation} characters.`),
+  questions: z
+    .array(z.string())
+    .describe(`At most ${L.questions} questions, each at most ${L.question} characters.`),
+  steps: z.array(z.string()).describe(`At most ${L.steps} steps, each at most ${L.step} characters.`),
+  files: z
+    .array(z.object({ name: z.string(), content: z.string() }))
+    .describe(
+      `At most ${L.files} files. A name uses letters, digits, spaces, _ . - and ends in .md, .txt or .csv.`,
+    ),
+  evidence: z
+    .array(z.object({ sourceId: z.string(), quote: z.string() }))
+    .describe(`1 to ${L.evidence} exact quotes, each at most ${L.quote} characters.`),
+});
+export type PreparedDraftModelOutput = z.infer<typeof preparedDraftModelSchema>;
+
+function fitText(value: string, max: number) {
+  return truncateText(value.trim(), max);
+}
+
+function fitList(values: string[], count: number, max: number) {
+  return values
+    .map((value) => fitText(value, max))
+    .filter(Boolean)
+    .slice(0, count);
+}
+
+function fitFileName(name: string) {
+  const extension = /\.(md|txt|csv)$/i.exec(name.trim())?.[1]?.toLowerCase() ?? 'md';
+  const stem = name
+    .trim()
+    .replace(/\.(md|txt|csv)$/i, '')
+    .replace(/[^A-Za-z0-9 _.-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-. ]+|[-. ]+$/g, '');
+  return `${stem.slice(0, L.fileName - extension.length - 1) || 'draft'}.${extension}`;
+}
+
+/**
+ * The model output inside the stored limits: text is cut to its limit, empty
+ * list entries are removed, lists keep their first entries, and file names
+ * keep only the allowed characters. A quote keeps its start, so it stays an
+ * exact quote of its source. When the evidence list is too long, one quote of
+ * the trigger source stays in it.
+ */
+export function fitPreparedDraft(output: PreparedDraftModelOutput, triggerSourceId?: string): PreparedDraft {
+  const evidence = output.evidence
+    .map((entry) => ({ sourceId: entry.sourceId, quote: fitText(entry.quote, L.quote) }))
+    .filter((entry) => entry.quote);
+  let kept = evidence.slice(0, L.evidence);
+  const trigger = evidence.find((entry) => entry.sourceId === triggerSourceId);
+  if (trigger && !kept.includes(trigger)) kept = [...kept.slice(0, L.evidence - 1), trigger];
+  return {
+    title: fitText(output.title, L.title),
+    shape: output.shape,
+    situation: fitText(output.situation, L.situation),
+    background: fitText(output.background, L.background),
+    assessment: fitText(output.assessment, L.assessment),
+    recommendation: fitText(output.recommendation, L.recommendation),
+    questions: fitList(output.questions, L.questions, L.question),
+    steps: fitList(output.steps, L.steps, L.step),
+    files: output.files
+      .map((file) => ({ name: fitFileName(file.name), content: truncateText(file.content, L.fileContent) }))
+      .filter((file) => file.content.trim())
+      .slice(0, L.files),
+    evidence: kept,
+  };
+}
+
+const PREPARATION_RETRY_BASE_MS = 10 * 60_000;
+const PREPARATION_RETRY_MAX_MS = 24 * 3_600_000;
+
+/**
+ * The wait before the next attempt of a preparation that failed `failures`
+ * times in a row: 10 minutes, then double for each failure, at most one day.
+ * A fixed 10 minute retry of a failure that repeats sent two paid calls to
+ * the model every 10 minutes, all day.
+ */
+export function preparationRetryDelayMs(failures: number) {
+  const count = Math.max(1, Math.floor(Number(failures) || 1));
+  return Math.min(PREPARATION_RETRY_MAX_MS, PREPARATION_RETRY_BASE_MS * 2 ** Math.min(count - 1, 20));
+}
+
+export const RESEARCH_QUERY_LIMIT = 4;
+export const RESEARCH_QUERY_CHARS = 160;
+export const researchPlanModelSchema = z.object({
+  queries: z
+    .array(z.string())
+    .describe(
+      `${RESEARCH_QUERY_LIMIT} or fewer targeted search queries, each at most ${RESEARCH_QUERY_CHARS} characters.`,
+    ),
+});
+
+/** The first distinct research queries, cut to the query limit. */
+export function fitResearchQueries(queries: string[]) {
+  const seen = new Set<string>();
+  const fitted: string[] = [];
+  for (const query of queries) {
+    const text = fitText(query, RESEARCH_QUERY_CHARS);
+    const key = text.toLocaleLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    fitted.push(text);
+    if (fitted.length === RESEARCH_QUERY_LIMIT) break;
+  }
+  return fitted;
+}
+
+/** Model text with prose or a code fence around one JSON object: the object alone. */
+export async function extractJsonObjectText({ text }: { text: string }): Promise<string | null> {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  return start >= 0 && end > start ? text.slice(start, end + 1) : null;
+}
 
 export function contentChunks(text: string): string[] {
   const result: string[] = [];
