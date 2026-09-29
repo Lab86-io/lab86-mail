@@ -2,6 +2,7 @@ import {
   decryptSecret,
   encryptedKeyId,
   encryptionKeyring,
+  encryptionWriteFormat,
   needsReencryption,
   reencryptSecret,
 } from './crypto';
@@ -67,10 +68,12 @@ function emptyReport(): FieldReport {
 /**
  * Stops a rotation run, a dry run too, while the v1 write format is set. With
  * that format every v1 value counts as current (it has no key id), so a dry
- * run would report no work while values still need a retired key.
+ * run would report no work while values still need a retired key. It reads
+ * the format through encryptionWriteFormat, the same parser as the writes,
+ * so " V1 " stops it too, and a value that is not a format throws.
  */
 export function assertRotationWriteFormat(env: Record<string, string | undefined> = process.env) {
-  if (env.LAB86_MAIL_ENCRYPTION_WRITE_FORMAT === 'v1') {
+  if (encryptionWriteFormat(env) === 'v1') {
     throw new Error(
       'Unset LAB86_MAIL_ENCRYPTION_WRITE_FORMAT before a rotation or a dry run. v1 values have no key id.',
     );

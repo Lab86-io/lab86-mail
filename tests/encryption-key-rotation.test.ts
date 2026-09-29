@@ -10,6 +10,7 @@ import {
   decryptSecret,
   encryptedKeyId,
   encryptionKeyring,
+  encryptionWriteFormat,
   encryptSecret,
   needsReencryption,
   parseEncryptionKeyring,
@@ -136,6 +137,55 @@ describe('encryption keyring', () => {
     expect(decryptSecret(value)).toBe('token');
     expect(needsReencryption(value)).toBe(false);
     expect(needsReencryption(legacyV1('x', OLD_KEY))).toBe(false);
+  });
+
+  test('an unset write format writes v2, and a v1 value then needs re-encryption', () => {
+    setKeyringEnv({ LAB86_MAIL_ENCRYPTION_KEY: OLD_KEY });
+    expect(encryptionWriteFormat()).toBe('v2');
+    const old = legacyV1('old-token', OLD_KEY);
+    for (const value of [undefined, '', '  ', 'v2', ' V2 ']) {
+      if (value === undefined) delete process.env.LAB86_MAIL_ENCRYPTION_WRITE_FORMAT;
+      else process.env.LAB86_MAIL_ENCRYPTION_WRITE_FORMAT = value;
+      const fresh = encryptSecret('token');
+      expect(encryptedKeyId(fresh)).toBe(DEFAULT_ENCRYPTION_KEY_ID);
+      expect(needsReencryption(fresh)).toBe(false);
+      // A v1 value names no key, so it is never current under v2.
+      expect(needsReencryption(old)).toBe(true);
+      expect(encryptedKeyId(reencryptSecret(old).payload)).toBe(DEFAULT_ENCRYPTION_KEY_ID);
+      expect(() => assertRotationWriteFormat()).not.toThrow();
+    }
+  });
+
+  test('an explicit v1 write format keeps writes in v1 in any case, and stops the rotation', () => {
+    setKeyringEnv({ LAB86_MAIL_ENCRYPTION_KEY: OLD_KEY });
+    const current = encryptSecret('v2-token');
+    for (const value of ['v1', 'V1', ' v1 ']) {
+      process.env.LAB86_MAIL_ENCRYPTION_WRITE_FORMAT = value;
+      expect(encryptionWriteFormat()).toBe('v1');
+      const fresh = encryptSecret('token');
+      expect(encryptedKeyId(fresh)).toBe('v1');
+      expect(decryptSecret(fresh)).toBe('token');
+      // An old build reads it: the old code opened v1 with no AAD.
+      expect(fresh.split('.')).toHaveLength(4);
+      expect(needsReencryption(fresh)).toBe(false);
+      expect(needsReencryption(legacyV1('x', OLD_KEY))).toBe(false);
+      // A v2 value goes back to v1 in the rollback window.
+      expect(needsReencryption(current)).toBe(true);
+      expect(() => assertRotationWriteFormat()).toThrow('Unset LAB86_MAIL_ENCRYPTION_WRITE_FORMAT');
+    }
+  });
+
+  test('a write format that is not v1 or v2 stops each write and the rotation', () => {
+    setKeyringEnv({ LAB86_MAIL_ENCRYPTION_KEY: OLD_KEY });
+    const stored = encryptSecret('token');
+    for (const value of ['v3', 'legacy', 'v1.', 'v 1']) {
+      process.env.LAB86_MAIL_ENCRYPTION_WRITE_FORMAT = value;
+      expect(() => encryptSecret('token')).toThrow('must be "v1", "v2", or unset');
+      expect(() => assertRotationWriteFormat()).toThrow('must be "v1", "v2", or unset');
+      expect(() => encryptionWriteFormat({ LAB86_MAIL_ENCRYPTION_WRITE_FORMAT: value })).toThrow();
+      // Reads do not depend on the write format.
+      expect(decryptSecret(stored)).toBe('token');
+    }
   });
 
   test('parses the retired key list and refuses unclear configuration', () => {

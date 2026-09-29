@@ -13,9 +13,11 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 //   LAB86_MAIL_ENCRYPTION_KEYS    optional retired keys that only decrypt,
 //                                 as "id:key,id:key"
 //   LAB86_MAIL_ENCRYPTION_WRITE_FORMAT
-//                                 optional; "v1" keeps new writes in the old
-//                                 format (current key), so a rollback to a
-//                                 build that reads v1 only stays safe
+//                                 optional; unset or "v2" writes v2. "v1"
+//                                 keeps new writes in the old format (current
+//                                 key), so a rollback to a build that reads
+//                                 v1 only stays safe. Other values are an
+//                                 error (encryptionWriteFormat)
 // With only LAB86_MAIL_ENCRYPTION_KEY set, the keyring is { k1 } and every
 // stored v1 value still decrypts. See docs/encryption-key-rotation.md.
 
@@ -93,8 +95,28 @@ export function encryptionKeyring(): EncryptionKeyring {
   return cached.keyring;
 }
 
+export type EncryptionWriteFormat = typeof V1 | typeof V2;
+
+/**
+ * The format of new writes, from LAB86_MAIL_ENCRYPTION_WRITE_FORMAT. Unset
+ * or blank gives v2, so each new value names its key id. "v1" gives the old
+ * format for a rollback window. Case and outer spaces do not count. Any
+ * other value throws, so a typing error cannot write v2 while a rollback
+ * window is open. The rotation guard reads the same value
+ * (assertRotationWriteFormat in lib/security/key-rotation.ts), so the two
+ * can never disagree.
+ */
+export function encryptionWriteFormat(
+  env: Record<string, string | undefined> = process.env,
+): EncryptionWriteFormat {
+  const value = (env.LAB86_MAIL_ENCRYPTION_WRITE_FORMAT ?? '').trim().toLowerCase();
+  if (!value) return V2;
+  if (value === V1 || value === V2) return value;
+  throw new Error('LAB86_MAIL_ENCRYPTION_WRITE_FORMAT must be "v1", "v2", or unset.');
+}
+
 function writesV1() {
-  return process.env.LAB86_MAIL_ENCRYPTION_WRITE_FORMAT === V1;
+  return encryptionWriteFormat() === V1;
 }
 
 export function encryptSecret(plaintext: string) {

@@ -10,7 +10,8 @@ full list of Convex fields is in `lib/security/encrypted-fields.ts`.
 - `v2.<kid>.<iv>.<tag>.<ciphertext>`: the current format. The key id is authenticated data, so a
   changed key id fails the tag check.
 
-`decryptSecret` reads both formats. `encryptSecret` writes `v2`.
+`decryptSecret` reads both formats. `encryptSecret` writes `v2`. It writes `v1` only while
+`LAB86_MAIL_ENCRYPTION_WRITE_FORMAT=v1` is set.
 
 ## Keyring variables
 
@@ -19,7 +20,7 @@ full list of Convex fields is in `lib/security/encrypted-fields.ts`.
 | `LAB86_MAIL_ENCRYPTION_KEY` | The key for new writes. The meaning did not change. |
 | `LAB86_MAIL_ENCRYPTION_KEY_ID` | The id of that key. Default: `k1`. |
 | `LAB86_MAIL_ENCRYPTION_KEYS` | Optional. Retired keys that only decrypt, as `id:key,id:key`. |
-| `LAB86_MAIL_ENCRYPTION_WRITE_FORMAT` | Optional. `v1` keeps new writes in the old format. |
+| `LAB86_MAIL_ENCRYPTION_WRITE_FORMAT` | Optional. Unset or `v2`: new writes are `v2`. `v1` keeps new writes in the old format. Case and outer spaces do not count. Other values stop each write with an error. |
 
 A key is 32 bytes in base64 (recommended: `openssl rand -base64 32`). Any other string becomes a
 key through SHA-256. A key id has 1 to 32 letters, digits, `_`, or `-`. The ids `v1` and `v2` are
@@ -36,6 +37,11 @@ that you will roll back to an older build, set `LAB86_MAIL_ENCRYPTION_WRITE_FORM
 deploy. Remove it when the rollback window closes. Do not rotate a key while it is set. The
 script stops while it is set, also for a dry run. With this format, all `v1` values count as
 current, so the report cannot show the values that need an old key.
+
+The default is `v2`, so each new value names its key id. The writes and the rotation guard read
+the variable through one function (`encryptionWriteFormat`), so they always agree. A value that
+is not `v1` or `v2` stops the writes and the rotation with an error. Thus a typing error cannot
+write `v2` while a rollback window is open.
 
 ## Procedure
 
