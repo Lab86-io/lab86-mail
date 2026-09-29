@@ -248,7 +248,9 @@ function storeTarget(ref: MailAttachmentRef, lookup: StoredLookup, opened: Opene
 /**
  * Opens an attachment as a stream, for the attachment route. A file from the
  * provider goes to the reader at once; a copy goes to storage through
- * `defer` when `fill` allows it and the file is within the storage cap.
+ * `defer` when `fill` allows it and the file is within the storage cap. The
+ * copy is read at once up to the cap, so memory stays bounded while the
+ * reader streams; only the store waits for `defer`.
  * Null when the account is not the user's, or not connected and nothing is
  * stored, or the provider has no file.
  */
@@ -269,8 +271,15 @@ export async function openMailAttachment(
     return opened;
   const [served, copy] = opened.stream.tee();
   const target = storeTarget(ref, lookup, opened);
+  // The copy is read now, while the reader streams. A tee keeps each chunk
+  // for a branch that has not read it, so a copy that waits for `defer`
+  // (after the response) would hold the whole file. The byte cap stops this
+  // read, so the copy holds at most the cap. Only the store waits.
+  const copied = readBounded(copy, ATTACHMENT_STORE_MAX_BYTES);
+  // The store task gets the error; this stops an unhandled rejection before it runs.
+  copied.catch(() => undefined);
   scheduleStore(options.defer, async () => {
-    const bytes = await readBounded(copy, ATTACHMENT_STORE_MAX_BYTES);
+    const bytes = await copied;
     if (bytes) await storeMailAttachmentBytes({ ...target, bytes }, deps);
   });
   return { ...opened, stream: served };

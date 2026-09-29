@@ -192,6 +192,63 @@ describe('openMailAttachment', () => {
     expect(h.mutations).toEqual([]);
   });
 
+  test('the stored copy is read at once and stops at the cap, while the reader waits', async () => {
+    // A provider file larger than the cap, in 1 MiB chunks, with no size in the corpus.
+    const chunk = new Uint8Array(1024 * 1024);
+    const total = ATTACHMENT_STORE_MAX_BYTES + 8 * chunk.byteLength;
+    let pulled = 0;
+    const provider = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (pulled >= total) return controller.close();
+          pulled += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const h = harness(connected({ corpus: null }), { provider });
+    const opened = await openMailAttachment(ref, { fill: 'always', defer: h.defer }, h.deps);
+    // The reader reads nothing yet, and the store task has not run.
+    let last = -1;
+    for (let i = 0; i < 500 && pulled !== last; i++) {
+      last = pulled;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(h.defer).toHaveBeenCalledTimes(1);
+    // The copy read the file up to the cap, then stopped: the rest waits for the reader.
+    expect(pulled).toBeGreaterThan(ATTACHMENT_STORE_MAX_BYTES);
+    expect(pulled).toBeLessThan(total);
+    const served = await new Response(opened!.stream).arrayBuffer();
+    expect(served.byteLength).toBe(total);
+    await h.runTasks();
+    expect(h.mutations).toEqual([]);
+  });
+
+  test('a provider error reaches the store task as a logged failure, not an unhandled rejection', async () => {
+    const provider = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new Error('provider reset'));
+      },
+    });
+    const h = harness(connected({ corpus: null }), { provider });
+    const errors = mock(() => undefined);
+    const original = console.error;
+    console.error = errors;
+    try {
+      const opened = await openMailAttachment(ref, { fill: 'always', defer: h.defer }, h.deps);
+      // The reader gets the provider error.
+      await expect(opened!.stream.getReader().read()).rejects.toThrow('provider reset');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await h.runTasks();
+    } finally {
+      console.error = original;
+    }
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(String((errors.mock.calls[0] as unknown[])[1])).toContain('provider reset');
+    expect(h.mutations).toEqual([]);
+  });
+
   test('the default defer runs the store and logs a failure', async () => {
     const h = harness(connected());
     h.deps.convexMutation.mockImplementation(async () => {
