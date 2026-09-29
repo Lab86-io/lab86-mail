@@ -2,7 +2,7 @@ import type { NextConfig } from 'next';
 
 // NEXT_PUBLIC_CLERK_PROXY_URL is baked into the CLIENT bundle by Clerk's SDK
 // at build time, bypassing every runtime guard. If it points at a different
-// origin than the app being built (e.g. the staging proxy URL copied into the
+// origin than the app being built (e.g. a local proxy URL copied into the
 // production environment), every sign-in dies on CORS with an empty page.
 // Fail the build loudly instead of shipping that.
 const clerkProxyUrl = process.env.NEXT_PUBLIC_CLERK_PROXY_URL || '';
@@ -41,7 +41,7 @@ export const PERMISSIONS_POLICY = [
   'browsing-topics=()',
 ].join(', ');
 
-// Response security headers for production builds (staging and production).
+// Response security headers for production builds, including local build checks.
 // The page Content-Security-Policy comes from proxy.ts, because it needs a
 // fresh nonce for each request (lib/security/csp.ts). X-Frame-Options keeps
 // the framing rule when LAB86_CSP_MODE is report-only or off. The native apps
