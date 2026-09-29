@@ -8,6 +8,7 @@ import {
   BACKFILL_PAGE,
   hexToBase64,
   QUEUE_ACCOUNT_WAIT_MS,
+  QUEUE_LEASE_ENDED_ERROR,
   QUEUE_LEASE_MS,
   QUEUE_MAX_ATTEMPTS,
   queueRetryDelay,
@@ -343,6 +344,35 @@ describe('claims and failures', () => {
     ).toEqual([]);
     await ingest(t, 'acct', [message('m1', { attachments: [pdf] })]);
     expect(await rows(t, 'mailAttachmentQueue')).toHaveLength(2);
+  });
+
+  test('a lease that ends with no report counts, and the last one stops the row', async () => {
+    const t = harness();
+    await addAccount(t, 'acct');
+    await ingest(t, 'acct', [message('m1')]);
+    const claim = () => t.mutation(api.mailAttachments.claimQueue, { internalSecret: SECRET, userId: USER });
+    let clock = NOW;
+    // The app process stops during each download: no failQueueItem call.
+    for (let attempt = 1; attempt <= QUEUE_MAX_ATTEMPTS; attempt++) {
+      const leased = await claim();
+      expect(leased.map((item) => item.attempts)).toEqual([attempt]);
+      clock += QUEUE_LEASE_MS;
+      setSystemTime(new Date(clock));
+    }
+    // The lease after the last allowed attempt: the row fails, with no download.
+    expect(await claim()).toEqual([]);
+    let [row] = await rows(t, 'mailAttachmentQueue');
+    expect(row).toMatchObject({
+      state: 'failed',
+      attempts: QUEUE_MAX_ATTEMPTS,
+      error: QUEUE_LEASE_ENDED_ERROR,
+      updatedAt: clock,
+    });
+    // A failed row is never leased again.
+    setSystemTime(new Date(clock + 30 * DAY));
+    expect(await claim()).toEqual([]);
+    [row] = await rows(t, 'mailAttachmentQueue');
+    expect(row).toMatchObject({ state: 'failed', attempts: QUEUE_MAX_ATTEMPTS, updatedAt: clock });
   });
 
   test('the retry delay grows to one day', () => {

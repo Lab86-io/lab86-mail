@@ -30,6 +30,8 @@ export const QUEUE_CLAIM_LIMIT = 5;
 export const QUEUE_LEASE_MS = 15 * 60_000;
 /** After this many attempts, a transient error becomes permanent. */
 export const QUEUE_MAX_ATTEMPTS = 5;
+/** The error of a row whose last allowed lease ended with no report. */
+export const QUEUE_LEASE_ENDED_ERROR = 'The last allowed lease ended with no report.';
 /** A row of a mailbox in `error` waits this long before the next look. */
 export const QUEUE_ACCOUNT_WAIT_MS = 6 * 3_600_000;
 const QUEUE_RETRY_BASE_MS = 15 * 60_000;
@@ -372,7 +374,8 @@ export const recordFile = mutation({
  * Leases up to `limit` due queue rows of one user and returns them. Rows of a
  * removed mailbox, of mail that left the window or went to spam or trash, of
  * a deleted message, and of a file that is stored already are deleted. Rows
- * of a mailbox in `error` wait. Each lease counts one attempt.
+ * of a mailbox in `error` wait. Each lease counts one attempt. A row that
+ * used QUEUE_MAX_ATTEMPTS leases becomes `failed` and is not leased again.
  */
 export const claimQueue = mutation({
   args: { ...caller, limit: v.optional(v.number()) },
@@ -409,6 +412,13 @@ export const claimQueue = mutation({
         (await byKey(ctx, 'mailAttachmentFiles', row).first())
       ) {
         await ctx.db.delete(row._id);
+        continue;
+      }
+      // A lease can end with no report (the app process stopped during the
+      // download). Only failQueueItem counts a report, so the claim stops a
+      // row that used all its attempts. Else one bad file loops forever.
+      if (row.attempts >= QUEUE_MAX_ATTEMPTS) {
+        await ctx.db.patch(row._id, { state: 'failed', error: QUEUE_LEASE_ENDED_ERROR, updatedAt: ts });
         continue;
       }
       const attempts = row.attempts + 1;
