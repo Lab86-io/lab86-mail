@@ -519,7 +519,10 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
     try {
       // The mail check fails: it counts as shared access, and the blocker check does not run.
       const blockerAfterMailFailure = mock(async () => null);
-      const failedMail = { fetch: mock(async () => new Response('')), mutation: mock(async () => undefined) };
+      const failedMail = {
+        fetch: mock(async () => new Response('')),
+        mutation: mock(async (..._args: unknown[]) => undefined),
+      };
       __setCloudFileConnectionDepsForTest({
         convexQuery: (async () => stored('google_drive')) as any,
         convexMutation: failedMail.mutation as any,
@@ -540,7 +543,7 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
       // The blocker check fails: it counts as a reason not to revoke.
       const failedBlocker = {
         fetch: mock(async () => new Response('')),
-        mutation: mock(async () => undefined),
+        mutation: mock(async (..._args: unknown[]) => undefined),
       };
       __setCloudFileConnectionDepsForTest({
         convexQuery: (async () => stored('google_drive')) as any,
