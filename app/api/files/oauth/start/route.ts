@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { saveCloudFileOAuthState } from '@/lib/files/connections';
 import {
@@ -73,7 +74,7 @@ export function createCloudFileOAuthStart(dependencies: typeof defaultDependenci
       if (error instanceof AuthRequiredError) {
         return NextResponse.json({ ok: false, error: error.message }, { status: 401 });
       }
-      console.error('[files/oauth/start] failed', error);
+      console.error('[files/oauth/start] failed', describeModelError(error));
       return NextResponse.json({ ok: false, error: 'Could not start file authorization.' }, { status: 500 });
     }
   };

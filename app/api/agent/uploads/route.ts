@@ -3,6 +3,7 @@ import { chatFileType, validateChatFiles } from '@/lib/ai/chat-attachments';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 import { sanitizeFilename } from '@/lib/shared/files';
 
 export const runtime = 'nodejs';
@@ -18,8 +19,10 @@ function errorResponse(err: any, fallback = 'Upload failed') {
   if (err instanceof AuthRequiredError) {
     return NextResponse.json({ ok: false, error: err.message || 'Authentication required' }, { status: 401 });
   }
-  console.error('[agent-uploads] Upload failed:', err);
-  return NextResponse.json({ ok: false, error: fallback }, { status: 500 });
+  return NextResponse.json(
+    { ok: false, error: serverErrorMessage('[agent-uploads] Upload failed:', err, fallback) },
+    { status: 500 },
+  );
 }
 
 export async function GET() {
@@ -67,8 +70,8 @@ export async function POST(req: Request) {
   let form: FormData;
   try {
     form = await req.formData();
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: `Invalid form: ${err?.message || err}` }, { status: 400 });
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Invalid form.' }, { status: 400 });
   }
 
   const files = form.getAll('files').filter((value): value is File => value instanceof File);

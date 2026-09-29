@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { completeMcpOAuthConnection, type McpOAuthCompletionPayload } from '@/lib/mcp/oauth-connection';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -63,7 +64,7 @@ export function createMcpOAuthFinalize(deps: typeof defaultDependencies = defaul
       if (error instanceof z.ZodError) {
         return NextResponse.json({ ok: false, error: 'Invalid authorization completion.' }, { status: 400 });
       }
-      console.error('[mcp/oauth/finalize] failed', error);
+      console.error('[mcp/oauth/finalize] failed', describeModelError(error));
       return NextResponse.json(
         { ok: false, error: 'Could not complete authorization. Please try again.' },
         { status: 500 },

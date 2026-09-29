@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,8 +37,10 @@ export async function GET() {
     return json(200, { ok: true, areas, onboarding: onboarding?.doc ?? null });
   } catch (err: any) {
     if (err instanceof AuthRequiredError) return json(401, { ok: false, error: 'auth required' });
-    console.error('[albatross-areas-route]', err?.message || err);
-    return json(500, { ok: false, error: err?.message || 'areas lookup failed' });
+    return json(500, {
+      ok: false,
+      error: serverErrorMessage('[albatross-areas-route]', err, 'areas lookup failed'),
+    });
   }
 }
 
@@ -186,7 +189,9 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     if (err instanceof RateLimitError) return rateLimitResponse(err);
     if (err instanceof AuthRequiredError) return json(401, { ok: false, error: 'auth required' });
-    console.error('[albatross-areas-route]', err?.message || err);
-    return json(500, { ok: false, error: err?.message || 'area action failed' });
+    return json(500, {
+      ok: false,
+      error: serverErrorMessage('[albatross-areas-route]', err, 'area action failed'),
+    });
   }
 }

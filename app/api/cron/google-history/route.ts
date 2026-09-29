@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
+import { describeModelError } from '@/lib/ai/log-error';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { syncGoogleHistory } from '@/lib/google/history-sync';
 
@@ -25,7 +26,7 @@ export function createGoogleHistoryPost(overrides: Partial<typeof defaultDepende
     }
     void runWithAiRequestContext({ userId, agent: 'ai' }, () =>
       deps.syncGoogleHistory({ userId, accountId }).catch((err) => {
-        console.error('[cron/google-history] sync failed', accountId, (err as Error)?.message || err);
+        console.error('[cron/google-history] sync failed', accountId, describeModelError(err));
       }),
     );
     return NextResponse.json({ ok: true, started: accountId }, { status: 202 });

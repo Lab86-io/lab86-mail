@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { isAllowedPushEndpoint } from '@/lib/notifications/delivery';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const status = error instanceof AuthRequiredError ? 401 : 500;
     return Response.json(
-      { ok: false, error: error instanceof Error ? error.message : 'push failed' },
+      { ok: false, error: errorAnswerMessage(status, error, 'push failed', '[notifications/push] failed') },
       { status },
     );
   }
@@ -44,7 +45,7 @@ export async function DELETE(req: NextRequest) {
   } catch (error) {
     const status = error instanceof AuthRequiredError ? 401 : 500;
     return Response.json(
-      { ok: false, error: error instanceof Error ? error.message : 'push failed' },
+      { ok: false, error: errorAnswerMessage(status, error, 'push failed', '[notifications/push] failed') },
       { status },
     );
   }

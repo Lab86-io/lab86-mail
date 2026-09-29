@@ -4,6 +4,7 @@ import { saveTokenConnection } from '@/lib/mcp/connections';
 import { getServerDef, type McpServerId } from '@/lib/mcp/servers';
 import { syncConnection } from '@/lib/mcp/sync';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -65,7 +66,7 @@ export function createMcpConnectPost(deps: typeof defaultDeps = defaultDeps) {
       return NextResponse.json({ ok: true, connectionId, validation });
     } catch (err) {
       return NextResponse.json(
-        { ok: false, error: (err as { message?: string })?.message || 'Could not connect.' },
+        { ok: false, error: serverErrorMessage('[mcp/connect] failed', err, 'Could not connect.') },
         { status: 500 },
       );
     }

@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import {
   consumeCloudFileOAuthState,
@@ -103,7 +104,7 @@ export function createCloudFileOAuthCallback(dependencies: typeof defaultDepende
         nativeCallback,
       );
     } catch (error) {
-      console.error('[files/oauth/callback] failed', error);
+      console.error('[files/oauth/callback] failed', describeModelError(error));
       return filesRedirect(
         redirectTo,
         'files_error',

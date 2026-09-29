@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { hostedPublicUrl } from '@/lib/hosted/env';
@@ -105,7 +106,7 @@ export function createMcpOAuthCallback(deps: typeof defaultDeps = defaultDeps) {
       }
       return settingsRedirect('mcp_connected', result.label);
     } catch (error) {
-      console.error('[mcp/oauth/callback] OAuth connection failed', error);
+      console.error('[mcp/oauth/callback] OAuth connection failed', describeModelError(error));
       return settingsRedirect(
         'mcp_error',
         'Could not complete authorization. Please sign in and try again.',

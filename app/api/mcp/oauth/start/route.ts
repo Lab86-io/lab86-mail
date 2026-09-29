@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, type ConvexCallArgs, convexMutation } from '@/lib/hosted/convex';
 import { beginMcpOAuth } from '@/lib/mcp/oauth';
@@ -31,7 +32,8 @@ const defaultDependencies: McpOAuthStartDependencies = {
   encryptSecret,
   randomState: () => randomBytes(32).toString('base64url'),
   now: Date.now,
-  reportUnexpectedError: (error) => console.error('[mcp/oauth/start] failed to start OAuth', error),
+  reportUnexpectedError: (error) =>
+    console.error('[mcp/oauth/start] failed to start OAuth', describeModelError(error)),
 };
 
 export function createMcpOAuthStartGet(deps: McpOAuthStartDependencies = defaultDependencies) {

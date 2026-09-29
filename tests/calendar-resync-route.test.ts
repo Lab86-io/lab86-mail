@@ -129,6 +129,7 @@ describe('POST /api/calendar/resync', () => {
     };
     const response = await createCalendarResyncPost(deps)(request({ reason: 'pull' }));
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ ok: false, error: 'convex unreachable' });
+    // A 5xx answer never passes the error message to the client (CASA S7).
+    expect(await response.json()).toEqual({ ok: false, error: 'Resync failed.' });
   });
 });

@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,7 +35,10 @@ export async function POST(req: NextRequest, context: { params: Promise<{ workId
     if (error instanceof RateLimitError) return rateLimitResponse(error);
     const status = error instanceof AuthRequiredError ? 401 : 500;
     return Response.json(
-      { ok: false, error: error instanceof Error ? error.message : 'advance failed' },
+      {
+        ok: false,
+        error: errorAnswerMessage(status, error, 'advance failed', '[albatross/work/advance] failed'),
+      },
       { status },
     );
   }

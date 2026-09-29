@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
+import { describeModelError } from '@/lib/ai/log-error';
 import {
   planShapeBackfill,
   SHAPE_BACKFILL_BATCH,
@@ -65,18 +66,15 @@ export function createShapeBackfillPost(deps: ShapeBackfillDeps = defaultDeps) {
           byShape[write.shape] = (byShape[write.shape] || 0) + 1;
           written += 1;
         } catch (error) {
-          console.error('[cron/shape-backfill] write failed', write.workId, error);
+          console.error('[cron/shape-backfill] write failed', write.workId, describeModelError(error));
         }
       }
       // A full batch means there is probably more to read on the next pass.
       const remaining = rows.length === limit ? 'more' : 0;
       return NextResponse.json({ ok: true, userId, read: rows.length, written, byShape, remaining });
     } catch (err: any) {
-      console.error('[cron/shape-backfill] backfill failed', userId, err);
-      return NextResponse.json(
-        { ok: false, error: err?.message || 'shape backfill failed', userId },
-        { status: 500 },
-      );
+      console.error('[cron/shape-backfill] backfill failed', userId, describeModelError(err));
+      return NextResponse.json({ ok: false, error: 'shape backfill failed', userId }, { status: 500 });
     }
   };
 }

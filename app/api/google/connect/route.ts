@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { GoogleConnectError, type GoogleMailMode, startGoogleMailConnect } from '@/lib/google/connect';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -60,7 +61,7 @@ export function createGoogleConnectGet(dependencies: typeof defaultDependencies 
       if (error instanceof GoogleConnectError) {
         return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
       }
-      console.error('[google/connect] failed', (error as Error)?.message || error);
+      console.error('[google/connect] failed', describeModelError(error));
       return NextResponse.json({ ok: false, error: 'Could not start the Google sign-in.' }, { status: 500 });
     }
   };

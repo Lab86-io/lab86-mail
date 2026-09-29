@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexMutation } from '@/lib/hosted/convex';
@@ -55,7 +56,7 @@ export function createEvidenceReconcilePost(deps: EvidenceReconcileDependencies 
       }
       return NextResponse.json({ ok: true, workId, status: result.status });
     } catch (error) {
-      deps.reportError('[cron/evidence-reconcile] advance failed', workId, error);
+      deps.reportError('[cron/evidence-reconcile] advance failed', workId, describeModelError(error));
       return NextResponse.json(
         { ok: false, error: 'Evidence reconciliation failed.', workId },
         { status: 500 },

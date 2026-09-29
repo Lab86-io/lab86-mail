@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { checkRecipientRateLimit, readExcludeParam, suggestRecipients } from '@/lib/contacts/lookup';
 import { RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -37,7 +38,7 @@ export function createRecipientsGet(deps = defaults) {
       if (err instanceof AuthRequiredError) {
         return NextResponse.json({ ok: false, error: err.message }, { status: 401 });
       }
-      console.error('[contacts/recipients] search failed', err?.message || err);
+      console.error('[contacts/recipients] search failed', describeModelError(err));
       return NextResponse.json({ ok: false, error: 'Recipient search failed.' }, { status: 500 });
     }
   };

@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { archiveDocument, getDocument, updateDocument } from '@/lib/documents/service';
 import { DocumentTooLargeError } from '@/lib/documents/sheet-workbook';
@@ -30,7 +31,7 @@ function responseForError(error: unknown) {
       { status: 400 },
     );
   }
-  console.error('[document]', error);
+  console.error('[document]', describeModelError(error));
   return NextResponse.json({ ok: false, error: 'Document operation failed.' }, { status: 500 });
 }
 

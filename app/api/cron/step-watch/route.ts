@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { evidenceSatisfies } from '@/lib/albatross/evidence-gate';
 import { proofMatchScore, proofOfferAllowed, threadPrimaryCategory } from '@/lib/albatross/proof-match';
 import { checkWaitingReplies } from '@/lib/albatross/reply-watch-runtime';
@@ -172,11 +173,8 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
         stillWatching,
       });
     } catch (error) {
-      deps.reportError('[cron/step-watch] watch failed', workId, error);
-      return NextResponse.json(
-        { ok: false, error: error instanceof Error ? error.message : 'Step watch failed.', workId },
-        { status: 500 },
-      );
+      deps.reportError('[cron/step-watch] watch failed', workId, describeModelError(error));
+      return NextResponse.json({ ok: false, error: 'Step watch failed.', workId }, { status: 500 });
     }
   };
 }

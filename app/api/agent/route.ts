@@ -7,6 +7,7 @@ import {
 import { after, type NextRequest } from 'next/server';
 import { hydrateChatAttachments } from '@/lib/ai/chat-upload-content';
 import { readRecoveryContext, resolveAgentRunId } from '@/lib/ai/execution';
+import { describeModelError } from '@/lib/ai/log-error';
 import { runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { normalizeClientPlatform } from '@/lib/ai/system-prompt';
@@ -19,6 +20,7 @@ import { type BriefResponseRef, briefResponseRefSchema } from '@/lib/brief/respo
 import { BriefResponseContextError, readBriefResponseContext } from '@/lib/brief/response-context';
 import { captureNarrativeTurn, narrativeEnabled } from '@/lib/narrative/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 import { withDeadline } from '@/lib/shared/deadline';
 import { compactMessage } from '@/lib/store/chat-sessions';
 
@@ -122,15 +124,8 @@ function prepareAgentMessages(input: UIMessage[]): {
   return { messages: prepared, omitted, compacted };
 }
 
-function errorForLog(err: any) {
-  return {
-    name: err?.name,
-    message: err?.message,
-    statusCode: err?.statusCode,
-    isRetryable: err?.isRetryable,
-    responseBody: typeof err?.responseBody === 'string' ? truncateText(err.responseBody, 500) : undefined,
-  };
-}
+// A 5xx answer never carries the message of the error (CASA finding S7).
+const AGENT_FAILED_MESSAGE = 'The assistant could not answer. Try again.';
 
 function agentErrorStreamResponse(message: string) {
   return createUIMessageStreamResponse({
@@ -212,7 +207,7 @@ export async function POST(req: NextRequest) {
           })
             .then((result) => result.systemContext)
             .catch((error) => {
-              console.warn('[agent-route] area discovery context failed', errorForLog(error));
+              console.warn('[agent-route] area discovery context failed', describeModelError(error));
               return '';
             })
         : '',
@@ -300,9 +295,8 @@ export async function POST(req: NextRequest) {
             : err instanceof WorkContextNotFoundError
               ? 404
               : 500;
-    console.error('[agent-route]', errorForLog(err));
     if (status === 500) {
-      return agentErrorStreamResponse(err?.message || 'agent failed');
+      return agentErrorStreamResponse(serverErrorMessage('[agent-route]', err, AGENT_FAILED_MESSAGE));
     }
     return new Response(JSON.stringify({ ok: false, error: err?.message || 'agent failed' }), {
       status,
@@ -312,4 +306,3 @@ export async function POST(req: NextRequest) {
 }
 
 import { presentationSessionFromMessages } from '@/lib/documents/presentation-choices';
-import { truncateText } from '@/lib/shared/text';

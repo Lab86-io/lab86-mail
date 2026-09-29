@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { enrichPlace } from '@/lib/albatross/place-enrichment';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -46,7 +47,9 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     if (err instanceof RateLimitError) return rateLimitResponse(err);
     if (err instanceof AuthRequiredError) return json(401, { ok: false, error: 'auth required' });
-    console.error('[albatross-place-route]', err?.message || err);
-    return json(500, { ok: false, error: err?.message || 'place lookup failed' });
+    return json(500, {
+      ok: false,
+      error: serverErrorMessage('[albatross-place-route]', err, 'place lookup failed'),
+    });
   }
 }

@@ -1,10 +1,12 @@
 import type { NextRequest } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { newOperationBatchId } from '@/lib/ai/operations';
 import { appliedStepsFromApplyResult } from '@/lib/albatross/work-model';
 import { unappliedActions } from '@/lib/albatross/work-v2';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 import { albatrossApplyIntentPlan } from '@/lib/tools/albatross';
 import { invokeTool, type ToolContext } from '@/lib/tools/registry';
 import { tasksAttachLink } from '@/lib/tools/tasks';
@@ -148,7 +150,7 @@ export function createAlbatrossApplyPost(deps: ApplyRouteDependencies = defaultD
             );
             artifactAttachedTo = String(firstTask.artifactId);
           } catch (err) {
-            console.warn('[albatross-apply] artifact attach failed:', err);
+            console.warn('[albatross-apply] artifact attach failed:', describeModelError(err));
           }
         }
       }
@@ -180,8 +182,10 @@ export function createAlbatrossApplyPost(deps: ApplyRouteDependencies = defaultD
     } catch (err: any) {
       if (err instanceof RateLimitError) return rateLimitResponse(err);
       if (err instanceof AuthRequiredError) return json(401, { ok: false, error: 'auth required' });
-      console.error('[albatross-apply-route]', err?.message || err);
-      return json(500, { ok: false, error: err?.message || 'apply failed' });
+      return json(500, {
+        ok: false,
+        error: serverErrorMessage('[albatross-apply-route]', err, 'apply failed'),
+      });
     }
   };
 }

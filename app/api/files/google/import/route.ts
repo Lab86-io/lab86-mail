@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import {
   GOOGLE_NATIVE_MIME,
@@ -137,7 +138,7 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    console.error('[google-file-import]', error);
+    console.error('[google-file-import]', describeModelError(error));
     return NextResponse.json({ ok: false, error: 'Google file import failed.' }, { status: 502 });
   }
 }

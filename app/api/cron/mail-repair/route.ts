@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
+import { describeModelError } from '@/lib/ai/log-error';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { repairUserMailCorpus, retryFailedWebhookEvents } from '@/lib/mail/corpus-sync';
 
@@ -26,7 +27,7 @@ export function createMailRepairPost(overrides: Partial<typeof defaultDependenci
     }
     if (body?.kind === 'webhooks') {
       void deps.retryFailedWebhookEvents().catch((err) => {
-        console.error('[cron/mail-repair] webhook retry failed', err);
+        console.error('[cron/mail-repair] webhook retry failed', describeModelError(err));
       });
       return NextResponse.json({ ok: true, started: 'webhooks' }, { status: 202 });
     }
@@ -39,7 +40,7 @@ export function createMailRepairPost(overrides: Partial<typeof defaultDependenci
     }
     void runWithAiRequestContext({ userId, agent: 'ai' }, () =>
       deps.repairUserMailCorpus(userId).catch((err) => {
-        console.error('[cron/mail-repair] sweep failed', userId, err);
+        console.error('[cron/mail-repair] sweep failed', userId, describeModelError(err));
       }),
     );
     return NextResponse.json({ ok: true, started: 'sweep', userId }, { status: 202 });

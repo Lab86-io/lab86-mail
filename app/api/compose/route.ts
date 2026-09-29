@@ -5,6 +5,7 @@ import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { withAccountSignature } from '@/lib/mail/signature';
 import { sendNylasMessage } from '@/lib/nylas/provider';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 import {
   buildForwardMessagePayload,
   replyAllTargetFor,
@@ -45,8 +46,8 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
     let form: FormData;
     try {
       form = await req.formData();
-    } catch (err: any) {
-      return NextResponse.json({ ok: false, error: `Invalid form: ${err?.message || err}` }, { status: 400 });
+    } catch {
+      return NextResponse.json({ ok: false, error: 'Invalid form.' }, { status: 400 });
     }
 
     const mode = String(form.get('mode') || '').toLowerCase();
@@ -234,7 +235,10 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
           agent: 'user',
         })
         .catch(() => undefined);
-      return NextResponse.json({ ok: false, error: err?.message || 'send failed' }, { status });
+      return NextResponse.json(
+        { ok: false, error: errorAnswerMessage(status, err, 'send failed', '[compose] send failed') },
+        { status },
+      );
     }
   };
 }

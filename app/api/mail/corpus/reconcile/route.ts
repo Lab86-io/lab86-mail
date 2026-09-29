@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { reconcileMailCorpusAccount } from '@/lib/mail/corpus-sync';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,7 +55,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, results });
   } catch (err: any) {
     return NextResponse.json(
-      { ok: false, error: err?.message || 'Corpus reconciliation failed.' },
+      {
+        ok: false,
+        error: serverErrorMessage('[mail/corpus/reconcile] failed', err, 'Corpus reconciliation failed.'),
+      },
       { status: 500 },
     );
   }

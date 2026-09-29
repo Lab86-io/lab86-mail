@@ -74,11 +74,15 @@ describe('Work conductor route', () => {
     });
     const response = await createWorkConductorPost(deps as any)(request({ userId: 'u', workId: 'w' }));
     expect(response.status).toBe(500);
+    // The answer holds a fixed text; the log gets a summary of the error (CASA S7, S8).
     expect(await response.json()).toEqual({
       ok: false,
-      error: 'planner unavailable',
+      error: 'advance failed',
       workId: 'w',
     });
-    expect(deps.reportError).toHaveBeenCalled();
+    expect(deps.reportError).toHaveBeenCalledWith('[cron/work-conductor] advance failed', 'w', {
+      name: 'Error',
+      message: 'planner unavailable',
+    });
   });
 });

@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, type ConvexCallArgs, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -122,7 +123,15 @@ export function createWorkProofPost(deps: WorkProofDependencies = defaults) {
       if (error instanceof RateLimitError) return rateLimitResponse(error);
       const status = error instanceof AuthRequiredError ? 401 : 500;
       return Response.json(
-        { ok: false, error: error instanceof Error ? error.message : 'Proof could not be attached.' },
+        {
+          ok: false,
+          error: errorAnswerMessage(
+            status,
+            error,
+            'Proof could not be attached.',
+            '[albatross/work/proof] failed',
+          ),
+        },
         { status },
       );
     }

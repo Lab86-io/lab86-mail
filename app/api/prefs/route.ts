@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 import { DEFAULT_UNDO_SEND_SECONDS, normalizeUndoSendSeconds } from '@/lib/shared/sending';
 import { getModelPins, setModelPins } from '@/lib/store/model-pins';
 import { getPref, setPref } from '@/lib/store/prefs';
@@ -39,7 +40,10 @@ export function createPrefsRoute(overrides: Partial<PrefsDependencies> = {}) {
       return NextResponse.json({ ok: true, prefs });
     } catch (err: any) {
       const status = err instanceof AuthRequiredError ? 401 : 500;
-      return NextResponse.json({ ok: false, error: err?.message || 'prefs failed' }, { status });
+      return NextResponse.json(
+        { ok: false, error: errorAnswerMessage(status, err, 'prefs failed', '[prefs] request failed') },
+        { status },
+      );
     }
   }
 
@@ -74,7 +78,10 @@ export function createPrefsRoute(overrides: Partial<PrefsDependencies> = {}) {
       return NextResponse.json({ ok: true, prefs });
     } catch (err: any) {
       const status = err instanceof AuthRequiredError ? 401 : 500;
-      return NextResponse.json({ ok: false, error: err?.message || 'prefs failed' }, { status });
+      return NextResponse.json(
+        { ok: false, error: errorAnswerMessage(status, err, 'prefs failed', '[prefs] request failed') },
+        { status },
+      );
     }
   }
 

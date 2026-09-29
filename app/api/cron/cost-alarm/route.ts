@@ -1,4 +1,5 @@
 import { after, type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { runCostAlarm } from '@/lib/notifications/cost-alarm';
 
@@ -24,7 +25,7 @@ export function createCostAlarmPost(overrides: Partial<typeof defaultDependencie
           if (run.status === 'ran' && (run.sent || run.failed)) console.info('[cron/cost-alarm]', run);
         })
         .catch((err) => {
-          console.error('[cron/cost-alarm] run failed', err);
+          console.error('[cron/cost-alarm] run failed', describeModelError(err));
         }),
     );
     return NextResponse.json({ ok: true, started: true }, { status: 202 });

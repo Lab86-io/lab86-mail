@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { exportDocument } from '@/lib/documents/export';
 import { getDocument, getDocumentImportSource } from '@/lib/documents/service';
@@ -73,7 +74,7 @@ export async function GET(_req: NextRequest, context: { params: Promise<{ docume
     if (error instanceof AuthRequiredError) {
       return Response.json({ ok: false, error: error.message }, { status: 401 });
     }
-    console.error('[document-export]', error);
+    console.error('[document-export]', describeModelError(error));
     return Response.json({ ok: false, error: 'Export failed.' }, { status: 500 });
   }
 }

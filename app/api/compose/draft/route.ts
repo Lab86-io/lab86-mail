@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { formatNarrativeContext, narrativeContextStamp } from '@/lib/narrative/context';
 import { getNarrativeTaskContext } from '@/lib/narrative/service';
@@ -24,7 +25,7 @@ const defaultDependencies: ComposeDraftDependencies = {
   enforceUserRateLimit,
   runWithAiRequestContext,
   generateTextForCurrentUser,
-  reportUnexpectedError: (error) => console.error('Compose drafting failed.', error),
+  reportUnexpectedError: (error) => console.error('Compose drafting failed.', describeModelError(error)),
   context: getNarrativeTaskContext,
 };
 

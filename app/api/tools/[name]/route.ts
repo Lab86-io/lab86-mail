@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 import { getTool } from '@/lib/tools';
 import { invokeTool, ToolValidationError } from '@/lib/tools/registry';
 
@@ -57,7 +58,10 @@ export function createToolPost(deps = dependencies) {
     } catch (err: any) {
       if (err instanceof RateLimitError) return rateLimitJson(err);
       const status = err instanceof AuthRequiredError ? 401 : err instanceof ToolValidationError ? 400 : 500;
-      return NextResponse.json({ ok: false, error: err?.message || 'tool failure' }, { status });
+      return NextResponse.json(
+        { ok: false, error: errorAnswerMessage(status, err, 'tool failure', `[tools/${name}] failed`) },
+        { status },
+      );
     }
   };
 }

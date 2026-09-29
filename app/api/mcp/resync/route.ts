@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import { syncAllMcpConnections, syncConnection } from '@/lib/mcp/sync';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, result });
   } catch (err) {
     return NextResponse.json(
-      { ok: false, error: (err as { message?: string })?.message || 'Sync failed.' },
+      { ok: false, error: serverErrorMessage('[mcp/resync] failed', err, 'Sync failed.') },
       { status: 500 },
     );
   }

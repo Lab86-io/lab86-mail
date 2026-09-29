@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { disconnectCloudFileConnection } from '@/lib/files/connections';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
     if (error instanceof AuthRequiredError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 401 });
     }
-    console.error('[files/disconnect] failed', error);
+    console.error('[files/disconnect] failed', describeModelError(error));
     return NextResponse.json({ ok: false, error: 'Could not disconnect file provider.' }, { status: 500 });
   }
 }

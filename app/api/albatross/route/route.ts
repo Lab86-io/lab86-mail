@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { classifyRoute, ROUTE_TEXT_MAX_CHARS } from '@/lib/albatross/route-classifier';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -56,7 +57,10 @@ export function createAlbatrossRoutePost(deps: AlbatrossRouteDependencies = defa
     } catch (error) {
       if (error instanceof RateLimitError) return rateLimitResponse(error);
       if (error instanceof AuthRequiredError) return json(401, { ok: false, error: 'auth required' });
-      return json(500, { ok: false, error: error instanceof Error ? error.message : 'route failed' });
+      return json(500, {
+        ok: false,
+        error: serverErrorMessage('[albatross-route] failed', error, 'route failed'),
+      });
     }
   };
 }

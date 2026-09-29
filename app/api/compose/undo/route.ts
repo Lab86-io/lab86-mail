@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { stopNylasScheduledMessage } from '@/lib/nylas/provider';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 import { cancelOutbox } from '@/lib/send/outbox';
 import {
   cancelPending,
@@ -76,7 +77,10 @@ export function createComposeUndoPost(overrides: Partial<typeof defaultDependenc
       return NextResponse.json({ ok: true, undone });
     } catch (err: any) {
       const status = err instanceof AuthRequiredError ? 401 : 500;
-      return NextResponse.json({ ok: false, error: err?.message || 'undo failed' }, { status });
+      return NextResponse.json(
+        { ok: false, error: errorAnswerMessage(status, err, 'undo failed', '[compose/undo] request failed') },
+        { status },
+      );
     }
   };
 }

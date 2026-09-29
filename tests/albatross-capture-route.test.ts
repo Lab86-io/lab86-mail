@@ -170,6 +170,7 @@ describe('POST /api/albatross/capture', () => {
       request({ text: 'x', source: 'chat', conversationId: 'c' }),
     );
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ ok: false, error: 'split failed' });
+    // The error message stays in the server log (CASA S7).
+    expect(await response.json()).toEqual({ ok: false, error: 'capture failed' });
   });
 });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import { syncCalendarAccount } from '@/lib/calendar/sync';
 import { maybeKickContactSync } from '@/lib/contacts/sync';
@@ -79,7 +80,7 @@ export function createNylasOAuthCallback(deps: typeof defaultDependencies = defa
       await completeNylasConnection({ userId: stored.userId, code, provider: stored.provider }, deps);
       return redirectWithStatus(redirectTo, 'nylas_connected', '1');
     } catch (err: any) {
-      console.error('[nylas/callback] OAuth connection failed', err);
+      console.error('[nylas/callback] OAuth connection failed', describeModelError(err));
       return redirectWithStatus(
         redirectTo,
         'nylas_error',

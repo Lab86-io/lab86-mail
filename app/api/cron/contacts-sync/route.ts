@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
+import { describeModelError } from '@/lib/ai/log-error';
 import { syncUserContacts } from '@/lib/contacts/sync';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 
@@ -28,7 +29,7 @@ export function createContactsCronPost(deps: ContactsCronDependencies = defaultD
     }
     void runWithAiRequestContext({ userId, agent: 'ai' }, () =>
       deps.syncUserContacts(userId, { reason: 'cron' }).catch((err) => {
-        console.error('[cron/contacts-sync] sync failed', userId, err);
+        console.error('[cron/contacts-sync] sync failed', userId, describeModelError(err));
       }),
     );
     return NextResponse.json({ ok: true, started: true, userId }, { status: 202 });

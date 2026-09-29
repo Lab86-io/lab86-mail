@@ -7,6 +7,7 @@ import {
   resolveAiBudgetPolicy,
 } from '@/lib/ai/budget';
 import { configuredAiDefaults } from '@/lib/ai/gateway';
+import { describeModelError } from '@/lib/ai/log-error';
 import {
   buildModelCatalog,
   catalogProviderFor,
@@ -47,7 +48,7 @@ export async function GET() {
   const monthlyCredits = requireOpenRouter ? 0 : entitlement.monthlyCredits;
   const creditsUsed = state.lab86Usage?.creditsUsed || 0;
   const fetched = await fetchOpenRouterCatalog().catch((err) => {
-    console.error('[ai-settings] failed to load OpenRouter model options', err);
+    console.error('[ai-settings] failed to load OpenRouter model options', describeModelError(err));
     return { data: [], live: false };
   });
   const openrouterModelOptions = openRouterModelOptionsFrom(fetched);
@@ -227,7 +228,7 @@ export function createAiSettingsPost(overrides: Partial<typeof postDependencies>
           ? existing?.settings?.fastModel
           : undefined;
     const { catalog } = await loadModelCatalog({ provider: validationProvider }).catch((err) => {
-      console.error('[ai-settings] failed to load the model catalog', err);
+      console.error('[ai-settings] failed to load the model catalog', describeModelError(err));
       return { catalog: buildModelCatalog({ provider: validationProvider }), live: false, liveData: [] };
     });
     const compatibleChoice = (slot: 'normal' | 'fast', saved: string | undefined, explicit: unknown) => {

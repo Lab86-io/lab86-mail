@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { DocumentGenerationError, generateDocumentProposal } from '@/lib/documents/ai';
 import { GoogleDocumentConflictError, updateGoogleNativeFile } from '@/lib/documents/google';
@@ -59,13 +60,13 @@ function errorResponse(error: unknown) {
     );
   }
   if (error instanceof DocumentGenerationError) {
-    console.error('[google-file-editor-ai] invalid model', error);
+    console.error('[google-file-editor-ai] invalid model', describeModelError(error));
     return NextResponse.json(
       { ok: false, error: 'Albatross returned an invalid edit. Try again.' },
       { status: 502 },
     );
   }
-  console.error('[google-file-editor]', error);
+  console.error('[google-file-editor]', describeModelError(error));
   return NextResponse.json({ ok: false, error: 'Google file operation failed.' }, { status: 502 });
 }
 

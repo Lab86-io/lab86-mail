@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { restoreDueSnoozes } from '@/lib/store/snooze';
 
@@ -16,7 +17,7 @@ export function createMailSnoozePost(overrides: Partial<typeof defaultDependenci
       return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
     }
     void deps.restoreDueSnoozes().catch((err) => {
-      console.error('[cron/mail-snooze] restore failed', err);
+      console.error('[cron/mail-snooze] restore failed', describeModelError(err));
     });
     return NextResponse.json({ ok: true, started: true }, { status: 202 });
   };

@@ -1,3 +1,4 @@
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { issueConsumeToken } from '@/lib/mail/one-time-code-token';
@@ -29,7 +30,7 @@ const defaultDependencies: OneTimeCodesDependencies = {
   requireCurrentUser,
   convexQuery,
   issueConsumeToken,
-  reportUnexpectedError: (error) => console.error('One-time code lookup failed.', error),
+  reportUnexpectedError: (error) => console.error('One-time code lookup failed.', describeModelError(error)),
 };
 
 export function createOneTimeCodeHandlers(deps: OneTimeCodesDependencies = defaultDependencies) {

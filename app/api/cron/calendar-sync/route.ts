@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
+import { describeModelError } from '@/lib/ai/log-error';
 import { calendarCronStartDelayMs, syncAllCalendarAccounts } from '@/lib/calendar/sync';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
   setTimeout(() => {
     void runWithAiRequestContext({ userId, agent: 'ai' }, () =>
       syncAllCalendarAccounts(userId, { reason: 'cron', window: 'auto' }).catch((err) => {
-        console.error('[cron/calendar-sync] sync failed', userId, err);
+        console.error('[cron/calendar-sync] sync failed', userId, describeModelError(err));
       }),
     );
   }, delayMs);

@@ -7,6 +7,7 @@ import {
   startCalendarResync,
 } from '@/lib/calendar/resync';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -66,7 +67,10 @@ export function createCalendarResyncPost(deps: CalendarResyncRouteDependencies =
       if (err instanceof AuthRequiredError) {
         return NextResponse.json({ ok: false, error: err.message }, { status: 401 });
       }
-      return NextResponse.json({ ok: false, error: err?.message || 'Resync failed.' }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: serverErrorMessage('[calendar/resync] failed', err, 'Resync failed.') },
+        { status: 500 },
+      );
     }
   };
 }

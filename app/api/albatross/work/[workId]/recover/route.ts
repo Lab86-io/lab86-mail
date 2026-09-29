@@ -5,6 +5,7 @@ import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -121,7 +122,10 @@ export function createWorkRecoveryPost(deps: WorkRecoveryDependencies = defaults
       const status =
         error instanceof AuthRequiredError ? 401 : error instanceof StepExecutionError ? error.status : 500;
       return Response.json(
-        { ok: false, error: error instanceof Error ? error.message : 'Recovery failed.' },
+        {
+          ok: false,
+          error: errorAnswerMessage(status, error, 'Recovery failed.', '[albatross/work/recover] failed'),
+        },
         { status },
       );
     }

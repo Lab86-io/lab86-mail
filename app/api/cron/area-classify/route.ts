@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
+import { describeModelError } from '@/lib/ai/log-error';
 import { classifyThreads } from '@/lib/albatross/area-classifier';
 import { classifyAreaArtifacts } from '@/lib/albatross/area-discovery';
 import { isInternalCronRequest } from '@/lib/cron-auth';
@@ -36,10 +37,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ ok: true, userId, ...counts }, { status: 200 });
   } catch (err: any) {
-    console.error('[cron/area-classify] classification failed', userId, err);
-    return NextResponse.json(
-      { ok: false, error: err?.message || 'area classification failed', userId },
-      { status: 500 },
-    );
+    console.error('[cron/area-classify] classification failed', userId, describeModelError(err));
+    return NextResponse.json({ ok: false, error: 'area classification failed', userId }, { status: 500 });
   }
 }

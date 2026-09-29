@@ -77,9 +77,10 @@ describe('Albatross Work step route', () => {
     const response = await invoke(deps);
 
     expect(response.status).toBe(500);
+    // The provider message stays in the server log (CASA S7).
     expect(await response.json()).toEqual({
       ok: false,
-      error: 'task provider unavailable',
+      error: 'Step update failed.',
     });
   });
 });

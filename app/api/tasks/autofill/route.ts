@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
@@ -27,7 +28,7 @@ const defaultDependencies: TaskAutofillDependencies = {
   enforceUserRateLimit,
   generateObjectForCurrentUser,
   now: () => new Date(),
-  reportUnexpectedError: (error) => console.error('Task autofill failed.', error),
+  reportUnexpectedError: (error) => console.error('Task autofill failed.', describeModelError(error)),
 };
 
 function validatedTimezone(value: string | null) {

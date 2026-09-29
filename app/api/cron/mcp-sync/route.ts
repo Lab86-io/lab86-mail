@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
+import { describeModelError } from '@/lib/ai/log-error';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { syncAllMcpConnections } from '@/lib/mcp/sync';
 
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
   // Persistent server: the sync outlives the response, so we ACK immediately.
   void runWithAiRequestContext({ userId, agent: 'ai' }, () =>
     syncAllMcpConnections(userId).catch((err) => {
-      console.error('[cron/mcp-sync] sync failed', userId, err);
+      console.error('[cron/mcp-sync] sync failed', userId, describeModelError(err));
     }),
   );
   return NextResponse.json({ ok: true, started: true, userId }, { status: 202 });

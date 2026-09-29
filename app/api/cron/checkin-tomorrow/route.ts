@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { tomorrowWorkPlanStatus } from '@/lib/albatross/checkin';
 import {
   splitTomorrowWork,
@@ -148,7 +149,12 @@ export function createCheckinTomorrowPost(overrides: Partial<TomorrowDependencie
       });
       return NextResponse.json({ ok: true, checkinId, workId: workIds[0], workIds, status });
     } catch (error) {
-      deps.reportError('[cron/checkin-tomorrow] planning failed', checkinId, workIds[0], error);
+      deps.reportError(
+        '[cron/checkin-tomorrow] planning failed',
+        checkinId,
+        workIds[0],
+        describeModelError(error),
+      );
       await deps
         .convexMutation(api.albatrossNotifications.failTomorrowPlan, {
           userId,

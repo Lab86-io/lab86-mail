@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 import {
   type ChatSessionScope,
   deleteChatSession,
@@ -29,7 +30,10 @@ async function withUser<T>(fn: () => Promise<T>) {
 function errorResponse(err: any) {
   if (err instanceof RateLimitError) return rateLimitJson(err);
   const status = err instanceof AuthRequiredError ? 401 : 500;
-  return NextResponse.json({ ok: false, error: err?.message || 'chat history failed' }, { status });
+  return NextResponse.json(
+    { ok: false, error: errorAnswerMessage(status, err, 'chat history failed', '[chats] request failed') },
+    { status },
+  );
 }
 
 export async function GET(req: NextRequest) {
