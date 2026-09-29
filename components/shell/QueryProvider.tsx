@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { PendingSendProvider } from '@/components/compose/PendingSendProvider';
 import { createMutationErrorFallback } from '@/lib/shell/mutation-errors';
+import { SignOutStorageGuard } from './SignOutStorageGuard';
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -48,6 +49,8 @@ export function QueryProvider({
   );
   const content = (
     <QueryClientProvider client={client}>
+      {/* ClerkProvider wraps this tree only when clerkEnabled is true. */}
+      {clerkEnabled ? <SignOutStorageGuard /> : null}
       <PendingSendProvider>{children}</PendingSendProvider>
     </QueryClientProvider>
   );

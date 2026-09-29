@@ -70,6 +70,7 @@ import { Switch } from '@/components/ui/switch';
 import { api } from '@/convex/_generated/api';
 import { settingsNavGroups, settingsTabScrollLeft } from '@/lib/albatross/settings-nav';
 import { type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
+import { signOutAndClearStorage } from '@/lib/auth/sign-out-storage';
 import { useClientStore } from '@/lib/client-state';
 import type { ContactAccountStatus } from '@/lib/contacts/lookup';
 import {
@@ -1549,7 +1550,7 @@ function AccountSection() {
               type="button"
               size="sm"
               variant="outline"
-              onClick={() => void clerk.signOut({ redirectUrl: '/sign-in' })}
+              onClick={() => void signOutAndClearStorage(clerk.signOut, { redirectUrl: '/sign-in' })}
             >
               Sign out
             </Button>
