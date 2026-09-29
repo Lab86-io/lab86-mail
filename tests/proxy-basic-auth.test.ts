@@ -9,8 +9,8 @@ const ENV_KEYS = [
   'LAB86_MAIL_REQUIRE_BASIC_AUTH',
   'RAILWAY_ENVIRONMENT_NAME',
   'NODE_ENV',
-  'STAGING_BASIC_AUTH_USER',
-  'STAGING_BASIC_AUTH_PASSWORD',
+  'LAB86_BASIC_AUTH_USER',
+  'LAB86_BASIC_AUTH_PASSWORD',
 ] as const;
 
 const previousEnv = new Map<string, string | undefined>();
@@ -33,6 +33,13 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
 }
 
 describe('proxy basic-auth bypass guard', () => {
+  test('ordinary local development and production do not need a browser challenge', () => {
+    for (const nodeEnv of ['development', 'production']) {
+      setEnv({ NODE_ENV: nodeEnv });
+      expect(shouldRequireBasicAuth(req('localhost:3000'), '/inbox')).toBe(false);
+      expect(shouldRequireBasicAuth(req('mail.lab86.io'), '/inbox')).toBe(false);
+    }
+  });
   test('bypasses only the exact capability-authenticated Office server endpoints', () => {
     setEnv({ LAB86_MAIL_REQUIRE_BASIC_AUTH: '1', NODE_ENV: 'test' });
     for (const path of [
@@ -42,7 +49,7 @@ describe('proxy basic-auth bypass guard', () => {
       '/api/office/wopi/file-123/contents',
     ]) {
       expect(isOfficeServerRoute(path)).toBe(true);
-      expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), path)).toBe(false);
+      expect(shouldRequireBasicAuth(req('preview.example.test'), path)).toBe(false);
     }
     for (const path of [
       '/api/office',
@@ -54,7 +61,7 @@ describe('proxy basic-auth bypass guard', () => {
       '/api/office/wopi',
     ]) {
       expect(isOfficeServerRoute(path)).toBe(false);
-      expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), path)).toBe(true);
+      expect(shouldRequireBasicAuth(req('preview.example.test'), path)).toBe(true);
     }
   });
   for (const key of ENV_KEYS) previousEnv.set(key, process.env[key]);
@@ -74,13 +81,13 @@ describe('proxy basic-auth bypass guard', () => {
     expect(isLocalBasicAuthBypassHost(req('::1'))).toBe(true);
     expect(isLocalBasicAuthBypassHost(req('preview.localhost'))).toBe(true);
     expect(isLocalBasicAuthBypassHost(req('albatross.lab86.io'))).toBe(true);
-    expect(isLocalBasicAuthBypassHost(req('mail-staging.lab86.io'))).toBe(false);
+    expect(isLocalBasicAuthBypassHost(req('preview.example.test'))).toBe(false);
     expect(isLocalBasicAuthBypassHost(req('lab86.io'))).toBe(false);
   });
 
-  test('requires basic auth on staging hosts unless the dev bypass is enabled and local', () => {
+  test('requires basic auth on development hosts unless the dev bypass is enabled and local', () => {
     setEnv({ LAB86_MAIL_REQUIRE_BASIC_AUTH: '1', NODE_ENV: 'test' });
-    expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), '/inbox')).toBe(true);
+    expect(shouldRequireBasicAuth(req('preview.example.test'), '/inbox')).toBe(true);
     expect(shouldRequireBasicAuth(req('localhost:3000'), '/inbox')).toBe(true);
 
     setEnv({
@@ -90,10 +97,10 @@ describe('proxy basic-auth bypass guard', () => {
     });
     expect(shouldRequireBasicAuth(req('localhost:3000'), '/inbox')).toBe(false);
     expect(shouldRequireBasicAuth(req('albatross.lab86.io'), '/inbox')).toBe(false);
-    expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), '/inbox')).toBe(true);
+    expect(shouldRequireBasicAuth(req('preview.example.test'), '/inbox')).toBe(true);
   });
 
-  test('does not honor the bypass on production except the Railway development environment', () => {
+  test('does not honor the bypass on production, regardless of legacy environment names', () => {
     setEnv({
       LAB86_MAIL_DISABLE_BASIC_AUTH: '1',
       LAB86_MAIL_REQUIRE_BASIC_AUTH: '1',
@@ -107,28 +114,28 @@ describe('proxy basic-auth bypass guard', () => {
       NODE_ENV: 'production',
       RAILWAY_ENVIRONMENT_NAME: 'development',
     });
-    expect(shouldRequireBasicAuth(req('localhost:3000'), '/inbox')).toBe(false);
+    expect(shouldRequireBasicAuth(req('localhost:3000'), '/inbox')).toBe(true);
   });
 
   test('the proxy lets the right pair through and challenges a wrong or short one', async () => {
     setEnv({
       LAB86_MAIL_REQUIRE_BASIC_AUTH: '1',
       NODE_ENV: 'test',
-      STAGING_BASIC_AUTH_USER: 'review',
-      STAGING_BASIC_AUTH_PASSWORD: 'a-long-staging-password',
+      LAB86_BASIC_AUTH_USER: 'review',
+      LAB86_BASIC_AUTH_PASSWORD: 'a-long-development-password',
     });
     const call = (credential?: string) =>
       proxy(
-        new NextRequest('https://mail-staging.lab86.io/api/mail/corpus/backfill', {
+        new NextRequest('https://preview.example.test/api/mail/corpus/backfill', {
           headers: {
-            host: 'mail-staging.lab86.io',
+            host: 'preview.example.test',
             ...(credential ? { authorization: `Basic ${btoa(credential)}` } : {}),
           },
         }),
         {} as NextFetchEvent,
       );
-    expect((await call('review:a-long-staging-password')).status).toBe(200);
-    for (const credential of [undefined, 'review:wrong', 'review:a', 'review:a-long-staging-password!']) {
+    expect((await call('review:a-long-development-password')).status).toBe(200);
+    for (const credential of [undefined, 'review:wrong', 'review:a', 'review:a-long-development-password!']) {
       const response = await call(credential);
       expect(response.status).toBe(401);
       expect(response.headers.get('www-authenticate')).toContain('Basic');
@@ -137,18 +144,16 @@ describe('proxy basic-auth bypass guard', () => {
 
   test('keeps public health checks outside basic auth', () => {
     setEnv({ LAB86_MAIL_REQUIRE_BASIC_AUTH: '1', NODE_ENV: 'test' });
-    expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), '/api/healthz')).toBe(false);
+    expect(shouldRequireBasicAuth(req('preview.example.test'), '/api/healthz')).toBe(false);
   });
 
   test('lets native Clerk bearer API requests reach Clerk validation', () => {
     setEnv({ LAB86_MAIL_REQUIRE_BASIC_AUTH: '1', NODE_ENV: 'test' });
 
-    expect(shouldRequireBasicAuth(bearerReq('mail-staging.lab86.io'), '/api/mobile/activity')).toBe(false);
-    expect(shouldRequireBasicAuth(bearerReq('mail-staging.lab86.io'), '/api/tools/list_accounts')).toBe(
-      false,
-    );
-    expect(shouldRequireBasicAuth(bearerReq('mail-staging.lab86.io'), '/inbox')).toBe(true);
-    expect(shouldRequireBasicAuth(bearerReq('mail-staging.lab86.io', ''), '/api/mobile/activity')).toBe(true);
-    expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), '/api/mobile/activity')).toBe(true);
+    expect(shouldRequireBasicAuth(bearerReq('preview.example.test'), '/api/mobile/activity')).toBe(false);
+    expect(shouldRequireBasicAuth(bearerReq('preview.example.test'), '/api/tools/list_accounts')).toBe(false);
+    expect(shouldRequireBasicAuth(bearerReq('preview.example.test'), '/inbox')).toBe(true);
+    expect(shouldRequireBasicAuth(bearerReq('preview.example.test', ''), '/api/mobile/activity')).toBe(true);
+    expect(shouldRequireBasicAuth(req('preview.example.test'), '/api/mobile/activity')).toBe(true);
   });
 });

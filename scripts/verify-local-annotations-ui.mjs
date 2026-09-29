@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 
-const artifacts = await mkdtemp('/tmp/albatross-staging-annotations-');
+const artifacts = await mkdtemp('/tmp/albatross-local-annotations-');
 const browser = await chromium.launch({
   executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || chromium.executablePath(),
   args: ['--no-sandbox'],

@@ -1,6 +1,6 @@
 # Document editor on Railway
 
-Albatross runs independent Collabora CODE services for staging and production, with each web app acting as its own WOPI storage host. Google originals are exported to private editable DOCX/XLSX/PPTX copies. Save to Google waits for a durable WOPI upload receipt, then conditionally replaces the original Google file without changing its ID. Provider etags prevent overwriting changes made elsewhere.
+Albatross runs one production Collabora CODE service, with the web app acting as its WOPI storage host. Google originals are exported to private editable DOCX/XLSX/PPTX copies. Save to Google waits for a durable WOPI upload receipt, then conditionally replaces the original Google file without changing its ID. Provider etags prevent overwriting changes made elsewhere.
 
 ## Railway services
 
@@ -13,30 +13,21 @@ Albatross runs independent Collabora CODE services for staging and production, w
 - `aliasgroup1=https://mail.lab86.io:443`
 - `extra_params=--o:ssl.enable=false --o:ssl.termination=true --o:welcome.enable=false --o:security.enable_macros_execution=false --o:logging.level=warning --o:logging.level_startup=warning`
 
-Staging runs a second instance in Railway’s `development` environment:
-
-- Service: `documents-staging` (`693e578d-0e64-4704-a480-5e84feed8535`)
-- HTTPS origin: `https://documents-staging-development.up.railway.app`
-- Same pinned image, port, healthcheck and isolation settings as production
-- `aliasgroup1=https://mail-staging.lab86.io:443`
-
-Each web environment points only to its own server. Deployments, processes, document caches and restarts are independent. Each environment retains its existing separate Convex storage and signing secret.
-
 Railway terminates TLS. WOPI storage remains in Convex, so document-server replacement does not remove saved files. CODE uses its upstream chroot and seccomp protections; Railway cannot create its mount namespaces, so it falls back to copying the jail tree. Do not disable seccomp or document-process isolation to avoid those runtime warnings. The upstream CODE welcome screen remains part of this free edition.
 
 ## Web environment
 
-Set these separately in each web environment:
+Set these on the production web service:
 
 ```dotenv
 OFFICE_EDITOR_PROVIDER=collabora
 OFFICE_EDITOR_ENABLED=true
-OFFICE_DOCUMENT_SERVER_URL=https://documents-staging-development.up.railway.app
-OFFICE_APP_ORIGIN=https://mail-staging.lab86.io
+OFFICE_DOCUMENT_SERVER_URL=https://documents-production-9780.up.railway.app
+OFFICE_APP_ORIGIN=https://mail.lab86.io
 OFFICE_JWT_SECRET=<unique random secret of at least 32 characters>
 ```
 
-For production, use `https://mail.lab86.io` as the app origin and `https://documents-production-9780.up.railway.app` as the document-server URL. Do not reuse signing secrets across environments. `OFFICE_LICENSE_ACCEPTED` applies only to the existing ONLYOFFICE adapter; it is not needed for Collabora. Never put secrets in source control or browser configuration. Deploy the Convex schema/functions before the web app. Railway production uses `https://proficient-viper-594.convex.cloud`; development uses `https://precise-skunk-847.convex.cloud`. Confirm the target against that environment’s `NEXT_PUBLIC_CONVEX_URL` before deploying. The Convex CLI’s default production selection currently resolves to a different deployment, so use deployment-specific credentials and verify the printed URL.
+For production, use `https://mail.lab86.io` as the app origin and `https://documents-production-9780.up.railway.app` as the document-server URL. Do not reuse signing secrets across environments. `OFFICE_LICENSE_ACCEPTED` applies only to the existing ONLYOFFICE adapter; it is not needed for Collabora. Never put secrets in source control or browser configuration. Deploy the Convex schema/functions before the web app. Railway production uses `https://proficient-viper-594.convex.cloud`. Local development uses an isolated local Convex deployment. Confirm the target against that environment’s `NEXT_PUBLIC_CONVEX_URL` before deploying. The Convex CLI’s default production selection currently resolves to a different deployment, so use deployment-specific credentials and verify the printed URL.
 
 Only the exact WOPI file and contents routes bypass interactive authentication. Each validates an expiring, owner/document/session-bound capability. Other Office routes require the signed-in user. Document locks are shared by authenticated sessions for the same owner and document. Closing an editor sends `Close_Session` to release its lock. Locks serialize document-server writes; conflicting saves are retained as recovery versions. Google credentials and encrypted source-version sessions never enter editor configuration.
 
@@ -56,6 +47,6 @@ Google↔Office conversion can alter provider-specific features. The original id
 
 ## Themed editor chrome
 
-`OFFICE_THEMED_CHROME` gates the compact, themed Collabora chrome with the Albatross controls. It defaults on in staging and off in production; an explicit `true` or `false` wins. The server decides once per session (`chrome.enabled` on the session object). The client then adds `ui_defaults` and `css_variables` to the editor URL and posts the hide and insert messages after the document loads. The toolbar icon is served from `/office/albatross-toolbar.svg` on the app origin. The control map, the dark-mode rule and the unsupported host messages are in `docs/albatross-document-editor-controls.md`.
+`OFFICE_THEMED_CHROME` gates the compact, themed Collabora chrome with the Albatross controls. It defaults on in local development and off in production; an explicit `true` or `false` wins. The server decides once per session (`chrome.enabled` on the session object). The client then adds `ui_defaults` and `css_variables` to the editor URL and posts the hide and insert messages after the document loads. The toolbar icon is served from `/office/albatross-toolbar.svg` on the app origin. The control map, the dark-mode rule and the unsupported host messages are in `docs/albatross-document-editor-controls.md`.
 
 Live check: `OFFICE_THEMED_CHROME=true bun scripts/verify-collabora-live.ts` after the prepare script. It also proves the themed chrome and writes screenshots to `/tmp/collabora-chrome/`. Without the variable the script checks the plain chrome only.

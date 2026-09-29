@@ -18,14 +18,9 @@ export function __setCollaboraDepsForTest(overrides: Partial<typeof defaultDepen
 /**
  * The session the client needs to open the editor. `chrome.enabled` is the
  * server's decision on the themed chrome; the client applies the URL
- * parameters and the post-load messages only when it is true. `host` lets a
- * caller pass the request host so staging detection can use it.
+ * parameters and the post-load messages only when it is true.
  */
-export async function startCollaboraSession(
-  userId: string,
-  document: OfficeFile,
-  options: { host?: string | null } = {},
-) {
+export async function startCollaboraSession(userId: string, document: OfficeFile) {
   const config = dependencies.requireOffice();
   const response = await dependencies.fetch(`${config.server}/hosting/discovery`, {
     signal: AbortSignal.timeout(15_000),
@@ -85,7 +80,7 @@ export async function startCollaboraSession(
     accessToken: token,
     accessTokenTtl: session.expiresAt,
     extension: document.extension,
-    chrome: { enabled: isThemedOfficeChromeEnabled(options.host) },
+    chrome: { enabled: isThemedOfficeChromeEnabled() },
   };
 }
 

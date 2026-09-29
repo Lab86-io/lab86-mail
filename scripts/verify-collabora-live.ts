@@ -1,5 +1,5 @@
 /**
- * Live verification of the real CollaboraFrame against the staging document
+ * Live verification of the real CollaboraFrame against the configured development document
  * server. Run `bun scripts/prepare-collabora-verification.ts` first. With
  * `OFFICE_THEMED_CHROME=true` the run also proves the themed chrome: the css
  * variables inside the frame, the hidden menubar, the hidden save and print

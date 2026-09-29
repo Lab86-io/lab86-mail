@@ -229,7 +229,7 @@ export const status = query({
   },
 });
 
-// Configuration is server-only: the Next route enforces the staging pilot gate.
+// Configuration is server-only: the Next route enforces the account opt-in gate.
 export const configure = mutation({
   args: {
     internalSecret: v.string(),

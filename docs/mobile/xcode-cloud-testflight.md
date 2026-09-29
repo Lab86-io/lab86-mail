@@ -1,42 +1,22 @@
-# Xcode Cloud → TestFlight for the iOS app
+# Xcode Cloud and TestFlight
 
-Goal: every push to the chosen branch produces a TestFlight build — no more
-Mac-side installs. The repo side is ready: `apps/ios/ci_scripts/ci_post_clone.sh`
-installs XcodeGen, synthesizes `Config/Local.xcconfig` from workflow environment
-variables, and generates `Lab86Mail.xcodeproj` before Xcode Cloud builds.
+Production is the only hosted backend. Follow the shared
+[release runbook](../hosted-release-runbook.md); feature PRs target `main` and
+pass CI plus CodeRabbit before merge.
 
-One-time setup (human-gated — needs the Apple Developer account, team 5JZV7V6Y4Z):
+The `Xcode Cloud production trigger` GitHub workflow consumes the successful
+`Deploy Production` run's immutable release artifact, resolves its version tag
+and commit, starts the `Production App Store` Xcode Cloud workflow, verifies the
+signed export, and uploads it to TestFlight. Its manual dispatch input is a
+successful production deployment run ID. There is no staging distribution workflow.
 
-1. **App record.** App Store Connect → Apps → New App → bundle id `io.lab86.mail`
-   (register the identifier in the developer portal first if it isn't), name
-   "Albatross", platform iOS.
-2. **Enable Xcode Cloud.** Open the generated `Lab86Mail.xcodeproj` in Xcode on
-   the Mac → Product → Xcode Cloud → Create Workflow. Sign in, grant Xcode Cloud
-   access to the GitHub repo (`Lab86-io/lab86-mail`) when prompted — this is the
-   main permission/keys step.
-3. **Workflow settings.**
-   - Start condition: branch changes on `staging` (or a dedicated `mobile` branch),
-     with "Files and folders" condition `apps/ios/**` so web-only pushes don't burn
-     build hours.
-   - Environment variables (plain, not secret, except the Clerk key can be secret):
-     `LAB86_API_BASE_URL=https://mail-staging.lab86.io`,
-     `CLERK_PUBLISHABLE_KEY=<pk_test…>`,
-     `CONVEX_DEPLOYMENT_URL=<https://precise-skunk-847.convex.cloud>`,
-     `CLERK_FRONTEND_API_HOST=<dev instance host>`.
-   - Archive action: platform iOS, scheme `Lab86Mail`, deployment preparation
-     "TestFlight (Internal Testing Only)" to start.
-   - Post-actions: TestFlight internal group (create "Jakob" group with your
-     Apple ID as tester).
-4. **Signing.** Xcode Cloud manages certificates/profiles automatically (cloud
-   signing) — no local certificate export needed. The app's entitlements (push,
-   App Groups if any) must exist on the registered identifier.
-5. **Push notifications caveat.** TestFlight builds use the production APNs
-   environment. `lib/notifications/apns.ts` currently targets the sandbox for
-   Debug device builds — confirm the server sends to production APNs for
-   TestFlight installs (token-based auth works for both; the endpoint differs).
-6. First green build → TestFlight app appears on the phone; installs update
-   with a tap thereafter.
+Every distributed iOS/macOS build uses `https://mail.lab86.io`, production Convex
+`https://proficient-viper-594.convex.cloud`, and Clerk `clerk.mail.lab86.io`.
+Xcode Cloud's post-clone script generates the project and embedded configuration;
+retain its production assertions and signed-export checks.
 
-Later, for production: duplicate the workflow with `LAB86_API_BASE_URL=
-https://mail.lab86.io` + prod Clerk/Convex values, External Testing (needs the
-beta review), then App Store release once the product is deemed functional.
+Native acceptance on PRs builds iOS and macOS without signing or distribution.
+Local development and test configurations remain separate from distributed builds.
+Apple Developer team `5JZV7V6Y4Z`, production signing, APNs, and TestFlight groups
+remain in use. Old staging references accepted by historical build scripts are
+compatibility paths, not instructions to provision another hosted environment.

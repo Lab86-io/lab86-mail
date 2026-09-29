@@ -129,23 +129,22 @@ function setup(
 afterEach(() => __setGoogleConnectDepsForTest());
 
 describe('switch gate', () => {
-  test('on with the flag, the switch flag, or on staging; off in production', () => {
-    const saved = process.env.RAILWAY_ENVIRONMENT_NAME;
+  test('on with the flag, the switch flag, or in development; off in production', () => {
+    const saved = process.env.LAB86_DEVELOPMENT_MODE;
     const savedNodeEnv = process.env.NODE_ENV;
     const savedBasic = process.env.LAB86_MAIL_REQUIRE_BASIC_AUTH;
-    process.env.RAILWAY_ENVIRONMENT_NAME = 'production';
+    process.env.LAB86_DEVELOPMENT_MODE = 'false';
     (process.env as any).NODE_ENV = 'test';
     delete process.env.LAB86_MAIL_REQUIRE_BASIC_AUTH;
     try {
       expect(isGoogleDirectSwitchAllowed({})).toBe(false);
       expect(isGoogleDirectSwitchAllowed({ LAB86_GOOGLE_DIRECT: '1' })).toBe(true);
       expect(isGoogleDirectSwitchAllowed({ LAB86_GOOGLE_DIRECT_SWITCH: '1' })).toBe(true);
-      expect(isGoogleDirectSwitchAllowed({}, 'mail-staging.lab86.io')).toBe(true);
-      process.env.RAILWAY_ENVIRONMENT_NAME = 'development';
+      process.env.LAB86_DEVELOPMENT_MODE = 'true';
       expect(isGoogleDirectSwitchAllowed({})).toBe(true);
     } finally {
-      if (saved === undefined) delete process.env.RAILWAY_ENVIRONMENT_NAME;
-      else process.env.RAILWAY_ENVIRONMENT_NAME = saved;
+      if (saved === undefined) delete process.env.LAB86_DEVELOPMENT_MODE;
+      else process.env.LAB86_DEVELOPMENT_MODE = saved;
       (process.env as any).NODE_ENV = savedNodeEnv;
       if (savedBasic !== undefined) process.env.LAB86_MAIL_REQUIRE_BASIC_AUTH = savedBasic;
     }
@@ -193,8 +192,8 @@ describe('startGoogleMailConnect', () => {
 
   test('refusals: unknown account, another provider, switching off, new off, no client', async () => {
     setup({ env: {} });
-    const saved = process.env.RAILWAY_ENVIRONMENT_NAME;
-    process.env.RAILWAY_ENVIRONMENT_NAME = 'production';
+    const saved = process.env.LAB86_DEVELOPMENT_MODE;
+    process.env.LAB86_DEVELOPMENT_MODE = 'false';
     try {
       const status = async (input: Parameters<typeof startGoogleMailConnect>[0]) =>
         ((await startGoogleMailConnect(input).catch((e) => e)) as GoogleConnectError).status;
@@ -208,8 +207,8 @@ describe('startGoogleMailConnect', () => {
       setup({ client: null });
       expect(await status({ userId: USER, mode: 'new' })).toBe(503);
     } finally {
-      if (saved === undefined) delete process.env.RAILWAY_ENVIRONMENT_NAME;
-      else process.env.RAILWAY_ENVIRONMENT_NAME = saved;
+      if (saved === undefined) delete process.env.LAB86_DEVELOPMENT_MODE;
+      else process.env.LAB86_DEVELOPMENT_MODE = saved;
     }
   });
 

@@ -1,7 +1,7 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import type { NextFetchEvent } from 'next/server';
 import { NextRequest, NextResponse } from 'next/server';
-import { isStagingRuntime } from './lib/hosted/controls';
+import { envFlag, isDevelopmentRuntime } from './lib/hosted/controls';
 import { NATIVE_BROWSER_COOKIE, verifyNativeBrowserAccess } from './lib/native/browser-access';
 import {
   buildContentSecurityPolicy,
@@ -64,7 +64,7 @@ const protectedProxy = clerkMiddleware(
   },
   {
     frontendApiProxy: {
-      enabled: Boolean(process.env.NEXT_PUBLIC_CLERK_PROXY_URL && isStagingRuntime()),
+      enabled: Boolean(process.env.NEXT_PUBLIC_CLERK_PROXY_URL && isDevelopmentRuntime()),
     },
   },
 );
@@ -78,7 +78,7 @@ export default async function proxy(req: NextRequest, event: NextFetchEvent) {
   const basicAuth = nativeBrowser ? NextResponse.next() : await basicAuthOrNext(req);
   if (basicAuth.status !== 200) return basicAuth;
 
-  // Staging basic auth makes browsers attach `Authorization: Basic ...` to every
+  // Development basic auth makes browsers attach `Authorization: Basic ...` to every
   // same-origin request. Clerk rejects requests that carry both `Origin` and
   // `Authorization`, and its server SDK prefers the header over the session
   // cookie, so the credential must not reach Clerk after it has been verified.
@@ -156,10 +156,10 @@ async function basicAuthOrNext(req: Request) {
   const url = new URL(req.url);
   if (!shouldRequireBasicAuth(req, url.pathname)) return NextResponse.next();
 
-  const user = process.env.STAGING_BASIC_AUTH_USER || '';
-  const password = process.env.STAGING_BASIC_AUTH_PASSWORD || '';
+  const user = process.env.LAB86_BASIC_AUTH_USER || '';
+  const password = process.env.LAB86_BASIC_AUTH_PASSWORD || '';
   if (!user || !password) {
-    return new NextResponse('Staging basic auth is not configured.', { status: 503 });
+    return new NextResponse('Development basic auth is not configured.', { status: 503 });
   }
 
   const authHeader = req.headers.get('authorization') || '';
@@ -172,35 +172,35 @@ async function basicAuthOrNext(req: Request) {
   return new NextResponse('Authentication required.', {
     status: 401,
     headers: {
-      'www-authenticate': 'Basic realm="lab86-mail staging", charset="UTF-8"',
+      'www-authenticate': 'Basic realm="lab86-mail development", charset="UTF-8"',
     },
   });
 }
 
 export function shouldRequireBasicAuth(req: Request, pathname: string) {
   if (process.env.LAB86_MAIL_DISABLE_BASIC_AUTH === '1' && isBasicAuthBypassAllowed(req)) return false;
-  if (!isStagingRuntime(req.headers.get('host'))) return false;
+  if (!envFlag('LAB86_MAIL_REQUIRE_BASIC_AUTH')) return false;
   if (pathname === '/api/healthz') return false;
   // These exact endpoints authenticate expiring, document-bound capabilities
   // (and callback JWTs) in their handlers. Other Office routes stay protected.
   if (isOfficeServerRoute(pathname)) return false;
   const [authorizationScheme, bearerToken] = (req.headers.get('authorization') || '').split(/\s+/, 2);
   // Native clients authenticate API requests with a Clerk session token. Do
-  // not challenge those requests for staging's browser-only Basic credential;
+  // not challenge those requests for development-only Basic credential;
   // clerkMiddleware still validates the bearer token immediately afterwards.
   if (pathname.startsWith('/api/') && authorizationScheme?.toLowerCase() === 'bearer' && bearerToken) {
     return false;
   }
   if (pathname === '/api/clerk/webhook') return false;
   // Convex validates Clerk JWTs by fetching the issuer's OIDC discovery
-  // document server-to-server — it can never present staging basic auth.
+  // document server-to-server — it can never present development basic auth.
   // With the proxy URL as the issuer, /__clerk must be reachable bare, or
   // every browser live query fails ("Auth provider discovery ... 401").
   // The Clerk Frontend API behind it is public by design.
   if (pathname.startsWith('/__clerk')) return false;
   // Nylas deliveries authenticate via HMAC signature in the route handler;
   // the challenge GET and signed POSTs come from Nylas servers, which can
-  // never satisfy staging basic auth.
+  // never satisfy development basic auth.
   if (pathname === '/api/nylas/webhook') return false;
   if (pathname === '/api/billing/webhook') return false;
   // Internal cron callbacks authenticate via the internal secret, not basic auth.
@@ -216,7 +216,7 @@ export function isOfficeServerRoute(pathname: string) {
 }
 
 export function isBasicAuthBypassAllowed(req: Request) {
-  if (process.env.NODE_ENV === 'production' && process.env.RAILWAY_ENVIRONMENT_NAME !== 'development') {
+  if (process.env.NODE_ENV === 'production') {
     return false;
   }
   return isLocalBasicAuthBypassHost(req);

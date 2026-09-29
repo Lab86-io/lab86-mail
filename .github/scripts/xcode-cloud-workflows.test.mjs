@@ -61,53 +61,6 @@ test('iOS auth dependency is pinned past the Clerk AuthView startup fix', () => 
   assert.equal(clerk?.state.revision, '38a14dfb7f2e5be689975b0f3d6dfe347c425770');
 });
 
-test('staging no longer runs on a push to staging', () => {
-  // Tier 2 replaced what it was for. It stays runnable by hand, so the machinery
-  // and its scripts keep their coverage, but a push must not start it.
-  const contents = workflow('xcode-cloud-staging.yml');
-
-  assert.doesNotMatch(contents, /^on:\s*\n\s+push:/m);
-  assert.match(contents, /^on:\s*\n\s+workflow_dispatch:/m);
-});
-
-test('staging builds iOS 27 in the production Xcode Cloud environment', () => {
-  const contents = workflow('xcode-cloud-staging.yml');
-  const project = readFileSync(new URL('../../apps/ios/project.yml', import.meta.url), 'utf8');
-
-  assert.match(contents, /runs-on: blacksmith-6vcpu-macos-latest/);
-  assert.match(contents, /name: Build iOS 27 in Xcode Cloud and distribute to TestFlight/);
-  assert.match(contents, /if: github\.ref == 'refs\/heads\/staging'/);
-  assert.match(contents, /XCODE_CLOUD_WORKFLOW_NAME: Production App Store/);
-  assert.match(contents, /XCODE_CLOUD_BRANCH_NAME: staging/);
-  assert.match(contents, /permissions:\s+contents: write/);
-  assert.match(contents, /name: Pin immutable staging source/);
-  assert.match(contents, /tag="ios-staging-\$\{SOURCE_SHA\}"/);
-  assert.match(contents, /test "\$\(git rev-list -n 1 "\$ref"\)" = "\$SOURCE_SHA"/);
-  assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: \$\{\{ steps\.source\.outputs\.git_ref \}\}/);
-  assert.match(contents, /XCODE_CLOUD_EXPECTED_XCODE_VERSION: "27\.0"/);
-  assert.doesNotMatch(contents, /xcodebuild/);
-  assert.match(project, /deploymentTarget:\s+iOS: "27\.0"/);
-  assert.match(project, /xcodeVersion: "27\.0"/);
-  assert.match(contents, new RegExp(immutableCheckout));
-  assert.match(contents, /node --test \.github\/scripts\/app-store-connect\.test\.mjs/);
-  assert.match(contents, /node --test \.github\/scripts\/upload-ios-export\.test\.mjs/);
-  assert.match(contents, /BUILD_NUMBER: \$\{\{ steps\.start\.outputs\.build_number \}\}/);
-  assert.match(contents, /XCODE_CLOUD_EXPECTED_COMMIT_SHA: \$\{\{ github\.sha \}\}/);
-  assert.match(contents, /IPA_PATH="\$ipa_path" node \.github\/scripts\/upload-ios-export\.mjs/);
-  assert.match(contents, /XCODE_CLOUD_DIAGNOSTICS_DIR: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
-  assert.match(contents, /name: Preserve failed Xcode Cloud diagnostics\s+if: failure\(\)/);
-  assert.match(contents, /path: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
-  assert.match(contents, /if-no-files-found: ignore/);
-  assert.match(contents, /retention-days: 1/);
-  assert.match(contents, /name: Preserve signed staging IPA for physical acceptance/);
-  assert.match(contents, /curl --fail --location \\\s+--connect-timeout 30 \\\s+--max-time 1800/);
-  assert.match(
-    contents,
-    /name: Confirm TestFlight processing and internal group assignment\s+env:\s+ASC_ISSUER_ID:/,
-  );
-  assert.equal(contents.split(immutableUploadArtifact).length - 1, 2);
-});
-
 test('production preserves diagnostics with an immutable upload action', () => {
   const contents = workflow('xcode-cloud-production.yml');
   const deployContents = workflow('deploy-production.yml');

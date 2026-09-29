@@ -1,484 +1,94 @@
-# Lab86 Mail Hosted Release Runbook
-
-## Environments
-
-| Purpose | Git branch | Railway environment | URL |
-| --- | --- | --- | --- |
-| Development / staging | `staging` | `development` | `https://web-development-292e.up.railway.app` |
-| Production | `main` | `production` | `https://web-production-3ec2.up.railway.app` |
-
-Runtime app variables are authoritative in Railway. GitHub stores deploy credentials only:
-
-- `RAILWAY_TOKEN`
-- `CONVEX_DEPLOY_KEY`
-- `RELEASE_BOT_TOKEN` for production version commits and tags
-
-Railway resources created on June 4, 2026:
-
-- Project `lab86-mail`: `919576b9-789c-4257-b6cc-250cf4a28ecb`
-- Service `web`: `1ee5eac3-493e-4a4b-a6b4-cb89c6e0d179`
-- Environment `development`: `be41491e-6d1b-45f7-b85a-299540ac125e`
-- Environment `production`: `c14045cd-da4a-4080-bc07-ff784f1e333d`
-- Railway development URL: `https://web-development-292e.up.railway.app`
-- Railway production URL: `https://web-production-3ec2.up.railway.app`
-
-GitHub resources created on June 4, 2026:
-
-- Repository: `Lab86-io/lab86-mail`
-- Team: `Lab86-io/maintainers`
-- Hosted release PR: `https://github.com/Lab86-io/lab86-mail/pull/1`
-
-Convex resources created on June 4, 2026:
-
-- Development deployment: `<convex-team>:lab86-mail:development`
-  - Deployment name: `precise-skunk-847`
-  - URL: `https://precise-skunk-847.convex.cloud`
-  - Site URL: `https://precise-skunk-847.convex.site`
-- Production deployment: `<convex-team>:lab86-mail:production`
-  - Deployment name: `proficient-viper-594`
-  - URL: `https://proficient-viper-594.convex.cloud`
-  - Site URL: `https://proficient-viper-594.convex.site`
-
-## Required Provider Setup
-
-Create separate development and production resources for:
-
-- Railway project `lab86-mail`, service `web`
-- Convex deployments
-- Clerk apps/instances
-- Nylas apps
-- Clerk Billing plans
-
-Clerk Billing plan shape:
-
-- Free/default: no Lab86-hosted AI budget
-- Pro: $29/month or $288/year (the Clerk annual fee is $24.00 a month), with no credit limit (the entitlement is `unlimited`)
-- Own key: $12/month or $120/year, plan slug `mail_byok`
-- Pro plan slug: `mail_pro`
-- Pro feature slug: `b2c_mail`
-
-Development uses Clerk's development billing gateway. Production connects the independent Lab86 Stripe
-account through Clerk Billing.
-
-## Dashboard Setup Still Required
-
-These items are intentionally not DNS cutover work, but they require provider dashboards or refreshed
-dashboard sessions:
-
-- Blacksmith: verify `Lab86-io/lab86-mail` has access to Blacksmith runners. The workflow runner label is
-  `blacksmith-2vcpu-ubuntu-2404`.
-- Railway: create a deploy token and store it as `RAILWAY_TOKEN` in the GitHub `development` and `production`
-  environments. The Railway CLI user session can deploy locally but does not expose a CI token.
-- Clerk production: run `clerk deploy` with a real Lab86-owned production domain. Clerk's wizard requires DNS
-  verification and does not allow using a Railway-provided subdomain as the production domain.
-- Clerk OAuth: configure production Apple, Google, and Microsoft OAuth credentials during `clerk deploy`.
-- Clerk Billing: enable Clerk Billing, create the Free/default and Pro plans, connect the production Lab86 Stripe
-  account, and set the resulting billing URLs in Railway.
-- Clerk webhooks: create the Svix/Clerk webhook endpoint for `/api/clerk/webhook`. Subscribe to `user.created`,
-  `user.updated`, and `user.deleted`, then set `CLERK_WEBHOOK_SIGNING_SECRET` in both Railway environments.
-  `user.created` and `user.updated` update the Convex user row. `user.deleted` runs the same deletion as
-  `DELETE /api/account`. The handler writes other events, such as billing events, to the audit log only.
-  Without the signing secret, the endpoint rejects every event.
-- Nylas: refresh `nylas dashboard login`, create separate development and production apps/API keys, and set the
-  production Nylas values in Railway. The existing sandbox app has callbacks for
-  `https://mail-staging.lab86.io/api/nylas/callback` and
-  `https://web-development-292e.up.railway.app/api/nylas/callback`.
-  Configure Nylas message/thread notifications to post to `/api/nylas/webhook`; the route records every event
-  idempotently and re-fetches truncated message notifications before writing the Convex corpus.
-- Google OAuth: before public launch, submit production OAuth verification with the public homepage, privacy
-  policy, terms, and support URLs. Keep development and staging in a separate Google Cloud project so test
-  sign-ins do not consume production OAuth quota. Start verification before public launch or at 70 lifetime
-  production Gmail authorizations, whichever comes first.
-- Google scopes: request only implemented mail scopes. With Nylas as the interim transport, keep the Nylas
-  provider connector scoped to read/search/sync, send, label/move, and trash actions currently visible in the
-  product. For a later direct Google driver, `gmail.modify` covers read/write/send without immediate permanent
-  delete; do not request `mail.google.com` unless bypassing trash becomes an implemented feature.
-- Microsoft OAuth: track Microsoft Partner Center publisher verification separately from Google verification
-  before B2C launch if Microsoft consumer accounts are included in public onboarding.
-- OpenRouter: enable account or guardrail privacy controls that disallow training on prompts and enforce ZDR
-  routing for routed mail-content requests before enabling hosted AI in production.
-- Vendor/DPA tracker: keep current terms, DPAs, and no-training/security notes for Railway, Convex, Nylas,
-  Clerk, Stripe, OpenRouter, OpenAI, Anthropic, and any enabled model provider.
-- CodeRabbit: install the GitHub App on `Lab86-io/lab86-mail` so PR #1 receives a review.
-
-## Nylas Sandbox → Production Migration
-
-The production Railway env points at a dedicated Nylas app
-(`a0327d4f-cde6-4ebb-b49d-5baf9f366e31`, "Lab86 Mail Production"), but that app
-is still in the **sandbox** environment, which hard-caps at **5 connected
-grants**. Once full, new account connections fail with
-`Maximum number of sandbox grants reached for Application`. Audit current state
-any time with:
-
-```bash
-NYLAS_API_KEY=<prod key> bun scripts/nylas-provision.ts status
-```
-
-As of this writing the production app already has the callback, the webhook
-(`/api/nylas/webhook`), and connectors for google/microsoft/imap/icloud/ews
-created — so the connector/webhook wiring (step 5 below) is already done and the
-script will report everything `present`. **The only blocker is the sandbox
-environment itself.** Steps 1–4 are the real work; 5–6 are verify/cutover.
-
-You cannot flip `sandbox → production` via API or env — it is a dashboard +
-billing + OAuth process. Do it in this order (Google verification is the long
-pole; start it first):
-
-1. **Nylas paid plan → Production application.** In the Nylas dashboard, put the
-   org on a paid plan and create/convert to a production application. Production
-   apps have no 5-grant cap (billed per connected account beyond the plan
-   quota). Sandbox grants do **not** carry over to a new app — users reconnect
-   once after cutover.
-2. **Google Cloud (BYO OAuth, required in v3 production).** Create an OAuth
-   client + consent screen in a production Google Cloud project (keep dev/staging
-   in a separate project so test sign-ins don't burn production quota). Request
-   only implemented scopes — `gmail.modify` + `userinfo.email`; do **not**
-   request `mail.google.com`. Submit OAuth verification and the annual **CASA
-   Tier 2** assessment before public launch or at ~70 lifetime production Gmail
-   authorizations, whichever comes first.
-
-   Provisioned 2026-06-11 via gcloud as jakob@lab86.io (org lab86.io
-   459734099637; project `lab86-mail-production`, number 452431903621, billing
-   `016424-9F9740-E75146`). An earlier duplicate under jjalangtry@gmail.com
-   (`lab86-mail-prod`) is obsolete and can be deleted.
-   - APIs enabled: `gmail.googleapis.com`, `pubsub.googleapis.com`.
-   - Org policy note: the lab86.io org's Domain Restricted Sharing default
-     blocks the Gmail push grant; a project-level override
-     (`constraints/iam.allowedPolicyMemberDomains` → allow all) was applied
-     (needed roles/orgpolicy.policyAdmin granted to jakob@lab86.io at the org).
-   - Service account
-     `nylas-gmail-realtime@lab86-mail-production.iam.gserviceaccount.com`
-     (exact name required by the Nylas connector).
-   - Pub/Sub topic `projects/lab86-mail-production/topics/nylas-gmail-realtime`
-     with `gmail-api-push@system.gserviceaccount.com` as Pub/Sub Publisher —
-     this is the connector's "Google Pub/Sub topic name" value.
-   - Authenticated push subscription `nylas-gmail-realtime-sub` →
-     `https://gmailrealtime.us.nylas.com` (OIDC as the service account, never
-     expires; the Pub/Sub service agent holds `iam.serviceAccountTokenCreator`).
-
-   Console-only remainder (no API exists for external consent screens): the
-   OAuth consent screen/branding, scopes, test users, and the **Web application
-   OAuth client** with redirect `https://api.us.nylas.com/v3/connect/callback`
-   — its client ID/secret go into the Nylas Google connector form.
-3. **Microsoft (Azure).** Register an Azure app (Mail.ReadWrite, Mail.Send,
-   offline_access, User.Read). Track Microsoft Partner Center publisher
-   verification separately from Google.
-4. **iCloud / IMAP.** No OAuth app — app-specific passwords only.
-5. **Configure the production Nylas app + webhook** (scriptable once 1–4 exist):
-
-   ```bash
-   NYLAS_API_KEY=<prod key> PUBLIC_URL=https://mail.lab86.io \
-   GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... \
-   MICROSOFT_CLIENT_ID=... MICROSOFT_CLIENT_SECRET=... \
-   SETUP_ICLOUD=1 \
-   bun scripts/nylas-provision.ts setup
-   ```
-
-   The script registers the `mail.lab86.io/api/nylas/callback` callback, creates
-   the Google/Microsoft/iCloud connectors, and creates the webhook against
-   `/api/nylas/webhook` (printing the one-time `webhook_secret`).
-6. **Railway production env cutover.** Set the production app's
-   `NYLAS_CLIENT_ID`, `NYLAS_CLIENT_SECRET`, `NYLAS_API_KEY`, and the
-   `NYLAS_WEBHOOK_SECRET` printed in step 5. `NYLAS_REDIRECT_URI` already points
-   at `https://mail.lab86.io/api/nylas/callback`. Redeploy and reconnect one
-   account to verify, then re-run `bun scripts/nylas-provision.ts status` to
-   confirm `environment: production` and the connectors/webhook are live.
-
-Stopgap while the above is in flight: delete a sandbox grant to free a slot
-(`DELETE /v3/grants/<id>` with the prod key, or revoke from the app's settings).
-This keeps you at the 5-grant cap and is for testing only.
-
-## Railway Variables
-
-Set these in both Railway environments (service `web`) with environment-specific values. Check the names with
-`railway variables --kv --environment <env> --service web | grep -E '^[A-Z_][A-Z0-9_]*=' | cut -d= -f1`. Do not
-print the values.
-
-Core:
-
-- `LAB86_MAIL_PUBLIC_URL`
-- `NEXT_PUBLIC_APP_URL`
-- `LAB86_MAIL_ENCRYPTION_KEY`
-- Optional: `LAB86_MAIL_ENCRYPTION_KEY_ID`, `LAB86_MAIL_ENCRYPTION_KEYS`, and
-  `LAB86_MAIL_ENCRYPTION_WRITE_FORMAT`. Set them only for a key rotation or a rollback window. See
-  `docs/encryption-key-rotation.md`.
-- `LAB86_CONVEX_INTERNAL_SECRET` (the same value as in the Convex deployment, see below)
-- `NEXT_PUBLIC_CONVEX_URL`
-- `CONVEX_DEPLOYMENT`
-
-Clerk:
-
-- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
-- `CLERK_SECRET_KEY`
-- `CLERK_WEBHOOK_SIGNING_SECRET`
-- `NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in`
-- `NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up`
-- `NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/`
-- `NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/`
-- `CLERK_BILLING_CHECKOUT_URL`
-- `CLERK_BILLING_PORTAL_URL`
-- `CLERK_PRO_PLAN_SLUG=mail_pro`
-- `CLERK_PRO_AI_FEATURE_SLUG=b2c_mail`
-
-Nylas:
-
-- `NYLAS_API_KEY`
-- `NYLAS_CLIENT_ID`
-- `NYLAS_CLIENT_SECRET`
-- `NYLAS_API_URI`
-- `NYLAS_REDIRECT_URI`
-- `NYLAS_WEBHOOK_SECRET`
-- `LAB86_MAIL_ICLOUD_MODE=hidden`
-- `LAB86_MAIL_NYLAS_ICLOUD_CONNECTOR_READY=0`
-
-Models and credits:
-
-- `OPENROUTER_API_KEY` or another supported platform key
-- `LAB86_MAIL_OPENAI_MODEL`
-- `LAB86_MAIL_OPENAI_FAST_MODEL`
-- `LAB86_MAIL_OPENAI_NANO_MODEL`
-- `LAB86_MAIL_AGENT_FALLBACK_MODEL`
-- `LAB86_AI_FREE_MONTHLY_CREDITS=0`
-- `LAB86_AI_PRO_MONTHLY_CREDITS=500` (stored with the Pro row for rollback only; Pro has no credit limit)
-- `LAB86_AI_ADMIN_MONTHLY_CREDITS` (optional; set it only to give admin a limit)
-- `LAB86_BRIEF_COST_BUDGET_USD` (optional; the per-edition safety stop, default 2)
-- `LAB86_REQUIRE_USER_OPENROUTER_KEY`
-- `LAB86_DISABLE_SUBSCRIPTIONS`
-
-Documents, files, and the shared browser:
-
-- `OFFICE_EDITOR_ENABLED`, `OFFICE_EDITOR_PROVIDER`, `OFFICE_DOCUMENT_SERVER_URL`, `OFFICE_APP_ORIGIN`,
-  `OFFICE_JWT_SECRET`
-- `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`
-- `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`
-
-Native push:
-
-- `APNS_BUNDLE_ID`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY`
-
-Narrative memory:
-
-- `LAB86_NARRATIVE_ENABLED`
-- `LAB86_NARRATIVE_USER_IDS` (optional allow list)
-
-The loop alarm. Each hour a Convex cron calls `/api/cron/cost-alarm`. When one user's background model
-cost (chat and own-key calls left out) passes the threshold in 24 hours, the owner gets one plain-text email
-for that user in that UTC day. It never stops or limits a user. It also needs `RESEND_API_KEY` and
-`LAB86_NOTIFICATION_FROM` (see the email list below). Production sets `LAB86_OWNER_ALERT_EMAIL` to
-`jakob@lab86.io`:
-
-- `LAB86_OWNER_ALERT_EMAIL` (no address, no alarm; the app logs one warning)
-- `LAB86_COST_ALARM_USD` (optional, default 5)
-
-Email and web push notifications. Production and staging set these since 2026-09-27. The cost alarm
-and the Brief by email need the Resend pair. `RESEND_API_KEY` is a send-only key for the verified
-domain `lab86.io`, and `LAB86_NOTIFICATION_FROM` is `Albatross <brief@lab86.io>`. If either one is
-missing, no email sends:
-
-- `LAB86_NOTIFICATION_LINK_SECRET`
-- `RESEND_API_KEY`
-- `LAB86_NOTIFICATION_FROM`
-- `NEXT_PUBLIC_VAPID_PUBLIC_KEY`
-- `VAPID_PRIVATE_KEY`
-- `VAPID_SUBJECT`
-
-Optional:
-
-- `NYLAS_SCOPES` (the connect route has a default)
-- `LAB86_MAIL_CORPUS_RECONCILE_ENABLED` (the reconcile route is on unless this is `0`)
-- `LAB86_MAIL_LOCAL_SEARCH_PROVIDERS` (see the corpus section)
-
-No code reads these. You can remove them from Railway: `LAB86_MAIL_ENABLE_GOG`, `LAB86_ENABLE_ALBATROSS`,
-`BRIEF_DOCUMENT_V2`, `NEXT_PUBLIC_CONVEX_SITE_URL`, `DECK_RENDER_CHECK`, and any `MAIL_OS_*` name.
-
-Development-only:
-
-- `STAGING_BASIC_AUTH_USER`
-- `STAGING_BASIC_AUTH_PASSWORD`
-- `NEXT_PUBLIC_CLERK_PROXY_URL` (staging only; the build fails if it does not match the app origin)
-
-Emergency switches:
-
-- `LAB86_DISABLE_LAB86_AI=1`
-- `LAB86_DISABLE_OUTBOUND_SEND=1`
-- `LAB86_DISABLE_PUBLIC_SIGNUP=1`
-- `LAB86_MAIL_CORPUS_RECONCILE_ENABLED=0`
-- `LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS=icloud,microsoft,google`
-
-## Convex Environment Variables
-
-Convex functions read their own environment. Railway variables do not reach Convex. A missing Convex variable
-caused the July 2026 outage, so check this list on each new deployment. Set the values in the Convex dashboard, or
-with `npx convex env set <NAME> <value>` for the target deployment. List the names with `npx convex env list`.
-
-Required in the development and production deployments:
-
-- `LAB86_CONVEX_INTERNAL_SECRET`: the same value as the Railway variable. Every internal mutation and every cron
-  call to the app uses it.
-- `LAB86_MAIL_PUBLIC_URL`: the app origin that Convex crons call, for example `https://mail.lab86.io`. Without it,
-  the crons skip their work.
-- `CLERK_JWT_ISSUER_DOMAIN`: the Clerk issuer for `convex/auth.config.ts`. Without it, all client queries that
-  need a signed-in user fail.
-
-Optional:
-
-- `RAILWAY_ENVIRONMENT_NAME`, `LAB86_MAIL_ENV`, or `LAB86_ENV`: set to `development` or `staging` to mark a
-  staging deployment for the Daily Brief cron. Without them, the cron uses the host of `LAB86_MAIL_PUBLIC_URL`.
-
-## DNS Cutover
-
-Use Railway-provided domains until the final cutover:
-
-- Development: `https://web-development-292e.up.railway.app`
-- Production: `https://web-production-3ec2.up.railway.app`
-
-Before changing records, lower TTL and record current values:
-
-```bash
-dig +short mail.lab86.io
-dig +short mail-staging.lab86.io
-```
-
-Current Cloudflare state after cleanup on June 4, 2026:
-
-- `mail.lab86.io` -> no DNS record
-- `mail-staging.lab86.io` -> no DNS record
-
-Rollback values removed on June 4, 2026:
-
-- `mail.lab86.io` A -> `100.104.121.93`, DNS-only, TTL automatic
-- `mail.lab86.io` AAAA -> `fd7a:115c:a1e0::9c35:795d`, DNS-only, TTL automatic
-
-Add custom domains in Railway first:
-
-```bash
-railway domain mail-staging.lab86.io --service web --environment development --json
-railway domain mail.lab86.io --service web --environment production --json
-```
-
-Then update Cloudflare records to the Railway-provided targets.
-
-As of June 4, 2026, the Railway CLI can deploy and update variables, but custom domain creation returns
-`Unauthorized. Please run railway login again.` Do not cut Cloudflare DNS until the domains appear under the
-Railway `web` service.
-
-Verify:
-
-```bash
-curl --fail https://mail-staging.lab86.io/api/healthz
-curl --fail https://mail.lab86.io/api/healthz
-```
-
-The public health check returns only `{"ok":true}`. To see the deployment, model, and flag details, send the
-internal secret in the `x-lab86-internal-secret` header.
-
-## Rollback
-
-Production rollback priority:
-
-1. Roll back to the previous healthy Railway deployment.
-2. Verify `https://mail.lab86.io/api/healthz`.
-3. If Railway domain/cutover itself is broken, restore the old Cloudflare record recorded before cutover.
-4. Open a Git revert or fix-forward PR so `main` reflects the restored production behavior.
-
-Useful Railway commands:
-
-```bash
-railway deployment list --service web --environment production --limit 20 --json
-railway logs --service web --environment production --lines 200 --json
-railway redeploy --service web --environment production --yes
-```
-
-## Convex Export / Restore Runbook
-
-Provider mail remains the source of truth for transport, but Convex stores hosted app state and the local mail
-corpus used for B2C search: users, connected account metadata, encrypted provider grants, AI settings, AI usage,
-entitlements/reporting mirrors, corpus sync state, webhook events, and indexed mail documents.
-
-Before public launch:
-
-1. Run a production export from the Convex dashboard or CLI.
-2. Store the export in the Lab86 private backup location.
-3. Verify the export contains expected hosted tables.
-4. Document the restore target and test restore in a non-production Convex deployment.
-
-Do not restore production data into development unless provider grants and encrypted secrets are explicitly
-sanitized.
-
-## Mail Corpus Backfill / Reconcile
-
-Convex is the durable local mail corpus. Nylas is the interim transport used to fetch mail and receive webhook
-wake signals.
-
-These routes check the internal secret in the handler, so Clerk does not redirect them. On staging, send the
-secret as a bearer token: staging basic auth lets bearer requests to `/api/` through.
-
-Manual backfill for one grant-backed account:
-
-```bash
-curl --fail -X POST https://mail-staging.lab86.io/api/mail/corpus/backfill \
-  -H "Authorization: Bearer $LAB86_CONVEX_INTERNAL_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{"userId":"user_...","accountId":"grant_...","limit":50}'
-```
-
-If the response includes `nextPageToken`, call the endpoint again with that token until `corpusReady` is true.
-
-Manual reconcile (there is no scheduled reconcile; webhooks and the manual call are the only paths):
-
-```bash
-curl --fail -X POST https://mail-staging.lab86.io/api/mail/corpus/reconcile \
-  -H "Authorization: Bearer $LAB86_CONVEX_INTERNAL_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{"limit":10,"messageLimit":50}'
-```
-
-The reconciler re-reads recent provider messages for ready accounts and repairs missed webhook delivery. It is safe
-to run repeatedly; Convex upserts by `(accountId, providerMessageId)` and `(accountId, providerThreadId)`.
-
-Local-first search rollout is controlled by provider list:
-
-- With no variable set, local search is on for all four providers (Google, Microsoft, iCloud, IMAP).
-- Set `LAB86_MAIL_LOCAL_SEARCH_PROVIDERS=<provider,...>` to limit local search to those providers.
-- Set `LAB86_MAIL_LOCAL_SEARCH_DISABLED_PROVIDERS=<provider>` for instant provider rollback to Nylas structured
-  search. Use `all` to force structured search for every provider.
-
-## Privacy / Deletion Readiness
-
-Public OAuth review URLs:
-
-- Homepage: `https://mail.lab86.io`
-- Privacy: `https://mail.lab86.io/privacy`
-- Terms: `https://mail.lab86.io/terms`
-- Support: `https://mail.lab86.io/support`
-
-Deletion behavior:
-
-- Provider disconnect calls Nylas grant revocation and deletes Lab86-hosted connected account rows, encrypted
-  grant rows, cached threads/messages, corpus rows, sync state, webhook rows, and account-scoped jobs.
-- Self-serve account deletion is exposed at `DELETE /api/account` through the app settings. It revokes every
-  connected Nylas grant, deletes all user-scoped Convex state including AI settings/usage and rate-limit rows,
-  then deletes the Clerk user.
-- Provider source mail remains in the user mailbox unless the user separately runs a provider delete/trash
-  action.
-
-Verification notes:
-
-- The privacy policy includes the Google API Services User Data Policy and Limited Use statement.
-- Keep Nylas, Google, and Microsoft dashboard scopes synchronized with the public privacy policy and implemented
-  UI actions.
-- Account deletion and provider disconnect are auditable through Convex table-count returns and tests that
-  enumerate cascade table coverage.
-
-## Security Incident Runbook
-
-1. Triage severity and affected providers. Preserve Railway, Convex, Nylas, Clerk, and AI-provider logs.
-2. Contain by disabling signups, outbound send, corpus reconcile, or hosted AI with emergency Railway variables.
-3. Rotate affected secrets in Railway and provider dashboards: Nylas, Clerk, Convex internal secret, AI keys,
-   Stripe/Clerk billing secrets, and webhook signing secrets.
-4. Revoke affected Nylas grants and run account deletion or provider disconnect cascades when user data exposure
-   requires it.
-5. Notify affected users and vendors according to contractual/legal requirements. Use Google and Microsoft
-   provider security/contact channels when their OAuth data or tokens are involved.
-6. Document the incident timeline, impacted tables, exposed data classes, containment actions, and follow-up
-   fixes before re-enabling disabled features.
+# Albatross release runbook
+
+## Release model
+
+Decided September 29, 2026: production is the only permanent hosted environment.
+Staging was used as a CodeRabbit review stop, so review now happens on feature PRs
+against `main`. Both Claude and Codex follow this workflow through `AGENTS.md`.
+
+1. Branch from current `origin/main` and open a PR targeting `main`.
+2. Wait for CI and CodeRabbit. Address findings and rerun affected checks.
+3. Merge the reviewed PR. `Deploy Production` validates the source, versions the
+   release, deploys Convex, and then deploys Railway.
+4. Verify `https://mail.lab86.io/api/healthz` and the changed product flow.
+5. The native production workflow consumes the immutable production release
+   artifact. Native PR acceptance continues to build both iOS and macOS.
+
+Production release automation pushes its version commit and tag. Preserve its
+ability to do so when changing branch protection; a required human approval
+would deadlock this single-maintainer repository. CI and CodeRabbit are the
+review gates, and release-bot version commits use `[skip release]`.
+
+## Production inventory
+
+| Resource | Identity |
+| --- | --- |
+| GitHub | `Lab86-io/lab86-mail`, default branch `main` |
+| Railway project | `919576b9-789c-4257-b6cc-250cf4a28ecb` (`lab86-mail`) |
+| Railway environment | `c14045cd-da4a-4080-bc07-ff784f1e333d` (`production`) |
+| Web service | `1ee5eac3-493e-4a4b-a6b4-cb89c6e0d179` (`web`) |
+| Document service | `1c39c627-c46c-4318-88cc-8f121ecc2e65` (`documents`) |
+| App origin | `https://mail.lab86.io` |
+| Convex | `https://proficient-viper-594.convex.cloud` |
+| Clerk frontend | `clerk.mail.lab86.io` |
+| Nylas production application | `ca47917b-5177-46d7-810f-df7a04135491` |
+
+Runtime variables are authoritative in Railway. GitHub's `production` environment
+holds deploy credentials and non-secret deploy targets. Explicitly select the
+production deployment when operating Convex: historical CLI project defaults
+have resolved to a different deployment. Never assume `--prod` means the URL above.
+
+## Isolated development
+
+Use the local app, synthetic fixtures, and a local Convex deployment. For first-time
+Convex configuration, `bunx convex dev --configure --dev-deployment local` selects
+a local backend; verify the printed target and `.env.local` before using it.
+Clerk development credentials can support local authentication without a second
+hosted app. Retain only the development auth configuration actually needed.
+
+Use test provider accounts when integration work needs real OAuth. Production
+mail grants, database credentials, and runtime environment exports are not local
+fixtures. The synthetic app workspace is available with `bun run dev:preview`.
+A temporary hosted integration environment requires an explicit new decision;
+it is not created automatically for PRs.
+
+`NODE_ENV=development` enables development behavior. For local testing of a
+production build, `LAB86_DEVELOPMENT_MODE=true` preserves scheduled-work suppression
+and server feature defaults. Set matching public feature flags explicitly for
+that build. Leave this mode unset in hosted production.
+
+The browser Basic challenge is opt-in with `LAB86_MAIL_REQUIRE_BASIC_AUTH=1` and
+`LAB86_BASIC_AUTH_USER` / `LAB86_BASIC_AUTH_PASSWORD`. Ordinary localhost development
+does not require it. Clerk authentication and capability checks remain in effect.
+
+## Provider changes
+
+- Keep production Clerk users, billing, JWT templates, webhooks, and native
+  associated domains intact. A development instance may belong to the same Clerk
+  application as production; deleting that application would remove both.
+- Keep production Nylas grants, connectors, webhook destination, and callbacks.
+  Remove only confirmed staging applications and their grants.
+- Google Drive OAuth, Apple push credentials, Browserbase, OpenRouter, and Resend
+  were shared across both web environments at retirement. Remove obsolete staging
+  callbacks where applicable; preserve credentials used by production or other apps.
+- Cloudflare records for `mail.lab86.io` and `clerk.mail.lab86.io` serve production.
+  Retire only records and paid resources positively attributed to staging.
+- See [document deployment](deployment/documents.md) for Collabora/WOPI configuration.
+
+## Recovery
+
+Rollback code and recover data separately. Restore the previous healthy Railway
+release and compatible Convex functions if needed, then verify the health endpoint
+and affected flow. Database migrations and external mail/calendar/file writes are
+not undone by redeploying old code. Keep a verified backup before destructive
+schema or data changes and maintain compatibility while Convex and web deploy in
+sequence.
+
+See [hosted operations](hosted-operations.md) for export/restore, corpus maintenance,
+account deletion, and incident response.
+
+## Retirement evidence
+
+See [the retirement record](operations/staging-retirement-2026-09-29.md) for resource
+status, verification, remaining login requirements, and any costs that remain shared.
+Historical staging instructions in older research notes describe past work only.

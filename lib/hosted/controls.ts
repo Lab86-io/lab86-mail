@@ -29,16 +29,6 @@ export function assertOutboundSendEnabled() {
   }
 }
 
-export function isStagingHost(host: string) {
-  return host.split(':')[0].toLowerCase() === 'mail-staging.lab86.io';
-}
-
-export function isStagingRuntime(host?: string | null) {
-  return (
-    process.env.RAILWAY_ENVIRONMENT_NAME === 'staging' ||
-    process.env.RAILWAY_ENVIRONMENT_NAME === 'development' ||
-    process.env.NODE_ENV === 'development' ||
-    Boolean(host && isStagingHost(host)) ||
-    envFlag('LAB86_MAIL_REQUIRE_BASIC_AUTH')
-  );
+export function isDevelopmentRuntime() {
+  return process.env.NODE_ENV === 'development' || envFlag('LAB86_DEVELOPMENT_MODE');
 }
