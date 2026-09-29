@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { withAccountSignature } from '@/lib/mail/signature';
 import { sendNylasMessage } from '@/lib/nylas/provider';
@@ -244,7 +245,8 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
           account,
           args: { mode: mode || 'new', to, subject, threadId, messageId },
           result: 'error',
-          detail: err?.message,
+          // The audit row keeps a short summary, not the provider text (CASA S8).
+          detail: describeModelError(err).message,
           agent: 'user',
         })
         .catch(() => undefined);

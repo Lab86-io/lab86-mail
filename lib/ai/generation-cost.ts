@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { redactModelErrorMessage } from './log-error';
 
 // The cost of a model call that failed or stopped. Before 2026-09-28 a failed
 // call recorded no usage and no cost, so about 60% of the OpenRouter spend
@@ -154,9 +155,10 @@ export interface FailedModelCall<R extends { provider: string; source: string }>
   schedule?: (task: () => Promise<void>) => void;
 }
 
+// The usage row keeps a short message without model output or keys (CASA S8).
 function errorText(error: unknown) {
   const message = (error as { message?: unknown } | null)?.message;
-  return typeof message === 'string' ? message : undefined;
+  return typeof message === 'string' ? redactModelErrorMessage(message) : undefined;
 }
 
 /**

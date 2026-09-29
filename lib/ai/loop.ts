@@ -997,13 +997,20 @@ async function streamAgentTurn(
         model: runtime.modelName,
         finishReason,
         aborted: !!options.signal?.aborted,
-        error: outcome.error ? safeAuthErrorText(outcome.error) : undefined,
+        error: outcome.error ? describeModelError(outcome.error) : undefined,
       });
       return { steps, failed: !!outcome.error, aborted: !!options.signal?.aborted };
     }
 
     lastError = outcome.error ?? new Error(`empty completion (${finishReason})`);
-    await recordFailedAgentTurn(runtime, feature, usage, lastError, capture.ids, errorText(lastError));
+    await recordFailedAgentTurn(
+      runtime,
+      feature,
+      usage,
+      lastError,
+      capture.ids,
+      redactModelErrorMessage(errorText(lastError)),
+    );
     if (options.signal?.aborted || isAuthError(lastError)) throw lastError;
     const hasNext = index < runtimes.length - 1;
     const eligible = outcome.error ? canFailOverAgentRuntime(outcome.error, feature, runtime) : true;
