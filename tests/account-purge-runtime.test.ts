@@ -475,6 +475,97 @@ describe('both account purges delete the same mailbox data', () => {
   });
 });
 
+describe('disconnect and held scheduled sends', () => {
+  test('disconnect cancels the held sends of the mailbox at once and deletes their stored messages', async () => {
+    const t = await setUp();
+    const seeded = await t.run(async (ctx) => {
+      const send = async (
+        key: string,
+        fields: { userId?: string; accountId?: string; status?: 'pending' | 'sending'; scheduled?: boolean },
+      ) => {
+        const payloadId = await ctx.storage.store(new Blob([`message ${key}`]));
+        const id = await ctx.db.insert('mailOutbox', {
+          userId: fields.userId ?? USER,
+          key,
+          status: fields.status ?? 'pending',
+          fireAt: T0 + DAY,
+          undoSeconds: 0,
+          payloadId,
+          ...(fields.scheduled === false ? {} : { scheduled: true, accountId: fields.accountId ?? GONE }),
+          updatedAt: T0,
+        });
+        return { id, payloadId };
+      };
+      return {
+        held: await send('held', {}),
+        secondHeld: await send('second-held', {}),
+        otherMailbox: await send('other-mailbox', { accountId: KEPT }),
+        undoWindow: await send('undo-window', { scheduled: false }),
+        inHandoff: await send('in-handoff', { status: 'sending' }),
+        otherUser: await send('other-user', { userId: 'user_other' }),
+      };
+    });
+    // No grant removal ran (it failed, or the mailbox is on Nylas): the account removal cancels the sends.
+    await t.mutation(api.accounts.deleteConnectedAccount, {
+      internalSecret: SECRET,
+      userId: USER,
+      accountId: GONE,
+    });
+    const state = await t.run(async (ctx) => {
+      const out: Record<string, { status: string; payloadId: boolean; stored: boolean }> = {};
+      for (const [name, row] of Object.entries(seeded)) {
+        const doc = await ctx.db.get(row.id);
+        out[name] = {
+          status: doc!.status,
+          payloadId: Boolean(doc!.payloadId),
+          stored: (await ctx.db.system.get(row.payloadId)) !== null,
+        };
+      }
+      return out;
+    });
+    const cancelled = { status: 'cancelled', payloadId: false, stored: false };
+    const untouched = (status: string) => ({ status, payloadId: true, stored: true });
+    expect(state).toEqual({
+      held: cancelled,
+      secondHeld: cancelled,
+      otherMailbox: untouched('pending'),
+      undoWindow: untouched('pending'),
+      inHandoff: untouched('sending'),
+      otherUser: untouched('pending'),
+    });
+  });
+
+  test('a stored message that is gone already does not stop the disconnect', async () => {
+    const t = await setUp();
+    const id = await t.run(async (ctx) => {
+      const payloadId = await ctx.storage.store(new Blob(['message']));
+      const row = await ctx.db.insert('mailOutbox', {
+        userId: USER,
+        key: 'held',
+        status: 'pending',
+        fireAt: T0 + DAY,
+        undoSeconds: 0,
+        payloadId,
+        scheduled: true,
+        accountId: GONE,
+        updatedAt: T0,
+      });
+      await ctx.storage.delete(payloadId);
+      return row;
+    });
+    await expect(
+      t.mutation(api.accounts.deleteConnectedAccount, {
+        internalSecret: SECRET,
+        userId: USER,
+        accountId: GONE,
+      }),
+    ).resolves.toEqual({ ok: true });
+    const row = await t.run((ctx) => ctx.db.get(id));
+    expect(row).toMatchObject({ status: 'cancelled' });
+    expect(row?.payloadId).toBeUndefined();
+  });
+});
+
 describe('the disconnect purge chain', () => {
   test('it stops when the mailbox is connected again under the same id', async () => {
     const t = await setUp();

@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
+import { cancelHeldSends } from './mailOutbox';
 
 // Direct Google transport (docs/google-direct-transport.md): the sign-in
 // state, the account switch and rollback, the token row, the History sync
@@ -250,18 +251,9 @@ export const removeGrant = mutation({
     const row = await soleGrantRow(ctx, args.grantId);
     if (!row) return none;
     // A held scheduled send of this mailbox goes with the grant: the message
-    // must not stay stored after a disconnect.
-    let cancelledSends = 0;
-    const held = await ctx.db
-      .query('mailOutbox')
-      .withIndex('by_user', (q) => q.eq('userId', row.userId))
-      .collect();
-    for (const send of held) {
-      if (!send.scheduled || send.accountId !== row.accountId || send.status !== 'pending') continue;
-      if (send.payloadId) await ctx.storage.delete(send.payloadId);
-      await ctx.db.patch(send._id, { status: 'cancelled', payloadId: undefined, updatedAt: now() });
-      cancelledSends += 1;
-    }
+    // must not stay stored after a disconnect. The account removal does the
+    // same, for the case where this step fails.
+    const cancelledSends = await cancelHeldSends(ctx, row.userId, row.accountId);
     await ctx.db.delete(row._id);
     const previousNylasGrantIds: string[] = [];
     const previous = row.previousNylasGrantId;

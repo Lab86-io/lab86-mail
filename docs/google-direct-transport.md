@@ -167,7 +167,9 @@ These rules add to the decisions above or make them exact.
   writes the From header.
 - **Scheduled send.** A held send is a `mailOutbox` row with `scheduled` and
   `accountId`. Its outbox key is the schedule id. A disconnect cancels the
-  held sends of the mailbox and deletes their stored messages.
+  held sends of the mailbox and deletes their stored messages. The grant
+  removal and the account removal both do this, so a failed grant removal
+  does not keep a message.
 - **History sync.** The cron runs every 2 minutes and reads at most 400
   changed messages in a run; the rest comes in the next run. New mail is read
   with its headers. A label change is read without headers, so the stored

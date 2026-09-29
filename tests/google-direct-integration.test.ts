@@ -243,6 +243,22 @@ describe('disconnect of a direct account', () => {
     }
   });
 
+  test('a failed grant removal still removes the account, which cancels the held sends', async () => {
+    await withHttpHarness(async (h) => {
+      h.onConvex('googleDirect:getGrantCredentials', () => null);
+      h.onConvex('googleDirect:removeGrant', () => {
+        throw new Error('Two connections share one direct Google grant id.');
+      });
+      h.onConvex('accounts:deleteConnectedAccount', () => ({ ok: true }));
+      expect(await deleteNylasAccount('user_1', 'acct_1', GRANT)).toEqual({ ok: true });
+      expect(h.convexCalls.map((call) => call.path)).toEqual([
+        'googleDirect:getGrantCredentials',
+        'googleDirect:removeGrant',
+        'accounts:deleteConnectedAccount',
+      ]);
+    });
+  });
+
   test('a failed revoke still removes the token row and the account', async () => {
     await withHttpHarness(async (h) => {
       h.onConvex('googleDirect:getGrantCredentials', () => null);

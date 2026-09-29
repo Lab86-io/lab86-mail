@@ -8,6 +8,7 @@ import { internalMutation, mutation, query } from './_generated/server';
 import { deleteContactRow } from './contacts';
 import { now, requireInternalSecret } from './lib';
 import { deleteAttachmentFileRow } from './mailAttachments';
+import { cancelHeldSends } from './mailOutbox';
 import schema from './schema';
 
 const providerValidator = v.union(
@@ -1109,6 +1110,10 @@ export const deleteConnectedAccount = mutation({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
+    // Every disconnect path comes here, also when the grant removal failed
+    // (lib/nylas/provider.ts deleteNylasAccount). So the held scheduled
+    // sends of the mailbox go here too, with their stored messages.
+    await cancelHeldSends(ctx, args.userId, args.accountId);
     // Small tables go inline so the account vanishes from the UI immediately;
     // the rest drains in scheduled batches right after (purgeAccountPass).
     for (const table of ['connectedAccounts', 'providerGrants', ...ACCOUNT_STATE_TABLES] as const) {
