@@ -581,11 +581,21 @@ async function nylasCleanupItem(
   nylasGrantId: string,
   refusal: (row: any) => Promise<string | null>,
 ): Promise<NylasCleanupItem> {
-  const holders = await ctx.db
+  const rows = await ctx.db
     .query('providerGrants')
     .withIndex('by_previous_nylas_grant', (q: any) => q.eq('previousNylasGrantId', nylasGrantId))
-    .take(NYLAS_CLEANUP_HOLDER_LIMIT);
+    .take(NYLAS_CLEANUP_HOLDER_LIMIT + 1);
+  const holders = rows.slice(0, NYLAS_CLEANUP_HOLDER_LIMIT);
   const item = { nylasGrantId, connections: holders.map(cleanupConnection) };
+  // The claim holds at most the limit. A row past it would keep a dead grant
+  // for its rollback, so such a grant stays.
+  if (rows.length > NYLAS_CLEANUP_HOLDER_LIMIT) {
+    return {
+      ...item,
+      eligible: false,
+      reason: `More than ${NYLAS_CLEANUP_HOLDER_LIMIT} connections keep this Nylas grant.`,
+    };
+  }
   if (isDirectGrant(nylasGrantId)) {
     return { ...item, eligible: false, reason: 'The kept grant id is a direct Google grant id.' };
   }

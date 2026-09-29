@@ -281,6 +281,52 @@ describe('cleanup plan by age', () => {
     expect(plan.items[0].connections).toHaveLength(2);
   });
 
+  test('a grant that more connections keep than one claim can hold stays', async () => {
+    const t = newHarness();
+    await t.run(async (ctx) => {
+      const ts = Date.now();
+      for (let index = 0; index < 21; index += 1) {
+        const userId = `user_many_${index}`;
+        const grantId = `google:00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+        await ctx.db.insert('connectedAccounts', {
+          userId,
+          accountId: ACCOUNT,
+          email: 'ann@example.com',
+          provider: 'google',
+          status: 'connected',
+          scopes: ['openid'],
+          grantId,
+          createdAt: ts,
+          updatedAt: ts,
+        } as any);
+        await ctx.db.insert('providerGrants', {
+          userId,
+          accountId: ACCOUNT,
+          provider: 'google',
+          grantId,
+          email: 'ann@example.com',
+          scopes: ['openid'],
+          previousNylasGrantId: NYLAS_GRANT,
+          switchedToGoogleAt: ts - 10 * HOUR,
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      }
+    });
+    const [item] = (await planByAge(t, Date.now())).items;
+    expect(item).toMatchObject({
+      eligible: false,
+      reason: 'More than 20 connections keep this Nylas grant.',
+    });
+    expect(item.connections).toHaveLength(20);
+    const claim = await t.mutation(api.googleDirect.claimNylasGrantCleanup, {
+      internalSecret: SECRET,
+      nylasGrantId: NYLAS_GRANT,
+      switchedBefore: Date.now(),
+    });
+    expect(claim).toEqual({ claimed: false, reason: 'More than 20 connections keep this Nylas grant.' });
+  });
+
   test('an account with nothing kept gives an empty plan', async () => {
     const t = newHarness();
     await seedNylasAccount(t);
