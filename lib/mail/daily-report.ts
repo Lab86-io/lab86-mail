@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
 import { getAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
+import { describeModelError } from '../ai/log-error';
 import { intentTerms } from '../albatross/daily-intent';
 import {
   type AlbatrossDailyReportContext,
@@ -317,7 +318,7 @@ export async function generateDailyReport(input: {
       if (replies.unavailable)
         errors.push('Some Albatross reply checks could not run; those watches will retry.');
     } catch (error) {
-      console.warn('Daily report reply watch failed:', error);
+      console.warn('Daily report reply watch failed:', describeModelError(error));
       errors.push('Albatross reply checks could not finish; saved watches will retry.');
     }
   }
@@ -1106,7 +1107,7 @@ async function buildThreadInsight(
     } catch (err) {
       // Enrichment is best-effort — the deterministic floor values still
       // produce a briefing — but the failure should be visible in logs.
-      console.warn('Daily report AI enrichment failed:', err);
+      console.warn('Daily report AI enrichment failed:', describeModelError(err));
     }
   }
 

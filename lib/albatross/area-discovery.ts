@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { describeModelError } from '@/lib/ai/log-error';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { truncateText } from '@/lib/shared/text';
 import type { AreaFactLite } from './area-classifier';
@@ -279,7 +280,7 @@ export async function classifyAreaArtifacts(input: { userId: string; areaId?: st
         llm += 1;
       }
     } catch (error) {
-      console.warn('[area-discovery] agentic pass failed:', error);
+      console.warn('[area-discovery] agentic pass failed:', describeModelError(error));
     }
     skipped += batch.filter((artifact) => !answered.has(candidateId(artifact))).length;
   }

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
+import { describeModelError } from '@/lib/ai/log-error';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { truncateText } from '@/lib/shared/text';
 import { AREA_CLASSIFIER_VERSION, areaFactIdentity, isSharedConsumerDomain } from './area-home';
@@ -420,7 +421,11 @@ export async function classifyThreads({ userId }: { userId: string }): Promise<C
         accountId: thread.accountId,
         messageId: thread.messageId,
       });
-      console.warn('[area-classifier] structured verdict failed', thread.providerThreadId, result.reason);
+      console.warn(
+        '[area-classifier] structured verdict failed',
+        thread.providerThreadId,
+        describeModelError(result.reason),
+      );
       continue;
     }
     const links = result.value.map((assignment) => ({
@@ -514,7 +519,7 @@ export function kickAreaClassification(userId: string, delayMs = 5_000) {
       pendingKicks.delete(userId);
       runningKicks.add(userId);
       void runAreaClassification({ userId })
-        .catch((error) => console.error('[area-classifier] ingest kick failed', error))
+        .catch((error) => console.error('[area-classifier] ingest kick failed', describeModelError(error)))
         .finally(() => {
           runningKicks.delete(userId);
           if (rerunRequested.delete(userId)) kickAreaClassification(userId, 1_000);

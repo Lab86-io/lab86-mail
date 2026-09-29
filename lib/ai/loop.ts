@@ -26,6 +26,7 @@ import {
   resolveAgentRuntimes,
 } from './gateway';
 import { newGenerationCapture, recordFailedModelCall, runWithGenerationCapture } from './generation-cost';
+import { describeModelError } from './log-error';
 import { newOperationBatchId } from './operations';
 import {
   buildSystemPrompt,
@@ -716,7 +717,7 @@ export function isAuthError(error: any): boolean {
 function authFailureResult(error: any) {
   const text =
     'Your model provider rejected the API key. Open Settings, then Intelligence, and enter a valid OpenRouter, OpenAI, or Anthropic key. Then continue.';
-  console.error(`[ai] auth failure: ${safeAuthErrorText(error)}`);
+  console.error('[ai] auth failure:', describeModelError(error));
   return {
     text,
     finishReason: 'stop',
@@ -729,7 +730,7 @@ function providerFailureResult(error: any) {
     ? 'The model provider sent a malformed response after the request started, so I could not give a reliable final answer. Check whether the requested change is already in place, and retry only if it is missing.'
     : 'The model provider failed before it finished that request. Retry the last step if the requested change is not visible.';
   // Keep raw provider diagnostics out of the user-facing text; log for triage.
-  console.error(`[ai] provider failure while finishing request: ${errorText(error)}`);
+  console.error('[ai] provider failure while finishing request:', describeModelError(error));
   return {
     text,
     finishReason: 'stop',
@@ -952,7 +953,7 @@ async function streamAgentTurn(
             runId: options.runId,
             provider: runtime.provider,
             model: runtime.modelName,
-            error: safeAuthErrorText(error),
+            error: describeModelError(error),
           });
         },
       });
@@ -1010,7 +1011,7 @@ async function streamAgentTurn(
         provider: runtime.provider,
         model: runtime.modelName,
         fallback: runtimes[index + 1]?.modelName,
-        error: errorText(lastError),
+        error: describeModelError(lastError),
       });
       continue;
     }
@@ -1186,13 +1187,13 @@ export async function runAgent({
               // Auth errors get a clear "fix your key" message instead of being
               // masked as a transient failure or thrown as an opaque provider string.
               if (isAuthError(err)) {
-                console.warn('[agent] auth error; returning key-fix guidance', safeAuthErrorText(err));
+                console.warn('[agent] auth error; returning key-fix guidance', describeModelError(err));
                 writeTextOnly(writer, 'text-auth', authFailureResult(err).text);
                 writer.write({ type: 'finish', finishReason: 'stop' });
               } else if (isRecoverableAgentProviderError(err)) {
                 console.warn(
                   '[agent] provider failed after retries; returning text fallback',
-                  errorText(err),
+                  describeModelError(err),
                 );
                 writeTextOnly(writer, 'text-provider', providerFailureResult(err).text);
                 writer.write({ type: 'finish', finishReason: 'stop' });
@@ -1210,7 +1211,7 @@ export async function runAgent({
             }
           },
           onError: (error) => {
-            console.error('[agent]', { runId, error: safeAuthErrorText(error) });
+            console.error('[agent]', { runId, error: describeModelError(error) });
             return safeAuthErrorText(error);
           },
         }),

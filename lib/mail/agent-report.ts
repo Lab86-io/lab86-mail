@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FunctionReference } from 'convex/server';
 import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
+import { describeModelError } from '../ai/log-error';
 import { BriefBudgetExhaustedError, currentBriefMeter } from '../brief/budget';
 import { api, convexQuery } from '../hosted/convex';
 import { prepareBriefContext } from '../narrative/service';
@@ -287,7 +288,7 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
   } catch (err) {
     // The pass persists a 'partial' edition before the work that can throw.
     // Settle it so the UI does not stay stuck on a dead run.
-    console.error('[agent-report] structured pass failed:', err);
+    console.error('[agent-report] structured pass failed:', describeModelError(err));
     const partial = await getDailyReport(reportId).catch(() => null);
     if (partial) {
       await saveDailyReport({ ...partial, status: 'ready', artifactStatus: 'rendered' }).catch(
@@ -338,7 +339,7 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
     await saveDailyReport(settled);
     return settled;
   } catch (err) {
-    console.error('[agent-report] budget composition failed:', err);
+    console.error('[agent-report] budget composition failed:', describeModelError(err));
     const fallback = withEditionBudget(
       withArtifactError(
         {

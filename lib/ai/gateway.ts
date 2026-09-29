@@ -15,7 +15,6 @@ import {
 } from '../classifier/catalog';
 import { loadSelectedClassifier } from '../classifier/selection';
 import { PAID_PLANS, planPriceLine } from '../hosted/plans';
-import { truncateText } from '../shared/text';
 import {
   BRIEF_GENERATION_FEATURES,
   estimateAiUsageCost,
@@ -26,6 +25,7 @@ import {
 import { anthropic, openai, openrouter } from './client';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { newGenerationCapture, recordFailedModelCall, runWithGenerationCapture } from './generation-cost';
+import { describeModelError } from './log-error';
 import {
   type CatalogModel,
   defaultModelsFor,
@@ -518,7 +518,7 @@ export async function generateTextForCurrentUser(
               provider: activeRuntime.provider,
               model: activeRuntime.modelName,
               attempt,
-              error: summarizeAiError(err),
+              error: describeModelError(err),
             });
             await sleep(TRANSIENT_GENERATE_RETRY_DELAY_MS * attempt);
             continue;
@@ -528,7 +528,7 @@ export async function generateTextForCurrentUser(
               provider: activeRuntime.provider,
               model: activeRuntime.modelName,
               fallback: runtimes[runtimeIndex + 1]?.modelName,
-              error: summarizeAiError(err),
+              error: describeModelError(err),
             });
             break;
           }
@@ -738,16 +738,6 @@ function isAgentFallbackEligible(err: any, feature: string, runtime: ResolvedAiR
   return /Provider returned error|server had an error|temporarily unavailable|rate.?limit|code"?\s*:\s*502/i.test(
     body,
   );
-}
-
-function summarizeAiError(err: any) {
-  return {
-    name: err?.name,
-    message: err?.message,
-    statusCode: err?.statusCode,
-    isRetryable: err?.isRetryable,
-    responseBody: typeof err?.responseBody === 'string' ? truncateText(err.responseBody, 240) : undefined,
-  };
 }
 
 function sleep(ms: number) {

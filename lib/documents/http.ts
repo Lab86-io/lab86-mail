@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError } from '@/lib/auth/current-user';
 import { RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { DocumentGenerationError } from './ai';
@@ -21,12 +22,12 @@ export function documentError(error: unknown) {
     );
   }
   if (error instanceof DocumentGenerationError) {
-    console.error('[documents] Invalid model output:', error);
+    console.error('[documents] Invalid model output:', describeModelError(error));
     return NextResponse.json(
       { ok: false, error: 'Albatross returned an invalid document. Try again.' },
       { status: 502 },
     );
   }
-  console.error('[documents]', error);
+  console.error('[documents]', describeModelError(error));
   return NextResponse.json({ ok: false, error: 'Document operation failed.' }, { status: 500 });
 }

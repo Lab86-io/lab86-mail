@@ -565,7 +565,11 @@ test('ingest kicks coalesce and recover a requested rerun after classification f
     // Let the completed batch clear its ownership before the next ingest.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(scans).toBe(2);
-    expect(logged).toHaveBeenCalledWith('[area-classifier] ingest kick failed', failure);
+    // The log holds a summary of the error, never the error object (CASA S8).
+    expect(logged).toHaveBeenCalledWith('[area-classifier] ingest kick failed', {
+      name: 'Error',
+      message: failure.message,
+    });
     kickAreaClassification(userId, 0);
     await started[2].promise;
     await new Promise((resolve) => setTimeout(resolve, 0));

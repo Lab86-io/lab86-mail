@@ -1,5 +1,6 @@
 import { describeProvider } from '../ai/client';
 import { generateTextForCurrentUser } from '../ai/gateway';
+import { describeModelError } from '../ai/log-error';
 import { allDayDateKey } from '../calendar/all-day';
 import { normalizeBriefTimezone } from '../shared/brief-edition';
 import { stripEmoji } from '../shared/format';
@@ -515,7 +516,10 @@ export async function writeBriefProse(
       model: describeProvider().primary || 'primary',
     };
   } catch (error) {
-    console.warn('[brief-prose] model call failed; using the deterministic letter:', error);
+    console.warn(
+      '[brief-prose] model call failed; using the deterministic letter:',
+      describeModelError(error),
+    );
     return fallback;
   }
 }

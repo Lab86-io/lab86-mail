@@ -1,6 +1,7 @@
 import { type ModelMessage, stepCountIs, tool } from 'ai';
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { describeModelError } from '@/lib/ai/log-error';
 import { withToolTimeout } from '@/lib/ai/tool-timeout';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from '@/lib/mail/brief-document-prompt';
@@ -1218,7 +1219,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
     } catch (err) {
       // The plan is still fully usable without its brief; don't fail the loop.
       if (!(err instanceof Error && err.message === 'brief-not-required')) {
-        console.warn('[albatross-plan] artifact composition failed:', err);
+        console.warn('[albatross-plan] artifact composition failed:', describeModelError(err));
       }
     }
 

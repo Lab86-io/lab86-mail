@@ -1,4 +1,5 @@
 import { getAiRequestContext, runWithAiRequestContext } from '../ai/context';
+import { describeModelError } from '../ai/log-error';
 import { isConvexConfigured } from '../hosted/env';
 import { runJevSweep } from '../jev/service';
 import { promoteHeldPriorityMail } from '../notifications/mail-digest';
@@ -28,7 +29,7 @@ export function kickLlmClassification(userId?: string | null, delayMs = KICK_DEB
     setTimeout(() => {
       pendingKicks.delete(uid);
       void runLlmClassificationSweep(uid).catch((err: any) => {
-        console.error('[llm-classify] sweep failed:', err?.message || err);
+        console.error('[llm-classify] sweep failed:', describeModelError(err));
       });
     }, delayMs),
   );
