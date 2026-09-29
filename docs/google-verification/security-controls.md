@@ -1,7 +1,9 @@
 # Security controls: CASA self-assessment answers
 
 Product: Albatross, from Lab86. Assessment lab: TAC Security (Premium plan).
-Status of this text: 2026-09-28, branch `claude/casa-verify`.
+Status of this text: 2026-09-28, branch `claude/casa-verify`. The fix round of
+2026-09-29 (branch `claude/casa-security-fixes`) updates rows 5.1.7, 6.1.1, 6.5.1,
+6.6.1, and "Error handling", and the status of the findings in section 9.
 
 ## Standard and process
 
@@ -84,7 +86,7 @@ setting that is in a vendor dashboard, not in the code.
 | 5.1.4 | Template injection | Yes | React escapes output. No server template engine uses user input. |
 | 5.1.5 | SSRF | Partial | Outbound hosts are fixed for logos, weather, MCP, and Office. User URLs go through `assertPublicHttpUrl`, which checks DNS, private ranges, and each redirect (`lib/attachments/fetch-store.ts:78-150`). Problem: IPv4-mapped IPv6 in hex form and DNS rebind (finding S3). |
 | 5.1.6 | XPath and XML injection | Yes | No XPath. XML parse (`xml-js`) reads Office files only, with ZIP checks (`lib/documents/office-security.ts:63-113`). |
-| 5.1.7 | XSS | Partial | Mail HTML goes through DOMPurify (`lib/sanitize.ts:28-109`) into an iframe without `allow-scripts` (`components/thread/ThreadView.tsx:1163-1170`). Markdown uses Streamdown with its sanitizer. Problems: no script CSP (nonce-based CSP after the casa-prep round), and the Daily Brief iframe has no CSP of its own (finding S5). |
+| 5.1.7 | XSS | Yes | Mail HTML goes through DOMPurify (`lib/sanitize.ts:28-109`) into an iframe without `allow-scripts` (`components/thread/ThreadView.tsx:1163-1170`). Markdown uses Streamdown with its sanitizer. The page policy is a nonce-based CSP (`lib/security/csp.ts`). The Daily Brief and brief canvas frames get a CSP of their own with `connect-src 'none'` and a fixed list of image hosts (`lib/security/brief-frame-csp.ts`; finding S5, fixed). |
 | 5.1.8 | Database injection | Yes | Convex has no query language. All reads use typed index calls and validators (`v.*`). |
 | 5.1.9 | OS command injection | Yes | The one `spawn` call starts a fixed worker script with fixed arguments (`lib/documents/spreadsheet-server.ts:29-36`). User data goes to the worker as JSON over IPC. |
 | 5.1.10 | File inclusion | Yes | No dynamic `import` with user input. The deck asset reader resolves a path and refuses a path outside `public/` (`lib/documents/deck-assets.ts:31-37`). The font reader uses fixed names (`lib/documents/deck-render.ts:51`). |
@@ -94,19 +96,19 @@ setting that is in a vendor dashboard, not in the code.
 
 | ID | Requirement | Answer | Evidence |
 |---|---|---|---|
-| 6.1.1 | No components with known exploitable vulnerabilities | Partial | See section 8. This branch updates `next`, `dompurify`, and `postcss`. Two critical Next.js advisories are open until `next` 16.3.3 or later. Other high advisories are in transitive packages. |
+| 6.1.1 | No components with known exploitable vulnerabilities | Partial | See section 8. `next` is 16.3.6 (finding S1). The `overrides` in `package.json` and two lockfile pins fix each transitive advisory that has a fix in the same major (finding S4). Five high advisories stay in packages with no such fix. Section 9 shows that their code is not reachable. Evidence: `docs/google-verification/evidence/bun-audit-2026-09-29.txt`. |
 | 6.2.1 | Debug modes off in production | Yes | `next start` production build; `poweredByHeader: false` (`next.config.ts:55`). Dev pages call `notFound()` in production (`app/dev/*/page.tsx`). ZAP found no debug header. |
 | 6.3.1 | Origin header not used for access control | Yes | No handler reads `Origin` for access. The proxy uses `req.nextUrl.origin` only to bind the native browser cookie to its own host (`proxy.ts:62-66`). |
 | 6.4.1 | No subdomain takeover | Yes (owner makes sure) | The owner makes sure that each DNS record of `lab86.io` points to a live service (Railway, Clerk, Resend). |
-| 6.5.1 | No credentials in logs | Partial | No log line writes a token or key intentionally. The audit line removes arguments (`lib/store/audit.ts:6-19`). The Nylas webhook logs only the envelope (`app/api/nylas/webhook/route.ts:84-93`). Problem: some catch blocks log raw model errors, which can hold prompt text (finding S8). |
-| 6.6.1 | Browser storage cleared at logout | No | Sign-out does not clear `localStorage` (`lab86-mail-ui` holds the selected account and the last search) or `sessionStorage` (`lib/client-state.ts:305-337`) (finding S9). |
+| 6.5.1 | No credentials in logs | Yes | No log line writes a token or key intentionally. The audit line removes arguments (`lib/store/audit.ts:6-19`). The Nylas webhook logs only the envelope (`app/api/nylas/webhook/route.ts:84-93`). A model or AI SDK error goes to the log only as a summary: the name, the HTTP status, a short message without model output, and the name of the cause (`lib/ai/log-error.ts`; finding S8, fixed). The request body and the response body of a model call never go to the log. |
+| 6.6.1 | Browser storage cleared at logout | Yes | Sign-out removes the app keys from `localStorage` and `sessionStorage` (for example `lab86-mail-ui`, which holds the selected account and the last search) and deletes the `albatross-compose` IndexedDB database (`lib/auth/sign-out-storage.ts`). The Settings sign-out button clears the storage before and after the Clerk sign-out, then loads a new page. When the session ends by another path (the Clerk `UserButton` menu, another tab, a revoked session), `components/shell/SignOutStorageGuard.tsx` clears the storage and reloads the page (finding S9, fixed). |
 | 6.7.1 | Server secrets kept securely | Yes | Secrets are Railway and Convex environment variables. `.gitignore` excludes `.env`, `.env.local`, `.env.*.local`, `*.pem`, and `apps/ios/Config/Local.xcconfig`. Git tracks only `.env.example`, which has no secret values. OAuth tokens and user API keys are AES-256-GCM encrypted in Convex, with key ids (after the casa-prep round). Gitleaks found no secret in the tree or the history (section 8). |
 
 ## 7. Other ASVS topics
 
 | Topic | Answer | Evidence |
 |---|---|---|
-| Error handling | Partial | API routes return no stack traces. Many routes return `err.message` in an error answer: 79 such lines in `app/api` (for example `app/api/tools/[name]/route.ts:60`) (finding S7). |
+| Error handling | Yes | API routes return no stack traces. A 5xx answer has a fixed text, and the server log gets a summary of the error (`lib/security/error-answer.ts`; finding S7, fixed). A 4xx answer keeps only a message that the app wrote (a typed error such as `AuthRequiredError` or a validation error). |
 | Logging and monitoring | Partial | Railway keeps standard output. Security events that are logged: Nylas signature failures (`app/api/nylas/webhook/route.ts:84-93`), audit lines for tool calls and sends (`lib/store/audit.ts`). Not logged: Clerk webhook signature failures, cron 401 answers. No alerting on security events. Cost alarm e-mail exists (`lib/notifications/cost-alarm.ts`). |
 | Data protection | Yes | Convex encrypts data at rest with AES-256 (<https://www.convex.dev/security>). Tokens have app-level encryption. Attachments stream with `no-store` today. Retention rules are in `retention-and-deletion.md`. Users can export and delete their data (`app/api/account/export/route.ts`, `app/api/account/route.ts`). |
 | Malicious code | Yes | All code is in one private GitHub repository with review by pull request and CodeRabbit (`.coderabbit.yaml`). CI pins GitHub Actions by SHA and sets `persist-credentials: false` (`.github/workflows/ci.yml:18-35`). Semgrep and Fluid Attacks found no back door or time bomb pattern. |
@@ -164,6 +166,36 @@ from the code review for this document.
 | S10 | `LAB86_MAIL_ALLOW_UNVERIFIED_WEBHOOKS=1` turns off the Nylas signature check in any environment (`app/api/nylas/webhook/route.ts:63`). | Low | security | Honor the flag only when `NODE_ENV !== 'production'`. |
 | S11 | Staging Basic auth compares with `===` (`proxy.ts:109`). | Low (staging only) | security | Use a constant-time compare. |
 | S12 | The chart tool puts model-given series keys and colors into a `<style>` element (`components/ui/chart.tsx:86-104`; schema `components/tool-ui/chart/schema.ts:9-13`). | Low | security | Allow only `[A-Za-z0-9_-]` in keys and a CSS color pattern in colors. |
+
+### Status of the findings (2026-09-29)
+
+| # | Status | Files |
+|---|---|---|
+| S1 | Fixed on `main` before this round. `next` is 16.3.6. | `package.json` |
+| S2 | Fixed on `main` before this round. The check refuses control characters and compares the origin. | `lib/security/redirect.ts` |
+| S3 | Fixed on `main` before this round. | `lib/attachments/fetch-store.ts` |
+| S4 | Fixed for each advisory with a fix in the same major. `overrides`: `@hono/node-server` 1.19.17, `fast-uri` 3.1.8, `hono` 4.13.5, `ip-address` 10.7.2, `mermaid` 11.16.1, `qs` 6.16.0, `ws` 8.21.0. Bun has no nested overrides, so the lockfile pins the nested copies: `docx/nanoid` 5.1.16 and `glob/minimatch/brace-expansion` 1.1.18; the top-level `brace-expansion` is 2.1.4. `bun audit`: from 41 advisories (19 high) to 8 (5 high). The advisories that stay are in the next table. | `package.json`, `bun.lock`, `docs/google-verification/evidence/bun-audit-2026-09-29.txt` |
+| S5 | Fixed. The host puts a CSP meta element before all other content of each Daily Brief frame and brief canvas frame: `default-src 'none'`, `connect-src 'none'`, `img-src data: blob:` plus the app origin, the Convex storage origin, and the museum image hosts of the daily art pool, `style-src 'unsafe-inline' https://fonts.googleapis.com`, `font-src https://fonts.gstatic.com`, `script-src 'unsafe-inline'`, `form-action 'none'`, `base-uri 'none'`, `object-src 'none'`. The page policy with its nonce applies at the same time. Nested widget frames inherit the policy. | `lib/security/brief-frame-csp.ts`, `components/report/DailyReport.tsx`, `components/report/brief-canvas/BriefCanvasLeaf.tsx`, `hooks/use-frame-nonce.ts`, `tests/brief-frame-csp.test.ts` |
+| S6 | Fixed on `main` before this round. | `lib/security/crypto.ts` |
+| S7 | Fixed. A 5xx answer of an API route has a fixed text; the detail goes to the server log as a summary. A 4xx answer keeps only a message that the app wrote. The mobile v1 error envelope does not change. | `lib/security/error-answer.ts`, `app/api/**/route.ts`, `tests/security-error-answer.test.ts` |
+| S8 | Fixed. `describeModelError` gives only the name, the HTTP status, a message of at most 300 characters without model output or keys, and the name of the cause. Each log line in `lib/` and `app/` that wrote a model or provider error object now writes this summary. Convex functions make no model calls. | `lib/ai/log-error.ts`, `lib/ai/gateway.ts`, `lib/ai/loop.ts`, `lib/mail/*.ts`, `lib/albatross/*.ts`, `app/api/**/route.ts`, `tests/ai-log-error.test.ts` |
+| S9 | Fixed. See row 6.6.1. | `lib/auth/sign-out-storage.ts`, `components/shell/SignOutStorageGuard.tsx`, `components/shell/QueryProvider.tsx`, `app/settings/page.tsx`, `tests/sign-out-storage.test.ts` |
+| S10 | Fixed on `main` before this round. The flag works only when `NODE_ENV` is not `production`. | `app/api/nylas/webhook/route.ts` |
+| S11 | Does not apply. Staging is retired. The development Basic auth in `proxy.ts` uses a constant-time compare (`constantTimeEqual`). | `proxy.ts` |
+| S12 | Fixed. The chart style accepts only keys of `[A-Za-z0-9_-]` and colors that match a strict pattern (hex, `rgb()`/`rgba()`/`hsl()`/`hsla()`/`oklch()` with numbers only, `var(--name)`, and the relative `oklch(from var(--name) ...)` form of the app palette). It drops all other entries. | `lib/theme/chart-style.ts`, `components/ui/chart.tsx`, `tests/chart-style.test.tsx` |
+
+### Advisories that stay after S4 (`bun audit`, 2026-09-29)
+
+| Package | Path | Severity | Why no fix | Reachability |
+|---|---|---|---|---|
+| `deepmerge-ts` 7.1.5 | `html-to-text` | High | The fix is in 8.0.0; `html-to-text` 10 asks for `^7.1.5`. | Not reachable. `html-to-text` merges only its own option objects with ours. Mail HTML is a string argument, not a merged object, so input cannot make a recursive object graph. |
+| `linkify-it` 3.0.3 | `ansi-to-react` | High | The fix is after 5.0.0; `ansi-to-react` 6 asks for `^3.0.3`. | Not reachable. `ansi-to-react` calls `linkify-it` only with the `linkify` prop. `components/tool-ui/terminal/terminal.tsx` does not set it. |
+| `image-size` 1.2.1 | `pptxgenjs` | High | The fix is in 2.0.3; `pptxgenjs` 4.0.1 asks for `^1.2.1`. | Not reachable. The `pptxgenjs` build does not load `image-size`; its size path calls `require('sizeof')` only for an image path without a size. `lib/documents/export.ts` gives data URLs of owned assets with a size. |
+| `uuid` 8.3.2 | `exceljs`, `nylas` | Moderate | The fix is in 11.1.1 (a new major). | Not reachable. The bug is in v3, v5, and v6 with a `buf` argument. `exceljs` and `nylas` call v4. (`mermaid` uses `uuid` 14.0.0; `bun audit` lists its path because the name is the same.) |
+| `baseline-browser-mapping` 2.10.31 | `next` | Moderate | No override in this round. | Not reachable at run time. The package gives browser data to the build. |
+| `@ai-sdk/provider-utils` 4.0.27 | `ai`, `@ai-sdk/*` | Low | The fix comes with a new version of the pinned AI SDK packages. | Reachable only from a model provider. The response handlers read a provider answer without a size limit. The app calls only OpenRouter, OpenAI, and Anthropic over HTTPS. |
+
+Other risks that stay after S5: a link in a brief can open a new tab to any URL when the user clicks it (`allow-popups`). A CSP cannot stop a navigation that the user starts. The `open_url` action has a review step (`components/report/DailyReport.tsx`).
 
 False positives:
 
