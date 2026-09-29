@@ -2,7 +2,7 @@
 
 Product: Albatross, from Lab86. Google Cloud project: `lab86-mail-production`
 (452431903621). Admin account: `jakob@lab86.io`. Status of this text:
-2026-09-28, branch `claude/casa-verify`.
+2026-09-29, branch `claude/casa-verify-gaps`.
 
 Do the steps in this order. Each step has a check box. Keep secrets out of
 e-mail, chat, Git, and shell history.
@@ -53,10 +53,19 @@ folder describe them as "(after the casa-prep round)".
       owner and a plan. Fix each critical and high item before the lab scan.
       Google gives the letter only when critical and high findings are fixed
       (<https://support.google.com/cloud/answer/13463817>).
-- [ ] Update `app/privacy/page.tsx`. The list of service providers must also
-      name Browserbase, Apple (push), the favicon services (DuckDuckGo and
-      Google), Open-Meteo, and OpenStreetMap Nominatim. The
-      disconnect text must match `retention-and-deletion.md`.
+- [x] `app/privacy/page.tsx` names each service that receives user data or
+      the IP address of the user: Browserbase, Apple push, the browser push
+      services, the site icon services (DuckDuckGo and Google), Open-Meteo,
+      OpenStreetMap Nominatim, Google Maps, the connected tools, and the hosts
+      that the browser loads directly (Google Fonts, museum collections,
+      DiceBear). Done on 2026-09-29.
+- [ ] The disconnect text of `app/privacy/page.tsx` must match
+      `retention-and-deletion.md`.
+- [x] The sign-in and sign-up pages name Albatross, tell what it does, and
+      link Privacy and Terms (`components/auth/AuthScreen.tsx`). Done on
+      2026-09-29.
+- [x] The Drive OAuth request has no `spreadsheets` and no `presentations`
+      scope. Done on 2026-09-29 (`scopes.md`, owner notes 1 and 2).
 
 ## Step 3: Google Cloud setup for the direct transport
 
@@ -114,6 +123,10 @@ gcloud pubsub subscriptions describe gmail-push-albatross
       mail flow has the redirect URI `https://mail.lab86.io/api/files/oauth/callback`.
 - [ ] In Google Auth Platform > Branding, keep `lab86.io` in the authorized
       domains. Keep `nylas.com` while any Google grant still goes through Nylas.
+- [ ] After the switch of the Google mailboxes to the direct transport, run
+      the Nylas grant cleanup. Do the dry run first. The commands are in
+      `docs/google-direct-transport.md`, section "Cleanup". After the cleanup,
+      the rollback to Nylas does not work for the cleaned accounts.
 
 ## Step 4: staging model key
 
@@ -178,12 +191,16 @@ In the Google Cloud console for project 452431903621:
       section "Summary". Remove any scope that is not in that list.
 - [ ] For each sensitive and restricted scope, paste the justification. Use the
       "Feature" and "Narrower scope" text of `scopes.md`.
-- [ ] Decide the owner notes at the end of `scopes.md` before you paste the
-      text for `spreadsheets` and `presentations`.
+- [ ] Remove `spreadsheets` and `presentations` from Data Access. Albatross
+      does not ask for them now (`scopes.md`, owner note 1).
 - [ ] Branding: check the home page, the privacy policy
       (`https://mail.lab86.io/privacy`), and the terms
-      (`https://mail.lab86.io/terms`). The privacy policy must have the
-      Limited Use text (`app/privacy/page.tsx:61-76`).
+      (`https://mail.lab86.io/terms`). The home page sends a signed-out
+      visitor to `/sign-in`. That page names Albatross, tells what it does,
+      and links Privacy and Terms. If the reviewer asks for a home page with
+      no redirect, use `https://mail.lab86.io/pricing` or
+      `https://mail.lab86.io/sign-in`. The privacy policy must have the
+      Limited Use text (`app/privacy/page.tsx:67-92`).
 - [ ] Verification Center: paste the YouTube link. Submit.
 - [ ] Answer each e-mail from the Google review team within a few days.
       Google estimates about 6 weeks for restricted scopes

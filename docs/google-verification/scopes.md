@@ -1,7 +1,7 @@
 # Google OAuth scopes: use and justification
 
 Product: Albatross, from Lab86. Google Cloud project: `lab86-mail-production`
-(452431903621). Status of this text: 2026-09-28, branch `claude/casa-verify`.
+(452431903621). Status of this text: 2026-09-29, branch `claude/casa-verify-gaps`.
 
 This document gives one section for each Google scope. Each section tells the
 user feature, the code that uses the scope, the reason that a narrower scope
@@ -33,9 +33,9 @@ Albatross has two Google consent flows. Both flows use OAuth clients in project
    Advanced > "Show Files" (`app/settings/page.tsx:152-163`). Then the user
    clicks "Connect" for Google Drive in the Files view
    (`components/files/FilesSurface.tsx:1595-1612`). The scopes are in
-   `lib/files/providers.ts:35-48`. The flow uses PKCE,
+   `lib/files/providers.ts:46-52`. The flow uses PKCE,
    `access_type=offline`, and `prompt=consent`
-   (`lib/files/providers.ts:88-113`).
+   (`lib/files/providers.ts:92-117`).
 
 Albatross does not use these scopes for sign-in to Albatross. Clerk hosts
 sign-in. The app reads only the Clerk profile and does not read Google data
@@ -53,18 +53,19 @@ through Clerk (`lib/auth/current-user.ts:21-68`).
 | `contacts.readonly` | Sensitive | Mailbox | Recipient autocomplete from saved contacts |
 | `contacts.other.readonly` | Sensitive | Mailbox | Recipient autocomplete from "Other contacts" |
 | `directory.readonly` | Sensitive | Mailbox | Recipient autocomplete from the Workspace directory |
-| `drive.readonly` | Restricted | Drive | Browse, search, open, and index Drive files |
-| `drive.file` | Non-sensitive | Drive | Create Google files from Albatross documents |
-| `documents` | Sensitive | Drive | Import Google Docs and save edits back to them |
-| `spreadsheets` | Sensitive | Drive | Import Google Sheets; write new Sheets that Albatross makes |
-| `presentations` | Sensitive | Drive | Import Google Slides; write new Slides files that Albatross makes |
+| `drive.readonly` | Restricted | Drive | Browse, search, open, and index Drive files; read Docs, Sheets, and Slides |
+| `drive.file` | Non-sensitive | Drive | Create Google Docs, Sheets, and Slides files from Albatross documents, and write to them |
+| `documents` | Sensitive | Drive | Save edits back to an existing Google Doc |
+
+Albatross does not ask for `spreadsheets`, `presentations`, or the full
+`drive` scope (owner decision of 2026-09-29, see "Notes for the owner").
 
 ## openid
 
 - **Feature.** Albatross identifies the Google account that the user connects.
 - **Code.** Nylas adds `openid` to each Google OAuth call. The Nylas Google
   guide says so: <https://developer.nylas.com/docs/provider-guides/google/create-google-app/>.
-  The Drive flow includes it in `lib/files/providers.ts:41`. The direct flow
+  The Drive flow includes it in `lib/files/providers.ts:47`. The direct flow
   includes it after the casa-prep round.
 - **Narrower scope.** Google has no narrower scope. `openid` is the minimum
   OpenID Connect scope.
@@ -79,7 +80,7 @@ through Clerk (`lib/auth/current-user.ts:21-68`).
     (`app/api/nylas/callback/route.ts:62-74`).
   - The direct cutover compares the OAuth address with the account address
     (`docs/google-direct-transport.md`, section "Cutover").
-  - The Drive flow includes the `email` alias (`lib/files/providers.ts:42`).
+  - The Drive flow includes the `email` alias (`lib/files/providers.ts:48`).
     It reads the address from `oauth2/v2/userinfo`
     (`lib/files/connections.ts:195-210`).
 - **Narrower scope.** No narrower scope gives the account address.
@@ -262,6 +263,13 @@ through Clerk (`lib/auth/current-user.ts:21-68`).
     `lib/content/cloud-sync.ts:94-116` and `:160-190`. Docs export as text,
     Sheets as `.xlsx`, and Slides as `.pptx`.
   - File metadata for import: `lib/documents/google-import.ts:65`.
+  - Import of a Google Sheet or Slides file into the Albatross editor:
+    `lib/documents/google-import.ts:128`, `:145`, `:301`, `:314`. The Sheets
+    method `spreadsheets.get` and the Slides method `presentations.get`
+    accept `drive.readonly`
+    (<https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/get>,
+    <https://developers.google.com/workspace/slides/api/reference/rest/v1/presentations/get>).
+    Thus Albatross does not ask for `spreadsheets` or `presentations`.
 - **Narrower scope.**
   - `drive.file` includes only files that the app made or that the user opened
     through the app. The user browses and searches all Drive files.
@@ -278,12 +286,22 @@ through Clerk (`lib/auth/current-user.ts:21-68`).
 - **Feature.** The user makes a new Google Doc, Sheet, or Slides file from an
   Albatross document. Albatross writes the content into that new file.
 - **Code.**
-  - `publishDocumentToGoogle` (`lib/documents/google.ts:541-615`) makes the
-    file with `createGoogleFile` (`:515-539`). Then it writes the content with
-    the Docs, Sheets, or Slides writer (`:108`, `:276`, `:486`).
-  - It reads the Drive metadata of the new file (`lib/documents/google.ts:218-230`).
+  - `publishDocumentToGoogle` (`lib/documents/google.ts:557-631`) makes the
+    file with `createGoogleFile` (`:531-555`). Then it writes the content with
+    the Docs, Sheets, or Slides writer (`:123`, `:292`, `:502`).
+  - The create methods and the `batchUpdate` methods of Docs, Sheets, and
+    Slides accept `drive.file`
+    (<https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/create>,
+    <https://developers.google.com/workspace/slides/api/reference/rest/v1/presentations/create>).
+  - It reads the Drive metadata of the new file (`lib/documents/google.ts:233-246`).
   - Route `POST /api/documents/[id]/google`, called from
     `components/files/DocumentEditor.tsx:440`.
+  - The Office working-copy save replaces a Google file with a Drive v2 upload
+    (`lib/documents/google-working-copy.ts:223-234`). With `drive.file`, this
+    works only for a file that Albatross made. For another file, Google
+    refuses the upload. Albatross then shows a clear message
+    (`GOOGLE_WORKING_COPY_NOT_APP_FILE`, `:48`), and the edited copy stays in
+    Albatross.
 - **Narrower scope.** `drive.file` is the narrowest Drive scope that lets an
   app make files and change the files that it made.
 - **Demo.** In an Albatross document, use the control that saves the document
@@ -296,10 +314,16 @@ through Clerk (`lib/auth/current-user.ts:21-68`).
 - **Code.**
   - Read: `lib/documents/google-import.ts:287`.
   - Write back to an existing Doc: `updateGoogleNativeFile`
-    (`lib/documents/google.ts:617-660`) calls `syncGoogleDoc`, which sends
-    `documents.batchUpdate` (`:205`). Only a Doc can go back to its Google
-    original (`lib/documents/google.ts:628`,
+    (`lib/documents/google.ts:633-675`) calls `syncGoogleDoc`, which sends
+    `documents.batchUpdate` (`:220`). Only a Doc can go back to its Google
+    original (`lib/documents/google.ts:644`,
     `lib/documents/google-write-policy.ts:53-62`).
+  - After the save, Albatross renames the Doc when the user changed the
+    title (`renameGoogleFile`, `lib/documents/google.ts:684-702`, Drive v3
+    `PATCH`). The Drive API renames a file only with `drive`, or with
+    `drive.file` for a file that the app made. For a Doc that the user made in
+    Google, Google refuses the rename (403). Albatross then keeps the Google
+    name and tells the user. The content save does not depend on the rename.
   - Route `PATCH /api/files/google/editor`, called from
     `components/files/DocumentEditor.tsx:997` and `:1073`.
   - The assistant tool `google_document_edit` only proposes a change. The user
@@ -310,59 +334,39 @@ through Clerk (`lib/auth/current-user.ts:21-68`).
 - **Demo.** Open a Google Doc from Files. Change one sentence. Save. Show the
   change in Google Docs.
 
-## spreadsheets (sensitive)
-
-- **Feature.** Import a Google Sheet into the Albatross sheet editor. Write the
-  cells of a new Google Sheet that Albatross makes.
-- **Code.**
-  - Read: `lib/documents/google-import.ts:128`, `:145`, `:301`.
-  - Write: `syncGoogleSheet` (`lib/documents/google.ts:276-329`) sends
-    `batchUpdate`, `values:batchClear`, and `values:batchUpdate`. Albatross
-    writes only to a Sheet that it made. An existing Google Sheet can be
-    imported but not written back (`lib/documents/google-write-policy.ts:53-62`).
-- **Narrower scope.** See the owner note at the end. For the code of today,
-  `drive.readonly` includes the reads and `drive.file` includes the writes.
-- **Demo.** Open a Google Sheet from Files in the Albatross editor. Then save
-  an Albatross sheet to Google as a new file. Show the new Sheet.
-
-## presentations (sensitive)
-
-- **Feature.** Import Google Slides into the Albatross deck editor. Write the
-  slides of a new Google Slides file that Albatross makes.
-- **Code.**
-  - Read: `lib/documents/google-import.ts:314`.
-  - Write: `syncGoogleDeck` (`lib/documents/google.ts:486-513`) sends
-    `presentations.batchUpdate`. Albatross writes only to a Slides file that it
-    made (`lib/documents/google-write-policy.ts:53-62`).
-- **Narrower scope.** See the owner note at the end. For the code of today,
-  `drive.readonly` includes the reads and `drive.file` includes the writes.
-- **Demo.** Open a Slides file from Files in the Albatross deck editor. Then
-  save an Albatross deck to Google as a new file. Show the new Slides file.
-
 ## Notes for the owner
 
-These notes are not for the reviewer. Decide each one before the submission.
+These notes are not for the reviewer. Each note has the decision of the owner.
 
-1. **`spreadsheets` and `presentations`.** The code of today reads existing
-   Sheets and Slides and writes only to files that Albatross made. The Sheets
-   and Slides APIs accept `drive.readonly` for reads and `drive.file` for files
-   that the app made. Thus a reviewer can say that these two scopes are not
-   necessary. Keep them only if a feature writes to existing Sheets or Slides
-   before the review. Else, expect a request to remove them.
-2. **Writes to Drive files that Albatross did not make.** Two calls change a
-   user's original file through the Drive API:
-   - the rename after a Doc write back (`lib/documents/google.ts:650-657`,
-     Drive v3 `PATCH`);
-   - the Office working-copy save (`lib/documents/google-working-copy.ts:193-199`,
-     Drive v2 upload).
-   For a file that the app did not make, the full `drive` scope is necessary
-   for these Drive API calls. Albatross does not include `drive`. We did not test
-   these calls with a live account. Test them before the video. Do not show
-   them if they fail.
-3. **`scripts/nylas-provision.ts:148-154`** lists only `gmail.modify`,
-   `userinfo.email`, and the three contact scopes. The production connector
-   also has `calendar`, `openid`, and `userinfo.profile`. Update the script, or
-   add a comment that the production connector is the source of truth.
+1. **`spreadsheets` and `presentations`: removed (decision of 2026-09-29).**
+   The code reads existing Sheets and Slides and writes only to files that
+   Albatross made. The Sheets and Slides APIs accept `drive.readonly` for reads
+   and `drive.file` for files that the app made. The Drive OAuth request
+   (`lib/files/providers.ts:46-52`) no longer has the two scopes, and no code
+   checks for them.
+   - A Drive connection from before the change still holds the two scopes. It
+     keeps them until the user connects Google Drive again or removes the
+     access at <https://myaccount.google.com/permissions>. Such a connection
+     works as before, and a new connection works without the two scopes.
+   - In Google Auth Platform > Data Access, remove the two scopes before you
+     submit.
+2. **Writes to Drive files that Albatross did not make: no `drive` scope
+   (decision of 2026-09-29).** Two calls change a user's original file through
+   the Drive API. For a file that the app did not make, these calls need the
+   full `drive` scope, and Albatross does not ask for it. Both calls fail soft:
+   - The rename after a Doc write back (`lib/documents/google.ts:684-702`,
+     Drive v3 `PATCH`). A 403 skips the rename. The content is saved, the file
+     keeps its Google name, and the editor tells the user.
+   - The Office working-copy save (`lib/documents/google-working-copy.ts:223-234`,
+     Drive v2 upload). A 403 gives the message "Google did not save your
+     edits: Albatross can change only the Google files that it made." The
+     edited copy stays in Albatross. A 403 for a rate limit keeps the old
+     error.
+   - Do not show these two actions on a file that Albatross did not make in the
+     demo video.
+3. **`scripts/nylas-provision.ts`: done (2026-09-29).** The script now sends
+   the eight scopes of the production connector (`GOOGLE_MAIL_SCOPES` in
+   `lib/google/oauth.ts`), and its `status` mode reports a missing scope.
 4. **`userinfo.profile`.** Albatross does not keep profile data from the grant.
    Nylas adds the scope. In the direct flow, the scope has no code use unless
    the Gmail workstream reads the name (for example, as the sender name).

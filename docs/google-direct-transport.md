@@ -62,7 +62,8 @@ system. The Google scopes do not change.
   1. Switch an existing Nylas Google account in place. The OAuth email must
      equal the account email. The Nylas grant id is kept on the Google
      `providerGrants` row (`previousNylasGrantId`) for a rollback. The Nylas
-     grant is destroyed only when the user disconnects the account.
+     grant is destroyed when the user disconnects the account, or by the
+     owner-run cleanup (section "Cleanup").
   2. New Google connections use the direct flow when `LAB86_GOOGLE_DIRECT=1`.
 - **Sync.** A cron polls the Gmail History API every 2 minutes for each direct
   account (`history.list` from the stored `historyId`). A `404` (history too
@@ -239,6 +240,92 @@ These rules add to the decisions above or make them exact.
 3. Nylas webhooks for that grant are processed again. The corpus stays.
 4. The Google access stays in the Google account permissions until the owner
    removes it there.
+
+A rollback is not possible after the cleanup below.
+
+### Cleanup
+
+A switched Google account keeps its old Nylas grant in
+`providerGrants.previousNylasGrantId`, for the rollback. Nylas bills each
+grant. When the direct transport is stable, the owner deletes these grants
+with `scripts/nylas-grant-cleanup.ts`.
+
+**Warning.** After the cleanup, `googleDirect:rollbackToNylas` does not work
+for the cleaned accounts. The rollback answers "The Nylas grant cleanup deleted
+the Nylas grant." To go back to Nylas, the user must connect the mailbox
+through Nylas again.
+
+What the command does:
+
+- It reads the plan from `googleDirect:nylasGrantCleanupPlan`. This query
+  changes nothing.
+- The default is a dry run. Only `--apply` deletes.
+- For each eligible grant, it calls the Nylas v3 API
+  `DELETE /v3/grants/{grantId}`. A success or a 404 counts as done.
+- Then `googleDirect:clearPreviousNylasGrant` clears `previousNylasGrantId`
+  and sets `nylasGrantRevokedAt` on each direct connection that kept the
+  grant.
+- A failed delete keeps the field, so the rollback still works for that
+  account. The command then exits with code 1.
+- Nylas then sends `grant.deleted` for the grant. The webhook marks the
+  accounts on that grant for a reconnect. No account is on it, so nothing
+  changes.
+
+The command keeps a Nylas grant in these cases:
+
+- The account does not use a direct grant: its `grantId` does not start with
+  `google:`.
+- The direct connection is not `connected`. It can need the rollback.
+- A connection of any user is on that Nylas grant now.
+- One-account mode: another switched connection keeps the same Nylas grant
+  (one mailbox under two users). Use the age mode for all of them.
+- Age mode: a connection that keeps the grant switched less than N hours ago,
+  or has no switch time. A switch records `switchedToGoogleAt`. A switch from
+  before this field has no time. Clean up such an account with the one-account
+  mode.
+
+The Nylas API key is in the environment of the Railway `web` service. Convex
+does not have it. Thus the command runs with `railway run`, from a checkout of
+`main` that is linked to the `lab86-mail` Railway project. The first two lines
+of the output show the Convex URL and the Nylas API URL. Check them before you
+use `--apply`. The output shows grant ids, account ids, and addresses. It shows
+no key and no token.
+
+Get `userId` and `accountId` from the Convex dashboard, table
+`connectedAccounts`.
+
+1. Do a dry run for one account. It changes nothing:
+
+   ```bash
+   railway run --environment production --service web -- \
+     bun scripts/nylas-grant-cleanup.ts --user <userId> --account <accountId>
+   ```
+
+2. Read the output. `WOULD DELETE <grant id>` names the grant that the command
+   deletes. `SKIPPED` gives the reason to keep a grant.
+3. Delete the grant of that account:
+
+   ```bash
+   railway run --environment production --service web -- \
+     bun scripts/nylas-grant-cleanup.ts --user <userId> --account <accountId> --apply
+   ```
+
+4. For all switched accounts whose switch is older than N hours (for example
+   168 hours, one week), do the dry run, and then the real run:
+
+   ```bash
+   railway run --environment production --service web -- \
+     bun scripts/nylas-grant-cleanup.ts --older-than-hours 168
+   railway run --environment production --service web -- \
+     bun scripts/nylas-grant-cleanup.ts --older-than-hours 168 --apply
+   ```
+
+5. Do the dry run again. In the one-account mode, a cleaned account shows
+   "The cleanup deleted the Nylas grant at <time>." In the age mode, a cleaned
+   account is not in the list.
+
+The age mode reads at most 500 token rows in one run. The output tells you when
+it reads that limit. Then run the command again.
 
 ### Runbook: store old Drive addresses in lower case
 
