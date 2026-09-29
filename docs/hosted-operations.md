@@ -37,7 +37,8 @@ curl --fail -X POST https://mail.lab86.io/api/mail/corpus/backfill \
 
 If the response includes `nextPageToken`, call the endpoint again with that token until `corpusReady` is true.
 
-Manual reconcile (there is no scheduled reconcile; webhooks and the manual call are the only paths):
+Manual reconcile is the operator-triggered repair path. Webhooks update the corpus, and scheduled Google
+history sync also reconciles when a Google History ID expires:
 
 ```bash
 curl --fail -X POST https://mail.lab86.io/api/mail/corpus/reconcile \
@@ -67,11 +68,14 @@ Public OAuth review URLs:
 
 Deletion behavior:
 
-- Provider disconnect calls Nylas grant revocation and deletes Lab86-hosted connected account rows, encrypted
-  grant rows, cached threads/messages, corpus rows, sync state, webhook rows, and account-scoped jobs.
-- Self-serve account deletion is exposed at `DELETE /api/account` through the app settings. It revokes every
-  connected Nylas grant, deletes all user-scoped Convex state including AI settings/usage and rate-limit rows,
-  then deletes the Clerk user.
+- Provider disconnect attempts Nylas grant revocation and initiates deletion of Lab86-hosted connected
+  account rows, encrypted grant rows, cached threads/messages, corpus rows, sync state, webhook rows, and
+  account-scoped jobs. Bulk cleanup is asynchronous, and provider revocation failures may be suppressed.
+- Self-serve account deletion is exposed at `DELETE /api/account` through the app settings. It attempts
+  Nylas grant revocation and removes user-scoped Convex state, including AI settings/usage and rate-limit
+  rows. Bulk Convex cleanup runs asynchronously. Nylas revocation failures may be suppressed, and the
+  Clerk user can be removed before all grants and bulk data are gone; verify provider grants and queued
+  cleanup separately when confirming deletion.
 - Provider source mail remains in the user mailbox unless the user separately runs a provider delete/trash
   action.
 
