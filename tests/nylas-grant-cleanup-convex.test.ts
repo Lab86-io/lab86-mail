@@ -288,37 +288,62 @@ describe('cleanup plan by age', () => {
   });
 });
 
-describe('clearPreviousNylasGrant', () => {
-  test('clears the kept grant on each direct connection, records the time, and ends the rollback', async () => {
+const claimArgs = (overrides: Record<string, unknown> = {}) => ({
+  internalSecret: SECRET,
+  nylasGrantId: NYLAS_GRANT,
+  userId: USER,
+  accountId: ACCOUNT,
+  ...overrides,
+});
+
+const finish = (t: Harness, deleted: boolean, holders = [{ userId: USER, accountId: ACCOUNT }]) =>
+  t.mutation(api.googleDirect.finishNylasGrantCleanup, {
+    internalSecret: SECRET,
+    nylasGrantId: NYLAS_GRANT,
+    holders,
+    deleted,
+  });
+
+describe('claim and finish', () => {
+  test('a claim holds the grant: no rollback, no webhook owner, and a finish records the delete', async () => {
     const t = newHarness();
     await seedNylasAccount(t);
-    await seedNylasAccount(t, USER_B);
     await switchAccount(t);
-    await switchAccount(t, USER_B, GRANT_B);
-    const before = Date.now();
-    const result = await t.mutation(api.googleDirect.clearPreviousNylasGrant, {
-      internalSecret: SECRET,
-      nylasGrantId: NYLAS_GRANT,
-    });
-    expect(result).toEqual({ cleared: 2 });
-    for (const userId of [USER, USER_B]) {
-      const row = await grantRow(t, userId);
-      expect(row?.previousNylasGrantId).toBeUndefined();
-      expect(row?.nylasGrantRevokedAt).toBeGreaterThanOrEqual(before);
-      expect(row?.grantId.startsWith('google:')).toBe(true);
-    }
+    const claim = await t.mutation(api.googleDirect.claimNylasGrantCleanup, claimArgs());
+    expect(claim).toEqual({ claimed: true, holders: [{ userId: USER, accountId: ACCOUNT }] });
+    const held = await grantRow(t);
+    expect(held?.previousNylasGrantId).toBeUndefined();
+    expect(held?.nylasGrantDeletePending).toBe(NYLAS_GRANT);
+
+    // While the claim holds, the rollback cannot put the account on the grant.
     expect(
-      await t.query(api.googleDirect.accountForPreviousNylasGrant, {
-        internalSecret: SECRET,
-        grantId: NYLAS_GRANT,
-      }),
-    ).toBeNull();
+      await t.mutation(internal.googleDirect.rollbackToNylas, { userId: USER, accountId: ACCOUNT }),
+    ).toEqual({
+      ok: false,
+      reason: 'The Nylas grant cleanup holds the Nylas grant and can delete it now.',
+    });
+    // A second run does not claim it again.
+    expect((await t.mutation(api.googleDirect.claimNylasGrantCleanup, claimArgs())).claimed).toBe(false);
+    expect((await planForAccount(t)).items[0].reason).toContain('A cleanup run holds this Nylas grant');
+
+    const before = Date.now();
+    expect(await finish(t, true)).toEqual({ updated: 1 });
+    const done = await grantRow(t);
+    expect(done?.nylasGrantDeletePending).toBeUndefined();
+    expect(done?.previousNylasGrantId).toBeUndefined();
+    expect(done?.nylasGrantRevokedAt).toBeGreaterThanOrEqual(before);
     expect(
       await t.mutation(internal.googleDirect.rollbackToNylas, { userId: USER, accountId: ACCOUNT }),
     ).toEqual({
       ok: false,
       reason: 'The Nylas grant cleanup deleted the Nylas grant. Connect the account through Nylas again.',
     });
+    expect(
+      await t.query(api.googleDirect.accountForPreviousNylasGrant, {
+        internalSecret: SECRET,
+        grantId: NYLAS_GRANT,
+      }),
+    ).toBeNull();
     // A disconnect has no Nylas grant left to destroy.
     const removed = await t.mutation(api.googleDirect.removeGrant, {
       internalSecret: SECRET,
@@ -327,19 +352,94 @@ describe('clearPreviousNylasGrant', () => {
     expect(removed.previousNylasGrantIds).toEqual([]);
   });
 
-  test('never touches a row that is not on a direct grant, and needs the secret', async () => {
+  test('a failed delete gives the grant back, and the rollback works again', async () => {
     const t = newHarness();
     await seedNylasAccount(t);
-    await patchRows(t, USER, { grant: { previousNylasGrantId: 'older-nylas-grant' } });
+    await switchAccount(t);
+    await t.mutation(api.googleDirect.claimNylasGrantCleanup, claimArgs());
+    expect(await finish(t, false)).toEqual({ updated: 1 });
+    const row = await grantRow(t);
+    expect(row?.previousNylasGrantId).toBe(NYLAS_GRANT);
+    expect(row?.nylasGrantDeletePending).toBeUndefined();
+    expect(row?.nylasGrantRevokedAt).toBeUndefined();
     expect(
-      await t.mutation(api.googleDirect.clearPreviousNylasGrant, {
+      (await t.mutation(internal.googleDirect.rollbackToNylas, { userId: USER, accountId: ACCOUNT })).ok,
+    ).toBe(true);
+  });
+
+  test('a rollback after the plan and before the claim makes the claim refuse', async () => {
+    const t = newHarness();
+    await seedNylasAccount(t);
+    await switchAccount(t);
+    expect((await planForAccount(t)).items[0].eligible).toBe(true);
+    await t.mutation(internal.googleDirect.rollbackToNylas, { userId: USER, accountId: ACCOUNT });
+    const claim = await t.mutation(api.googleDirect.claimNylasGrantCleanup, claimArgs());
+    expect(claim.claimed).toBe(false);
+    // The account is on the Nylas grant again, so the claim must not take it.
+    expect((await grantRow(t))?.grantId).toBe(NYLAS_GRANT);
+  });
+
+  test('an age claim holds every switched connection of the grant; a finish touches only the held rows', async () => {
+    const t = newHarness();
+    await seedNylasAccount(t);
+    await seedNylasAccount(t, USER_B);
+    await switchAccount(t);
+    await switchAccount(t, USER_B, GRANT_B);
+    const claim = await t.mutation(api.googleDirect.claimNylasGrantCleanup, {
+      internalSecret: SECRET,
+      nylasGrantId: NYLAS_GRANT,
+      switchedBefore: Date.now() + HOUR,
+    });
+    expect(claim.claimed).toBe(true);
+    if (!claim.claimed) throw new Error('Expected a claim');
+    expect(claim.holders.map((holder) => holder.userId).sort()).toEqual([USER, USER_B]);
+
+    // A finish for A only leaves B held; a finish for a row that the claim did not hold does nothing.
+    expect(await finish(t, true)).toEqual({ updated: 1 });
+    expect((await grantRow(t, USER_B))?.nylasGrantDeletePending).toBe(NYLAS_GRANT);
+    expect(await finish(t, true, [{ userId: 'user_other', accountId: ACCOUNT }])).toEqual({ updated: 0 });
+    expect(await finish(t, true, [{ userId: USER_B, accountId: ACCOUNT }])).toEqual({ updated: 1 });
+    expect((await grantRow(t, USER_B))?.nylasGrantRevokedAt).toBeNumber();
+    // A finish again changes nothing: the rows no longer hold the claim.
+    expect(await finish(t, false, claim.holders)).toEqual({ updated: 0 });
+  });
+
+  test('the claim refuses what the plan refuses, and a grant that the account does not keep', async () => {
+    const t = newHarness();
+    await expect(t.mutation(api.googleDirect.claimNylasGrantCleanup, claimArgs())).resolves.toEqual({
+      claimed: false,
+      reason: 'The account was not found.',
+    });
+    await seedNylasAccount(t);
+    await switchAccount(t);
+    expect(
+      await t.mutation(api.googleDirect.claimNylasGrantCleanup, claimArgs({ nylasGrantId: 'another-grant' })),
+    ).toEqual({ claimed: false, reason: 'The account keeps another Nylas grant.' });
+    expect(
+      await t.mutation(api.googleDirect.claimNylasGrantCleanup, {
         internalSecret: SECRET,
-        nylasGrantId: 'older-nylas-grant',
+        nylasGrantId: NYLAS_GRANT,
+        switchedBefore: 0,
       }),
-    ).toEqual({ cleared: 0 });
-    expect((await grantRow(t))?.previousNylasGrantId).toBe('older-nylas-grant');
+    ).toEqual({ claimed: false, reason: 'A connection switched too recently.' });
+    expect(
+      await t.mutation(api.googleDirect.claimNylasGrantCleanup, {
+        internalSecret: SECRET,
+        nylasGrantId: 'nobody-keeps-this',
+        switchedBefore: Date.now() + HOUR,
+      }),
+    ).toEqual({ claimed: false, reason: 'No connection keeps this Nylas grant.' });
+    expect((await grantRow(t))?.previousNylasGrantId).toBe(NYLAS_GRANT);
     await expect(
-      t.mutation(api.googleDirect.clearPreviousNylasGrant, { internalSecret: 'wrong', nylasGrantId: 'x' }),
+      t.mutation(api.googleDirect.claimNylasGrantCleanup, claimArgs({ internalSecret: 'wrong' })),
+    ).rejects.toThrow('Invalid Convex internal secret.');
+    await expect(
+      t.mutation(api.googleDirect.finishNylasGrantCleanup, {
+        internalSecret: 'wrong',
+        nylasGrantId: NYLAS_GRANT,
+        holders: [],
+        deleted: true,
+      }),
     ).rejects.toThrow('Invalid Convex internal secret.');
   });
 
@@ -347,10 +447,8 @@ describe('clearPreviousNylasGrant', () => {
     const t = newHarness();
     await seedNylasAccount(t);
     await switchAccount(t);
-    await t.mutation(api.googleDirect.clearPreviousNylasGrant, {
-      internalSecret: SECRET,
-      nylasGrantId: NYLAS_GRANT,
-    });
+    await t.mutation(api.googleDirect.claimNylasGrantCleanup, claimArgs());
+    await finish(t, true);
     // The user connects through Nylas again (a new Nylas grant), then switches again.
     await patchRows(t, USER, {
       account: { grantId: 'new-nylas-grant' },

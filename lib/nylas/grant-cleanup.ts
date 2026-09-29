@@ -57,9 +57,22 @@ export interface NylasCleanupReport {
   results: NylasCleanupResult[];
 }
 
+/** A connection that a claim holds (claimNylasGrantCleanup). */
+export interface NylasCleanupHolder {
+  userId: string;
+  accountId: string;
+}
+
+export type NylasCleanupClaim =
+  | { claimed: true; holders: NylasCleanupHolder[] }
+  | { claimed: false; reason: string };
+
 export interface NylasCleanupDeps {
   plan(args: NylasCleanupPlanArgs): Promise<NylasCleanupPlan>;
-  clear(nylasGrantId: string): Promise<{ cleared: number }>;
+  /** googleDirect:claimNylasGrantCleanup: checks the grant again and holds it. */
+  claim(nylasGrantId: string, args: NylasCleanupPlanArgs): Promise<NylasCleanupClaim>;
+  /** googleDirect:finishNylasGrantCleanup: records the delete, or gives the grant back. */
+  finish(nylasGrantId: string, holders: NylasCleanupHolder[], deleted: boolean): Promise<{ updated: number }>;
   deleteGrant(grantId: string): Promise<'deleted' | 'not_found'>;
   now(): number;
 }
@@ -110,18 +123,26 @@ export function nylasCleanupPlanArgs(target: NylasCleanupTarget, now: number): N
   return { switchedBefore: now - target.olderThanHours * HOUR_MS };
 }
 
+/** The message of a thrown value. */
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Plans, and with `apply`, runs the cleanup. The dry run (the default) calls
- * only the read-only plan query. With `apply`, each eligible grant is deleted
- * in Nylas first; only a success or a 404 clears the field. A failed delete
- * keeps the field, so the rollback still works for that account.
+ * only the read-only plan query. With `apply`, each eligible grant is first
+ * claimed in Convex (a new check in one transaction; a rollback cannot use a
+ * claimed grant), then deleted in Nylas. A success or a 404 finishes the
+ * claim: the rollback does not work after that. A failed delete gives the
+ * grant back, so the rollback still works for that account.
  */
 export async function runNylasGrantCleanup(input: {
   target: NylasCleanupTarget;
   apply: boolean;
   deps: NylasCleanupDeps;
 }): Promise<NylasCleanupReport> {
-  const plan = await input.deps.plan(nylasCleanupPlanArgs(input.target, input.deps.now()));
+  const planArgs = nylasCleanupPlanArgs(input.target, input.deps.now());
+  const plan = await input.deps.plan(planArgs);
   const results: NylasCleanupResult[] = [];
   for (const item of plan.items) {
     if (!item.eligible || !item.nylasGrantId) {
@@ -132,19 +153,49 @@ export async function runNylasGrantCleanup(input: {
       results.push({ ...item, outcome: 'would_delete' });
       continue;
     }
-    try {
-      const deleted = await input.deps.deleteGrant(item.nylasGrantId);
-      const { cleared } = await input.deps.clear(item.nylasGrantId);
-      results.push({ ...item, outcome: deleted === 'deleted' ? 'deleted' : 'already_gone', cleared });
-    } catch (error) {
-      results.push({
-        ...item,
-        outcome: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    results.push(await cleanUpGrant(item, item.nylasGrantId, planArgs, input.deps));
   }
   return { apply: input.apply, target: input.target, truncated: plan.truncated, results };
+}
+
+/** Claim, delete, finish: one eligible grant of the plan. */
+async function cleanUpGrant(
+  item: NylasCleanupItem,
+  nylasGrantId: string,
+  planArgs: NylasCleanupPlanArgs,
+  deps: NylasCleanupDeps,
+): Promise<NylasCleanupResult> {
+  let claim: NylasCleanupClaim;
+  try {
+    claim = await deps.claim(nylasGrantId, planArgs);
+  } catch (error) {
+    return { ...item, outcome: 'failed', error: `The claim failed: ${errorText(error)}` };
+  }
+  if (!claim.claimed) return { ...item, eligible: false, reason: claim.reason, outcome: 'skipped' };
+
+  let deleted: 'deleted' | 'not_found';
+  try {
+    deleted = await deps.deleteGrant(nylasGrantId);
+  } catch (error) {
+    const release = await deps
+      .finish(nylasGrantId, claim.holders, false)
+      .then(() => ' The grant is given back; the rollback still works.')
+      .catch(
+        (releaseError) =>
+          ` The release also failed (${errorText(releaseError)}); the rows keep nylasGrantDeletePending.`,
+      );
+    return { ...item, outcome: 'failed', error: `${errorText(error)}.${release}` };
+  }
+  try {
+    const { updated } = await deps.finish(nylasGrantId, claim.holders, true);
+    return { ...item, outcome: deleted === 'deleted' ? 'deleted' : 'already_gone', cleared: updated };
+  } catch (error) {
+    return {
+      ...item,
+      outcome: 'failed',
+      error: `Nylas has no such grant now, but the record failed (${errorText(error)}); the rows keep nylasGrantDeletePending.`,
+    };
+  }
 }
 
 const OUTCOME_LABEL: Record<NylasCleanupOutcome, string> = {

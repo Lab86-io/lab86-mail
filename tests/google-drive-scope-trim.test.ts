@@ -5,6 +5,7 @@ import {
   GoogleWriteError,
   updateGoogleNativeFile,
 } from '../lib/documents/google';
+import { googleErrorReasons, isGoogleAppAccessDenied } from '../lib/documents/google-access';
 import {
   __setGoogleWorkingCopyDepsForTest,
   GOOGLE_WORKING_COPY_NOT_APP_FILE,
@@ -126,6 +127,36 @@ describe('Doc write-back rename', () => {
     installDocs({ name: 'Memo', rename: () => googleError(401, 'authError') });
     await expect(save('Renamed')).rejects.toThrow('Reconnect Google Drive');
   });
+
+  test('only an app-access 403 skips the rename; a limit, a quota, or no reason fails as before', async () => {
+    for (const rename of [
+      () => googleError(403, 'userRateLimitExceeded'),
+      () => googleError(403, 'storageQuotaExceeded'),
+      () => googleError(403, 'insufficientFilePermissions'),
+      () => new Response('', { status: 403 }),
+    ]) {
+      installDocs({ name: 'Memo', rename });
+      const failure = await save('Renamed').catch((error) => error);
+      expect(failure).toBeInstanceOf(GoogleWriteError);
+      expect(failure.status).toBe(403);
+    }
+
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // Newer Google APIs name the missing scope in error.details.
+      installDocs({
+        name: 'Memo',
+        rename: () =>
+          Response.json(
+            { error: { code: 403, details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] } },
+            { status: 403 },
+          ),
+      });
+      expect(await save('Renamed')).toMatchObject({ title: 'Memo', renameSkipped: true });
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe('Office working-copy save', () => {
@@ -181,16 +212,26 @@ describe('Office working-copy save', () => {
     expect(failure.status).toBe(403);
     expect(GOOGLE_WORKING_COPY_NOT_APP_FILE).toContain('only the Google files that it made');
 
-    installWorkingCopy(() => new Response('forbidden', { status: 403 }));
+    installWorkingCopy(() => googleError(403, 'insufficientPermissions'));
     await expect(saveCopy()).rejects.toThrow(GOOGLE_WORKING_COPY_NOT_APP_FILE);
   });
 
-  test('a rate limit 403 and an expired sign-in keep their own errors', async () => {
-    installWorkingCopy(() => googleError(403, 'userRateLimitExceeded'));
-    const limited = await saveCopy().catch((error) => error);
-    expect(limited.message).not.toBe(GOOGLE_WORKING_COPY_NOT_APP_FILE);
-    expect(limited.message).toContain('Google write access is missing');
+  test('a rate limit, a quota, a user permission, or no reason keeps the old 403 error', async () => {
+    for (const upload of [
+      () => googleError(403, 'userRateLimitExceeded'),
+      () => googleError(403, 'storageQuotaExceeded'),
+      () => googleError(403, 'insufficientFilePermissions'),
+      () => new Response('forbidden', { status: 403 }),
+    ]) {
+      installWorkingCopy(upload);
+      const failure = await saveCopy().catch((error) => error);
+      expect(failure.message).not.toBe(GOOGLE_WORKING_COPY_NOT_APP_FILE);
+      expect(failure.message).toContain('Google write access is missing');
+      expect(failure.status).toBe(403);
+    }
+  });
 
+  test('an expired sign-in keeps its own error', async () => {
     installWorkingCopy(() => googleError(401, 'authError'));
     await expect(saveCopy()).rejects.toThrow('Reconnect Google Drive');
   });
@@ -216,5 +257,26 @@ describe('Office working-copy save', () => {
     const unversioned = await saveCopy().catch((error) => error);
     expect(unversioned.status).toBe(502);
     expect(unversioned.message).toContain('did not return its new version');
+  });
+});
+
+describe('Google 403 reasons', () => {
+  test('reads the reasons of errors[] and details[], and ignores bodies with none', () => {
+    expect(
+      googleErrorReasons({
+        error: { errors: [{ reason: 'appNotAuthorizedToFile' }, {}], details: [{ reason: 'X' }, null] },
+      }),
+    ).toEqual(['appNotAuthorizedToFile', 'X']);
+    expect(googleErrorReasons(null)).toEqual([]);
+    expect(googleErrorReasons('not json')).toEqual([]);
+    expect(googleErrorReasons({ error: { errors: 'bad' } })).toEqual([]);
+  });
+
+  test('only an app-access reason on a 403 counts', () => {
+    expect(isGoogleAppAccessDenied(403, ['appNotAuthorizedToFile'])).toBe(true);
+    expect(isGoogleAppAccessDenied(403, ['userRateLimitExceeded', 'insufficientPermissions'])).toBe(true);
+    expect(isGoogleAppAccessDenied(403, ['storageQuotaExceeded'])).toBe(false);
+    expect(isGoogleAppAccessDenied(403, [])).toBe(false);
+    expect(isGoogleAppAccessDenied(401, ['appNotAuthorizedToFile'])).toBe(false);
   });
 });

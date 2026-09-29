@@ -1,6 +1,7 @@
 import { getCloudFileAccess, listCloudFileConnections } from '@/lib/files/connections';
 import { truncateText } from '@/lib/shared/text';
 import { upgradeDeckModel } from './deck-versions';
+import { googleErrorReasons, isGoogleAppAccessDenied } from './google-access';
 import {
   assertGoogleFileEditable,
   GOOGLE_QUOTE_COLOR,
@@ -60,11 +61,16 @@ export class GoogleDocumentConflictError extends Error {
   }
 }
 
-/** A failed Google write. `status` is the HTTP status of the Google answer. */
+/**
+ * A failed Google write. `status` is the HTTP status of the Google answer, and
+ * `reasons` are the error reasons of its body (for example
+ * `appNotAuthorizedToFile`).
+ */
 export class GoogleWriteError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly reasons: readonly string[] = [],
   ) {
     super(message);
     this.name = 'GoogleWriteError';
@@ -101,15 +107,18 @@ async function googleJson(
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = String(payload?.error?.message || '');
+    const reasons = googleErrorReasons(payload);
     if (response.status === 401 || response.status === 403) {
       throw new GoogleWriteError(
         'Google write access is missing or expired. Reconnect Google Drive and try again.',
         response.status,
+        reasons,
       );
     }
     throw new GoogleWriteError(
       detail ? `Google could not update this file: ${detail}` : 'Google could not update this file.',
       response.status,
+      reasons,
     );
   }
   return payload;
@@ -230,6 +239,7 @@ async function syncGoogleDoc(
   );
 }
 
+/** The Drive name, web link, and version of a file. */
 async function googleDriveMetadata(accessToken: string, fileId: string) {
   const payload = await googleJson(
     accessToken,
@@ -677,9 +687,11 @@ export async function updateGoogleNativeFile(input: {
 /**
  * Renames a Google file after its content is saved. The Drive API renames a
  * file only with the full `drive` scope, or with `drive.file` for a file that
- * Albatross made. Albatross does not ask for `drive`, so Google refuses (403)
- * the rename of a Doc that the user made in Google. The content is saved at
- * that point, so the rename is skipped and the file keeps its Google name.
+ * Albatross made. Albatross does not ask for `drive`, so Google refuses (403,
+ * an app-access reason) the rename of a Doc that the user made in Google. The
+ * content is saved at that point, so the rename is skipped and the file keeps
+ * its Google name. Each other failure (a rate limit, a quota, a 403 with no
+ * reason) goes to the caller as before.
  */
 async function renameGoogleFile(accessToken: string, fileId: string, title: string) {
   try {
@@ -693,7 +705,7 @@ async function renameGoogleFile(accessToken: string, fileId: string, title: stri
     );
     return true;
   } catch (error) {
-    if (error instanceof GoogleWriteError && error.status === 403) {
+    if (error instanceof GoogleWriteError && isGoogleAppAccessDenied(error.status, error.reasons)) {
       console.warn('[google-docs] rename skipped: Drive write access covers only files that Albatross made');
       return false;
     }

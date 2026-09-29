@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   deleteNylasGrant,
   formatNylasCleanupReport,
+  type NylasCleanupClaim,
   type NylasCleanupDeps,
   type NylasCleanupItem,
   type NylasCleanupPlanArgs,
@@ -76,17 +77,31 @@ describe('deleteNylasGrant', () => {
   });
 });
 
+const HOLDERS = [{ userId: 'user_a', accountId: 'account_a' }];
+
 function harness(
   items: NylasCleanupItem[],
-  options: { deleteResult?: 'deleted' | 'not_found' | Error } = {},
+  options: {
+    deleteResult?: 'deleted' | 'not_found' | Error;
+    claim?: NylasCleanupClaim | Error;
+    finishError?: { deleted: boolean; error: Error };
+  } = {},
 ) {
   const planned: NylasCleanupPlanArgs[] = [];
+  const claims: Array<{ grantId: string; args: NylasCleanupPlanArgs }> = [];
   const deleted: string[] = [];
   const cleared: string[] = [];
+  const released: string[] = [];
   const deps: NylasCleanupDeps = {
     plan: async (args) => {
       planned.push(args);
       return { items, truncated: false };
+    },
+    claim: async (grantId, args) => {
+      claims.push({ grantId, args });
+      const claim = options.claim ?? { claimed: true, holders: HOLDERS };
+      if (claim instanceof Error) throw claim;
+      return claim;
     },
     deleteGrant: async (grantId) => {
       deleted.push(grantId);
@@ -94,13 +109,15 @@ function harness(
       if (result instanceof Error) throw result;
       return result;
     },
-    clear: async (grantId) => {
-      cleared.push(grantId);
-      return { cleared: 1 };
+    finish: async (grantId, holders, wasDeleted) => {
+      expect(holders).toEqual(HOLDERS);
+      if (options.finishError?.deleted === wasDeleted) throw options.finishError.error;
+      (wasDeleted ? cleared : released).push(grantId);
+      return { updated: holders.length };
     },
     now: () => Date.UTC(2026, 8, 29),
   };
-  return { deps, planned, deleted, cleared };
+  return { deps, planned, claims, deleted, cleared, released };
 }
 
 const eligible: NylasCleanupItem = { nylasGrantId: NYLAS_GRANT, eligible: true, connections: [connection] };
@@ -112,8 +129,8 @@ const refused: NylasCleanupItem = {
 };
 
 describe('runNylasGrantCleanup', () => {
-  test('a dry run lists what it would delete and calls neither Nylas nor the clear mutation', async () => {
-    const { deps, planned, deleted, cleared } = harness([eligible, refused]);
+  test('a dry run lists what it would delete and calls neither Nylas nor a mutation', async () => {
+    const { deps, planned, claims, deleted, cleared } = harness([eligible, refused]);
     const report = await runNylasGrantCleanup({
       target: { kind: 'age', olderThanHours: 72 },
       apply: false,
@@ -121,6 +138,7 @@ describe('runNylasGrantCleanup', () => {
     });
     expect(planned).toEqual([{ switchedBefore: Date.UTC(2026, 8, 29) - 72 * 3_600_000 }]);
     expect(report.results.map((result) => result.outcome)).toEqual(['would_delete', 'skipped']);
+    expect(claims).toEqual([]);
     expect(deleted).toEqual([]);
     expect(cleared).toEqual([]);
     const lines = formatNylasCleanupReport(report);
@@ -132,14 +150,16 @@ describe('runNylasGrantCleanup', () => {
     expect(lines.at(-1)).toBe('Would delete 1, skip 1. Add --apply to delete.');
   });
 
-  test('apply deletes an eligible grant, then clears it; a skipped item is left alone', async () => {
-    const { deps, planned, deleted, cleared } = harness([eligible, refused]);
+  test('apply claims an eligible grant, deletes it, then finishes; a skipped item is left alone', async () => {
+    const { deps, planned, claims, deleted, cleared } = harness([eligible, refused]);
     const report = await runNylasGrantCleanup({
       target: { kind: 'account', userId: 'user_a', accountId: 'account_a' },
       apply: true,
       deps,
     });
     expect(planned).toEqual([{ userId: 'user_a', accountId: 'account_a' }]);
+    // The claim checks the grant again with the same target as the plan.
+    expect(claims).toEqual([{ grantId: NYLAS_GRANT, args: { userId: 'user_a', accountId: 'account_a' } }]);
     expect(deleted).toEqual([NYLAS_GRANT]);
     expect(cleared).toEqual([NYLAS_GRANT]);
     expect(report.results[0]).toMatchObject({ outcome: 'deleted', cleared: 1 });
@@ -161,18 +181,75 @@ describe('runNylasGrantCleanup', () => {
     expect(cleared).toEqual([NYLAS_GRANT]);
   });
 
-  test('a failed delete keeps the field, so the rollback still works', async () => {
-    const { deps, cleared } = harness([eligible], { deleteResult: new NylasGrantDeleteError(500, 'boom') });
+  test('a failed delete gives the grant back, so the rollback still works', async () => {
+    const { deps, cleared, released } = harness([eligible], {
+      deleteResult: new NylasGrantDeleteError(500, 'boom'),
+    });
     const report = await runNylasGrantCleanup({
       target: { kind: 'age', olderThanHours: 1 },
       apply: true,
       deps,
     });
-    expect(report.results[0]).toMatchObject({ outcome: 'failed', error: 'Nylas answered 500: boom' });
+    const error = 'Nylas answered 500: boom. The grant is given back; the rollback still works.';
+    expect(report.results[0]).toMatchObject({ outcome: 'failed', error });
     expect(cleared).toEqual([]);
+    expect(released).toEqual([NYLAS_GRANT]);
     const lines = formatNylasCleanupReport(report);
-    expect(lines).toContain('  error: Nylas answered 500: boom');
+    expect(lines).toContain(`  error: ${error}`);
     expect(lines.at(-1)).toBe('Deleted 0, already gone 0, skipped 0, failed 1.');
+  });
+
+  test('a failed release says that the rows keep the claim', async () => {
+    const { deps } = harness([eligible], {
+      deleteResult: new NylasGrantDeleteError(503, ''),
+      finishError: { deleted: false, error: new Error('Convex down') },
+    });
+    const report = await runNylasGrantCleanup({
+      target: { kind: 'age', olderThanHours: 1 },
+      apply: true,
+      deps,
+    });
+    expect(report.results[0].error).toBe(
+      'Nylas answered 503. The release also failed (Convex down); the rows keep nylasGrantDeletePending.',
+    );
+  });
+
+  test('a refused claim skips the grant with its reason and deletes nothing', async () => {
+    const { deps, deleted } = harness([eligible], {
+      claim: { claimed: false, reason: 'A connection still uses this Nylas grant.' },
+    });
+    const report = await runNylasGrantCleanup({
+      target: { kind: 'age', olderThanHours: 1 },
+      apply: true,
+      deps,
+    });
+    expect(report.results[0]).toMatchObject({
+      outcome: 'skipped',
+      eligible: false,
+      reason: 'A connection still uses this Nylas grant.',
+    });
+    expect(deleted).toEqual([]);
+  });
+
+  test('a claim that throws, and a record that fails after the delete, are failures', async () => {
+    const thrown = harness([eligible], { claim: new Error('no secret') });
+    const claimFailed = await runNylasGrantCleanup({
+      target: { kind: 'age', olderThanHours: 1 },
+      apply: true,
+      deps: thrown.deps,
+    });
+    expect(claimFailed.results[0]).toMatchObject({ outcome: 'failed', error: 'The claim failed: no secret' });
+    expect(thrown.deleted).toEqual([]);
+
+    const recorded = harness([eligible], { finishError: { deleted: true, error: new Error('timeout') } });
+    const recordFailed = await runNylasGrantCleanup({
+      target: { kind: 'age', olderThanHours: 1 },
+      apply: true,
+      deps: recorded.deps,
+    });
+    expect(recorded.deleted).toEqual([NYLAS_GRANT]);
+    expect(recordFailed.results[0].outcome).toBe('failed');
+    expect(recordFailed.results[0].error).toContain('the record failed (timeout)');
   });
 
   test('an item with no Nylas grant is skipped; an empty and a truncated plan say so', async () => {

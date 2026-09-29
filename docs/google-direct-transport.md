@@ -260,13 +260,17 @@ What the command does:
 - It reads the plan from `googleDirect:nylasGrantCleanupPlan`. This query
   changes nothing.
 - The default is a dry run. Only `--apply` deletes.
-- For each eligible grant, it calls the Nylas v3 API
-  `DELETE /v3/grants/{grantId}`. A success or a 404 counts as done.
-- Then `googleDirect:clearPreviousNylasGrant` clears `previousNylasGrantId`
-  and sets `nylasGrantRevokedAt` on each direct connection that kept the
-  grant.
-- A failed delete keeps the field, so the rollback still works for that
-  account. The command then exits with code 1.
+- For each eligible grant, `googleDirect:claimNylasGrantCleanup` first checks
+  the grant again in one transaction. Then it moves the grant from
+  `previousNylasGrantId` to `nylasGrantDeletePending` on each connection that
+  keeps it. From this point, `rollbackToNylas` cannot use the grant.
+- Then the command calls the Nylas v3 API `DELETE /v3/grants/{grantId}`. A
+  success or a 404 counts as done. `googleDirect:finishNylasGrantCleanup`
+  then sets `nylasGrantRevokedAt` on the connections that the claim holds.
+- A failed delete gives the grant back to `previousNylasGrantId`, so the
+  rollback still works for that account. The command then exits with code 1.
+- If a run stops between the claim and the finish, the rows keep
+  `nylasGrantDeletePending`. The dry run for that account tells you so.
 - Nylas then sends `grant.deleted` for the grant. The webhook marks the
   accounts on that grant for a reconnect. No account is on it, so nothing
   changes.

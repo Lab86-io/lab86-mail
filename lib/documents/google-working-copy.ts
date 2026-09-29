@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { getCloudFileAccess } from '@/lib/files/connections';
 import { decryptSecret, encryptSecret } from '@/lib/security/crypto';
+import { googleErrorReasons, isGoogleAppAccessDenied } from './google-access';
 import {
   OFFICE_MIME,
   OfficeError,
@@ -48,18 +49,19 @@ async function access(userId: string, connectionId: string) {
 export const GOOGLE_WORKING_COPY_NOT_APP_FILE =
   'Google did not save your edits: Albatross can change only the Google files that it made. Your edited copy is still in Albatross. Download it to keep your changes.';
 
-const RATE_LIMIT_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded', 'dailyLimitExceeded']);
-
-/** The Google error reason of a failed answer, for example `appNotAuthorizedToFile`. */
-async function googleErrorReason(response: Response) {
+/** The error reasons of a failed Google answer, for example `appNotAuthorizedToFile`. */
+async function responseErrorReasons(response: Response) {
   const payload = await response
     .clone()
     .json()
     .catch(() => null);
-  const reason = payload?.error?.errors?.[0]?.reason ?? payload?.error?.status;
-  return typeof reason === 'string' ? reason : '';
+  return googleErrorReasons(payload);
 }
 
+/**
+ * One Drive call with the user's token. It maps a failed answer to an
+ * OfficeError; `options.forbidden` replaces the message of an app-access 403.
+ */
 async function request(
   token: string,
   url: string,
@@ -77,11 +79,14 @@ async function request(
       'The original changed in Google. Download its latest version before saving your edits.',
       409,
     );
-  if (response.status === 403 && options.forbidden) {
-    // Google also answers 403 for a rate limit; that is not a missing access.
-    if (!RATE_LIMIT_REASONS.has(await googleErrorReason(response))) {
-      throw new OfficeError(options.forbidden, 403);
-    }
+  // Only an app-access reason gets the caller's message. A rate limit, a
+  // quota, or a 403 with no reason keeps the error below.
+  if (
+    response.status === 403 &&
+    options.forbidden &&
+    isGoogleAppAccessDenied(403, await responseErrorReasons(response))
+  ) {
+    throw new OfficeError(options.forbidden, 403);
   }
   if (response.status === 401 || response.status === 403)
     throw new OfficeError(
@@ -228,8 +233,8 @@ export async function saveGoogleWorkingCopy(input: {
       headers: { 'Content-Type': `multipart/related; boundary=${boundary}`, 'If-Match': session.etag },
       body,
     },
-    // The metadata said that the user can edit the file, so a 403 here means
-    // that Albatross did not make it.
+    // The metadata said that the user can edit the file, so an app-access
+    // 403 here means that Albatross did not make it.
     { forbidden: GOOGLE_WORKING_COPY_NOT_APP_FILE },
   );
   const saved = await response.json();

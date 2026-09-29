@@ -286,21 +286,21 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
 - **Feature.** The user makes a new Google Doc, Sheet, or Slides file from an
   Albatross document. Albatross writes the content into that new file.
 - **Code.**
-  - `publishDocumentToGoogle` (`lib/documents/google.ts:557-631`) makes the
-    file with `createGoogleFile` (`:531-555`). Then it writes the content with
-    the Docs, Sheets, or Slides writer (`:123`, `:292`, `:502`).
+  - `publishDocumentToGoogle` (`lib/documents/google.ts:567-641`) makes the
+    file with `createGoogleFile` (`:541-565`). Then it writes the content with
+    the Docs, Sheets, or Slides writer (`:132`, `:302`, `:512`).
   - The create methods and the `batchUpdate` methods of Docs, Sheets, and
     Slides accept `drive.file`
     (<https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/create>,
     <https://developers.google.com/workspace/slides/api/reference/rest/v1/presentations/create>).
-  - It reads the Drive metadata of the new file (`lib/documents/google.ts:233-246`).
+  - It reads the Drive metadata of the new file (`lib/documents/google.ts:243-256`).
   - Route `POST /api/documents/[id]/google`, called from
     `components/files/DocumentEditor.tsx:440`.
   - The Office working-copy save replaces a Google file with a Drive v2 upload
-    (`lib/documents/google-working-copy.ts:223-234`). With `drive.file`, this
+    (`lib/documents/google-working-copy.ts:228-239`). With `drive.file`, this
     works only for a file that Albatross made. For another file, Google
     refuses the upload. Albatross then shows a clear message
-    (`GOOGLE_WORKING_COPY_NOT_APP_FILE`, `:48`), and the edited copy stays in
+    (`GOOGLE_WORKING_COPY_NOT_APP_FILE`, `:49`), and the edited copy stays in
     Albatross.
 - **Narrower scope.** `drive.file` is the narrowest Drive scope that lets an
   app make files and change the files that it made.
@@ -314,16 +314,17 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
 - **Code.**
   - Read: `lib/documents/google-import.ts:287`.
   - Write back to an existing Doc: `updateGoogleNativeFile`
-    (`lib/documents/google.ts:633-675`) calls `syncGoogleDoc`, which sends
-    `documents.batchUpdate` (`:220`). Only a Doc can go back to its Google
-    original (`lib/documents/google.ts:644`,
+    (`lib/documents/google.ts:643-685`) calls `syncGoogleDoc`, which sends
+    `documents.batchUpdate` (`:229`). Only a Doc can go back to its Google
+    original (`lib/documents/google.ts:654`,
     `lib/documents/google-write-policy.ts:53-62`).
   - After the save, Albatross renames the Doc when the user changed the
-    title (`renameGoogleFile`, `lib/documents/google.ts:684-702`, Drive v3
+    title (`renameGoogleFile`, `lib/documents/google.ts:696-714`, Drive v3
     `PATCH`). The Drive API renames a file only with `drive`, or with
     `drive.file` for a file that the app made. For a Doc that the user made in
-    Google, Google refuses the rename (403). Albatross then keeps the Google
-    name and tells the user. The content save does not depend on the rename.
+    Google, Google refuses the rename (403 with an app-access reason, for
+    example `appNotAuthorizedToFile`). Albatross then keeps the Google name and
+    tells the user. The content save does not depend on the rename.
   - Route `PATCH /api/files/google/editor`, called from
     `components/files/DocumentEditor.tsx:997` and `:1073`.
   - The assistant tool `google_document_edit` only proposes a change. The user
@@ -354,13 +355,17 @@ These notes are not for the reviewer. Each note has the decision of the owner.
    (decision of 2026-09-29).** Two calls change a user's original file through
    the Drive API. For a file that the app did not make, these calls need the
    full `drive` scope, and Albatross does not ask for it. Both calls fail soft:
-   - The rename after a Doc write back (`lib/documents/google.ts:684-702`,
-     Drive v3 `PATCH`). A 403 skips the rename. The content is saved, the file
-     keeps its Google name, and the editor tells the user.
-   - The Office working-copy save (`lib/documents/google-working-copy.ts:223-234`,
-     Drive v2 upload). A 403 gives the message "Google did not save your
-     edits: Albatross can change only the Google files that it made." The
-     edited copy stays in Albatross. A 403 for a rate limit keeps the old
+   - The rename after a Doc write back (`lib/documents/google.ts:696-714`,
+     Drive v3 `PATCH`). A 403 with an app-access reason
+     (`lib/documents/google-access.ts`) skips the rename. The content is
+     saved, the file keeps its Google name, and the editor tells the user.
+     Each other failure (a rate limit, a quota, a 403 with no reason) fails
+     the save as before.
+   - The Office working-copy save (`lib/documents/google-working-copy.ts:228-239`,
+     Drive v2 upload). A 403 with an app-access reason gives the message
+     "Google did not save your edits: Albatross can change only the Google
+     files that it made." The edited copy stays in Albatross. Each other 403
+     (a rate limit, a quota, a user permission, no reason) keeps the old
      error.
    - Do not show these two actions on a file that Albatross did not make in the
      demo video.

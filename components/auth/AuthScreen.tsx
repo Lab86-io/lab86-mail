@@ -41,6 +41,7 @@ export function AuthScreen({ children }: { children: ReactNode }) {
   );
 }
 
+/** The quiet legal row under the sign-in form: the product and company, then Privacy and Terms. */
 export function AuthFooter() {
   return (
     <footer className="relative z-10 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 pb-6 text-[12px] text-[var(--color-text-muted)]">

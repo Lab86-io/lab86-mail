@@ -199,6 +199,11 @@ export default defineSchema({
     // The cleanup deletes only the Nylas grants of switches older than a set
     // age. Switches from before this field have no value.
     switchedToGoogleAt: v.optional(v.number()),
+    // The Nylas grant that a cleanup run claimed and can delete now. While it
+    // is set, previousNylasGrantId is empty, so a rollback cannot use the
+    // grant. The run clears it: with nylasGrantRevokedAt after the delete, or
+    // back to previousNylasGrantId when the delete fails.
+    nylasGrantDeletePending: v.optional(v.string()),
     // When the cleanup deleted the Nylas grant. A rollback is not possible
     // after this time.
     nylasGrantRevokedAt: v.optional(v.number()),

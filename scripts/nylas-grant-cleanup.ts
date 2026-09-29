@@ -3,8 +3,9 @@
  *
  * DRY RUN BY DEFAULT. Without --apply it lists what it would delete and
  * changes nothing. With --apply it calls the Nylas v3 API
- * `DELETE /v3/grants/{grantId}` for each eligible grant. On success (or a
- * 404) it clears `previousNylasGrantId` and records `nylasGrantRevokedAt`.
+ * `DELETE /v3/grants/{grantId}` for each eligible grant. First it claims the
+ * grant in Convex, so that a rollback cannot use it. On success (or a 404)
+ * it records `nylasGrantRevokedAt`; on a failure it gives the grant back.
  * After that, `googleDirect:rollbackToNylas` does not work for the account.
  *
  * The procedure is in docs/google-direct-transport.md, section "Cleanup".
@@ -24,6 +25,7 @@ import {
   deleteNylasGrant,
   formatNylasCleanupReport,
   NYLAS_CLEANUP_USAGE,
+  type NylasCleanupClaim,
   type NylasCleanupPlan,
   parseNylasCleanupArgs,
   runNylasGrantCleanup,
@@ -57,8 +59,14 @@ const report = await runNylasGrantCleanup({
   apply: parsed.apply,
   deps: {
     plan: (args) => convexQuery<NylasCleanupPlan>(api.googleDirect.nylasGrantCleanupPlan, args),
-    clear: (nylasGrantId) =>
-      convexMutation<{ cleared: number }>(api.googleDirect.clearPreviousNylasGrant, { nylasGrantId }),
+    claim: (nylasGrantId, args) =>
+      convexMutation<NylasCleanupClaim>(api.googleDirect.claimNylasGrantCleanup, { nylasGrantId, ...args }),
+    finish: (nylasGrantId, holders, deleted) =>
+      convexMutation<{ updated: number }>(api.googleDirect.finishNylasGrantCleanup, {
+        nylasGrantId,
+        holders,
+        deleted,
+      }),
     deleteGrant: (grantId) => deleteNylasGrant(grantId, { apiKey, apiUri: process.env.NYLAS_API_URI }),
     now: () => Date.now(),
   },
