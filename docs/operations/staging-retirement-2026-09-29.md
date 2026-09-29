@@ -120,6 +120,29 @@ mail staging/development; its other `My First Project` was not attributed to thi
 retirement and was left intact. The separate `lab86-mail-prod` project accessible
 to the Gmail account is not the live project and was also left intact.
 
+## Retained data and documentation follow-up
+
+The three retired Convex deployments return 404; live `proficient-viper-594` returns
+200. Convex's [deployment deletion API](https://docs.convex.dev/management-api/delete-deployment)
+deletes the deployment's database records and stored files. There is no separate
+staging table purge to perform on production. The retired staging deployment's
+cloud-backup listing also returns `DeploymentNotFound`; the production deployment's
+cloud-backup list was empty when checked on September 29. No production data was
+deleted as part of retirement.
+
+Private local recovery exports remain outside Git: the main staging ZIP is
+2,181,973,982 bytes (about 2.18 GB), with much smaller exports for the other two
+retired deployments. These local files incur no Convex storage usage. Retain the
+configuration and encryption keys needed to recover the encrypted records with
+the exports. Removing a recovery export is a separate decision from retiring a
+hosted deployment.
+
+Current Drive OAuth, Google transport, reviewer-account, model-credential,
+encryption-rotation, CSP, and native rollout documentation now follows the
+production-only release model. Historical implementation notes, tags, disabled
+workflow records, and native compatibility fixtures remain as history. Local
+Convex and Clerk development authentication remain available for isolated testing.
+
 ## CI follow-up
 
 Native macOS acceptance passed in both runs `36595319165` and `36599722019`.

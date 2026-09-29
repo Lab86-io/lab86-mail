@@ -1,7 +1,7 @@
 # Test accounts for the lab and for Google reviewers
 
-Product: Albatross, from Lab86. Status of this text: 2026-09-28, branch
-`claude/casa-verify`.
+Product: Albatross, from Lab86. Updated: 2026-09-29 for the
+[production-only release model](../hosted-release-runbook.md).
 
 ## Who must have what
 
@@ -82,24 +82,20 @@ Then open Today and let the Daily Brief operate one time.
 - The scan can send mail from the test mailbox through `/api/compose`. The
   route sends to each address in To, Cc, and Bcc, so synthetic contacts do
   not stop mail to a live person. Stop the sends before the scan:
-  - On staging, set `LAB86_DISABLE_OUTBOUND_SEND=1` on service `web` in the
-    Railway environment `development` for the scan window. Then each mail
-    send (compose, reply, scheduled send, and the outbox) stops with an error
-    before it goes to the provider. `sendNylasMessage` and the direct Google
-    adapter send both call `assertOutboundSendEnabled`
-    (`lib/hosted/controls.ts`). Remove the variable after the scan.
-  - Do not set this variable on production: it stops the mail of all users.
-    For a production scan, put the test account in its own organizational
+  - For the hosted scan, put the test account in its own organizational
     unit, and set Google Workspace Gmail > Compliance > Restrict delivery for
-    that unit to `lab86.io` only.
-  - The variable does not stop calendar invitations. A new event with
+    that unit to `lab86.io` only. Verify this restriction with the test account
+    before the scan. Keep `LAB86_DISABLE_OUTBOUND_SEND` unset in production:
+    it stops mail for all users, rather than only the review account.
+  - For isolated local rehearsal, `LAB86_DISABLE_OUTBOUND_SEND=1` stops compose,
+    reply, scheduled-send, and outbox sends before they reach the provider
+    (`assertOutboundSendEnabled` in `lib/hosted/controls.ts`).
+  - Mail send restrictions do not stop calendar invitations. A new event with
     participants can make Google Calendar send an invitation
     (`lib/calendar/mutate.ts`). Ask TAC to keep the calendar write routes out
     of the active scan, or accept this risk.
-- Tell TAC that the staging host `mail-staging.lab86.io` has HTTP Basic auth.
-  Scan production with the test account and the Workspace restriction above.
-  Or scan staging with the variable above, and give TAC the staging Basic
-  auth pair through the portal.
+- Give TAC the production URL and dedicated test login through the portal.
+  Use the Workspace restriction above and the agreed scan window.
 
 ## Information for the TAC form
 

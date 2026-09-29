@@ -112,7 +112,10 @@ After the casa-prep round:
   a Google Drive connection of the same user and address shares the grant;
   another live Google connection of any user in the deployment (a Nylas or
   direct mailbox, or a Google Drive connection) uses the address; or the
-  deployment is not production (staging uses the production Google project).
+  deployment is not production and `LAB86_GOOGLE_REVOKE=1` is not set.
+  Leaving `LAB86_GOOGLE_REVOKE` unset blocks revocation outside production;
+  setting it to `1` permits revocation when the other shared-grant checks pass.
+  Keep it unset for local OAuth tests that share the production Google project.
   `lib/google/shared-grant.ts` has these rules.
 
 ## Google Drive disconnect

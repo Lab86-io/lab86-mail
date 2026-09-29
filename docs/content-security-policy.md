@@ -69,7 +69,7 @@ all modes. `next dev` sends no policy unless `LAB86_CSP_MODE` is set.
 | `upgrade-insecure-requests` | | Sent on all hosts except plain-HTTP loopback hosts. |
 
 The Convex, Clerk, and office origins come from `NEXT_PUBLIC_CONVEX_URL`, the Clerk publishable key,
-and `OFFICE_DOCUMENT_SERVER_URL`. On staging the Clerk proxy (`/__clerk`) is same-origin.
+and `OFFICE_DOCUMENT_SERVER_URL`. When the Clerk proxy (`/__clerk`) is enabled, it is same-origin.
 
 ## Other response headers (`next.config.ts`, production builds)
 

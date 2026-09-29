@@ -128,20 +128,20 @@ gcloud pubsub subscriptions describe gmail-push-albatross
       `docs/google-direct-transport.md`, section "Cleanup". After the cleanup,
       the rollback to Nylas does not work for the cleaned accounts.
 
-## Step 4: staging model key
+## Step 4: model credentials for local testing
 
-Staging (Railway environment `development`) must not use the production
-OpenRouter key.
+Production is the only permanent hosted environment. Follow the
+[release runbook](../hosted-release-runbook.md) for isolated local testing.
 
-- [ ] In OpenRouter, make a new key named `albatross-staging` with a monthly
-      credit limit.
+- [ ] If a local test needs live model calls, use a separate development key with
+      a monthly credit limit and synthetic input data.
 - [ ] In the OpenRouter account settings (privacy section), turn off each
       option that lets providers train on inputs or log inputs. This setting
       is for the account. It supports the per-call `data_collection: deny`.
-- [ ] In the Railway dashboard, set `OPENROUTER_API_KEY` of service `web` in
-      environment `development` to the new key. Redeploy staging.
-- [ ] Check that the production key and the staging key differ. Do not print
-      either key.
+- [ ] Keep that key in ignored local configuration; preserve the live Railway
+      `production` service's credentials.
+- [ ] Verify that the local key differs from the production key without printing
+      either value.
 
 ## Step 5: Microsoft publisher verification (free)
 

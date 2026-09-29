@@ -47,9 +47,9 @@ source identity + `CONFIGURATION=Debug`); every CI and Release path keeps the fu
    Notifications, Associated Domains, App Groups (`group.io.lab86.mail`), Time-Sensitive
    Notifications. Create/let Xcode manage a Mac development + distribution profile.
 2. **App Store Connect** — add the macOS platform to the existing Albatross app record
-   (universal purchase), then create an Xcode Cloud workflow for the `Lab86MailMac`
-   scheme mirroring the iOS staging/production workflows (same branch/tag rules; the
-   checked-in `ci_scripts` run unchanged). Enable TestFlight for Mac.
+   (universal purchase). The existing `Albatross Mac` Xcode Cloud workflow uses the
+   `Lab86MailMac` scheme and production version tags. Verify its current setup and
+   TestFlight distribution with [the native release runbook](xcode-cloud-testflight.md).
 3. **APNs** — nothing new: the same APNs auth key serves macOS; the server already
    accepts the `macos` platform. Confirm `APNS_BUNDLE_ID` remains `io.lab86.mail`.
 4. **Clerk** — nothing new for sign-in (same publishable key; ClerkKit supports macOS).

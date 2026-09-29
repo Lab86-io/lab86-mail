@@ -90,5 +90,9 @@ account deletion, and incident response.
 ## Retirement evidence
 
 See [the retirement record](operations/staging-retirement-2026-09-29.md) for resource
-status, verification, remaining login requirements, and any costs that remain shared.
-Historical staging instructions in older research notes describe past work only.
+status, verification, retained recovery data, and any costs that remain shared.
+Historical staging instructions in older research and implementation notes describe
+past work only; use this runbook for current releases. Incorporate current `main`
+before continuing an older feature branch so its agent instructions and automation
+follow the current release model. Historical tags, disabled workflow records, and
+compatibility fixtures do not provision another environment.
