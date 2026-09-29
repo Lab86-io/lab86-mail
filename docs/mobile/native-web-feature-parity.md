@@ -39,8 +39,9 @@ feature access, not a rewrite of every editing control in SwiftUI.
 - Every workspace has a nonpersistent WKWebsiteDataStore. Closing requests revocation of
   its separate Clerk session; the native session cannot be revoked by this endpoint.
   Revocation is best effort when offline. The browser data store is still discarded.
-- Staging's Basic password is never copied into WebKit. A signed, origin-bound, one-hour
-  cookie passes only that outer gate; Clerk still authenticates every protected request.
+- When the optional development Basic gate is enabled, its password is never copied
+  into WebKit. A signed, origin-bound, one-hour cookie passes only that outer gate;
+  Clerk still authenticates every protected request.
   Native bearer requests renew the cookie before expiry and after foregrounding.
 - Provider authorization uses the existing native authentication coordinator. External
   links open through the system. Browser confirmations, prompts, file upload, and exports
@@ -81,22 +82,27 @@ Lint retains one existing image-element warning and two existing informational n
 No web visual redesign is introduced: the embedded screen composes the existing Files
 and assistant surfaces. Browser review checks their layout inside the new container.
 
-## Staging → main rollout
+## Production rollout
 
-1. Deploy the Convex V2 downgrade guard first. No schema migration or document rewrite is
-   required. Confirm old projection saves fail without adding a revision.
-2. Deploy the web/API changes to staging. Confirm Clerk configuration and the existing
-   `LAB86_CONVEX_INTERNAL_SECRET` are present. Keep staging Basic auth enabled.
-3. Publish paired iOS/macOS testing builds against that staging deployment. Verify with
+Updated September 29, 2026. Follow the [release runbook](../hosted-release-runbook.md)
+and [native distribution runbook](xcode-cloud-testflight.md). The validation results
+above record the original implementation; rerun affected checks for subsequent changes.
+
+1. Validate the Convex V2 downgrade guard locally with synthetic documents. Confirm
+   old projection saves fail without adding a revision; preserve the guard in the release.
+2. Merge the reviewed PR to `main` after CI and CodeRabbit pass. The production workflow
+   deploys Convex before the web/API. Verify health and the live Clerk configuration and
+   `LAB86_CONVEX_INTERNAL_SECRET` without exposing their values.
+3. Use the matching production release for paired iOS/macOS testing builds. Verify with
    a real signed-in account: open each editor without another sign-in, edit and reopen
    on web, restore a revision, export and share, upload an Office file, reconnect a
    provider, background/resume, and switch accounts. Confirm closing the embedded
    workspace leaves the native login active. These authenticated/provider acceptance
    checks are a release gate; local synthetic tests do not substitute for them.
-4. Promote the matching Convex and web commits to main before releasing Apple builds
-   pointed at production. Preserve the repository's existing release/version process.
+4. Confirm the Apple builds match the verified production version and commit before
+   distribution. Preserve the repository's existing release/version process.
 5. If native integration must be rolled back, keep the server session routes compatible
    with shipped builds and retain the downgrade guard. Reverting the guard would expose
    rich presentations to old-client data loss again.
 
-This branch does not deploy, merge staging into main, or publish an Apple build.
+The implementation record alone is not evidence that a release or Apple distribution completed.

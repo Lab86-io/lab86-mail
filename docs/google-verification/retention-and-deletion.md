@@ -112,7 +112,7 @@ After the casa-prep round:
   a Google Drive connection of the same user and address shares the grant;
   another live Google connection of any user in the deployment (a Nylas or
   direct mailbox, or a Google Drive connection) uses the address; or the
-  deployment is not production (staging uses the production Google project).
+  deployment is not production (local OAuth tests can share the production Google project).
   `lib/google/shared-grant.ts` has these rules.
 
 ## Google Drive disconnect

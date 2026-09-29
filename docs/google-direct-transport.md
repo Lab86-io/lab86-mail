@@ -115,8 +115,8 @@ system. The Google scopes do not change.
 These rules add to the decisions above or make them exact.
 
 - **Switch gate.** `/api/google/connect?mode=switch&account=<email or
-  accountId>` works on staging (`RAILWAY_ENVIRONMENT_NAME=development` or
-  `staging`) with no change of variables. In production it needs
+  accountId>` is enabled during isolated local development by
+  `isDevelopmentRuntime()` (`lib/hosted/controls.ts`). In production it needs
   `LAB86_GOOGLE_DIRECT=1` or `LAB86_GOOGLE_DIRECT_SWITCH=1`. The Gmail address
   of the sign-in must equal the account address; the flow refuses another
   address and stores nothing.
@@ -203,9 +203,10 @@ These rules add to the decisions above or make them exact.
   revoke is sent; the log says so. A failed check also skips the revoke. Only
   a mail OAuth client in another Google Cloud project ends the sharing. That
   project needs its own consent screen and verification (an owner decision).
-- **No revoke outside production, or while Nylas uses the address.** Staging
-  and local development use the production Google Cloud project, so a revoke
-  there would end the production access for that address. Only a deployment
+- **No revoke outside production, or while Nylas uses the address.** A local
+  OAuth test can share a Google Cloud project with production, so a revoke
+  there could end production access for that address. Use isolated test accounts
+  as described in the [release runbook](hosted-release-runbook.md). Only a deployment
   with `RAILWAY_ENVIRONMENT_NAME=production` (or `LAB86_GOOGLE_REVOKE=1`)
   revokes. Production also skips the revoke while another live Google
   connection of any user in the deployment uses the address: a Nylas or
@@ -221,8 +222,11 @@ These rules add to the decisions above or make them exact.
 
 ### Runbook: switch one account
 
-1. Deploy the branch to staging. No variable change is necessary on staging.
-2. Sign in to the staging web app as the account owner.
+1. Validate locally with a test account, then release through a reviewed PR to
+   `main` using the [release runbook](hosted-release-runbook.md). Verify the live
+   production version and that `LAB86_GOOGLE_DIRECT=1` or
+   `LAB86_GOOGLE_DIRECT_SWITCH=1` is enabled before switching a real account.
+2. Sign in to `https://mail.lab86.io` as the account owner.
 3. Open `/api/google/connect?mode=switch&account=<email>` in that browser.
 4. On the Google screen, choose the same Google account and allow all access.
 5. The app opens `/settings?nylas_connected=1&google_mail=switched`.
@@ -344,8 +348,9 @@ Run this one time on each deployment. The fix reads the table in pages of
    `CONVEX_DEPLOYMENT=prod:proficient-viper-594 npx convex run cloudFiles:normalizeDriveAccountEmails '{}'`
 4. Do step 1 again. The logs must show `changed 0`.
 
-Do not use `--prod`. For staging, use the staging deployment name in
-`CONVEX_DEPLOYMENT`.
+Use the explicit production deployment above; the historical project default selected
+a different deployment, so `--prod` alone is not a sufficient target check. Rehearse
+with synthetic rows on local Convex before applying the pass to production.
 
 ### Variables
 

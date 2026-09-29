@@ -1,6 +1,7 @@
 # Google Drive + AI Office operational runbook
 
-Date: 2026-07-27
+Updated: 2026-09-29. Hosted changes follow the
+[production-only release runbook](hosted-release-runbook.md).
 
 ## Enabled project services
 
@@ -35,12 +36,12 @@ In Google Auth Platform for `lab86-mail-production`:
    domains.
 2. Add the Drive, Docs, Sheets, Slides, `openid`, and `email` scopes requested in
    `lib/files/providers.ts`.
-3. Reuse the existing **Lab86 Mail** Web application OAuth client. Do not create
-   another web client for Files.
-4. Preserve its existing callbacks and add both Files callback URIs:
+3. Reuse the Drive Web application OAuth client identified by the live Railway
+   `GOOGLE_DRIVE_CLIENT_ID`. Match the client ID before editing; display names
+   alone do not distinguish the shared mail and Drive clients.
+4. Preserve the production Files callback and other live callbacks on that client:
 
    - `https://mail.lab86.io/api/files/oauth/callback`
-   - `https://mail-staging.lab86.io/api/files/oauth/callback`
 
 5. Complete Google verification/security requirements before broad external
    production availability. Testing-mode refresh grants can expire quickly.
@@ -56,11 +57,9 @@ Official references:
 
 ## Railway variables
 
-Set the client credentials separately in both Railway environments on the `web`
-service:
-
-- `development`, which serves the staging callback at `mail-staging.lab86.io`
-- `production`, which serves the production callback at `mail.lab86.io`
+Set the client credentials on the Railway `web` service in `production`, which
+serves the callback at `mail.lab86.io`. For isolated local development, follow
+the release runbook's test-account and credential rules.
 
 ```text
 GOOGLE_DRIVE_CLIENT_ID

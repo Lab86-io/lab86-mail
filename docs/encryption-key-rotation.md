@@ -45,7 +45,10 @@ write `v2` while a rollback window is open.
 
 ## Procedure
 
-Do these steps for one environment at a time. Start with staging. Keep the old key until step 6.
+Rehearse with synthetic encrypted records and test keys on local Convex. For the hosted rotation,
+verify the production target against the [release runbook](hosted-release-runbook.md) and take
+a recovery backup before changing its keyring. Keep the old key until step 6. Preserve a private
+copy of any old key needed to restore retained encrypted backups after it leaves the live keyring.
 
 1. Make a new key and choose a new id (for example `k2`).
 2. On the Railway `web` service, set:
