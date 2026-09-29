@@ -39,7 +39,33 @@ async function access(userId: string, connectionId: string) {
     throw new OfficeError('Google Drive connection not found.', 404);
   return result.accessToken;
 }
-async function request(token: string, url: string, init: RequestInit = {}) {
+/**
+ * Shown when Google refuses to replace a file that the user can edit. The
+ * Drive API replaces a file only with the full `drive` scope, or with
+ * `drive.file` for a file that Albatross made; Albatross does not ask for
+ * `drive` (docs/google-verification/scopes.md).
+ */
+export const GOOGLE_WORKING_COPY_NOT_APP_FILE =
+  'Google did not save your edits: Albatross can change only the Google files that it made. Your edited copy is still in Albatross. Download it to keep your changes.';
+
+const RATE_LIMIT_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded', 'dailyLimitExceeded']);
+
+/** The Google error reason of a failed answer, for example `appNotAuthorizedToFile`. */
+async function googleErrorReason(response: Response) {
+  const payload = await response
+    .clone()
+    .json()
+    .catch(() => null);
+  const reason = payload?.error?.errors?.[0]?.reason ?? payload?.error?.status;
+  return typeof reason === 'string' ? reason : '';
+}
+
+async function request(
+  token: string,
+  url: string,
+  init: RequestInit = {},
+  options: { forbidden?: string } = {},
+) {
   const response = await deps.fetch(url, {
     ...init,
     headers: { Authorization: `Bearer ${token}`, ...init.headers },
@@ -51,6 +77,12 @@ async function request(token: string, url: string, init: RequestInit = {}) {
       'The original changed in Google. Download its latest version before saving your edits.',
       409,
     );
+  if (response.status === 403 && options.forbidden) {
+    // Google also answers 403 for a rate limit; that is not a missing access.
+    if (!RATE_LIMIT_REASONS.has(await googleErrorReason(response))) {
+      throw new OfficeError(options.forbidden, 403);
+    }
+  }
   if (response.status === 401 || response.status === 403)
     throw new OfficeError(
       'Google write access is missing. Reconnect Google Drive or check sharing permissions.',
@@ -196,6 +228,9 @@ export async function saveGoogleWorkingCopy(input: {
       headers: { 'Content-Type': `multipart/related; boundary=${boundary}`, 'If-Match': session.etag },
       body,
     },
+    // The metadata said that the user can edit the file, so a 403 here means
+    // that Albatross did not make it.
+    { forbidden: GOOGLE_WORKING_COPY_NOT_APP_FILE },
   );
   const saved = await response.json();
   if (!saved.etag || saved.version == null)

@@ -37,14 +37,18 @@ export const CLOUD_FILE_PROVIDER_DEFINITIONS: Record<CloudFileProvider, CloudFil
     label: 'Google Drive',
     authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
+    // drive.readonly reads every file, Sheets and Slides included; drive.file
+    // writes the files that Albatross makes; documents writes edits back to an
+    // existing Doc. The Sheets and Slides APIs accept those Drive scopes, so
+    // the app asks for no `spreadsheets` or `presentations` scope
+    // (docs/google-verification/scopes.md). A connection made before this
+    // change still holds both; nothing checks for them.
     scopes: [
       'openid',
       'email',
       'https://www.googleapis.com/auth/drive.readonly',
       'https://www.googleapis.com/auth/drive.file',
       'https://www.googleapis.com/auth/documents',
-      'https://www.googleapis.com/auth/spreadsheets',
-      'https://www.googleapis.com/auth/presentations',
     ],
   },
   onedrive: {

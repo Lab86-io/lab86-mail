@@ -60,6 +60,17 @@ export class GoogleDocumentConflictError extends Error {
   }
 }
 
+/** A failed Google write. `status` is the HTTP status of the Google answer. */
+export class GoogleWriteError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'GoogleWriteError';
+  }
+}
+
 export function googleProviderVersionChanged(stored?: string, current?: string) {
   return Boolean(stored && current && stored !== current);
 }
@@ -91,10 +102,14 @@ async function googleJson(
   if (!response.ok) {
     const detail = String(payload?.error?.message || '');
     if (response.status === 401 || response.status === 403) {
-      throw new Error('Google write access is missing or expired. Reconnect Google Drive and try again.');
+      throw new GoogleWriteError(
+        'Google write access is missing or expired. Reconnect Google Drive and try again.',
+        response.status,
+      );
     }
-    throw new Error(
+    throw new GoogleWriteError(
       detail ? `Google could not update this file: ${detail}` : 'Google could not update this file.',
+      response.status,
     );
   }
   return payload;
@@ -218,9 +233,10 @@ async function syncGoogleDoc(
 async function googleDriveMetadata(accessToken: string, fileId: string) {
   const payload = await googleJson(
     accessToken,
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true&fields=id,webViewLink,version`,
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true&fields=id,name,webViewLink,version`,
   );
   return {
+    name: typeof payload.name === 'string' ? payload.name : undefined,
     webUrl: typeof payload.webViewLink === 'string' ? payload.webViewLink : undefined,
     providerVersion:
       typeof payload.version === 'string' || typeof payload.version === 'number'
@@ -646,19 +662,41 @@ export async function updateGoogleNativeFile(input: {
   if (model.kind === 'sheet') await syncGoogleSheet(access.accessToken, input.fileId, sheetGridModel(model)!);
   if (model.kind === 'deck') await syncGoogleDeck(access.accessToken, input.fileId, model);
   const title = truncateText(input.title.trim(), 500) || 'Untitled';
-  await googleJson(
-    access.accessToken,
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.fileId)}?supportsAllDrives=true&fields=id`,
-    {
-      method: 'PATCH',
-      body: JSON.stringify({ name: title }),
-    },
-  );
+  const renamed = current.name === title || (await renameGoogleFile(access.accessToken, input.fileId, title));
   const updated = await googleDriveMetadata(access.accessToken, input.fileId);
   return {
-    title,
+    // A skipped rename keeps the Google name, so the editor shows the true name.
+    title: renamed ? title : current.name || title,
+    ...(renamed ? {} : { renameSkipped: true as const }),
     model,
     webUrl: updated.webUrl || current.webUrl,
     providerVersion: updated.providerVersion,
   };
+}
+
+/**
+ * Renames a Google file after its content is saved. The Drive API renames a
+ * file only with the full `drive` scope, or with `drive.file` for a file that
+ * Albatross made. Albatross does not ask for `drive`, so Google refuses (403)
+ * the rename of a Doc that the user made in Google. The content is saved at
+ * that point, so the rename is skipped and the file keeps its Google name.
+ */
+async function renameGoogleFile(accessToken: string, fileId: string, title: string) {
+  try {
+    await googleJson(
+      accessToken,
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true&fields=id`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ name: title }),
+      },
+    );
+    return true;
+  } catch (error) {
+    if (error instanceof GoogleWriteError && error.status === 403) {
+      console.warn('[google-docs] rename skipped: Drive write access covers only files that Albatross made');
+      return false;
+    }
+    throw error;
+  }
 }
