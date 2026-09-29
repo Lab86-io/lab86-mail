@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, jest, setSystemTime, test } from 'bun:test';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
 import { ACCOUNT_KEYED_ROWS, evidenceNamesAccount, PURGE_PASS_BYTES } from '../convex/accounts';
+import { HELD_SEND_BATCH } from '../convex/mailOutbox';
 import schema from '../convex/schema';
 
 // Disconnect and the 30-day dead-account purge delete one set of mailbox
@@ -16,6 +17,7 @@ const modules = {
   '../convex/accounts.ts': () => import('../convex/accounts'),
   '../convex/correspondents.ts': () => import('../convex/correspondents'),
   '../convex/deadAccounts.ts': () => import('../convex/deadAccounts'),
+  '../convex/mailOutbox.ts': () => import('../convex/mailOutbox'),
   '../convex/narrative.ts': () => import('../convex/narrative'),
 };
 const SECRET = 'account-purge-secret';
@@ -563,6 +565,157 @@ describe('disconnect and held scheduled sends', () => {
     const row = await t.run((ctx) => ctx.db.get(id));
     expect(row).toMatchObject({ status: 'cancelled' });
     expect(row?.payloadId).toBeUndefined();
+  });
+
+  /** Stores `count` held sends with a stored message each, and returns their ids. */
+  async function holdSends(
+    t: T,
+    count: number,
+    fields: { userId?: string; accountId?: string; status?: 'pending' | 'sending' } = {},
+  ) {
+    return t.run(async (ctx) => {
+      const ids: Array<{ id: Id<'mailOutbox'>; payloadId: Id<'_storage'> }> = [];
+      for (let i = 0; i < count; i++) {
+        const payloadId = await ctx.storage.store(new Blob([`message ${i}`]));
+        const id = await ctx.db.insert('mailOutbox', {
+          userId: fields.userId ?? USER,
+          key: `held-${fields.accountId ?? GONE}-${i}`,
+          status: fields.status ?? 'pending',
+          fireAt: T0 + DAY,
+          undoSeconds: 0,
+          payloadId,
+          scheduled: true,
+          accountId: fields.accountId ?? GONE,
+          updatedAt: T0,
+        });
+        ids.push({ id, payloadId });
+      }
+      return ids;
+    });
+  }
+
+  /** The status of each send, and whether its stored message is still there. */
+  const sendState = (t: T, ids: Array<{ id: Id<'mailOutbox'>; payloadId: Id<'_storage'> }>) =>
+    t.run(async (ctx) =>
+      Promise.all(
+        ids.map(async (row) => {
+          const doc = await ctx.db.get(row.id);
+          return {
+            status: doc?.status,
+            payloadId: Boolean(doc?.payloadId),
+            stored: (await ctx.db.system.get(row.payloadId)) !== null,
+          };
+        }),
+      ),
+    );
+
+  const countBy = (states: Array<{ status?: string }>) =>
+    states.reduce<Record<string, number>>((out, row) => {
+      out[String(row.status)] = (out[String(row.status)] ?? 0) + 1;
+      return out;
+    }, {});
+
+  /**
+   * Runs `body` with fake timers, so a scheduled pass runs only when the test
+   * lets it (`runScheduled`), and not while the test reads the state.
+   */
+  async function withHeldTimers(body: (t: T, runScheduled: () => Promise<void>) => Promise<void>) {
+    jest.useFakeTimers();
+    try {
+      const t = convexTest(schema, modules);
+      await body(t, () => t.finishAllScheduledFunctions(() => jest.runAllTimers()));
+    } finally {
+      jest.useRealTimers();
+    }
+  }
+
+  const disconnect = (t: T) =>
+    t.mutation(api.accounts.deleteConnectedAccount, {
+      internalSecret: SECRET,
+      userId: USER,
+      accountId: GONE,
+    });
+
+  test('a disconnect cancels more held sends than one pass holds, in bounded passes', async () => {
+    await withHeldTimers(async (t, runScheduled) => {
+      const total = 2 * HELD_SEND_BATCH + 7;
+      const held = await holdSends(t, total);
+      const others = [
+        ...(await holdSends(t, 2, { accountId: KEPT })),
+        ...(await holdSends(t, 2, { userId: 'user_other' })),
+        ...(await holdSends(t, 1, { status: 'sending' })),
+      ];
+      await disconnect(t);
+      // The disconnect transaction cancels one batch only and schedules the rest.
+      expect(countBy(await sendState(t, held))).toEqual({
+        cancelled: HELD_SEND_BATCH,
+        pending: total - HELD_SEND_BATCH,
+      });
+      await runScheduled();
+      const after = await sendState(t, held);
+      expect(after.every((row) => row.status === 'cancelled' && !row.payloadId && !row.stored)).toBe(true);
+      expect(await sendState(t, others)).toEqual([
+        { status: 'pending', payloadId: true, stored: true },
+        { status: 'pending', payloadId: true, stored: true },
+        { status: 'pending', payloadId: true, stored: true },
+        { status: 'pending', payloadId: true, stored: true },
+        { status: 'sending', payloadId: true, stored: true },
+      ]);
+    });
+  });
+
+  test('a later pass leaves the held sends of a later connection of the same mailbox', async () => {
+    await withHeldTimers(async (t, runScheduled) => {
+      const held = await holdSends(t, HELD_SEND_BATCH + 5);
+      await disconnect(t);
+      // The mailbox connects again and holds a new send before the next pass runs.
+      const later = await t.run(async (ctx) => {
+        const payloadId = await ctx.storage.store(new Blob(['later message']));
+        const id = await ctx.db.insert('mailOutbox', {
+          userId: USER,
+          key: 'held-after-reconnect',
+          status: 'pending',
+          fireAt: T0 + DAY,
+          undoSeconds: 0,
+          payloadId,
+          scheduled: true,
+          accountId: GONE,
+          updatedAt: T0,
+        });
+        return { id, payloadId };
+      });
+      expect(countBy(await sendState(t, held))).toEqual({ cancelled: HELD_SEND_BATCH, pending: 5 });
+      await runScheduled();
+      expect(countBy(await sendState(t, held))).toEqual({ cancelled: HELD_SEND_BATCH + 5 });
+      expect(await sendState(t, [later])).toEqual([{ status: 'pending', payloadId: true, stored: true }]);
+    });
+  });
+
+  test('exactly one batch of held sends schedules no next pass', async () => {
+    await withHeldTimers(async (t) => {
+      const held = await holdSends(t, HELD_SEND_BATCH);
+      await disconnect(t);
+      expect(countBy(await sendState(t, held))).toEqual({ cancelled: HELD_SEND_BATCH });
+      const scheduled = await t.run(async (ctx) => ctx.db.system.query('_scheduled_functions').collect());
+      expect(scheduled.map((job) => job.name).filter((name) => name.includes('cancelHeldSends'))).toEqual([]);
+    });
+  });
+
+  test('a pass reports when the chain is done', async () => {
+    await withHeldTimers(async (t, runScheduled) => {
+      await holdSends(t, HELD_SEND_BATCH + 1);
+      const pass = () =>
+        t.mutation(internal.mailOutbox.cancelHeldSendsBatch, {
+          userId: USER,
+          accountId: GONE,
+          until: Number.MAX_SAFE_INTEGER,
+        });
+      expect(await pass()).toEqual({ cancelled: HELD_SEND_BATCH, done: false });
+      expect(await pass()).toEqual({ cancelled: 1, done: true });
+      expect(await pass()).toEqual({ cancelled: 0, done: true });
+      // The pass that the first call scheduled finds nothing left.
+      await runScheduled();
+    });
   });
 });
 

@@ -24,6 +24,50 @@ const receipt = (row: { key: string; fireAt: number; undoSeconds: number; status
   status: row.status,
 });
 
+/** The held sends that one pass cancels. One pass is one bounded transaction. */
+export const HELD_SEND_BATCH = 50;
+
+/**
+ * The pending held sends of one mailbox, oldest first. With `until`, only the
+ * sends that were made at that time or before.
+ */
+const heldSends = (ctx: MutationCtx, userId: string, accountId: string, until?: number) =>
+  ctx.db.query('mailOutbox').withIndex('by_user_account_scheduled_status', (q) => {
+    const range = q
+      .eq('userId', userId)
+      .eq('accountId', accountId)
+      .eq('scheduled', true)
+      .eq('status', 'pending');
+    return until === undefined ? range : range.lte('_creationTime', until);
+  });
+
+/** Cancels one batch of held sends and deletes their stored messages. */
+async function cancelHeldSendsPass(ctx: MutationCtx, userId: string, accountId: string, until?: number) {
+  const rows = await heldSends(ctx, userId, accountId, until).take(HELD_SEND_BATCH);
+  for (const send of rows) {
+    await ctx.db.patch(send._id, { status: 'cancelled', payloadId: undefined, updatedAt: Date.now() });
+    if (send.payloadId) await ctx.storage.delete(send.payloadId).catch(() => undefined);
+  }
+  return rows.length;
+}
+
+/**
+ * Schedules the next pass when held sends are left. The pass gets the
+ * creation time of the newest send that is left now, so it cancels only the
+ * sends of the connection that goes. A send of a later connection of the same
+ * mailbox stays.
+ */
+async function continueWhenSendsAreLeft(ctx: MutationCtx, userId: string, accountId: string, until?: number) {
+  const newest = await heldSends(ctx, userId, accountId, until).order('desc').first();
+  if (!newest) return false;
+  await ctx.scheduler.runAfter(0, internalApi.cancelHeldSendsBatch, {
+    userId,
+    accountId,
+    until: newest._creationTime,
+  });
+  return true;
+}
+
 /**
  * Cancels the held scheduled sends of one mailbox and deletes their stored
  * messages. A direct Google account holds a scheduled send here until
@@ -31,22 +75,35 @@ const receipt = (row: { key: string; fireAt: number; undoSeconds: number; status
  * the grant removal (googleDirect.removeGrant) and the account removal
  * (accounts.deleteConnectedAccount), so no message stays stored when one of
  * them fails. A message that is gone already does not stop the disconnect.
- * Returns the count of cancelled sends.
+ *
+ * The design: this call cancels the first batch (HELD_SEND_BATCH) in the
+ * transaction of the caller, which is all the sends of a usual mailbox. When
+ * more are left, it schedules cancelHeldSendsBatch in the same transaction.
+ * Convex runs a scheduled mutation exactly one time after the transaction
+ * commits, so a disconnect that commits always gets the rest of the chain,
+ * and a disconnect that fails schedules nothing. Each pass does at most one
+ * batch of writes and storage deletes. A cancelled send leaves the index
+ * range, so the chain always ends. A loop in one transaction would not be
+ * simpler: it needs a cap and a continuation too.
+ * Returns the count of sends that this call cancelled (the first batch).
  */
 export async function cancelHeldSends(ctx: MutationCtx, userId: string, accountId: string) {
-  const rows = await ctx.db
-    .query('mailOutbox')
-    .withIndex('by_user', (q) => q.eq('userId', userId))
-    .collect();
-  let cancelled = 0;
-  for (const send of rows) {
-    if (!send.scheduled || send.accountId !== accountId || send.status !== 'pending') continue;
-    await ctx.db.patch(send._id, { status: 'cancelled', payloadId: undefined, updatedAt: Date.now() });
-    if (send.payloadId) await ctx.storage.delete(send.payloadId).catch(() => undefined);
-    cancelled += 1;
-  }
+  const cancelled = await cancelHeldSendsPass(ctx, userId, accountId);
+  if (cancelled === HELD_SEND_BATCH) await continueWhenSendsAreLeft(ctx, userId, accountId);
   return cancelled;
 }
+
+/** One later pass of cancelHeldSends. A pass schedules the next while sends are left. */
+export const cancelHeldSendsBatch = internalMutation({
+  args: { userId: v.string(), accountId: v.string(), until: v.number() },
+  handler: async (ctx, args) => {
+    const cancelled = await cancelHeldSendsPass(ctx, args.userId, args.accountId, args.until);
+    const more =
+      cancelled === HELD_SEND_BATCH &&
+      (await continueWhenSendsAreLeft(ctx, args.userId, args.accountId, args.until));
+    return { cancelled, done: !more };
+  },
+});
 
 export const uploadUrl = mutation({
   args: { internalSecret: v.string() },

@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, jest, test } from 'bun:test';
 import { convexTest } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
+import { driveAccountEmail } from '../convex/cloudFiles';
 import schema from '../convex/schema';
 
 const convexModules = {
@@ -317,5 +318,131 @@ describe('cloud file Convex lifecycle', () => {
       deleted: 1,
     });
     expect(await t.run((ctx) => ctx.db.query('cloudFileOAuthCompletions').collect())).toHaveLength(0);
+  });
+});
+
+describe('Google Drive addresses', () => {
+  const stored = (t: ReturnType<typeof newHarness>) =>
+    t.run(async (ctx) =>
+      (await ctx.db.query('cloudFileConnections').collect()).map((row) => [
+        row.connectionId,
+        row.accountEmail ?? null,
+      ]),
+    );
+
+  test('the stored form is trimmed and in lower case', () => {
+    expect(driveAccountEmail('  Files@Example.TEST ')).toBe('files@example.test');
+    expect(driveAccountEmail('   ')).toBeUndefined();
+    expect(driveAccountEmail(undefined)).toBeUndefined();
+  });
+
+  test('a Google Drive address is stored trimmed and in lower case; a OneDrive address keeps its form', async () => {
+    const t = newHarness();
+    await connect(t, { accountEmail: ' Files@Example.TEST ' });
+    await connect(t, {
+      connectionId: 'onedrive_connection',
+      provider: 'onedrive',
+      accountKey: 'microsoft_account',
+      accountEmail: 'Files@Example.TEST',
+    });
+    expect(await stored(t)).toEqual([
+      ['google_drive_connection', 'files@example.test'],
+      ['onedrive_connection', 'Files@Example.TEST'],
+    ]);
+    // A reconnect with another letter case writes the same stored form.
+    await connect(t, { accountEmail: 'FILES@example.test' });
+    expect((await stored(t))[0]).toEqual(['google_drive_connection', 'files@example.test']);
+  });
+
+  test('the one-time fix lowercases old Drive addresses in pages, with a dry run, and is idempotent', async () => {
+    jest.useFakeTimers();
+    try {
+      const t = newHarness();
+      await t.run(async (ctx) => {
+        const row = (connectionId: string, provider: 'google_drive' | 'onedrive', accountEmail?: string) =>
+          ctx.db.insert('cloudFileConnections', {
+            userId: USER,
+            connectionId,
+            provider,
+            accountKey: connectionId,
+            ...(accountEmail === undefined ? {} : { accountEmail }),
+            status: 'connected',
+            scopes: [],
+            createdAt: 1,
+            updatedAt: 1,
+          });
+        await row('mixed', 'google_drive', 'Ann@Example.COM');
+        await row('spaces', 'google_drive', ' bob@example.com ');
+        await row('lower', 'google_drive', 'carl@example.com');
+        await row('no-address', 'google_drive');
+        await row('onedrive', 'onedrive', 'Dan@Example.com');
+      });
+      const before = await stored(t);
+      const run = async (args: { dryRun?: boolean }) => {
+        const first = await t.mutation(internal.cloudFiles.normalizeDriveAccountEmails, {
+          ...args,
+          limit: 2,
+        });
+        // One page of two rows; the scheduled pages read the rest.
+        expect(first).toMatchObject({ scanned: 2, done: false });
+        await t.finishAllScheduledFunctions(() => jest.runAllTimers());
+      };
+
+      await run({ dryRun: true });
+      expect(await stored(t)).toEqual(before);
+
+      await run({});
+      expect(await stored(t)).toEqual([
+        ['mixed', 'ann@example.com'],
+        ['spaces', 'bob@example.com'],
+        ['lower', 'carl@example.com'],
+        ['no-address', null],
+        ['onedrive', 'Dan@Example.com'],
+      ]);
+      const updatedAt = await t.run(async (ctx) =>
+        (await ctx.db.query('cloudFileConnections').collect()).map((row) => row.updatedAt),
+      );
+      expect(new Set(updatedAt)).toEqual(new Set([1]));
+
+      // A second run finds nothing to change.
+      expect(await t.mutation(internal.cloudFiles.normalizeDriveAccountEmails, {})).toEqual({
+        scanned: 5,
+        changed: 0,
+        dryRun: false,
+        done: true,
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a single page reports the totals of the whole run', async () => {
+    const t = newHarness();
+    await connect(t);
+    await t.run((ctx) =>
+      ctx.db.insert('cloudFileConnections', {
+        userId: USER,
+        connectionId: 'old',
+        provider: 'google_drive',
+        accountKey: 'old',
+        accountEmail: 'Old@Example.test',
+        status: 'connected',
+        scopes: [],
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    expect(await t.mutation(internal.cloudFiles.normalizeDriveAccountEmails, { dryRun: true })).toEqual({
+      scanned: 2,
+      changed: 1,
+      dryRun: true,
+      done: true,
+    });
+    expect(await t.mutation(internal.cloudFiles.normalizeDriveAccountEmails, {})).toEqual({
+      scanned: 2,
+      changed: 1,
+      dryRun: false,
+      done: true,
+    });
   });
 });

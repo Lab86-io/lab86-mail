@@ -1,10 +1,12 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, jest, test } from 'bun:test';
 import { convexTest } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
+import { HELD_SEND_BATCH } from '../convex/mailOutbox';
 import schema from '../convex/schema';
 
 const convexModules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
+  '../convex/cloudFiles.ts': () => import('../convex/cloudFiles'),
   '../convex/googleDirect.ts': () => import('../convex/googleDirect'),
   '../convex/mailOutbox.ts': () => import('../convex/mailOutbox'),
 };
@@ -462,6 +464,53 @@ describe('token row', () => {
   });
 });
 
+describe('held sends on grant removal', () => {
+  test('a grant removal with more held sends than one pass cancels all of them', async () => {
+    jest.useFakeTimers();
+    try {
+      const t = newHarness();
+      await seedNylasAccount(t);
+      await t.mutation(api.googleDirect.activateGoogleAccount, activation());
+      const total = HELD_SEND_BATCH + 12;
+      const seeded = await t.run(async (ctx) => {
+        const hold = async (key: string, accountId: string) => {
+          const payloadId = await ctx.storage.store(new Blob([key]));
+          const id = await ctx.db.insert('mailOutbox', {
+            userId: USER,
+            key,
+            accountId,
+            scheduled: true,
+            payloadId,
+            status: 'pending',
+            fireAt: Date.now() + 3_600_000,
+            undoSeconds: 0,
+            updatedAt: Date.now(),
+          });
+          return { id, payloadId };
+        };
+        const held = [];
+        for (let i = 0; i < total; i++) held.push(await hold(`held-${i}`, ACCOUNT));
+        return { held, other: await hold('other-mailbox', 'another-account') };
+      });
+      expect(
+        await t.mutation(api.googleDirect.removeGrant, { internalSecret: SECRET, grantId: GRANT }),
+      ).toEqual({ removed: 1, previousNylasGrantIds: [NYLAS_GRANT], cancelledSends: HELD_SEND_BATCH });
+      await t.finishAllScheduledFunctions(() => jest.runAllTimers());
+      const state = await t.run(async (ctx) => {
+        const read = async (row: { id: any; payloadId: any }) => {
+          const doc = await ctx.db.get(row.id);
+          return `${(doc as any)?.status}:${Boolean((doc as any)?.payloadId)}:${(await ctx.storage.get(row.payloadId)) !== null}`;
+        };
+        return { held: await Promise.all(seeded.held.map(read)), other: await read(seeded.other) };
+      });
+      expect([...new Set(state.held)]).toEqual(['cancelled:false:false']);
+      expect(state.other).toBe('pending:true:true');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
 describe('two users who share one accountId', () => {
   // One mailbox connected under two users: Nylas gives both the same grant id,
   // and the first grant id is the accountId of each account row.
@@ -850,5 +899,25 @@ describe('googleAccessUsesAddress', () => {
     expect(await ask(t, {})).toBe(true);
     expect(await ask(t, { exceptConnectionId: 'drive-b' })).toBe(false);
     expect(await ask(t, { email: 'ANN@example.com', exceptConnectionId: 'drive-b' })).toBe(false);
+  });
+
+  test('a Drive connection saved with a mixed-case address counts for the disconnect of another one', async () => {
+    const t = newHarness();
+    const save = (userId: string, connectionId: string, accountEmail: string) =>
+      t.mutation(api.cloudFiles.upsertConnection, {
+        internalSecret: SECRET,
+        userId,
+        connectionId,
+        provider: 'google_drive',
+        accountKey: `key-${connectionId}`,
+        accountEmail,
+        scopes: [],
+        accessTokenEncrypted: 'enc',
+      });
+    await save(USER, 'drive-a', ' Ann@Example.COM ');
+    await save(USER_B, 'drive-b', 'ann@example.com');
+    // The disconnect of B asks with the address of B. A has the same address.
+    expect(await ask(t, { email: 'ann@example.com', exceptConnectionId: 'drive-b' })).toBe(true);
+    expect(await ask(t, { email: 'ann@example.com', exceptConnectionId: 'drive-a' })).toBe(true);
   });
 });

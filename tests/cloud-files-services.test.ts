@@ -189,12 +189,12 @@ describe('cloud file connection service', () => {
     const fetchMock = mock(async (url: string | URL | Request) => {
       const endpoint = String(url);
       if (endpoint.includes('googleapis.com')) {
-        return Response.json({ id: 'google-account', email: 'drive@example.test', name: 'Drive User' });
+        return Response.json({ id: 'google-account', email: ' Drive@Example.TEST ', name: 'Drive User' });
       }
       return Response.json({
         id: 'microsoft-account',
         mail: null,
-        userPrincipalName: 'onedrive@example.test',
+        userPrincipalName: 'OneDrive@example.test',
         displayName: 'OneDrive User',
       });
     });
@@ -226,11 +226,15 @@ describe('cloud file connection service', () => {
       accountEmail: 'drive@example.test',
       displayName: 'Drive User',
     });
+    // Only a Google address is stored trimmed and in lower case: the Google
+    // revoke guard looks it up in that form.
     expect(microsoft).toMatchObject({
       accountKey: 'microsoft-account',
-      accountEmail: 'onedrive@example.test',
+      accountEmail: 'OneDrive@example.test',
     });
+    expect(mutation.mock.calls[1][1].accountEmail).toBe('OneDrive@example.test');
     expect(mutation.mock.calls[0][1]).toMatchObject({
+      accountEmail: 'drive@example.test',
       accessTokenEncrypted: 'encrypted:google-access',
       refreshTokenEncrypted: 'encrypted:google-refresh',
       expiresAt: 130_000,

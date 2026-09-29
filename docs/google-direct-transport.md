@@ -169,7 +169,9 @@ These rules add to the decisions above or make them exact.
   `accountId`. Its outbox key is the schedule id. A disconnect cancels the
   held sends of the mailbox and deletes their stored messages. The grant
   removal and the account removal both do this, so a failed grant removal
-  does not keep a message.
+  does not keep a message. The disconnect cancels 50 sends in its own
+  transaction and schedules bounded passes for the rest
+  (`mailOutbox:cancelHeldSendsBatch`).
 - **History sync.** The cron runs every 2 minutes and reads at most 400
   changed messages in a run; the rest comes in the next run. New mail is read
   with its headers. A label change is read without headers, so the stored
@@ -209,7 +211,9 @@ These rules add to the decisions above or make them exact.
   direct mail account, or a Google Drive connection, other than the one that
   goes (`googleDirect:googleAccessUsesAddress`).
   In each case only our token row goes (`googleRevokeBlockedReason` in
-  `lib/google/shared-grant.ts`).
+  `lib/google/shared-grant.ts`). The check finds a Drive connection by its
+  stored address, so a Drive address is stored trimmed and in lower case
+  (`cloudFiles:upsertConnection`), as a mail address is.
 - **Rollback.** `googleDirect:rollbackToNylas` does not revoke the Google
   token. Google can revoke the whole project grant, and the production Nylas
   connector is in the same Google Cloud project. The token row is deleted.
@@ -235,6 +239,22 @@ These rules add to the decisions above or make them exact.
 3. Nylas webhooks for that grant are processed again. The corpus stays.
 4. The Google access stays in the Google account permissions until the owner
    removes it there.
+
+### Runbook: store old Drive addresses in lower case
+
+Drive connections from before the change can have an address in mixed case.
+Run this one time on each deployment. The fix reads the table in pages of
+100 and is idempotent.
+
+1. Do a dry run. It counts and writes nothing:
+   `CONVEX_DEPLOYMENT=prod:proficient-viper-594 npx convex run cloudFiles:normalizeDriveAccountEmails '{"dryRun": true}'`
+2. Read the totals in the deployment logs (`[drive address case]`).
+3. Do the real pass:
+   `CONVEX_DEPLOYMENT=prod:proficient-viper-594 npx convex run cloudFiles:normalizeDriveAccountEmails '{}'`
+4. Do step 1 again. The logs must show `changed 0`.
+
+Do not use `--prod`. For staging, use the staging deployment name in
+`CONVEX_DEPLOYMENT`.
 
 ### Variables
 

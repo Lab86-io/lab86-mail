@@ -103,7 +103,10 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user_key', ['userId', 'key'])
-    .index('by_user', ['userId']),
+    .index('by_user', ['userId'])
+    // The held sends of one mailbox: a disconnect cancels them in bounded
+    // passes (convex/mailOutbox.ts cancelHeldSends).
+    .index('by_user_account_scheduled_status', ['userId', 'accountId', 'scheduled', 'status']),
   agentToolExecutions: defineTable({
     userId: v.string(),
     runId: v.string(),
