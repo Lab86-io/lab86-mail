@@ -16,7 +16,7 @@ import { PreparedWork } from '@/components/report/PreparedWork';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useFrameNonce } from '@/hooks/use-frame-nonce';
+import { useBriefFrameCspOptions, useFrameNonce } from '@/hooks/use-frame-nonce';
 import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { briefFreshness, briefIsStale, briefStaleNote } from '@/lib/albatross/today';
@@ -34,6 +34,7 @@ import { handleDailyReportNavigationAction, openBriefMailThread } from '@/lib/da
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
+import { type BriefFrameCspOptions, withBriefFrameCsp } from '@/lib/security/brief-frame-csp';
 import { withFrameNonce } from '@/lib/security/frame-nonce';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import { stripEmoji } from '@/lib/shared/format';
@@ -403,7 +404,7 @@ const REPORT_ARTIFACT_LAUNCHER_CLEARANCE = `<style id="lab86-launcher-clearance"
 export function withReportArtifactRuntime(
   html: string,
   albatrossContext?: AlbatrossDailyReportContext | null,
-  options: { launcherClearance?: boolean } = {},
+  options: { launcherClearance?: boolean; frameCsp?: BriefFrameCspOptions } = {},
 ): string {
   if (!html) return html;
   let next = injectReportAreaBrief(html, albatrossContext ?? null).replace(
@@ -415,7 +416,9 @@ export function withReportArtifactRuntime(
     ? `${REPORT_ARTIFACT_LAUNCHER_CLEARANCE}${REPORT_ARTIFACT_RUNTIME_JS}`
     : REPORT_ARTIFACT_RUNTIME_JS;
   next = bodyClose >= 0 ? `${next.slice(0, bodyClose)}${tail}${next.slice(bodyClose)}` : `${next}${tail}`;
-  return injectBriefArtifactReadyRuntime(next);
+  // The edition is model-written: the frame policy stops it from sending
+  // brief text to another host (lib/security/brief-frame-csp.ts).
+  return withBriefFrameCsp(injectBriefArtifactReadyRuntime(next), options.frameCsp);
 }
 
 function ReportArtifact({
@@ -437,14 +440,18 @@ function ReportArtifact({
   const frameRef = useRef<HTMLIFrameElement>(null);
   // The srcdoc frame inherits the page CSP; its scripts need the page nonce.
   const frameNonce = useFrameNonce();
+  const { appOrigin, storageUrl } = useBriefFrameCspOptions();
   // The frame re-renders on each height message; the document passes stay done.
   const srcDoc = useMemo(
     () =>
       withFrameNonce(
-        withReportArtifactRuntime(html, albatrossContext, { launcherClearance: !autoHeight }),
+        withReportArtifactRuntime(html, albatrossContext, {
+          launcherClearance: !autoHeight,
+          frameCsp: { appOrigin, storageUrl },
+        }),
         frameNonce,
       ),
-    [html, albatrossContext, autoHeight, frameNonce],
+    [html, albatrossContext, autoHeight, frameNonce, appOrigin, storageUrl],
   );
   const [artifactReady, setArtifactReady] = useState(false);
   const [artifactHeight, setArtifactHeight] = useState<number | null>(null);
