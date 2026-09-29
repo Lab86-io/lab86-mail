@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, jest, test } from 'bun:test';
 import { convexTest } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
+import { HELD_SEND_BATCH } from '../convex/mailOutbox';
 import schema from '../convex/schema';
 
 const convexModules = {
@@ -459,6 +460,53 @@ describe('token row', () => {
         grantId: NYLAS_GRANT,
       }),
     ).toBeNull();
+  });
+});
+
+describe('held sends on grant removal', () => {
+  test('a grant removal with more held sends than one pass cancels all of them', async () => {
+    jest.useFakeTimers();
+    try {
+      const t = newHarness();
+      await seedNylasAccount(t);
+      await t.mutation(api.googleDirect.activateGoogleAccount, activation());
+      const total = HELD_SEND_BATCH + 12;
+      const seeded = await t.run(async (ctx) => {
+        const hold = async (key: string, accountId: string) => {
+          const payloadId = await ctx.storage.store(new Blob([key]));
+          const id = await ctx.db.insert('mailOutbox', {
+            userId: USER,
+            key,
+            accountId,
+            scheduled: true,
+            payloadId,
+            status: 'pending',
+            fireAt: Date.now() + 3_600_000,
+            undoSeconds: 0,
+            updatedAt: Date.now(),
+          });
+          return { id, payloadId };
+        };
+        const held = [];
+        for (let i = 0; i < total; i++) held.push(await hold(`held-${i}`, ACCOUNT));
+        return { held, other: await hold('other-mailbox', 'another-account') };
+      });
+      expect(
+        await t.mutation(api.googleDirect.removeGrant, { internalSecret: SECRET, grantId: GRANT }),
+      ).toEqual({ removed: 1, previousNylasGrantIds: [NYLAS_GRANT], cancelledSends: HELD_SEND_BATCH });
+      await t.finishAllScheduledFunctions(() => jest.runAllTimers());
+      const state = await t.run(async (ctx) => {
+        const read = async (row: { id: any; payloadId: any }) => {
+          const doc = await ctx.db.get(row.id);
+          return `${(doc as any)?.status}:${Boolean((doc as any)?.payloadId)}:${(await ctx.storage.get(row.payloadId)) !== null}`;
+        };
+        return { held: await Promise.all(seeded.held.map(read)), other: await read(seeded.other) };
+      });
+      expect([...new Set(state.held)]).toEqual(['cancelled:false:false']);
+      expect(state.other).toBe('pending:true:true');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 

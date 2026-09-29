@@ -237,7 +237,8 @@ export const saveGrantAccessToken = mutation({
 
 /**
  * Deletes the token row of one direct grant (grants.destroy), and cancels the
- * held scheduled sends of that connection. Returns the Nylas grant that the
+ * held scheduled sends of that connection (`cancelledSends` counts the first
+ * batch; scheduled passes cancel the rest). Returns the Nylas grant that the
  * connection used before the switch, so the caller can destroy it too, but
  * only when no other connection still uses that Nylas grant. The connected
  * account row is not touched here.
