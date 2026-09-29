@@ -151,6 +151,21 @@ function reloadPage() {
   if (typeof window !== 'undefined') window.location.reload();
 }
 
+// True while signOutAndClearStorage runs. That sign-out clears storage and
+// loads its own redirect URL, so the session-end cleanup must not reload the
+// page at the same time.
+let appSignOutInProgress = false;
+
+/** True while an app-started sign-out runs. */
+export function isAppSignOutInProgress(): boolean {
+  return appSignOutInProgress;
+}
+
+/** Tests reset the flag; in the browser the next page load resets it. */
+export function resetAppSignOutForTest() {
+  appSignOutInProgress = false;
+}
+
 /**
  * Clears app storage, then signs out with Clerk.
  *
@@ -166,13 +181,20 @@ export async function signOutAndClearStorage(
   const clearStorage = deps.clearStorage ?? (() => clearAppStorage());
   const deleteDatabases = deps.deleteDatabases ?? (() => deleteAppDatabases());
   const navigate = deps.navigate ?? loadPage;
+  appSignOutInProgress = true;
   clearStorage();
   await deleteDatabases().catch(() => undefined);
-  await signOut(async () => {
-    // The session is gone. Remove the keys that a component wrote in the meantime.
-    clearStorage();
-    navigate(options.redirectUrl || DEFAULT_SIGN_OUT_REDIRECT);
-  }, options);
+  try {
+    await signOut(async () => {
+      // The session is gone. Remove the keys that a component wrote in the meantime.
+      clearStorage();
+      navigate(options.redirectUrl || DEFAULT_SIGN_OUT_REDIRECT);
+    }, options);
+  } catch (error) {
+    // The sign-out failed, so the session-end cleanup must work again.
+    appSignOutInProgress = false;
+    throw error;
+  }
 }
 
 export interface AuthSnapshot {
@@ -200,6 +222,7 @@ export interface SessionEndDeps {
   clearStorage?: () => unknown;
   deleteDatabases?: () => Promise<unknown>;
   reload?: () => void;
+  appSignOutInProgress?: () => boolean;
 }
 
 /** Clears app storage after a session ends, then reloads so no in-memory state writes it back. */
@@ -207,6 +230,8 @@ export async function clearStorageAfterSessionEnd(deps: SessionEndDeps = {}): Pr
   const clearStorage = deps.clearStorage ?? (() => clearAppStorage());
   const deleteDatabases = deps.deleteDatabases ?? (() => deleteAppDatabases());
   const reload = deps.reload ?? reloadPage;
+  // An app-started sign-out clears storage and loads its own page.
+  if ((deps.appSignOutInProgress ?? isAppSignOutInProgress)()) return;
   clearStorage();
   await deleteDatabases().catch(() => undefined);
   clearStorage();

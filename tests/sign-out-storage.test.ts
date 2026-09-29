@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { ONBOARDING_DISMISSED_STORAGE_KEY } from '../components/hosted/onboarding-state';
@@ -10,12 +10,16 @@ import {
   createSessionEndWatcher,
   DEFAULT_SIGN_OUT_REDIRECT,
   deleteAppDatabases,
+  isAppSignOutInProgress,
   isAppStorageKey,
+  resetAppSignOutForTest,
   signOutAndClearStorage,
 } from '../lib/auth/sign-out-storage';
 import { verdictStorageKey } from '../lib/mail/sender-logo';
 import { PINNED_MODELS_KEY } from '../lib/shell/pinned-models';
 import { PROOF_DISMISSALS_KEY } from '../lib/shell/proof-dismissals';
+
+beforeEach(() => resetAppSignOutForTest());
 
 class MemoryStorage {
   readonly data = new Map<string, string>();
@@ -258,6 +262,24 @@ describe('signOutAndClearStorage', () => {
     expect(assigned).toEqual(['/sign-in']);
   });
 
+  test('the flag stays set after the sign-out, and a failed sign-out clears it', async () => {
+    const deps = { clearStorage: () => undefined, deleteDatabases: async () => {}, navigate: () => {} };
+    await signOutAndClearStorage(async (callback) => callback(), {}, deps);
+    expect(isAppSignOutInProgress()).toBe(true);
+
+    resetAppSignOutForTest();
+    await expect(
+      signOutAndClearStorage(
+        async () => {
+          throw new Error('network');
+        },
+        {},
+        deps,
+      ),
+    ).rejects.toThrow('network');
+    expect(isAppSignOutInProgress()).toBe(false);
+  });
+
   test('a sign-out that fails still leaves storage clear', async () => {
     const local = seeded(APP_LOCAL_KEYS);
     await expect(
@@ -299,6 +321,34 @@ describe('session end watcher', () => {
     expect(ended).toBe(1);
     watch({ isLoaded: true, userId: 'user_c' });
     expect(ended).toBe(2);
+  });
+
+  test('cleanup does nothing while an app-started sign-out loads its own page', async () => {
+    const calls: string[] = [];
+    await clearStorageAfterSessionEnd({
+      clearStorage: () => calls.push('clear'),
+      deleteDatabases: async () => {
+        calls.push('delete');
+      },
+      reload: () => calls.push('reload'),
+      appSignOutInProgress: () => true,
+    });
+    expect(calls).toEqual([]);
+
+    await signOutAndClearStorage(
+      async (callback) => callback(),
+      {},
+      {
+        clearStorage: () => undefined,
+        deleteDatabases: async () => {},
+        navigate: () => {},
+      },
+    );
+    await clearStorageAfterSessionEnd({
+      clearStorage: () => calls.push('clear'),
+      reload: () => calls.push('reload'),
+    });
+    expect(calls).toEqual([]);
   });
 
   test('cleanup clears, deletes databases, clears again, then reloads', async () => {
