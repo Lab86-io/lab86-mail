@@ -47,7 +47,7 @@ async function access(userId: string, connectionId: string) {
  * `drive` (docs/google-verification/scopes.md).
  */
 export const GOOGLE_WORKING_COPY_NOT_APP_FILE =
-  'Google did not save your edits: Albatross can change only the Google files that it made. Your edited copy is still in Albatross. Download it to keep your changes.';
+  'Google did not save your edits: Albatross has no write access to this file in Google Drive. Your edited copy is still in Albatross. Download it to keep your changes.';
 
 /** The error reasons of a failed Google answer, for example `appNotAuthorizedToFile`. */
 async function responseErrorReasons(response: Response) {
@@ -234,7 +234,7 @@ export async function saveGoogleWorkingCopy(input: {
       body,
     },
     // The metadata said that the user can edit the file, so an app-access
-    // 403 here means that Albatross did not make it.
+    // 403 here means that the app has no access to the file.
     { forbidden: GOOGLE_WORKING_COPY_NOT_APP_FILE },
   );
   const saved = await response.json();

@@ -298,8 +298,9 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
     `components/files/DocumentEditor.tsx:440`.
   - The Office working-copy save replaces a Google file with a Drive v2 upload
     (`lib/documents/google-working-copy.ts:228-239`). With `drive.file`, this
-    works only for a file that Albatross made. For another file, Google
-    refuses the upload. Albatross then shows a clear message
+    works only for a file that the app has access to: in Albatross, a file
+    that Albatross made. For another file, Google refuses the upload
+    (`appNotAuthorizedToFile`). Albatross then shows a clear message
     (`GOOGLE_WORKING_COPY_NOT_APP_FILE`, `:49`), and the edited copy stays in
     Albatross.
 - **Narrower scope.** `drive.file` is the narrowest Drive scope that lets an
@@ -322,9 +323,9 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
     title (`renameGoogleFile`, `lib/documents/google.ts:696-714`, Drive v3
     `PATCH`). The Drive API renames a file only with `drive`, or with
     `drive.file` for a file that the app made. For a Doc that the user made in
-    Google, Google refuses the rename (403, reason `appNotAuthorizedToFile`).
-    Albatross then keeps the Google name and tells the user. The content save
-    does not depend on the rename.
+    Google, Google refuses the rename (403, reason `appNotAuthorizedToFile`:
+    the app has no access to the file). Albatross then keeps the Google name
+    and tells the user. The content save does not depend on the rename.
   - Route `PATCH /api/files/google/editor`, called from
     `components/files/DocumentEditor.tsx:997` and `:1073`.
   - The assistant tool `google_document_edit` only proposes a change. The user
@@ -364,8 +365,9 @@ These notes are not for the reviewer. Each note has the decision of the owner.
      allow write access at consent; a reconnect fixes it).
    - The Office working-copy save (`lib/documents/google-working-copy.ts:228-239`,
      Drive v2 upload). A 403 with the reason `appNotAuthorizedToFile` gives
-     the message "Google did not save your edits: Albatross can change only
-     the Google files that it made." The edited copy stays in Albatross. Each
+     the message "Google did not save your edits: Albatross has no write
+     access to this file in Google Drive." The edited copy stays in
+     Albatross. Each
      other 403 (a rate limit, a quota, a user permission, a missing scope, no
      reason) keeps the old error, which tells the user to reconnect.
    - Do not show these two actions on a file that Albatross did not make in the

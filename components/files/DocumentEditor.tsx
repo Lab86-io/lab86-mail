@@ -67,7 +67,7 @@ interface GoogleEditorFile extends GoogleEditorSource {
   webUrl?: string;
   providerVersion?: string;
   editability?: { editable: boolean; reason?: string };
-  /** Google refused the rename (a file that Albatross did not make); the file keeps its Google name. */
+  /** Google refused the rename (Albatross has no access to the file); the file keeps its Google name. */
   renameSkipped?: boolean;
 }
 
@@ -1019,7 +1019,7 @@ function SemanticGoogleDocumentEditor({
       setRecovered(null);
       if (saved.renameSkipped) {
         toast.message('Your changes are saved. Google Drive kept the old file name.', {
-          description: 'Albatross can rename only the Google files that it made.',
+          description: 'Albatross has no access to rename this file in Google Drive.',
         });
       }
       queryClient.setQueryData(queryKey, { ok: true, file: { ...saved, editability: file?.editability } });

@@ -4,13 +4,13 @@
 // Drive write to a file that it did not make fails with
 // `appNotAuthorizedToFile`
 // (https://developers.google.com/workspace/drive/api/guides/handle-errors).
-// Only that reason gets the "Albatross did not make this file" handling. A
+// Only that reason gets the "Albatross has no access to this file" handling. A
 // missing scope (`insufficientPermissions`, `ACCESS_TOKEN_SCOPE_INSUFFICIENT`)
 // means that the user did not allow write access at consent, so it keeps the
 // reconnect error, as does each other 403
 // (docs/google-verification/scopes.md, owner note 2).
 
-/** Reasons that mean that the app is not on the file: Albatross did not make it. */
+/** Reasons that mean that the app has no access to the file (for Albatross: a file that it did not make). */
 export const GOOGLE_APP_ACCESS_DENIED_REASONS: ReadonlySet<string> = new Set(['appNotAuthorizedToFile']);
 
 /** Every error reason in a Google error body: `error.errors[].reason` and `error.details[].reason`. */

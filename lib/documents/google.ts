@@ -706,7 +706,9 @@ async function renameGoogleFile(accessToken: string, fileId: string, title: stri
     return true;
   } catch (error) {
     if (error instanceof GoogleWriteError && isGoogleAppAccessDenied(error.status, error.reasons)) {
-      console.warn('[google-docs] rename skipped: Drive write access covers only files that Albatross made');
+      console.warn(
+        '[google-docs] rename skipped: the app has no Drive access to this file (appNotAuthorizedToFile)',
+      );
       return false;
     }
     throw error;

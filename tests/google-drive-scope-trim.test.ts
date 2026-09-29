@@ -202,7 +202,7 @@ describe('Office working-copy save', () => {
     const failure = await saveCopy().catch((error) => error);
     expect(failure.message).toBe(GOOGLE_WORKING_COPY_NOT_APP_FILE);
     expect(failure.status).toBe(403);
-    expect(GOOGLE_WORKING_COPY_NOT_APP_FILE).toContain('only the Google files that it made');
+    expect(GOOGLE_WORKING_COPY_NOT_APP_FILE).toContain('Albatross has no write access to this file');
   });
 
   test('a rate limit, a quota, a user permission, a missing scope, or no reason keeps the old 403 error', async () => {
