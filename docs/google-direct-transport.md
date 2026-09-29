@@ -115,8 +115,11 @@ system. The Google scopes do not change.
 These rules add to the decisions above or make them exact.
 
 - **Switch gate.** `/api/google/connect?mode=switch&account=<email or
-  accountId>` is enabled during isolated local development by
-  `isDevelopmentRuntime()` (`lib/hosted/controls.ts`). In production it needs
+  accountId>` is enabled by `isDevelopmentRuntime()` (`lib/hosted/controls.ts`).
+  This existing feature gate checks runtime mode, not the Convex target. Before
+  local testing, verify that `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL`
+  select local Convex, and use only test accounts and synthetic data. Keep
+  `LAB86_DEVELOPMENT_MODE` unset in hosted production. In production the flow needs
   `LAB86_GOOGLE_DIRECT=1` or `LAB86_GOOGLE_DIRECT_SWITCH=1`. The Gmail address
   of the sign-in must equal the account address; the flow refuses another
   address and stores nothing.

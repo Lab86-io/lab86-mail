@@ -94,11 +94,14 @@ above record the original implementation; rerun affected checks for subsequent c
    deploys Convex before the web/API. Verify health and the live Clerk configuration and
    `LAB86_CONVEX_INTERNAL_SECRET` without exposing their values.
 3. Use the matching production release for paired iOS/macOS testing builds. Verify with
-   a real signed-in account: open each editor without another sign-in, edit and reopen
+   a dedicated production test account containing only synthetic data and connected
+   only to test provider accounts: open each editor without another sign-in, edit and reopen
    on web, restore a revision, export and share, upload an Office file, reconnect a
    provider, background/resume, and switch accounts. Confirm closing the embedded
    workspace leaves the native login active. These authenticated/provider acceptance
-   checks are a release gate; local synthetic tests do not substitute for them.
+   checks are a release gate; local synthetic tests do not substitute for them. After
+   validation, disconnect the test provider connections and delete or disable the
+   test account. Follow the [test-account rules](../google-verification/test-account.md).
 4. Confirm the Apple builds match the verified production version and commit before
    distribution. Preserve the repository's existing release/version process.
 5. If native integration must be rolled back, keep the server session routes compatible
