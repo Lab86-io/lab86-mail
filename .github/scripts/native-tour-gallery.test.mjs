@@ -237,3 +237,35 @@ test('the script fails on a problem but still writes the gallery for the upload'
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('reports an image with no sidecar and a sidecar whose uncovered is not a list', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'native-tour-'));
+  try {
+    const input = path.join(root, 'input');
+    const ios = path.join(input, 'native-tour-ios-sha', 'ios');
+    await writeTour(ios, [record({})]);
+    await writeTour(path.join(input, 'native-tour-macos-sha', 'macos'), [
+      record({ file: 'macos-mac-today-dark.png', platform: 'macOS', screen: 'mac-today' }),
+    ]);
+    await writeFile(path.join(ios, 'lonely.png'), 'png');
+    await writeTour(ios, [record({ file: 'bad-uncovered.png', uncovered: 'GET /x' })]);
+
+    const { records, problems } = await collectRecords(input);
+    assert.equal(records.length, 2);
+    assert.deepEqual(
+      problems.map((problem) => [problem.file, problem.reason]),
+      [
+        [
+          path.join('native-tour-ios-sha', 'ios', 'bad-uncovered.json'),
+          'The sidecar field uncovered is not a list.',
+        ],
+        [path.join('native-tour-ios-sha', 'ios', 'lonely.png'), 'The image has no sidecar.'],
+      ],
+    );
+    const manifest = await buildGallery(input, path.join(root, 'output'), { commit: 'abc' });
+    assert.equal(manifest.counts.total, 2);
+    assert.equal(validationErrors(manifest).length, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
