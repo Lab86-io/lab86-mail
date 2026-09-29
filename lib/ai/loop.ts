@@ -26,7 +26,7 @@ import {
   resolveAgentRuntimes,
 } from './gateway';
 import { newGenerationCapture, recordFailedModelCall, runWithGenerationCapture } from './generation-cost';
-import { describeModelError } from './log-error';
+import { describeModelError, redactModelErrorMessage } from './log-error';
 import { newOperationBatchId } from './operations';
 import {
   buildSystemPrompt,
@@ -963,7 +963,8 @@ async function streamAgentTurn(
         sendReasoning: true,
         sendSources: true,
         // This formatter also runs for recoverable tool errors. Only streamText.onError owns fatal state.
-        onError: (error) => safeAuthErrorText(error),
+        // The text goes to the client: bounded, without model output or keys (CASA S7, S8).
+        onError: (error) => redactModelErrorMessage(errorText(error)),
       });
       const outcome = await forwardAgentStream(
         writer,
@@ -1212,7 +1213,7 @@ export async function runAgent({
           },
           onError: (error) => {
             console.error('[agent]', { runId, error: describeModelError(error) });
-            return safeAuthErrorText(error);
+            return redactModelErrorMessage(errorText(error));
           },
         }),
       });

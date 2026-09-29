@@ -59,7 +59,15 @@ export function createToolPost(deps = dependencies) {
       if (err instanceof RateLimitError) return rateLimitJson(err);
       const status = err instanceof AuthRequiredError ? 401 : err instanceof ToolValidationError ? 400 : 500;
       return NextResponse.json(
-        { ok: false, error: errorAnswerMessage(status, err, 'tool failure', `[tools/${name}] failed`) },
+        {
+          ok: false,
+          error: errorAnswerMessage(
+            status,
+            err,
+            'The action could not finish. Try again.',
+            `[tools/${name}] failed`,
+          ),
+        },
         { status },
       );
     }

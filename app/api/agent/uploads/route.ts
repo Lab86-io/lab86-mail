@@ -14,8 +14,19 @@ const MAX_FILES = 5;
 const STORAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const agentUploadsApi = api.agentUploads;
 
+// The upload took too long. Its message tells the user what to do (CASA S7).
+class UploadTimeoutError extends Error {
+  constructor() {
+    super('Storage upload timed out. Try again with a smaller file.');
+    this.name = 'UploadTimeoutError';
+  }
+}
+
 function errorResponse(err: any, fallback = 'Upload failed') {
   if (err instanceof RateLimitError) return rateLimitJson(err);
+  if (err instanceof UploadTimeoutError) {
+    return NextResponse.json({ ok: false, error: err.message }, { status: 504 });
+  }
   if (err instanceof AuthRequiredError) {
     return NextResponse.json({ ok: false, error: err.message || 'Authentication required' }, { status: 401 });
   }
@@ -58,7 +69,7 @@ async function uploadToStorage(uploadUrl: string, file: File, contentType: strin
     return (await response.json()) as { storageId: string };
   } catch (err: any) {
     if (err?.name === 'AbortError') {
-      throw new Error('Storage upload timed out. Try again with a smaller file.');
+      throw new UploadTimeoutError();
     }
     throw err;
   } finally {

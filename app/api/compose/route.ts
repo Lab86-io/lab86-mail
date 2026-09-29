@@ -27,6 +27,18 @@ export const dynamic = 'force-dynamic';
 
 const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
 
+// A compose request that the app refuses with a message for the user. The
+// answer keeps this message; other errors get a fixed text (CASA S7).
+class ComposeRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status = 400,
+  ) {
+    super(message);
+    this.name = 'ComposeRequestError';
+  }
+}
+
 type NylasAttachment = NonNullable<Parameters<typeof sendNylasMessage>[0]['attachments']>[number];
 
 const defaults = {
@@ -223,7 +235,8 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
       });
     } catch (err: any) {
       if (err instanceof RateLimitError) return rateLimitJson(err);
-      const status = err instanceof AuthRequiredError ? 401 : 500;
+      const status =
+        err instanceof AuthRequiredError ? 401 : err instanceof ComposeRequestError ? err.status : 500;
       await deps
         .writeAudit({
           tool: `compose_route:${mode || 'new'}:nylas`,
@@ -248,7 +261,7 @@ type PreparedSend = Omit<Parameters<typeof sendNylasMessage>[0], 'userId' | 'sen
 
 async function sendPrepared(userId: string, prepared: PreparedSend, sendAt?: number): Promise<Message> {
   const sent = await sendNylasMessage({ userId, ...prepared, sendAt });
-  if (!sent) throw new Error('Connect this mailbox with Nylas before sending.');
+  if (!sent) throw new ComposeRequestError('Connect this mailbox with Nylas before sending.', 409);
   return sent;
 }
 
@@ -287,7 +300,8 @@ async function prepareComposeSend({
   body = signed.body;
   html = signed.html;
   if (mode === 'reply' || mode === 'reply_all') {
-    if (!messageId && !threadId) throw new Error('messageId or threadId is required for reply/reply_all');
+    if (!messageId && !threadId)
+      throw new ComposeRequestError('messageId or threadId is required for reply/reply_all');
     const anchor = await resolveSendAnchor({ account, messageId, threadId });
     const target = mode === 'reply_all' ? replyAllTargetFor(anchor, account) : replyTargetFor(anchor);
     return {
@@ -304,8 +318,8 @@ async function prepareComposeSend({
   }
 
   if (mode === 'forward') {
-    if (!messageId) throw new Error('messageId is required for forward');
-    if (!to) throw new Error('to is required for forward');
+    if (!messageId) throw new ComposeRequestError('messageId is required for forward');
+    if (!to) throw new ComposeRequestError('to is required for forward');
     const original = await resolveSendAnchor({ account, messageId, threadId });
     const quoted = buildForwardMessagePayload(original, { body, html });
     return {
@@ -320,8 +334,8 @@ async function prepareComposeSend({
     };
   }
 
-  if (!to) throw new Error('to is required');
-  if (!subject) throw new Error('subject is required');
+  if (!to) throw new ComposeRequestError('to is required');
+  if (!subject) throw new ComposeRequestError('subject is required');
   return { account, to, cc, bcc, subject, body, html, attachments };
 }
 
