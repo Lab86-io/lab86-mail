@@ -512,6 +512,60 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
     expect(order).toEqual(['disconnect']);
   });
 
+  test('a failed shared-grant check skips the revoke and still disconnects', async () => {
+    const warn = mock((..._args: unknown[]) => undefined);
+    const original = console.warn;
+    console.warn = warn;
+    try {
+      // The mail check fails: it counts as shared access, and the blocker check does not run.
+      const blockerAfterMailFailure = mock(async () => null);
+      const failedMail = { fetch: mock(async () => new Response('')), mutation: mock(async () => undefined) };
+      __setCloudFileConnectionDepsForTest({
+        convexQuery: (async () => stored('google_drive')) as any,
+        convexMutation: failedMail.mutation as any,
+        decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
+        fetch: failedMail.fetch as any,
+        mailUsesDriveGrant: async () => {
+          throw new Error('convex down');
+        },
+        googleRevokeBlockedReason: blockerAfterMailFailure,
+      });
+      await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
+      expect(failedMail.fetch).not.toHaveBeenCalled();
+      expect(blockerAfterMailFailure).not.toHaveBeenCalled();
+      expect(failedMail.mutation.mock.calls).toEqual([
+        [expect.anything(), { userId: 'user-1', connectionId: 'conn-1' }],
+      ]);
+
+      // The blocker check fails: it counts as a reason not to revoke.
+      const failedBlocker = {
+        fetch: mock(async () => new Response('')),
+        mutation: mock(async () => undefined),
+      };
+      __setCloudFileConnectionDepsForTest({
+        convexQuery: (async () => stored('google_drive')) as any,
+        convexMutation: failedBlocker.mutation as any,
+        decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
+        fetch: failedBlocker.fetch as any,
+        mailUsesDriveGrant: async () => false,
+        googleRevokeBlockedReason: async () => {
+          throw new Error('convex down');
+        },
+      });
+      await expect(disconnectCloudFileConnection('user-1', 'conn-1')).resolves.toEqual({ revoked: false });
+      expect(failedBlocker.fetch).not.toHaveBeenCalled();
+      expect(failedBlocker.mutation).toHaveBeenCalledTimes(1);
+    } finally {
+      console.warn = original;
+    }
+    const logged = warn.mock.calls.map((call) => call.join(' '));
+    expect(logged).toContain('[cloud-files] mail grant check failed; no revoke convex down');
+    expect(logged).toContain('[cloud-files] Google connection check failed convex down');
+    expect(logged).toContain(
+      '[cloud-files] no Google revoke: the Google connection check failed; the rows go',
+    );
+  });
+
   test('a failed revoke still disconnects; OneDrive has no revoke call', async () => {
     const mutation = mock(async (..._args: unknown[]) => undefined);
     __setCloudFileConnectionDepsForTest({
