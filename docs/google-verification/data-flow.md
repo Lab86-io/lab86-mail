@@ -54,9 +54,12 @@ correct only when the named work of that round is merged and deployed.
 
 ## 1. Sign-in to Albatross
 
-- Clerk hosts sign-in and sign-up (`app/sign-in/[[...sign-in]]/page.tsx:36`,
-  `app/sign-up/[[...sign-up]]/page.tsx:39`). The proxy makes a Clerk session necessary
+- Clerk hosts sign-in and sign-up (`app/sign-in/[[...sign-in]]/page.tsx:24`,
+  `app/sign-up/[[...sign-up]]/page.tsx:37`). The proxy makes a Clerk session necessary
   on each route that is not public (`proxy.ts:12-59`).
+- The sign-in and sign-up pages name Albatross, tell what it does, and link
+  the privacy policy and the terms (`components/auth/AuthScreen.tsx`). A
+  signed-out visit to `/` goes to `/sign-in`.
 - Albatross reads only the Clerk profile: user id, e-mail address, name, and
   image (`lib/auth/current-user.ts:21-68`). Albatross never reads Google data
   through Clerk. The code has no `getUserOauthAccessToken` call.
@@ -242,12 +245,16 @@ Browserbase directly. Three features use Browserbase:
 
 | Service | What it receives | Code |
 |---|---|---|
-| Nylas | Today: all Google mail, calendar, and contact traffic. After the casa-prep round: Microsoft and iCloud accounts only; a switched Google account keeps its old Nylas grant until disconnect. | `lib/nylas/client.ts:62`; `docs/google-direct-transport.md` |
+| Nylas | Today: all Google mail, calendar, and contact traffic. After the casa-prep round: Microsoft and iCloud accounts only; a switched Google account keeps its old Nylas grant until disconnect or until the owner-run cleanup (`scripts/nylas-grant-cleanup.ts`). | `lib/nylas/client.ts:62`; `docs/google-direct-transport.md` |
 | Clerk | Identity. The brief e-mail reads the primary address from Clerk. | `lib/auth/current-user.ts`; `lib/mail/brief-email.ts:168-176` |
 | Railway | Hosts the web server and its logs. | `railway.json` |
-| DuckDuckGo and Google favicon services | The registrable domain of a company sender, for the sender logo. Personal mail domains are excluded. | `lib/tools/photo-resolution.ts:188-226`; `app/api/logos/[domain]/route.ts` |
-| Open-Meteo | Up to 3 place names from calendar events, for the brief weather. | `lib/mail/brief-weather.ts:100-118` |
-| OpenStreetMap Nominatim | Latitude and longitude for a place in a plan. | `lib/albatross/intent-plan.ts:929-946` |
+| DuckDuckGo and Google favicon services | The registrable domain of a company sender or a web site, for the logo. Personal mail domains are excluded. The browser sends some requests, so the service also gets the user IP address. | `lib/tools/photo-resolution.ts:188-226`; `lib/mail/sender-logo.ts:127-141`; `app/api/logos/[domain]/route.ts` |
+| Open-Meteo | The device location that the user shares, or up to 3 place names from calendar events, or the city of the time zone, for the brief weather. | `lib/mail/brief-weather.ts:100-195`; `lib/weather/open-meteo.ts:214-260` |
+| OpenStreetMap Nominatim | The device location (latitude and longitude) for a search of places near the user in a plan. It returns the city and region. | `lib/albatross/intent-plan.ts:929-946` |
+| Google Maps (browser) | The place text of a calendar event, when the user opens the event details. | `components/calendar/engine/event-details-dialog.tsx:230` |
+| Browser push services (Google, Mozilla, Apple) | Encrypted web push messages with fixed text. | `lib/notifications/delivery.ts:94-100` |
+| Connected tools (GitHub, Bitbucket, Jira, Slack, Granola) | The requests of the user, when the user connects the tool. | `lib/mcp/servers.ts` |
+| Hosts that the browser loads directly | The user IP address: Google Fonts (brief pages), public museum collections (brief art), DiceBear (a generated picture with the author name of a social post). | `lib/mail/report-artifact.ts:35`; `lib/mail/daily-art.ts`; `lib/tools/display.ts:556` |
 | Collabora Online | Office documents that the user opens. Lab86 hosts it on Railway. | `docs/deployment/documents.md` |
 | Stripe (through Clerk Billing) | Billing only. No Google data. | `app/api/billing/webhook/route.ts:6-13` |
 
@@ -278,9 +285,9 @@ See `retention-and-deletion.md`. In short:
 - Albatross does not sell Google user data and does not use it for ads.
 - Albatross sends Google user data to a third party only to give a feature:
   the model providers through OpenRouter, Nylas, Convex, Railway, Apple push,
-  Resend, and Browserbase, as listed above.
+  Resend, Browserbase, and the other services in section 9, as listed above.
 - Albatross does not use Google user data to train general models. The
   OpenRouter setting `data_collection: deny` (after the casa-prep round) keeps
   calls away from providers that train on data.
 - Lab86 staff do not read user mail, except with the user's consent, for
-  security, or when the law makes it necessary (`app/privacy/page.tsx:61-76`).
+  security, or when the law makes it necessary (`app/privacy/page.tsx:67-92`).

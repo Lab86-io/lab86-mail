@@ -106,7 +106,7 @@ short. The full video is about 8 to 12 minutes.
 
 ## Limited Use: what to show
 
-- The privacy policy section "Google user data" (`app/privacy/page.tsx:61-76`),
+- The privacy policy section "Google user data" (`app/privacy/page.tsx:67-92`),
   with the link to the Google API Services User Data Policy.
 - That sign-in with Clerk does not give Google data to Albatross (shot A2).
 - That each scope maps to a visible user feature (parts C to F).

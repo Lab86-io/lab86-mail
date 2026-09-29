@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { getCloudFileAccess } from '@/lib/files/connections';
 import { decryptSecret, encryptSecret } from '@/lib/security/crypto';
+import { googleErrorReasons, isGoogleAppAccessDenied } from './google-access';
 import {
   OFFICE_MIME,
   OfficeError,
@@ -39,7 +40,34 @@ async function access(userId: string, connectionId: string) {
     throw new OfficeError('Google Drive connection not found.', 404);
   return result.accessToken;
 }
-async function request(token: string, url: string, init: RequestInit = {}) {
+/**
+ * Shown when Google refuses to replace a file that the user can edit. The
+ * Drive API replaces a file only with the full `drive` scope, or with
+ * `drive.file` for a file that Albatross made; Albatross does not ask for
+ * `drive` (docs/google-verification/scopes.md).
+ */
+export const GOOGLE_WORKING_COPY_NOT_APP_FILE =
+  'Google did not save your edits: Albatross has no write access to this file in Google Drive. Your edited copy is still in Albatross. Download it to keep your changes.';
+
+/** The error reasons of a failed Google answer, for example `appNotAuthorizedToFile`. */
+async function responseErrorReasons(response: Response) {
+  const payload = await response
+    .clone()
+    .json()
+    .catch(() => null);
+  return googleErrorReasons(payload);
+}
+
+/**
+ * One Drive call with the user's token. It maps a failed answer to an
+ * OfficeError; `options.forbidden` replaces the message of an app-access 403.
+ */
+async function request(
+  token: string,
+  url: string,
+  init: RequestInit = {},
+  options: { forbidden?: string } = {},
+) {
   const response = await deps.fetch(url, {
     ...init,
     headers: { Authorization: `Bearer ${token}`, ...init.headers },
@@ -51,6 +79,15 @@ async function request(token: string, url: string, init: RequestInit = {}) {
       'The original changed in Google. Download its latest version before saving your edits.',
       409,
     );
+  // Only an app-access reason gets the caller's message. A rate limit, a
+  // quota, or a 403 with no reason keeps the error below.
+  if (
+    response.status === 403 &&
+    options.forbidden &&
+    isGoogleAppAccessDenied(403, await responseErrorReasons(response))
+  ) {
+    throw new OfficeError(options.forbidden, 403);
+  }
   if (response.status === 401 || response.status === 403)
     throw new OfficeError(
       'Google write access is missing. Reconnect Google Drive or check sharing permissions.',
@@ -196,6 +233,9 @@ export async function saveGoogleWorkingCopy(input: {
       headers: { 'Content-Type': `multipart/related; boundary=${boundary}`, 'If-Match': session.etag },
       body,
     },
+    // The metadata said that the user can edit the file, so an app-access
+    // 403 here means that the app has no access to the file.
+    { forbidden: GOOGLE_WORKING_COPY_NOT_APP_FILE },
   );
   const saved = await response.json();
   if (!saved.etag || saved.version == null)

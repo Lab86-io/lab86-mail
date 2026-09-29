@@ -1,7 +1,7 @@
 import { SignIn } from '@clerk/nextjs';
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
-import { DotGridGlow } from '@/components/ui/dot-grid-glow';
+import { AuthScreen } from '@/components/auth/AuthScreen';
 import { isClerkConfigured } from '@/lib/hosted/env';
 
 export default async function SignInPage() {
@@ -20,27 +20,14 @@ export default async function SignInPage() {
   if (session.userId) redirect('/');
 
   return (
-    <main className="app-paper relative grid min-h-dvh place-items-center px-4 py-10">
-      <DotGridGlow />
-      <div className="relative z-10 flex w-full max-w-4xl flex-col items-center gap-10 md:flex-row md:justify-center md:gap-16">
-        <div className="max-w-sm text-center md:text-left">
-          <div className="text-[13px] font-medium text-[var(--color-accent)]">Albatross</div>
-          <h1 className="mt-2 text-[28px] font-semibold leading-tight tracking-tight text-[var(--color-text)]">
-            Tell it what is weighing on you.
-          </h1>
-          <p className="mt-3 text-[13.5px] leading-relaxed text-[var(--color-text-muted)]">
-            Albatross works out what you actually want, finds the context across your mail and calendar,
-            carries the parts it can, and tells you when something is genuinely done.
-          </p>
-        </div>
-        <SignIn
-          fallbackRedirectUrl="/"
-          forceRedirectUrl="/"
-          signUpFallbackRedirectUrl="/"
-          signUpForceRedirectUrl="/"
-          signUpUrl="/sign-up"
-        />
-      </div>
-    </main>
+    <AuthScreen>
+      <SignIn
+        fallbackRedirectUrl="/"
+        forceRedirectUrl="/"
+        signUpFallbackRedirectUrl="/"
+        signUpForceRedirectUrl="/"
+        signUpUrl="/sign-up"
+      />
+    </AuthScreen>
   );
 }

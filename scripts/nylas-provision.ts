@@ -23,6 +23,8 @@
  * confirms the app is in the `production` environment with connectors live.
  */
 
+import { GOOGLE_MAIL_SCOPES } from '../lib/google/oauth';
+
 const API_KEY = process.env.NYLAS_API_KEY || '';
 const API_URI = process.env.NYLAS_API_URI || 'https://api.us.nylas.com';
 const PUBLIC_URL = (process.env.PUBLIC_URL || 'https://mail.lab86.io').replace(/\/$/, '');
@@ -49,14 +51,14 @@ const WEBHOOK_TRIGGERS = [
   'grant.expired',
 ];
 
-// Contact scopes (lib/contacts/model.ts). Google: saved contacts, "Other
-// contacts", and the Workspace directory. Microsoft: Outlook contacts, and
-// the People API for people the user wrote to and the work directory.
-const GOOGLE_CONTACT_SCOPES = [
-  'https://www.googleapis.com/auth/contacts.readonly',
-  'https://www.googleapis.com/auth/contacts.other.readonly',
-  'https://www.googleapis.com/auth/directory.readonly',
-];
+// The Google connector has the eight scopes of the production connector
+// (docs/google-verification/scopes.md, "Mailbox connect"): openid,
+// userinfo.email, userinfo.profile, gmail.modify, calendar, and the three
+// contact scopes. The direct Google flow asks for the same list, so both
+// read it from lib/google/oauth.ts.
+const GOOGLE_CONNECTOR_SCOPES: string[] = [...GOOGLE_MAIL_SCOPES];
+// Microsoft contact scopes (lib/contacts/model.ts): Outlook contacts, and the
+// People API for people the user wrote to and the work directory.
 const MICROSOFT_CONTACT_SCOPES = ['Contacts.Read', 'People.Read'];
 
 if (!API_KEY) {
@@ -147,11 +149,7 @@ async function ensureConnector(provider: 'google' | 'microsoft', clientId: strin
       // the upper bound. Keep these aligned with NYLAS_SCOPES_* in Railway.
       scope:
         provider === 'google'
-          ? [
-              'https://www.googleapis.com/auth/gmail.modify',
-              'https://www.googleapis.com/auth/userinfo.email',
-              ...GOOGLE_CONTACT_SCOPES,
-            ]
+          ? GOOGLE_CONNECTOR_SCOPES
           : ['Mail.ReadWrite', 'Mail.Send', 'offline_access', 'User.Read', ...MICROSOFT_CONTACT_SCOPES],
     }),
   });
@@ -199,7 +197,7 @@ async function main() {
   for (const connector of connectors) {
     const wanted =
       connector.provider === 'google'
-        ? GOOGLE_CONTACT_SCOPES
+        ? GOOGLE_CONNECTOR_SCOPES
         : connector.provider === 'microsoft'
           ? MICROSOFT_CONTACT_SCOPES
           : [];
@@ -207,8 +205,7 @@ async function main() {
     const absent = wanted.filter(
       (scope) => !scopes.some((entry) => entry.toLowerCase().endsWith(scope.toLowerCase())),
     );
-    if (absent.length)
-      console.log(`  ${connector.provider} connector lacks contact scopes: ${absent.join(', ')}`);
+    if (absent.length) console.log(`  ${connector.provider} connector lacks scopes: ${absent.join(', ')}`);
   }
   console.log(`  grants:      ${grants.length}`);
   for (const g of grants) console.log(`    - ${g.provider} ${g.email} (${g.grant_status})`);
@@ -255,5 +252,3 @@ main().catch((err) => {
   console.error(err?.message || err);
   process.exit(1);
 });
-
-export {};

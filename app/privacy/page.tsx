@@ -6,7 +6,7 @@ export default function PrivacyPage() {
       <article className="mx-auto max-w-3xl space-y-5">
         <h1 className="text-2xl font-semibold">Privacy Policy</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
-          Effective June 2026. Updated September 28, 2026.
+          Effective June 2026. Updated September 29, 2026.
         </p>
         <p>
           {PRODUCT_NAME} is hosted email and personal operations software from {COMPANY_NAME}. This policy
@@ -86,6 +86,10 @@ export default function PrivacyPage() {
           intelligence or machine learning models, or allow humans to read message content except with your
           consent, for security, to comply with law, or for support you request.
         </p>
+        <p>
+          We transfer Google user data to the service providers in &quot;How we share data&quot; only to give
+          you the features that you use, for security, or to obey the law.
+        </p>
 
         <h2 className="pt-2 text-lg font-semibold">How we share data</h2>
         <p>
@@ -94,6 +98,54 @@ export default function PrivacyPage() {
           to hosts that do not train models on the data. Examples are OpenAI, Anthropic, Amazon Web Services,
           Microsoft Azure, and Google Cloud. If you add your own model key, we also send requests to the
           provider of that key.
+        </p>
+        <p>Some features also send data to these services:</p>
+        <ul className="list-disc space-y-2 pl-5">
+          <li>
+            <strong>Browserbase:</strong> runs the web browser for web search, for the web pages that you or
+            the assistant open, for guided work, and for slide images. It receives the search words, the page
+            addresses, and the slide content. It records the browser sessions of guided work.
+          </li>
+          <li>
+            <strong>Apple Push Notification service:</strong> receives the device token of your iPhone, iPad,
+            or Mac and the text of each notification that you turn on, for example the sender and subject of
+            new mail.
+          </li>
+          <li>
+            <strong>Browser push services:</strong> browser notifications go through the push service of your
+            browser, for example Google, Mozilla, or Apple. They are encrypted and hold only fixed text, such
+            as a check-in reminder.
+          </li>
+          <li>
+            <strong>DuckDuckGo and Google site icons:</strong> to show the logo of a company sender or a web
+            site, we ask these icon services for the icon of that domain. Your browser sends some of these
+            requests, so the service also receives your IP address. We do not send personal mail domains such
+            as gmail.com.
+          </li>
+          <li>
+            <strong>Open-Meteo:</strong> for the weather in your brief, receives the location that you share
+            from your device, or up to three place names from your calendar events, or the city of your time
+            zone.
+          </li>
+          <li>
+            <strong>OpenStreetMap Nominatim:</strong> when a plan needs places near you and your device shares
+            its location, receives that latitude and longitude and returns the name of the city and region.
+          </li>
+          <li>
+            <strong>Google Maps:</strong> when you open an event that has a place, your browser shows a map of
+            that place from Google Maps. Google receives the place text and your IP address.
+          </li>
+          <li>
+            <strong>Connected tools:</strong> if you connect GitHub, Bitbucket, Jira, Slack, or Granola, we
+            send your requests to that service and read the results for you, with the access that you give.
+          </li>
+        </ul>
+        <p>
+          Your browser also loads some content directly from other hosts. These hosts receive your IP address.
+          The fonts of some pages come from Google Fonts. The art in your brief comes from public museum
+          collections. A social post with no author picture gets a generated picture from DiceBear, which
+          receives the author name. Images in a message come from the servers that the sender chose, as in
+          other mail apps.
         </p>
         <p>
           These providers process data only to provide, secure, bill, or support {PRODUCT_NAME}. We may also

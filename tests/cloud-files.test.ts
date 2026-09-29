@@ -31,8 +31,17 @@ describe('cloud file provider contracts', () => {
     expect(url.searchParams.get('scope')).toContain('drive.readonly');
     expect(url.searchParams.get('scope')).toContain('drive.file');
     expect(url.searchParams.get('scope')).toContain('/auth/documents');
-    expect(url.searchParams.get('scope')).toContain('/auth/spreadsheets');
-    expect(url.searchParams.get('scope')).toContain('/auth/presentations');
+    // Sheets and Slides use drive.readonly (reads) and drive.file (files that
+    // Albatross makes); the wider scopes are not requested.
+    expect(url.searchParams.get('scope')?.split(' ')).toEqual([
+      'openid',
+      'email',
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/documents',
+    ]);
+    expect(url.searchParams.get('scope')).not.toContain('/auth/spreadsheets');
+    expect(url.searchParams.get('scope')).not.toContain('/auth/presentations');
     expect(url.searchParams.has('include_granted_scopes')).toBe(false);
   });
 
