@@ -31,7 +31,8 @@ async function walk(directory) {
 /**
  * Reads every sidecar. A sidecar that does not parse, that has no `file` or
  * `platform`, whose `uncovered` is not a list, or whose PNG is missing is a
- * problem, not a silent omission. A PNG with no sidecar is a problem too.
+ * problem, not a silent omission. A PNG that no valid sidecar references is
+ * a problem too.
  * The gallery lists each one and the build fails.
  */
 export async function collectRecords(inputDirectory) {
@@ -63,11 +64,15 @@ export async function collectRecords(inputDirectory) {
     }
     records.push({ ...record, source });
   }
-  // A capture that wrote its image but not its sidecar is a problem too.
+  // An image that no valid sidecar references is a problem too: a capture
+  // that wrote its image but not its sidecar, or whose sidecar was refused.
   const paired = new Set(records.map((record) => record.source));
   for (const png of pngs) {
-    if (!paired.has(png) && !files.includes(png.replace(/\.png$/, '.json'))) {
-      problems.push({ file: path.relative(inputDirectory, png), reason: 'The image has no sidecar.' });
+    if (!paired.has(png)) {
+      problems.push({
+        file: path.relative(inputDirectory, png),
+        reason: 'No valid sidecar references the image.',
+      });
     }
   }
   problems.sort((a, b) => a.file.localeCompare(b.file));

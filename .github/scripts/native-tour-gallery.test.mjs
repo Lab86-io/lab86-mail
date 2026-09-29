@@ -238,7 +238,7 @@ test('the script fails on a problem but still writes the gallery for the upload'
   }
 });
 
-test('reports an image with no sidecar and a sidecar whose uncovered is not a list', async () => {
+test('reports an image that no valid sidecar references and a sidecar whose uncovered is not a list', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'native-tour-'));
   try {
     const input = path.join(root, 'input');
@@ -259,12 +259,16 @@ test('reports an image with no sidecar and a sidecar whose uncovered is not a li
           path.join('native-tour-ios-sha', 'ios', 'bad-uncovered.json'),
           'The sidecar field uncovered is not a list.',
         ],
-        [path.join('native-tour-ios-sha', 'ios', 'lonely.png'), 'The image has no sidecar.'],
+        [
+          path.join('native-tour-ios-sha', 'ios', 'bad-uncovered.png'),
+          'No valid sidecar references the image.',
+        ],
+        [path.join('native-tour-ios-sha', 'ios', 'lonely.png'), 'No valid sidecar references the image.'],
       ],
     );
     const manifest = await buildGallery(input, path.join(root, 'output'), { commit: 'abc' });
     assert.equal(manifest.counts.total, 2);
-    assert.equal(validationErrors(manifest).length, 2);
+    assert.equal(validationErrors(manifest).length, 3);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
