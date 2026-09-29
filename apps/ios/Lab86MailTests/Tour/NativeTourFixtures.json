@@ -1,0 +1,1204 @@
+{
+  "_comment": "Synthetic data for the native screenshot tour. No customer information. Strings that start with @ms:, @iso:, or @art, and {{...}} inside strings, are resolved at run time by TourTime (see NativeTourSupport.swift).",
+  "tools": {
+    "list_accounts": {
+      "accounts": [
+        {
+          "accountId": "acct-work",
+          "email": "casey@northwind.example",
+          "provider": "google",
+          "displayName": "Northwind",
+          "primary": true
+        },
+        {
+          "accountId": "acct-home",
+          "email": "casey.morgan@example.com",
+          "provider": "google",
+          "displayName": "Personal",
+          "primary": false
+        }
+      ]
+    },
+    "list_smart_labels": {
+      "custom": [
+        { "_id": "label-receipts", "name": "Receipts", "enabled": true, "sidebarVisible": true },
+        { "_id": "label-school", "name": "School", "enabled": true, "sidebarVisible": true }
+      ]
+    },
+    "albatross_list_approval_queue": { "approvals": [] },
+    "calendar_list_events": {
+      "events": [
+        {
+          "eventId": "e-review",
+          "accountId": "acct-work",
+          "calendarId": "work-primary",
+          "title": "Quarterly review",
+          "startAt": "@ms:day-1@10:00",
+          "endAt": "@ms:day-1@11:00",
+          "location": "Room 4"
+        },
+        {
+          "eventId": "e-standup",
+          "accountId": "acct-work",
+          "calendarId": "work-primary",
+          "title": "Standup",
+          "startAt": "@ms:day@09:30",
+          "endAt": "@ms:day@09:45",
+          "location": "Room 2"
+        },
+        {
+          "eventId": "e-walkthrough",
+          "accountId": "acct-work",
+          "calendarId": "work-primary",
+          "title": "Venue walkthrough",
+          "startAt": "@ms:day@11:00",
+          "endAt": "@ms:day@12:00",
+          "location": "Harbor Hall, 200 Pier Street"
+        },
+        {
+          "eventId": "e-lunch",
+          "accountId": "acct-work",
+          "calendarId": "work-primary",
+          "title": "Lunch with Priya",
+          "startAt": "@ms:day@12:30",
+          "endAt": "@ms:day@13:30",
+          "location": "Blue Door Cafe"
+        },
+        {
+          "eventId": "e-deck",
+          "accountId": "acct-work",
+          "calendarId": "work-primary",
+          "title": "Board deck review",
+          "startAt": "@ms:day@15:00",
+          "endAt": "@ms:day@16:00",
+          "location": "Video call"
+        },
+        {
+          "eventId": "e-sam",
+          "accountId": "acct-home",
+          "calendarId": "home-primary",
+          "title": "Call with Sam",
+          "startAt": "@ms:day@15:30",
+          "endAt": "@ms:day@16:00"
+        },
+        {
+          "eventId": "e-pickup",
+          "accountId": "acct-home",
+          "calendarId": "home-primary",
+          "title": "Soccer pickup",
+          "startAt": "@ms:day@17:30",
+          "endAt": "@ms:day@18:00",
+          "location": "Riverside Field"
+        },
+        {
+          "eventId": "e-dentist",
+          "accountId": "acct-home",
+          "calendarId": "home-primary",
+          "title": "Dentist",
+          "startAt": "@ms:day+1@10:00",
+          "endAt": "@ms:day+1@11:00",
+          "location": "Bright Smile Dental"
+        },
+        {
+          "eventId": "e-one-on-one",
+          "accountId": "acct-work",
+          "calendarId": "work-primary",
+          "title": "1:1 with Marcus",
+          "startAt": "@ms:day+1@14:00",
+          "endAt": "@ms:day+1@14:30"
+        },
+        {
+          "eventId": "e-offsite-plan",
+          "accountId": "acct-work",
+          "calendarId": "work-primary",
+          "title": "Offsite planning",
+          "startAt": "@ms:day+2@13:00",
+          "endAt": "@ms:day+2@14:00",
+          "location": "Room 2"
+        },
+        {
+          "eventId": "e-prep-week",
+          "accountId": "acct-work",
+          "calendarId": "work-primary",
+          "title": "Offsite prep week",
+          "allDay": true,
+          "startAt": "@ms:utcday+2",
+          "endAt": "@ms:utcday+5"
+        },
+        {
+          "eventId": "e-flight",
+          "accountId": "acct-work",
+          "calendarId": "work-primary",
+          "title": "Flight to Denver",
+          "startAt": "@ms:day+3@08:00",
+          "endAt": "@ms:day+3@10:30",
+          "location": "Terminal B"
+        },
+        {
+          "eventId": "e-birthday",
+          "accountId": "acct-home",
+          "calendarId": "home-primary",
+          "title": "Mom's birthday",
+          "allDay": true,
+          "startAt": "@ms:utcday+5",
+          "endAt": "@ms:utcday+6"
+        },
+        {
+          "eventId": "e-book-club",
+          "accountId": "acct-home",
+          "calendarId": "home-primary",
+          "title": "Book club",
+          "startAt": "@ms:day+8@19:00",
+          "endAt": "@ms:day+8@20:30"
+        }
+      ]
+    },
+    "tasks_due_cards": {
+      "cards": [
+        { "cardId": "card-bus", "title": "Book the offsite bus", "dueAt": "@ms:day+2@17:00" },
+        { "cardId": "card-agenda", "title": "Draft the offsite agenda", "dueAt": "@ms:day+1@12:00" }
+      ]
+    },
+    "tasks_list_boards": {
+      "boards": [
+        { "boardId": "board-personal", "title": "Personal", "owned": true, "isDefault": true },
+        { "boardId": "board-offsite", "title": "Team offsite", "owned": false }
+      ]
+    },
+    "tasks_get_board": {
+      "board": {
+        "role": "owner",
+        "columns": [
+          { "columnId": "c-todo", "name": "To do", "order": 0 },
+          { "columnId": "c-doing", "name": "Doing", "order": 1 },
+          { "columnId": "c-done", "name": "Done", "order": 2 }
+        ],
+        "members": [],
+        "cards": [
+          {
+            "cardId": "card-bus",
+            "columnId": "c-todo",
+            "title": "Book the offsite bus",
+            "description": "Twenty-four people, round trip from the hotel.",
+            "dueAt": "@ms:day+2@17:00",
+            "priority": "high",
+            "labels": ["Offsite"],
+            "order": 0
+          },
+          {
+            "cardId": "card-badges",
+            "columnId": "c-todo",
+            "title": "Order name badges",
+            "dueAt": "@ms:day+4@12:00",
+            "labels": ["Offsite"],
+            "order": 1
+          },
+          {
+            "cardId": "card-gift",
+            "columnId": "c-todo",
+            "title": "Pick up a birthday gift for Mom",
+            "dueAt": "@ms:day+4@18:00",
+            "order": 2
+          },
+          {
+            "cardId": "card-agenda",
+            "columnId": "c-doing",
+            "title": "Draft the offsite agenda",
+            "description": "Three sessions and a dinner. Keep Friday afternoon open.",
+            "dueAt": "@ms:day+1@12:00",
+            "priority": "medium",
+            "labels": ["Offsite"],
+            "order": 0
+          },
+          {
+            "cardId": "card-photo",
+            "columnId": "c-doing",
+            "title": "Get passport photos taken",
+            "labels": ["Passport"],
+            "order": 1
+          },
+          {
+            "cardId": "card-ds82",
+            "columnId": "c-done",
+            "title": "Print the DS-82 form",
+            "completedAt": "@ms:day-1@16:00",
+            "order": 0
+          },
+          {
+            "cardId": "card-lease",
+            "columnId": "c-done",
+            "title": "Sign the lease renewal",
+            "completedAt": "@ms:day-2@11:00",
+            "order": 1
+          }
+        ]
+      }
+    },
+    "get_latest_daily_report": {
+      "report": {
+        "_id": "report-tour",
+        "kind": "daily",
+        "generatedAt": "@ms:day@06:30",
+        "status": "ready",
+        "title": "The {{weekday:day}} Brief",
+        "narrative": "Sarah needs the offsite head count by Friday. Invoice 2211 is five days past due.",
+        "artifactStatus": "ready",
+        "artifactSource": "document-v2",
+        "art": {
+          "imageUrl": "@art",
+          "credit": "Fallback edition art",
+          "source": "Albatross"
+        },
+        "services": ["gmail", "google-calendar"],
+        "stats": {
+          "scannedThreads": 146,
+          "needsReply": 3,
+          "replyOwed": 3,
+          "dueSoon": 2,
+          "unread": 9,
+          "openTasks": 5,
+          "completedTasks": 2,
+          "calendarEvents": 6,
+          "noise": 131,
+          "selected": 11
+        },
+        "sections": {
+          "answer": [
+            {
+              "account": "acct-work",
+              "threadId": "t-venue",
+              "subject": "Offsite venue: final head count",
+              "sender": "Sarah Chen",
+              "line": "The venue holds the room only until Friday."
+            },
+            {
+              "account": "acct-work",
+              "threadId": "t-invoice",
+              "subject": "Invoice 2211 is past due",
+              "sender": "Priya Patel",
+              "line": "Five days late. She asked for a payment date."
+            },
+            {
+              "account": "acct-home",
+              "threadId": "t-soccer",
+              "subject": "Soccer practice moves to Saturday",
+              "sender": "Sam Lee",
+              "line": "Sam asks if you can drive this week."
+            }
+          ],
+          "overflow": [
+            {
+              "account": "acct-work",
+              "threadId": "t-standup",
+              "subject": "Standup moves to 9:30 this week",
+              "whyItMatters": "The new time conflicts with the school drop-off on Thursday."
+            },
+            {
+              "account": "acct-home",
+              "threadId": "t-lease",
+              "subject": "Lease renewal documents",
+              "whyItMatters": "The landlord wants the signed copy back by the 30th."
+            }
+          ]
+        },
+        "document": {
+          "version": 2,
+          "title": "The {{weekday:day}} Brief",
+          "summary": "Sarah needs the offsite head count by Friday, and invoice 2211 is five days past due. The afternoon is open after the board deck review.",
+          "generatedAt": "@ms:day@06:30",
+          "timezone": "America/New_York",
+          "regions": [
+            {
+              "id": "lede",
+              "summary": "Two replies are owed. The afternoon is open after four.",
+              "tree": {
+                "kind": "hero",
+                "emphasis": "primary",
+                "tone": "neutral",
+                "surface": "plain",
+                "children": [
+                  {
+                    "kind": "text",
+                    "emphasis": "primary",
+                    "tone": "neutral",
+                    "role": "lede",
+                    "text": "Sarah needs the offsite head count by Friday, and invoice 2211 is five days past due. The afternoon is open after the board deck review."
+                  }
+                ]
+              }
+            },
+            {
+              "id": "yesterday",
+              "summary": "What moved since yesterday.",
+              "tree": {
+                "kind": "text",
+                "emphasis": "standard",
+                "tone": "neutral",
+                "role": "body",
+                "text": "Yesterday you signed the lease renewal and moved the dentist to {{weekday:day+1}}. Albatross filed two receipts and put the passport form in your outbox."
+              }
+            },
+            {
+              "id": "answer",
+              "summary": "Replies you owe.",
+              "tree": {
+                "kind": "entity_list",
+                "emphasis": "standard",
+                "tone": "neutral",
+                "title": "Answer",
+                "variant": "rows",
+                "items": [
+                  {
+                    "ref": { "kind": "thread", "id": "t-venue", "account": "acct-work", "label": "Offsite venue: final head count" },
+                    "framing": { "lane": "answer", "sender": "Sarah Chen", "reason": "The venue holds the room only until Friday.", "age": "Day 2" },
+                    "actions": [
+                      { "action": "open_thread", "label": "Open", "payload": { "account": "acct-work", "threadId": "t-venue" }, "style": "quiet" },
+                      { "action": "draft_reply", "label": "Reply", "payload": { "account": "acct-work", "threadId": "t-venue" }, "style": "primary" }
+                    ]
+                  },
+                  {
+                    "ref": { "kind": "thread", "id": "t-invoice", "account": "acct-work", "label": "Invoice 2211 is past due" },
+                    "framing": { "lane": "answer", "sender": "Priya Patel", "reason": "Five days late. She asked for a payment date." },
+                    "actions": [
+                      { "action": "open_thread", "label": "Open", "payload": { "account": "acct-work", "threadId": "t-invoice" }, "style": "quiet" }
+                    ]
+                  },
+                  {
+                    "ref": { "kind": "thread", "id": "t-soccer", "account": "acct-home", "label": "Soccer practice moves to Saturday" },
+                    "framing": { "lane": "answer", "sender": "Sam Lee", "reason": "Sam asks if you can drive this week." },
+                    "actions": [
+                      { "action": "open_thread", "label": "Open", "payload": { "account": "acct-home", "threadId": "t-soccer" }, "style": "quiet" }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "id": "today",
+              "summary": "Deadlines and the calendar.",
+              "tree": {
+                "kind": "entity_list",
+                "emphasis": "standard",
+                "tone": "neutral",
+                "title": "Today",
+                "variant": "rows",
+                "items": [
+                  {
+                    "ref": { "kind": "event", "id": "e-walkthrough", "account": "acct-work", "label": "Venue walkthrough" },
+                    "framing": { "lane": "today", "reason": "{{time:day@11:00}} to {{time:day@12:00}}, Harbor Hall. Bring the floor plan." },
+                    "actions": [
+                      { "action": "open_event", "label": "Open", "payload": { "account": "acct-work", "eventId": "e-walkthrough" }, "style": "quiet" }
+                    ]
+                  },
+                  {
+                    "ref": { "kind": "event", "id": "e-deck", "account": "acct-work", "label": "Board deck review" },
+                    "framing": { "lane": "today", "reason": "{{time:day@15:00}} to {{time:day@16:00}}. The Q3 numbers arrived last night." },
+                    "actions": [
+                      { "action": "open_event", "label": "Open", "payload": { "account": "acct-work", "eventId": "e-deck" }, "style": "quiet" }
+                    ]
+                  },
+                  {
+                    "ref": { "kind": "thread", "id": "t-contract", "account": "acct-work", "label": "Contract redlines, round two" },
+                    "framing": { "lane": "today", "sender": "Legal", "reason": "Legal wants comments before the end of the day." },
+                    "actions": [
+                      { "action": "open_thread", "label": "Open", "payload": { "account": "acct-work", "threadId": "t-contract" }, "style": "quiet" }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "id": "know",
+              "summary": "Worth a look.",
+              "tree": {
+                "kind": "entity_list",
+                "emphasis": "standard",
+                "tone": "neutral",
+                "title": "Know",
+                "variant": "rows",
+                "items": [
+                  {
+                    "ref": { "kind": "thread", "id": "t-q3", "account": "acct-work", "label": "Q3 numbers for the board deck" },
+                    "framing": { "lane": "know", "sender": "Finance Team", "reason": "Revenue is up nine percent. Churn is flat." },
+                    "actions": [
+                      { "action": "open_thread", "label": "Open", "payload": { "account": "acct-work", "threadId": "t-q3" }, "style": "quiet" }
+                    ]
+                  },
+                  {
+                    "ref": { "kind": "thread", "id": "t-passport", "account": "acct-home", "label": "Passport renewal: form received" },
+                    "framing": { "lane": "know", "sender": "Passport Office", "reason": "Processing takes six to eight weeks." },
+                    "actions": [
+                      { "action": "open_thread", "label": "Open", "payload": { "account": "acct-home", "threadId": "t-passport" }, "style": "quiet" }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "id": "waiting",
+              "summary": "Replies you wait for.",
+              "tree": {
+                "kind": "entity_list",
+                "emphasis": "standard",
+                "tone": "neutral",
+                "title": "Waiting on",
+                "variant": "rows",
+                "items": [
+                  {
+                    "ref": { "kind": "thread", "id": "t-bus-quote", "account": "acct-work", "label": "Bus quote for the offsite" },
+                    "framing": { "lane": "waiting", "sender": "Metro Coach", "reason": "You asked on {{weekday:day-2}}. No reply yet." },
+                    "actions": [
+                      { "action": "open_thread", "label": "Open", "payload": { "account": "acct-work", "threadId": "t-bus-quote" }, "style": "quiet" }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "id": "tasks",
+              "summary": "Due inside seven days.",
+              "tree": {
+                "kind": "entity_list",
+                "emphasis": "standard",
+                "tone": "neutral",
+                "title": "Tasks this week",
+                "variant": "rows",
+                "items": [
+                  {
+                    "ref": { "kind": "task", "id": "card-agenda", "label": "Draft the offsite agenda" },
+                    "framing": { "lane": "tasks", "reason": "Due {{weekday:day+1}} at noon." }
+                  },
+                  {
+                    "ref": { "kind": "task", "id": "card-bus", "label": "Book the offsite bus" },
+                    "framing": { "lane": "tasks", "reason": "Due {{weekday:day+2}}. The quote is still missing." }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "week-ahead",
+              "summary": "The week ahead.",
+              "tree": {
+                "kind": "text",
+                "emphasis": "standard",
+                "tone": "neutral",
+                "role": "body",
+                "text": "On {{weekday:day+1}} you have the dentist at ten. {{weekday:day+3}} starts with the flight to Denver, so send the head count before then. The weekend is open."
+              }
+            },
+            {
+              "id": "areas",
+              "summary": "Your areas.",
+              "tree": {
+                "kind": "entity_list",
+                "emphasis": "standard",
+                "tone": "neutral",
+                "title": "Areas",
+                "variant": "compact",
+                "items": [
+                  {
+                    "ref": { "kind": "area", "id": "area-offsite", "label": "Team offsite" },
+                    "framing": { "reason": "The head count is the one open question." },
+                    "actions": [{ "action": "open_area", "label": "Open", "payload": { "areaId": "area-offsite" }, "style": "quiet" }]
+                  },
+                  {
+                    "ref": { "kind": "area", "id": "area-passport", "label": "Passport renewal" },
+                    "framing": { "reason": "Mail the DS-82 form today." },
+                    "actions": [{ "action": "open_area", "label": "Open", "payload": { "areaId": "area-passport" }, "style": "quiet" }]
+                  },
+                  {
+                    "ref": { "kind": "area", "id": "area-home", "label": "Home" },
+                    "framing": { "reason": "Quiet this week." },
+                    "actions": [{ "action": "open_area", "label": "Open", "payload": { "areaId": "area-home" }, "style": "quiet" }]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "get_brief_sources": {
+      "health": {
+        "attention": 0,
+        "line": "Mail and calendar synced a few minutes ago.",
+        "sources": [
+          {
+            "id": "acct-work",
+            "kind": "mail",
+            "label": "casey@northwind.example",
+            "provider": "google",
+            "status": "ok",
+            "lastSyncedAt": "@ms:now-4m",
+            "inEdition": true
+          },
+          {
+            "id": "acct-home",
+            "kind": "mail",
+            "label": "casey.morgan@example.com",
+            "provider": "google",
+            "status": "ok",
+            "lastSyncedAt": "@ms:now-6m",
+            "inEdition": true
+          },
+          {
+            "id": "cal-work",
+            "kind": "calendar",
+            "label": "casey@northwind.example",
+            "provider": "google",
+            "status": "ok",
+            "lastSyncedAt": "@ms:now-4m",
+            "inEdition": true
+          }
+        ]
+      }
+    },
+    "area_list": {
+      "areas": [
+        {
+          "_id": "area-offsite",
+          "name": "Team offsite",
+          "kind": "project",
+          "description": "The March offsite in Denver",
+          "workCounts": { "needsYou": 1, "events": 2, "tasks": 3, "unreadMail": 2 }
+        },
+        {
+          "_id": "area-passport",
+          "name": "Passport renewal",
+          "kind": "project",
+          "description": "A new passport before the trip",
+          "workCounts": { "plans": 1, "tasks": 1 }
+        },
+        {
+          "_id": "area-home",
+          "name": "Home",
+          "kind": "area",
+          "workCounts": { "tasks": 2 }
+        },
+        {
+          "_id": "area-health",
+          "name": "Health",
+          "kind": "area",
+          "factCounts": { "verified": 3, "candidate": 1 }
+        }
+      ]
+    },
+    "work_list": {
+      "work": [
+        {
+          "_id": "w-headcount",
+          "title": "Confirm the offsite head count",
+          "rawText": "Get the final offsite head count to Sarah",
+          "status": "needs_answers",
+          "workState": "active",
+          "agentState": "needs_input",
+          "primaryAreaId": "area-offsite",
+          "areaName": "Team offsite",
+          "openQuestions": 1,
+          "updatedAt": "@ms:now-40m",
+          "nextStep": "Pick the final number"
+        },
+        {
+          "_id": "w-passport",
+          "title": "Renew my passport before the Denver trip",
+          "rawText": "Renew my passport",
+          "status": "ready",
+          "workState": "active",
+          "agentState": "idle",
+          "primaryAreaId": "area-passport",
+          "areaName": "Passport renewal",
+          "openQuestions": 0,
+          "updatedAt": "@ms:now-3h",
+          "nextStep": "Mail the DS-82 form",
+          "scheduledStartAt": "@ms:day@17:00",
+          "scheduledEndAt": "@ms:day@17:30"
+        },
+        {
+          "_id": "w-invoice",
+          "title": "Get invoice 2211 paid",
+          "rawText": "Get invoice 2211 paid",
+          "status": "ready",
+          "workState": "waiting",
+          "agentState": "idle",
+          "primaryAreaId": "area-offsite",
+          "areaName": "Team offsite",
+          "openQuestions": 0,
+          "updatedAt": "@ms:now-1d"
+        },
+        {
+          "_id": "w-agenda",
+          "title": "Write the offsite agenda",
+          "rawText": "Write the offsite agenda",
+          "status": "ready",
+          "workState": "active",
+          "agentState": "researching",
+          "primaryAreaId": "area-offsite",
+          "areaName": "Team offsite",
+          "openQuestions": 0,
+          "updatedAt": "@ms:now-2h",
+          "nextStep": "Choose three session topics"
+        },
+        {
+          "_id": "w-garden",
+          "title": "Plan the spring garden",
+          "rawText": "Plan the spring garden",
+          "status": "ready",
+          "workState": "active",
+          "agentState": "idle",
+          "primaryAreaId": "area-home",
+          "areaName": "Home",
+          "openQuestions": 0,
+          "updatedAt": "@ms:now-9d",
+          "horizon": { "kind": "someday", "label": "Someday" }
+        },
+        {
+          "_id": "w-taxes",
+          "title": "File the 2026 taxes",
+          "rawText": "File the 2026 taxes",
+          "status": "done",
+          "workState": "done",
+          "agentState": "idle",
+          "openQuestions": 0,
+          "updatedAt": "@ms:now-12d"
+        }
+      ],
+      "execution": {
+        "currentMove": {
+          "workId": "w-passport",
+          "workTitle": "Renew my passport before the Denver trip",
+          "stepKey": "step-mail",
+          "stepTitle": "Mail the DS-82 form",
+          "detail": "Use the prepaid envelope. The post office closes at six.",
+          "phase": "scheduled",
+          "scheduledStartAt": "@ms:day@17:00",
+          "scheduledEndAt": "@ms:day@17:30",
+          "remainingSteps": 2,
+          "totalSteps": 4,
+          "areaName": "Passport renewal"
+        },
+        "missedMoves": [],
+        "needsYou": [
+          {
+            "_id": "w-headcount",
+            "title": "Confirm the offsite head count",
+            "status": "needs_answers",
+            "workState": "active",
+            "agentState": "needs_input",
+            "openQuestions": 1
+          }
+        ]
+      }
+    },
+    "calendar_list_calendars": {
+      "calendars": [
+        { "accountId": "acct-work", "calendarId": "work-primary", "name": "Northwind", "isPrimary": true, "hexColor": "#3B6E8F" },
+        { "accountId": "acct-home", "calendarId": "home-primary", "name": "Personal", "isPrimary": true, "hexColor": "#B5502F" }
+      ],
+      "syncStates": []
+    }
+  },
+  "threadsByAccount": {
+    "acct-work": [
+      {
+        "threadId": "t-venue",
+        "accountId": "acct-work",
+        "subject": "Offsite venue: final head count",
+        "fromAddress": "Sarah Chen <sarah.chen@northwind.example>",
+        "snippet": "Can you confirm the head count by Friday? The venue needs the number before they hold the room.",
+        "lastDate": "@ms:now-12m",
+        "unread": true,
+        "starred": false,
+        "smartCategory": { "primary": "main" }
+      },
+      {
+        "threadId": "t-code",
+        "accountId": "acct-work",
+        "subject": "Your sign-in code",
+        "fromAddress": "Northwind SSO <no-reply@sso.northwind.example>",
+        "snippet": "Your code is 482913. It expires in ten minutes.",
+        "lastDate": "@ms:now-30m",
+        "unread": true,
+        "starred": false,
+        "smartCategory": { "primary": "codes" }
+      },
+      {
+        "threadId": "t-invoice",
+        "accountId": "acct-work",
+        "subject": "Invoice 2211 is past due",
+        "fromAddress": "Priya Patel <priya@ledgerworks.example>",
+        "snippet": "Hi Casey, invoice 2211 was due last Tuesday. Can you give me a payment date?",
+        "lastDate": "@ms:now-55m",
+        "unread": true,
+        "starred": false,
+        "smartCategory": { "primary": "main" }
+      },
+      {
+        "threadId": "t-q3",
+        "accountId": "acct-work",
+        "subject": "Q3 numbers for the board deck",
+        "fromAddress": "Finance Team <finance@northwind.example>",
+        "snippet": "The final Q3 numbers are attached. Revenue is up nine percent against plan.",
+        "lastDate": "@ms:now-2h",
+        "unread": false,
+        "starred": true,
+        "smartCategory": { "primary": "main" }
+      },
+      {
+        "threadId": "t-contract",
+        "accountId": "acct-work",
+        "subject": "Contract redlines, round two",
+        "fromAddress": "Legal <legal@northwind.example>",
+        "snippet": "We accepted most of the changes. Two clauses need your decision before we send it back.",
+        "lastDate": "@ms:now-4h",
+        "unread": false,
+        "starred": false,
+        "smartCategory": { "primary": "main" }
+      },
+      {
+        "threadId": "t-standup",
+        "accountId": "acct-work",
+        "subject": "Standup moves to 9:30 this week",
+        "fromAddress": "Marcus Webb <marcus@northwind.example>",
+        "snippet": "Small change: standup starts at 9:30 through Friday so the new hires can join.",
+        "lastDate": "@ms:now-1d",
+        "unread": false,
+        "starred": false,
+        "smartCategory": { "primary": "main" }
+      },
+      {
+        "threadId": "t-receipt",
+        "accountId": "acct-work",
+        "subject": "Your receipt from Metro Coach",
+        "fromAddress": "Metro Coach <billing@metrocoach.example>",
+        "snippet": "Thank you for your deposit. Your reservation number is MC-20418.",
+        "lastDate": "@ms:now-2d",
+        "unread": false,
+        "starred": false,
+        "smartCategory": { "primary": "main", "customLabels": ["label-receipts"] }
+      }
+    ],
+    "acct-home": [
+      {
+        "threadId": "t-soccer",
+        "accountId": "acct-home",
+        "subject": "Soccer practice moves to Saturday",
+        "fromAddress": "Sam Lee <sam@example.com>",
+        "snippet": "The field is closed on Friday, so practice is on Saturday morning. Can you drive?",
+        "lastDate": "@ms:now-3h",
+        "unread": true,
+        "starred": false,
+        "smartCategory": { "primary": "main", "customLabels": ["label-school"] }
+      },
+      {
+        "threadId": "t-passport",
+        "accountId": "acct-home",
+        "subject": "Passport renewal: form received",
+        "fromAddress": "Passport Office <passports@travel.example>",
+        "snippet": "We received your application. Routine processing takes six to eight weeks.",
+        "lastDate": "@ms:now-1d",
+        "unread": false,
+        "starred": false,
+        "smartCategory": { "primary": "main" }
+      },
+      {
+        "threadId": "t-order",
+        "accountId": "acct-home",
+        "subject": "Your order has shipped",
+        "fromAddress": "Hardware Store <orders@shop.example>",
+        "snippet": "Your garden hose and two planters are on the way. Arrives Thursday.",
+        "lastDate": "@ms:now-1d",
+        "unread": false,
+        "starred": false,
+        "smartCategory": { "primary": "orders" }
+      },
+      {
+        "threadId": "t-dentist",
+        "accountId": "acct-home",
+        "subject": "Reminder: your appointment on {{weekday:day+1}}",
+        "fromAddress": "Bright Smile Dental <frontdesk@brightsmile.example>",
+        "snippet": "This is a reminder of your cleaning at 10:00. Reply C to confirm.",
+        "lastDate": "@ms:now-2d",
+        "unread": false,
+        "starred": false,
+        "smartCategory": { "primary": "main" }
+      },
+      {
+        "threadId": "t-lease",
+        "accountId": "acct-home",
+        "subject": "Lease renewal documents",
+        "fromAddress": "Jordan Park <jordan@parkproperties.example>",
+        "snippet": "Attached are the renewal documents. Sign them before the end of the month.",
+        "lastDate": "@ms:now-3d",
+        "unread": false,
+        "starred": false,
+        "smartCategory": { "primary": "main" }
+      },
+      {
+        "threadId": "t-design",
+        "accountId": "acct-home",
+        "subject": "The week in design: quiet interfaces",
+        "fromAddress": "Design Weekly <hello@designweekly.example>",
+        "snippet": "This week: why the best tools get out of the way, and five small type details.",
+        "lastDate": "@ms:now-4d",
+        "unread": false,
+        "starred": false,
+        "smartCategory": { "primary": "main" }
+      }
+    ]
+  },
+  "threadDetails": {
+    "t-venue": {
+      "subject": "Offsite venue: final head count",
+      "messages": [
+        {
+          "id": "m-venue-1",
+          "from": "Sarah Chen <sarah.chen@northwind.example>",
+          "to": "Casey Morgan <casey@northwind.example>",
+          "date": "@ms:now-1d",
+          "snippet": "Harbor Hall can hold the main room for us.",
+          "textBody": "Hi Casey,\n\nHarbor Hall can hold the main room for us on the 12th and 13th. They need a final head count before they sign the contract.\n\nThe floor plan is attached. The main room seats 30 at round tables.\n\nSarah",
+          "attachments": [
+            { "attachmentId": "att-floor", "filename": "Harbor Hall floor plan.pdf", "mimeType": "application/pdf", "size": 482113 }
+          ]
+        },
+        {
+          "id": "m-venue-2",
+          "from": "Casey Morgan <casey@northwind.example>",
+          "to": "Sarah Chen <sarah.chen@northwind.example>",
+          "date": "@ms:now-20h",
+          "snippet": "Thanks. I am waiting on two teams.",
+          "textBody": "Thanks, Sarah. I am waiting on two teams. I will send the number as soon as I have it.\n\nCasey"
+        },
+        {
+          "id": "m-venue-3",
+          "from": "Sarah Chen <sarah.chen@northwind.example>",
+          "to": "Casey Morgan <casey@northwind.example>",
+          "date": "@ms:now-12m",
+          "snippet": "Can you confirm the head count by Friday?",
+          "textBody": "Hi Casey,\n\nCan you confirm the head count by Friday? The venue needs the number before they hold the room. If we miss Friday, the next open date is in April.\n\nAlso, do we need the projector in the second room?\n\nThanks,\nSarah"
+        }
+      ]
+    }
+  },
+  "workHome": {
+    "w-passport": {
+      "work": {
+        "_id": "w-passport",
+        "title": "Renew my passport before the Denver trip",
+        "rawText": "Renew my passport",
+        "status": "ready",
+        "workState": "active",
+        "agentState": "idle",
+        "updatedAt": "@ms:now-3h"
+      },
+      "execution": {
+        "currentStep": {
+          "key": "step-mail",
+          "kind": "physical",
+          "title": "Mail the DS-82 form",
+          "detail": "Use the prepaid envelope. The post office closes at six.",
+          "stepMode": "you_do_offline",
+          "doneWhen": "The envelope is in the mail",
+          "done": false
+        },
+        "guideSteps": [
+          {
+            "key": "step-photo",
+            "kind": "physical",
+            "title": "Get two passport photos",
+            "stepMode": "you_do_offline",
+            "done": true,
+            "verification": { "level": "reported" }
+          },
+          {
+            "key": "step-form",
+            "kind": "task",
+            "title": "Fill in the DS-82 form",
+            "done": true,
+            "verification": { "level": "artifact", "evidenceTitle": "DS-82 form, signed" }
+          },
+          {
+            "key": "step-mail",
+            "kind": "physical",
+            "title": "Mail the DS-82 form",
+            "detail": "Use the prepaid envelope. The post office closes at six.",
+            "stepMode": "you_do_offline",
+            "doneWhen": "The envelope is in the mail",
+            "done": false
+          },
+          {
+            "key": "step-track",
+            "kind": "task",
+            "title": "Track the application status",
+            "detail": "Albatross checks the status page each week.",
+            "done": false
+          }
+        ],
+        "remainingSteps": 2,
+        "totalSteps": 4,
+        "scheduledStartAt": "@ms:day@17:00",
+        "scheduledEndAt": "@ms:day@17:30"
+      },
+      "plan": {
+        "_id": "plan-passport",
+        "status": "ready",
+        "outcome": "A renewed passport in hand before the Denver trip",
+        "summary": "Routine processing takes six to eight weeks, so the form must go out this week. Expedited service is the fallback if nothing arrives by the 20th.",
+        "assumptions": ["Your current passport is not damaged.", "You renew by mail, not in person."]
+      },
+      "contract": {
+        "outcome": "A renewed passport in hand before the Denver trip",
+        "closeWhen": "outcome_confirmed",
+        "proofs": [
+          { "id": "proof-received", "what": "The passport office confirms that it received the form", "satisfiedBy": "Passport Office email", "satisfiedAt": "@ms:now-1d" },
+          { "id": "proof-arrived", "what": "The new passport arrives in the mail" }
+        ]
+      },
+      "evidence": [
+        {
+          "_id": "ev-received",
+          "title": "Passport renewal: form received",
+          "summary": "The passport office confirmed the application.",
+          "sourceKind": "mail_thread",
+          "occurredAt": "@ms:now-1d",
+          "trust": "observed"
+        }
+      ],
+      "questions": []
+    },
+    "w-headcount": {
+      "work": {
+        "_id": "w-headcount",
+        "title": "Confirm the offsite head count",
+        "rawText": "Get the final offsite head count to Sarah",
+        "status": "needs_answers",
+        "workState": "active",
+        "agentState": "needs_input",
+        "updatedAt": "@ms:now-40m"
+      },
+      "execution": {
+        "guideSteps": [
+          { "key": "step-teams", "kind": "task", "title": "Ask the two open teams for their numbers", "done": true },
+          { "key": "step-number", "kind": "task", "title": "Pick the final number", "done": false },
+          { "key": "step-reply", "kind": "task", "title": "Reply to Sarah with the number", "done": false }
+        ],
+        "remainingSteps": 2,
+        "totalSteps": 3
+      },
+      "plan": {
+        "_id": "plan-headcount",
+        "status": "ready",
+        "outcome": "Sarah has the final head count by Friday",
+        "summary": "Design replied with 6 and Sales with 9. Engineering has not answered."
+      },
+      "questions": [
+        {
+          "_id": "q-count",
+          "status": "pending",
+          "prompt": "Engineering has not answered. Which number should Albatross send?",
+          "reason": "The venue needs a number by Friday.",
+          "options": [
+            { "id": "opt-24", "label": "24 people", "description": "Assume Engineering sends 9" },
+            { "id": "opt-20", "label": "20 people", "description": "Only the teams that answered" }
+          ]
+        }
+      ]
+    }
+  },
+  "paths": {
+    "/api/mobile/activity": { "suggestions": [], "questions": [] },
+    "/api/calendar/resync": { "ok": true, "started": false, "lastSyncedAt": "@ms:now-3m" },
+    "/api/billing/plan": { "ok": true, "plan": "pro", "planName": "Pro", "trial": { "active": false } },
+    "/api/account/surfaces": { "ok": true, "files": true },
+    "/api/documents": {
+      "documents": [
+        {
+          "documentId": "doc-agenda",
+          "kind": "doc",
+          "title": "Offsite agenda",
+          "currentRevision": 4,
+          "createdAt": "@ms:now-5d",
+          "updatedAt": "@ms:now-2h",
+          "model": {
+            "kind": "doc",
+            "version": 1,
+            "blocks": [
+              { "id": "b1", "type": "heading", "text": "Team offsite", "level": 1 },
+              { "id": "b2", "type": "paragraph", "text": "Two days in Denver. Three sessions and one dinner." },
+              { "id": "b3", "type": "heading", "text": "Day one", "level": 2 },
+              { "id": "b4", "type": "paragraph", "text": "Morning: where we are. Afternoon: customer stories." }
+            ]
+          }
+        },
+        {
+          "documentId": "doc-budget",
+          "kind": "sheet",
+          "title": "Offsite budget",
+          "currentRevision": 7,
+          "createdAt": "@ms:now-6d",
+          "updatedAt": "@ms:now-1d",
+          "model": {
+            "kind": "sheet",
+            "version": 1,
+            "activeSheetId": "sheet-1",
+            "sheets": [
+              {
+                "id": "sheet-1",
+                "name": "Budget",
+                "cells": {
+                  "A1": { "value": "Item" },
+                  "B1": { "value": "Cost" },
+                  "A2": { "value": "Venue" },
+                  "B2": { "value": 4200 },
+                  "A3": { "value": "Bus" },
+                  "B3": { "value": 1150 },
+                  "A4": { "value": "Total" },
+                  "B4": { "formula": "SUM(B2:B3)" }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "documentId": "doc-deck",
+          "kind": "deck",
+          "title": "Board deck: Q3",
+          "currentRevision": 3,
+          "createdAt": "@ms:now-8d",
+          "updatedAt": "@ms:now-3d",
+          "model": {
+            "kind": "deck",
+            "version": 1,
+            "activeSlideId": "slide-1",
+            "slides": [
+              {
+                "id": "slide-1",
+                "title": "Q3 at a glance",
+                "elements": [
+                  { "id": "el-1", "type": "text", "text": "Q3 at a glance", "role": "title", "x": 8, "y": 10, "width": 80, "height": 16 },
+                  { "id": "el-2", "type": "text", "text": "Revenue up nine percent. Churn flat.", "x": 8, "y": 36, "width": 80, "height": 20 }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "/api/files/status": {
+      "connections": [
+        { "connectionId": "drive-work", "provider": "google_drive", "accountEmail": "casey@northwind.example", "status": "connected" }
+      ]
+    },
+    "/api/agent/uploads": {
+      "files": [
+        { "id": "upload-floor", "name": "Harbor Hall floor plan.pdf", "mimeType": "application/pdf", "size": 482113, "createdAt": "@ms:now-1d" },
+        { "id": "upload-photo", "name": "Passport photo.jpg", "mimeType": "image/jpeg", "size": 211004, "createdAt": "@ms:now-4d" }
+      ]
+    },
+    "/api/files/browse": {
+      "items": [
+        { "id": "drive-roster", "connectionId": "drive-work", "provider": "google_drive", "name": "Offsite roster", "mimeType": "application/vnd.google-apps.spreadsheet", "modifiedAt": "@ms:now-5h", "owner": "Sarah Chen" },
+        { "id": "drive-notes", "connectionId": "drive-work", "provider": "google_drive", "name": "Board meeting notes", "mimeType": "application/vnd.google-apps.document", "modifiedAt": "@ms:now-2d", "owner": "Casey Morgan" }
+      ]
+    },
+    "/api/chats": {
+      "session": {
+        "id": "tour-chat",
+        "messages": [
+          {
+            "id": "chat-u1",
+            "role": "user",
+            "parts": [{ "type": "text", "text": "What does my week look like, and what should I do first?" }]
+          },
+          {
+            "id": "chat-a1",
+            "role": "assistant",
+            "parts": [
+              {
+                "type": "tool-calendar_list_events",
+                "toolCallId": "call-cal",
+                "state": "output-available",
+                "input": { "fromIso": "@iso:day", "toIso": "@iso:day+7" },
+                "output": { "events": [{ "title": "Venue walkthrough" }, { "title": "Board deck review" }, { "title": "Flight to Denver" }] },
+                "startedAt": "@ms:now-2m",
+                "endedAt": "@ms:now-2m"
+              },
+              {
+                "type": "text",
+                "text": "You have six meetings this week and one flight. The busiest day is today: the venue walkthrough at 11 and the board deck review at 3.\n\nStart with the head count. Sarah needs it by Friday, and the venue releases the room after that."
+              },
+              {
+                "type": "tool-show_plan",
+                "toolCallId": "call-plan",
+                "state": "output-available",
+                "input": {},
+                "output": {
+                  "ok": true,
+                  "payload": {
+                    "title": "This week",
+                    "todos": [
+                      { "label": "Confirm the offsite head count", "status": "in_progress" },
+                      { "label": "Mail the passport form", "status": "pending" },
+                      { "label": "Give Priya a payment date for invoice 2211", "status": "pending" },
+                      { "label": "Sign the lease renewal", "status": "completed" }
+                    ]
+                  }
+                },
+                "startedAt": "@ms:now-2m",
+                "endedAt": "@ms:now-2m"
+              }
+            ]
+          },
+          {
+            "id": "chat-u2",
+            "role": "user",
+            "parts": [{ "type": "text", "text": "How many people have answered so far?" }]
+          },
+          {
+            "id": "chat-a2",
+            "role": "assistant",
+            "parts": [
+              {
+                "type": "tool-show_stats",
+                "toolCallId": "call-stats",
+                "state": "output-available",
+                "input": {},
+                "output": {
+                  "ok": true,
+                  "payload": {
+                    "title": "Offsite head count",
+                    "stats": [
+                      { "label": "Confirmed", "value": 15 },
+                      { "label": "Waiting", "value": 9 },
+                      { "label": "Room limit", "value": 30 }
+                    ]
+                  }
+                },
+                "startedAt": "@ms:now-1m",
+                "endedAt": "@ms:now-1m"
+              },
+              {
+                "type": "text",
+                "text": "Design and Sales answered with 15 people together. Engineering has not answered yet; last time they sent 9. With them, the count is 24, which fits the main room."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "scenarios": {
+    "today-empty": {
+      "tools": { "get_latest_daily_report": { "report": null } }
+    },
+    "today-error": {
+      "toolErrors": { "get_latest_daily_report": "The brief service did not answer. Try again in a minute." }
+    },
+    "mail-empty": {
+      "threadsByAccount": { "acct-work": [], "acct-home": [] }
+    },
+    "mail-error": {
+      "toolErrors": { "list_accounts": "The mail server did not answer. Try again in a minute." }
+    }
+  }
+}
