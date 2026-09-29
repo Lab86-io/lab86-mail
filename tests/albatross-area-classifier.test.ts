@@ -527,8 +527,13 @@ describe('sparse classifier orchestration', () => {
   });
 });
 
-test('the strict classifier response schema requires every declared assignment field', () => {
-  const schema: any = z.toJSONSchema(areaModelVerdictSchema);
+test('the strict classifier input schema requires every declared field', () => {
+  const schema: any = z.toJSONSchema(areaModelVerdictSchema, {
+    target: 'draft-7',
+    io: 'input',
+  });
+  expect(schema.required).toContain('assignments');
+  expect([...schema.required].sort()).toEqual(Object.keys(schema.properties).sort());
   const assignments = schema.properties.assignments.items;
   expect(assignments.required).toContain('factIds');
   expect([...assignments.required].sort()).toEqual(Object.keys(assignments.properties).sort());
