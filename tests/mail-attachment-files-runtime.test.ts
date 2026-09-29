@@ -5,13 +5,19 @@ import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
 import { ACCOUNT_BULK_TABLES, EXPORT_TABLES } from '../convex/accounts';
 import {
+  BACKFILL_ACCOUNTS_PER_TICK,
   BACKFILL_PAGE,
+  BACKFILL_SCAN_CURSOR,
+  BACKFILL_SCAN_PAGE,
+  DUE_SCAN_CURSOR,
+  DUE_SCAN_READS,
   hexToBase64,
   QUEUE_ACCOUNT_WAIT_MS,
   QUEUE_LEASE_ENDED_ERROR,
   QUEUE_LEASE_MS,
   QUEUE_MAX_ATTEMPTS,
   queueRetryDelay,
+  USERS_PER_TICK,
 } from '../convex/mailAttachments';
 import schema from '../convex/schema';
 import { ATTACHMENT_STORE_MAX_BYTES } from '../lib/attachments/store-policy';
@@ -794,7 +800,7 @@ describe('backfill of stored mail', () => {
     await addAccount(t, 'dead', 'error');
     const inWindow = BACKFILL_PAGE + 10;
     await seedCorpus(t, 'acct', inWindow + 4, (i) => (i < inWindow ? NOW - i * 60_000 : NOW - 90 * DAY - i));
-    expect(await t.query(internal.mailAttachments.backfillAccounts, {})).toEqual([
+    expect((await t.query(internal.mailAttachments.backfillAccounts, {})).accounts).toEqual([
       { userId: USER, accountId: 'acct' },
     ]);
     const first = await t.mutation(internal.mailAttachments.backfillAccountPage, {
@@ -814,7 +820,7 @@ describe('backfill of stored mail', () => {
     expect(done).toMatchObject({ doneAt: NOW, queued: BACKFILL_PAGE / 2 + 5 });
     expect(done.cursor).toBeUndefined();
     expect(await rows(t, 'mailAttachmentQueue')).toHaveLength(inWindow / 2);
-    expect(await t.query(internal.mailAttachments.backfillAccounts, {})).toEqual([]);
+    expect((await t.query(internal.mailAttachments.backfillAccounts, {})).accounts).toEqual([]);
     expect(
       await t.mutation(internal.mailAttachments.backfillAccountPage, { userId: USER, accountId: 'acct' }),
     ).toEqual({ done: true, queued: 0 });
@@ -831,6 +837,181 @@ describe('backfill of stored mail', () => {
     expect(
       await t.mutation(internal.mailAttachments.backfillAccountPage, { userId: USER, accountId: 'acct' }),
     ).toEqual({ done: true, queued: 2 });
+  });
+});
+
+async function seedLiveAccounts(t: T, ids: string[], userId = USER) {
+  await t.run(async (ctx) => {
+    for (const accountId of ids)
+      await ctx.db.insert('connectedAccounts', {
+        userId,
+        accountId,
+        email: `${accountId}@example.com`,
+        provider: 'google',
+        status: 'connected',
+        scopes: [],
+        grantId: `grant_${accountId}`,
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+  });
+}
+
+async function markBackfillDone(t: T, ids: string[]) {
+  await t.run(async (ctx) => {
+    for (const accountId of ids)
+      await ctx.db.insert('mailAttachmentBackfills', {
+        userId: USER,
+        accountId,
+        queued: 0,
+        doneAt: NOW,
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+  });
+}
+
+async function queueRow(t: T, userId: string, overrides: Record<string, unknown> = {}) {
+  await t.run((ctx) =>
+    ctx.db.insert('mailAttachmentQueue', {
+      userId,
+      accountId: `acct_${userId}`,
+      providerMessageId: 'm1',
+      attachmentId: 'a1',
+      filename: 'f.pdf',
+      mimeType: 'application/pdf',
+      size: 9000,
+      receivedAt: NOW,
+      state: 'queued',
+      attempts: 0,
+      dueAt: NOW,
+      createdAt: NOW,
+      updatedAt: NOW,
+      ...overrides,
+    } as any),
+  );
+}
+
+const ids = (prefix: string, count: number) =>
+  Array.from({ length: count }, (_, i) => `${prefix}_${String(i).padStart(3, '0')}`);
+
+const saveCursors = (t: T, cursors: { backfill?: string | null; due?: string | null }) =>
+  t.mutation(internal.mailAttachments.saveScanCursors, {
+    backfill: cursors.backfill ?? null,
+    due: cursors.due ?? null,
+  });
+
+describe('the tick scans', () => {
+  test('the backfill scan pages the live mailboxes past the first page and comes back to the start', async () => {
+    const t = harness();
+    const done = ids('done', BACKFILL_SCAN_PAGE);
+    const open = ids('open', BACKFILL_ACCOUNTS_PER_TICK + 5);
+    await seedLiveAccounts(t, done);
+    await seedLiveAccounts(t, open);
+    await addAccount(t, 'dead', 'error');
+    await markBackfillDone(t, done);
+    const scan = () => t.query(internal.mailAttachments.backfillAccounts, {});
+
+    // The first page has no open backfill: the scan moves to the next page.
+    const first = await scan();
+    expect(first.accounts).toEqual([]);
+    expect(first.cursor).toBeString();
+    await saveCursors(t, { backfill: first.cursor });
+
+    // The next page has more open backfills than one tick moves: the page stays.
+    const second = await scan();
+    expect(second.accounts.map((row) => row.accountId)).toEqual(open.slice(0, BACKFILL_ACCOUNTS_PER_TICK));
+    expect(second.cursor).toBe(first.cursor);
+    await markBackfillDone(t, open.slice(0, BACKFILL_ACCOUNTS_PER_TICK));
+
+    // The rest of the page, then the scan comes back to the first page.
+    const third = await scan();
+    expect(third.accounts.map((row) => row.accountId)).toEqual(open.slice(BACKFILL_ACCOUNTS_PER_TICK));
+    expect(third.cursor).toBeNull();
+    await saveCursors(t, { backfill: third.cursor });
+    const fourth = await scan();
+    expect(fourth.accounts).toEqual([]);
+    expect(fourth.cursor).toBe(first.cursor);
+  });
+
+  test('the due-work scan reads the queue users in turn and skips users with no due work', async () => {
+    const t = harness();
+    const due = ids('due', USERS_PER_TICK + 2);
+    for (const userId of due) {
+      await seedLiveAccounts(t, [`acct_${userId}`], userId);
+      await queueRow(t, userId);
+    }
+    // Sorted after the "due_" users: a mailbox in error, a failed row, and a row that is not due yet.
+    await addAccount(t, 'acct_error_user', 'error', 'error_user');
+    await queueRow(t, 'error_user');
+    await seedLiveAccounts(t, ['acct_failed_user'], 'failed_user');
+    await queueRow(t, 'failed_user', { state: 'failed' });
+    await seedLiveAccounts(t, ['acct_later_user'], 'later_user');
+    await queueRow(t, 'later_user', { dueAt: NOW + 1 });
+    const scan = () => t.query(internal.mailAttachments.usersWithDueWork, { now: NOW });
+
+    const first = await scan();
+    expect(first.users).toEqual(due.slice(0, USERS_PER_TICK));
+    expect(first.cursor).toBe(due[USERS_PER_TICK - 1]);
+    await saveCursors(t, { due: first.cursor });
+
+    // The next tick goes on after the last user it read, to the end.
+    expect(await scan()).toEqual({ users: due.slice(USERS_PER_TICK), cursor: null });
+
+    // After the end, the scan starts again at the first user.
+    await saveCursors(t, { due: null });
+    expect((await scan()).users[0]).toBe(due[0]);
+  });
+
+  test('the due-work scan stops after DUE_SCAN_READS users and goes on from there', async () => {
+    const t = harness();
+    const later = ids('later', DUE_SCAN_READS);
+    await t.run(async (ctx) => {
+      for (const userId of later)
+        await ctx.db.insert('mailAttachmentQueue', {
+          userId,
+          accountId: 'acct',
+          providerMessageId: 'm1',
+          attachmentId: 'a1',
+          filename: 'f.pdf',
+          mimeType: 'application/pdf',
+          size: 9000,
+          receivedAt: NOW,
+          state: 'queued',
+          attempts: 0,
+          dueAt: NOW + DAY,
+          createdAt: NOW,
+          updatedAt: NOW,
+        });
+    });
+    // "zed" sorts after every "later_" user.
+    await seedLiveAccounts(t, ['acct_zed'], 'zed');
+    await queueRow(t, 'zed');
+    const first = await t.query(internal.mailAttachments.usersWithDueWork, { now: NOW });
+    expect(first).toEqual({ users: [], cursor: later.at(-1)! });
+    await saveCursors(t, { due: first.cursor });
+    expect(await t.query(internal.mailAttachments.usersWithDueWork, { now: NOW })).toEqual({
+      users: ['zed'],
+      cursor: null,
+    });
+  });
+
+  test('saveScanCursors keeps one row for each scan', async () => {
+    const t = harness();
+    const saved = () =>
+      t.run(async (ctx) =>
+        (await ctx.db.query('contentSyncCursors').collect()).map((row) => [row.source, row.cursor]).sort(),
+      );
+    await saveCursors(t, { backfill: 'page-2', due: 'user_a' });
+    expect(await saved()).toEqual([
+      [BACKFILL_SCAN_CURSOR, 'page-2'],
+      [DUE_SCAN_CURSOR, 'user_a'],
+    ]);
+    await saveCursors(t, { backfill: 'page-2', due: null });
+    expect(await saved()).toEqual([
+      [BACKFILL_SCAN_CURSOR, 'page-2'],
+      [DUE_SCAN_CURSOR, null],
+    ]);
   });
 });
 
@@ -876,7 +1057,16 @@ describe('the tick', () => {
           secret: SECRET,
         },
       ]);
-      expect(await t.query(internal.mailAttachments.usersWithDueWork, { now: NOW - 1 })).toEqual([]);
+      // Both scans came to the end, so the next tick starts at the first row.
+      const cursors = await t.run((ctx) => ctx.db.query('contentSyncCursors').collect());
+      expect(cursors.map((row) => [row.source, row.cursor]).sort()).toEqual([
+        [BACKFILL_SCAN_CURSOR, null],
+        [DUE_SCAN_CURSOR, null],
+      ]);
+      expect(await t.query(internal.mailAttachments.usersWithDueWork, { now: NOW - 1 })).toEqual({
+        users: [],
+        cursor: null,
+      });
       // With no due work the app is not called.
       await t.mutation(api.mailAttachments.claimQueue, { internalSecret: SECRET, userId: USER });
       calls.length = 0;

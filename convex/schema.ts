@@ -523,7 +523,10 @@ export default defineSchema({
   })
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_user_account_message', ['userId', 'accountId', 'providerMessageId', 'attachmentId'])
-    .index('by_user_state_due', ['userId', 'state', 'dueAt']),
+    .index('by_user_state_due', ['userId', 'state', 'dueAt'])
+    // The tick scan: one read for each user with queued rows gives the
+    // earliest dueAt of that user (convex/mailAttachments.ts usersWithDueWork).
+    .index('by_state_user_due', ['state', 'userId', 'dueAt']),
 
   // One row for each mailbox: how far the queue read the stored mail of the
   // time window. New mail enters the queue when the corpus stores it; this

@@ -20,6 +20,10 @@ import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 // - The tick asks the app (/api/cron/mail-attachments) to store a few queued
 //   files for each user. The app downloads through the provider path, hashes
 //   the bytes, uploads them, and records the row (recordFile).
+// - Each tick reads a bounded part of the live mailboxes (for the backfill)
+//   and of the queue users (for the due work). A cursor in
+//   contentSyncCursors keeps the place, so the next tick goes on from there
+//   and each mailbox and user comes in turn, at any count.
 // - The attachment routes read storage first and store what they fetch.
 // - Account removal, user deletion, message deletion, and the dead-account
 //   purge delete the rows; the stored file goes with its last row.
@@ -39,11 +43,16 @@ const QUEUE_RETRY_MAX_MS = 24 * 3_600_000;
 /** Stored messages that one backfill page reads. */
 export const BACKFILL_PAGE = 100;
 /** Mailboxes whose backfill moves one page in one tick. */
-const BACKFILL_ACCOUNTS_PER_TICK = 20;
-/** Live mailboxes that one tick reads. */
-const LIVE_ACCOUNTS_READ = 500;
+export const BACKFILL_ACCOUNTS_PER_TICK = 20;
+/** Live mailboxes that the backfill scan reads in one tick. */
+export const BACKFILL_SCAN_PAGE = 100;
+/** Queue users that the due-work scan reads in one tick. */
+export const DUE_SCAN_READS = 500;
 /** Users that one tick asks the app to serve. */
-const USERS_PER_TICK = 100;
+export const USERS_PER_TICK = 100;
+/** The contentSyncCursors keys of the two tick scans. */
+export const BACKFILL_SCAN_CURSOR = 'mailAttachments:backfill';
+export const DUE_SCAN_CURSOR = 'mailAttachments:due';
 
 type Ctx = any;
 type FileKey = { userId: string; accountId: string; providerMessageId: string; attachmentId: string };
@@ -461,12 +470,36 @@ export const failQueueItem = mutation({
   },
 });
 
-async function liveAccounts(ctx: Ctx): Promise<Doc<'connectedAccounts'>[]> {
+function scanCursorRow(ctx: Ctx, source: string) {
   return ctx.db
-    .query('connectedAccounts')
-    .withIndex('by_status', (q: any) => q.eq('status', 'connected'))
-    .take(LIVE_ACCOUNTS_READ);
+    .query('contentSyncCursors')
+    .withIndex('by_source', (q: any) => q.eq('source', source))
+    .unique();
 }
+
+async function savedScanCursor(ctx: Ctx, source: string): Promise<string | null> {
+  return (await scanCursorRow(ctx, source))?.cursor ?? null;
+}
+
+/**
+ * Keeps the place of the two tick scans. The scans are queries, so they
+ * cause no write conflict with the queue writers; the tick saves the place
+ * after the work of the tick.
+ */
+export const saveScanCursors = internalMutation({
+  args: { backfill: v.union(v.string(), v.null()), due: v.union(v.string(), v.null()) },
+  handler: async (ctx, args) => {
+    for (const [source, cursor] of [
+      [BACKFILL_SCAN_CURSOR, args.backfill],
+      [DUE_SCAN_CURSOR, args.due],
+    ] as const) {
+      const row = await scanCursorRow(ctx, source);
+      if (row) {
+        if (row.cursor !== cursor) await ctx.db.patch(row._id, { cursor });
+      } else await ctx.db.insert('contentSyncCursors', { source, cursor });
+    }
+  },
+});
 
 function backfillRow(ctx: Ctx, userId: string, accountId: string) {
   return ctx.db
@@ -475,17 +508,34 @@ function backfillRow(ctx: Ctx, userId: string, accountId: string) {
     .unique();
 }
 
-/** Live mailboxes whose backfill is not done, at most BACKFILL_ACCOUNTS_PER_TICK. */
+/**
+ * Live mailboxes whose backfill is not done, at most BACKFILL_ACCOUNTS_PER_TICK,
+ * from one page of BACKFILL_SCAN_PAGE live mailboxes. The page starts at the
+ * saved cursor. `cursor` is the start of the next tick: the same page while
+ * it has more open backfills than one tick moves, else the next page, and
+ * null (the first page) after the last page.
+ */
 export const backfillAccounts = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const out: Array<{ userId: string; accountId: string }> = [];
-    for (const account of await liveAccounts(ctx)) {
-      if (out.length >= BACKFILL_ACCOUNTS_PER_TICK) break;
+    const saved = await savedScanCursor(ctx, BACKFILL_SCAN_CURSOR);
+    const page = await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_status', (q) => q.eq('status', 'connected'))
+      .paginate({ cursor: saved, numItems: BACKFILL_SCAN_PAGE });
+    const accounts: Array<{ userId: string; accountId: string }> = [];
+    let more = false;
+    for (const account of page.page) {
       const state = await backfillRow(ctx, account.userId, account.accountId);
-      if (!state?.doneAt) out.push({ userId: account.userId, accountId: account.accountId });
+      if (state?.doneAt) continue;
+      if (accounts.length >= BACKFILL_ACCOUNTS_PER_TICK) {
+        more = true;
+        break;
+      }
+      accounts.push({ userId: account.userId, accountId: account.accountId });
     }
-    return out;
+    const cursor = more ? saved : page.isDone ? null : page.continueCursor;
+    return { accounts, cursor };
   },
 });
 
@@ -531,23 +581,37 @@ export const backfillAccountPage = internalMutation({
   },
 });
 
-/** Users with a live mailbox and a due queue row, at most USERS_PER_TICK. */
+/**
+ * Users with a due queue row and a live mailbox, at most USERS_PER_TICK. The
+ * scan reads the queue, not the accounts: one read for each user with queued
+ * rows, in user order from the saved cursor, at most DUE_SCAN_READS. The
+ * first queued row of a user has the earliest dueAt, so that one read tells
+ * if the user has due work. `cursor` is the last user that the scan read, or
+ * null when the scan came to the end (the next tick starts at the first user).
+ */
 export const usersWithDueWork = internalQuery({
   args: { now: v.number() },
   handler: async (ctx, args) => {
-    const users = [...new Set((await liveAccounts(ctx)).map((account) => account.userId))];
-    const due: string[] = [];
-    for (const userId of users) {
-      if (due.length >= USERS_PER_TICK) break;
+    let after = await savedScanCursor(ctx, DUE_SCAN_CURSOR);
+    const users: string[] = [];
+    for (let reads = 0; reads < DUE_SCAN_READS && users.length < USERS_PER_TICK; reads++) {
+      const previous = after;
       const row = await ctx.db
         .query('mailAttachmentQueue')
-        .withIndex('by_user_state_due', (q) =>
-          q.eq('userId', userId).eq('state', 'queued').lte('dueAt', args.now),
+        .withIndex('by_state_user_due', (q) =>
+          previous === null ? q.eq('state', 'queued') : q.eq('state', 'queued').gt('userId', previous),
         )
         .first();
-      if (row) due.push(userId);
+      if (!row) return { users, cursor: null };
+      after = row.userId;
+      if (row.dueAt > args.now) continue;
+      const live = await ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_status_user', (q) => q.eq('status', 'connected').eq('userId', row.userId))
+        .first();
+      if (live) users.push(row.userId);
     }
-    return due;
+    return { users, cursor: after };
   },
 });
 
@@ -562,11 +626,17 @@ export const tick = internalAction({
     const url = process.env.LAB86_MAIL_PUBLIC_URL;
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     if (!url || !secret) return { backfilled: 0, queued: 0, users: 0, started: 0 };
-    const accounts = await ctx.runQuery(internal.mailAttachments.backfillAccounts, {});
+    const backfill = await ctx.runQuery(internal.mailAttachments.backfillAccounts, {});
+    const accounts = backfill.accounts;
     let queued = 0;
     for (const account of accounts)
       queued += (await ctx.runMutation(internal.mailAttachments.backfillAccountPage, account)).queued;
-    const users = await ctx.runQuery(internal.mailAttachments.usersWithDueWork, { now: Date.now() });
+    const due = await ctx.runQuery(internal.mailAttachments.usersWithDueWork, { now: Date.now() });
+    const users = due.users;
+    await ctx.runMutation(internal.mailAttachments.saveScanCursors, {
+      backfill: backfill.cursor,
+      due: due.cursor,
+    });
     const started = users.length
       ? await fanOutInternalPost(
           `${url.replace(/\/$/, '')}/api/cron/mail-attachments`,
