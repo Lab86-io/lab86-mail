@@ -15,10 +15,10 @@ import { nativeBrowserDestination } from '../lib/native/browser-destination';
 import { completeNativeBrowserSignIn } from '../lib/native/browser-session';
 import { RateLimitError } from '../lib/rate-limit';
 
-const original = process.env.LAB86_DEVELOPMENT_MODE;
+const original = process.env.LAB86_MAIL_REQUIRE_BASIC_AUTH;
 afterEach(() => {
-  if (original === undefined) delete process.env.LAB86_DEVELOPMENT_MODE;
-  else process.env.LAB86_DEVELOPMENT_MODE = original;
+  if (original === undefined) delete process.env.LAB86_MAIL_REQUIRE_BASIC_AUTH;
+  else process.env.LAB86_MAIL_REQUIRE_BASIC_AUTH = original;
 });
 
 function request(method = 'POST', body: unknown = {}, authorization: string | null = 'Bearer native-token') {
@@ -29,7 +29,7 @@ function request(method = 'POST', body: unknown = {}, authorization: string | nu
   });
 }
 function harness() {
-  process.env.LAB86_DEVELOPMENT_MODE = 'false';
+  process.env.LAB86_MAIL_REQUIRE_BASIC_AUTH = 'false';
   const issue = mock(async (_input: unknown) => ({ token: 'single-use-ticket' }));
   const revoke = mock(async (_id: string) => ({}));
   const getSession = mock(async (id: string) => ({ id, userId: 'owner', status: 'active' }));
@@ -87,7 +87,7 @@ describe('native editor sessions', () => {
     };
     expect((await createNativeWebSessionPost(h.deps)(request())).status).toBe(429);
     expect(h.issue).not.toHaveBeenCalled();
-    process.env.LAB86_DEVELOPMENT_MODE = 'true';
+    process.env.LAB86_MAIL_REQUIRE_BASIC_AUTH = 'true';
     h.deps.enforceUserRateLimit = async () => ({});
     h.deps.createAccess = async () => {
       throw new Error('secret must not leak');
@@ -97,15 +97,15 @@ describe('native editor sessions', () => {
     expect(await response.text()).not.toContain('secret must not leak');
     expect(h.issue).not.toHaveBeenCalled();
   });
-  test('development receives a signed browser capability rather than the Basic password', async () => {
+  test('an explicitly challenged browser receives a capability without enabling development features', async () => {
     const h = harness();
-    process.env.LAB86_DEVELOPMENT_MODE = 'true';
+    process.env.LAB86_MAIL_REQUIRE_BASIC_AUTH = 'true';
     const response = await createNativeWebSessionPost(h.deps)(request());
     expect((await response.json()).access).toEqual({ value: 'signed-access', expiresAt: 2000000000 });
   });
-  test('renewing development access never mints a ticket and still requires native authentication', async () => {
+  test('renewing challenged browser access never mints a ticket and still requires native authentication', async () => {
     const h = harness();
-    process.env.LAB86_DEVELOPMENT_MODE = 'true';
+    process.env.LAB86_MAIL_REQUIRE_BASIC_AUTH = 'true';
     const renew = createNativeWebSessionPatch(h.deps);
     const response = await renew(request('PATCH'));
     expect(response.status).toBe(200);
@@ -117,7 +117,7 @@ describe('native editor sessions', () => {
     });
     expect(h.issue).not.toHaveBeenCalled();
     expect((await renew(request('PATCH', {}, null))).status).toBe(401);
-    process.env.LAB86_DEVELOPMENT_MODE = 'false';
+    process.env.LAB86_MAIL_REQUIRE_BASIC_AUTH = 'false';
     expect((await (await renew(request('PATCH'))).json()).access).toBeNull();
   });
   test('closing revokes only a separate session owned by the native caller', async () => {

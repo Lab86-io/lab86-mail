@@ -1,7 +1,7 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
 import { type NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { isDevelopmentRuntime } from '@/lib/hosted/controls';
+import { envFlag } from '@/lib/hosted/controls';
 import { createNativeBrowserAccess } from '@/lib/native/browser-access';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
@@ -58,7 +58,7 @@ export function createNativeWebSessionPost(deps: Dependencies = defaults) {
         limit: 20,
         windowMs: 60_000,
       });
-      const access = isDevelopmentRuntime()
+      const access = envFlag('LAB86_MAIL_REQUIRE_BASIC_AUTH')
         ? await deps.createAccess(req.nextUrl.origin, process.env.LAB86_CONVEX_INTERNAL_SECRET || '')
         : null;
       const client = await deps.clerkClient();
@@ -85,7 +85,7 @@ export function createNativeWebSessionPatch(deps: Dependencies = defaults) {
         limit: 20,
         windowMs: 60_000,
       });
-      const access = isDevelopmentRuntime()
+      const access = envFlag('LAB86_MAIL_REQUIRE_BASIC_AUTH')
         ? await deps.createAccess(req.nextUrl.origin, process.env.LAB86_CONVEX_INTERNAL_SECRET || '')
         : null;
       return noStore({ ok: true, userId: user.userId, access });
