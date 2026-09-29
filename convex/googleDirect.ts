@@ -409,6 +409,9 @@ export const activateGoogleAccount = mutation({
         createdAt: ts,
       });
 
+    // A switch from a Nylas grant starts the age that the Nylas grant cleanup
+    // reads. A reconnect keeps the time of the first switch.
+    const switchedFromNylas = Boolean(priorGrantId && !isDirectGrant(priorGrantId));
     const grantPatch = {
       provider: 'google',
       grantId,
@@ -418,6 +421,7 @@ export const activateGoogleAccount = mutation({
       expiresAt: args.expiresAt,
       scopes: args.scopes,
       previousNylasGrantId,
+      ...(switchedFromNylas ? { switchedToGoogleAt: ts, nylasGrantRevokedAt: undefined } : {}),
       updatedAt: ts,
     };
     if (grant) await ctx.db.patch(grant._id, grantPatch);
@@ -480,7 +484,14 @@ export const rollbackToNylas = internalMutation({
     if (!account || !grant) return { ok: false as const, reason: 'The account was not found.' };
     if (!isDirectGrant(account.grantId)) return { ok: false as const, reason: 'The account uses Nylas.' };
     const nylasGrantId = grant.previousNylasGrantId;
-    if (!nylasGrantId) return { ok: false as const, reason: 'The account has no Nylas grant to go back to.' };
+    if (!nylasGrantId) {
+      return {
+        ok: false as const,
+        reason: grant.nylasGrantRevokedAt
+          ? 'The Nylas grant cleanup deleted the Nylas grant. Connect the account through Nylas again.'
+          : 'The account has no Nylas grant to go back to.',
+      };
+    }
     await ctx.db.patch(account._id, {
       grantId: nylasGrantId,
       status: 'connected',
@@ -495,10 +506,216 @@ export const rollbackToNylas = internalMutation({
       refreshTokenEncrypted: undefined,
       expiresAt: undefined,
       previousNylasGrantId: undefined,
+      switchedToGoogleAt: undefined,
       updatedAt: ts,
     });
     await patchSyncStateGrants(ctx, args.userId, args.accountId, nylasGrantId, ts, { historyId: undefined });
     return { ok: true as const, grantId: nylasGrantId };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Nylas grant cleanup (docs/google-direct-transport.md, "Cleanup")
+// ---------------------------------------------------------------------------
+
+/** The most token rows that one cleanup plan reads. */
+const NYLAS_CLEANUP_PLAN_LIMIT = 500;
+/** The most rows that can keep one Nylas grant (one mailbox under a few users). */
+const NYLAS_CLEANUP_HOLDER_LIMIT = 20;
+
+type NylasCleanupConnection = {
+  userId: string;
+  accountId: string;
+  email: string;
+  grantId: string;
+  switchedToGoogleAt: number | null;
+};
+
+type NylasCleanupItem = {
+  nylasGrantId: string | null;
+  eligible: boolean;
+  reason?: string;
+  connections: NylasCleanupConnection[];
+};
+
+function cleanupConnection(row: any): NylasCleanupConnection {
+  return {
+    userId: row.userId,
+    accountId: row.accountId,
+    email: row.email,
+    grantId: row.grantId,
+    switchedToGoogleAt: typeof row.switchedToGoogleAt === 'number' ? row.switchedToGoogleAt : null,
+  };
+}
+
+/**
+ * The reason that the Nylas grant of this token row must stay, or null. The
+ * connection must use its direct grant (account row and token row) and be
+ * connected: a direct connection in an error state can need the rollback.
+ */
+async function directConnectionRefusal(ctx: any, row: any) {
+  if (!isDirectGrant(row.grantId)) return 'The account does not use a direct Google grant (google:...).';
+  const account = await ctx.db
+    .query('connectedAccounts')
+    .withIndex('by_user_account', (q: any) => q.eq('userId', row.userId).eq('accountId', row.accountId))
+    .unique();
+  if (!account || account.grantId !== row.grantId) {
+    return 'The account row does not use the direct Google grant of its token row.';
+  }
+  if (account.status !== 'connected') {
+    return `The direct connection has status "${account.status}". Keep the Nylas grant for a rollback.`;
+  }
+  return null;
+}
+
+/**
+ * One Nylas grant and the connections that keep it. The grant can go only
+ * when no connection is on it now and every connection that keeps it for a
+ * rollback passes `refusal` (it returns the reason to keep the grant).
+ */
+async function nylasCleanupItem(
+  ctx: any,
+  nylasGrantId: string,
+  refusal: (row: any) => Promise<string | null>,
+): Promise<NylasCleanupItem> {
+  const holders = await ctx.db
+    .query('providerGrants')
+    .withIndex('by_previous_nylas_grant', (q: any) => q.eq('previousNylasGrantId', nylasGrantId))
+    .take(NYLAS_CLEANUP_HOLDER_LIMIT);
+  const item = { nylasGrantId, connections: holders.map(cleanupConnection) };
+  if (isDirectGrant(nylasGrantId)) {
+    return { ...item, eligible: false, reason: 'The kept grant id is a direct Google grant id.' };
+  }
+  for (const table of ['connectedAccounts', 'providerGrants'] as const) {
+    const inUse = await ctx.db
+      .query(table)
+      .withIndex('by_grant', (q: any) => q.eq('grantId', nylasGrantId))
+      .first();
+    if (inUse) return { ...item, eligible: false, reason: 'A connection still uses this Nylas grant.' };
+  }
+  for (const holder of holders) {
+    const reason = await refusal(holder);
+    if (reason) return { ...item, eligible: false, reason };
+  }
+  return { ...item, eligible: true };
+}
+
+/**
+ * The Nylas grants that the owner can delete now. A switched Google account
+ * keeps its Nylas grant for `rollbackToNylas`, and Nylas bills each grant.
+ * Name one account (`userId` and `accountId`), or give `switchedBefore` for
+ * all switched accounts whose switch is older than that time. The cleanup
+ * script (scripts/nylas-grant-cleanup.ts) deletes each eligible grant in
+ * Nylas and then calls clearPreviousNylasGrant. Reads only.
+ */
+export const nylasGrantCleanupPlan = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    accountId: v.optional(v.string()),
+    switchedBefore: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const oneAccount = args.userId !== undefined || args.accountId !== undefined;
+    if (oneAccount) {
+      if (!args.userId || !args.accountId) throw new Error('Name both the userId and the accountId.');
+      if (args.switchedBefore !== undefined) throw new Error('Name one account, or a switch time. Not both.');
+      const row = await ctx.db
+        .query('providerGrants')
+        .withIndex('by_user_account', (q) => q.eq('userId', args.userId!).eq('accountId', args.accountId!))
+        .unique();
+      if (!row) {
+        return {
+          items: [
+            { nylasGrantId: null, eligible: false, reason: 'The account was not found.', connections: [] },
+          ],
+          truncated: false,
+        };
+      }
+      const refused = await directConnectionRefusal(ctx, row);
+      const previous = row.previousNylasGrantId;
+      if (refused || !previous) {
+        const reason =
+          refused ??
+          (row.nylasGrantRevokedAt
+            ? `The cleanup deleted the Nylas grant at ${new Date(row.nylasGrantRevokedAt).toISOString()}.`
+            : 'The account keeps no Nylas grant.');
+        return {
+          items: [
+            {
+              nylasGrantId: previous ?? null,
+              eligible: false,
+              reason,
+              connections: [cleanupConnection(row)],
+            },
+          ],
+          truncated: false,
+        };
+      }
+      const item = await nylasCleanupItem(ctx, previous, async (holder) => {
+        if (holder.userId !== row.userId || holder.accountId !== row.accountId) {
+          return 'Another connection keeps this Nylas grant for its rollback. Use the age mode for all of them.';
+        }
+        return await directConnectionRefusal(ctx, holder);
+      });
+      return { items: [item], truncated: false };
+    }
+
+    if (args.switchedBefore === undefined) throw new Error('Name one account, or a switch time.');
+    const switchedBefore = args.switchedBefore;
+    const rows = await ctx.db
+      .query('providerGrants')
+      .withIndex('by_previous_nylas_grant', (q) => q.gt('previousNylasGrantId', ''))
+      .take(NYLAS_CLEANUP_PLAN_LIMIT + 1);
+    const truncated = rows.length > NYLAS_CLEANUP_PLAN_LIMIT;
+    const grantIds = [
+      ...new Set(rows.slice(0, NYLAS_CLEANUP_PLAN_LIMIT).map((row) => row.previousNylasGrantId!)),
+    ];
+    const items: NylasCleanupItem[] = [];
+    for (const grantId of grantIds) {
+      items.push(
+        await nylasCleanupItem(ctx, grantId, async (holder) => {
+          const refused = await directConnectionRefusal(ctx, holder);
+          if (refused) return refused;
+          if (typeof holder.switchedToGoogleAt !== 'number') {
+            return 'The switch time of a connection is not known. Clean it up by account.';
+          }
+          if (holder.switchedToGoogleAt > switchedBefore) return 'A connection switched too recently.';
+          return null;
+        }),
+      );
+    }
+    return { items, truncated };
+  },
+});
+
+/**
+ * Records that the owner deleted this Nylas grant in Nylas (or that Nylas no
+ * longer had it). Each direct connection that kept it for a rollback loses
+ * it: `previousNylasGrantId` is cleared and `nylasGrantRevokedAt` is set.
+ * `rollbackToNylas` does not work for these connections after this call.
+ */
+export const clearPreviousNylasGrant = mutation({
+  args: { internalSecret: v.optional(v.string()), nylasGrantId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const ts = now();
+    const holders = await ctx.db
+      .query('providerGrants')
+      .withIndex('by_previous_nylas_grant', (q) => q.eq('previousNylasGrantId', args.nylasGrantId))
+      .take(NYLAS_CLEANUP_HOLDER_LIMIT);
+    let cleared = 0;
+    for (const holder of holders) {
+      if (!isDirectGrant(holder.grantId)) continue;
+      await ctx.db.patch(holder._id, {
+        previousNylasGrantId: undefined,
+        nylasGrantRevokedAt: ts,
+        updatedAt: ts,
+      });
+      cleared += 1;
+    }
+    return { cleared };
   },
 });
 

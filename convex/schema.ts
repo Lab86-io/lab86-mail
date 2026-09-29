@@ -191,9 +191,17 @@ export default defineSchema({
     expiresAt: v.optional(v.number()),
     scopes: v.array(v.string()),
     // The Nylas grant of a Google account that now talks to Google directly
-    // (grantId `google:<UUID>`). A rollback puts it back. It is
-    // destroyed only when the user removes the account.
+    // (grantId `google:<UUID>`). A rollback puts it back. It is destroyed
+    // when the user removes the account, or by the owner-run cleanup
+    // (scripts/nylas-grant-cleanup.ts), which clears it.
     previousNylasGrantId: v.optional(v.string()),
+    // When the account switched from its Nylas grant to the direct grant.
+    // The cleanup deletes only the Nylas grants of switches older than a set
+    // age. Switches from before this field have no value.
+    switchedToGoogleAt: v.optional(v.number()),
+    // When the cleanup deleted the Nylas grant. A rollback is not possible
+    // after this time.
+    nylasGrantRevokedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
