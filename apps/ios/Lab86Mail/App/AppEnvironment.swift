@@ -52,8 +52,14 @@ final class AppEnvironment {
 
     // Rendering tests build a second, isolated environment inside the host
     // app. Its local database lives in memory, so it never shares the app's
-    // store file.
-    init(configuration: AppConfiguration, inMemoryPersistence: Bool = false) {
+    // store file. The screenshot tour also gives a stub backend client, so
+    // each screen loads fixture data through its own request paths. The app
+    // never passes a backend client.
+    init(
+        configuration: AppConfiguration,
+        inMemoryPersistence: Bool = false,
+        backend backendOverride: BackendClient? = nil
+    ) {
         self.configuration = configuration
         let sessionStore = SessionStore()
         self.sessionStore = sessionStore
@@ -62,7 +68,7 @@ final class AppEnvironment {
         let tokenProvider: @Sendable () async throws -> String = {
             try await ClerkSessionAccess.activeToken()
         }
-        let backend = BackendClient(
+        let backend = backendOverride ?? BackendClient(
             baseURL: configuration.apiBaseURL,
             tokenProvider: tokenProvider
         )
