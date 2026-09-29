@@ -6,7 +6,7 @@ export default function PrivacyPage() {
       <article className="mx-auto max-w-3xl space-y-5">
         <h1 className="text-2xl font-semibold">Privacy Policy</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
-          Effective June 2026. Updated September 27, 2026.
+          Effective June 2026. Updated September 28, 2026.
         </p>
         <p>
           {PRODUCT_NAME} is hosted email and personal operations software from {COMPANY_NAME}. This policy
@@ -23,11 +23,12 @@ export default function PrivacyPage() {
           <li>
             <strong>Connected mailbox data:</strong> after you connect a mailbox, {PRODUCT_NAME} connects to
             your mail provider only with the access you authorize. It processes message headers, message
-            bodies, snippets, labels, attachments that you open or send, drafts, and outbound send metadata.
+            bodies, snippets, labels, attachments, drafts, and outbound send metadata. It also keeps copies of
+            the attachment files from the last 60 days of mail, so that they open quickly.
           </li>
           <li>
-            <strong>Calendar and file data:</strong> calendar events when you connect a calendar, and files
-            when you connect a file service such as Google Drive.
+            <strong>Calendar, contact, and file data:</strong> the calendar events and contacts of a connected
+            account, and files when you connect a file service such as Google Drive.
           </li>
           <li>
             <strong>Content you create:</strong> tasks, notes, plans, rules, labels, saved replies,
@@ -52,10 +53,15 @@ export default function PrivacyPage() {
           synchronization.
         </p>
         <p>
-          When the assistant is enabled, relevant message content and instructions may be sent to configured
-          AI providers to generate summaries, classifications, drafts, and other requested results. These
-          providers process the data to return a result to you. Bring-your-own key mode sends requests to the
-          provider configured by the signed-in user.
+          To sort and search your mail and to do the work you ask for, {PRODUCT_NAME} sends relevant message
+          content and your instructions to model providers. They return summaries, classifications, search
+          vectors, drafts, and other results. Hosted requests go through OpenRouter. OpenRouter sends each
+          request only to a model host that does not train models on the data. Some of these hosts keep
+          requests for a limited time under their own policies, for example to find abuse.
+        </p>
+        <p>
+          If you add your own OpenRouter key, the same rule applies. If you add your own OpenAI or Anthropic
+          key, requests go directly to that provider under your agreement with it.
         </p>
 
         <h2 className="pt-2 text-lg font-semibold">Google user data</h2>
@@ -66,39 +72,63 @@ export default function PrivacyPage() {
           </a>
           , including the Limited Use requirements. When you connect a Google account, {PRODUCT_NAME} uses the
           Gmail access you grant to read, sort, label, draft, and send mail for you, and uses your Google
-          email address to identify the connected account. If you connect Google Drive, {PRODUCT_NAME} uses
-          that access to find, open, and create the files you ask for.
+          email address to identify the connected account. It uses the Google Calendar access to show, create,
+          and change your events, and the contacts access to show names and suggest recipients. If you connect
+          Google Drive, {PRODUCT_NAME} uses that access to find, open, and create the files you ask for.
         </p>
         <p>
-          We do not sell Google user data, use it for advertising, use it to train generalized AI or machine
-          learning models, or allow humans to read message content except with your consent, for security, to
-          comply with law, or for support you request.
+          A Google account can connect directly to Google. Then {PRODUCT_NAME} uses the Google APIs for the
+          mail, calendar, and contacts of that account. A Google account that connected through Nylas stays on
+          Nylas until you connect it again. Microsoft and iCloud accounts connect through Nylas.
+        </p>
+        <p>
+          We do not sell Google user data, use it for advertising, use it to train generalized artificial
+          intelligence or machine learning models, or allow humans to read message content except with your
+          consent, for security, to comply with law, or for support you request.
         </p>
 
         <h2 className="pt-2 text-lg font-semibold">How we share data</h2>
         <p>
-          {PRODUCT_NAME} does not sell personal information. We use service providers to run the product,
-          including Railway, Convex, Nylas, Clerk, Stripe, Resend, OpenRouter, OpenAI, Anthropic, and
-          comparable AI providers selected in your account settings. These providers process data only to
-          provide, secure, bill, or support {PRODUCT_NAME}. We may also disclose data when the law requires it
-          or to protect users and the service from fraud or abuse.
+          {PRODUCT_NAME} does not sell personal information. We use service providers to run the product:
+          Railway, Convex, Nylas, Clerk, Stripe, Resend, and OpenRouter. OpenRouter sends model requests only
+          to hosts that do not train models on the data. Examples are OpenAI, Anthropic, Amazon Web Services,
+          Microsoft Azure, and Google Cloud. If you add your own model key, we also send requests to the
+          provider of that key.
+        </p>
+        <p>
+          These providers process data only to provide, secure, bill, or support {PRODUCT_NAME}. We may also
+          disclose data when the law requires it or to protect users and the service from fraud or abuse.
         </p>
 
         <h2 className="pt-2 text-lg font-semibold">Security</h2>
         <p>
           Data moves between your device, {PRODUCT_NAME}, and our service providers over encrypted (TLS)
-          connections. Model provider keys that you add are encrypted before we store them. Access to
-          production systems is limited to the people who operate the service.
+          connections. Convex stores the data, including the attachment copies, encrypted at rest. Model
+          provider keys that you add are encrypted before we store them. Access to production systems is
+          limited to the people who operate the service.
         </p>
 
         <h2 className="pt-2 text-lg font-semibold">Retention and deletion</h2>
         <p>
-          We keep your data while your account is active. Disconnecting a provider revokes the hosted grant
-          and deletes {COMPANY_NAME}-hosted grant records, cached thread and message data, index rows, sync
-          state, and provider webhook records for that mailbox. Account deletion removes your {COMPANY_NAME}
-          -hosted account data, AI settings, usage records, index data, and connected mail grants. Processed
-          provider webhook events are deleted after 14 days. These actions do not delete messages from the
-          original mail provider mailbox unless you separately perform a delete action in that provider.
+          We keep your data while your account is active. When you disconnect a mailbox, we revoke our access
+          to it and delete its {COMPANY_NAME}-hosted grant records. Then we delete its stored mail, labels,
+          calendar events, contacts, attachment copies, search index, and sync state. We also delete its
+          provider webhook records and what we made from its mail: memory notes, Work receipts, notifications,
+          event suggestions, and prepared brief items. If another connection in {PRODUCT_NAME} uses the same
+          Google sign-in, for example your Google Drive connection, we delete our copy of the access but do
+          not revoke the sign-in, so that the other connection keeps working.
+        </p>
+        <p>
+          If a mailbox needs a reconnect for 30 days, a daily job deletes the same mailbox data. It keeps the
+          mailbox entry and its grant record, so that you can reconnect or disconnect the mailbox in Settings.
+          Some items stay until you delete them or your account. These are tasks and Work that you made from a
+          message, notes about an area, the activity log, and past briefs.
+        </p>
+        <p>
+          We delete provider webhook records after 14 days, or after 30 days if we could not process them.
+          Account deletion removes your {COMPANY_NAME}-hosted account data, model settings, usage records,
+          index data, attachment copies, and connected mail grants. These actions do not delete messages from
+          the original mail provider mailbox unless you separately perform a delete action in that provider.
         </p>
 
         <h2 className="pt-2 text-lg font-semibold">Your choices</h2>

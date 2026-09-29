@@ -64,7 +64,12 @@ test('both scheduled workflows resume all target pages and preserve the original
   process.env.LAB86_CONVEX_INTERNAL_SECRET = 'test-secret';
   process.env.RAILWAY_ENVIRONMENT_NAME = 'production';
   globalThis.fetch = (async (input, init) => {
-    calls.push({ path: new URL(String(input)).pathname, body: JSON.parse(String(init?.body)) });
+    const body = JSON.parse(String(init?.body));
+    // Only the users seeded here. Scheduled work that another test file left
+    // running can post in the same process while this test holds fetch.
+    if (typeof body?.userId === 'string' && body.userId.startsWith('user-')) {
+      calls.push({ path: new URL(String(input)).pathname, body });
+    }
     return new Response('{}');
   }) as typeof fetch;
   try {

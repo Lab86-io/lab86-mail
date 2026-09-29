@@ -1,11 +1,14 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { hostedPublicUrl } from '@/lib/hosted/env';
 import { saveOAuthConnection } from '@/lib/mcp/connections';
 import { finishMcpOAuth, type PersistedMcpOAuthState } from '@/lib/mcp/oauth';
-import { getServerDef, type McpServerId } from '@/lib/mcp/servers';
+import { completeMcpOAuthConnection, type McpOAuthCompletionPayload } from '@/lib/mcp/oauth-connection';
+import { getServerDef } from '@/lib/mcp/servers';
 import { syncConnection } from '@/lib/mcp/sync';
 import { decryptSecret } from '@/lib/security/crypto';
+import { saveOAuthCompletion } from '@/lib/security/oauth-completions';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,9 +20,16 @@ const defaultDeps = {
   finishMcpOAuth,
   saveOAuthConnection,
   syncConnection,
+  requireCurrentUser,
+  saveOAuthCompletion: (input: { userId: string; kind: 'mcp'; payload: McpOAuthCompletionPayload }) =>
+    saveOAuthCompletion(input),
 };
 
-function settingsRedirect(key: 'mcp_connected' | 'mcp_error', value: string, nativeCallback = false) {
+function settingsRedirect(
+  key: 'mcp_connected' | 'mcp_error' | 'mcp_completion',
+  value: string,
+  nativeCallback = false,
+) {
   if (nativeCallback) {
     const target = new URL('lab86://oauth/connection');
     target.searchParams.set(key, value.slice(0, 300));
@@ -30,6 +40,11 @@ function settingsRedirect(key: 'mcp_connected' | 'mcp_error', value: string, nat
   return NextResponse.redirect(target);
 }
 
+// The OAuth state alone does not prove who approved the provider: a user can
+// start a connection and send the provider link to someone else. The web flow
+// therefore requires the Clerk session of the user who started it. The native
+// flow has no session in the system browser, so it keeps the provider result
+// for the app to redeem through the authenticated /api/mcp/oauth/finalize.
 export function createMcpOAuthCallback(deps: typeof defaultDeps = defaultDeps) {
   return async function mcpOAuthCallback(req: NextRequest) {
     const state = req.nextUrl.searchParams.get('state') || '';
@@ -65,27 +80,30 @@ export function createMcpOAuthCallback(deps: typeof defaultDeps = defaultDeps) {
       if (!definition || definition.connectMode !== 'oauth') throw new Error('Unsupported OAuth server.');
       const persisted = JSON.parse(deps.decryptSecret(stored.payloadEncrypted)) as PersistedMcpOAuthState;
       if (persisted.state !== state) throw new Error('OAuth state did not match.');
-      const completed = await deps.finishMcpOAuth({
-        serverUrl: definition.defaultUrl,
-        code,
-        persisted,
-      });
-      const { connectionId } = await deps.saveOAuthConnection({
-        userId: stored.userId,
-        server: stored.server as McpServerId,
-        persisted: completed,
-        displayName: definition.label,
-      });
-      const validation = await deps.syncConnection(stored.userId, connectionId);
-      if (!validation.ok) {
-        console.warn('[mcp/oauth/callback] initial sync failed', definition.id, validation.error);
+      if (nativeCallback) {
+        const completionToken = await deps.saveOAuthCompletion({
+          userId: stored.userId,
+          kind: 'mcp',
+          payload: { server: stored.server, code, persisted },
+        });
+        return settingsRedirect('mcp_completion', completionToken, true);
+      }
+      const sessionUser = await deps.requireCurrentUser().catch(() => null);
+      if (!sessionUser || sessionUser.userId !== stored.userId) {
+        return settingsRedirect('mcp_error', 'Sign in again and retry the connection.');
+      }
+      const result = await completeMcpOAuthConnection(
+        { userId: stored.userId, server: stored.server, code, persisted },
+        deps,
+      );
+      if (!result.ok) {
+        console.warn('[mcp/oauth/callback] initial sync failed', definition.id, result.error);
         return settingsRedirect(
           'mcp_error',
           'Connected, but the first sync failed. Please reconnect and try again.',
-          nativeCallback,
         );
       }
-      return settingsRedirect('mcp_connected', definition.label, nativeCallback);
+      return settingsRedirect('mcp_connected', result.label);
     } catch (error) {
       console.error('[mcp/oauth/callback] OAuth connection failed', error);
       return settingsRedirect(

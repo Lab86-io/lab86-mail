@@ -9,9 +9,10 @@ export function requireInternalSecret(secret?: string) {
 
 /** Compares two strings in time that does not depend on where they differ. */
 export function constantTimeEqual(provided: string, expected: string) {
-  const length = Math.max(provided.length, expected.length);
+  // The loop follows the length of the provided value only, so the time does
+  // not tell the length of the expected secret.
   let diff = provided.length ^ expected.length;
-  for (let i = 0; i < length; i++) {
+  for (let i = 0; i < provided.length; i++) {
     diff |= (provided.charCodeAt(i) | 0) ^ (expected.charCodeAt(i) | 0);
   }
   return diff === 0;

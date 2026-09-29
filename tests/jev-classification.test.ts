@@ -27,7 +27,13 @@ describe('Jev typed transport', () => {
       init,
     ) => {
       expect(url).toBe('https://openrouter.ai/api/alpha/decisions');
-      expect(JSON.parse(String(init?.body))).toEqual({ model: 'typesafe/jev-1.13', state: input, questions });
+      // OpenRouter must route only to endpoints that do not train on the data.
+      expect(JSON.parse(String(init?.body))).toEqual({
+        model: 'typesafe/jev-1.13',
+        state: input,
+        questions,
+        provider: { data_collection: 'deny' },
+      });
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer test-only' });
       return Response.json(responseFor(input));
     }) as typeof fetch);

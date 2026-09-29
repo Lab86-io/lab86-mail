@@ -106,7 +106,9 @@ struct BriefSourceStrip: View {
         reconnectingID = source.id
         defer { reconnectingID = nil }
         do {
-            try await environment.webAuthentication.connectMailbox(provider: source.provider)
+            // A mail or calendar source id is "<kind>:<accountId>".
+            let accountId = source.id.split(separator: ":", maxSplits: 1).last.map(String.init)
+            try await environment.webAuthentication.connectMailbox(provider: source.provider, accountId: accountId)
             await environment.store.refreshMail()
             await environment.store.refreshBriefSources()
         } catch {

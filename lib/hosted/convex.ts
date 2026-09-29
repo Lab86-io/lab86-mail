@@ -70,12 +70,18 @@ export async function convexQuery<T = unknown, Fn extends PublicFunction<'query'
   return (await scoped.query(fn, convexArgs(args as Record<string, unknown>) as FunctionArgs<Fn>)) as T;
 }
 
+/**
+ * Runs a Convex mutation. The shared client runs its mutations one at a time,
+ * for the whole server process. `skipQueue` runs this one at once: use it only
+ * for a write that no other queued write must come before, such as a cache row
+ * that its caller already orders.
+ */
 export async function convexMutation<
   T = unknown,
   Fn extends PublicFunction<'mutation'> = PublicFunction<'mutation'>,
->(fn: Fn, args: ConvexCallArgs<Fn>): Promise<T> {
-  return (await requireConvexClient().mutation(
-    fn,
-    convexArgs(args as Record<string, unknown>) as FunctionArgs<Fn>,
-  )) as T;
+>(fn: Fn, args: ConvexCallArgs<Fn>, options?: { skipQueue?: boolean }): Promise<T> {
+  const callArgs = convexArgs(args as Record<string, unknown>) as FunctionArgs<Fn>;
+  return (await (options?.skipQueue
+    ? requireConvexClient().mutation(fn, callArgs, { skipQueue: true })
+    : requireConvexClient().mutation(fn, callArgs))) as T;
 }

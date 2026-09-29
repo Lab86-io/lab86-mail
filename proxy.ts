@@ -3,6 +3,17 @@ import type { NextFetchEvent } from 'next/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { isStagingRuntime } from './lib/hosted/controls';
 import { NATIVE_BROWSER_COOKIE, verifyNativeBrowserAccess } from './lib/native/browser-access';
+import {
+  buildContentSecurityPolicy,
+  CSP_NONCE_HEADER,
+  continuesToPage,
+  createCspNonce,
+  cspHeaderName,
+  cspMode,
+  isDocumentCspPath,
+  isLoopbackHost,
+  withMiddlewareRequestHeaders,
+} from './lib/security/csp';
 
 const hasClerkKeys = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
 
@@ -64,7 +75,7 @@ export default async function proxy(req: NextRequest, event: NextFetchEvent) {
     req.nextUrl.origin,
     process.env.LAB86_CONVEX_INTERNAL_SECRET,
   );
-  const basicAuth = nativeBrowser ? NextResponse.next() : basicAuthOrNext(req);
+  const basicAuth = nativeBrowser ? NextResponse.next() : await basicAuthOrNext(req);
   if (basicAuth.status !== 200) return basicAuth;
 
   // Staging basic auth makes browsers attach `Authorization: Basic ...` to every
@@ -81,7 +92,38 @@ export default async function proxy(req: NextRequest, event: NextFetchEvent) {
     >[1]);
   }
 
-  return hasClerkKeys ? protectedProxy(forwarded, event) : passthroughProxy(forwarded);
+  const response =
+    (hasClerkKeys ? await protectedProxy(forwarded, event) : passthroughProxy(forwarded)) ??
+    NextResponse.next();
+  return applyDocumentCsp(forwarded, response);
+}
+
+// A fresh nonce and policy for each page request (lib/security/csp.ts). The
+// page render gets both through request headers: Next.js reads the nonce from
+// the policy for its own scripts, and the root layout reads x-nonce.
+export function applyDocumentCsp(req: NextRequest, response: Response) {
+  const mode = cspMode();
+  if (mode === 'off' || !isDocumentCspPath(req.nextUrl.pathname)) return response;
+  const nonce = createCspNonce();
+  const policy = buildContentSecurityPolicy({
+    nonce,
+    development: process.env.NODE_ENV !== 'production',
+    upgradeInsecureRequests: !isLoopbackHost(req.nextUrl.hostname),
+  });
+  const header = cspHeaderName(mode);
+  try {
+    response.headers.set(header, policy);
+    if (continuesToPage(response)) {
+      withMiddlewareRequestHeaders(response, req.headers, {
+        [CSP_NONCE_HEADER]: nonce,
+        [header.toLowerCase()]: policy,
+      });
+    }
+  } catch {
+    // Response.redirect() and Response.error() have read-only headers; a
+    // redirect renders no page, so it needs no policy.
+  }
+  return response;
 }
 
 export const config = {
@@ -92,7 +134,25 @@ export const config = {
   ],
 };
 
-function basicAuthOrNext(req: Request) {
+/**
+ * Compares the SHA-256 digests of two strings, byte by byte through all 32
+ * bytes. The time depends on neither where the strings differ nor the length
+ * of the configured value, so a caller cannot learn the secret or its length.
+ */
+export async function constantTimeEqual(a: string, b: string) {
+  const encoder = new TextEncoder();
+  const [left, right] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(a)),
+    crypto.subtle.digest('SHA-256', encoder.encode(b)),
+  ]);
+  const x = new Uint8Array(left);
+  const y = new Uint8Array(right);
+  let diff = 0;
+  for (let i = 0; i < x.length; i += 1) diff |= x[i] ^ y[i];
+  return diff === 0;
+}
+
+async function basicAuthOrNext(req: Request) {
   const url = new URL(req.url);
   if (!shouldRequireBasicAuth(req, url.pathname)) return NextResponse.next();
 
@@ -106,7 +166,7 @@ function basicAuthOrNext(req: Request) {
   const [scheme, encoded] = authHeader.split(/\s+/, 2);
   if (scheme?.toLowerCase() === 'basic' && encoded) {
     const decoded = decodeBase64(encoded);
-    if (decoded === `${user}:${password}`) return NextResponse.next();
+    if (await constantTimeEqual(decoded, `${user}:${password}`)) return NextResponse.next();
   }
 
   return new NextResponse('Authentication required.', {

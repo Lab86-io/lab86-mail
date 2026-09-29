@@ -60,7 +60,10 @@ function verifyNylasSignature(
 ): { ok: true } | { ok: false; status: number; error: string } {
   const secret = process.env.NYLAS_WEBHOOK_SECRET || '';
   if (!secret) {
-    if (process.env.LAB86_MAIL_ALLOW_UNVERIFIED_WEBHOOKS === '1') return { ok: true };
+    // Local development only: a production build never accepts an unsigned webhook.
+    if (process.env.LAB86_MAIL_ALLOW_UNVERIFIED_WEBHOOKS === '1' && process.env.NODE_ENV !== 'production') {
+      return { ok: true };
+    }
     return {
       ok: false,
       status: 503,

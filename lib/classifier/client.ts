@@ -1,3 +1,4 @@
+import { withOpenRouterDataPolicy } from '../ai/openrouter-policy';
 import { type ClassifierModel, defaultClassifier } from './catalog';
 
 export type ClassifierQuestion =
@@ -18,6 +19,11 @@ export class ClassifierUnavailableError extends Error {
     super(`Classifier evaluation unavailable (${reason}).`);
   }
 }
+/** The text a usage row keeps for a failed classifier call: the adapter's reason when it has one. */
+export function classifierFailureText(error: unknown) {
+  return error instanceof ClassifierUnavailableError ? error.message : 'Classifier evaluation unavailable';
+}
+
 const probability = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 
@@ -85,13 +91,14 @@ export async function evaluateClassifier(
   const model = input.model || defaultClassifier();
   const timeout = AbortSignal.timeout(input.timeoutMs ?? 5_000);
   const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
-  const post = async (body: unknown) => {
+  const post = async (body: Record<string, unknown>) => {
     let response: Response;
     try {
       response = await fetcher(model.endpoint, {
         method: 'POST',
         headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        // A model reached through OpenRouter gets the no-training data policy.
+        body: JSON.stringify(model.credential === 'openrouter' ? withOpenRouterDataPolicy(body) : body),
         signal,
       });
     } catch {
@@ -123,7 +130,7 @@ const CHOICE_SYSTEM =
 async function evaluateByChoice(
   input: ClassifierRequest,
   model: ClassifierModel,
-  post: (body: unknown) => Promise<any>,
+  post: (body: Record<string, unknown>) => Promise<any>,
 ) {
   const state = typeof input.state === 'string' ? input.state : JSON.stringify(input.state);
   let served = '';
@@ -201,6 +208,52 @@ export function letterDistribution(
   const total = Object.values(mass).reduce((a, b) => a + b, 0);
   if (!(total > 0)) return null;
   return Object.fromEntries(options.map((option) => [option.label, (mass[option.label] || 0) / total]));
+}
+
+/**
+ * A gate that runs at most `concurrency` tasks at once. A task that waits
+ * starts when a running task ends, in the order the tasks arrived.
+ */
+export function concurrencyLimit(concurrency: number) {
+  const limit = Math.max(1, Math.floor(concurrency) || 1);
+  let running = 0;
+  const waiting: Array<() => void> = [];
+  return async function run<R>(task: () => Promise<R>): Promise<R> {
+    if (running < limit) running += 1;
+    // The ending task gives its place directly to this one.
+    else await new Promise<void>((resolve) => waiting.push(resolve));
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else running -= 1;
+    }
+  };
+}
+
+/**
+ * Starts `run` now for each item that has a key, `concurrency` at a time, and
+ * gives each promise by its key. An item with a null key does not start. The
+ * caller awaits the promises in its own order; a rejection that the caller
+ * does not reach is not reported as unhandled.
+ */
+export function startConcurrent<T, R>(
+  items: readonly T[],
+  keyOf: (item: T) => string | null,
+  run: (item: T) => Promise<R>,
+  concurrency: number,
+): Map<string, Promise<R>> {
+  const gate = concurrencyLimit(concurrency);
+  const started = new Map<string, Promise<R>>();
+  for (const item of items) {
+    const key = keyOf(item);
+    if (key === null || started.has(key)) continue;
+    const pending = gate(() => run(item));
+    pending.catch(() => undefined);
+    started.set(key, pending);
+  }
+  return started;
 }
 
 export async function mapConcurrent<T, R>(

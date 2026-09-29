@@ -11,7 +11,7 @@ import {
 } from '../albatross/daily-report';
 import { checkWaitingReplies } from '../albatross/reply-watch-runtime';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
-import { mapConcurrent } from '../classifier/client';
+import { concurrencyLimit, mapConcurrent, startConcurrent } from '../classifier/client';
 import { isWeakHeaderName, preferredSenderName } from '../contacts/model';
 import { contactNamesFor } from '../contacts/names';
 import { api, convexQuery } from '../hosted/convex';
@@ -111,6 +111,10 @@ const SENT_QUERY = { q: 'in:sent -in:trash -in:spam', max: 200 };
 // brief scores every candidate deterministically and enriches only the top 12.
 export const CANDIDATE_LIMIT = 120;
 export const ENRICH_CAP = 12;
+/** Enrichment model calls that run at once. */
+export const INSIGHT_CONCURRENCY = 4;
+/** Thread cache writes that run at once after a candidate search. */
+export const SEARCH_CACHE_CONCURRENCY = 8;
 const TIME_SENSITIVE_WINDOW = 14 * 86400_000;
 // Legacy lane caps. These lanes still feed the handoff index and the
 // deterministic HTML fallback; the budget lanes (answer/today/know) are what
@@ -534,21 +538,42 @@ export async function generateDailyReport(input: {
 
   // Saved contact names for people whose headers give only an address.
   const contactNames = await loadBriefContactNames(input.userId, bounded, messagesByKey, self);
+  const calendarLines = calendarContext.map(calendarContextLine);
+  const buildInsight = (thread: Thread) => {
+    const key = `${thread.account}:${thread._id}`;
+    return buildThreadInsight(
+      thread,
+      messagesByKey.get(key) || [],
+      smartByKey.get(key) || null,
+      floors.get(key)!,
+      trackedByKey.has(key),
+      now,
+      { calendarContext: calendarLines, memoryContext, enrich: enrichKeys.has(key), self, contactNames },
+    );
+  };
+  // The model calls of the enriched threads start now, INSIGHT_CONCURRENCY at
+  // a time. One after the other, twelve premium calls used most of the
+  // edition's writer time. The loop below keeps its order and its writes.
+  const enriched = startConcurrent(
+    bounded,
+    (thread) => {
+      const key = `${thread.account}:${thread._id}`;
+      return enrichKeys.has(key) ? key : null;
+    },
+    buildInsight,
+    INSIGHT_CONCURRENCY,
+  );
   const insights: ThreadInsight[] = [];
+  // The cache rows of each thread do not hold up the next thread. They are
+  // all written before the edition is composed.
+  const cacheWrite = concurrencyLimit(SEARCH_CACHE_CONCURRENCY);
+  const cacheWrites: Array<Promise<unknown>> = [];
   let lastPartialSaveAt = Date.now();
   for (const thread of bounded) {
     const key = `${thread.account}:${thread._id}`;
-    const messages = messagesByKey.get(key) || [];
     const smart = smartByKey.get(`${thread.account}:${thread._id}`) || null;
-    const floor = floors.get(key)!;
     const trackedItem = trackedByKey.get(key);
-    const insight = await buildThreadInsight(thread, messages, smart, floor, Boolean(trackedItem), now, {
-      calendarContext: calendarContext.map(calendarContextLine),
-      memoryContext,
-      enrich: enrichKeys.has(key),
-      self,
-      contactNames,
-    });
+    const insight = await (enriched.get(key) ?? buildInsight(thread));
     insights.push(insight);
     // Stream the edition as it forms: lanes fill in while the slow enriched
     // threads are still being analyzed.
@@ -556,8 +581,12 @@ export async function generateDailyReport(input: {
       lastPartialSaveAt = Date.now();
       await savePartial('Analyzing conversations', insights.length + 2, bounded.length + 4, insights);
     }
-    await upsertThread(thread.account, { ...thread, smartCategory: smart }).catch(() => undefined);
-    await upsertThreadInsight(insight).catch(() => undefined);
+    cacheWrites.push(
+      cacheWrite(() =>
+        upsertThread(thread.account, { ...thread, smartCategory: smart }).catch(() => undefined),
+      ),
+      cacheWrite(() => upsertThreadInsight(insight).catch(() => undefined)),
+    );
     if (
       trackedItem &&
       trackedItem.source === 'report' &&
@@ -599,6 +628,7 @@ export async function generateDailyReport(input: {
     }
   }
 
+  await Promise.all(cacheWrites);
   const refreshedTracked = await listTrackedThreads({ limit: 500 });
   await savePartial('Writing the narrative', bounded.length + 3, bounded.length + 4, insights);
   const report = await composeReport({
@@ -643,10 +673,21 @@ function validEmail(value: string | undefined | null): string | undefined {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : undefined;
 }
 
-async function searchAccountThreads(account: string, query: string, max: number, userId?: string | null) {
-  const result = await searchNylasThreads({ userId, account, query, max });
+// Each search result goes into the thread cache: one read and one write per
+// thread. One at a time, the week scan of three mailboxes spent about five
+// minutes on these round trips before the writers could start.
+export async function searchAccountThreads(
+  account: string,
+  query: string,
+  max: number,
+  userId?: string | null,
+  deps = { searchNylasThreads, upsertThread },
+) {
+  const result = await deps.searchNylasThreads({ userId, account, query, max });
   const threads = (result?.items || []).filter((item) => item._id);
-  for (const thread of threads) await upsertThread(account, thread).catch(() => undefined);
+  await mapConcurrent(threads, SEARCH_CACHE_CONCURRENCY, (thread) =>
+    deps.upsertThread(account, thread).catch(() => undefined),
+  );
   return threads as Thread[];
 }
 

@@ -16,6 +16,7 @@ import { internal } from './_generated/api';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { recordInsertedMessages } from './correspondents';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
+import { deleteMessageAttachmentData, enqueueMessageAttachments } from './mailAttachments';
 import {
   deleteMessageBody,
   deleteThreadBodies,
@@ -512,6 +513,12 @@ async function upsertCorpusMessage(
     bodyHashHasBody(plan.bodyHash)
   )
     await moveMessageBody(ctx, bodyInput, ts);
+  // New mail, and mail whose attachment list changed, enters the attachment
+  // file queue. A message with no attachments costs no read.
+  const attachmentsChanged =
+    !existing || stableContent(existing.attachments) !== stableContent(next.attachments);
+  if (attachmentsChanged)
+    await enqueueMessageAttachments(ctx, scope, next as Parameters<typeof enqueueMessageAttachments>[2], ts);
   if (!existing) {
     await ctx.db.insert('mailCorpusMessages', { ...next, createdAt: ts, updatedAt: ts });
     return { inserted: true, wrote: true, contentChanged: false };
@@ -687,6 +694,11 @@ export const deleteCorpusMessage = mutation({
         messagesSyncedDelta: -1,
       });
     }
+    // The stored attachment files of the message go also when the corpus has
+    // no row for it: the attachment route stores the files that a person
+    // opens, and such a message can be outside the corpus. The cleanup reads
+    // only the rows of this user.
+    await deleteMessageAttachmentData(ctx, args.userId, args.accountId, args.providerMessageId);
     return { ok: true };
   },
 });
@@ -718,6 +730,7 @@ export const deleteCorpusThread = mutation({
     for (const message of messages) {
       if (message.userId === args.userId) {
         await ctx.db.delete(message._id);
+        await deleteMessageAttachmentData(ctx, args.userId, args.accountId, message.providerMessageId);
         deleted += 1;
       }
     }

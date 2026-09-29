@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject } from 'ai';
 import { getFunctionName } from 'convex/server';
+import { createOpenRouterProvider } from '../lib/ai/openrouter-policy';
 import { evaluateClassifier } from '../lib/classifier/client';
 import type { ContentItem } from '../lib/content/contract';
 import { classifyContent, embedContent } from '../lib/content/intelligence';
@@ -11,7 +11,7 @@ import { prepareBriefWork } from '../lib/content/prepare';
 const apiKey = process.env.OPENROUTER_API_KEY;
 if (!apiKey) throw new Error('OPENROUTER_API_KEY is required.');
 const model = process.env.CONTENT_DEMO_MODEL || 'openai/gpt-5.5';
-const provider = createOpenAI({ apiKey, baseURL: 'https://openrouter.ai/api/v1' });
+const provider = createOpenRouterProvider(apiKey);
 const output = process.env.CONTENT_DEMO_OUTPUT || '/tmp/albatross-connected-content/live';
 await mkdir(output, { recursive: true });
 const inference: any = {

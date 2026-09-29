@@ -39,12 +39,29 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         self.backend = backend
     }
 
-    func connectMailbox(provider: String) async throws {
+    /// The connect path for a mailbox sign-in. A reconnect names its account,
+    /// so the server signs in that mailbox again (a direct Google account stays
+    /// direct) and does not add a new one.
+    nonisolated static func mailboxConnectPath(provider: String, accountId: String? = nil) -> String {
         let encoded = provider.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? provider
+        var path = "/api/nylas/connect?provider=\(encoded)&native=1&format=json"
+        if let accountId, !accountId.isEmpty {
+            let account = accountId.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? accountId
+            path += "&account=\(account)"
+        }
+        return path
+    }
+
+    /// Starts a mailbox sign-in. Pass `accountId` for a reconnect.
+    func connectMailbox(provider: String, accountId: String? = nil) async throws {
         let response = try await backend.get(
-            path: "/api/nylas/connect?provider=\(encoded)&native=1&format=json"
+            path: Self.mailboxConnectPath(provider: provider, accountId: accountId)
         )
-        try await authorize(response: response, successKey: "nylas_connected")
+        try await authorize(
+            response: response,
+            successKey: "nylas_connected",
+            completionPath: "/api/nylas/finalize"
+        )
     }
 
     func connectOAuthSource(server: String) async throws {
@@ -52,7 +69,11 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         let response = try await backend.get(
             path: "/api/mcp/oauth/start?server=\(encoded)&native=1&format=json"
         )
-        try await authorize(response: response, successKey: "mcp_connected")
+        try await authorize(
+            response: response,
+            successKey: "mcp_connected",
+            completionPath: "/api/mcp/oauth/finalize"
+        )
     }
 
     func connectCloudFiles(provider: String) async throws {
@@ -121,7 +142,12 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
             } ?? []
         )
         if values[successKey] != nil { return }
-        if let completionToken = values["files_completion"], let completionPath {
+        // The callback keeps the provider result for the signed-in app to
+        // redeem, so an approval in another person's browser never connects.
+        let completionToken = values["files_completion"]
+            ?? values["nylas_completion"]
+            ?? values["mcp_completion"]
+        if let completionToken, let completionPath {
             _ = try await backend.post(
                 path: completionPath,
                 body: .object(["completionToken": .string(completionToken)])

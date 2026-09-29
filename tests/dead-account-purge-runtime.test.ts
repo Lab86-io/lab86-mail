@@ -1,12 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
-import {
-  DEAD_ACCOUNT_PURGE_AFTER_MS,
-  DEAD_ACCOUNT_TABLES,
-  deadSince,
-  isPurgeDue,
-} from '../convex/deadAccounts';
+import { DEAD_ACCOUNT_PURGE_AFTER_MS, deadSince, isPurgeDue } from '../convex/deadAccounts';
 import schema from '../convex/schema';
 import { ABSENT_BODY_PART, bodyPartHash, joinBodyHash } from '../lib/mail/corpus-body';
 
@@ -204,10 +199,6 @@ describe('dead-account bookkeeping', () => {
     expect(isPurgeDue({ status: 'error', errorSince: T0, updatedAt: ts, corpusPurgedAt: 1 }, ts)).toBe(false);
     expect(isPurgeDue({ status: 'connected', errorSince: T0, updatedAt: ts }, ts)).toBe(false);
   });
-
-  test('the table list covers the future body table in one entry', () => {
-    expect(DEAD_ACCOUNT_TABLES.map((entry) => entry.table)).toContain('mailCorpusBodies');
-  });
 });
 
 describe('dead-account purge', () => {
@@ -356,13 +347,16 @@ describe('dead-account purge', () => {
       accountId: 'grant_1',
     });
     expect(first).toMatchObject({ done: false });
-    expect((await countFor(t, 'grant_1')).mailCorpusMessages).toBe(5);
+    // One pass takes a page that the byte room of message rows sets.
+    const left = (await countFor(t, 'grant_1')).mailCorpusMessages;
+    expect(left).toBeGreaterThan(0);
+    expect(left).toBeLessThan(45);
     // The account reconnects and fails again before the next pass runs.
     setSystemTime(new Date(T0 + 2 * DAY));
     await connect(t);
     await markDead(t);
     await drain(t);
-    expect((await countFor(t, 'grant_1')).mailCorpusMessages).toBe(5);
+    expect((await countFor(t, 'grant_1')).mailCorpusMessages).toBe(left);
     const row = await t.run((ctx) => ctx.db.query('connectedAccounts').first());
     expect(row).toMatchObject({ status: 'error', errorSince: T0 + 2 * DAY });
     expect(row?.corpusPurgedAt).toBeUndefined();

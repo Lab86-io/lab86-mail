@@ -7,12 +7,15 @@ import PricingPage from '../app/pricing/page';
 import PrivacyPage from '../app/privacy/page';
 import SupportPage from '../app/support/page';
 import TermsPage from '../app/terms/page';
+import { DEAD_ACCOUNT_PURGE_AFTER_MS } from '../convex/deadAccounts';
+import { WEBHOOK_EVENT_TTL_MS } from '../convex/retention';
 import {
   B2C_ANNUAL_PRICE_USD,
   B2C_BYOK_ANNUAL_PRICE_USD,
   B2C_BYOK_MONTHLY_PRICE_USD,
   B2C_MONTHLY_PRICE_USD,
 } from '../lib/ai/budget';
+import { OPENROUTER_DATA_POLICY } from '../lib/ai/openrouter-policy';
 import {
   DAY_MS,
   formatUsd,
@@ -101,6 +104,30 @@ describe('one price and one name', () => {
       expect(html).toContain(`>${heading}</h2>`);
     expect(html).toContain('Limited Use requirements');
     expect(html).toContain('https://myaccount.google.com/permissions');
+  });
+
+  test('the privacy policy states the deletion and model rules that the code enforces', () => {
+    const text = renderToStaticMarkup(<PrivacyPage />).replace(/\s+/g, ' ');
+    // The dead-account purge (convex/deadAccounts.ts) and the webhook TTLs (convex/retention.ts).
+    expect(text).toContain(
+      `If a mailbox needs a reconnect for ${DEAD_ACCOUNT_PURGE_AFTER_MS / DAY_MS} days, a daily job deletes the same mailbox data.`,
+    );
+    expect(text).toContain(
+      `We delete provider webhook records after ${WEBHOOK_EVENT_TTL_MS.processed / DAY_MS} days, or after ${WEBHOOK_EVENT_TTL_MS.error / DAY_MS} days if we could not process them.`,
+    );
+    // Every OpenRouter request carries data_collection: 'deny' (lib/ai/openrouter-policy.ts).
+    expect(OPENROUTER_DATA_POLICY).toEqual({ data_collection: 'deny' });
+    expect(text).toContain(
+      'OpenRouter sends each request only to a model host that does not train models on the data.',
+    );
+    expect(text).toContain('If you add your own OpenRouter key, the same rule applies.');
+    expect(text).toContain('copies of the attachment files from the last 60 days of mail');
+    expect(text).toContain('Convex stores the data, including the attachment copies, encrypted at rest.');
+    expect(text).toContain('A Google account can connect directly to Google.');
+    expect(text).toContain('Microsoft and iCloud accounts connect through Nylas.');
+    expect(text).toContain('Railway, Convex, Nylas, Clerk, Stripe, Resend, and OpenRouter');
+    // User copy never says "AI"; vendor names such as OpenAI are fine.
+    expect(text).not.toMatch(/\bAI\b/);
   });
 
   test('no surface hard-codes a plan price or the old product name', () => {

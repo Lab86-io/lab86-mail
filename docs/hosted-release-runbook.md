@@ -199,6 +199,9 @@ Core:
 - `LAB86_MAIL_PUBLIC_URL`
 - `NEXT_PUBLIC_APP_URL`
 - `LAB86_MAIL_ENCRYPTION_KEY`
+- Optional: `LAB86_MAIL_ENCRYPTION_KEY_ID`, `LAB86_MAIL_ENCRYPTION_KEYS`, and
+  `LAB86_MAIL_ENCRYPTION_WRITE_FORMAT`. Set them only for a key rotation or a rollback window. See
+  `docs/encryption-key-rotation.md`.
 - `LAB86_CONVEX_INTERNAL_SECRET` (the same value as in the Convex deployment, see below)
 - `NEXT_PUBLIC_CONVEX_URL`
 - `CONVEX_DEPLOYMENT`
