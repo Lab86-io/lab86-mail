@@ -25,7 +25,8 @@ Configure `.env.local` for your development services:
 
 [`.env.example`](.env.example) also documents optional cloud-file OAuth, push notifications, billing, and embedded Office editing. [The hosted setup runbook](docs/hosted-release-runbook.md) covers provider configuration.
 
-Start Convex against your development deployment and run the app in a second terminal:
+Configure a local Convex backend on first use with `bunx convex dev --configure --dev-deployment local`.
+Verify its local target, then run Convex and the app in separate terminals:
 
 ```bash
 bun run convex:dev
@@ -83,7 +84,10 @@ bun run build
 bun run start
 ```
 
-GitHub Actions deploys `staging` to Railway's `development` environment and `main` to `production`, deploying Convex before the web service. Railway uses `bun run start:railway`, which binds to `0.0.0.0` and the supplied `PORT`. Production CI manages version bumps; see the workflows in [`.github/workflows/`](.github/workflows/).
+Production is the only permanent hosted environment. Open feature PRs directly against `main`,
+pass CI and CodeRabbit review, then merge. GitHub Actions deploys Convex before Railway and manages
+release versions. Railway uses `bun run start:railway`, which binds to `0.0.0.0` and the supplied `PORT`.
+Use isolated local development for experiments; see the [release runbook](docs/hosted-release-runbook.md).
 
 - [Hosted setup, releases, rollback, and recovery](docs/hosted-release-runbook.md)
 - [Google Drive and AI Office operations](docs/google-drive-office-runbook.md)

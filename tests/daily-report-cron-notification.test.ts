@@ -15,7 +15,7 @@ function request(body: unknown, host = 'mail.lab86.io') {
 function dependencies() {
   return {
     isInternalCronRequest: mock(() => true),
-    isStagingRuntime: mock(() => false),
+    isDevelopmentRuntime: mock(() => false),
     generateReport: mock(async () => ({
       _id: 'report_1',
       generatedAt: Date.parse('2026-07-25T02:30:00.000Z'),
@@ -73,7 +73,7 @@ describe('daily brief cron and completion notifications', () => {
     for (const kind of ['manual', 'evening'])
       expect(await notifyBriefReady('owner', kind, report, 'UTC', deps as any)).toBeUndefined();
   });
-  test('cron rejects unauthorized/missing user, skips staging, and surfaces persistence failure', async () => {
+  test('cron rejects unauthorized/missing user, skips development, and surfaces persistence failure', async () => {
     const deps = {
       ...dependencies(),
       enqueue: mock(async (..._args: unknown[]) => {
@@ -82,7 +82,7 @@ describe('daily brief cron and completion notifications', () => {
     };
     expect((await createDailyReportPost(deps as any)(request({ userId: 'owner' }))).status).toBe(500);
     expect((await createDailyReportPost(deps as any)(request({}))).status).toBe(400);
-    deps.isStagingRuntime.mockReturnValue(true);
+    deps.isDevelopmentRuntime.mockReturnValue(true);
     expect(
       await (await createDailyReportPost(deps as any)(request({ userId: 'owner' }))).json(),
     ).toMatchObject({ skipped: true });

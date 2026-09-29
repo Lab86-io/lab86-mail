@@ -281,7 +281,7 @@ describe('the daily-report cron route', () => {
     const queued: any[] = [];
     const post = createDailyReportPost({
       isInternalCronRequest: () => true,
-      isStagingRuntime: () => false,
+      isDevelopmentRuntime: () => false,
       enqueue: async (input: any) => {
         queued.push(input);
         return { jobId: 'job', reportId: 'r', started: true };

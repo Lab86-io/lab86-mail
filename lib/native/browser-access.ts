@@ -1,4 +1,4 @@
-// This capability bypasses staging's browser Basic challenge only. Clerk still
+// This capability bypasses the optional development browser Basic challenge only. Clerk still
 // authenticates every protected request. It never contains a Clerk credential.
 export const NATIVE_BROWSER_COOKIE = 'lab86_native_browser';
 export const NATIVE_BROWSER_TTL_SECONDS = 60 * 60;

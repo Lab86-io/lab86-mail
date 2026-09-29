@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { isInternalCronRequest } from '@/lib/cron-auth';
-import { isStagingRuntime } from '@/lib/hosted/controls';
+import { isDevelopmentRuntime } from '@/lib/hosted/controls';
 import { isStandingOrderPaused } from '@/lib/hosted/standing-orders';
 import { enqueueBriefJob } from '@/lib/mail/brief-jobs';
 
@@ -14,7 +14,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const defaults = {
   isInternalCronRequest,
-  isStagingRuntime,
+  isDevelopmentRuntime,
   enqueue: enqueueBriefJob,
   briefPaused: (userId: string) => isStandingOrderPaused(userId, 'brief'),
 };
@@ -23,8 +23,8 @@ export function createDailyReportPost(overrides: Partial<typeof defaults> = {}) 
   return async function post(req: NextRequest) {
     if (!deps.isInternalCronRequest(req))
       return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
-    if (deps.isStagingRuntime(req.headers.get('x-forwarded-host') || req.headers.get('host')))
-      return NextResponse.json({ ok: true, skipped: true, reason: 'staging' });
+    if (deps.isDevelopmentRuntime())
+      return NextResponse.json({ ok: true, skipped: true, reason: 'development' });
     const body = await req.json().catch(() => null);
     const userId = typeof body?.userId === 'string' ? body.userId.trim() : '';
     if (!userId) return NextResponse.json({ ok: false, error: 'userId is required.' }, { status: 400 });

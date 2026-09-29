@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { isInternalCronRequest } from '@/lib/cron-auth';
-import { isStagingRuntime } from '@/lib/hosted/controls';
+import { isDevelopmentRuntime } from '@/lib/hosted/controls';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { enqueueBriefJob } from '@/lib/mail/brief-jobs';
 
@@ -16,9 +16,8 @@ export async function POST(req: NextRequest) {
   if (!isInternalCronRequest(req)) {
     return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
   }
-  const host = req.headers.get('x-forwarded-host') || req.headers.get('host');
-  if (isStagingRuntime(host)) {
-    return NextResponse.json({ ok: true, skipped: true, reason: 'staging' }, { status: 200 });
+  if (isDevelopmentRuntime()) {
+    return NextResponse.json({ ok: true, skipped: true, reason: 'development' }, { status: 200 });
   }
   let body: any = {};
   try {

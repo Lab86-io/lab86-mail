@@ -532,7 +532,7 @@ describe('the routes honor a pause', () => {
     const enqueue = mock(async () => ({ jobId: 'job' }));
     const post = createDailyReportPost({
       isInternalCronRequest: () => true,
-      isStagingRuntime: () => false,
+      isDevelopmentRuntime: () => false,
       enqueue: enqueue as any,
       briefPaused: async () => true,
     });

@@ -1,5 +1,8 @@
 # Claude Instructions
 
+Read and follow [AGENTS.md](AGENTS.md), including its production-only release workflow.
+PRs target `main` and pass CI plus CodeRabbit before merge; local development uses isolated data.
+
 Claude owns the native Apple platform (iOS and macOS) product: research, design, implementation,
 integration, and review of `apps/ios`, the `MobileAPI` package, the mobile v1 contract
 (`lib/mobile/v1`), and the native release pipeline. Decided by Jakob on 2026-08-19.

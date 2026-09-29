@@ -8,7 +8,7 @@ import type { CSSProperties } from 'react';
 import { Toaster } from 'sonner';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { ThemeProvider } from '@/components/shell/ThemeProvider';
-import { isStagingRuntime } from '@/lib/hosted/controls';
+import { isDevelopmentRuntime } from '@/lib/hosted/controls';
 import { isClerkConfigured } from '@/lib/hosted/env';
 import { CSP_NONCE_HEADER } from '@/lib/security/csp';
 import { GROTESK_FONT_FAMILY } from '@/lib/theme/font-families';
@@ -82,7 +82,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const nonce = (await headers()).get(CSP_NONCE_HEADER) || undefined;
   const clerkEnabled = isClerkConfigured();
   const clerkProxyUrl =
-    clerkEnabled && process.env.NEXT_PUBLIC_CLERK_PROXY_URL && isStagingRuntime() ? '/__clerk' : undefined;
+    clerkEnabled && process.env.NEXT_PUBLIC_CLERK_PROXY_URL && isDevelopmentRuntime()
+      ? '/__clerk'
+      : undefined;
   const content = (
     <>
       <ThemeProvider

@@ -17,7 +17,7 @@ export async function POST(request: Request, context: { params: Promise<{ docume
       {
         ok: true,
         ...(configuration.provider === 'collabora'
-          ? await startCollaboraSession(user.userId, file, { host: request.headers.get('host') })
+          ? await startCollaboraSession(user.userId, file)
           : await startOfficeSession(user.userId, file)),
       },
       { headers: { 'Cache-Control': 'no-store' } },

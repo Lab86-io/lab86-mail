@@ -1,5 +1,16 @@
 # Agent Instructions
 
+## Release workflow (decided 2026-09-29)
+
+Production is the only permanent hosted environment. Start feature branches from current `main`
+and open PRs directly against `main`. Wait for CI and CodeRabbit, address review findings, then
+merge; the production workflow deploys Convex before Railway. Use isolated local development
+and synthetic data for experiments. Keep production credentials out of local test runs.
+
+For deployment, provider configuration, or environment cleanup, read
+[`docs/hosted-release-runbook.md`](docs/hosted-release-runbook.md). The old `staging` branch and
+Railway `development` environment are retired; recreating hosted staging requires a new user decision.
+
 ## Ownership split (decided 2026-08-19)
 
 Claude owns the native Apple platform product: `apps/ios` (iOS and macOS targets), the `MobileAPI`

@@ -2,7 +2,7 @@ import { clerkClient } from '@clerk/nextjs/server';
 import type { NextRequest } from 'next/server';
 import { checkinIsDue, fallbackEmailIsDue, localDateKey } from '@/lib/albatross/work-v2';
 import { isInternalCronRequest } from '@/lib/cron-auth';
-import { isStagingRuntime } from '@/lib/hosted/controls';
+import { isDevelopmentRuntime } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import {
   type NotificationEnvelope,
@@ -18,7 +18,7 @@ export const maxDuration = 60;
 
 interface NotificationCronDependencies {
   isInternalCronRequest: typeof isInternalCronRequest;
-  isStagingRuntime: typeof isStagingRuntime;
+  isDevelopmentRuntime: typeof isDevelopmentRuntime;
   convexMutation: typeof convexMutation;
   convexQuery: typeof convexQuery;
   dispatchNativeNotification: typeof dispatchNativeNotification;
@@ -41,7 +41,7 @@ async function clerkPrimaryEmail(userId: string) {
 
 const defaults: NotificationCronDependencies = {
   isInternalCronRequest,
-  isStagingRuntime,
+  isDevelopmentRuntime,
   convexMutation,
   convexQuery,
   dispatchNativeNotification,
@@ -62,9 +62,8 @@ export function createAlbatrossNotificationsPost(overrides: Partial<Notification
     const body = await req.json().catch(() => ({}));
     const userId = String(body.userId || '').trim();
     if (!userId) return Response.json({ ok: false, error: 'userId required' }, { status: 400 });
-    const host = req.headers.get('x-forwarded-host') || req.headers.get('host');
-    if (deps.isStagingRuntime(host) && body.force !== true) {
-      return Response.json({ ok: true, skipped: true, reason: 'staging' });
+    if (deps.isDevelopmentRuntime() && body.force !== true) {
+      return Response.json({ ok: true, skipped: true, reason: 'development' });
     }
     const preference = {
       timezone: String(body.timezone || 'UTC'),

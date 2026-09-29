@@ -1,6 +1,6 @@
 /**
  * Milestone A proof: what the pinned Collabora build lets a host change, in a
- * real editing session against the staging document server. Run
+ * real editing session against the configured development document server. Run
  * `bun scripts/prepare-collabora-verification.ts` first (it writes the
  * sessions file), then `bun scripts/spike-collabora-customization.ts`.
  * Output: /tmp/collabora-spike/{findings.md, *.png}.

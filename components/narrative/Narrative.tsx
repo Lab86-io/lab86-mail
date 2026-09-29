@@ -61,8 +61,7 @@ export function NarrativeSettings() {
         </button>
       </p>
     );
-  if (!state.data?.available)
-    return <p>Narrative memory is in a staging pilot and is not enabled for this account.</p>;
+  if (!state.data?.available) return <p>Narrative memory is not enabled for this account.</p>;
   const settings = state.data.settings;
   return (
     <section className="space-y-5 text-[13px]">

@@ -10,7 +10,7 @@ const keys = [
   'OFFICE_THEMED_CHROME',
   'DECK_V2_AUTHORING',
   'NEXT_PUBLIC_DECK_V2_AUTHORING',
-  'RAILWAY_ENVIRONMENT_NAME',
+  'LAB86_DEVELOPMENT_MODE',
   'NODE_ENV',
 ] as const;
 const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
@@ -21,19 +21,21 @@ describe('editor rollout flags', () => {
       setProcessEnv(key, saved[key]);
     }
   });
-  test('default on in staging and off elsewhere, with explicit values always winning', () => {
+  test('default on in development and off elsewhere, with explicit values always winning', () => {
     setProcessEnv('NODE_ENV', 'production');
-    delete process.env.RAILWAY_ENVIRONMENT_NAME;
+    delete process.env.LAB86_DEVELOPMENT_MODE;
     delete process.env.OFFICE_THEMED_CHROME;
     delete process.env.DECK_V2_AUTHORING;
     expect(isThemedOfficeChromeEnabled()).toBe(false);
     expect(isDeckV2AuthoringEnabled()).toBe(false);
-    expect(isThemedOfficeChromeEnabled('mail-staging.lab86.io')).toBe(true);
-    process.env.RAILWAY_ENVIRONMENT_NAME = 'development';
+    setProcessEnv('NODE_ENV', 'development');
+    expect(isThemedOfficeChromeEnabled()).toBe(true);
+    setProcessEnv('NODE_ENV', 'production');
+    process.env.LAB86_DEVELOPMENT_MODE = 'true';
     expect(isDeckV2AuthoringEnabled()).toBe(true);
     process.env.DECK_V2_AUTHORING = 'false';
     expect(isDeckV2AuthoringEnabled()).toBe(false);
-    process.env.RAILWAY_ENVIRONMENT_NAME = 'production';
+    process.env.LAB86_DEVELOPMENT_MODE = 'false';
     process.env.OFFICE_THEMED_CHROME = 'true';
     expect(isThemedOfficeChromeEnabled()).toBe(true);
   });

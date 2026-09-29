@@ -18,7 +18,7 @@ import { NextResponse } from 'next/server';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import { syncCalendarAccount } from '@/lib/calendar/sync';
 import { maybeKickContactSync } from '@/lib/contacts/sync';
-import { isStagingRuntime } from '@/lib/hosted/controls';
+import { isDevelopmentRuntime } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { hostedPublicUrl } from '@/lib/hosted/env';
 import { maybeKickCorpusBackfill, reconcileMailCorpusAccount } from '@/lib/mail/corpus-sync';
@@ -60,11 +60,10 @@ type Env = Record<string, string | undefined>;
 
 /**
  * Switching a Nylas account to Gmail is on where new direct connections are
- * on, on staging, or where LAB86_GOOGLE_DIRECT_SWITCH=1. So the owner can
- * switch one staging account without a variable change.
+ * on, during local development, or where LAB86_GOOGLE_DIRECT_SWITCH=1.
  */
-export function isGoogleDirectSwitchAllowed(env: Env = process.env, host?: string | null): boolean {
-  return isGoogleDirectEnabled(env) || env.LAB86_GOOGLE_DIRECT_SWITCH === '1' || isStagingRuntime(host);
+export function isGoogleDirectSwitchAllowed(env: Env = process.env): boolean {
+  return isGoogleDirectEnabled(env) || env.LAB86_GOOGLE_DIRECT_SWITCH === '1' || isDevelopmentRuntime();
 }
 
 const defaults = {
@@ -166,7 +165,7 @@ export async function startGoogleMailConnect(input: StartInput) {
       throw new GoogleConnectError(400, 'Only a Google account can use Gmail directly.');
     }
     if (isGoogleDirectGrant(account.grantId)) mode = 'reconnect';
-    else if (!isGoogleDirectSwitchAllowed(env, input.host)) {
+    else if (!isGoogleDirectSwitchAllowed(env)) {
       throw new GoogleConnectError(403, 'Switching accounts to Gmail is off.');
     } else mode = 'switch';
   }

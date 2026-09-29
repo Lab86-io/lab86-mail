@@ -4,8 +4,8 @@ set -euo pipefail
 channel="${1:-}"
 export_root="${2:-}"
 
-if [[ "$channel" != "staging" && "$channel" != "production" ]]; then
-  echo "Usage: verify-ios-export.sh <staging|production> <export-directory>" >&2
+if [[ "$channel" != "production" ]]; then
+  echo "Usage: verify-ios-export.sh <production> <export-directory>" >&2
   exit 64
 fi
 if [[ ! -d "$export_root" ]]; then
@@ -53,21 +53,6 @@ clerk_key="$(plist_value CLERK_PUBLISHABLE_KEY)"
 }
 
 case "$channel" in
-  staging)
-    [[ "$api_base_url" == "https://mail.lab86.io" ]] || {
-      echo "Staging IPA does not contain the production API base URL." >&2
-      exit 1
-    }
-    [[ "$convex_url" == "https://proficient-viper-594.convex.cloud" ]] || {
-      echo "Staging IPA does not contain the production Convex deployment." >&2
-      exit 1
-    }
-    [[ "$clerk_key" == pk_live_* ]] || {
-      echo "Staging IPA does not contain a live Clerk publishable key." >&2
-      exit 1
-    }
-    expected_clerk_host="clerk.mail.lab86.io"
-    ;;
   production)
     [[ "$api_base_url" == "https://mail.lab86.io" ]] || {
       echo "Production IPA contains an invalid API base URL." >&2

@@ -1,7 +1,7 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
 import { type NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { isStagingRuntime } from '@/lib/hosted/controls';
+import { isDevelopmentRuntime } from '@/lib/hosted/controls';
 import { createNativeBrowserAccess } from '@/lib/native/browser-access';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
@@ -58,7 +58,7 @@ export function createNativeWebSessionPost(deps: Dependencies = defaults) {
         limit: 20,
         windowMs: 60_000,
       });
-      const access = isStagingRuntime(req.nextUrl.hostname)
+      const access = isDevelopmentRuntime()
         ? await deps.createAccess(req.nextUrl.origin, process.env.LAB86_CONVEX_INTERNAL_SECRET || '')
         : null;
       const client = await deps.clerkClient();
@@ -73,7 +73,7 @@ export function createNativeWebSessionPost(deps: Dependencies = defaults) {
   };
 }
 
-// Renew the staging gate without creating another Clerk sign-in ticket.
+// Renew the optional development gate without creating another Clerk sign-in ticket.
 export function createNativeWebSessionPatch(deps: Dependencies = defaults) {
   return async (req: NextRequest) => {
     try {
@@ -85,7 +85,7 @@ export function createNativeWebSessionPatch(deps: Dependencies = defaults) {
         limit: 20,
         windowMs: 60_000,
       });
-      const access = isStagingRuntime(req.nextUrl.hostname)
+      const access = isDevelopmentRuntime()
         ? await deps.createAccess(req.nextUrl.origin, process.env.LAB86_CONVEX_INTERNAL_SECRET || '')
         : null;
       return noStore({ ok: true, userId: user.userId, access });
