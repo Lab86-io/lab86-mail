@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { CLOUD_FILE_PROVIDER_DEFINITIONS } from '../lib/files/providers';
+import {
+  CLOUD_FILE_PROVIDER_DEFINITIONS,
+  cloudFileProviderDefinition,
+  isCloudFileProvider,
+} from '../lib/files/providers';
 import { GOOGLE_MAIL_SCOPES } from '../lib/google/oauth';
 
 const ROOT = path.join(import.meta.dir, '..');
@@ -37,7 +41,11 @@ describe('Google scope lists', () => {
   });
 
   test('the Drive flow asks for no Sheets, Slides, or full Drive scope', () => {
-    const drive = CLOUD_FILE_PROVIDER_DEFINITIONS.google_drive.scopes.map(shortScope);
+    expect(isCloudFileProvider('google_drive')).toBe(true);
+    expect(isCloudFileProvider('dropbox')).toBe(false);
+    expect(isCloudFileProvider(42)).toBe(false);
+    expect(cloudFileProviderDefinition('dropbox')).toBeNull();
+    const drive = cloudFileProviderDefinition('google_drive')!.scopes.map(shortScope);
     expect(drive).toEqual(['openid', 'userinfo.email', 'drive.readonly', 'drive.file', 'documents']);
     for (const wide of ['spreadsheets', 'presentations', 'drive']) expect(drive).not.toContain(wide);
   });
