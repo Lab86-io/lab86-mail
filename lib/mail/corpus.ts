@@ -102,8 +102,23 @@ export function extractNylasWebhookMetadata(payload: unknown): NylasWebhookMetad
 /** The longest id or type that a webhook row keeps. */
 export const WEBHOOK_ID_MAX_CHARS = 500;
 
+/**
+ * Cuts an id or type to WEBHOOK_ID_MAX_CHARS. A longer value keeps its start
+ * and ends with a hash of the whole value, so two ids that differ only after
+ * the cut stay distinct, and a synthesized id keeps a trace of its payload
+ * hash. A value within the limit comes back unchanged, so cutting a stored
+ * value again gives the same value.
+ */
 export function capWebhookId(value: string | undefined): string | undefined {
-  return value === undefined ? undefined : truncateText(value, WEBHOOK_ID_MAX_CHARS);
+  if (value === undefined || value.length <= WEBHOOK_ID_MAX_CHARS) return value;
+  const suffix = `~${hashText(value)}`;
+  return `${truncateText(value, WEBHOOK_ID_MAX_CHARS - suffix.length)}${suffix}`;
+}
+
+function hashText(text: string) {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i += 1) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
+  return (hash >>> 0).toString(36);
 }
 
 function hashPayload(payload: unknown) {
@@ -113,11 +128,7 @@ function hashPayload(payload: unknown) {
   } catch {
     serialized = String(payload);
   }
-  let hash = 5381;
-  for (let i = 0; i < serialized.length; i += 1) {
-    hash = ((hash << 5) + hash + serialized.charCodeAt(i)) | 0;
-  }
-  return (hash >>> 0).toString(36);
+  return hashText(serialized);
 }
 
 function firstString(...values: unknown[]) {

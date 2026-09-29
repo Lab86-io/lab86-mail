@@ -114,4 +114,17 @@ describe('webhook payload storage (M5)', () => {
     expect(again.eventId).toBe(first.eventId);
     expect(again.type).toBe(first.type);
   });
+
+  test('two long ids that differ only after the cut stay distinct', () => {
+    const shared = `evt_${'x'.repeat(700)}`;
+    const a = extractNylasWebhookMetadata({ id: `${shared}A`, type: 'message.updated', data: {} });
+    const b = extractNylasWebhookMetadata({ id: `${shared}B`, type: 'message.updated', data: {} });
+    expect(a.eventId).toHaveLength(WEBHOOK_ID_MAX_CHARS);
+    expect(b.eventId).toHaveLength(WEBHOOK_ID_MAX_CHARS);
+    expect(a.eventId).not.toBe(b.eventId);
+    // An id within the limit does not change.
+    expect(extractNylasWebhookMetadata({ id: 'evt-1', type: 'message.updated', data: {} }).eventId).toBe(
+      'evt-1',
+    );
+  });
 });
