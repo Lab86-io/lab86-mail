@@ -9,6 +9,7 @@ import {
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 import { truncateText } from '@/lib/shared/text';
 import { dismissedProofWorkIds } from '@/lib/store/proof-dismissals';
 
@@ -145,7 +146,15 @@ export function createProofMatchesPost(overrides: Partial<ProofMatchesDependenci
       if (error instanceof RateLimitError) return rateLimitResponse(error);
       const status = error instanceof AuthRequiredError ? 401 : 500;
       return Response.json(
-        { ok: false, error: error instanceof Error ? error.message : 'Proof matches could not be loaded.' },
+        {
+          ok: false,
+          error: errorAnswerMessage(
+            status,
+            error,
+            'Proof matches could not be loaded.',
+            '[albatross/proof-matches] failed',
+          ),
+        },
         { status },
       );
     }

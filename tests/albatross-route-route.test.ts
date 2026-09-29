@@ -88,6 +88,7 @@ describe('POST /api/albatross/route', () => {
     };
     const response = await createAlbatrossRoutePost(deps)(request({ text: 'hi there' }));
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ ok: false, error: 'boom' });
+    // The error message stays in the server log (CASA S7).
+    expect(await response.json()).toEqual({ ok: false, error: 'route failed' });
   });
 });

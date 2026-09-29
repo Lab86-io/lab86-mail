@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AttachmentTooLargeError, readMailAttachmentBytes } from '@/lib/attachments/mail-files';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { parseIcsEvents } from '@/lib/calendar/ics';
@@ -34,7 +35,7 @@ const defaultDependencies: SuggestionActDependencies = {
   convexQuery,
   readMailAttachmentBytes,
   createCalendarEvent,
-  reportUnexpectedError: (error) => console.error('[suggestions] act failed:', error),
+  reportUnexpectedError: (error) => console.error('[suggestions] act failed:', describeModelError(error)),
 };
 
 interface SafeSuggestedEvent {

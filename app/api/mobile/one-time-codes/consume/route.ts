@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import {
   consumeOneTimeCode,
@@ -21,7 +22,7 @@ const defaultDependencies: ConsumeDependencies = {
   requireCurrentUser,
   verifyConsumeToken,
   consumeOneTimeCode,
-  reportUnexpectedError: (error) => console.error('One-time code consume failed.', error),
+  reportUnexpectedError: (error) => console.error('One-time code consume failed.', describeModelError(error)),
 };
 
 export function createConsumeHandlers(deps: ConsumeDependencies = defaultDependencies) {

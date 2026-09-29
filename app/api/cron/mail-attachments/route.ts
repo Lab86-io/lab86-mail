@@ -1,4 +1,5 @@
 import { after, type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { drainMailAttachmentQueue } from '@/lib/attachments/mail-files';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 
@@ -26,7 +27,7 @@ export function createMailAttachmentsPost(overrides: Partial<typeof defaultDepen
       return NextResponse.json({ ok: false, error: 'A userId is required.' }, { status: 400 });
     deps.defer(() =>
       deps.drainMailAttachmentQueue(userId).catch((error) => {
-        console.error('[cron/mail-attachments] drain failed', userId, error);
+        console.error('[cron/mail-attachments] drain failed', userId, describeModelError(error));
       }),
     );
     return NextResponse.json({ ok: true, started: true }, { status: 202 });

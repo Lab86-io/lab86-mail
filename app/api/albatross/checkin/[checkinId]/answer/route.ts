@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { checkinCallerArgs } from '@/lib/albatross/checkin';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
@@ -109,7 +110,7 @@ export function createCheckinAnswerPost(deps: CheckinAnswerDependencies = defaul
       if (error instanceof AuthRequiredError) {
         return Response.json({ ok: false, error: error.message }, { status: 401 });
       }
-      deps.reportUnexpectedError('[albatross/checkin/answer] request failed', error);
+      deps.reportUnexpectedError('[albatross/checkin/answer] request failed', describeModelError(error));
       return Response.json({ ok: false, error: 'Check-in answer failed.' }, { status: 500 });
     }
   };

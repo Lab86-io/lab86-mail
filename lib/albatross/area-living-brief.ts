@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describeProvider } from '../ai/client';
 import { getAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser } from '../ai/gateway';
+import { describeModelError } from '../ai/log-error';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { sanitizeLine, sanitizeProse } from '../mail/brief-prose';
 import { briefSourceCoverage } from '../mail/brief-source-refresh';
@@ -566,7 +567,10 @@ export async function writeAreaPulse(
     if (!parsed) return fallback;
     return { ...parsed, model: describeProvider().fast || describeProvider().primary || 'fast' };
   } catch (error) {
-    console.warn('[area-living-brief] pulse model call failed; using the deterministic pulse:', error);
+    console.warn(
+      '[area-living-brief] pulse model call failed; using the deterministic pulse:',
+      describeModelError(error),
+    );
     return fallback;
   }
 }

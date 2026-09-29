@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { getDocument, listDocumentRevisions, restoreDocumentRevision } from '@/lib/documents/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -18,7 +19,7 @@ function failure(error: unknown) {
   if (error instanceof RateLimitError) return rateLimitJson(error);
   if (error instanceof z.ZodError)
     return NextResponse.json({ ok: false, error: 'Invalid revision.' }, { status: 400 });
-  console.error('[document-revisions]', error);
+  console.error('[document-revisions]', describeModelError(error));
   return NextResponse.json({ ok: false, error: 'Could not load or restore versions.' }, { status: 500 });
 }
 

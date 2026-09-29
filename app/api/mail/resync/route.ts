@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { runCorpusBackfill } from '@/lib/mail/corpus-sync';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,7 +42,7 @@ export async function POST(req: NextRequest) {
       progress: { stage: 'resync_requested' },
     });
     void runCorpusBackfill({ userId: user.userId, accountId }).catch((err) => {
-      console.error(`[resync] backfill failed for ${accountId}:`, err?.message || err);
+      console.error(`[resync] backfill failed for ${accountId}:`, describeModelError(err));
     });
     return NextResponse.json({ ok: true, started: true });
   } catch (err: any) {
@@ -48,6 +50,9 @@ export async function POST(req: NextRequest) {
     if (err instanceof AuthRequiredError) {
       return NextResponse.json({ ok: false, error: err.message }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, error: err?.message || 'Resync failed.' }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: serverErrorMessage('[mail/resync] failed', err, 'Resync failed.') },
+      { status: 500 },
+    );
   }
 }

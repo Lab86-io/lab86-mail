@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { listStandingOrders, StandingOrderError, setStandingOrderPaused } from '@/lib/hosted/standing-orders';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -29,8 +30,9 @@ export function createStandingOrdersRoute(overrides: Partial<typeof defaults> = 
     if (err instanceof StandingOrderError)
       return NextResponse.json({ ok: false, error: err.message }, { status: err.status });
     const message = err instanceof Error ? err.message : '';
-    if (/not found/i.test(message)) return NextResponse.json({ ok: false, error: message }, { status: 404 });
-    console.error('[standing-orders] request failed', err instanceof Error ? err.name : err);
+    if (/not found/i.test(message))
+      return NextResponse.json({ ok: false, error: 'Standing order not found.' }, { status: 404 });
+    console.error('[standing-orders] request failed', describeModelError(err));
     return NextResponse.json({ ok: false, error: 'Could not load standing orders.' }, { status: 500 });
   }
 

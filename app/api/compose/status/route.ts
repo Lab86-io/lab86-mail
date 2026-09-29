@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { getNylasScheduledSendStatus } from '@/lib/nylas/provider';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 import { outboxStatus } from '@/lib/send/outbox';
 import { getPendingStatus, parseProviderPendingId, rememberPendingStatus } from '@/lib/send/pending';
 
@@ -41,6 +42,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, ...local });
   } catch (err: any) {
     const status = err instanceof AuthRequiredError ? 401 : 500;
-    return NextResponse.json({ ok: false, error: err?.message || 'status failed' }, { status });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: errorAnswerMessage(status, err, 'status failed', '[compose/status] request failed'),
+      },
+      { status },
+    );
   }
 }

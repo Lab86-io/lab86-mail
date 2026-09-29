@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { parseDocumentModel } from '@/lib/documents/model';
 import { OfficeError, readOfficeRequest } from '@/lib/documents/office-security';
@@ -180,7 +181,7 @@ export function createDocumentImportPost(deps: ImportDependencies = defaultDepen
           { status: 400 },
         );
       }
-      console.error('[document-import]', error);
+      console.error('[document-import]', describeModelError(error));
       return NextResponse.json({ ok: false, error: 'Import failed.' }, { status: 500 });
     }
   };

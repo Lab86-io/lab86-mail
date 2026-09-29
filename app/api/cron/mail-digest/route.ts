@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { releaseDueMailDigests } from '@/lib/notifications/mail-digest';
 
@@ -16,7 +17,7 @@ export function createMailDigestPost(overrides: Partial<typeof defaultDependenci
       return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
     }
     void deps.releaseDueMailDigests().catch((err) => {
-      console.error('[cron/mail-digest] release failed', err);
+      console.error('[cron/mail-digest] release failed', describeModelError(err));
     });
     return NextResponse.json({ ok: true, started: true }, { status: 202 });
   };

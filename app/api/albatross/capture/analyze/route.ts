@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { describeModelError } from '@/lib/ai/log-error';
 import { parseWorkSplit } from '@/lib/albatross/work-v2';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
@@ -18,7 +19,7 @@ const defaultDependencies: CaptureAnalyzeDependencies = {
   requireCurrentUser,
   enforceUserRateLimit,
   generateTextForCurrentUser,
-  reportUnexpectedError: (error) => console.error('Capture analysis failed.', error),
+  reportUnexpectedError: (error) => console.error('Capture analysis failed.', describeModelError(error)),
 };
 
 export function createCaptureAnalyzePost(deps: CaptureAnalyzeDependencies = defaultDependencies) {

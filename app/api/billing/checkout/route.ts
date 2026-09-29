@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { clerkBillingCheckoutUrl } from '@/lib/hosted/billing';
 import { isSubscriptionServiceDisabled } from '@/lib/hosted/controls';
@@ -41,7 +42,7 @@ export async function POST() {
     imageUrl: user.imageUrl,
   }).catch((error) => {
     // Checkout still proceeds, but leave a trace for the missing Convex record.
-    console.error('[checkout] Failed to upsert user to Convex:', error);
+    console.error('[checkout] Failed to upsert user to Convex:', describeModelError(error));
   });
   const url = clerkBillingCheckoutUrl() || '/pricing';
   return NextResponse.json({ ok: true, url });

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { runWithAiRequestContext } from '@/lib/ai/context';
-import { resolveClassifierRuntime } from '@/lib/ai/gateway';
+import { AiAccessError, resolveClassifierRuntime } from '@/lib/ai/gateway';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { CLASSIFIER_MODELS, classifierById, resolveClassifier } from '@/lib/classifier/catalog';
 import { loadClassifierSelection, saveClassifierSelection } from '@/lib/classifier/selection';
@@ -90,7 +90,8 @@ export function createJevSettingsRoutes(dependencies = defaults) {
       } catch (error) {
         return {
           configured: false,
-          configurationMessage: error instanceof Error ? error.message : 'Jev is unavailable.',
+          // Only an access error has a message for the user (CASA finding S7).
+          configurationMessage: error instanceof AiAccessError ? error.message : 'Jev is unavailable.',
         };
       }
     });

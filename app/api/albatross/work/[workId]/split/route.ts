@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { commitWorkSplit, proposeWorkSplit, type SplitWorkChild } from '@/lib/albatross/split-work';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -71,7 +72,10 @@ export function createWorkSplitPost(overrides: Partial<WorkSplitDependencies> = 
       if (error instanceof RateLimitError) return rateLimitResponse(error);
       const status = error instanceof AuthRequiredError ? 401 : 500;
       return Response.json(
-        { ok: false, error: error instanceof Error ? error.message : 'The split failed.' },
+        {
+          ok: false,
+          error: errorAnswerMessage(status, error, 'The split failed.', '[albatross/work/split] failed'),
+        },
         { status },
       );
     }

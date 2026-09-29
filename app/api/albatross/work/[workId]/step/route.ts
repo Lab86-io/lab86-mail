@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { completeWorkStep, StepExecutionError } from '@/lib/albatross/step-execution';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
@@ -47,7 +48,10 @@ export function createWorkStepPost(deps: WorkStepDependencies = defaults) {
       const status =
         error instanceof AuthRequiredError ? 401 : error instanceof StepExecutionError ? error.status : 500;
       return Response.json(
-        { ok: false, error: error instanceof Error ? error.message : 'Step update failed.' },
+        {
+          ok: false,
+          error: errorAnswerMessage(status, error, 'Step update failed.', '[albatross/work/step] failed'),
+        },
         { status },
       );
     }

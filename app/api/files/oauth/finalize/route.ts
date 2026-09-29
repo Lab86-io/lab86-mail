@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import {
   consumeCloudFileOAuthCompletion,
@@ -68,7 +69,7 @@ export function createCloudFileOAuthFinalize(dependencies: typeof defaultDepende
       if (error instanceof z.ZodError) {
         return NextResponse.json({ ok: false, error: 'Invalid authorization completion.' }, { status: 400 });
       }
-      console.error('[files/oauth/finalize] failed', error);
+      console.error('[files/oauth/finalize] failed', describeModelError(error));
       return NextResponse.json(
         { ok: false, error: 'Could not complete file authorization.' },
         { status: 500 },

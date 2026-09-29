@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 import { createComposePost } from '../app/api/compose/route';
 import { createDispatchPost } from '../app/api/cron/mail-outbox/route';
@@ -45,6 +45,30 @@ describe('compose holds before provider handoff', () => {
       expect.objectContaining({ body: 'Draft', to: 'recipient@example.test' }),
     );
     expect(d.sendPrepared).not.toHaveBeenCalled();
+  });
+  test('a refused request keeps its own message, and an unknown failure gets a fixed text', async () => {
+    const error = spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const noRecipient = request(5);
+      const form = await noRecipient.formData();
+      form.delete('to');
+      const refused = await createComposePost(deps())(
+        new NextRequest('http://localhost/api/compose', { method: 'POST', body: form }),
+      );
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({ ok: false, error: 'to is required' });
+
+      const d = deps();
+      d.enqueueOutbox.mockImplementation(async () => {
+        throw new Error('Convex [Request ID: 7] Server Error at internal path');
+      });
+      const failed = await createComposePost(d)(request(5));
+      expect(failed.status).toBe(500);
+      // The answer never carries the error message (CASA S7).
+      expect(await failed.json()).toEqual({ ok: false, error: 'send failed' });
+    } finally {
+      error.mockRestore();
+    }
   });
   test('a hold failure never falls back to immediate sending', async () => {
     const d = deps();

@@ -1,0 +1,40 @@
+bun audit v1.3.11 (af24e281)
+uuid  <11.1.1
+  exceljs › uuid
+  nylas › uuid
+  streamdown › mermaid › uuid
+  moderate: uuid: Missing buffer bounds check in v3/v5/v6 when buf is provided - https://github.com/advisories/GHSA-w5hq-g745-h8pq
+
+baseline-browser-mapping  >=2.0.0 <2.11.0
+  next › baseline-browser-mapping
+  moderate: baseline-browser-mapping process termination on invalid input causes denial of service - https://github.com/advisories/GHSA-w5vr-8v7q-w6rv
+
+deepmerge-ts  <8.0.0
+  html-to-text › deepmerge-ts
+  high: DeepmergeTS has stack exhaustion when merging recursive object graphs - https://github.com/advisories/GHSA-ggr8-5vv4-36mx
+
+image-size  >=1.2.0 <=2.0.2
+  pptxgenjs › image-size
+  high: image-size: JXL and HEIF parsers allow denial of service through infinite loops - https://github.com/advisories/GHSA-5p2g-fcmc-qvqq
+  high: image-size: ICNS parser allows denial of service through an infinite loop - https://github.com/advisories/GHSA-w3rx-r6r6-pgpr
+
+@ai-sdk/provider-utils  >=4.0.0-beta.10 <4.0.33
+  @ai-sdk/anthropic › @ai-sdk/provider-utils
+  @ai-sdk/openai › @ai-sdk/provider-utils
+  @ai-sdk/react › @ai-sdk/provider-utils
+  ai › @ai-sdk/gateway › @ai-sdk/provider-utils
+  low: @ai-sdk/provider-utils has an Uncontrolled Resource Consumption issue - https://github.com/advisories/GHSA-866g-f22w-33x8
+
+linkify-it  <=5.0.0
+  ansi-to-react › linkify-it
+  high: LinkifyIt#match scan loop has quadratic algorithmic complexity - https://github.com/advisories/GHSA-22p9-wv53-3rq4
+  high: linkify-it: Quadratic-complexity DoS via the `mailto:` validator scan-loop on attacker text - https://github.com/advisories/GHSA-v245-v573-v5vm
+
+8 vulnerabilities (5 high, 2 moderate, 1 low)
+
+To update all dependencies to the latest compatible versions:
+  bun update
+
+To update all dependencies to the latest versions (including breaking changes):
+  bun update --latest
+

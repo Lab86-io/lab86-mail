@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { describeModelError } from '@/lib/ai/log-error';
 import { parseCheckinReconciliation } from '@/lib/albatross/checkin';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexMutation } from '@/lib/hosted/convex';
@@ -56,7 +57,11 @@ Mark an item completed only when the user's words explicitly say it was done, fi
       });
       return NextResponse.json({ ok: true, checkinId, ...result });
     } catch (error) {
-      deps.reportError('[cron/checkin-reflection] reconciliation failed', checkinId, error);
+      deps.reportError(
+        '[cron/checkin-reflection] reconciliation failed',
+        checkinId,
+        describeModelError(error),
+      );
       await deps
         .convexMutation(api.albatrossNotifications.failReflectionReconcile, {
           userId,

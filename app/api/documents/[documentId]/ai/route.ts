@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { DocumentGenerationError, generateDocumentProposal } from '@/lib/documents/ai';
 import { createDocumentSuggestion, getDocument, updateDocument } from '@/lib/documents/service';
@@ -34,7 +35,7 @@ const defaultDependencies: DocumentAiDependencies = {
   generateDocumentProposal,
   updateDocument,
   createDocumentSuggestion,
-  reportUnexpectedError: (label, error) => console.error(label, error),
+  reportUnexpectedError: (label, error) => console.error(label, describeModelError(error)),
 };
 
 export function createDocumentAiPost(deps: DocumentAiDependencies = defaultDependencies) {

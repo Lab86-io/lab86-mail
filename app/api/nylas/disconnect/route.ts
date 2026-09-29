@@ -3,6 +3,7 @@ import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { deleteNylasAccount } from '@/lib/nylas/provider';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,9 +32,8 @@ export async function POST(req: NextRequest) {
     if (err instanceof AuthRequiredError) {
       return NextResponse.json({ ok: false, error: err.message }, { status: 401 });
     }
-    console.error('[nylas-disconnect] failed:', err?.message || err);
     return NextResponse.json(
-      { ok: false, error: err?.message || 'Account removal failed.' },
+      { ok: false, error: serverErrorMessage('[nylas-disconnect] failed:', err, 'Account removal failed.') },
       { status: 500 },
     );
   }

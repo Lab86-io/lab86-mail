@@ -3,6 +3,7 @@ import { captureFromChat } from '@/lib/albatross/capture-from-chat';
 import { captureWork } from '@/lib/albatross/capture-work';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -117,7 +118,10 @@ export function createAlbatrossCapturePost(deps: CaptureRouteDependencies = defa
     } catch (error) {
       if (error instanceof RateLimitError) return rateLimitResponse(error);
       if (error instanceof AuthRequiredError) return json(401, { ok: false, error: 'auth required' });
-      return json(500, { ok: false, error: error instanceof Error ? error.message : 'capture failed' });
+      return json(500, {
+        ok: false,
+        error: serverErrorMessage('[albatross-capture] failed', error, 'capture failed'),
+      });
     }
   };
 }

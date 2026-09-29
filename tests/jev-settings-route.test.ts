@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 import { POST as cronPost } from '../app/api/cron/jev/route';
 import { createJevSettingsRoutes } from '../app/api/jev/settings/route';
+import { AiAccessError } from '../lib/ai/gateway';
 import { AuthRequiredError } from '../lib/auth/current-user';
 import { DEFAULT_JEV_PREFERENCES } from '../lib/jev/contract';
 import { RateLimitError } from '../lib/rate-limit';
@@ -59,13 +60,25 @@ describe('Jev settings HTTP contract', () => {
     const unavailable = await createJevSettingsRoutes(
       deps({
         resolveClassifierRuntime: async () => {
-          throw new Error('Add an OpenRouter key.');
+          throw new AiAccessError('Add an OpenRouter key.');
         },
       }),
     ).GET();
     expect(await unavailable.json()).toMatchObject({
       configured: false,
       configurationMessage: 'Add an OpenRouter key.',
+    });
+    // Another error does not pass its message to the client.
+    const broken = await createJevSettingsRoutes(
+      deps({
+        resolveClassifierRuntime: async () => {
+          throw new Error('Convex [Request ID: 1] Server Error at internal/path.ts');
+        },
+      }),
+    ).GET();
+    expect(await broken.json()).toMatchObject({
+      configured: false,
+      configurationMessage: 'Jev is unavailable.',
     });
   });
   test('authentication and strict input validation prevent cross-user writes and a model picker', async () => {

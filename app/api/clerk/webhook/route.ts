@@ -1,6 +1,7 @@
 import { verifyWebhook } from '@clerk/nextjs/webhooks';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { deleteUserData } from '@/lib/security/account-deletion';
 import { writeAudit } from '@/lib/store/audit';
@@ -51,7 +52,7 @@ export function createClerkWebhookPost(deps: typeof defaultDeps = defaultDeps) {
           );
         }
       } catch (err) {
-        console.error('[clerk/webhook] user deletion failed', err);
+        console.error('[clerk/webhook] user deletion failed', describeModelError(err));
         return NextResponse.json({ ok: false, error: 'User deletion failed.' }, { status: 500 });
       }
     }

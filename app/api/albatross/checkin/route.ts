@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { localDateKey } from '@/lib/albatross/work-v2';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,7 +22,10 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const status = error instanceof AuthRequiredError ? 401 : 500;
     return Response.json(
-      { ok: false, error: error instanceof Error ? error.message : 'check-in failed' },
+      {
+        ok: false,
+        error: errorAnswerMessage(status, error, 'check-in failed', '[albatross/checkin] failed'),
+      },
       { status },
     );
   }

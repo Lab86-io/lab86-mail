@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { resolveBriefTimezone } from '@/lib/mail/brief-timezone';
@@ -40,11 +41,8 @@ export function createWorkConductorPost(deps: WorkConductorDependencies = defaul
       const result = await deps.advanceWork({ userId, workId, trigger: 'conductor', timezone });
       return NextResponse.json({ ok: true, ...result });
     } catch (error) {
-      deps.reportError('[cron/work-conductor] advance failed', workId, error);
-      return NextResponse.json(
-        { ok: false, error: error instanceof Error ? error.message : 'advance failed', workId },
-        { status: 500 },
-      );
+      deps.reportError('[cron/work-conductor] advance failed', workId, describeModelError(error));
+      return NextResponse.json({ ok: false, error: 'advance failed', workId }, { status: 500 });
     }
   };
 }

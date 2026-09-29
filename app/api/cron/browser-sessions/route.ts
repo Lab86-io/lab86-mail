@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { browserSessionsConfigured, releaseBrowserSession } from '@/lib/albatross/browser-session';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexMutation } from '@/lib/hosted/convex';
@@ -51,7 +52,11 @@ export function createBrowserSessionSweepPost(overrides: Partial<BrowserSessionS
           await deps.releaseBrowserSession(session.sessionId);
           released += 1;
         } catch (error) {
-          deps.reportError('[cron/browser-sessions] release failed', session.sessionId, error);
+          deps.reportError(
+            '[cron/browser-sessions] release failed',
+            session.sessionId,
+            describeModelError(error),
+          );
         }
       }
       try {
@@ -63,7 +68,11 @@ export function createBrowserSessionSweepPost(overrides: Partial<BrowserSessionS
         });
         ended += 1;
       } catch (error) {
-        deps.reportError('[cron/browser-sessions] ledger update failed', session.sessionId, error);
+        deps.reportError(
+          '[cron/browser-sessions] ledger update failed',
+          session.sessionId,
+          describeModelError(error),
+        );
       }
     }
     return NextResponse.json({ ok: true, released, ended });

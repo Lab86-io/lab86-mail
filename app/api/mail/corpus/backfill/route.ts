@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { backfillMailCorpusAccount } from '@/lib/mail/corpus-sync';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,7 +27,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (err: any) {
     return NextResponse.json(
-      { ok: false, error: err?.message || 'Corpus backfill failed.' },
+      {
+        ok: false,
+        error: serverErrorMessage('[mail/corpus/backfill] failed', err, 'Corpus backfill failed.'),
+      },
       { status: 500 },
     );
   }

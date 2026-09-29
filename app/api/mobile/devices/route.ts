@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import {
@@ -40,7 +41,7 @@ const defaultDependencies: MobileDeviceDependencies = {
   convexMutation,
   parseMobileDeviceRegistration,
   parseMobileDeviceRevocation,
-  reportUnexpectedError: (error) => console.error('Push device update failed.', error),
+  reportUnexpectedError: (error) => console.error('Push device update failed.', describeModelError(error)),
 };
 
 export function createMobileDeviceHandlers(deps: MobileDeviceDependencies = defaultDependencies) {

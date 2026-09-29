@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { listCloudFileConnections } from '@/lib/files/connections';
 import {
@@ -40,7 +41,7 @@ export async function GET() {
     if (error instanceof AuthRequiredError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 401 });
     }
-    console.error('[files/status] failed', error);
+    console.error('[files/status] failed', describeModelError(error));
     return NextResponse.json({ ok: false, error: 'Could not load file connections.' }, { status: 500 });
   }
 }

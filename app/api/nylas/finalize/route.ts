@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import {
   finalizeGoogleMailCompletion,
@@ -78,7 +79,7 @@ export function createNylasOAuthFinalize(deps: typeof defaultDependencies = defa
       if (error instanceof GoogleConnectError) {
         return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
       }
-      console.error('[nylas/finalize] failed', error);
+      console.error('[nylas/finalize] failed', describeModelError(error));
       return NextResponse.json(
         { ok: false, error: 'Could not complete authorization. Please try again.' },
         { status: 500 },

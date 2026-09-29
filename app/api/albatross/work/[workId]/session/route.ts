@@ -1,4 +1,5 @@
 import { after, type NextRequest } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import {
   browserSessionsConfigured,
   createBrowserSession,
@@ -12,6 +13,7 @@ import { stepNeedsCheck } from '@/lib/albatross/step-verification';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -134,7 +136,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
                 : 'The shared browser is ready.',
             });
           } catch (error) {
-            deps.reportError('[work-session] prepare failed', session.sessionId, error);
+            deps.reportError('[work-session] prepare failed', session.sessionId, describeModelError(error));
             await deps
               .convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
                 userId,
@@ -277,7 +279,10 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
       if (error instanceof RateLimitError) return rateLimitResponse(error);
       const status = error instanceof AuthRequiredError ? 401 : 500;
       return Response.json(
-        { ok: false, error: error instanceof Error ? error.message : 'The session failed.' },
+        {
+          ok: false,
+          error: errorAnswerMessage(status, error, 'The session failed.', '[albatross/work/session] failed'),
+        },
         { status },
       );
     }

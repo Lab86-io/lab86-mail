@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { applyDocumentSuggestion, getDocument, resolveDocumentSuggestion } from '@/lib/documents/service';
 import { DocumentTooLargeError } from '@/lib/documents/sheet-workbook';
@@ -114,7 +115,7 @@ export function createDocumentSuggestionPost(deps = defaultDependencies) {
           { status: 400 },
         );
       }
-      console.error('[document-suggestion]', error);
+      console.error('[document-suggestion]', describeModelError(error));
       return NextResponse.json({ ok: false, error: 'Suggestion operation failed.' }, { status: 500 });
     }
   };

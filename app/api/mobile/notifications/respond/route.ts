@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { checkinCallerArgs } from '@/lib/albatross/checkin';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
@@ -77,7 +78,7 @@ export function createNotificationResponsePost(
       if (error instanceof AuthRequiredError) {
         return Response.json({ ok: false, error: error.message }, { status: 401 });
       }
-      console.error('[mobile notification response]', error);
+      console.error('[mobile notification response]', describeModelError(error));
       return Response.json(
         { ok: false, error: 'The notification response could not be saved.' },
         { status: 500 },

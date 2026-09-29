@@ -1,13 +1,54 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useFrameNonce } from '@/hooks/use-frame-nonce';
+import { useBriefFrameCspOptions, useFrameNonce } from '@/hooks/use-frame-nonce';
 import { useClientStore } from '@/lib/client-state';
 import { sanitizeEmailFrameHtml } from '@/lib/sanitize';
+import { type BriefFrameCspOptions, withBriefFrameCsp } from '@/lib/security/brief-frame-csp';
 import { withFrameNonce } from '@/lib/security/frame-nonce';
 import { readBriefTheme } from '@/lib/theme/brief-theme';
 
 const HEIGHTS = { compact: 180, medium: 300, tall: 460 } as const;
+
+const CANVAS_BRIDGE_JS = `<script>
+document.addEventListener('click',function(event){
+  var target=event.target&&event.target.closest&&event.target.closest('[data-action]');
+  if(!target)return;
+  event.preventDefault();
+  var payload={};
+  try{payload=JSON.parse(target.getAttribute('data-payload')||'{}')||{};}catch(_){}
+  parent.postMessage({source:'lab86-brief-canvas',action:target.getAttribute('data-action'),payload:payload},'*');
+});
+</script>`;
+
+/**
+ * The frame document for a canvas leaf, from HTML that the sanitizer already
+ * cleaned. Canvas HTML is written against --brief-* tokens with light
+ * fallbacks, so the customizer's resolved fonts and colors go in (same
+ * contract as postBriefTheme). The canvas is model-written, so the brief frame
+ * policy goes first (lib/security/brief-frame-csp.ts).
+ */
+export function briefCanvasFrameDocument(
+  clean: string,
+  tokens: Record<string, string>,
+  frameCsp?: BriefFrameCspOptions,
+): string {
+  if (!clean) return '';
+  const themeStyle = `<style>:root{${Object.entries(tokens)
+    .map(([name, value]) => `${name}:${value}`)
+    .join(';')}}</style>`;
+  const headClose = clean.toLowerCase().indexOf('</head>');
+  const themed =
+    headClose >= 0
+      ? `${clean.slice(0, headClose)}${themeStyle}${clean.slice(headClose)}`
+      : `${themeStyle}${clean}`;
+  const bodyClose = themed.toLowerCase().lastIndexOf('</body>');
+  const bridged =
+    bodyClose >= 0
+      ? `${themed.slice(0, bodyClose)}${CANVAS_BRIDGE_JS}${themed.slice(bodyClose)}`
+      : `${themed}${CANVAS_BRIDGE_JS}`;
+  return withBriefFrameCsp(bridged, frameCsp);
+}
 
 export function BriefCanvasLeaf({
   title,
@@ -30,42 +71,18 @@ export function BriefCanvasLeaf({
   const appFont = useClientStore((state) => state.appFont);
   // The srcdoc frame inherits the page CSP; its bridge script needs the page nonce.
   const frameNonce = useFrameNonce();
+  const { appOrigin, storageUrl } = useBriefFrameCspOptions();
 
   useEffect(() => {
     const raw = sanitizeEmailFrameHtml(html);
     if (!raw) return;
-    // Canvas HTML is written against --brief-* tokens with light fallbacks;
-    // mirror the customizer's resolved fonts/colors in so the ornament matches
-    // the surrounding native brief (same contract as postBriefTheme).
-    const tokens = readBriefTheme(appFont);
-    const themeStyle = `<style>:root{${Object.entries(tokens)
-      .map(([name, value]) => `${name}:${value}`)
-      .join(';')}}</style>`;
-    const headClose = raw.toLowerCase().indexOf('</head>');
-    const clean =
-      headClose >= 0
-        ? `${raw.slice(0, headClose)}${themeStyle}${raw.slice(headClose)}`
-        : `${themeStyle}${raw}`;
-    const bridge = `<script>
-document.addEventListener('click',function(event){
-  var target=event.target&&event.target.closest&&event.target.closest('[data-action]');
-  if(!target)return;
-  event.preventDefault();
-  var payload={};
-  try{payload=JSON.parse(target.getAttribute('data-payload')||'{}')||{};}catch(_){}
-  parent.postMessage({source:'lab86-brief-canvas',action:target.getAttribute('data-action'),payload:payload},'*');
-});
-</script>`;
-    const bodyClose = clean.toLowerCase().lastIndexOf('</body>');
     setSrcDoc(
       withFrameNonce(
-        bodyClose >= 0
-          ? `${clean.slice(0, bodyClose)}${bridge}${clean.slice(bodyClose)}`
-          : `${clean}${bridge}`,
+        briefCanvasFrameDocument(raw, readBriefTheme(appFont), { appOrigin, storageUrl }),
         frameNonce,
       ),
     );
-  }, [html, appFont, frameNonce]);
+  }, [html, appFont, frameNonce, appOrigin, storageUrl]);
 
   useEffect(() => {
     const receive = (event: MessageEvent) => {

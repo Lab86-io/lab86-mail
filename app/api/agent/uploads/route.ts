@@ -3,6 +3,7 @@ import { chatFileType, validateChatFiles } from '@/lib/ai/chat-attachments';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 import { sanitizeFilename } from '@/lib/shared/files';
 
 export const runtime = 'nodejs';
@@ -13,13 +14,26 @@ const MAX_FILES = 5;
 const STORAGE_UPLOAD_TIMEOUT_MS = 45_000;
 const agentUploadsApi = api.agentUploads;
 
+// The upload took too long. Its message tells the user what to do (CASA S7).
+class UploadTimeoutError extends Error {
+  constructor() {
+    super('Storage upload timed out. Try again with a smaller file.');
+    this.name = 'UploadTimeoutError';
+  }
+}
+
 function errorResponse(err: any, fallback = 'Upload failed') {
   if (err instanceof RateLimitError) return rateLimitJson(err);
+  if (err instanceof UploadTimeoutError) {
+    return NextResponse.json({ ok: false, error: err.message }, { status: 504 });
+  }
   if (err instanceof AuthRequiredError) {
     return NextResponse.json({ ok: false, error: err.message || 'Authentication required' }, { status: 401 });
   }
-  console.error('[agent-uploads] Upload failed:', err);
-  return NextResponse.json({ ok: false, error: fallback }, { status: 500 });
+  return NextResponse.json(
+    { ok: false, error: serverErrorMessage('[agent-uploads] Upload failed:', err, fallback) },
+    { status: 500 },
+  );
 }
 
 export async function GET() {
@@ -55,7 +69,7 @@ async function uploadToStorage(uploadUrl: string, file: File, contentType: strin
     return (await response.json()) as { storageId: string };
   } catch (err: any) {
     if (err?.name === 'AbortError') {
-      throw new Error('Storage upload timed out. Try again with a smaller file.');
+      throw new UploadTimeoutError();
     }
     throw err;
   } finally {
@@ -67,8 +81,8 @@ export async function POST(req: Request) {
   let form: FormData;
   try {
     form = await req.formData();
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: `Invalid form: ${err?.message || err}` }, { status: 400 });
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Invalid form.' }, { status: 400 });
   }
 
   const files = form.getAll('files').filter((value): value is File => value instanceof File);

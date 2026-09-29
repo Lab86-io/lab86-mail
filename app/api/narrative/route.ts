@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enqueueBriefJob } from '@/lib/mail/brief-jobs';
@@ -41,7 +42,7 @@ function errorResponse(error: unknown) {
     return NextResponse.json({ error: 'Sign in required.' }, { status: 401 });
   if (error instanceof z.ZodError || error instanceof SyntaxError)
     return NextResponse.json({ error: 'Invalid narrative request.' }, { status: 400 });
-  console.error('[narrative]', error);
+  console.error('[narrative]', describeModelError(error));
   return NextResponse.json(
     { error: 'Narrative is temporarily unavailable. Your existing memory has not been replaced.' },
     { status: 500 },

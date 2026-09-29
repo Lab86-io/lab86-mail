@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { isDevelopmentRuntime } from '@/lib/hosted/controls';
 import { api, convexQuery } from '@/lib/hosted/convex';
@@ -47,10 +48,7 @@ export async function POST(req: NextRequest) {
       );
     return NextResponse.json({ ok: true, userId, force, areas: areas.length, jobs }, { status: 202 });
   } catch (err: any) {
-    console.error('[cron/area-briefs] regeneration failed', userId, err);
-    return NextResponse.json(
-      { ok: false, error: err?.message || 'area brief regeneration failed', userId },
-      { status: 500 },
-    );
+    console.error('[cron/area-briefs] regeneration failed', userId, describeModelError(err));
+    return NextResponse.json({ ok: false, error: 'area brief regeneration failed', userId }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@ import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { errorAnswerMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -47,7 +48,10 @@ export async function POST(req: NextRequest, context: { params: Promise<{ questi
     if (error instanceof RateLimitError) return rateLimitResponse(error);
     const status = error instanceof AuthRequiredError ? 401 : 500;
     return Response.json(
-      { ok: false, error: error instanceof Error ? error.message : 'answer failed' },
+      {
+        ok: false,
+        error: errorAnswerMessage(status, error, 'answer failed', '[albatross/work/answer] failed'),
+      },
       { status },
     );
   }

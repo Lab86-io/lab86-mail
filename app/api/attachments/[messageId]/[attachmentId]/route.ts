@@ -1,6 +1,7 @@
 import { after, type NextRequest } from 'next/server';
 import { openMailAttachment } from '@/lib/attachments/mail-files';
 import { requireCurrentUser } from '@/lib/auth/current-user';
+import { serverErrorMessage } from '@/lib/security/error-answer';
 import { sanitizeFilename } from '@/lib/shared/files';
 
 export const runtime = 'nodejs';
@@ -111,7 +112,9 @@ export function createAttachmentGet(overrides: Partial<typeof defaultDependencie
         }),
       });
     } catch (err: any) {
-      return new Response(`attachment fetch failed: ${err?.message || 'error'}`, { status: 502 });
+      return new Response(serverErrorMessage('[attachments] fetch failed', err, 'attachment fetch failed'), {
+        status: 502,
+      });
     }
   };
 }

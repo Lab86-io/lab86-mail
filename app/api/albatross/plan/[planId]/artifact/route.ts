@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
 
@@ -41,7 +42,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ planId: st
     }
     const message = err?.message || '';
     if (/not found/i.test(message)) return new Response('Plan not found.', { status: 404 });
-    console.error('[albatross-artifact-route]', message || err);
+    console.error('[albatross-artifact-route]', describeModelError(err));
     return new Response('Failed to load plan brief.', { status: 500 });
   }
 }

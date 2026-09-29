@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { generateIntentPlan } from '@/lib/albatross/intent-plan';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 
@@ -30,10 +31,7 @@ export async function POST(req: NextRequest) {
     await generateIntentPlan({ userId, intentId });
     return NextResponse.json({ ok: true, userId, intentId }, { status: 200 });
   } catch (err: any) {
-    console.error('[cron/plan-reconcile] regeneration failed', intentId, err);
-    return NextResponse.json(
-      { ok: false, error: err?.message || 'plan regeneration failed', intentId },
-      { status: 500 },
-    );
+    console.error('[cron/plan-reconcile] regeneration failed', intentId, describeModelError(err));
+    return NextResponse.json({ ok: false, error: 'plan regeneration failed', intentId }, { status: 500 });
   }
 }

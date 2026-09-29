@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError } from '@/lib/auth/current-user';
 import { RateLimitError } from '@/lib/rate-limit';
 import { ToolValidationError } from '@/lib/tools/registry';
@@ -94,7 +95,7 @@ export function mapMobileHTTPError(error: unknown): MobileHTTPError {
 
 export function mobileErrorResponse(error: unknown, requestID: string): Response {
   const mapped = mapMobileHTTPError(error);
-  if (mapped.status >= 500) console.error('Mobile API request failed.', error);
+  if (mapped.status >= 500) console.error('Mobile API request failed.', describeModelError(error));
   return mobileJSON(
     {
       ok: false,

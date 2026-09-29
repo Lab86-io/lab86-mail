@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { GoogleDocumentConflictError, publishDocumentToGoogle } from '@/lib/documents/google';
 import { GoogleDocumentFidelityError } from '@/lib/documents/google-fidelity';
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ docume
         { status: 422 },
       );
     }
-    console.error('[document-google]', error);
+    console.error('[document-google]', describeModelError(error));
     return NextResponse.json({ ok: false, error: 'Google publish failed.' }, { status: 502 });
   }
 }

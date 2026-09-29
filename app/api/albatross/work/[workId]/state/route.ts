@@ -1,5 +1,6 @@
 import type { FunctionReturnType } from 'convex/server';
 import type { NextRequest } from 'next/server';
+import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
@@ -26,7 +27,7 @@ const defaultDependencies: WorkStateDependencies = {
   requireCurrentUser,
   enforceUserRateLimit,
   updateWorkState: (args) => convexMutation<UpdateWorkStateResult>(api.albatrossWorkV2.updateWorkState, args),
-  reportUnexpectedError: (error) => console.error('Work state update failed.', error),
+  reportUnexpectedError: (error) => console.error('Work state update failed.', describeModelError(error)),
 };
 
 export function createWorkStatePost(deps: WorkStateDependencies = defaultDependencies) {
