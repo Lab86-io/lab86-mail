@@ -36,4 +36,22 @@ struct MailboxConnectPathTests {
         let path = WebAuthenticationCoordinator.mailboxConnectPath(provider: "microsoft", accountId: "")
         #expect(try items(path)["account"] == nil)
     }
+
+    @Test func aBriefSourceIdNamesAnAccountOnlyInTheKindAccountForm() {
+        #expect(BriefSource.reconnectAccountID(fromSourceID: "mail:dc636c8d-1660-4cfb") == "dc636c8d-1660-4cfb")
+        #expect(BriefSource.reconnectAccountID(fromSourceID: "calendar:acct_1") == "acct_1")
+        // Only the first ":" splits, so an account id can hold ":".
+        #expect(BriefSource.reconnectAccountID(fromSourceID: "mail:google:1111") == "google:1111")
+        #expect(BriefSource.reconnectAccountID(fromSourceID: "calendar") == nil)
+        #expect(BriefSource.reconnectAccountID(fromSourceID: "mail:") == nil)
+        #expect(BriefSource.reconnectAccountID(fromSourceID: ":acct_1") == nil)
+        #expect(BriefSource.reconnectAccountID(fromSourceID: ":") == nil)
+        #expect(BriefSource.reconnectAccountID(fromSourceID: "") == nil)
+    }
+
+    @Test func aBriefSourceIdWithNoAccountStartsANewConnection() throws {
+        let accountId = BriefSource.reconnectAccountID(fromSourceID: "calendar")
+        let path = WebAuthenticationCoordinator.mailboxConnectPath(provider: "google", accountId: accountId)
+        #expect(try items(path)["account"] == nil)
+    }
 }
