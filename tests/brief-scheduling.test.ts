@@ -188,10 +188,13 @@ test('local and explicitly isolated backends do not schedule hosted brief callba
   const before = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   const originalFetch = globalThis.fetch;
   let calls = 0;
-  globalThis.fetch = (async () => {
-    calls++;
-    return new Response('{}');
-  }) as typeof fetch;
+  globalThis.fetch = Object.assign(
+    async () => {
+      calls++;
+      return new Response('{}');
+    },
+    { preconnect: originalFetch.preconnect },
+  );
   try {
     process.env.LAB86_CONVEX_INTERNAL_SECRET = 'test-secret';
     for (const [url, mode] of [
