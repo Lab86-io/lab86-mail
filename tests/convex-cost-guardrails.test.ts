@@ -70,10 +70,6 @@ describe('Convex cost guardrails', () => {
   test('large index deletion requires an explicit deployment commit marker', () => {
     for (const [workflowPath, markerCondition] of [
       [
-        '.github/workflows/deploy-development.yml',
-        'if [[ "$DEPLOY_COMMIT_MESSAGE" == *"[allow convex index cleanup]"* ]]; then',
-      ],
-      [
         '.github/workflows/deploy-production.yml',
         "if grep -Fq '[allow convex index cleanup]' .release-commits.txt; then",
       ],

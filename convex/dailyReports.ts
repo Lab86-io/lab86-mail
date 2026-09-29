@@ -104,16 +104,13 @@ export const briefTimezoneSources = query({
   },
 });
 
-function isStagingCronTarget(appUrl: string) {
-  const environment = String(
-    process.env.RAILWAY_ENVIRONMENT_NAME || process.env.LAB86_MAIL_ENV || process.env.LAB86_ENV || '',
-  ).toLowerCase();
-  if (environment === 'staging' || environment === 'development') return true;
+function isDevelopmentCronTarget(appUrl: string) {
+  if (['1', 'true', 'yes'].includes(process.env.LAB86_DEVELOPMENT_MODE || '')) return true;
   try {
     const host = new URL(appUrl).hostname.toLowerCase();
-    return host === 'mail-staging.lab86.io';
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost');
   } catch {
-    return /\bstaging\b/i.test(appUrl);
+    return true;
   }
 }
 
@@ -303,8 +300,8 @@ export const tick = internalAction({
       console.error('[daily-report cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
       return;
     }
-    if (isStagingCronTarget(appUrl)) {
-      console.log('[daily-report cron] skipped on staging target');
+    if (isDevelopmentCronTarget(appUrl)) {
+      console.log('[daily-report cron] skipped on development target');
       return;
     }
 
@@ -380,8 +377,8 @@ export const areaRefreshTick = internalAction({
       console.error('[area-refresh cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
       return;
     }
-    if (isStagingCronTarget(appUrl)) {
-      console.log('[area-refresh cron] skipped on staging target');
+    if (isDevelopmentCronTarget(appUrl)) {
+      console.log('[area-refresh cron] skipped on development target');
       return;
     }
     const { targets, nextUserId } = await ctx.runQuery(internal.dailyReports.reportTargetPage, {

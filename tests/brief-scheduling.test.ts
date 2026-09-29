@@ -182,3 +182,40 @@ test('scheduled targets use the preference zone, then the calendar zone, then th
   expect(byUser['user-2']).toMatchObject({ timezone: 'Asia/Tokyo', zoneKnown: true });
   expect(byUser['user-3']).toMatchObject({ zoneKnown: false });
 });
+
+test('local and explicitly isolated backends do not schedule hosted brief callbacks', async () => {
+  const keys = ['LAB86_MAIL_PUBLIC_URL', 'LAB86_CONVEX_INTERNAL_SECRET', 'LAB86_DEVELOPMENT_MODE'] as const;
+  const before = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    return new Response('{}');
+  }) as typeof fetch;
+  try {
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'test-secret';
+    for (const [url, mode] of [
+      ['http://localhost:3000', ''],
+      ['http://127.0.0.1:3000', ''],
+      ['http://[::1]:3000', ''],
+      ['http://preview.localhost:3000', ''],
+      ['https://isolated.example.test', 'true'],
+      ['invalid target', ''],
+    ]) {
+      process.env.LAB86_MAIL_PUBLIC_URL = url;
+      process.env.LAB86_DEVELOPMENT_MODE = mode;
+      const t = await seeded();
+      await t.action(internal.dailyReports.tick, { at: Date.parse('2026-09-22T11:00:00Z') });
+      await t.action(internal.dailyReports.areaRefreshTick, {});
+      const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+      expect(scheduled).toHaveLength(0);
+    }
+    expect(calls).toBe(0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of keys) {
+      if (before[key] === undefined) delete process.env[key];
+      else process.env[key] = before[key];
+    }
+  }
+});
