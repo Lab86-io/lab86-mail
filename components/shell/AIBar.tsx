@@ -1351,12 +1351,8 @@ function ChatComposer({
         });
       }}
       // "Ask now" on the Hold line: the text goes to chat. When chat cannot
-      // take it yet, the text comes back to the bar, never lost.
-      onAsk={(text) => {
-        void onSendText(text).then((accepted) => {
-          if (!accepted) setValue((current) => current || text);
-        });
-      }}
+      // take it yet, the composer puts it back without a loss of a newer draft.
+      onAsk={onSendText}
     />
   );
 }

@@ -31,6 +31,7 @@ import {
   kickAdvance,
   releaseHold,
   resolveGeo,
+  restoreHeldText,
 } from '../lib/albatross/capture-client';
 import type { BarRoute, RouteVerdict } from '../lib/albatross/route-classifier';
 import { flipRoute, instantRoute, predictRoute, ROUTE_CONFIRM_DELAY_MS } from '../lib/albatross/route-client';
@@ -830,7 +831,10 @@ interface Harness {
 async function mountComposer(
   onHold: (text: string) => Promise<HoldCard[]> = async () => cards(1),
   predict: PredictFn = async () => verdict('ask'),
-  extra: { onUndoHold?: (cards: HoldCard[]) => Promise<void>; onAsk?: (text: string) => void } = {},
+  extra: {
+    onUndoHold?: (cards: HoldCard[]) => Promise<void>;
+    onAsk?: (text: string) => Promise<boolean> | boolean;
+  } = {},
 ): Promise<Harness> {
   let value = '';
   let door: DoorRequest | null = null;
@@ -1057,7 +1061,7 @@ describe('the Hold notice', () => {
   }
 
   test('after a Hold lands, a line says what was held, with Undo and Ask now', async () => {
-    const bar = await mountComposer(undefined, undefined, { onAsk: () => {}, onUndoHold: async () => {} });
+    const bar = await mountComposer(undefined, undefined, { onAsk: () => true, onUndoHold: async () => {} });
     await holdAndLand(bar, 'book the dentist before the trip');
     expect(bar.landed).toEqual([1]);
     expect(notice(bar)).toHaveLength(1);
@@ -1099,7 +1103,10 @@ describe('the Hold notice', () => {
       onUndoHold: async (rows) => {
         undone.push(...rows.map((row) => row.id));
       },
-      onAsk: (text) => asked.push(text),
+      onAsk: (text) => {
+        asked.push(text);
+        return true;
+      },
     });
     await holdAndLand(bar, 'Add the label Offsite to the October 9 thread');
     await act(async () => {
@@ -1125,6 +1132,71 @@ describe('the Hold notice', () => {
     expect(notice(bar)).toHaveLength(1);
     expect(JSON.stringify(bar.renderer.toJSON())).toContain(HOLD_UNDO_ERROR);
     expect(bar.value()).toBe('');
+  });
+
+  test('text typed while Undo runs stays; the held text comes back under it', async () => {
+    let finishUndo!: () => void;
+    const bar = await mountComposer(undefined, undefined, {
+      onUndoHold: () =>
+        new Promise<void>((resolve) => {
+          finishUndo = resolve;
+        }),
+    });
+    await holdAndLand(bar, 'book the dentist before the trip');
+    await act(async () => {
+      action(bar, 'Undo').props.onClick();
+    });
+    await bar.set('what did Sarah say?');
+    await act(async () => {
+      finishUndo();
+    });
+    await flush();
+    expect(bar.value()).toBe('what did Sarah say?\n\nbook the dentist before the trip');
+  });
+
+  test('Ask now that chat cannot take puts the text back, under a newer draft', async () => {
+    let answer!: (accepted: boolean) => void;
+    const bar = await mountComposer(undefined, undefined, {
+      onUndoHold: async () => {},
+      onAsk: () =>
+        new Promise<boolean>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    await holdAndLand(bar, 'book the dentist before the trip');
+    await act(async () => {
+      action(bar, 'Ask now').props.onClick();
+    });
+    await flush();
+    await bar.set('a newer draft');
+    await act(async () => {
+      answer(false);
+    });
+    await flush();
+    expect(bar.value()).toBe('a newer draft\n\nbook the dentist before the trip');
+    expect(bar.chip().props['data-route']).toBe('ask');
+
+    // A throw is a refusal too, and an empty bar gets the text alone.
+    const thrower = await mountComposer(undefined, undefined, {
+      onUndoHold: async () => {},
+      onAsk: () => {
+        throw new Error('busy');
+      },
+    });
+    await holdAndLand(thrower, 'book the dentist before the trip');
+    await act(async () => {
+      action(thrower, 'Ask now').props.onClick();
+    });
+    await flush();
+    expect(thrower.value()).toBe('book the dentist before the trip');
+  });
+
+  test('restoreHeldText never drops a draft or the held text', () => {
+    expect(restoreHeldText('', 'held')).toBe('held');
+    expect(restoreHeldText('  ', 'held')).toBe('held');
+    expect(restoreHeldText('draft ', 'held')).toBe('draft\n\nheld');
+    expect(restoreHeldText('draft and held', 'held')).toBe('draft and held');
+    expect(restoreHeldText('draft', '  ')).toBe('draft');
   });
 
   test('a Hold that made no Work shows no notice', async () => {

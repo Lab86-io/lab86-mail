@@ -14,6 +14,7 @@ import {
   type HoldCard,
   heldNotice,
   releaseHold,
+  restoreHeldText,
 } from '@/lib/albatross/capture-client';
 import type { BarRoute } from '@/lib/albatross/route-rules';
 import { cn } from '@/lib/utils';
@@ -70,8 +71,11 @@ export interface AskHoldComposerProps {
   onHeld?: (cards: HoldCard[]) => void;
   /** Undo a Hold: archive the Work it made. Defaults to `releaseHold`. Rejects on failure. */
   onUndoHold?: (cards: HoldCard[]) => Promise<void>;
-  /** Send held text to chat after Undo. Without it, the line offers Undo only. */
-  onAsk?: (text: string) => void;
+  /**
+   * Send held text to chat after Undo. Resolves false when chat cannot take
+   * it; the text then comes back to the bar. Without it, the line offers Undo only.
+   */
+  onAsk?: (text: string) => Promise<boolean> | boolean;
   door?: DoorRequest | null;
   predict?: RoutePredictionOptions['predict'];
   railTarget?: () => Element | null;
@@ -169,24 +173,31 @@ export function AskHoldComposer({
   }, [landing, voice, onValueChange, onHold, prediction.preset, focusField]);
 
   // Undo archives the held Work. Then the text goes back to the bar on Ask,
-  // or straight to chat with "Ask now".
+  // or straight to chat with "Ask now". The field stays open during Undo, so
+  // the text comes back under a newer draft and never replaces it. When chat
+  // cannot take the text, it comes back to the bar the same way.
   const undoHold = useCallback(
     (next: 'restore' | 'ask') => {
       if (!held || undoing) return;
+      const { text, cards } = held;
       setUndoing(true);
       setHoldError(null);
-      onUndoHold(held.cards)
-        .then(() => {
-          setHeld(null);
-          if (next === 'ask' && onAsk) {
-            onAsk(held.text);
-            return;
-          }
-          onValueChange(held.text);
-          prediction.preset('ask');
-          focusField();
-        })
-        .catch(() => setHoldError(HOLD_UNDO_ERROR))
+      onUndoHold(cards)
+        .then(
+          async () => {
+            setHeld(null);
+            if (next === 'ask' && onAsk) {
+              const accepted = await Promise.resolve()
+                .then(() => onAsk(text))
+                .catch(() => false);
+              if (accepted !== false) return;
+            }
+            onValueChange(restoreHeldText(valueRef.current, text));
+            prediction.preset('ask');
+            focusField();
+          },
+          () => setHoldError(HOLD_UNDO_ERROR),
+        )
         .finally(() => setUndoing(false));
     },
     [held, undoing, onUndoHold, onAsk, onValueChange, prediction.preset, focusField],

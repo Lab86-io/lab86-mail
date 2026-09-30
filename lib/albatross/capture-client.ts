@@ -165,6 +165,19 @@ export function heldNotice(cards: HoldCard[], text: string): string {
 }
 
 /**
+ * The bar text when an undone Hold comes back. An empty bar gets the held
+ * text. A bar with a newer draft keeps that draft and gets the held text
+ * under it, so the bar never loses either text.
+ */
+export function restoreHeldText(current: string, held: string): string {
+  const draft = current.trim();
+  const text = held.trim();
+  if (!draft) return held;
+  if (!text || draft.includes(text)) return current;
+  return `${current.trimEnd()}\n\n${text}`;
+}
+
+/**
  * Undo a Hold from the bar: archive each Work it made. Rejects with
  * `HOLD_UNDO_ERROR` when one archive fails, so the bar keeps the notice.
  */
