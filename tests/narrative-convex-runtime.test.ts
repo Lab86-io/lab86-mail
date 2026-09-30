@@ -755,6 +755,9 @@ describe('shared narrative runtime', () => {
     const flushed = await prefs();
     expect(flushed?.refreshToken).toBeUndefined();
     expect(flushed?.refreshScheduledAt).toBeUndefined();
+    const jobs = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    const runs = jobs.filter((job) => job.name.endsWith(':refreshUser'));
+    expect(runs.map((job) => job.args)).toEqual([[{ userId }]]);
   });
   test.each([
     false,
