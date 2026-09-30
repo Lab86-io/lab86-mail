@@ -67,7 +67,18 @@ function oneDriveEndpoint(input: { folderId?: string; query?: string; cursor?: s
   return `https://graph.microsoft.com/v1.0/me/drive/root/children?$top=${pageSize}&$expand=thumbnails`;
 }
 
-function googleDriveEndpoint(input: {
+/**
+ * The Drive v3 `files.list` URL for one page.
+ *
+ * - A folder page lists the children of the folder, folders first, by name.
+ * - A search looks in all the files of the account (My Drive and the files
+ *   shared with the user), by name and by the text in the file. The open
+ *   folder does not limit a search: the search box names the account. A
+ *   search has no `orderBy`: Drive refuses a sort order for a query with
+ *   `fullText` (403 `forbidden`, "Sorting is not supported for queries with
+ *   fullText terms") and gives the results in order of relevance.
+ */
+export function googleDriveEndpoint(input: {
   folderId?: string;
   query?: string;
   cursor?: string;
@@ -91,7 +102,7 @@ function googleDriveEndpoint(input: {
     'nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink,thumbnailLink,owners(displayName))',
   );
   url.searchParams.set('pageSize', String(Math.min(100, Math.max(1, Math.floor(input.pageSize || 100)))));
-  url.searchParams.set('orderBy', 'folder,name_natural');
+  if (!query) url.searchParams.set('orderBy', 'folder,name_natural');
   url.searchParams.set('supportsAllDrives', 'true');
   url.searchParams.set('includeItemsFromAllDrives', 'true');
   if (input.driveId) {
@@ -102,7 +113,22 @@ function googleDriveEndpoint(input: {
   return url.toString();
 }
 
-function googleFailure(response: Response, payload: any) {
+/** Google 403 reasons that mean "too many requests", not "no access". */
+const GOOGLE_RATE_LIMIT_REASONS = new Set([
+  'userRateLimitExceeded',
+  'rateLimitExceeded',
+  'dailyLimitExceeded',
+  'sharingRateLimitExceeded',
+]);
+
+/**
+ * Maps a failed Drive answer to the error the Files view shows. Only an
+ * answer about access asks for a reconnect. A 403 with a rate-limit reason is
+ * a rate limit. Another 403 (reason `forbidden` for a request that Drive
+ * refuses, for example a sort order on a text search) is a request error: a
+ * retry gets the same answer, and the connection stays good.
+ */
+export function googleFailure(response: Response, payload: any) {
   const reason = String(payload?.error?.errors?.[0]?.reason || '').slice(0, 100) || undefined;
   const detail = String(payload?.error?.message || '').trim();
   if (response.status === 401) {
@@ -123,7 +149,7 @@ function googleFailure(response: Response, payload: any) {
       reason,
     );
   }
-  if (response.status === 429) {
+  if (response.status === 429 || (response.status === 403 && GOOGLE_RATE_LIMIT_REASONS.has(reason || ''))) {
     return new CloudFileProviderError(
       'Google Drive is temporarily rate limited. Try again shortly.',
       429,
@@ -146,6 +172,15 @@ function googleFailure(response: Response, payload: any) {
       'Google Drive permission is missing or expired. Reconnect this account.',
       409,
       'RECONNECT_REQUIRED',
+      response.status,
+      reason,
+    );
+  }
+  if (response.status === 403) {
+    return new CloudFileProviderError(
+      detail ? `Google Drive refused this request: ${detail}` : 'Google Drive refused this request.',
+      400,
+      'INVALID_REQUEST',
       response.status,
       reason,
     );
