@@ -741,6 +741,21 @@ describe('shared narrative runtime', () => {
     expect(await t.query((internal as any).narrative.refreshTarget, { userId })).toBe(false);
     await t.action((internal as any).narrative.refreshUser, { userId });
   });
+  // The due path used to run only when the background timer fired in time,
+  // so coverage of these lines changed from run to run.
+  test('a due refresh clears its token and starts the run at once', async () => {
+    const t = harness();
+    await enable(t);
+    await capture(t, 'First plan', 'first');
+    const prefs = () => t.run((ctx) => ctx.db.query('narrativeSettings').first());
+    const queued = await prefs();
+    expect(queued?.refreshToken).toBeDefined();
+    await t.run((ctx) => ctx.db.patch(queued!._id, { leaseUntil: undefined, lastRunAt: undefined }));
+    await t.mutation((internal as any).narrative.flushRefresh, { userId, token: queued!.refreshToken });
+    const flushed = await prefs();
+    expect(flushed?.refreshToken).toBeUndefined();
+    expect(flushed?.refreshScheduledAt).toBeUndefined();
+  });
   test.each([
     false,
     true,
