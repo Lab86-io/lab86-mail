@@ -3,6 +3,7 @@
 // state for its header, and label the reasoning line. The React block lives in
 // components/ai-elements/work-log.tsx.
 
+import { isToolApprovalPart } from '../ai/approval';
 import type { ToolShape } from '../ai/tool-shapes';
 import {
   isHitlToolName,
@@ -38,7 +39,10 @@ function isBlankText(part: any): boolean {
  * Group parts into segments. Consecutive non-HITL tool parts form one work
  * log; a `data-tool-shape` part attaches to the row whose toolCallId matches
  * its id. Blank text parts and step markers do not break a run. HITL tools
- * (ask_*) stay standalone parts and render in place, as before.
+ * (ask_*) stay standalone parts and render in place, as before. A call that
+ * waits at the approval gate (for example calendar_rsvp_event) is also
+ * standalone: the chat must show its approval card, because a log row cannot
+ * take the answer. When the call has its result, it joins a log again.
  */
 export function groupMessageParts(parts: any[]): MessageSegment[] {
   const segments: MessageSegment[] = [];
@@ -60,7 +64,7 @@ export function groupMessageParts(parts: any[]): MessageSegment[] {
     if (part.type === 'step-start' || isBlankText(part)) return;
     if (isToolPart(part)) {
       const toolName = toolPartName(part);
-      if (isHitlToolName(toolName)) {
+      if (isHitlToolName(toolName) || isToolApprovalPart(part)) {
         closeRun();
         segments.push({ kind: 'part', index, part });
         return;

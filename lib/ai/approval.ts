@@ -106,6 +106,28 @@ export function toolNeedsApproval(toolName: string, input: unknown): boolean {
   return APPROVAL_GATED_TOOLS.has(toolName) && approvalConditionMet(toolName, input);
 }
 
+/** The AI SDK tool-part states of a call that waits for, or was stopped by, the approval gate. */
+const APPROVAL_PART_STATES: ReadonlySet<string> = new Set([
+  'approval-requested',
+  'approval-responded',
+  'output-denied',
+]);
+
+/**
+ * True while a chat tool part waits for the user's approval, or after the
+ * user answered it and before the call has a result. The chat must show the
+ * approval card for such a part. A work log row cannot take the answer, so a
+ * part in a log stays open until the turn ends, and then shows as failed.
+ */
+export function isToolApprovalPart(part: unknown): boolean {
+  const value = rec(part);
+  return (
+    typeof value.state === 'string' &&
+    APPROVAL_PART_STATES.has(value.state) &&
+    typeof rec(value.approval).id === 'string'
+  );
+}
+
 const UNSUBSCRIBE_METHODS: Record<string, string> = {
   one_click: 'One-click request',
   mailto: 'An email from your mailbox',
