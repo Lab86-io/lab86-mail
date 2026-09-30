@@ -71,9 +71,12 @@ struct AssistantChatView: View {
                     messageRow(message)
                 }
                 ForEach(model.receipts) { receipt in
-                    HoldReceiptRow(model: receipt) {
-                        environment.navigation.openWork(id: receipt.id, title: receipt.title)
-                    }
+                    HoldReceiptRow(
+                        model: receipt,
+                        isUndoing: model.isUndoingHold,
+                        onOpen: { environment.navigation.openWork(id: receipt.id, title: receipt.title) },
+                        onUndo: undoAction(for: receipt)
+                    )
                 }
                 if let holdError = model.holdError {
                     Text(holdError)
@@ -384,6 +387,23 @@ struct AssistantChatView: View {
             return
         }
         sendDraft()
+    }
+
+    /// Undo is only for a Hold from the bar. A kept reply has no bar text.
+    private func undoAction(for receipt: HoldCardModel) -> (() -> Void)? {
+        guard model.canUndoHold(receipt) else { return nil }
+        return { undoHold(receipt) }
+    }
+
+    /// Undo archives the held Work. Then the text comes back to the bar on
+    /// Ask, under a newer draft when there is one.
+    private func undoHold(_ receipt: HoldCardModel) {
+        Task {
+            guard let text = await model.undoHold(receipt) else { return }
+            draft = HoldUndo.restoredDraft(current: draft, held: text)
+            model.presetRoute(.ask)
+            composerFocused = true
+        }
     }
 
     private func sendDraft() {

@@ -385,3 +385,98 @@ struct BarRouteParityTests {
         #expect(RouteHeuristic.verdict(for: text)?.route == .hold)
     }
 }
+
+// The Undo of a Hold from the bar. It mirrors the web held notice:
+// `releaseHold` and `restoreHeldText` in `lib/albatross/capture-client.ts`.
+@MainActor
+@Suite("Hold undo")
+struct HoldUndoTests {
+    private let capturePath = "/api/albatross/capture"
+
+    private func model(_ server: StubBackendServer) -> AssistantChatModel {
+        AssistantChatModel(backend: server.backend, baseURL: URL(string: "https://\(server.host)"))
+    }
+
+    private func work(_ id: String, _ title: String) -> JSONValue {
+        .object(["id": .string(id), "title": .string(title), "shape": .string("quick")])
+    }
+
+    @Test("Undo archives each Work of a bar Hold and gives the text back")
+    func undoArchivesAndRestores() async throws {
+        let server = StubBackendServer()
+        defer { server.tearDown() }
+        server.routes[capturePath] = .object([
+            "ok": .bool(true),
+            "work": .array([work("w1", "Renew the passport"), work("w2", "Book the photos")]),
+        ])
+        for id in ["w1", "w2"] {
+            server.routes["/api/albatross/work/\(id)/state"] = .object([
+                "ok": .bool(true),
+                "state": .string("archived"),
+            ])
+        }
+        let chat = model(server)
+
+        await chat.hold("Renew the passport and book the photos")
+        #expect(chat.receipts.map(\.id) == ["w1", "w2"])
+        let second = try #require(chat.receipts.last)
+        #expect(chat.canUndoHold(second))
+
+        let text = await chat.undoHold(second)
+        #expect(text == "Renew the passport and book the photos")
+        #expect(chat.receipts.isEmpty)
+        #expect(chat.holdError == nil)
+        #expect(!chat.isUndoingHold)
+        let archives = server.recorded.filter { $0.path.hasSuffix("/state") }
+        #expect(archives.map(\.path) == ["/api/albatross/work/w1/state", "/api/albatross/work/w2/state"])
+        #expect(archives.allSatisfy { $0.method == "POST" && $0.body?["state"] == .string("archived") })
+    }
+
+    @Test("A failed Undo keeps the receipt and shows the error")
+    func failedUndoKeepsReceipt() async throws {
+        let server = StubBackendServer()
+        defer { server.tearDown() }
+        server.routes[capturePath] = .object([
+            "ok": .bool(true),
+            "work": .array([work("w1", "Renew the passport")]),
+        ])
+        server.routes["/api/albatross/work/w1/state"] = .object(["ok": .bool(false), "error": .string("down")])
+        server.statuses["/api/albatross/work/w1/state"] = 500
+        let chat = model(server)
+
+        await chat.hold("Renew the passport")
+        let receipt = try #require(chat.receipts.first)
+        let text = await chat.undoHold(receipt)
+        #expect(text == nil)
+        #expect(chat.receipts.map(\.id) == ["w1"])
+        #expect(chat.holdError == HoldUndo.errorText)
+        #expect(chat.canUndoHold(receipt))
+    }
+
+    @Test("A kept reply shows no Undo")
+    func keptReplyHasNoUndo() async throws {
+        let server = StubBackendServer()
+        defer { server.tearDown() }
+        server.routes[capturePath] = .object([
+            "ok": .bool(true),
+            "work": .array([work("w1", "Plan the trip")]),
+        ])
+        let chat = model(server)
+
+        await chat.holdReply(messageID: "m1", userText: "Plan the trip", replyText: "Here is a plan.")
+        let receipt = try #require(chat.receipts.first)
+        #expect(!chat.canUndoHold(receipt))
+        let text = await chat.undoHold(receipt)
+        #expect(text == nil)
+        #expect(!server.requests.contains { $0.hasSuffix("/state") })
+    }
+
+    @Test("The held text never drops a draft")
+    func restoredDraftKeepsBothTexts() {
+        #expect(HoldUndo.restoredDraft(current: "", held: "held") == "held")
+        #expect(HoldUndo.restoredDraft(current: "  ", held: "held") == "held")
+        #expect(HoldUndo.restoredDraft(current: "draft ", held: "held") == "draft\n\nheld")
+        #expect(HoldUndo.restoredDraft(current: "draft and held", held: "held") == "draft and held")
+        #expect(HoldUndo.restoredDraft(current: "draft", held: "  ") == "draft")
+    }
+}
