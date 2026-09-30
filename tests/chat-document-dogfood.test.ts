@@ -16,6 +16,10 @@ import {
   downloadGoogleWorkingCopy,
   saveGoogleWorkingCopy,
 } from '../lib/documents/google-working-copy';
+import {
+  GOOGLE_DOC_OFFICE_OPEN_REFUSED,
+  GOOGLE_DOC_OFFICE_SAVE_REFUSED,
+} from '../lib/documents/google-write-policy';
 import { createDefaultDocumentModel, deckModelSchema } from '../lib/documents/model';
 import { officeConfiguration } from '../lib/documents/office-security';
 import {
@@ -244,7 +248,7 @@ describe('dogfood regressions', () => {
 
 describe('Google working copy', () => {
   test('opening retries a conversion that changes version during export', async () => {
-    const bytes = await officeBytes('doc');
+    const bytes = await officeBytes('sheet');
     let reads = 0;
     let exports = 0;
     __setGoogleWorkingCopyDepsForTest({
@@ -260,8 +264,8 @@ describe('Google working copy', () => {
         }
         reads++;
         return Response.json({
-          title: 'Document',
-          mimeType: 'application/vnd.google-apps.document',
+          title: 'Budget',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
           etag: reads === 1 ? 'before-conversion' : 'stable',
           version: reads === 1 ? '1' : '2',
         });
@@ -277,7 +281,6 @@ describe('Google working copy', () => {
   });
 
   test.each([
-    'doc',
     'sheet',
     'deck',
   ] as const)('conditional %s replacement updates the same Google file', async (kind) => {
@@ -323,8 +326,58 @@ describe('Google working copy', () => {
     expect(saved.fileId).toBe('original');
     expect(Buffer.from(upload.init!.body as any).includes(Buffer.from(bytes))).toBe(true);
   });
-  test('a changed original, expired or foreign session cannot be overwritten', async () => {
+  test('a Google Doc gets no Office working copy, and a Doc copy never replaces the Doc', async () => {
     const bytes = await officeBytes('doc');
+    const requests: string[] = [];
+    __setGoogleWorkingCopyDepsForTest({
+      getCloudFileAccess: (async () => ({
+        connection: { provider: 'google_drive' },
+        accessToken: 'test',
+      })) as any,
+      encryptSecret: (s) => s,
+      decryptSecret: (s) => s,
+      fetch: async (url, init) => {
+        requests.push(`${init?.method || 'GET'} ${String(url)}`);
+        return Response.json({
+          id: 'doc',
+          title: 'Project brief',
+          mimeType: 'application/vnd.google-apps.document',
+          etag: 'etag1',
+          version: '1',
+          editable: true,
+        });
+      },
+    });
+    const opened = await downloadGoogleWorkingCopy({
+      userId: 'owner',
+      connectionId: 'c',
+      fileId: 'doc',
+    }).catch((error) => error);
+    expect(opened).toMatchObject({ status: 409, message: GOOGLE_DOC_OFFICE_OPEN_REFUSED });
+    // Only the metadata read: no export of the Doc.
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).not.toContain('/export?');
+
+    requests.length = 0;
+    const session = JSON.stringify({
+      userId: 'owner',
+      connectionId: 'c',
+      fileId: 'doc',
+      mimeType: 'application/vnd.google-apps.document',
+      etag: 'etag1',
+      version: '1',
+      expiresAt: Date.now() + 100000,
+    });
+    const saved = await saveGoogleWorkingCopy({ userId: 'owner', session, bytes, extension: 'docx' }).catch(
+      (error) => error,
+    );
+    expect(saved).toMatchObject({ status: 409, message: GOOGLE_DOC_OFFICE_SAVE_REFUSED });
+    // No Drive request at all, and above all no v2 upload.
+    expect(requests).toEqual([]);
+  });
+
+  test('a changed original, expired or foreign session cannot be overwritten', async () => {
+    const bytes = await officeBytes('sheet');
     let writes = 0;
     __setGoogleWorkingCopyDepsForTest({
       decryptSecret: (s) => s,
@@ -334,20 +387,24 @@ describe('Google working copy', () => {
       })) as any,
       fetch: async (_url, init) => {
         if (init?.method === 'PUT') writes++;
-        return Response.json({ mimeType: 'application/vnd.google-apps.document', etag: 'new', version: '2' });
+        return Response.json({
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+          etag: 'new',
+          version: '2',
+        });
       },
     });
     const session = {
       userId: 'owner',
       connectionId: 'connection',
       fileId: 'file',
-      mimeType: 'application/vnd.google-apps.document',
+      mimeType: 'application/vnd.google-apps.spreadsheet',
       etag: 'old',
       version: '1',
       expiresAt: Date.now() + 100000,
     };
     const save = (userId: string, value = session) =>
-      saveGoogleWorkingCopy({ userId, session: JSON.stringify(value), bytes, extension: 'docx' });
+      saveGoogleWorkingCopy({ userId, session: JSON.stringify(value), bytes, extension: 'xlsx' });
     await expect(save('other')).rejects.toThrow('another user');
     await expect(save('owner', { ...session, expiresAt: 1 })).rejects.toThrow('expired');
     await expect(save('owner')).rejects.toThrow('original changed');

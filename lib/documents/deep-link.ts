@@ -6,6 +6,21 @@ export function documentDeepLinkUrl(documentId: string, currentHref: string) {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+/** The Files link that opens one Google-native file in its editor. */
+export function googleFileDeepLinkUrl(
+  source: { connectionId: string; fileId: string; mimeType: string },
+  currentHref: string,
+) {
+  const url = new URL(currentHref);
+  url.searchParams.set('view', 'files');
+  for (const key of ['document', 'office']) url.searchParams.delete(key);
+  url.searchParams.set('provider', 'google_drive');
+  url.searchParams.set('connection', source.connectionId);
+  url.searchParams.set('file', source.fileId);
+  url.searchParams.set('mime', source.mimeType);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 export function pushDocumentDeepLink(documentId: string) {
   const href = documentDeepLinkUrl(documentId, window.location.href);
   window.history.pushState({ ...(window.history.state || {}), albatrossDocument: documentId }, '', href);

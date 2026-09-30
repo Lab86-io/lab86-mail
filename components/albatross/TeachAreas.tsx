@@ -22,14 +22,18 @@
 // auto-continues keep the Teach persona too.
 
 import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport } from 'ai';
+import {
+  DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
+  type UIMessage,
+} from 'ai';
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { ArrowUp, Check, Square } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-prompt';
-import { HitlPart } from '@/components/ai-elements/hitl-parts';
+import { HitlPart, isToolApprovalPart, ToolApprovalPart } from '@/components/ai-elements/hitl-parts';
 import { ToolActivityRow } from '@/components/ai-elements/tool-activity';
 import { TOOL_UI_RENDERED_TOOLS, ToolUiDisplayPart } from '@/components/ai-elements/tool-ui-part';
 import { ChatContainer, ChatContainerContent } from '@/components/odysseyui/chat-container';
@@ -41,6 +45,7 @@ import { Loader } from '@/components/ui/loader';
 import { Markdown } from '@/components/ui/markdown';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { createApprovalAutoContinueGuard } from '@/lib/ai/approval';
 import { areaCanArchive } from '@/lib/albatross/area-home';
 import { TEACH_SYSTEM_PROMPT } from '@/lib/albatross/teach-prompt';
 import {
@@ -118,13 +123,34 @@ function TeachChat() {
     [],
   );
   const shouldAutoContinueHitl = useMemo(() => createHitlAutoContinueGuard(), []);
+  const shouldAutoContinueApproval = useMemo(
+    () =>
+      createApprovalAutoContinueGuard((msgs) =>
+        lastAssistantMessageIsCompleteWithApprovalResponses({ messages: msgs as UIMessage[] }),
+      ),
+    [],
+  );
 
-  const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
+  const {
+    messages,
+    sendMessage,
+    status,
+    stop,
+    error,
+    setMessages,
+    addToolResult,
+    addToolApprovalResponse,
+    regenerate,
+  } = useChat({
     transport,
     // Auto-continue ONLY after the user answers a human-in-the-loop tool call
     // — same rationale as AIBar: the server runs ordinary tools to completion
     // in one response, so the built-in predicate would resubmit in a loop.
-    sendAutomaticallyWhen: ({ messages: msgs }) => shouldAutoContinueHitl(msgs as any),
+    // An answered approval card (a server-gated call) also continues the run,
+    // so the server runs or skips the call. Without the card the call waits
+    // for an answer that never comes.
+    sendAutomaticallyWhen: ({ messages: msgs }) =>
+      shouldAutoContinueHitl(msgs as any) || shouldAutoContinueApproval(msgs as any),
   });
 
   const answerHitl = useCallback(
@@ -132,6 +158,12 @@ function TeachChat() {
       void addToolResult({ tool: tool as any, toolCallId, output });
     },
     [addToolResult],
+  );
+  const respondApproval = useCallback(
+    (approvalId: string, approved: boolean) => {
+      void addToolApprovalResponse({ id: approvalId, approved });
+    },
+    [addToolApprovalResponse],
   );
 
   // --- Session: one persisted conversation, found again by its reserved title ---
@@ -280,6 +312,7 @@ function TeachChat() {
                       key={teachPartKey(message.id, i)}
                       part={part}
                       onAnswer={answerHitl}
+                      onApproval={respondApproval}
                       streaming={streaming && message.id === messages.at(-1)?.id}
                     />
                   );
@@ -374,10 +407,12 @@ function UserBubble({ message }: { message: any }) {
 function TeachPart({
   part,
   onAnswer,
+  onApproval,
   streaming = false,
 }: {
   part: any;
   onAnswer: (tool: string, toolCallId: string, output: Record<string, unknown>) => void;
+  onApproval: (approvalId: string, approved: boolean) => void;
   streaming?: boolean;
 }) {
   const type = part?.type;
@@ -420,6 +455,8 @@ function TeachPart({
       <HitlPart toolName={name} part={part} onResult={(output) => onAnswer(name, part.toolCallId, output)} />
     );
   }
+  if (isToolApprovalPart(part))
+    return <ToolApprovalPart toolName={name} part={part} onRespond={onApproval} />;
 
   // ONE grammar for every tool call: a quiet sentence with a running
   // indicator, a completed line, or a visible danger-toned failure (including

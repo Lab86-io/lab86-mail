@@ -45,10 +45,24 @@ export interface OfficeFile {
   version: { revision: number; url: string | null; size: number; sha256: string } | null;
 }
 /** Public Office metadata excludes provider capabilities and internal locks. */
+/**
+ * The Office metadata the browser reads. The Google link keeps only ids and
+ * the synced revision: the connection id is also in the Files link of the
+ * original, and the editor uses it to open an original Google Doc. The
+ * working-copy session and the lock stay on the server.
+ */
 export function publicOfficeFile({ google, wopiLock: _lock, ...file }: OfficeFile) {
   return {
     ...file,
-    ...(google ? { google: { fileId: google.fileId, syncedRevision: google.syncedRevision } } : {}),
+    ...(google
+      ? {
+          google: {
+            connectionId: google.connectionId,
+            fileId: google.fileId,
+            syncedRevision: google.syncedRevision,
+          },
+        }
+      : {}),
   };
 }
 export function requireOffice(existingSession = false) {

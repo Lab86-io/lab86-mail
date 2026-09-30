@@ -7,6 +7,7 @@ import {
   renewGoogleWorkingCopy,
   saveGoogleWorkingCopy,
 } from './google-working-copy';
+import { GOOGLE_DOC_MIME, GOOGLE_DOC_OFFICE_SAVE_REFUSED } from './google-write-policy';
 import { OfficeError, readOfficeResponse, validateOfficeArchive } from './office-security';
 import { createOfficeFile, getOfficeFile, type OfficeFile, storeOfficeBytes } from './office-service';
 
@@ -33,6 +34,7 @@ function version(session: string) {
     userId: string;
     connectionId: string;
     fileId: string;
+    mimeType?: string;
     etag: string;
     version: string;
   };
@@ -170,6 +172,10 @@ export async function saveGoogleOfficeFile(userId: string, documentId: string, s
   let file = await deps.getOfficeFile(userId, documentId);
   if (file?.google?.pendingSave) file = await recoverPendingSave(userId, file);
   if (!file?.google || !file.version?.url) throw new OfficeError('Google working copy not found.', 404);
+  // An Office copy of a Google Doc (made before Docs moved to the Albatross
+  // editor) never replaces the Doc: that upload needs the full `drive` scope.
+  if (version(file.google.session).mimeType === GOOGLE_DOC_MIME)
+    throw new OfficeError(GOOGLE_DOC_OFFICE_SAVE_REFUSED, 409);
   if (file.lastWopiSave?.id !== saveId)
     throw new OfficeError('The editor is still saving. Wait for the upload to finish, then try again.', 409);
   if (file.google.syncedRevision === file.currentRevision)

@@ -150,3 +150,53 @@ export async function kickAdvance(
     }
   }
 }
+
+export const HOLD_UNDO_ERROR = 'Could not undo the hold. Try again.';
+
+/**
+ * The line the bar shows after a Hold, so a Hold never clears the bar with
+ * no word: "Held for later: <title>".
+ */
+export function heldNotice(cards: HoldCard[], text: string): string {
+  if (cards.length > 1)
+    return `Held for later as ${cards.length} items: ${cards.map((card) => card.title).join(', ')}`;
+  const title = cards[0]?.title?.trim() || text.trim();
+  return `Held for later: ${title}`;
+}
+
+/**
+ * The bar text when an undone Hold comes back. An empty bar gets the held
+ * text. A bar with a newer draft keeps that draft and gets the held text
+ * under it, so the bar never loses either text.
+ */
+export function restoreHeldText(current: string, held: string): string {
+  const draft = current.trim();
+  const text = held.trim();
+  if (!draft) return held;
+  if (!text || draft.includes(text)) return current;
+  return `${current.trimEnd()}\n\n${text}`;
+}
+
+/**
+ * Undo a Hold from the bar: archive each Work it made. Rejects with
+ * `HOLD_UNDO_ERROR` when one archive fails, so the bar keeps the notice.
+ */
+export async function releaseHold(cards: HoldCard[], options: HoldOptions = {}): Promise<void> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const results = await Promise.all(
+    cards.map(async (card) => {
+      try {
+        const response = await fetchImpl(`/api/albatross/work/${encodeURIComponent(card.id)}/state`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ state: 'archived' }),
+        });
+        const body = await response.json().catch(() => null);
+        return response.ok && body?.ok === true;
+      } catch {
+        return false;
+      }
+    }),
+  );
+  if (results.some((ok) => !ok)) throw new Error(HOLD_UNDO_ERROR);
+}

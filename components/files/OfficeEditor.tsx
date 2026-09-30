@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useClientStore } from '@/lib/client-state';
 import { type EditorUiMode, uiModeToggleLabel } from '@/lib/documents/collabora-chrome';
+import { googleFileDeepLinkUrl } from '@/lib/documents/deep-link';
+import { GOOGLE_DOC_MIME } from '@/lib/documents/google-write-policy';
 import type { OfficeFile } from '@/lib/documents/office-service';
 import { CollaboraFrame, type CollaboraHandle, type CollaboraSession } from './CollaboraFrame';
 import { DocumentSaveStatus } from './DocumentSaveStatus';
@@ -17,7 +19,7 @@ interface OfficeMetadata {
   extension: 'docx' | 'xlsx' | 'pptx';
   currentRevision: number;
   versions: Array<{ revision: number; recovery: boolean; createdAt: number }>;
-  google?: { fileId: string; syncedRevision: number };
+  google?: { connectionId?: string; fileId: string; syncedRevision: number };
   aiEdit?: OfficeFile['aiEdit'];
 }
 interface OfficeInstance {
@@ -153,6 +155,30 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
     };
   }, [documentId, file.data?.extension, file.data?.title, file.data?.currentRevision, changed, saving]);
 
+  // An Office copy of a Google Doc (made before Docs moved to the Albatross
+  // editor) saves only here. Its Google save would need the full `drive`
+  // scope, so the original Doc opens in the Albatross editor instead.
+  const googleDocCopy = Boolean(file.data?.google) && file.data?.extension === 'docx';
+  const googleSync = Boolean(file.data?.google) && !googleDocCopy;
+  const openOriginalDoc = () => {
+    const google = file.data?.google;
+    if (!google?.connectionId) return;
+    if (
+      (changed || saving || aiBusy) &&
+      !window.confirm('The editor may still be saving this copy. Open the original Google Doc?')
+    )
+      return;
+    window.history.pushState(
+      window.history.state,
+      '',
+      googleFileDeepLinkUrl(
+        { connectionId: google.connectionId, fileId: google.fileId, mimeType: GOOGLE_DOC_MIME },
+        window.location.href,
+      ),
+    );
+    window.dispatchEvent(new Event('lab86-mail:files-navigate'));
+  };
+
   const close = () => {
     if (
       (changed || saving || aiBusy) &&
@@ -234,7 +260,7 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
     setError(null);
     try {
       const saveId = await collaboraRef.current.save();
-      if (file.data?.google) {
+      if (googleSync) {
         const response = await fetch(`/api/office/${documentId}/google`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -290,14 +316,28 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
               dirty={changed}
               revision={file.data?.currentRevision || 1}
               googleBehind={Boolean(
-                file.data?.google && file.data.google.syncedRevision < file.data.currentRevision,
+                googleSync &&
+                  file.data?.google &&
+                  file.data.google.syncedRevision < file.data.currentRevision,
               )}
             />
           </div>
           {collabora ? (
             <Button size="sm" disabled={!ready || saving || aiBusy} onClick={() => void save()}>
-              {saving ? 'Saving…' : file.data?.google ? 'Save to Google' : 'Save'}
+              {saving ? 'Saving…' : googleSync ? 'Save to Google' : 'Save'}
             </Button>
+          ) : null}
+          {googleDocCopy && file.data?.google?.connectionId ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="sm" onClick={openOriginalDoc}>
+                  Open original
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                Open the Google Doc in the Albatross editor. That editor saves your edits to Google.
+              </TooltipContent>
+            </Tooltip>
           ) : null}
           <Tooltip>
             <TooltipTrigger asChild>

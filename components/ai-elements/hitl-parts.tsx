@@ -85,12 +85,8 @@ export function ApprovalPart({ part, onResult }: { part: any; onResult: HitlResu
 // another person waits here until the user approves or denies it.
 // ---------------------------------------------------------------------------
 
-const TOOL_APPROVAL_STATES = new Set(['approval-requested', 'approval-responded', 'output-denied']);
-
 /** True while a tool part is waiting on, or was stopped by, the approval gate. */
-export function isToolApprovalPart(part: any): boolean {
-  return TOOL_APPROVAL_STATES.has(part?.state) && typeof part?.approval?.id === 'string';
-}
+export { isToolApprovalPart } from '@/lib/ai/approval';
 
 export function ToolApprovalPart({
   toolName,
@@ -106,7 +102,7 @@ export function ToolApprovalPart({
   const decided = typeof part.approval?.approved === 'boolean';
   const choice = decided ? (part.approval.approved ? 'approved' : 'denied') : undefined;
   return (
-    <div className="max-w-[420px]">
+    <div className="max-w-[420px]" data-tool-approval={toolName}>
       <ApprovalCard
         id={part.toolCallId || approvalId}
         title={summary.title}

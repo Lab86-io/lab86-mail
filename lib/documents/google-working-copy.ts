@@ -3,6 +3,11 @@ import { getCloudFileAccess } from '@/lib/files/connections';
 import { decryptSecret, encryptSecret } from '@/lib/security/crypto';
 import { googleErrorReasons, isGoogleAppAccessDenied } from './google-access';
 import {
+  GOOGLE_DOC_MIME,
+  GOOGLE_DOC_OFFICE_OPEN_REFUSED,
+  GOOGLE_DOC_OFFICE_SAVE_REFUSED,
+} from './google-write-policy';
+import {
   OFFICE_MIME,
   OfficeError,
   type OfficeExtension,
@@ -122,6 +127,9 @@ export async function downloadGoogleWorkingCopy(input: {
   const token = await access(input.userId, input.connectionId);
   for (let attempt = 0; attempt < 3; attempt++) {
     const before = await metadata(token, input.fileId);
+    // A Google Doc gets no Office working copy: the Albatross editor saves it
+    // with the `documents` scope (lib/documents/google-write-policy.ts).
+    if (before.mimeType === GOOGLE_DOC_MIME) throw new OfficeError(GOOGLE_DOC_OFFICE_OPEN_REFUSED, 409);
     const extension = nativeTypes[before.mimeType];
     const response = await request(
       token,
@@ -201,6 +209,9 @@ export async function saveGoogleWorkingCopy(input: {
   }
   if (session.userId !== input.userId)
     throw new OfficeError('This working copy belongs to another user.', 403);
+  // The Drive upload below replaces a Doc that Albatross did not make only
+  // with the full `drive` scope. A Doc saves from the Albatross editor.
+  if (session.mimeType === GOOGLE_DOC_MIME) throw new OfficeError(GOOGLE_DOC_OFFICE_SAVE_REFUSED, 409);
   if (session.expiresAt < Date.now())
     throw new OfficeError('This working copy has expired. Download the latest original.', 409);
   if (nativeTypes[session.mimeType] !== input.extension)

@@ -22,12 +22,16 @@ import { RouteChip, routeChipLabel } from '../components/shell/RouteChip';
 import { type RoutePrediction, useRoutePrediction } from '../components/shell/useRoutePrediction';
 import {
   HOLD_ERROR,
+  HOLD_UNDO_ERROR,
   type HoldCard,
   type HoldInput,
+  heldNotice,
   holdCardsFromResponse,
   holdText,
   kickAdvance,
+  releaseHold,
   resolveGeo,
+  restoreHeldText,
 } from '../lib/albatross/capture-client';
 import type { BarRoute, RouteVerdict } from '../lib/albatross/route-classifier';
 import { flipRoute, instantRoute, predictRoute, ROUTE_CONFIRM_DELAY_MS } from '../lib/albatross/route-client';
@@ -827,6 +831,10 @@ interface Harness {
 async function mountComposer(
   onHold: (text: string) => Promise<HoldCard[]> = async () => cards(1),
   predict: PredictFn = async () => verdict('ask'),
+  extra: {
+    onUndoHold?: (cards: HoldCard[]) => Promise<void>;
+    onAsk?: (text: string) => Promise<boolean> | boolean;
+  } = {},
 ): Promise<Harness> {
   let value = '';
   let door: DoorRequest | null = null;
@@ -852,6 +860,8 @@ async function mountComposer(
         return onHold(text);
       }}
       onHeld={(rows) => landed.push(rows.length)}
+      onUndoHold={extra.onUndoHold}
+      onAsk={extra.onAsk}
       door={door}
       predict={predict}
       now={() => NOW}
@@ -1020,5 +1030,234 @@ describe('the composer', () => {
     await bar.set('book the dentist');
     await bar.press('Escape');
     expect(bar.value()).toBe('');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The Hold notice (2026-09-30: a Hold must never clear the bar with   */
+/* no word)                                                            */
+/* ------------------------------------------------------------------ */
+
+describe('the Hold notice', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  const notice = (bar: Harness) =>
+    bar.renderer.root.findAll((node) => node.props['data-held-notice'] === true);
+  const action = (bar: Harness, label: string) =>
+    bar.renderer.root.find((node) => node.type === 'button' && node.children.join('') === label);
+
+  async function holdAndLand(bar: Harness, text: string) {
+    await bar.set(text);
+    await bar.press('Tab');
+    if (bar.chip().props['data-route'] !== 'hold') await bar.press('Tab');
+    await bar.press('Enter');
+    await act(async () => {
+      jest.advanceTimersByTime(HOLD_COLLAPSE_MS);
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(HOLD_CARD_MS + HOLD_LEAVE_MS);
+    });
+  }
+
+  test('after a Hold lands, a line says what was held, with Undo and Ask now', async () => {
+    const bar = await mountComposer(undefined, undefined, { onAsk: () => true, onUndoHold: async () => {} });
+    await holdAndLand(bar, 'book the dentist before the trip');
+    expect(bar.landed).toEqual([1]);
+    expect(notice(bar)).toHaveLength(1);
+    expect(notice(bar)[0].props.role).toBe('status');
+    expect(JSON.stringify(bar.renderer.toJSON())).toContain('Held for later: Book the dentist');
+    expect(action(bar, 'Undo')).toBeDefined();
+    expect(action(bar, 'Ask now')).toBeDefined();
+    // New text ends the notice.
+    await bar.set('what did Sarah say?');
+    expect(notice(bar)).toHaveLength(0);
+  });
+
+  test('Undo archives the held Work and puts the text back on Ask', async () => {
+    const undone: string[][] = [];
+    const bar = await mountComposer(undefined, undefined, {
+      onUndoHold: async (rows) => {
+        undone.push(rows.map((row) => row.id));
+      },
+    });
+    await holdAndLand(bar, 'book the dentist before the trip');
+    expect(bar.renderer.root.findAll((node) => node.children?.join?.('') === 'Ask now')).toHaveLength(0);
+    await act(async () => {
+      action(bar, 'Undo').props.onClick();
+    });
+    await flush();
+    expect(undone).toEqual([['w1']]);
+    expect(bar.value()).toBe('book the dentist before the trip');
+    expect(bar.chip().props['data-route']).toBe('ask');
+    expect(bar.chip().props['data-locked']).toBe(true);
+    expect(notice(bar)).toHaveLength(0);
+    await bar.press('Enter');
+    expect(bar.sent).toEqual(['book the dentist before the trip']);
+  });
+
+  test('Ask now archives the held Work and sends the text to chat', async () => {
+    const asked: string[] = [];
+    const undone: string[] = [];
+    const bar = await mountComposer(undefined, undefined, {
+      onUndoHold: async (rows) => {
+        undone.push(...rows.map((row) => row.id));
+      },
+      onAsk: (text) => {
+        asked.push(text);
+        return true;
+      },
+    });
+    await holdAndLand(bar, 'Add the label Offsite to the October 9 thread');
+    await act(async () => {
+      action(bar, 'Ask now').props.onClick();
+    });
+    await flush();
+    expect(undone).toEqual(['w1']);
+    expect(asked).toEqual(['Add the label Offsite to the October 9 thread']);
+    expect(notice(bar)).toHaveLength(0);
+  });
+
+  test('a failed Undo keeps the notice and says so', async () => {
+    const bar = await mountComposer(undefined, undefined, {
+      onUndoHold: async () => {
+        throw new Error('down');
+      },
+    });
+    await holdAndLand(bar, 'book the dentist before the trip');
+    await act(async () => {
+      action(bar, 'Undo').props.onClick();
+    });
+    await flush();
+    expect(notice(bar)).toHaveLength(1);
+    expect(JSON.stringify(bar.renderer.toJSON())).toContain(HOLD_UNDO_ERROR);
+    expect(bar.value()).toBe('');
+  });
+
+  test('text typed while Undo runs stays; the held text comes back under it', async () => {
+    let finishUndo!: () => void;
+    const bar = await mountComposer(undefined, undefined, {
+      onUndoHold: () =>
+        new Promise<void>((resolve) => {
+          finishUndo = resolve;
+        }),
+    });
+    await holdAndLand(bar, 'book the dentist before the trip');
+    await act(async () => {
+      action(bar, 'Undo').props.onClick();
+    });
+    await bar.set('what did Sarah say?');
+    await act(async () => {
+      finishUndo();
+    });
+    await flush();
+    expect(bar.value()).toBe('what did Sarah say?\n\nbook the dentist before the trip');
+  });
+
+  test('Ask now that chat cannot take puts the text back, under a newer draft', async () => {
+    let answer!: (accepted: boolean) => void;
+    const bar = await mountComposer(undefined, undefined, {
+      onUndoHold: async () => {},
+      onAsk: () =>
+        new Promise<boolean>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    await holdAndLand(bar, 'book the dentist before the trip');
+    await act(async () => {
+      action(bar, 'Ask now').props.onClick();
+    });
+    await flush();
+    await bar.set('a newer draft');
+    await act(async () => {
+      answer(false);
+    });
+    await flush();
+    expect(bar.value()).toBe('a newer draft\n\nbook the dentist before the trip');
+    expect(bar.chip().props['data-route']).toBe('ask');
+
+    // A throw is a refusal too, and an empty bar gets the text alone.
+    const thrower = await mountComposer(undefined, undefined, {
+      onUndoHold: async () => {},
+      onAsk: () => {
+        throw new Error('busy');
+      },
+    });
+    await holdAndLand(thrower, 'book the dentist before the trip');
+    await act(async () => {
+      action(thrower, 'Ask now').props.onClick();
+    });
+    await flush();
+    expect(thrower.value()).toBe('book the dentist before the trip');
+  });
+
+  test('a newer Hold that lands while an Undo runs keeps its notice', async () => {
+    let finishUndo!: () => void;
+    const bar = await mountComposer(
+      async (text) => [{ id: `w-${text.length}`, title: text, shape: 'quick', horizon: null }],
+      undefined,
+      {
+        onUndoHold: () =>
+          new Promise<void>((resolve) => {
+            finishUndo = resolve;
+          }),
+      },
+    );
+    await holdAndLand(bar, 'book the dentist before the trip');
+    await act(async () => {
+      action(bar, 'Undo').props.onClick();
+    });
+    await holdAndLand(bar, 'renew the passport by Friday');
+    expect(JSON.stringify(bar.renderer.toJSON())).toContain('Held for later: renew the passport by Friday');
+    await act(async () => {
+      finishUndo();
+    });
+    await flush();
+    expect(notice(bar)).toHaveLength(1);
+    expect(JSON.stringify(bar.renderer.toJSON())).toContain('Held for later: renew the passport by Friday');
+    expect(bar.value()).toBe('book the dentist before the trip');
+  });
+
+  test('restoreHeldText never drops a draft or the held text', () => {
+    expect(restoreHeldText('', 'held')).toBe('held');
+    expect(restoreHeldText('  ', 'held')).toBe('held');
+    expect(restoreHeldText('draft ', 'held')).toBe('draft\n\nheld');
+    expect(restoreHeldText('draft and held', 'held')).toBe('draft and held');
+    expect(restoreHeldText('draft', '  ')).toBe('draft');
+  });
+
+  test('a Hold that made no Work shows no notice', async () => {
+    const bar = await mountComposer(async () => []);
+    await holdAndLand(bar, 'book the dentist before the trip');
+    expect(notice(bar)).toHaveLength(0);
+  });
+
+  test('the notice text names one title, or the count and titles of a split', () => {
+    expect(heldNotice(cards(1), 'book it')).toBe('Held for later: Book the dentist');
+    expect(heldNotice([], '  book it ')).toBe('Held for later: book it');
+    expect(heldNotice(cards(2), 'x')).toBe('Held for later as 2 items: Book the dentist, Renew the passport');
+  });
+
+  test('releaseHold archives each Work and fails as one error', async () => {
+    const calls: Array<{ url: string; body: string }> = [];
+    const ok = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: String(init?.body) });
+      return jsonResponse({ ok: true, state: 'archived' });
+    }) as unknown as typeof fetch;
+    await releaseHold(cards(2), { fetchImpl: ok });
+    expect(calls.map((call) => call.url)).toEqual([
+      '/api/albatross/work/w1/state',
+      '/api/albatross/work/w2/state',
+    ]);
+    expect(JSON.parse(calls[0].body)).toEqual({ state: 'archived' });
+
+    const denied = (async () => jsonResponse({ ok: false }, 500)) as unknown as typeof fetch;
+    await expect(releaseHold(cards(1), { fetchImpl: denied })).rejects.toThrow(HOLD_UNDO_ERROR);
+    const thrown = (async () => {
+      throw new Error('offline');
+    }) as unknown as typeof fetch;
+    await expect(releaseHold(cards(1), { fetchImpl: thrown })).rejects.toThrow(HOLD_UNDO_ERROR);
+    const badBody = (async () => new Response('not json', { status: 200 })) as unknown as typeof fetch;
+    await expect(releaseHold(cards(1), { fetchImpl: badBody })).rejects.toThrow(HOLD_UNDO_ERROR);
   });
 });

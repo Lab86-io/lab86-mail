@@ -151,14 +151,16 @@ describe('Doc write-back rename', () => {
   });
 });
 
+// A Google Doc no longer gets an Office working copy (it saves from the
+// Albatross editor), so the working-copy save runs for Sheets and Slides.
 describe('Office working-copy save', () => {
   let bytes: Uint8Array;
   beforeAll(async () => {
     const exported = await exportDocument({
       documentId: 'fixture',
       title: 'Report',
-      kind: 'doc',
-      model: createDefaultDocumentModel('doc'),
+      kind: 'sheet',
+      model: createDefaultDocumentModel('sheet'),
       currentRevision: 1,
       sourceRefs: [],
       createdAt: 1,
@@ -170,7 +172,7 @@ describe('Office working-copy save', () => {
     userId: 'owner',
     connectionId: 'drive',
     fileId: 'original',
-    mimeType: 'application/vnd.google-apps.document',
+    mimeType: 'application/vnd.google-apps.spreadsheet',
     etag: 'etag1',
     version: '1',
     expiresAt: Date.now() + 60_000,
@@ -186,7 +188,7 @@ describe('Office working-copy save', () => {
         return Response.json({
           id: 'original',
           title: 'Report',
-          mimeType: 'application/vnd.google-apps.document',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
           etag: 'etag1',
           version: '1',
           editable: true,
@@ -195,7 +197,7 @@ describe('Office working-copy save', () => {
     });
   }
 
-  const saveCopy = () => saveGoogleWorkingCopy({ userId: 'owner', session, bytes, extension: 'docx' });
+  const saveCopy = () => saveGoogleWorkingCopy({ userId: 'owner', session, bytes, extension: 'xlsx' });
 
   test('a file that Albatross did not make gets a clear error, not a raw 403', async () => {
     installWorkingCopy(() => googleError(403, 'appNotAuthorizedToFile'));
