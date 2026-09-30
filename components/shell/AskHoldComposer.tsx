@@ -8,13 +8,21 @@ import { HoldLanding } from '@/components/shell/HoldLanding';
 import { RouteChip, RouteTabHint } from '@/components/shell/RouteChip';
 import { type RoutePredictionOptions, useRoutePrediction } from '@/components/shell/useRoutePrediction';
 import { Button } from '@/components/ui/button';
-import { HOLD_ERROR, type HoldCard } from '@/lib/albatross/capture-client';
+import {
+  HOLD_ERROR,
+  HOLD_UNDO_ERROR,
+  type HoldCard,
+  heldNotice,
+  releaseHold,
+} from '@/lib/albatross/capture-client';
 import type { BarRoute } from '@/lib/albatross/route-rules';
 import { cn } from '@/lib/utils';
 
 // One bar for Ask and Hold. The chip at the right edge says where Enter
 // goes. Tab flips it. Cmd+Enter always sends to chat. Enter on Hold turns
-// the bar into the parsed Work card, which then moves to the Work rail.
+// the bar into the parsed Work card, which then moves to the Work rail. A
+// line under the bar then says what was held, with Undo and Ask now, so a
+// Hold never clears the bar with no word.
 
 export const BAR_PLACEHOLDER = 'Find, draft, schedule, label, anything…';
 
@@ -60,6 +68,10 @@ export interface AskHoldComposerProps {
   onHold: (text: string) => Promise<HoldCard[]>;
   /** After the landing ends. */
   onHeld?: (cards: HoldCard[]) => void;
+  /** Undo a Hold: archive the Work it made. Defaults to `releaseHold`. Rejects on failure. */
+  onUndoHold?: (cards: HoldCard[]) => Promise<void>;
+  /** Send held text to chat after Undo. Without it, the line offers Undo only. */
+  onAsk?: (text: string) => void;
   door?: DoorRequest | null;
   predict?: RoutePredictionOptions['predict'];
   railTarget?: () => Element | null;
@@ -78,6 +90,11 @@ interface Landing {
   cards: HoldCard[] | null;
 }
 
+interface Held {
+  text: string;
+  cards: HoldCard[];
+}
+
 export function AskHoldComposer({
   value,
   onValueChange,
@@ -88,6 +105,8 @@ export function AskHoldComposer({
   onStop,
   onHold,
   onHeld,
+  onUndoHold = releaseHold,
+  onAsk,
   door = null,
   predict,
   railTarget,
@@ -105,6 +124,14 @@ export function AskHoldComposer({
   const voice = useVoiceCapture(() => valueRef.current, onValueChange);
   const [landing, setLanding] = useState<Landing | null>(null);
   const [holdError, setHoldError] = useState<string | null>(null);
+  const [held, setHeld] = useState<Held | null>(null);
+  const [undoing, setUndoing] = useState(false);
+
+  // New text in the field ends the notice of the last Hold.
+  const hasText = value.trim() !== '';
+  useEffect(() => {
+    if (hasText) setHeld(null);
+  }, [hasText]);
 
   const focusField = useCallback(() => {
     if (typeof requestAnimationFrame !== 'function') return;
@@ -126,6 +153,7 @@ export function AskHoldComposer({
     if (!text || landing) return;
     if (voice.listening) voice.stop();
     setHoldError(null);
+    setHeld(null);
     setLanding({ text, cards: null });
     onValueChange('');
     onHold(text)
@@ -139,6 +167,30 @@ export function AskHoldComposer({
         focusField();
       });
   }, [landing, voice, onValueChange, onHold, prediction.preset, focusField]);
+
+  // Undo archives the held Work. Then the text goes back to the bar on Ask,
+  // or straight to chat with "Ask now".
+  const undoHold = useCallback(
+    (next: 'restore' | 'ask') => {
+      if (!held || undoing) return;
+      setUndoing(true);
+      setHoldError(null);
+      onUndoHold(held.cards)
+        .then(() => {
+          setHeld(null);
+          if (next === 'ask' && onAsk) {
+            onAsk(held.text);
+            return;
+          }
+          onValueChange(held.text);
+          prediction.preset('ask');
+          focusField();
+        })
+        .catch(() => setHoldError(HOLD_UNDO_ERROR))
+        .finally(() => setUndoing(false));
+    },
+    [held, undoing, onUndoHold, onAsk, onValueChange, prediction.preset, focusField],
+  );
 
   const submit = useCallback(() => {
     if (streaming) {
@@ -204,6 +256,7 @@ export function AskHoldComposer({
                   onDone={() => {
                     const cards = landing.cards ?? [];
                     setLanding(null);
+                    if (cards.length) setHeld({ text: landing.text, cards });
                     prediction.reset();
                     onHeld?.(cards);
                     focusField();
@@ -247,6 +300,35 @@ export function AskHoldComposer({
           </PromptInputActions>
         )}
       </PromptInput>
+      {held ? (
+        <div
+          role="status"
+          data-held-notice
+          className="flex min-w-0 items-baseline gap-2 px-2 pt-1.5 text-[11.5px] text-[var(--color-text-muted)]"
+        >
+          <span className="min-w-0 flex-1 truncate" title={heldNotice(held.cards, held.text)}>
+            {heldNotice(held.cards, held.text)}
+          </span>
+          <button
+            type="button"
+            disabled={undoing}
+            onClick={() => undoHold('restore')}
+            className="shrink-0 font-medium text-[var(--color-accent)] hover:underline disabled:opacity-50"
+          >
+            Undo
+          </button>
+          {onAsk ? (
+            <button
+              type="button"
+              disabled={undoing}
+              onClick={() => undoHold('ask')}
+              className="shrink-0 font-medium text-[var(--color-accent)] hover:underline disabled:opacity-50"
+            >
+              Ask now
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {holdError ? (
         <p role="alert" className="px-2 pt-1.5 text-[11.5px] text-[var(--color-danger)]">
           {holdError}

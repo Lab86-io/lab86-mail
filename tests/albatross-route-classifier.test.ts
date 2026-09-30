@@ -215,3 +215,75 @@ describe('WRK-6 contractions, curly apostrophes, and "may"', () => {
     expect(routeHeuristic(text)?.route).toBe('hold');
   });
 });
+
+// 2026-09-30 demo bug: "Add the label Offsite to the message "Board meeting
+// materials for October 9" and mark it as unread." moved the chip to Hold,
+// because "October 9" read as a horizon. An imperative that acts on mail,
+// events, contacts, files, or tasks is Ask, also with a date in it.
+describe('app actions with a date stay Ask', () => {
+  test('the demo request is Ask, with no model call', async () => {
+    const text =
+      'Add the label Offsite to the message "Board meeting materials for October 9" and mark it as unread.';
+    expect(routeHeuristic(text)).toEqual({ route: 'ask', confidence: 0.85, reason: 'app action' });
+    const { calls, deps } = modelDeps(async () => ({ object: { route: 'hold', confidence: 1 } }));
+    expect(await classifyRoute({ text }, deps)).toMatchObject({ route: 'ask', reason: 'app action' });
+    expect(calls).toHaveLength(0);
+  });
+
+  test.each([
+    'Archive the message "Board meeting materials for October 9"',
+    'Label the “Q3 offsite, October 9” thread as Offsite',
+    'Accept the "Board prep sync" invitation on Friday.',
+    'Cancel "Board prep sync" tomorrow',
+    'Create an event on October 9 at 3pm called Offsite',
+    'Move the October 9 board meeting to October 10',
+    'Mark the email from Dana as unread',
+    'mark it as read by tomorrow',
+    'Forward the October 9 minutes to Priya',
+    'Delete the calendar event next week',
+    'Cancel the meeting with Sam tomorrow',
+    'Decline the invite for next week',
+    'Please trash the newsletters from last month',
+    'Add a task to the Offsite board for October 9',
+    'RSVP yes to the October 9 dinner',
+    'Reply to Dana by Friday',
+    'Rename the file "Budget October 9" to Budget',
+    'Send the October 9 deck to Dana',
+    'Snooze the thread from Dana until Monday',
+  ])('"%s" is Ask', (text) => {
+    expect(routeHeuristic(text)?.route).toBe('ask');
+  });
+
+  test('a quoted subject gives no date signal, and a quoted question mark does not win', () => {
+    expect(routeHeuristic('"Board meeting materials for October 9"')).toMatchObject({ route: 'hold' });
+    expect(routeHeuristic('Remind me about "Can we meet?" next week')).toMatchObject({
+      route: 'hold',
+      reason: 'explicit hold',
+    });
+    expect(routeHeuristic('Find “Board meeting materials for October 9”')).toMatchObject({ route: 'ask' });
+    expect(routeHeuristic('the “October 9” notes')).toBeNull();
+  });
+
+  test.each([
+    'remind me on October 9 to send the board materials',
+    'Remind me on October 9 to archive the board email',
+    'hold this until Friday',
+    'follow up next week about the contract',
+    'Follow up with Dana on October 9 about the offsite',
+    'Send flowers to mom on October 9',
+    'Delete my old Facebook account next week',
+    'cancel the gym membership',
+    'file the taxes by Friday',
+    'I need to archive the October 9 email',
+    'schedule the car service by Friday',
+  ])('the deferral "%s" stays Hold', (text) => {
+    expect(routeHeuristic(text)?.route).toBe('hold');
+  });
+
+  test('the model prompt says the same', async () => {
+    const { calls, deps } = modelDeps(async () => ({ object: { route: 'ask', confidence: 0.6 } }));
+    await classifyRoute({ text: 'the venue' }, deps);
+    expect(calls[0].system).toContain('also when it names a date or a time');
+    expect(calls[0].system).toContain('A date inside quoted text names a thing');
+  });
+});

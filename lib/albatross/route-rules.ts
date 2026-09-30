@@ -193,6 +193,125 @@ const HORIZON_PHRASES = [
   'tonight',
 ];
 
+// Verbs that name an action on the user's mail, calendar, contacts, files, or
+// tasks. The verb alone is enough: "archive", "forward", "rsvp".
+const APP_ACTION_VERBS = [
+  'archive',
+  'unarchive',
+  'trash',
+  'untrash',
+  'forward',
+  'reply',
+  'rsvp',
+  'unsubscribe',
+  'star',
+  'unstar',
+  'label',
+  'relabel',
+  'unlabel',
+];
+
+// Verbs that name an app action only with an app object: "cancel the
+// meeting" is an action, "cancel the gym membership" is an errand.
+const APP_OBJECT_VERBS = [
+  'add',
+  'apply',
+  'attach',
+  'accept',
+  'block',
+  'cancel',
+  'change',
+  'clear',
+  'close',
+  'complete',
+  'copy',
+  'create',
+  'decline',
+  'delete',
+  'download',
+  'edit',
+  'file',
+  'invite',
+  'mark',
+  'move',
+  'mute',
+  'pin',
+  'put',
+  'remove',
+  'rename',
+  'reschedule',
+  'restore',
+  'save',
+  'schedule',
+  'send',
+  'set',
+  'share',
+  'snooze',
+  'tag',
+  'unpin',
+  'unsnooze',
+  'update',
+  'upload',
+];
+
+// The things those verbs act on in the app.
+const APP_OBJECTS = [
+  'message',
+  'messages',
+  'email',
+  'emails',
+  'e-mail',
+  'e-mails',
+  'mail',
+  'thread',
+  'threads',
+  'conversation',
+  'conversations',
+  'inbox',
+  'label',
+  'labels',
+  'draft',
+  'drafts',
+  'attachment',
+  'attachments',
+  'sender',
+  'senders',
+  'newsletter',
+  'newsletters',
+  'subject',
+  'unread',
+  'event',
+  'events',
+  'meeting',
+  'meetings',
+  'invitation',
+  'invitations',
+  'invite',
+  'invites',
+  'calendar',
+  'contact',
+  'contacts',
+  'file',
+  'files',
+  'folder',
+  'folders',
+  'document',
+  'documents',
+  'doc',
+  'docs',
+  'spreadsheet',
+  'spreadsheets',
+  'slides',
+  'deck',
+  'presentation',
+  'pdf',
+  'task',
+  'tasks',
+  'board',
+  'boards',
+  'column',
+];
+
 const MONTHS = [
   'january',
   'february',
@@ -250,6 +369,39 @@ function firstWord(text: string) {
   return text.split(' ')[0]?.replace(/[^a-z']/g, '') || '';
 }
 
+// Text in double quotes names a thing (a subject, a title, a file name). A
+// date or a hold word inside it says nothing about when to act. Straight,
+// curly, low-high, and angle quotes count; an apostrophe does not.
+const QUOTED_SOURCE = String.raw`"[^"]*"|\u201c[^\u201d]*\u201d|\u201e[^\u201c\u201d]*[\u201c\u201d]|\u00ab[^\u00bb]*\u00bb`;
+
+function hasQuoted(text: string) {
+  return new RegExp(QUOTED_SOURCE).test(text);
+}
+
+/** The normalized text without its quoted parts. The full text when nothing stays. */
+function withoutQuotes(normalized: string) {
+  const stripped = normalized.replace(new RegExp(QUOTED_SOURCE, 'g'), ' ').replace(/\s+/g, ' ').trim();
+  return stripped || normalized;
+}
+
+/**
+ * An imperative that acts on mail, events, contacts, files, or tasks now:
+ * "label the message …", "mark it as unread", "accept the invitation …".
+ * A date in such a request is an argument of the action, not a deferral.
+ */
+function isAppAction(normalized: string, unquoted: string) {
+  const text = normalized.replace(/^(please|pls|now|also|and) /, '');
+  const verb = firstWord(text);
+  if (APP_ACTION_VERBS.includes(verb)) return true;
+  if (!APP_OBJECT_VERBS.includes(verb)) return false;
+  // A quoted title names the thing the action works on.
+  if (hasQuoted(text)) return true;
+  // The object comes after the verb: "file the taxes" has no app object.
+  const rest = unquoted.replace(/^(please|pls|now|also|and) /, '').slice(verb.length);
+  if (/\bas (not )?(read|unread|important|spam|done|complete|completed)\b/.test(rest)) return true;
+  return includesAny(rest, APP_OBJECTS);
+}
+
 /** Two or more items separated by commas, numbers, or line bullets. */
 export function looksEnumerated(text: string) {
   const lines = text
@@ -277,23 +429,29 @@ function mentionsMonth(text: string) {
 /**
  * Deterministic pre-pass. Returns a verdict for the clear cases and `null`
  * when the text is unclear. A question mark always wins for "ask". Explicit
- * hold words always win for "hold". Mixed signals return `null`.
+ * hold words always win for "hold". An imperative that acts on mail, events,
+ * contacts, files, or tasks is "ask", also with a date in it. Mixed signals
+ * return `null`. Quoted text (a subject, a title) gives no signal.
  */
 export function routeHeuristic(text: string): RouteVerdict | null {
   const normalized = normalize(text);
   if (!normalized) return { route: 'ask', confidence: 0, reason: 'empty' };
-  if (normalized.includes('?')) return { route: 'ask', confidence: 0.95, reason: 'question mark' };
-  if (includesAny(normalized, HOLD_EXPLICIT))
+  const unquoted = withoutQuotes(normalized);
+  if (unquoted.includes('?')) return { route: 'ask', confidence: 0.95, reason: 'question mark' };
+  if (includesAny(unquoted, HOLD_EXPLICIT))
     return { route: 'hold', confidence: 0.95, reason: 'explicit hold' };
+  // "Add the label Offsite to the message "Board meeting materials for
+  // October 9"" acts now. The date names the message; it does not defer.
+  if (isAppAction(normalized, unquoted)) return { route: 'ask', confidence: 0.85, reason: 'app action' };
 
-  const opener = firstWord(normalized);
+  const opener = firstWord(unquoted);
   const interrogative =
-    INTERROGATIVES.includes(opener) || (opener === 'may' && /^may (i|we|you)\b/.test(normalized));
-  const askOpener = startsWithAny(normalized, ASK_OPENERS);
-  const askPhrase = includesAny(normalized, ASK_PHRASES);
-  const commitment = includesAny(normalized, HOLD_COMMITMENT);
-  const holdVerb = startsWithAny(normalized, HOLD_VERBS);
-  const horizon = includesAny(normalized, HORIZON_PHRASES) || mentionsMonth(normalized);
+    INTERROGATIVES.includes(opener) || (opener === 'may' && /^may (i|we|you)\b/.test(unquoted));
+  const askOpener = startsWithAny(unquoted, ASK_OPENERS);
+  const askPhrase = includesAny(unquoted, ASK_PHRASES);
+  const commitment = includesAny(unquoted, HOLD_COMMITMENT);
+  const holdVerb = startsWithAny(unquoted, HOLD_VERBS);
+  const horizon = includesAny(unquoted, HORIZON_PHRASES) || mentionsMonth(unquoted);
   const enumerated = looksEnumerated(text);
 
   const askSignals = Number(interrogative) + Number(askOpener) + Number(askPhrase);

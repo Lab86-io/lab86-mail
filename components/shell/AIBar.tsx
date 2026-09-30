@@ -1350,6 +1350,13 @@ function ChatComposer({
           if (accepted) setValue((current) => (current === sent ? '' : current));
         });
       }}
+      // "Ask now" on the Hold line: the text goes to chat. When chat cannot
+      // take it yet, the text comes back to the bar, never lost.
+      onAsk={(text) => {
+        void onSendText(text).then((accepted) => {
+          if (!accepted) setValue((current) => current || text);
+        });
+      }}
     />
   );
 }
