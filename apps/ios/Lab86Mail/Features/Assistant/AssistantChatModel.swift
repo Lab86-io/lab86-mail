@@ -204,6 +204,10 @@ final class AssistantChatModel {
     private(set) var receipts: [HoldCardModel] = []
     private(set) var heldMessageIDs: Set<String> = []
     private(set) var holdingMessageID: String?
+    private(set) var isUndoingHold = false
+    // Each Hold from the bar, by the id of every Work it made. A kept reply
+    // has no entry, so its receipt shows no Undo.
+    private var undoableHolds: [String: HeldBarText] = [:]
     private var routeTask: Task<Void, Never>?
 
     private let backend: BackendClient
@@ -1105,6 +1109,8 @@ final class AssistantChatModel {
                 holdError = "Could not hold that. Try again."
                 return
             }
+            let held = HeldBarText(workIDs: cards.map(\.id), text: text)
+            for card in cards { undoableHolds[card.id] = held }
             await runLanding(cards)
         } catch {
             holdError = "Could not hold that. Try again."
@@ -1132,6 +1138,41 @@ final class AssistantChatModel {
         } catch {
             holdError = "Could not hold that. Try again."
         }
+    }
+
+    /// True when the receipt came from the bar, so Undo can give its text back.
+    func canUndoHold(_ receipt: HoldCardModel) -> Bool {
+        undoableHolds[receipt.id] != nil
+    }
+
+    /// Undo a Hold from the bar: archive each Work it made and remove its
+    /// receipts. Returns the held text for the bar, or nil when the Undo
+    /// fails. A failed Undo keeps the receipts, so Undo can run again.
+    func undoHold(_ receipt: HoldCardModel) async -> String? {
+        guard let held = undoableHolds[receipt.id], !isUndoingHold else { return nil }
+        isUndoingHold = true
+        holdError = nil
+        defer { isUndoingHold = false }
+        for workID in held.workIDs {
+            let archived: Bool
+            do {
+                let result = try await backend.post(
+                    path: "/api/albatross/work/\(workID)/state",
+                    body: .object(["state": .string("archived")])
+                )
+                archived = result["ok"]?.boolValue == true
+            } catch {
+                archived = false
+            }
+            guard archived else {
+                holdError = HoldUndo.errorText
+                return nil
+            }
+        }
+        let undone = Set(held.workIDs)
+        receipts.removeAll { undone.contains($0.id) }
+        for workID in undone { undoableHolds[workID] = nil }
+        return held.text
     }
 
     private func runLanding(_ cards: [HoldCardModel]) async {

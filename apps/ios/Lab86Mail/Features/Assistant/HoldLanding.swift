@@ -14,6 +14,31 @@ struct HoldCardModel: Identifiable, Equatable, Sendable {
     }
 }
 
+/// One Hold from the bar: the Work it made and the text it kept. Undo
+/// archives all of that Work and gives the text back to the bar.
+struct HeldBarText: Equatable, Sendable {
+    let workIDs: [String]
+    let text: String
+}
+
+/// The Undo of a Hold. It mirrors `releaseHold` and `restoreHeldText` in
+/// `lib/albatross/capture-client.ts`.
+enum HoldUndo {
+    static let errorText = "Could not undo the hold. Try again."
+
+    /// The bar text when an undone Hold comes back. An empty bar gets the held
+    /// text. A bar with a newer draft keeps that draft and gets the held text
+    /// under it, so the bar never loses either text.
+    static func restoredDraft(current: String, held: String) -> String {
+        let draft = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = held.trimmingCharacters(in: .whitespacesAndNewlines)
+        if draft.isEmpty { return held }
+        if text.isEmpty || draft.contains(text) { return current }
+        guard let last = current.lastIndex(where: { !$0.isWhitespace }) else { return held }
+        return "\(current[...last])\n\n\(text)"
+    }
+}
+
 /// The three parts of the landing. The whole run takes under 600 ms.
 enum HoldPhase: Equatable, Sendable {
     /// The text collapses into the card.
@@ -76,26 +101,33 @@ struct HoldCard: View {
 }
 
 /// The line that stays in the transcript after a Hold. It is client state, not
-/// a chat message.
+/// a chat message. A Hold from the bar also shows Undo.
 struct HoldReceiptRow: View {
     let model: HoldCardModel
+    var isUndoing: Bool = false
     let onOpen: () -> Void
+    var onUndo: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("Held: \(model.title)")
+            Text("Held for later: \(model.title)")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             Spacer(minLength: 0)
+            if let onUndo {
+                Button("Undo", action: onUndo)
+                    .buttonStyle(.plain)
+                    .font(.footnote.weight(.medium))
+                    .disabled(isUndoing)
+                    .accessibilityHint("Archives the Work and puts the text back in the bar")
+            }
             Button("Open", action: onOpen)
                 .buttonStyle(.plain)
                 .font(.footnote.weight(.medium))
+                .accessibilityHint("Shows the Work")
         }
         .padding(.vertical, 6)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Held: \(model.title)")
-        .accessibilityHint("Double tap Open to see the Work")
     }
 }
 
