@@ -131,11 +131,14 @@ export function AskHoldComposer({
   const [held, setHeld] = useState<Held | null>(null);
   const [undoing, setUndoing] = useState(false);
 
-  // New text in the field ends the notice of the last Hold.
-  const hasText = value.trim() !== '';
+  // New typing ends the notice of the last Hold. Text that Undo puts back
+  // is not new typing, so a newer notice stays.
+  const restoredRef = useRef<string | null>(null);
   useEffect(() => {
-    if (hasText) setHeld(null);
-  }, [hasText]);
+    if (!value.trim() || value === restoredRef.current) return;
+    restoredRef.current = null;
+    setHeld(null);
+  }, [value]);
 
   const focusField = useCallback(() => {
     if (typeof requestAnimationFrame !== 'function') return;
@@ -179,20 +182,24 @@ export function AskHoldComposer({
   const undoHold = useCallback(
     (next: 'restore' | 'ask') => {
       if (!held || undoing) return;
-      const { text, cards } = held;
+      const undone = held;
+      const { text, cards } = undone;
       setUndoing(true);
       setHoldError(null);
       onUndoHold(cards)
         .then(
           async () => {
-            setHeld(null);
+            // A newer Hold can land while this Undo runs. Its notice stays.
+            setHeld((current) => (current === undone ? null : current));
             if (next === 'ask' && onAsk) {
               const accepted = await Promise.resolve()
                 .then(() => onAsk(text))
                 .catch(() => false);
               if (accepted !== false) return;
             }
-            onValueChange(restoreHeldText(valueRef.current, text));
+            const restored = restoreHeldText(valueRef.current, text);
+            restoredRef.current = restored;
+            onValueChange(restored);
             prediction.preset('ask');
             focusField();
           },

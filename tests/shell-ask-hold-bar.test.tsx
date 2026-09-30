@@ -1191,6 +1191,33 @@ describe('the Hold notice', () => {
     expect(thrower.value()).toBe('book the dentist before the trip');
   });
 
+  test('a newer Hold that lands while an Undo runs keeps its notice', async () => {
+    let finishUndo!: () => void;
+    const bar = await mountComposer(
+      async (text) => [{ id: `w-${text.length}`, title: text, shape: 'quick', horizon: null }],
+      undefined,
+      {
+        onUndoHold: () =>
+          new Promise<void>((resolve) => {
+            finishUndo = resolve;
+          }),
+      },
+    );
+    await holdAndLand(bar, 'book the dentist before the trip');
+    await act(async () => {
+      action(bar, 'Undo').props.onClick();
+    });
+    await holdAndLand(bar, 'renew the passport by Friday');
+    expect(JSON.stringify(bar.renderer.toJSON())).toContain('Held for later: renew the passport by Friday');
+    await act(async () => {
+      finishUndo();
+    });
+    await flush();
+    expect(notice(bar)).toHaveLength(1);
+    expect(JSON.stringify(bar.renderer.toJSON())).toContain('Held for later: renew the passport by Friday');
+    expect(bar.value()).toBe('book the dentist before the trip');
+  });
+
   test('restoreHeldText never drops a draft or the held text', () => {
     expect(restoreHeldText('', 'held')).toBe('held');
     expect(restoreHeldText('  ', 'held')).toBe('held');
