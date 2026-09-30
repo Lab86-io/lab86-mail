@@ -256,7 +256,9 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
   - Albatross keeps a text index of Drive files. The index finds files in
     search and gives sources to the Daily Brief.
 - **Code.**
-  - Browse and search: `lib/files/browse.ts:70-104`, folder lookup `:205`.
+  - Browse and search: `lib/files/browse.ts:70-114`, folder lookup `:240`.
+    A search has no sort order: Drive refuses `orderBy` with a `fullText`
+    query and gives the results in order of relevance.
     Route `/api/files/browse`, called from
     `components/files/FilesSurface.tsx:410`.
   - Index: the Drive change feed and the file download are in
@@ -295,14 +297,14 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
     <https://developers.google.com/workspace/slides/api/reference/rest/v1/presentations/create>).
   - It reads the Drive metadata of the new file (`lib/documents/google.ts:243-256`).
   - Route `POST /api/documents/[id]/google`, called from
-    `components/files/DocumentEditor.tsx:440`.
-  - The Office working-copy save replaces a Google file with a Drive v2 upload
-    (`lib/documents/google-working-copy.ts:228-239`). With `drive.file`, this
-    works only for a file that the app has access to: in Albatross, a file
-    that Albatross made. For another file, Google refuses the upload
-    (`appNotAuthorizedToFile`). Albatross then shows a clear message
-    (`GOOGLE_WORKING_COPY_NOT_APP_FILE`, `:49`), and the edited copy stays in
-    Albatross.
+    `components/files/DocumentEditor.tsx:443`.
+  - The Office working-copy save replaces a Google Sheet or Slides file with a
+    Drive v2 upload (`lib/documents/google-working-copy.ts:239-250`). With
+    `drive.file`, this works only for a file that the app has access to: in
+    Albatross, a file that Albatross made. For another file, Google refuses the
+    upload (`appNotAuthorizedToFile`). Albatross then shows a clear message
+    (`GOOGLE_WORKING_COPY_NOT_APP_FILE`, `:54`), and the edited copy stays in
+    Albatross. A Google Doc never uses this upload: see `documents`.
 - **Narrower scope.** `drive.file` is the narrowest Drive scope that lets an
   app make files and change the files that it made.
 - **Demo.** In an Albatross document, use the control that saves the document
@@ -318,7 +320,14 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
     (`lib/documents/google.ts:643-685`) calls `syncGoogleDoc`, which sends
     `documents.batchUpdate` (`:229`). Only a Doc can go back to its Google
     original (`lib/documents/google.ts:654`,
-    `lib/documents/google-write-policy.ts:53-62`).
+    `lib/documents/google-write-policy.ts:80-90`).
+  - A Google Doc always opens in the Albatross editor, also when the Office
+    editor is on (`googleNativeEditor`, `lib/documents/google-write-policy.ts:16`,
+    used by `components/files/DocumentEditor.tsx:843`). Albatross makes no
+    Office working copy of a Doc, and the working-copy save refuses a Doc
+    before any Google call (`lib/documents/google-working-copy.ts:132`, `:214`,
+    `lib/documents/google-office.ts:178`). Thus the save of a Doc goes through
+    `documents.batchUpdate` and not through a Drive upload.
   - After the save, Albatross renames the Doc when the user changed the
     title (`renameGoogleFile`, `lib/documents/google.ts:696-714`, Drive v3
     `PATCH`). The Drive API renames a file only with `drive`, or with
@@ -327,7 +336,7 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
     the app has no access to the file). Albatross then keeps the Google name
     and tells the user. The content save does not depend on the rename.
   - Route `PATCH /api/files/google/editor`, called from
-    `components/files/DocumentEditor.tsx:997` and `:1073`.
+    `components/files/DocumentEditor.tsx:1006` and `:1087`.
   - The assistant tool `google_document_edit` only proposes a change. The user
     reviews it in the editor. The tool never writes to Google
     (`lib/tools/google-documents.ts:45`).
@@ -363,13 +372,16 @@ These notes are not for the reviewer. Each note has the decision of the owner.
      Each other failure fails the save as before. Examples are a rate limit,
      a quota, a 403 with no reason, and a missing scope (the user did not
      allow write access at consent; a reconnect fixes it).
-   - The Office working-copy save (`lib/documents/google-working-copy.ts:228-239`,
+   - The Office working-copy save (`lib/documents/google-working-copy.ts:239-250`,
      Drive v2 upload). A 403 with the reason `appNotAuthorizedToFile` gives
      the message "Google did not save your edits: Albatross has no write
      access to this file in Google Drive." The edited copy stays in
      Albatross. Each
      other 403 (a rate limit, a quota, a user permission, a missing scope, no
-     reason) keeps the old error, which tells the user to reconnect.
+     reason) keeps the old error, which tells the user to reconnect. Since
+     2026-09-30 this save runs only for Sheets and Slides. A Google Doc opens
+     in the Albatross editor and saves with `documents.batchUpdate`, also when
+     the Office editor is on (decision of the owner, 2026-09-30).
    - Do not show these two actions on a file that Albatross did not make in the
      demo video.
 3. **`scripts/nylas-provision.ts`: done (2026-09-29).** The script now sends

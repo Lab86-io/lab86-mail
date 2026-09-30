@@ -29,6 +29,7 @@ import { discardDraft, peekDraft, pendingFlush, type RetainedDraft } from '@/lib
 import {
   googleLinkedFileSyncLimitation,
   googleModelWriteLimitation,
+  googleNativeEditor,
 } from '@/lib/documents/google-write-policy';
 import type {
   AlbatrossDocumentModel,
@@ -833,6 +834,12 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   );
 }
 
+/**
+ * Every Files entry point (the list, search, links, and links from other
+ * surfaces) opens a Google-native file here. A Google Doc always opens in the
+ * Albatross editor, which saves to the Doc with the `documents` scope. Office
+ * keeps Sheets and Slides when it is on (googleNativeEditor).
+ */
 export function GoogleDocumentEditor({
   source,
   onClose,
@@ -842,7 +849,7 @@ export function GoogleDocumentEditor({
   onClose: () => void;
   officeEnabled?: boolean;
 }) {
-  return officeEnabled ? (
+  return googleNativeEditor(source.mimeType, officeEnabled) === 'office' ? (
     <GoogleOfficeDocumentEditor source={source} onClose={onClose} />
   ) : (
     <SemanticGoogleDocumentEditor source={source} onClose={onClose} />

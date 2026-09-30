@@ -179,6 +179,13 @@ test('public Office metadata redacts provider credentials and locks consistently
     },
   });
   expect(result).not.toHaveProperty('wopiLock');
-  expect(result.google).toEqual({ fileId: 'google-id', syncedRevision: 2 });
+  expect(result.google).toEqual({
+    connectionId: 'private-connection',
+    fileId: 'google-id',
+    syncedRevision: 2,
+  });
+  expect(JSON.stringify(result)).not.toContain('encrypted-token');
+  expect(JSON.stringify(result)).not.toContain('private-recovery-token');
+  expect(JSON.stringify(result)).not.toContain('private-lock');
   expect(publicOfficeFile(original)).not.toHaveProperty('google');
 });

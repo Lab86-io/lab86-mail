@@ -1,4 +1,31 @@
-/** Isomorphic capability gate shared by editor controls, tools, and provider writes. */
+// Isomorphic capability gate shared by editor controls, tools, and provider writes.
+
+export const GOOGLE_DOC_MIME = 'application/vnd.google-apps.document';
+
+/** The editor that opens a Google-native file. */
+export type GoogleNativeEditor = 'albatross' | 'office';
+
+/**
+ * A Google Doc always opens in the Albatross editor, also when Office is on.
+ * Its save sends `documents.batchUpdate` with the `documents` scope, which
+ * writes to a Doc that Albatross did not make. The Office editor saves with a
+ * Drive upload, and for such a Doc that upload needs the full `drive` scope,
+ * which Albatross does not ask for (docs/google-verification/scopes.md). A
+ * Sheet or Slides file keeps the Office editor when Office is on.
+ */
+export function googleNativeEditor(mimeType: string, officeEnabled: boolean): GoogleNativeEditor {
+  if (mimeType === GOOGLE_DOC_MIME) return 'albatross';
+  return officeEnabled ? 'office' : 'albatross';
+}
+
+/** Shown when a Google Doc comes to the Office working copy, for example from an old page. */
+export const GOOGLE_DOC_OFFICE_OPEN_REFUSED =
+  'Albatross opens a Google Doc in its own editor, which saves your edits to the Doc. Go back to Files and open the Doc again.';
+
+/** Shown when an Office copy of a Google Doc tries to replace the Doc in Google Drive. */
+export const GOOGLE_DOC_OFFICE_SAVE_REFUSED =
+  'Albatross saves a Google Doc to Google only from its own editor. Open the original Doc from Files to save your edits there. This copy stays in Albatross.';
+
 export const ENGINE_GOOGLE_PUBLISH_LIMITATION =
   'Google publishing is unavailable for this full spreadsheet workbook because it would discard formatting, charts, validation, or other workbook data. Download Excel from the editor instead; the original workbook remains unchanged.';
 export const RICH_DOCUMENT_GOOGLE_PUBLISH_LIMITATION =
