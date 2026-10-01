@@ -559,6 +559,129 @@
 .doc-rich-text .ProseMirror s {
   text-decoration-color: #64748b;
 }
+.doc-rich-text .ProseMirror a {
+  color: #1155cc;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: text;
+}
+/* Title and subtitle, as in Google Docs: larger and lighter than a heading. */
+.doc-rich-text .ProseMirror h1[data-variant="title"] {
+  font-size: 36px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.doc-rich-text .ProseMirror h2[data-variant="subtitle"] {
+  font-size: 20px;
+  font-weight: 400;
+  color: #475569;
+  margin-top: 0.2em;
+}
+/* A nested list item: each level is one step further in, with the next marker. */
+.doc-rich-text .ProseMirror li[data-list-level] {
+  margin-left: calc(var(--list-level, 0) * 1.6em);
+}
+.doc-rich-text .ProseMirror li[data-list-level="1"] {
+  --list-level: 1;
+}
+.doc-rich-text .ProseMirror li[data-list-level="2"] {
+  --list-level: 2;
+}
+.doc-rich-text .ProseMirror li[data-list-level="3"] {
+  --list-level: 3;
+}
+.doc-rich-text .ProseMirror li[data-list-level="4"] {
+  --list-level: 4;
+}
+.doc-rich-text .ProseMirror li[data-list-level="5"] {
+  --list-level: 5;
+}
+.doc-rich-text .ProseMirror li[data-list-level="6"] {
+  --list-level: 6;
+}
+.doc-rich-text .ProseMirror li[data-list-level="7"] {
+  --list-level: 7;
+}
+.doc-rich-text .ProseMirror li[data-list-level="8"] {
+  --list-level: 8;
+}
+.doc-rich-text .ProseMirror ul > li[data-list-level="1"],
+.doc-rich-text .ProseMirror ul > li[data-list-level="4"],
+.doc-rich-text .ProseMirror ul > li[data-list-level="7"] {
+  list-style-type: circle;
+}
+.doc-rich-text .ProseMirror ul > li[data-list-level="2"],
+.doc-rich-text .ProseMirror ul > li[data-list-level="5"],
+.doc-rich-text .ProseMirror ul > li[data-list-level="8"] {
+  list-style-type: square;
+}
+/* Numbered items count within their own level, as in Google Docs: 1. a. i. */
+.doc-rich-text .ProseMirror ol {
+  counter-reset: doc-list-0 doc-list-1 doc-list-2 doc-list-3 doc-list-4 doc-list-5 doc-list-6 doc-list-7
+    doc-list-8;
+}
+.doc-rich-text .ProseMirror ol > li {
+  counter-increment: doc-list-0;
+  counter-reset: doc-list-1 doc-list-2 doc-list-3 doc-list-4 doc-list-5 doc-list-6 doc-list-7 doc-list-8;
+}
+.doc-rich-text .ProseMirror ol > li::marker {
+  content: counter(doc-list-0, decimal) ". ";
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="1"] {
+  counter-increment: doc-list-1;
+  counter-reset: doc-list-2 doc-list-3 doc-list-4 doc-list-5 doc-list-6 doc-list-7 doc-list-8;
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="1"]::marker {
+  content: counter(doc-list-1, lower-alpha) ". ";
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="2"] {
+  counter-increment: doc-list-2;
+  counter-reset: doc-list-3 doc-list-4 doc-list-5 doc-list-6 doc-list-7 doc-list-8;
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="2"]::marker {
+  content: counter(doc-list-2, lower-roman) ". ";
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="3"] {
+  counter-increment: doc-list-3;
+  counter-reset: doc-list-4 doc-list-5 doc-list-6 doc-list-7 doc-list-8;
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="3"]::marker {
+  content: counter(doc-list-3, decimal) ". ";
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="4"] {
+  counter-increment: doc-list-4;
+  counter-reset: doc-list-5 doc-list-6 doc-list-7 doc-list-8;
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="4"]::marker {
+  content: counter(doc-list-4, lower-alpha) ". ";
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="5"] {
+  counter-increment: doc-list-5;
+  counter-reset: doc-list-6 doc-list-7 doc-list-8;
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="5"]::marker {
+  content: counter(doc-list-5, lower-roman) ". ";
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="6"] {
+  counter-increment: doc-list-6;
+  counter-reset: doc-list-7 doc-list-8;
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="6"]::marker {
+  content: counter(doc-list-6, decimal) ". ";
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="7"] {
+  counter-increment: doc-list-7;
+  counter-reset: doc-list-8;
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="7"]::marker {
+  content: counter(doc-list-7, lower-alpha) ". ";
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="8"] {
+  counter-increment: doc-list-8;
+}
+.doc-rich-text .ProseMirror ol > li[data-list-level="8"]::marker {
+  content: counter(doc-list-8, lower-roman) ". ";
+}
 .doc-rich-text .ProseMirror ::selection {
   background: color-mix(in srgb, var(--color-accent) 22%, transparent);
 }

@@ -3,8 +3,12 @@ import { z } from 'zod';
 import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { DocumentGenerationError, generateDocumentProposal } from '@/lib/documents/ai';
-import { GoogleDocumentConflictError, updateGoogleNativeFile } from '@/lib/documents/google';
-import { GoogleDocumentFidelityError } from '@/lib/documents/google-fidelity';
+import {
+  GoogleDocumentConflictError,
+  GoogleDocumentSaveMismatchError,
+  updateGoogleNativeFile,
+} from '@/lib/documents/google';
+import { GoogleDocumentFidelityError, googleDocMode } from '@/lib/documents/google-fidelity';
 import {
   GOOGLE_NATIVE_MIME,
   GOOGLE_NATIVE_MIME_TYPES,
@@ -24,10 +28,18 @@ const identitySchema = z.object({
   mimeType: z.enum(GOOGLE_NATIVE_MIME_TYPES),
 });
 
+/**
+ * `rich`: the client edits inline formatting, links and nested lists (the web
+ * editor). Without it (the iOS app), a Doc with such formatting stays a
+ * preview, so a client that cannot show the formatting never drops it.
+ */
+const formatSchema = z.enum(['plain', 'rich']).optional();
+
 const patchSchema = identitySchema.extend({
   title: z.string().min(1).max(500),
   model: z.unknown(),
   expectedProviderVersion: z.string().max(100).optional(),
+  format: formatSchema,
 });
 
 const aiSchema = identitySchema.extend({
@@ -60,6 +72,13 @@ function errorResponse(error: unknown) {
       { status: 409 },
     );
   }
+  if (error instanceof GoogleDocumentSaveMismatchError) {
+    console.error('[google-file-editor] save did not match the model');
+    return NextResponse.json(
+      { ok: false, code: 'PROVIDER_SAVE_MISMATCH', error: error.message },
+      { status: 502 },
+    );
+  }
   if (error instanceof DocumentGenerationError) {
     console.error('[google-file-editor-ai] invalid model', describeModelError(error));
     return NextResponse.json(
@@ -85,7 +104,11 @@ export async function GET(req: NextRequest) {
       fileId: req.nextUrl.searchParams.get('fileId'),
       mimeType: req.nextUrl.searchParams.get('mimeType'),
     });
-    const imported = await importGoogleNativeFile({ userId: user.userId, ...input });
+    const imported = await importGoogleNativeFile({
+      userId: user.userId,
+      ...input,
+      mode: googleDocMode(req.nextUrl.searchParams.get('format')),
+    });
     return NextResponse.json({
       ok: true,
       file: {
@@ -135,6 +158,7 @@ export async function PATCH(req: NextRequest) {
       title: input.title,
       model: input.model,
       expectedProviderVersion: input.expectedProviderVersion,
+      mode: googleDocMode(input.format),
     });
     return NextResponse.json({
       ok: true,

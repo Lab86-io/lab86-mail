@@ -7,7 +7,10 @@ import {
   ArrowUp,
   Bold,
   Code,
+  IndentDecrease,
+  IndentIncrease,
   Italic,
+  Link2,
   List,
   ListOrdered,
   Quote,
@@ -16,10 +19,12 @@ import {
   Underline,
   Undo2,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { GOOGLE_DOC_EDITING_NOTICE } from '@/lib/documents/google-write-policy';
 import type { AlbatrossDocumentModel } from '@/lib/documents/model';
-import { documentExtensions } from './doc-extensions';
+import { changeListLevel, documentExtensions } from './doc-extensions';
 import {
   type BlockStyle,
   type DocModel,
@@ -27,6 +32,7 @@ import {
   docModelsEqual,
   docModelToEditorJson,
   editorJsonToDocModel,
+  linkFromInput,
   moveDocBlock,
 } from './doc-rich-text';
 import './document-editors.css';
@@ -35,22 +41,26 @@ export function RichDocumentEditor({
   model,
   onChange,
   readOnly = false,
-  plainTextOnly = false,
+  target = 'albatross',
 }: {
   model: DocModel;
   onChange: (model: AlbatrossDocumentModel) => void;
   readOnly?: boolean;
-  /** Direct Google editing only supports the provider's existing paragraph-level subset. */
-  plainTextOnly?: boolean;
+  /** `google`: the model saves to a Google Doc; the editor says so. */
+  target?: 'albatross' | 'google';
 }) {
   const modelRef = useRef(model);
   const callback = useRef(onChange);
   callback.current = onChange;
   const [notice, setNotice] = useState('');
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkDraft, setLinkDraft] = useState('');
+  const [linkError, setLinkError] = useState('');
+  const linkFieldId = useId();
   const editor = useEditor(
     {
       immediatelyRender: false,
-      extensions: documentExtensions(plainTextOnly),
+      extensions: documentExtensions(),
       content: docModelToEditorJson(model) as JSONContent,
       editable: !readOnly,
       editorProps: {
@@ -68,15 +78,14 @@ export function RichDocumentEditor({
           const unsupported =
             data.files.length > 0 ||
             Boolean(parsed?.querySelector('table, img, video, iframe, li ul, li ol'));
-          if (!unsupported && !plainTextOnly) return false;
+          if (!unsupported) return false;
           const text = data.getData('text/plain');
-          if (unsupported || html)
-            setNotice(
-              plainTextOnly
-                ? 'Pasted as plain text. Direct Google editing supports text and paragraph styles only.'
-                : 'Pasted text only. Tables, images and nested lists need a full Office editor.',
-            );
-          if (!text) return unsupported;
+          setNotice(
+            target === 'google'
+              ? 'Pasted text only. Open the Doc in Google to add tables and images.'
+              : 'Pasted text only. Tables, images and nested lists need a full Office editor.',
+          );
+          if (!text) return true;
           const paragraphs = text
             .split(/\r?\n/)
             .map((line) =>
@@ -93,7 +102,7 @@ export function RichDocumentEditor({
         callback.current(next);
       },
     },
-    [plainTextOnly],
+    [],
   );
   const status = useEditorState({
     editor,
@@ -108,8 +117,12 @@ export function RichDocumentEditor({
                 : current.isActive('blockquote')
                   ? 'quote'
                   : current.isActive('heading')
-                    ? `heading${current.getAttributes('heading').level}`
+                    ? current.getAttributes('heading').variant ||
+                      `heading${current.getAttributes('heading').level}`
                     : 'paragraph',
+            link: current.isActive('link') ? String(current.getAttributes('link').href || '') : '',
+            inList: current.isActive('listItem'),
+            listLevel: Number(current.getAttributes('listItem').listLevel) || 0,
             bold: current.isActive('bold'),
             italic: current.isActive('italic'),
             underline: current.isActive('underline'),
@@ -152,11 +165,42 @@ export function RichDocumentEditor({
   const style = (next: BlockStyle) => {
     if (!editor) return;
     const chain = editor.chain().focus().clearNodes();
-    if (next.startsWith('heading')) chain.setHeading({ level: Number(next.slice(-1)) as 1 | 2 | 3 }).run();
+    if (next === 'title') chain.setNode('heading', { level: 1, variant: 'title' }).run();
+    else if (next === 'subtitle') chain.setNode('heading', { level: 2, variant: 'subtitle' }).run();
+    else if (next.startsWith('heading'))
+      chain.setHeading({ level: Number(next.slice(-1)) as 1 | 2 | 3 }).run();
     else if (next === 'bullet') chain.toggleBulletList().run();
     else if (next === 'numbered') chain.toggleOrderedList().run();
     else if (next === 'quote') chain.wrapIn('blockquote').run();
     else chain.setParagraph().run();
+  };
+  const openLink = (open: boolean) => {
+    setLinkOpen(open);
+    setLinkError('');
+    if (open) setLinkDraft(status?.link || '');
+  };
+  const applyLink = (event: FormEvent) => {
+    event.preventDefault();
+    if (!editor) return;
+    const href = linkFromInput(linkDraft);
+    if (!href) {
+      setLinkError('Type a web address or an email address.');
+      return;
+    }
+    const chain = editor.chain().focus();
+    if (editor.state.selection.empty && !editor.isActive('link'))
+      chain.insertContent({
+        type: 'text',
+        text: linkDraft.trim(),
+        marks: [{ type: 'link', attrs: { href } }],
+      });
+    else chain.extendMarkRange('link').setLink({ href });
+    chain.run();
+    setLinkOpen(false);
+  };
+  const removeLink = () => {
+    editor?.chain().focus().extendMarkRange('link').unsetLink().run();
+    setLinkOpen(false);
   };
   const index = model.blocks.findIndex((block) => block.id === status?.blockId);
   const headings = docHeadings(model);
@@ -191,6 +235,8 @@ export function RichDocumentEditor({
           onChange={(event) => style(event.target.value as BlockStyle)}
         >
           <option value="paragraph">Paragraph</option>
+          <option value="title">Title</option>
+          <option value="subtitle">Subtitle</option>
           <option value="heading1">Heading 1</option>
           <option value="heading2">Heading 2</option>
           <option value="heading3">Heading 3</option>
@@ -198,31 +244,80 @@ export function RichDocumentEditor({
           <option value="numbered">Numbered list</option>
           <option value="quote">Quote</option>
         </select>
-        {!plainTextOnly
-          ? (
-              [
-                ['bold', Bold],
-                ['italic', Italic],
-                ['underline', Underline],
-                ['strike', Strikethrough],
-                ['code', Code],
-              ] as const
-            ).map(([mark, Icon]) => (
-              <Button
-                key={mark}
-                variant="ghost"
-                size="icon-sm"
-                className="size-11 sm:size-8"
-                aria-label={mark === 'strike' ? 'Strikethrough' : mark[0].toUpperCase() + mark.slice(1)}
-                aria-pressed={Boolean(status?.[mark])}
-                disabled={readOnly || !editor}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => editor?.chain().focus().toggleMark(mark).run()}
-              >
-                <Icon className="size-4" />
-              </Button>
-            ))
-          : null}
+        {(
+          [
+            ['bold', Bold],
+            ['italic', Italic],
+            ['underline', Underline],
+            ['strike', Strikethrough],
+            ['code', Code],
+          ] as const
+        ).map(([mark, Icon]) => (
+          <Button
+            key={mark}
+            variant="ghost"
+            size="icon-sm"
+            className="size-11 sm:size-8"
+            aria-label={mark === 'strike' ? 'Strikethrough' : mark[0].toUpperCase() + mark.slice(1)}
+            aria-pressed={Boolean(status?.[mark])}
+            disabled={readOnly || !editor}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => editor?.chain().focus().toggleMark(mark).run()}
+          >
+            <Icon className="size-4" />
+          </Button>
+        ))}
+        <Popover open={linkOpen} onOpenChange={openLink}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="size-11 sm:size-8"
+              aria-label="Link"
+              aria-pressed={Boolean(status?.link)}
+              disabled={readOnly || !editor}
+              onMouseDown={(event) => event.preventDefault()}
+            >
+              <Link2 className="size-4" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-80 p-3">
+            <form onSubmit={applyLink} className="space-y-2">
+              <label htmlFor={linkFieldId} className="block text-xs font-medium">
+                Link
+              </label>
+              <input
+                id={linkFieldId}
+                value={linkDraft}
+                onChange={(event) => {
+                  setLinkDraft(event.target.value);
+                  setLinkError('');
+                }}
+                placeholder="https://example.com"
+                inputMode="url"
+                autoComplete="off"
+                className="control-field h-9 w-full px-2 text-base sm:text-sm"
+                aria-invalid={Boolean(linkError)}
+                aria-describedby={linkError ? `${linkFieldId}-error` : undefined}
+              />
+              {linkError ? (
+                <p id={`${linkFieldId}-error`} role="alert" className="text-xs text-[var(--color-danger)]">
+                  {linkError}
+                </p>
+              ) : null}
+              <div className="flex justify-end gap-2 pt-1">
+                {status?.link ? (
+                  <Button type="button" variant="ghost" size="sm" onClick={removeLink}>
+                    Remove
+                  </Button>
+                ) : null}
+                <Button type="submit" size="sm">
+                  Apply
+                </Button>
+              </div>
+            </form>
+          </PopoverContent>
+        </Popover>
         {(
           [
             ['bullet', List],
@@ -244,6 +339,28 @@ export function RichDocumentEditor({
             <Icon className="size-4" />
           </Button>
         ))}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="size-11 sm:size-8"
+          aria-label="Decrease indent"
+          disabled={readOnly || !status?.inList || !status.listLevel}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => editor && changeListLevel(editor, -1)}
+        >
+          <IndentDecrease className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="size-11 sm:size-8"
+          aria-label="Increase indent"
+          disabled={readOnly || !status?.inList || status.listLevel >= 8}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => editor && changeListLevel(editor, 1)}
+        >
+          <IndentIncrease className="size-4" />
+        </Button>
         <span className="mx-1 h-5 border-l border-[var(--color-border)]" />
         <Button
           variant="ghost"
@@ -286,10 +403,9 @@ export function RichDocumentEditor({
           <ArrowDown className="size-4" />
         </Button>
       </div>
-      {plainTextOnly ? (
+      {target === 'google' ? (
         <p className="border-b border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
-          Direct Google editing: text, headings and lists. Open in Google for full formatting; rich paste is
-          text only.
+          {GOOGLE_DOC_EDITING_NOTICE}
         </p>
       ) : null}
       {notice ? (

@@ -10,10 +10,59 @@
  * - `text` is the concatenation of runs; hard breaks are `\n` characters.
  * - Blocks with no formatting omit `runs` entirely.
  */
-import type { AlbatrossDocumentModel, DocBlock, DocRun } from '@/lib/documents/model';
+import {
+  type AlbatrossDocumentModel,
+  DOC_LINK_PATTERN,
+  type DocBlock,
+  type DocRun,
+  MAX_DOC_LINK_LENGTH,
+  MAX_DOC_LIST_LEVEL,
+} from '@/lib/documents/model';
 
 export type DocModel = Extract<AlbatrossDocumentModel, { kind: 'doc' }>;
-export type BlockStyle = 'paragraph' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote';
+export type BlockStyle =
+  | 'paragraph'
+  | 'title'
+  | 'subtitle'
+  | 'heading1'
+  | 'heading2'
+  | 'heading3'
+  | 'bullet'
+  | 'numbered'
+  | 'quote';
+
+/** A link the model can hold: http, https or mailto. */
+export function validDocLink(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return value.length <= MAX_DOC_LINK_LENGTH && DOC_LINK_PATTERN.test(value) ? value : undefined;
+}
+
+/**
+ * A typed address as a link the model can hold. A bare address gets
+ * `https://`, an email address gets `mailto:`. Returns null when it is not valid.
+ */
+export function linkFromInput(input: string): string | null {
+  const value = input.trim();
+  if (!value || /\s/u.test(value)) return null;
+  let candidate = value;
+  // Keep only an allowed scheme; "example.com:8080" is a host and a port, not a scheme.
+  if (!/^(https?:\/\/|mailto:)/iu.test(value))
+    candidate = /^[^@/:]+@[^@/]+\.[^@/]+$/u.test(value) ? `mailto:${value}` : `https://${value}`;
+  try {
+    const url = new URL(candidate);
+    if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) return null;
+    if (url.protocol !== 'mailto:' && !url.hostname.includes('.') && url.hostname !== 'localhost')
+      return null;
+    return validDocLink(url.href) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function clampListLevel(value: unknown) {
+  const level = Math.trunc(Number(value) || 0);
+  return Math.max(0, Math.min(MAX_DOC_LIST_LEVEL, level));
+}
 
 export const RUN_MARKS = ['bold', 'italic', 'underline', 'strike', 'code'] as const;
 export type RunMark = (typeof RUN_MARKS)[number];
@@ -37,16 +86,18 @@ export function createBlockId() {
 }
 
 function runFormatKey(run: Omit<DocRun, 'text'>) {
-  return RUN_MARKS.map((mark) => (run[mark] ? '1' : '0')).join('');
+  return `${RUN_MARKS.map((mark) => (run[mark] ? '1' : '0')).join('')}|${run.link || ''}`;
 }
 
 function hasFormatting(run: Omit<DocRun, 'text'>) {
-  return RUN_MARKS.some((mark) => run[mark]);
+  return RUN_MARKS.some((mark) => run[mark]) || Boolean(run.link);
 }
 
 function stripFormat(run: DocRun): DocRun {
   const next: DocRun = { text: run.text };
   for (const mark of RUN_MARKS) if (run[mark]) next[mark] = true;
+  const link = validDocLink(run.link);
+  if (link) next.link = link;
   return next;
 }
 
@@ -80,7 +131,9 @@ export function effectiveRuns(block: Pick<DocBlock, 'text' | 'runs'>): DocRun[] 
 }
 
 function marksForRun(run: DocRun): EditorMark[] {
-  return RUN_MARKS.filter((mark) => run[mark]).map((mark) => ({ type: mark }));
+  const marks: EditorMark[] = RUN_MARKS.filter((mark) => run[mark]).map((mark) => ({ type: mark }));
+  if (run.link) marks.push({ type: 'link', attrs: { href: run.link } });
+  return marks;
 }
 
 function inlineContent(block: DocBlock): EditorNode[] {
@@ -101,7 +154,9 @@ function inlineContent(block: DocBlock): EditorNode[] {
 function textBlockNode(block: DocBlock): EditorNode {
   const content = inlineContent(block);
   if (block.type === 'heading') {
-    const node: EditorNode = { type: 'heading', attrs: { level: block.level ?? 2, blockId: block.id } };
+    const attrs: Record<string, unknown> = { level: block.level ?? 2, blockId: block.id };
+    if (block.variant) attrs.variant = block.variant;
+    const node: EditorNode = { type: 'heading', attrs };
     if (content.length) node.content = content;
     return node;
   }
@@ -128,8 +183,10 @@ export function docModelToEditorJson(model: DocModel, createId: () => string = c
         content.push(node);
         group = { type: listType, node };
       }
+      const listLevel = clampListLevel(block.listLevel);
       group.node.content!.push({
         type: 'listItem',
+        ...(listLevel ? { attrs: { listLevel } } : {}),
         content: [textBlockNode({ ...block, type: 'paragraph' })],
       });
       continue;
@@ -154,6 +211,10 @@ function runFromMarks(text: string, marks: EditorMark[] | undefined): DocRun {
   const run: DocRun = { text };
   for (const mark of marks || []) {
     if ((RUN_MARKS as readonly string[]).includes(mark.type)) run[mark.type as RunMark] = true;
+    if (mark.type === 'link') {
+      const link = validDocLink(mark.attrs?.href);
+      if (link) run.link = link;
+    }
   }
   return run;
 }
@@ -173,6 +234,7 @@ function readTextBlock(
   type: DocBlock['type'],
   createId: () => string,
   seen: Set<string>,
+  listLevel = 0,
 ): DocBlock {
   const runs = readInline(node);
   const text = runsText(runs);
@@ -183,7 +245,10 @@ function readTextBlock(
   if (type === 'heading') {
     const level = Number(node.attrs?.level);
     block.level = level === 1 || level === 3 ? level : 2;
+    const variant = node.attrs?.variant;
+    if (variant === 'title' || variant === 'subtitle') block.variant = variant;
   }
+  if ((type === 'bullet' || type === 'numbered') && listLevel) block.listLevel = listLevel;
   if (runs.some(hasFormatting)) block.runs = runs;
   return block;
 }
@@ -196,13 +261,15 @@ function readTextBlock(
 export function editorJsonToDocBlocks(doc: EditorNode, createId: () => string = createBlockId): DocBlock[] {
   const blocks: DocBlock[] = [];
   const seen = new Set<string>();
-  const visit = (node: EditorNode, context: DocBlock['type']) => {
+  const visit = (node: EditorNode, context: DocBlock['type'], listLevel: number) => {
     if (node.type === 'heading') {
-      blocks.push(readTextBlock(node, context === 'paragraph' ? 'heading' : context, createId, seen));
+      blocks.push(
+        readTextBlock(node, context === 'paragraph' ? 'heading' : context, createId, seen, listLevel),
+      );
       return;
     }
     if (TEXT_BLOCK_TYPES.has(node.type)) {
-      blocks.push(readTextBlock(node, context, createId, seen));
+      blocks.push(readTextBlock(node, context, createId, seen, listLevel));
       return;
     }
     const nextContext =
@@ -213,11 +280,15 @@ export function editorJsonToDocBlocks(doc: EditorNode, createId: () => string = 
           : node.type === 'blockquote'
             ? 'quote'
             : context;
-    for (const child of node.content || []) visit(child, nextContext);
-    if (node.type === 'listItem' && !(node.content || []).length)
-      blocks.push({ id: createId(), type: context, text: '' });
+    const nextLevel = node.type === 'listItem' ? clampListLevel(node.attrs?.listLevel) : listLevel;
+    for (const child of node.content || []) visit(child, nextContext, nextLevel);
+    if (node.type === 'listItem' && !(node.content || []).length) {
+      const empty: DocBlock = { id: createId(), type: context, text: '' };
+      if (nextLevel && (context === 'bullet' || context === 'numbered')) empty.listLevel = nextLevel;
+      blocks.push(empty);
+    }
   };
-  for (const child of doc.content || []) visit(child, 'paragraph');
+  for (const child of doc.content || []) visit(child, 'paragraph', 0);
   return blocks;
 }
 
@@ -245,13 +316,15 @@ export function docModelsEqual(left: DocModel | null | undefined, right: DocMode
       block.type === other.type &&
       block.text === other.text &&
       (block.level ?? undefined) === (other.level ?? undefined) &&
+      (block.variant ?? undefined) === (other.variant ?? undefined) &&
+      (block.listLevel || 0) === (other.listLevel || 0) &&
       runsEqual(block.runs, other.runs)
     );
   });
 }
 
-export function blockStyleOf(block: Pick<DocBlock, 'type' | 'level'>): BlockStyle {
-  if (block.type === 'heading') return `heading${block.level ?? 2}` as BlockStyle;
+export function blockStyleOf(block: Pick<DocBlock, 'type' | 'level' | 'variant'>): BlockStyle {
+  if (block.type === 'heading') return block.variant ?? (`heading${block.level ?? 2}` as BlockStyle);
   return block.type;
 }
 
@@ -268,4 +341,33 @@ export function moveDocBlock(model: DocModel, blockId: string, direction: -1 | 1
 
 export function docHeadings(model: DocModel) {
   return model.blocks.filter((block) => block.type === 'heading' && block.text.trim());
+}
+
+/**
+ * A proposed model (for example from an Albatross suggestion) may leave out
+ * the formatting of blocks it did not change. A block with the same id and the
+ * same text keeps its runs, list level and title style; a block whose text
+ * changed keeps only what the proposal gives.
+ */
+export function keepUnchangedFormatting(
+  current: AlbatrossDocumentModel,
+  proposed: AlbatrossDocumentModel,
+): AlbatrossDocumentModel {
+  if (current.kind !== 'doc' || proposed.kind !== 'doc') return proposed;
+  const byId = new Map(current.blocks.map((block) => [block.id, block]));
+  let changed = false;
+  const blocks = proposed.blocks.map((block) => {
+    const before = byId.get(block.id);
+    if (!before || before.text !== block.text || before.type !== block.type) return block;
+    const next: DocBlock = { ...block };
+    if (!next.runs && before.runs) next.runs = before.runs;
+    if (next.listLevel === undefined && before.listLevel) next.listLevel = before.listLevel;
+    if (next.variant === undefined && before.variant && (next.level ?? 2) === (before.level ?? 2))
+      next.variant = before.variant;
+    if (next.runs === block.runs && next.listLevel === block.listLevel && next.variant === block.variant)
+      return block;
+    changed = true;
+    return next;
+  });
+  return changed ? { ...proposed, blocks } : proposed;
 }

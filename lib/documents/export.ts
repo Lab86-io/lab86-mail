@@ -1,4 +1,4 @@
-import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
+import { Document, ExternalHyperlink, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
 import ExcelJS from 'exceljs';
 import pptxgen from 'pptxgenjs';
 import { truncateText } from '../shared/text';
@@ -23,41 +23,45 @@ function textRunsForBlock(block: DocBlock) {
     block.runs && block.runs.map((run) => run.text).join('') === block.text
       ? block.runs
       : [{ text: block.text }];
-  return runs.flatMap((run) =>
-    run.text.split('\n').map(
+  return runs.flatMap((run): Array<TextRun | ExternalHyperlink> => {
+    const pieces = run.text.split('\n').map(
       (text, index) =>
         new TextRun({
           text,
           break: index ? 1 : undefined,
           bold: run.bold,
           italics: run.italic || block.type === 'quote',
-          underline: run.underline ? { type: 'single' } : undefined,
+          underline: run.underline || run.link ? { type: 'single' } : undefined,
           strike: run.strike,
           font: run.code ? 'Consolas' : undefined,
-          color: block.type === 'quote' ? '52606D' : undefined,
+          color: run.link ? '1155CC' : block.type === 'quote' ? '52606D' : undefined,
         }),
-    ),
-  );
+    );
+    return run.link ? [new ExternalHyperlink({ link: run.link, children: pieces })] : pieces;
+  });
 }
 
 function paragraphForBlock(block: DocBlock, numberingReference = 'ordered') {
   const children = textRunsForBlock(block);
   if (block.type === 'heading') {
     const heading =
-      block.level === 1
-        ? HeadingLevel.HEADING_1
-        : block.level === 3
-          ? HeadingLevel.HEADING_3
-          : HeadingLevel.HEADING_2;
+      block.variant === 'title'
+        ? HeadingLevel.TITLE
+        : block.level === 1
+          ? HeadingLevel.HEADING_1
+          : block.level === 3
+            ? HeadingLevel.HEADING_3
+            : HeadingLevel.HEADING_2;
     return new Paragraph({ children, heading });
   }
+  const level = Math.max(0, Math.min(8, block.listLevel ?? 0));
   if (block.type === 'bullet') {
-    return new Paragraph({ children, bullet: { level: 0 } });
+    return new Paragraph({ children, bullet: { level } });
   }
   if (block.type === 'numbered') {
     return new Paragraph({
       children,
-      numbering: { reference: numberingReference, level: 0 },
+      numbering: { reference: numberingReference, level },
     });
   }
   if (block.type === 'quote') {
@@ -81,7 +85,14 @@ async function exportDoc(document: AlbatrossDocumentRecord): Promise<DocumentExp
     numbering: {
       config: Array.from({ length: listGroup }, (_, index) => ({
         reference: `ordered-${index + 1}`,
-        levels: [{ level: 0, format: 'decimal' as const, text: '%1.', alignment: 'left' as const }],
+        // Decimal, then letters, then roman numerals, as in a Google Docs numbered list.
+        levels: Array.from({ length: 9 }, (_, level) => ({
+          level,
+          format: (['decimal', 'lowerLetter', 'lowerRoman'] as const)[level % 3],
+          text: `%${level + 1}.`,
+          alignment: 'left' as const,
+          style: { paragraph: { indent: { left: 720 * (level + 1), hanging: 360 } } },
+        })),
       })),
     },
     sections: [

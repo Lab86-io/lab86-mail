@@ -34,7 +34,7 @@ export const googleDocumentGet = defineTool({
     editability: z.object({ editable: z.boolean(), reason: z.string().optional() }).optional(),
   }),
   async handler(args, ctx) {
-    return deps.read({ ...args, userId: owner(ctx.userId) });
+    return deps.read({ ...args, userId: owner(ctx.userId), mode: 'rich' });
   },
 });
 
@@ -62,7 +62,7 @@ export const googleDocumentEdit = defineTool({
     summary: z.string(),
   }),
   async handler(args, ctx) {
-    const current = await deps.read({ ...args, userId: owner(ctx.userId) });
+    const current = await deps.read({ ...args, userId: owner(ctx.userId), mode: 'rich' });
     if (!current.providerVersion || current.providerVersion !== args.expectedProviderVersion)
       throw new Error('This file changed in Google Drive. Read it again before proposing edits.');
     if (current.editability?.editable === false)

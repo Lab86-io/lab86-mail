@@ -2,11 +2,15 @@ import { getCloudFileAccess, listCloudFileConnections } from '@/lib/files/connec
 import { truncateText } from '@/lib/shared/text';
 import { upgradeDeckModel } from './deck-versions';
 import { googleErrorReasons, isGoogleAppAccessDenied } from './google-access';
+import { googleDocHasOpenComments } from './google-comments';
+import { googleDocTarget, googleDocUpdateRequests } from './google-doc-diff';
 import {
   assertGoogleFileEditable,
-  GOOGLE_QUOTE_COLOR,
-  GOOGLE_QUOTE_INDENT_PT,
+  GOOGLE_DOC_OPEN_COMMENTS_REASON,
+  type GoogleDocMode,
   GoogleDocumentFidelityError,
+  googlePreviewReason,
+  projectGoogleDoc,
 } from './google-fidelity';
 import { googleModelWriteLimitation } from './google-write-policy';
 import {
@@ -22,8 +26,8 @@ import {
 } from './model';
 import { linkGoogleDocument } from './service';
 
-function assertGoogleModelFidelity(model: unknown) {
-  const reason = googleModelWriteLimitation(model);
+function assertGoogleModelFidelity(model: unknown, mode: GoogleDocMode = 'rich') {
+  const reason = googleModelWriteLimitation(model, mode);
   if (reason) throw new GoogleDocumentFidelityError(reason);
 }
 
@@ -74,6 +78,16 @@ export class GoogleWriteError extends Error {
   ) {
     super(message);
     this.name = 'GoogleWriteError';
+  }
+}
+
+/** The save went through, but the Doc that Google kept is not the same as the model. */
+export class GoogleDocumentSaveMismatchError extends Error {
+  constructor() {
+    super(
+      'Google saved your edits, but the Doc is different from your version. Open the Doc in Google to check it, then reload it here.',
+    );
+    this.name = 'GoogleDocumentSaveMismatchError';
   }
 }
 
@@ -129,114 +143,91 @@ function googleObjectId(value: string, suffix = '') {
   return /^[a-zA-Z_]/u.test(safe) ? safe : `a_${safe}`;
 }
 
+const GOOGLE_DOCS_ENDPOINT = 'https://docs.googleapis.com/v1/documents';
+
+/** The whole Doc, with its tabs, so a Doc with more than one tab is seen. */
+function googleDocUrl(fileId: string) {
+  return `${GOOGLE_DOCS_ENDPOINT}/${encodeURIComponent(fileId)}?includeTabsContent=true`;
+}
+
+/** Docs refuses a write whose `requiredRevisionId` is no longer the latest revision. */
+function isRevisionConflict(error: unknown) {
+  return error instanceof GoogleWriteError && error.status === 400 && /revision/iu.test(error.message);
+}
+
+async function writeGoogleDoc(
+  accessToken: string,
+  fileId: string,
+  requests: Record<string, any>[],
+  revisionId: string | undefined,
+) {
+  try {
+    return await googleJson(
+      accessToken,
+      `${GOOGLE_DOCS_ENDPOINT}/${encodeURIComponent(fileId)}:batchUpdate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          requests,
+          ...(revisionId ? { writeControl: { requiredRevisionId: revisionId } } : {}),
+        }),
+      },
+    );
+  } catch (error) {
+    if (isRevisionConflict(error)) throw new GoogleDocumentConflictError();
+    throw error;
+  }
+}
+
+/**
+ * Saves the model to a Google Doc with the smallest batchUpdate
+ * (lib/documents/google-doc-diff.ts). The write is bound to the revision that
+ * the diff read. Then the Doc is read again: when it does not match the model
+ * (Docs applied a request in an unexpected way), one more write corrects it,
+ * and a second miss is an error. When the revision changed after the write,
+ * the writer does not correct: a Doc that matches is a save, and a Doc that
+ * does not match is a conflict (another edit came in, or Google changed the
+ * revision for its own reasons; either way the user reloads).
+ */
 async function syncGoogleDoc(
   accessToken: string,
   fileId: string,
   model: Extract<AlbatrossDocumentModel, { kind: 'doc' }>,
   createdNow = false,
   expectedProviderVersion?: string,
+  mode: GoogleDocMode = 'rich',
 ) {
-  const current = await googleJson(
-    accessToken,
-    `https://docs.googleapis.com/v1/documents/${encodeURIComponent(fileId)}`,
-  );
-  if (!createdNow) assertGoogleFileEditable('doc', current);
-  if (!createdNow && !current.revisionId) throw new GoogleDocumentConflictError();
+  let current = await googleJson(accessToken, googleDocUrl(fileId));
+  let projection = projectGoogleDoc(current, createdNow ? 'rich' : mode);
   if (!createdNow) {
+    if (projection.reasons.length)
+      throw new GoogleDocumentFidelityError(googlePreviewReason(projection.reasons));
+    if (!current.revisionId) throw new GoogleDocumentConflictError();
     // Bind the loaded body to the version the user edited, before its revision-guarded write.
     const metadata = await googleDriveMetadata(accessToken, fileId);
     if (!expectedProviderVersion || metadata.providerVersion !== expectedProviderVersion)
       throw new GoogleDocumentConflictError();
+    if (await googleDocHasOpenComments((endpoint) => googleJson(accessToken, endpoint), fileId))
+      throw new GoogleDocumentFidelityError(googlePreviewReason([GOOGLE_DOC_OPEN_COMMENTS_REASON]));
   }
-  const endIndex = Math.max(
-    1,
-    ...(Array.isArray(current?.body?.content)
-      ? current.body.content.map((entry: any) => Number(entry?.endIndex) || 1)
-      : [1]),
-  );
-  const requests: Record<string, any>[] = [];
-  if (endIndex > 2) {
-    requests.push({ deleteContentRange: { range: { startIndex: 1, endIndex: endIndex - 1 } } });
-  }
-  const segments = model.blocks.map((block) => ({
-    block,
-    text: `${block.text}\n`,
-  }));
-  // Docs retains one mandatory final newline. Inserting another creates a new
-  // blank paragraph on every round-trip.
-  const text = segments
-    .map((segment) => segment.text)
-    .join('')
-    .replace(/\n$/u, '');
-  if (segments.length) {
-    if (text) requests.push({ insertText: { location: { index: 1 }, text } });
-    let startIndex = 1;
-    for (const segment of segments) {
-      const segmentEndIndex = startIndex + segment.text.length;
-      const range = { startIndex, endIndex: segmentEndIndex };
-      requests.push({
-        updateParagraphStyle: {
-          range,
-          paragraphStyle: {
-            namedStyleType:
-              segment.block.type !== 'heading'
-                ? 'NORMAL_TEXT'
-                : segment.block.level === 1
-                  ? 'HEADING_1'
-                  : segment.block.level === 3
-                    ? 'HEADING_3'
-                    : 'HEADING_2',
-          },
-          fields: 'namedStyleType',
-        },
-      });
-      if (segment.block.type === 'bullet' || segment.block.type === 'numbered') {
-        requests.push({
-          createParagraphBullets: {
-            range,
-            bulletPreset:
-              segment.block.type === 'numbered' ? 'NUMBERED_DECIMAL_NESTED' : 'BULLET_DISC_CIRCLE_SQUARE',
-          },
-        });
-      }
-      if (segment.block.type === 'quote' && segment.block.text) {
-        requests.push({
-          updateTextStyle: {
-            range: { startIndex, endIndex: segmentEndIndex - 1 },
-            textStyle: {
-              italic: true,
-              foregroundColor: { color: { rgbColor: hexToRgb(GOOGLE_QUOTE_COLOR) } },
-            },
-            fields: 'italic,foregroundColor',
-          },
-        });
-        requests.push({
-          updateParagraphStyle: {
-            range,
-            paragraphStyle: {
-              indentStart: { magnitude: GOOGLE_QUOTE_INDENT_PT, unit: 'PT' },
-            },
-            fields: 'indentStart',
-          },
-        });
-      }
-      startIndex = segmentEndIndex;
+  const target = googleDocTarget(model.blocks);
+  let revisionId = typeof current.revisionId === 'string' ? current.revisionId : undefined;
+  for (let attempt = 0; ; attempt += 1) {
+    const requests = googleDocUpdateRequests(projection, target);
+    if (!requests.length) return;
+    if (attempt === 2) throw new GoogleDocumentSaveMismatchError();
+    const reply = await writeGoogleDoc(accessToken, fileId, requests, revisionId);
+    const written = reply?.writeControl?.requiredRevisionId;
+    current = await googleJson(accessToken, googleDocUrl(fileId));
+    projection = projectGoogleDoc(current, 'rich');
+    if (typeof written === 'string' && written && current.revisionId !== written) {
+      if (projection.reasons.length || googleDocUpdateRequests(projection, target).length)
+        throw new GoogleDocumentConflictError();
+      return;
     }
+    if (projection.reasons.length) throw new GoogleDocumentSaveMismatchError();
+    revisionId = typeof current.revisionId === 'string' ? current.revisionId : undefined;
   }
-  if (!requests.length) return;
-  await googleJson(
-    accessToken,
-    `https://docs.googleapis.com/v1/documents/${encodeURIComponent(fileId)}:batchUpdate`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        requests,
-        ...(typeof current.revisionId === 'string' && current.revisionId
-          ? { writeControl: { requiredRevisionId: current.revisionId } }
-          : {}),
-      }),
-    },
-  );
 }
 
 /** The Drive name, web link, and version of a file. */
@@ -609,6 +600,7 @@ export async function publishDocumentToGoogle(input: {
       input.document.model,
       !isExistingGoogleFile,
       input.document.google?.providerVersion,
+      'rich',
     );
   }
   if (input.document.model.kind === 'sheet') {
@@ -648,8 +640,11 @@ export async function updateGoogleNativeFile(input: {
   title: string;
   model: unknown;
   expectedProviderVersion?: string;
+  /** `rich` only for a client that edits inline formatting (the web editor). */
+  mode?: GoogleDocMode;
 }) {
-  assertGoogleModelFidelity(input.model);
+  const mode = input.mode ?? 'plain';
+  assertGoogleModelFidelity(input.model, mode);
   if (!input.expectedProviderVersion) throw new GoogleDocumentConflictError();
   if (input.kind !== 'doc') throw new GoogleDocumentFidelityError();
   const access = await dependencies.getCloudFileAccess({
@@ -668,7 +663,7 @@ export async function updateGoogleNativeFile(input: {
   }
   const model = parseDocumentModel(input.model, input.kind);
   if (model.kind === 'doc')
-    await syncGoogleDoc(access.accessToken, input.fileId, model, false, input.expectedProviderVersion);
+    await syncGoogleDoc(access.accessToken, input.fileId, model, false, input.expectedProviderVersion, mode);
   if (model.kind === 'sheet') await syncGoogleSheet(access.accessToken, input.fileId, sheetGridModel(model)!);
   if (model.kind === 'deck') await syncGoogleDeck(access.accessToken, input.fileId, model);
   const title = truncateText(input.title.trim(), 500) || 'Untitled';

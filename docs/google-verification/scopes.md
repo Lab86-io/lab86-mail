@@ -264,14 +264,22 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
   - Index: the Drive change feed and the file download are in
     `lib/content/cloud-sync.ts:94-116` and `:160-190`. Docs export as text,
     Sheets as `.xlsx`, and Slides as `.pptx`.
-  - File metadata for import: `lib/documents/google-import.ts:65`.
+  - File metadata for import: `lib/documents/google-import.ts:71`.
   - Import of a Google Sheet or Slides file into the Albatross editor:
-    `lib/documents/google-import.ts:128`, `:145`, `:301`, `:314`. The Sheets
+    `lib/documents/google-import.ts:133`, `:150`, `:312`, `:325`. The Sheets
     method `spreadsheets.get` and the Slides method `presentations.get`
     accept `drive.readonly`
     (<https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/get>,
     <https://developers.google.com/workspace/slides/api/reference/rest/v1/presentations/get>).
     Thus Albatross does not ask for `spreadsheets` or `presentations`.
+  - Before a Google Doc opens for edits, and before each save to it,
+    Albatross reads the status of the Doc comments
+    (`lib/documents/google-comments.ts:9-32`, Drive v3 `comments.list` with
+    `fields=comments(resolved,deleted,anchor)`). It reads no comment text. A
+    Doc with an open anchored comment opens as a preview, because an edit can
+    detach the comment from its text. `comments.list` accepts
+    `drive.readonly`
+    (<https://developers.google.com/workspace/drive/api/reference/rest/v3/comments/list>).
 - **Narrower scope.**
   - `drive.file` includes only files that the app made or that the user opened
     through the app. The user browses and searches all Drive files.
@@ -288,16 +296,16 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
 - **Feature.** The user makes a new Google Doc, Sheet, or Slides file from an
   Albatross document. Albatross writes the content into that new file.
 - **Code.**
-  - `publishDocumentToGoogle` (`lib/documents/google.ts:567-641`) makes the
-    file with `createGoogleFile` (`:541-565`). Then it writes the content with
-    the Docs, Sheets, or Slides writer (`:132`, `:302`, `:512`).
+  - `publishDocumentToGoogle` (`lib/documents/google.ts:558-633`) makes the
+    file with `createGoogleFile` (`:532-556`). Then it writes the content with
+    the Docs, Sheets, or Slides writer (`:192`, `:293`, `:503`).
   - The create methods and the `batchUpdate` methods of Docs, Sheets, and
     Slides accept `drive.file`
     (<https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/create>,
     <https://developers.google.com/workspace/slides/api/reference/rest/v1/presentations/create>).
-  - It reads the Drive metadata of the new file (`lib/documents/google.ts:243-256`).
+  - It reads the Drive metadata of the new file (`lib/documents/google.ts:234-247`).
   - Route `POST /api/documents/[id]/google`, called from
-    `components/files/DocumentEditor.tsx:443`.
+    `components/files/DocumentEditor.tsx:444`.
   - The Office working-copy save replaces a Google Sheet or Slides file with a
     Drive v2 upload (`lib/documents/google-working-copy.ts:239-250`). With
     `drive.file`, this works only for a file that the app has access to: in
@@ -315,28 +323,30 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
 - **Feature.** Import a Google Doc into the Albatross editor. Save edits back
   to the same Google Doc, also when Albatross did not make that Doc.
 - **Code.**
-  - Read: `lib/documents/google-import.ts:287`.
+  - Read: `lib/documents/google-import.ts:297`.
   - Write back to an existing Doc: `updateGoogleNativeFile`
-    (`lib/documents/google.ts:643-685`) calls `syncGoogleDoc`, which sends
-    `documents.batchUpdate` (`:229`). Only a Doc can go back to its Google
-    original (`lib/documents/google.ts:654`,
-    `lib/documents/google-write-policy.ts:80-90`).
+    (`lib/documents/google.ts:635-680`) calls `syncGoogleDoc` (`:192`), which
+    sends `documents.batchUpdate` (`writeGoogleDoc`, `:158`). The request
+    changes only the text and styles that the user changed
+    (`lib/documents/google-doc-diff.ts`), and `writeControl.requiredRevisionId`
+    binds it to the revision that Albatross read. Only a Doc can go back to
+    its Google original (`lib/documents/google-write-policy.ts`).
   - A Google Doc always opens in the Albatross editor, also when the Office
     editor is on (`googleNativeEditor`, `lib/documents/google-write-policy.ts:16`,
-    used by `components/files/DocumentEditor.tsx:843`). Albatross makes no
+    used by `components/files/DocumentEditor.tsx:853`). Albatross makes no
     Office working copy of a Doc, and the working-copy save refuses a Doc
     before any Google call (`lib/documents/google-working-copy.ts:132`, `:214`,
     `lib/documents/google-office.ts:178`). Thus the save of a Doc goes through
     `documents.batchUpdate` and not through a Drive upload.
   - After the save, Albatross renames the Doc when the user changed the
-    title (`renameGoogleFile`, `lib/documents/google.ts:696-714`, Drive v3
+    title (`renameGoogleFile`, `lib/documents/google.ts:691-711`, Drive v3
     `PATCH`). The Drive API renames a file only with `drive`, or with
     `drive.file` for a file that the app made. For a Doc that the user made in
     Google, Google refuses the rename (403, reason `appNotAuthorizedToFile`:
     the app has no access to the file). Albatross then keeps the Google name
     and tells the user. The content save does not depend on the rename.
   - Route `PATCH /api/files/google/editor`, called from
-    `components/files/DocumentEditor.tsx:1006` and `:1087`.
+    `components/files/DocumentEditor.tsx:1009` and `:1091`.
   - The assistant tool `google_document_edit` only proposes a change. The user
     reviews it in the editor. The tool never writes to Google
     (`lib/tools/google-documents.ts:45`).
@@ -365,7 +375,7 @@ These notes are not for the reviewer. Each note has the decision of the owner.
    (decision of 2026-09-29).** Two calls change a user's original file through
    the Drive API. For a file that the app did not make, these calls need the
    full `drive` scope, and Albatross does not ask for it. Both calls fail soft:
-   - The rename after a Doc write back (`lib/documents/google.ts:696-714`,
+   - The rename after a Doc write back (`lib/documents/google.ts:691-711`,
      Drive v3 `PATCH`). A 403 with the reason `appNotAuthorizedToFile`
      (`lib/documents/google-access.ts`) skips the rename. The content is
      saved, the file keeps its Google name, and the editor tells the user.

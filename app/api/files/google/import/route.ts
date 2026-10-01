@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
       connectionId: input.connectionId,
       fileId: input.fileId,
       mimeType: input.mimeType,
+      mode: 'rich',
     });
     const sourceRefs = [
       {

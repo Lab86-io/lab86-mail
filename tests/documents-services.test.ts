@@ -36,6 +36,7 @@ import {
 } from '../lib/documents/service';
 import { api } from '../lib/hosted/convex';
 import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
+import { GoogleDocsSimulator } from './google-docs-simulator';
 
 const documentsApi = (api as any).documents;
 
@@ -935,9 +936,19 @@ describe('Google document publishing', () => {
   function installPublisher() {
     const linked = mock(async () => ({ ok: true }));
     const requests: Array<{ url: string; init?: RequestInit }> = [];
+    // The Doc applies each batchUpdate, so the writer's check after the save reads the result.
+    const docs = new GoogleDocsSimulator([{ text: 'Source' }]);
+    docs.revision = 7;
     const fetchMock = mock(async (url: string | URL | Request, init?: RequestInit) => {
       const endpoint = String(url);
       requests.push({ url: endpoint, init });
+      if (
+        endpoint.startsWith('https://docs.googleapis.com/v1/documents/') &&
+        endpoint.endsWith(':batchUpdate')
+      ) {
+        const result = docs.batchUpdate(JSON.parse(String(init?.body)));
+        return Response.json(result.body, { status: result.status });
+      }
       if (endpoint === 'https://docs.googleapis.com/v1/documents' && init?.method === 'POST') {
         return Response.json({ documentId: 'created-doc' });
       }
@@ -948,14 +959,7 @@ describe('Google document publishing', () => {
         return Response.json({ presentationId: 'created-deck' });
       }
       if (endpoint.includes('docs.googleapis.com') && !init?.method) {
-        return Response.json({
-          revisionId: 'docs-revision-7',
-          body: {
-            content: [
-              { startIndex: 1, endIndex: 8, paragraph: { elements: [{ textRun: { content: 'Source\n' } }] } },
-            ],
-          },
-        });
+        return Response.json(docs.toJson({ legacy: true }));
       }
       if (endpoint.includes('sheets.googleapis.com') && endpoint.includes('fields=sheets')) {
         return Response.json({
@@ -1094,7 +1098,7 @@ describe('Google document publishing', () => {
     const docBatch = requests.find((request) => request.url.includes('created-doc:batchUpdate'));
     expect(String(docBatch?.init?.body)).toContain('createParagraphBullets');
     expect(JSON.parse(String(docBatch?.init?.body)).writeControl).toEqual({
-      requiredRevisionId: 'docs-revision-7',
+      requiredRevisionId: 'rev-7',
     });
     const sheetValues = requests.find((request) => request.url.includes('values:batchUpdate'));
     expect(String(sheetValues?.init?.body)).toContain('=SUM(B2:B2)');

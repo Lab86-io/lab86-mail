@@ -35,6 +35,12 @@ const sourceRefSchema = z.object({
   url: z.string().max(2_000).optional(),
 });
 
+/** The link schemes a doc run can carry: web pages and email addresses. */
+export const DOC_LINK_PATTERN = /^(https?:\/\/|mailto:)\S+$/iu;
+export const MAX_DOC_LINK_LENGTH = 8_000;
+/** Google Docs list nesting levels are 0 to 8. */
+export const MAX_DOC_LIST_LEVEL = 8;
+
 /**
  * Optional inline formatting for a doc block. `text` stays the canonical
  * plain-text value that native clients and tools read; `runs`, when present,
@@ -47,6 +53,8 @@ const docRunSchema = z.object({
   underline: z.boolean().optional(),
   strike: z.boolean().optional(),
   code: z.boolean().optional(),
+  /** An http, https or mailto address. */
+  link: z.string().max(MAX_DOC_LINK_LENGTH).regex(DOC_LINK_PATTERN).optional(),
 });
 
 const docBlockSchema = z
@@ -55,6 +63,10 @@ const docBlockSchema = z
     type: z.enum(['paragraph', 'heading', 'bullet', 'numbered', 'quote']),
     text: z.string().max(100_000),
     level: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+    /** A heading shown as the document title or subtitle (Google Docs TITLE and SUBTITLE). */
+    variant: z.enum(['title', 'subtitle']).optional(),
+    /** The nesting level of a bullet or numbered item. 0 (the default) is the top level. */
+    listLevel: z.number().int().min(0).max(MAX_DOC_LIST_LEVEL).optional(),
     runs: z.array(docRunSchema).min(1).max(10_000).optional(),
   })
   .refine(

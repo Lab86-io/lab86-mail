@@ -36,8 +36,17 @@ function googleError(status: number, reason: string) {
   return Response.json({ error: { code: status, errors: [{ reason }], message: reason } }, { status });
 }
 
+/** The Doc after the save of the default (empty) model. */
+const savedDoc = {
+  revisionId: 'revision-2',
+  body: {
+    content: [{ startIndex: 1, endIndex: 2, paragraph: { elements: [{ textRun: { content: '\n' } }] } }],
+  },
+};
+
 function installDocs(options: { name?: string; rename: () => Response }) {
   const calls: Array<{ url: string; method: string }> = [];
+  let current = doc;
   __setGoogleDocumentDepsForTest({
     getCloudFileAccess: access,
     fetch: (async (url: unknown, init?: RequestInit) => {
@@ -52,8 +61,11 @@ function installDocs(options: { name?: string; rename: () => Response }) {
           version: '9',
         });
       }
-      if (endpoint.includes('docs.googleapis.com') && method === 'POST') return Response.json({});
-      return Response.json(doc);
+      if (endpoint.includes('docs.googleapis.com') && method === 'POST') {
+        current = savedDoc;
+        return Response.json({});
+      }
+      return Response.json(current);
     }) as any,
   });
   return calls;
