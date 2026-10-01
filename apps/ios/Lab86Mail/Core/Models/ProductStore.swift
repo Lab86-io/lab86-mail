@@ -2355,7 +2355,8 @@ final class ProductStore {
         attachments: [ComposeAttachment],
         sendAt: Date?,
         undoSeconds: Int,
-        includeSignature: Bool
+        includeSignature: Bool,
+        fromAddress: String? = nil
     ) async throws -> ComposeSubmission {
         var fields = Self.composeFields(
             mode: mode,
@@ -2365,7 +2366,8 @@ final class ProductStore {
             bcc: bcc,
             subject: subject,
             body: body,
-            includeSignature: includeSignature
+            includeSignature: includeSignature,
+            fromAddress: fromAddress
         )
         if let threadID { fields["threadId"] = threadID }
         if let messageID { fields["messageId"] = messageID }
@@ -2395,6 +2397,8 @@ final class ProductStore {
 
     /// The text fields of `POST /api/compose`. The mailbox signature goes on
     /// by default; `signature=0` leaves it off for this one message.
+    /// `fromAddress` is a usable send-as address (`SendAsRules.sendAddress`).
+    /// Without it the server sends from the mailbox default.
     static func composeFields(
         mode: String,
         accountID: String,
@@ -2403,7 +2407,8 @@ final class ProductStore {
         bcc: String,
         subject: String,
         body: String,
-        includeSignature: Bool
+        includeSignature: Bool,
+        fromAddress: String? = nil
     ) -> [String: String] {
         var fields = [
             "mode": mode,
@@ -2415,6 +2420,9 @@ final class ProductStore {
             "body": body,
         ]
         if !includeSignature { fields["signature"] = "0" }
+        if let fromAddress = fromAddress?.trimmingCharacters(in: .whitespacesAndNewlines), !fromAddress.isEmpty {
+            fields["fromAddress"] = fromAddress
+        }
         return fields
     }
 

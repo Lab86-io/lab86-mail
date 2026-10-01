@@ -51,6 +51,15 @@ struct ComposeView: View {
     @State private var includeSignature = true
     @State private var savedReplies: [SavedReply] = []
     @State private var savedRepliesState: SavedRepliesState = .idle
+    // Send-as (Gmail "Send mail as"): the address the user picked, or the
+    // address of a restored draft. Nil uses the mailbox default (for a reply,
+    // the address the original was sent to).
+    @State private var fromAddress: String?
+    // The send-as list of each mailbox, by account id.
+    @State private var sendAsPages: [String: SendAsPage] = [:]
+    // The mailbox of the message that a reply or a forward answers. Only its
+    // list asks the server for the address the original was sent to.
+    @State private var anchorAccountID: String?
     @FocusState private var focusedField: Field?
 
     private enum SavedRepliesState: Equatable {
@@ -140,6 +149,7 @@ struct ComposeView: View {
                     draftID = pending.draftID
                     showsCopyFields = !pending.cc.isEmpty || !pending.bcc.isEmpty
                     if let pendingAccount = pending.accountID { accountID = pendingAccount }
+                    fromAddress = pending.fromAddress?.nilIfBlank
                     environment.navigation.pendingCompose = nil
                     if let key = pending.attachmentsKey {
                         Task { await loadAttachments(key: key) }
@@ -150,6 +160,7 @@ struct ComposeView: View {
                         ?? environment.store.accounts.first?.id
                         ?? ""
                 }
+                if anchorAccountID == nil { anchorAccountID = accountID.nilIfBlank }
                 if focusedField == nil {
                     focusedField = mode == "new" && to.isEmpty ? .to : .body
                 }
@@ -162,6 +173,7 @@ struct ComposeView: View {
                 }
                 Task { await loadSignatures() }
             }
+            .task(id: sendAsLoadKey) { await loadSendAs() }
             .task(id: draftFingerprint) {
                 guard didSeedDraft, hasMeaningfulDraft, isDirty, !isSending else { return }
                 do {
@@ -239,31 +251,39 @@ struct ComposeView: View {
             .padding(.leading, 20)
     }
 
-    // Which account is sending, always visible — this is a multi-account app.
+    // Which address is sending, always visible — this is a multi-account app.
+    // Each mailbox is one row. A mailbox with more than one usable send-as
+    // address (Gmail "Send mail as") lists each address under its own name.
     private var fromRow: some View {
         Menu {
-            ForEach(environment.store.accounts) { account in
-                Button {
-                    accountID = account.id
-                } label: {
-                    if account.id == accountID {
-                        Label(account.email, systemImage: "checkmark")
-                    } else {
-                        Text(account.email)
+            ForEach(fromGroups) { group in
+                if group.offersAddressChoice {
+                    Section(group.accountEmail) {
+                        ForEach(group.choices) { choice in fromButton(choice) }
                     }
+                } else if let choice = group.choices.first {
+                    fromButton(choice)
                 }
             }
         } label: {
             HStack(spacing: 10) {
-                InitialsAvatar(name: selectedAccountLabel, seed: accountID, size: 30)
+                InitialsAvatar(name: selectedFrom?.name ?? selectedFromEmail, seed: accountID, size: 30)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("From")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(selectedAccountLabel)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(selectedFromEmail)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .layoutPriority(1)
+                        if let name = selectedFrom?.name {
+                            Text(name)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .lineLimit(1)
                 }
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.caption2)
@@ -278,11 +298,67 @@ struct ComposeView: View {
         // bordered button) doubled it and collided with the avatar.
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
-        .accessibilityLabel("From \(selectedAccountLabel)")
+        .accessibilityLabel(fromAccessibilityLabel)
     }
 
-    private var selectedAccountLabel: String {
-        environment.store.accounts.first(where: { $0.id == accountID })?.email ?? "Choose account"
+    private func fromButton(_ choice: FromChoice) -> some View {
+        Button {
+            accountID = choice.accountID
+            fromAddress = SendAsRules.userAddress(after: choice)
+        } label: {
+            if choice.id == selectedFrom?.id {
+                Label(choice.email, systemImage: "checkmark")
+            } else {
+                Text(choice.email)
+            }
+            if let name = choice.name { Text(name) }
+        }
+    }
+
+    private var fromGroups: [FromChoiceGroup] {
+        SendAsRules.groups(accounts: environment.store.accounts, pages: sendAsPages)
+    }
+
+    private var selectedFrom: FromChoice? {
+        SendAsRules.selected(
+            in: fromGroups,
+            accountID: accountID,
+            address: SendAsRules.preferredAddress(userAddress: fromAddress, page: sendAsPages[accountID])
+        )
+    }
+
+    private var selectedFromEmail: String {
+        selectedFrom?.email ?? "Choose account"
+    }
+
+    private var fromAccessibilityLabel: String {
+        guard let selectedFrom else { return "From: choose account" }
+        if let name = selectedFrom.name { return "From \(name), \(selectedFrom.email)" }
+        return "From \(selectedFrom.email)"
+    }
+
+    /// The `fromAddress` field of this send (web: `sendFromAddress`).
+    private var sendFromAddress: String? {
+        SendAsRules.sendAddress(page: sendAsPages[accountID], selected: selectedFrom, userAddress: fromAddress)
+    }
+
+    private var sendAsLoadKey: String {
+        ([accountID, anchorAccountID ?? "", mode, sourceMessageID ?? "", sourceThreadID ?? ""]
+            + environment.store.accounts.map(\.id)).joined(separator: "\u{1F}")
+    }
+
+    /// Reads the send-as list of each mailbox, the sending mailbox first. A
+    /// list that does not load leaves that mailbox on its own address.
+    private func loadSendAs() async {
+        let anchor = SendAsAnchor(mode: mode, messageID: sourceMessageID, threadID: sourceThreadID)
+        var ids = environment.store.accounts.map(\.id).filter { $0 != accountID }
+        if !accountID.isEmpty { ids.insert(accountID, at: 0) }
+        for id in ids {
+            guard !Task.isCancelled else { return }
+            let page = await environment.sendAs.page(accountID: id, anchor: id == anchorAccountID ? anchor : nil)
+            guard !Task.isCancelled else { return }
+            if let page { sendAsPages[id] = page }
+        }
     }
 
     // To, Cc, and Bcc are chip fields with recipient search. Each binds to
@@ -611,6 +687,7 @@ struct ComposeView: View {
     private var draftFingerprint: String {
         [
             accountID,
+            fromAddress ?? "",
             to,
             cc,
             bcc,
@@ -636,6 +713,7 @@ struct ComposeView: View {
                     draftID: attachmentKey
                 )
             }
+            let from = sendFromAddress
             let submission = try await environment.store.sendCompose(
                 mode: mode == "reply" && replyAll ? "reply_all" : mode,
                 accountID: accountID,
@@ -649,7 +727,8 @@ struct ComposeView: View {
                 attachments: attachments,
                 sendAt: sendsLater ? sendLaterDate : nil,
                 undoSeconds: sendsLater ? 0 : undoSendSeconds,
-                includeSignature: includeSignature
+                includeSignature: includeSignature,
+                fromAddress: from
             )
             switch submission {
             case .pending(let receipt):
@@ -668,7 +747,8 @@ struct ComposeView: View {
                     messageID: sourceMessageID,
                     replyAll: replyAll,
                     attachmentsKey: attachmentKey,
-                    draftID: draftID
+                    draftID: draftID,
+                    fromAddress: from
                 )
                 environment.pendingSends.register(receipt: receipt, ownerID: ownerID, snapshot: snapshot)
             case .scheduled, .sent:
@@ -683,6 +763,12 @@ struct ComposeView: View {
                 return
             }
             dismiss()
+        } catch let refusal as ComposeFromRefusal {
+            // The draft stays open. The list may have changed in Gmail, so
+            // the From control reads it again.
+            errorMessage = refusal.localizedDescription
+            environment.sendAs.invalidate(accountID: accountID)
+            await loadSendAs()
         } catch { errorMessage = error.localizedDescription }
     }
 

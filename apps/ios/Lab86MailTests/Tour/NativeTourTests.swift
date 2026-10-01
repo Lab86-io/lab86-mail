@@ -316,7 +316,12 @@ final class NativeTourTests: XCTestCase {
         }
 
         let configuration = AppConfiguration(bundle: Bundle(for: NativeTourTests.self), defaults: defaults)
-        let environment = AppEnvironment(configuration: configuration, inMemoryPersistence: true, backend: backend.client)
+        let environment = AppEnvironment(
+            configuration: configuration,
+            inMemoryPersistence: true,
+            backend: backend.client,
+            sendAs: TourSendAs(fixtures: fixtures)
+        )
         let ownerID = await TourSession.signIn(environment)
         environment.navigation.selectPrimary(screen.tab)
         await environment.store.bootstrap(cacheOwner: ownerID)

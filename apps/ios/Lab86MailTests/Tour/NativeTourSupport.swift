@@ -1,4 +1,5 @@
 import Foundation
+import MobileAPI
 @testable import Lab86Mail
 
 // Shared parts of the native screenshot tour (NativeTourTests on iOS and
@@ -296,6 +297,38 @@ struct TourRoutes: Sendable {
             }
         }
         return nil
+    }
+}
+
+/// Decodes a mobile v1 body the way the generated client does: dates may
+/// carry fractional seconds (`Date.toISOString()`).
+enum MobileContractJSON {
+    static func decode<Value: Decodable>(_ type: Value.Type, from data: Data) throws -> Value {
+        let transcoder = LenientISO8601DateTranscoder()
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            try transcoder.decode(try decoder.singleValueContainer().decode(String.self))
+        }
+        return try decoder.decode(type, from: data)
+    }
+}
+
+/// The send-as lists of the tour mailboxes (`sendAs` in the fixtures, and
+/// `sendAsAnchored` for a reply or a forward), read through the same
+/// generated type and mapping as the app.
+struct TourSendAs: SendAsFetching {
+    let fixtures: JSONValue
+
+    func fetchSendAs(accountID: String, anchor: SendAsAnchor?) async throws -> SendAsPage {
+        let anchored = anchor == nil ? nil : fixtures["sendAsAnchored"]?[accountID]
+        guard let value = anchored ?? fixtures["sendAs"]?[accountID] else {
+            throw URLError(.resourceUnavailable)
+        }
+        let page = try MobileContractJSON.decode(
+            Components.Schemas.MobileSendAsPage.self,
+            from: try JSONEncoder().encode(value)
+        )
+        return MobileV1Client.sendAsPage(from: page)
     }
 }
 

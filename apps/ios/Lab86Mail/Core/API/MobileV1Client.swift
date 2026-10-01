@@ -724,3 +724,58 @@ extension MobileV1Client: RecipientSearching, ContactStatusServing {
         )
     }
 }
+
+// MARK: - Send-as addresses (mobile v1)
+
+// The addresses one mailbox can send from. `lib/mobile/v1/contract.ts`
+// ("MobileSendAsPage") is the source.
+extension MobileV1Client: SendAsFetching {
+    func fetchSendAs(accountID: String, anchor: SendAsAnchor?) async throws -> SendAsPage {
+        let output = try await client.getMobileSendAs(
+            .init(
+                path: .init(accountID: accountID),
+                query: .init(messageID: anchor?.messageID, threadID: anchor?.threadID)
+            )
+        )
+        switch output {
+        case .ok(let response):
+            return Self.sendAsPage(from: try response.body.json)
+        case .badRequest(let response):
+            throw Self.error(from: try response.body.json, status: 400)
+        case .unauthorized(let response):
+            throw Self.error(from: try response.body.json, status: 401)
+        case .notFound(let response):
+            throw Self.error(from: try response.body.json, status: 404)
+        case .conflict(let response):
+            throw Self.error(from: try response.body.json, status: 409)
+        case .tooManyRequests(let response):
+            throw Self.error(from: try response.body.json, status: 429)
+        case .internalServerError(let response):
+            throw Self.error(from: try response.body.json, status: 500)
+        case .undocumented(let status, _):
+            throw MobileV1ClientError.undocumented(status: status)
+        }
+    }
+
+    static func sendAsPage(from value: Components.Schemas.MobileSendAsPage) -> SendAsPage {
+        SendAsPage(
+            accountID: value.accountID,
+            aliasesSupported: value.aliasesSupported,
+            partial: value.partial,
+            identities: value.identities.map { identity in
+                SendAsIdentity(
+                    email: identity.email,
+                    displayName: identity.displayName?.nilIfBlank,
+                    isPrimary: identity.isPrimary,
+                    isDefault: identity.isDefault,
+                    verificationStatus: SendAsVerification(rawValue: identity.verificationStatus.rawValue) ?? .unknown,
+                    replyTo: identity.replyTo?.nilIfBlank,
+                    hasProviderSignature: identity.hasProviderSignature,
+                    usable: identity.usable
+                )
+            },
+            defaultAddress: value.defaultAddress,
+            serverTime: value.serverTime
+        )
+    }
+}

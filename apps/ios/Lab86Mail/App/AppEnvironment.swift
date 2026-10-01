@@ -43,6 +43,9 @@ final class AppEnvironment {
     // (mobile v1 contacts endpoints).
     let recipientSearch: (any RecipientSearching)?
     let contactStatus: (any ContactStatusServing)?
+    // The addresses each mailbox can send from (Gmail "Send mail as"), kept
+    // for a short time for the composer's From control.
+    let sendAs: SendAsDirectory
     // The plan, the trial note, and the optional Files surface (round 2).
     let trust: AccountTrustStore
     // The current Albatross conversation. Held here so switching destinations
@@ -58,7 +61,8 @@ final class AppEnvironment {
     init(
         configuration: AppConfiguration,
         inMemoryPersistence: Bool = false,
-        backend backendOverride: BackendClient? = nil
+        backend backendOverride: BackendClient? = nil,
+        sendAs sendAsOverride: (any SendAsFetching)? = nil
     ) {
         self.configuration = configuration
         let sessionStore = SessionStore()
@@ -104,6 +108,7 @@ final class AppEnvironment {
             self.mobileClient = mobileClient
             recipientSearch = mobileClient
             contactStatus = mobileClient
+            sendAs = SendAsDirectory(fetcher: sendAsOverride ?? mobileClient)
             briefHydration = BriefHydrationClient(
                 baseURL: apiBaseURL,
                 tokenProvider: tokenProvider
@@ -121,6 +126,7 @@ final class AppEnvironment {
             mobileClient = nil
             recipientSearch = nil
             contactStatus = nil
+            sendAs = SendAsDirectory(fetcher: sendAsOverride)
             briefHydration = nil
             preparedWork = nil
             processor = nil
