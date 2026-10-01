@@ -30,13 +30,19 @@ const defaults = {
   now: () => Date.now(),
 };
 let deps = defaults;
-const cache = new Map<string, { at: number; identities: SendAsIdentity[] }>();
-const inflight = new Map<string, Promise<SendAsIdentity[]>>();
+// The raw Gmail entries of each grant. Each caller builds its own identities
+// from them, with its own mailbox address.
+const cache = new Map<string, { at: number; entries: GmailSendAs[] }>();
+const inflight = new Map<string, { generation: number; entries: Promise<GmailSendAs[]> }>();
+// A forget moves the generation of a grant forward, so a read that started
+// before it cannot write its old list into the cache.
+const generations = new Map<string, number>();
 
 export function __setGoogleSendAsDepsForTest(overrides: Partial<typeof defaults> = {}) {
   deps = { ...defaults, ...overrides };
   cache.clear();
   inflight.clear();
+  generations.clear();
 }
 
 function verification(entry: GmailSendAs): SendAsVerification {
@@ -99,34 +105,42 @@ export function gmailSendAsIdentities(entries: GmailSendAs[] | undefined, primar
   return identities.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
 }
 
-function remember(grantId: string, identities: SendAsIdentity[]) {
+function remember(grantId: string, entries: GmailSendAs[]) {
   if (!cache.has(grantId) && cache.size >= SEND_AS_CACHE_MAX) {
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
   }
-  cache.set(grantId, { at: deps.now(), identities });
+  cache.set(grantId, { at: deps.now(), entries });
 }
 
-/** The send-as identities of a direct Google grant, cached for SEND_AS_CACHE_MS. */
-export async function listGmailSendAs(grantId: string, primaryEmail?: string): Promise<SendAsIdentity[]> {
+async function gmailEntries(grantId: string): Promise<GmailSendAs[]> {
   const cached = cache.get(grantId);
-  if (cached && deps.now() - cached.at < SEND_AS_CACHE_MS) return cached.identities;
-  let pending = inflight.get(grantId);
-  if (!pending) {
-    pending = deps
-      .fetchSendAs(grantId)
-      .then((result) => {
-        const identities = gmailSendAsIdentities(result?.sendAs, primaryEmail);
-        remember(grantId, identities);
-        return identities;
-      })
-      .finally(() => inflight.delete(grantId));
-    inflight.set(grantId, pending);
-  }
-  return await pending;
+  if (cached && deps.now() - cached.at < SEND_AS_CACHE_MS) return cached.entries;
+  const generation = generations.get(grantId) ?? 0;
+  const running = inflight.get(grantId);
+  if (running?.generation === generation) return await running.entries;
+  const entries = deps
+    .fetchSendAs(grantId)
+    .then((result) => {
+      const list = Array.isArray(result?.sendAs) ? result.sendAs : [];
+      if ((generations.get(grantId) ?? 0) === generation) remember(grantId, list);
+      return list;
+    })
+    .finally(() => {
+      if (inflight.get(grantId)?.entries === entries) inflight.delete(grantId);
+    });
+  inflight.set(grantId, { generation, entries });
+  return await entries;
 }
 
-/** Clears the cached list of a grant (a reconnect or a removed grant). */
+/** The send-as identities of a direct Google grant. The Gmail list is cached for SEND_AS_CACHE_MS. */
+export async function listGmailSendAs(grantId: string, primaryEmail?: string): Promise<SendAsIdentity[]> {
+  return gmailSendAsIdentities(await gmailEntries(grantId), primaryEmail);
+}
+
+/** Clears the cached list of a grant (a reconnect or a removed grant), and a read that is still open. */
 export function forgetGmailSendAs(grantId: string): void {
   cache.delete(grantId);
+  inflight.delete(grantId);
+  generations.set(grantId, (generations.get(grantId) ?? 0) + 1);
 }

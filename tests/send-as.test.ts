@@ -141,7 +141,7 @@ describe('Gmail send-as mapping', () => {
       },
     });
     const [first, second] = await Promise.all([listGmailSendAs('google:a'), listGmailSendAs('google:a')]);
-    expect(first).toBe(second);
+    expect(first).toEqual(second);
     expect(reads).toBe(1);
     now += SEND_AS_CACHE_MS - 1;
     await listGmailSendAs('google:a');
@@ -154,6 +154,37 @@ describe('Gmail send-as mapping', () => {
     expect(reads).toBe(3);
     await listGmailSendAs('google:b');
     expect(reads).toBe(4);
+  });
+
+  test('a forget during a read keeps the old list out of the cache', async () => {
+    let reads = 0;
+    let release: (value: { sendAs: GmailSendAs[] }) => void = () => {};
+    __setGoogleSendAsDepsForTest({
+      fetchSendAs: async () => {
+        reads += 1;
+        if (reads === 1) return await new Promise((resolve) => (release = resolve));
+        return { sendAs: [PRIMARY, WORK] };
+      },
+    });
+    const stale = listGmailSendAs('google:d');
+    forgetGmailSendAs('google:d');
+    // A read after the forget does not wait for the old one.
+    expect(await listGmailSendAs('google:d')).toHaveLength(2);
+    release({ sendAs: [PRIMARY] });
+    expect(await stale).toHaveLength(1);
+    expect(await listGmailSendAs('google:d')).toHaveLength(2);
+    expect(reads).toBe(2);
+  });
+
+  test('each caller gets its own mailbox address added when Gmail lists no primary', async () => {
+    __setGoogleSendAsDepsForTest({ fetchSendAs: async () => ({ sendAs: [WORK] }) });
+    const [one, two] = await Promise.all([
+      listGmailSendAs('google:e', 'one@gmail.com'),
+      listGmailSendAs('google:e', 'two@gmail.com'),
+    ]);
+    expect(one[0].email).toBe('one@gmail.com');
+    expect(two[0].email).toBe('two@gmail.com');
+    expect(await listGmailSendAs('google:e')).toHaveLength(1);
   });
 
   test('a failed read is not cached', async () => {
