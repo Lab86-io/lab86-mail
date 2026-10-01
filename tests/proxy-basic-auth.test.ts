@@ -147,6 +147,14 @@ describe('proxy basic-auth bypass guard', () => {
     expect(shouldRequireBasicAuth(req('preview.example.test'), '/api/healthz')).toBe(false);
   });
 
+  test('keeps the Google push routes outside basic auth; Google cannot send it', () => {
+    setEnv({ LAB86_MAIL_REQUIRE_BASIC_AUTH: '1', NODE_ENV: 'test' });
+    for (const path of ['/api/google/push/gmail', '/api/google/push/calendar', '/api/google/push/drive']) {
+      expect(shouldRequireBasicAuth(req('preview.example.test'), path)).toBe(false);
+    }
+    expect(shouldRequireBasicAuth(req('preview.example.test'), '/api/google/connect')).toBe(true);
+  });
+
   test('lets native Clerk bearer API requests reach Clerk validation', () => {
     setEnv({ LAB86_MAIL_REQUIRE_BASIC_AUTH: '1', NODE_ENV: 'test' });
 

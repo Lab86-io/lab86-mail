@@ -67,8 +67,9 @@ system. The Google scopes do not change.
   2. New Google connections use the direct flow when `LAB86_GOOGLE_DIRECT=1`.
 - **Sync.** A cron polls the Gmail History API every 2 minutes for each direct
   account (`history.list` from the stored `historyId`). A `404` (history too
-  old) runs the normal reconcile path. Pub/Sub push is not built (see "Not in
-  this change").
+  old) runs the normal reconcile path. Gmail push through Cloud Pub/Sub is in
+  the code, but it is off until the owner sets its flags (section "Push").
+  With healthy push, the cron reads a mailbox about every 15 minutes.
 - **Scheduled send.** Gmail has no scheduled send. A direct account holds a
   scheduled message in the mail outbox (`mailOutbox`) with a future fire time.
   The list and cancel calls read the outbox.
@@ -107,8 +108,9 @@ system. The Google scopes do not change.
   query, as the Google documentation specifies.
 - **Limits.** The People API has no read of one other contact. Thus
   `contacts.find` for an other contact rejects with 501. A direct account gets
-  no calendar or contact push. The 15-minute poll, the daily full pass, and
-  the sync after each write keep the mirror current.
+  calendar push only with `LAB86_GOOGLE_CALENDAR_PUSH=1` (section "Push").
+  Contacts get no push. The 15-minute poll, the daily full pass, and the sync
+  after each write keep the mirror current.
 
 ## Gmail
 
@@ -247,6 +249,11 @@ These rules add to the decisions above or make them exact.
 3. Nylas webhooks for that grant are processed again. The corpus stays.
 4. The Google access stays in the Google account permissions until the owner
    removes it there.
+5. With Gmail or Calendar push on, the rollback removes the Google token
+   before the app can stop the watch and the channels of the account. Google
+   ends them at their expiration (at most 7 days). The push routes find no
+   direct account or no row for them, so their messages do nothing. The
+   hourly push cron removes their rows.
 
 A rollback is not possible after the cleanup below.
 
@@ -363,6 +370,254 @@ with synthetic rows on local Convex before applying the pass to production.
 - `LAB86_GOOGLE_DIRECT_SWITCH=1`: the switch works in production without the
   flag above.
 
+## Push
+
+Status: in the code, off by default (2026-10-01). A flag turns on each part.
+No new OAuth scope is necessary. The scope `gmail.modify` lets the app call
+`users.watch` and `users.stop`. The scope `calendar` lets it call
+`events.watch` and `channels.stop`. The scope `drive.readonly` lets it call
+`changes.watch` and `channels.stop`.
+
+### Routes
+
+| Route | Caller | Check |
+|---|---|---|
+| `POST /api/google/push/gmail` | Cloud Pub/Sub push subscription `gmail-push-albatross` | The OIDC token in `Authorization: Bearer`: a Google RS256 signature (keys from `https://www.googleapis.com/oauth2/v3/certs`), `iss` is `accounts.google.com`, `aud` is `LAB86_GOOGLE_PUBSUB_AUDIENCE`, `email` is `LAB86_GOOGLE_PUBSUB_SERVICE_ACCOUNT`, `email_verified` is `true`, and the token is not expired. |
+| `POST /api/google/push/calendar` | Google Calendar channel | `X-Goog-Channel-ID` finds the row. The SHA-256 hash of `X-Goog-Channel-Token` is equal to the stored hash. `X-Goog-Resource-ID` is equal to the stored resource id. |
+| `POST /api/google/push/drive` | Google Drive changes channel | The same checks as for Calendar. |
+| `POST /api/cron/google-push` | Convex cron `googlePush:renewalTick`, each hour | The internal secret. |
+
+Answers:
+
+- When the flag of a route is off, the route answers 204 and does nothing.
+- The Gmail route answers 401 when the token is not correct, or when a
+  Pub/Sub variable is missing. Pub/Sub then sends the message again. All
+  other answers are 204: also for a body that is not correct, and for an
+  address that has no direct account. Thus Pub/Sub does not send bad input
+  again.
+- The Calendar and Drive routes always answer 204, because Google does not
+  send a message again after a 2xx answer. A message with an incorrect token,
+  an incorrect resource, or an unknown channel does nothing.
+- These two routes are public. Thus each app instance reads at most 600
+  channel rows in one minute from Convex. It keeps a checked row in memory for
+  5 minutes, and an unknown channel id for 10 minutes.
+
+What a message does:
+
+- A message has no mail, event, or file data. It only starts a sync that the
+  app has already: the History sync of the mailbox (`syncGoogleHistory`), the
+  calendar sync of the account (`syncCalendarAccount`, window `auto`), or the
+  content sync of the Drive connection (`syncCloudContent`).
+- The sync starts 2 seconds (Gmail) or 5 seconds (Calendar, Drive) after the
+  first message. More messages in that time start no more syncs. A message
+  during a sync starts one more sync after it. A sync that was busy, or that
+  has more to read, starts again after a short time. The number of these
+  starts has a limit.
+- A Calendar or Drive `sync` message (the first message of a new channel)
+  starts no sync. It shows that the path from Google to the app works.
+- The code is in `lib/google/push/` (`receive.ts`, `renewal.ts`,
+  `calendar-poll.ts`, `oidc.ts`, `rules.ts`).
+
+### State
+
+The Convex table `googlePushChannels` (`convex/googlePushSchema.ts`) has one
+row for each Gmail watch (one for each mailbox), each Calendar channel (one
+for each calendar), and each Drive channel (one for each connection). A row
+keeps the channel id (a random UUID), the resource id, the SHA-256 hash of the
+channel token (not the token), the expiration, the time of the last watch call
+(`requestedAt`), and the time of the last message (`lastMessageAt`). The
+account deletion removes the rows. The data export does not include them.
+
+### Watch and channel life
+
+The Convex cron `google push renewal` runs each hour. It calls
+`/api/cron/google-push` for each user with a connected direct Google account,
+a connected Google Drive connection, or push rows. With all flags off and no
+rows, the route does nothing. If not, `lib/google/push/renewal.ts` does these
+steps for the user:
+
+- Gmail (`LAB86_GOOGLE_GMAIL_PUSH=1`): it calls `users.watch` for each
+  connected direct mailbox, with the topic `LAB86_GOOGLE_PUBSUB_TOPIC`. The
+  watch does not include drafts (`labelIds: ["DRAFT"]`, `labelFilterBehavior:
+  "exclude"`), because Gmail changes a draft many times while a person writes.
+  A watch ends after 7 days. Google recommends one watch call each day, so the
+  cron calls `users.watch` again after 20 hours.
+- Calendar (`LAB86_GOOGLE_CALENDAR_PUSH=1`): it calls `events.watch` for each
+  calendar of each connected direct account. A channel has a life of 7 days.
+  Two days before the end, the cron makes a new channel (a new id and a new
+  token). Then it stops the channel that was there before (`channels.stop`).
+  A calendar that Google cannot watch (for example a holiday calendar) gets a
+  new try after 7 days.
+- Drive (`LAB86_GOOGLE_DRIVE_PUSH=1`): it calls `changes.watch` for each
+  connected Google Drive connection, from the stored page token of the content
+  sync. This occurs only when content indexing is on for the user. The channel
+  life and the replacement are the same as for Calendar.
+- After Google refuses a watch call, the next try comes after 6 hours. A
+  Gmail watch that continues to work stays active.
+- One cron call makes at most 40 watch calls for one user. The next cron call
+  makes the remaining calls.
+
+Stop:
+
+- When a flag is off, the cron stops the watches or channels of that type at
+  Google and removes the rows.
+- For a removed calendar, a disconnected mailbox, or a disconnected Drive
+  connection, the cron stops the channel and removes the row.
+- A mail disconnect (`grants.destroy`, also in the account deletion) stops the
+  Gmail watch and the Calendar channels of the grant before the revoke. A
+  Gmail stop ends the watch for all of the mailbox. Thus the app does not stop
+  the watch while a different connected direct account has the same address.
+- A Drive disconnect (`/api/files/disconnect`) stops the Drive channel before
+  the revoke.
+- Without a sign-in that works (after a rollback to Nylas, a revoked grant, or
+  an account deletion for Drive), the app cannot stop a watch or a channel.
+  Google ends it at its expiration (at most 7 days). The routes ignore its
+  messages, because they find no row and no direct account for them.
+- With all flags off, a disconnect reads no push rows.
+
+### Poll back-off
+
+- Gmail: a mailbox has healthy push when its watch is active, ends in more
+  than 10 minutes, and a push came after the last watch call and in the last
+  26 hours. Each watch call makes Gmail send one push immediately. Thus a
+  path that works shows this each day. The 2-minute History cron reads a
+  healthy mailbox one time in each 15 minutes, at a time that is different for
+  each mailbox. When the push stops (the watch ends, or no push comes in 26 hours),
+  the cron reads the mailbox each 2 minutes again. No manual step is
+  necessary.
+- Calendar: an account has healthy push when each of its calendars has an
+  active channel with a message after the last watch call, or Google cannot
+  watch that calendar. The 15-minute calendar cron skips a healthy account,
+  but it syncs the account when the last sync is one hour old, and for the
+  daily full pass.
+- Drive: no back-off. The 2-minute content cron also does other work.
+- The mail repair sweep (each 30 minutes) does not change.
+
+### Push variables
+
+| Variable | Value | Default |
+|---|---|---|
+| `LAB86_GOOGLE_GMAIL_PUSH` | `1` turns on the Gmail watches and the Gmail route. | Off |
+| `LAB86_GOOGLE_CALENDAR_PUSH` | `1` turns on the Calendar channels, the Calendar route, and the calendar poll back-off. | Off |
+| `LAB86_GOOGLE_DRIVE_PUSH` | `1` turns on the Drive channels and the Drive route. | Off |
+| `LAB86_GOOGLE_PUBSUB_TOPIC` | `projects/lab86-mail-production/topics/gmail-push` | None |
+| `LAB86_GOOGLE_PUBSUB_AUDIENCE` | `https://mail.lab86.io/api/google/push/gmail` | None |
+| `LAB86_GOOGLE_PUBSUB_SERVICE_ACCOUNT` | `gmail-push-invoker@lab86-mail-production.iam.gserviceaccount.com` | None |
+
+The channel address is `LAB86_MAIL_PUBLIC_URL` with the route path. Google
+accepts only HTTPS. Thus a local server makes no channel.
+
+### Runbook: enable push
+
+Do the steps in this order. Steps 1 and 2 change only Google Cloud. The app
+does not change until step 3.
+
+1. In Cloud Shell, as `jakob@lab86.io`, make the topic, the publisher
+   binding, the invoker service account, the token creator binding, and the
+   push subscription:
+
+   ```bash
+   gcloud config set project lab86-mail-production
+
+   # APIs that push uses.
+   gcloud services enable pubsub.googleapis.com gmail.googleapis.com \
+     calendar-json.googleapis.com drive.googleapis.com
+
+   # The topic that Gmail publishes to.
+   gcloud pubsub topics create gmail-push
+
+   # Gmail publishes as this Google service account.
+   gcloud pubsub topics add-iam-policy-binding gmail-push \
+     --member="serviceAccount:gmail-api-push@system.gserviceaccount.com" \
+     --role="roles/pubsub.publisher"
+
+   # The service account whose OIDC token Pub/Sub sends with each push.
+   gcloud iam service-accounts create gmail-push-invoker \
+     --display-name="Gmail push invoker"
+
+   # Pub/Sub makes the token as its service agent. 452431903621 is the
+   # project number.
+   gcloud iam service-accounts add-iam-policy-binding \
+     gmail-push-invoker@lab86-mail-production.iam.gserviceaccount.com \
+     --member="serviceAccount:service-452431903621@gcp-sa-pubsub.iam.gserviceaccount.com" \
+     --role="roles/iam.serviceAccountTokenCreator"
+
+   # The push subscription to Albatross. The route checks the OIDC token.
+   gcloud pubsub subscriptions create gmail-push-albatross \
+     --topic=gmail-push \
+     --push-endpoint="https://mail.lab86.io/api/google/push/gmail" \
+     --push-auth-service-account="gmail-push-invoker@lab86-mail-production.iam.gserviceaccount.com" \
+     --push-auth-token-audience="https://mail.lab86.io/api/google/push/gmail" \
+     --ack-deadline=20 \
+     --message-retention-duration=1d \
+     --min-retry-delay=10s \
+     --max-retry-delay=600s
+   ```
+
+   If the topic binding fails with a domain restriction error, an
+   organization policy (`iam.allowedPolicyMemberDomains`) stops the Google
+   service account. Ask the owner of the organization policy to add an
+   exception for the project. Then do the binding again.
+
+2. Check the result:
+
+   ```bash
+   gcloud pubsub topics get-iam-policy gmail-push
+   gcloud pubsub subscriptions describe gmail-push-albatross \
+     --format="yaml(pushConfig,ackDeadlineSeconds,messageRetentionDuration,retryPolicy)"
+   gcloud iam service-accounts get-iam-policy \
+     gmail-push-invoker@lab86-mail-production.iam.gserviceaccount.com
+   ```
+
+   The topic policy must show `gmail-api-push@system.gserviceaccount.com`
+   with `roles/pubsub.publisher`. The subscription must show the endpoint,
+   the service account, and the audience of step 1.
+
+3. In the Railway dashboard (project `lab86-mail`, environment `production`,
+   service `web`), set these variables in one change. Use the dashboard, so
+   that no value goes into the shell history:
+
+   ```text
+   LAB86_GOOGLE_PUBSUB_TOPIC=projects/lab86-mail-production/topics/gmail-push
+   LAB86_GOOGLE_PUBSUB_AUDIENCE=https://mail.lab86.io/api/google/push/gmail
+   LAB86_GOOGLE_PUBSUB_SERVICE_ACCOUNT=gmail-push-invoker@lab86-mail-production.iam.gserviceaccount.com
+   LAB86_GOOGLE_GMAIL_PUSH=1
+   ```
+
+4. After the deploy, wait for the next hourly push cron. In the Convex
+   dashboard, table `googlePushChannels`, each direct mailbox must have a
+   `gmail` row with `status` `active` and a `lastMessageAt` after its
+   `requestedAt`. A `failed` row shows the Google error in `lastError`. A
+   `403` from `users.watch` usually shows that the publisher binding of step 1
+   is missing.
+5. Send a message to a direct mailbox. It must show in the inbox in about 10
+   seconds.
+6. Set `LAB86_GOOGLE_CALENDAR_PUSH=1` in Railway. After the next hourly cron,
+   each calendar of a direct account has a `calendar` row. Change an event in
+   Google Calendar. The change must show in Albatross in about 10 seconds.
+7. Set `LAB86_GOOGLE_DRIVE_PUSH=1` in Railway. After the next hourly cron,
+   each Google Drive connection with content indexing on has a `drive` row.
+
+Calendar and Drive need no Google Cloud step. Google posts to the HTTPS route
+of each channel.
+
+### Runbook: turn off push
+
+1. In Railway, set the flag of the part to `0`, or delete the flag. After the
+   deploy, the route answers 204 and does nothing.
+2. In one hour or less, the push cron stops the watches or the channels of
+   that part at Google and removes the rows. Then the polls are back at each
+   2 minutes (Gmail) and each 15 minutes (Calendar). Until the rows go, a
+   healthy mailbox can stay at the 15-minute poll.
+3. Only to remove the Google Cloud setup too (not necessary for a turn-off):
+
+   ```bash
+   gcloud pubsub subscriptions delete gmail-push-albatross --project=lab86-mail-production
+   gcloud pubsub topics delete gmail-push --project=lab86-mail-production
+   gcloud iam service-accounts delete \
+     gmail-push-invoker@lab86-mail-production.iam.gserviceaccount.com --project=lab86-mail-production
+   ```
+
 ## Workstreams
 
 - Gmail (messages, threads, labels, attachments, drafts, send, grants, tokens,
@@ -373,6 +628,6 @@ with synthetic rows on local Convex before applying the pass to production.
 
 ## Not in this change
 
-Microsoft and iCloud stay on Nylas. Pub/Sub push is not built: the History
-sync polls. A push route needs a topic and a subscription in
-`lab86-mail-production` (a `gcloud` step for the owner).
+Microsoft and iCloud stay on Nylas. Contacts get no push. Push is in the code
+but off: the owner does the `gcloud` steps and sets the flags (section
+"Runbook: enable push"). Drive push does not slow the 2-minute content cron.

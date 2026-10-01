@@ -8,6 +8,7 @@ const convexModules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
   '../convex/cloudFiles.ts': () => import('../convex/cloudFiles'),
   '../convex/googleDirect.ts': () => import('../convex/googleDirect'),
+  '../convex/googlePush.ts': () => import('../convex/googlePush'),
   '../convex/mailOutbox.ts': () => import('../convex/mailOutbox'),
 };
 

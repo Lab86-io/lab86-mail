@@ -329,12 +329,19 @@ export async function syncCalendarAccount({
 
 export async function syncAllCalendarAccounts(
   userId: string,
-  options: { force?: boolean; reason?: string; window?: CalendarWindowMode } = {},
+  options: {
+    force?: boolean;
+    reason?: string;
+    window?: CalendarWindowMode;
+    // Accounts that this run leaves out: Google push keeps them current
+    // (lib/google/push/calendar-poll.ts).
+    skipAccountIds?: readonly string[];
+  } = {},
 ): Promise<CalendarSyncResult[]> {
   const accounts = await convexQuery<NylasAccountRow[]>(accountsApi.listConnectedAccounts, { userId });
   const results: CalendarSyncResult[] = [];
   for (const account of accounts || []) {
-    if (account.status !== 'connected') continue;
+    if (account.status !== 'connected' || options.skipAccountIds?.includes(account.accountId)) continue;
     try {
       results.push(
         await syncCalendarAccount({

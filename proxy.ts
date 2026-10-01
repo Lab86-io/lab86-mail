@@ -32,6 +32,9 @@ export const isPublicRoute = createRouteMatcher([
   '/api/billing/webhook',
   // Google Cross-Account Protection: the handler verifies Google's signature.
   '/api/google/risc',
+  // Google push (Pub/Sub for Gmail, channels for Calendar and Drive). The
+  // handler checks the Pub/Sub OIDC token or the channel token.
+  '/api/google/push/(.*)',
   // Convex scheduled actions call these; they authenticate with the internal
   // secret in-handler, so they must bypass Clerk (which would 302 → sign-in).
   '/api/cron(.*)',
@@ -207,6 +210,9 @@ export function shouldRequireBasicAuth(req: Request, pathname: string) {
   if (pathname === '/api/billing/webhook') return false;
   // Google signs each security event token; the handler verifies it.
   if (pathname === '/api/google/risc') return false;
+  // Google push deliveries come from Google servers, which can never satisfy
+  // development basic auth. The handler checks the OIDC or channel token.
+  if (pathname.startsWith('/api/google/push/')) return false;
   // Internal cron callbacks authenticate via the internal secret, not basic auth.
   if (pathname.startsWith('/api/cron')) return false;
   return true;

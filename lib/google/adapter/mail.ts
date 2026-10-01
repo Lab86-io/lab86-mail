@@ -26,6 +26,7 @@ import {
 import { GMAIL_API, googleJson, googleUrl } from '../http';
 import { buildMimeMessage, type MimeAttachment, replyReferences } from '../mime';
 import { revokeGoogleToken } from '../oauth';
+import { stopGooglePushForGrant } from '../push/renewal';
 import {
   cancelGoogleScheduledSend,
   findGoogleScheduledSend,
@@ -60,6 +61,7 @@ const defaults = {
   revokeGoogleToken: (token: string) => revokeGoogleToken(token),
   driveUsesMailGrant,
   googleRevokeBlockedReason,
+  stopGooglePushForGrant,
   destroyNylasGrant: async (grantId: string) => {
     // A dynamic import: lib/nylas/client.ts imports this adapter.
     const { requireNylas } = await import('@/lib/nylas/client');
@@ -727,6 +729,9 @@ function readStoredToken(encrypted: string): string | null {
  */
 async function destroyGrant(args: any) {
   const grantId = String(args?.grantId);
+  // The Gmail watch and the Calendar channels stop while the sign-in still
+  // works (lib/google/push/renewal.ts). This step never throws.
+  await deps.stopGooglePushForGrant(grantId);
   const credentials = await deps.loadCredentials(grantId).catch(() => null);
   const token = credentials?.refreshTokenEncrypted || credentials?.accessTokenEncrypted;
   const plain = token ? readStoredToken(token) : null;

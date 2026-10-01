@@ -1271,6 +1271,8 @@ export const USER_INLINE_TABLES = [
   'cloudFileOAuthCompletions',
   'googleMailOAuthStates',
   'googleSecurityAudit',
+  // Gmail watch and Calendar/Drive channel rows (convex/googlePush.ts).
+  'googlePushChannels',
   'oauthCompletions',
   'documents',
   'documentSuggestions',
@@ -1347,6 +1349,7 @@ export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
   cloudFileOAuthStates: 'Short-lived sign-in state for a file connection, not user content.',
   cloudFileOAuthCompletions: 'Short-lived sign-in state for a file connection, not user content.',
   googleMailOAuthStates: 'Short-lived sign-in state for a mailbox connection, not user content.',
+  googlePushChannels: 'Push channel state (ids, expiry times, token hashes), not user content.',
   oauthCompletions: 'Short-lived sign-in state for a mailbox or tool connection, not user content.',
   rateLimits: 'Request counters that protect the service, not user content.',
   aiCostWatch: 'Cost samples for the owner alarm that protect the service, not user content.',

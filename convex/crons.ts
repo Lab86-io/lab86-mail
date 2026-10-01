@@ -150,6 +150,10 @@ crons.interval('mail corpus repair', { minutes: 30 }, internal.mailCorpus.repair
 // Direct Google accounts (grant id google:<UUID>) have no Nylas
 // webhooks. The app reads the Gmail History of each one every 2 minutes.
 crons.interval('google mail history sync', { minutes: 2 }, internal.googleDirect.historyTick, {});
+// Direct Google push (LAB86_GOOGLE_*_PUSH flags, all off by default): make,
+// renew, and stop Gmail watches and Calendar and Drive channels. With all
+// flags off and no rows, the app answers at once and does nothing.
+crons.interval('google push renewal', { hours: 1 }, internal.googlePush.renewalTick, {});
 // Attachment files in our own encrypted storage: move each unfinished backfill
 // one page, then ask the app to store a few queued files for each user.
 crons.interval('mail attachment files', { minutes: 5 }, internal.mailAttachments.tick, {});

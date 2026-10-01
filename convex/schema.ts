@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { contentTables } from './contentSchema';
+import { googlePushTables } from './googlePushSchema';
 import { narrativeTables } from './narrativeSchema';
 
 const albatrossSourceRef = v.object({
@@ -81,6 +82,7 @@ const albatrossConfirmationRef = v.object({
 export default defineSchema({
   ...narrativeTables,
   ...contentTables,
+  ...googlePushTables,
   mailOutbox: defineTable({
     userId: v.string(),
     key: v.string(),
