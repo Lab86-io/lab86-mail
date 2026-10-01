@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { internalMutation, mutation, query } from './_generated/server';
+import { driveGoogleSub } from './googleSecurity';
 import { now, requireInternalSecret } from './lib';
 
 const providerValidator = v.union(v.literal('google_drive'), v.literal('onedrive'));
@@ -180,6 +181,10 @@ export const upsertConnection = mutation({
     accessTokenEncrypted: v.string(),
     refreshTokenEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
+    // Google Cross-Account Protection (convex/googleSecurity.ts).
+    googleSub: v.optional(v.string()),
+    refreshTokenPrefixHash: v.optional(v.string()),
+    refreshTokenDoubleHash: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -202,6 +207,10 @@ export const upsertConnection = mutation({
       status: 'connected' as const,
       scopes: args.scopes,
       error: undefined,
+      // A new connection ends a security hold: Google let the user sign in.
+      googleSub: args.googleSub || byAccount?.googleSub,
+      securityHoldAt: undefined,
+      securityEvent: undefined,
       updatedAt: ts,
     };
     if (byAccount) await ctx.db.patch(byAccount._id, connectionRow);
@@ -223,6 +232,13 @@ export const upsertConnection = mutation({
       accessTokenEncrypted: args.accessTokenEncrypted,
       refreshTokenEncrypted: args.refreshTokenEncrypted || credentials?.refreshTokenEncrypted,
       expiresAt: args.expiresAt,
+      // The identifiers follow the refresh token that the row keeps.
+      refreshTokenPrefixHash: args.refreshTokenEncrypted
+        ? args.refreshTokenPrefixHash
+        : credentials?.refreshTokenPrefixHash,
+      refreshTokenDoubleHash: args.refreshTokenEncrypted
+        ? args.refreshTokenDoubleHash
+        : credentials?.refreshTokenDoubleHash,
       updatedAt: ts,
     };
     if (credentials) await ctx.db.patch(credentials._id, credentialRow);
@@ -350,6 +366,9 @@ export const updateCredentials = mutation({
     accessTokenEncrypted: v.string(),
     refreshTokenEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
+    // The identifiers of the refresh token in use (convex/googleSecurity.ts).
+    refreshTokenPrefixHash: v.optional(v.string()),
+    refreshTokenDoubleHash: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -364,8 +383,28 @@ export const updateCredentials = mutation({
       accessTokenEncrypted: args.accessTokenEncrypted,
       ...(args.refreshTokenEncrypted ? { refreshTokenEncrypted: args.refreshTokenEncrypted } : {}),
       ...(args.expiresAt !== undefined ? { expiresAt: args.expiresAt } : {}),
+      // A new refresh token replaces both identifiers, so no identifier of
+      // the old token stays. Without a new token, given identifiers fill in.
+      ...(args.refreshTokenEncrypted || args.refreshTokenPrefixHash || args.refreshTokenDoubleHash
+        ? {
+            refreshTokenPrefixHash: args.refreshTokenPrefixHash,
+            refreshTokenDoubleHash: args.refreshTokenDoubleHash,
+          }
+        : {}),
       updatedAt: now(),
     });
+    // A Google Drive connection from before `googleSub` gets it on its next
+    // refresh. The Drive account key is the Google account id.
+    if (credentials.provider === 'google_drive') {
+      const connection = await ctx.db
+        .query('cloudFileConnections')
+        .withIndex('by_user_connection', (q) =>
+          q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+        )
+        .unique();
+      const sub = connection && !connection.googleSub ? driveGoogleSub(connection) : undefined;
+      if (connection && sub) await ctx.db.patch(connection._id, { googleSub: sub });
+    }
     return { ok: true };
   },
 });
@@ -388,6 +427,12 @@ export const markAccessed = mutation({
       )
       .unique();
     if (!connection) return { ok: false };
+    if (!args.error && connection.securityEvent && connection.status === 'error') {
+      // A Google security event asked for a reconnect. A good call does not
+      // end that state; only a new connection does.
+      await ctx.db.patch(connection._id, { lastAccessedAt: now() });
+      return { ok: true };
+    }
     if (args.error && !args.reconnect) {
       // A missing folder or a rate limit is not a broken connection. Content
       // sync and the Brief keep using it; the text stays in lastError.

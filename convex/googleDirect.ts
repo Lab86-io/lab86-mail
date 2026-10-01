@@ -199,6 +199,7 @@ export const getGrantCredentials = query({
       refreshTokenEncrypted: row.refreshTokenEncrypted,
       expiresAt: row.expiresAt,
       previousNylasGrantId: row.previousNylasGrantId,
+      googleSub: row.googleSub,
     };
   },
 });
@@ -216,6 +217,12 @@ export const saveGrantAccessToken = mutation({
     accessTokenEncrypted: v.string(),
     expiresAt: v.number(),
     refreshTokenEncrypted: v.optional(v.string()),
+    // Google Cross-Account Protection (convex/googleSecurity.ts): the Google
+    // account id, filled once for a grant from before the field, and the
+    // identifiers of the refresh token in use.
+    googleSub: v.optional(v.string()),
+    refreshTokenPrefixHash: v.optional(v.string()),
+    refreshTokenDoubleHash: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -225,10 +232,16 @@ export const saveGrantAccessToken = mutation({
       .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
       .unique();
     if (!row || row.grantId !== args.grantId) return { updated: 0 };
+    // A Google security event deleted the tokens during this refresh: the
+    // row stays without them until the user signs in again.
+    if (!row.refreshTokenEncrypted) return { updated: 0 };
     await ctx.db.patch(row._id, {
       accessTokenEncrypted: args.accessTokenEncrypted,
       expiresAt: args.expiresAt,
       ...(args.refreshTokenEncrypted ? { refreshTokenEncrypted: args.refreshTokenEncrypted } : {}),
+      ...(args.googleSub && !row.googleSub ? { googleSub: args.googleSub } : {}),
+      ...(args.refreshTokenPrefixHash ? { refreshTokenPrefixHash: args.refreshTokenPrefixHash } : {}),
+      ...(args.refreshTokenDoubleHash ? { refreshTokenDoubleHash: args.refreshTokenDoubleHash } : {}),
       updatedAt: now(),
     });
     return { updated: 1 };
@@ -351,6 +364,10 @@ export const activateGoogleAccount = mutation({
     refreshTokenEncrypted: v.string(),
     expiresAt: v.number(),
     historyId: v.string(),
+    // Google Cross-Account Protection (convex/googleSecurity.ts).
+    googleSub: v.optional(v.string()),
+    refreshTokenPrefixHash: v.optional(v.string()),
+    refreshTokenDoubleHash: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -422,6 +439,13 @@ export const activateGoogleAccount = mutation({
       scopes: args.scopes,
       previousNylasGrantId,
       ...(switchedFromNylas ? { switchedToGoogleAt: ts, nylasGrantRevokedAt: undefined } : {}),
+      // A new sign-in replaces the token identifiers and ends a security
+      // hold: Google let the user sign in.
+      ...(args.googleSub ? { googleSub: args.googleSub } : {}),
+      refreshTokenPrefixHash: args.refreshTokenPrefixHash,
+      refreshTokenDoubleHash: args.refreshTokenDoubleHash,
+      securityHoldAt: undefined,
+      securityEvent: undefined,
       updatedAt: ts,
     };
     if (grant) await ctx.db.patch(grant._id, grantPatch);

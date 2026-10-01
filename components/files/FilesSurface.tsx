@@ -54,6 +54,7 @@ import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import type { AlbatrossDocumentRecord, DocumentKind } from '@/lib/documents/model';
 import { importXlsxWorkbook, loadSpreadsheetEngine } from '@/lib/documents/odoo-spreadsheet-engine';
 import { ODOO_SPREADSHEET_ENGINE } from '@/lib/documents/sheet-workbook';
+import { type DriveCapability, driveReconnectMessage } from '@/lib/files/drive-capabilities';
 import { fileMatchesType, mergeFilePages, readFilePage } from '@/lib/files/library-client';
 import type { CloudFileItem, CloudFileProvider } from '@/lib/files/providers';
 import { cn } from '@/lib/utils';
@@ -66,6 +67,8 @@ interface Connection {
   status: 'connected' | 'error';
   lastAccessedAt?: number;
   error?: string;
+  /** Google Drive write access that the user did not give at consent. */
+  missingCapabilities?: DriveCapability[];
 }
 
 interface ProviderStatus {
@@ -1586,6 +1589,15 @@ function ProviderConnectionRow({
               >
                 Disconnect
               </Button>
+              {connection.status === 'error' && connection.error ? (
+                <p className="basis-full text-[10.5px] leading-relaxed text-[var(--color-text-muted)]">
+                  {connection.error}
+                </p>
+              ) : connection.missingCapabilities?.length ? (
+                <p className="basis-full text-[10.5px] leading-relaxed text-[var(--color-text-muted)]">
+                  {driveReconnectMessage(connection.missingCapabilities)}
+                </p>
+              ) : null}
             </div>
           ))}
         </div>
@@ -1603,7 +1615,9 @@ function ProviderConnectionRow({
             <a
               href={`/api/files/oauth/start?provider=${provider.id}&redirectTo=${encodeURIComponent('/?view=files')}`}
             >
-              {connections.some((connection) => connection.status === 'error')
+              {connections.some(
+                (connection) => connection.status === 'error' || connection.missingCapabilities?.length,
+              )
                 ? 'Reconnect'
                 : connections.length
                   ? 'Add'

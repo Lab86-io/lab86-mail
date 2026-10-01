@@ -18,7 +18,14 @@ import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { callTool } from '@/lib/api-client';
 import { gridCreateArgs, gridEventDates, gridUpdateArgs } from '@/lib/calendar/surface-writes';
-import { isPendingEventRow, syncedAtByAccount } from '@/lib/calendar/sync-copy';
+import {
+  CALENDAR_ACCESS_BANNER,
+  CALENDAR_ACCESS_BODY,
+  CALENDAR_ACCESS_TITLE,
+  calendarReconnectHref,
+  isPendingEventRow,
+  syncedAtByAccount,
+} from '@/lib/calendar/sync-copy';
 import { useCalendarResync } from '@/lib/calendar/use-calendar-resync';
 import { useClientStore } from '@/lib/client-state';
 import { calendarSearchWindow } from '@/lib/search/calendar-event';
@@ -305,13 +312,24 @@ export function CalendarSurface() {
               <CalendarDaysIcon size={22} />
             </span>
             <p className="font-display text-[16px] font-semibold text-[var(--color-text)]">
-              {unauthorized.length ? 'Calendar access needed' : 'No calendars synced yet'}
+              {unauthorized.length ? CALENDAR_ACCESS_TITLE : 'No calendars synced yet'}
             </p>
             <p className="text-[13px] leading-relaxed text-[var(--color-text-muted)]">
               {unauthorized.length
-                ? 'Your accounts were connected before calendar support existed. Reconnect them from Settings to grant calendar access — everything else keeps working meanwhile.'
+                ? CALENDAR_ACCESS_BODY
                 : 'Connect an account in Settings, or wait a moment while the first sync completes.'}
             </p>
+            {unauthorized.length ? (
+              <div className="flex flex-wrap justify-center gap-2 pt-1">
+                {unauthorized.map((state) => (
+                  <Button key={state.accountId} asChild variant="outline" size="sm">
+                    <a href={calendarReconnectHref(state)} title={state.error || undefined}>
+                      Reconnect {state.email || state.accountId.slice(0, 8)}
+                    </a>
+                  </Button>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -322,13 +340,13 @@ export function CalendarSurface() {
     <div className="relative flex h-full min-w-0 flex-col overflow-hidden">
       {unauthorized.length ? (
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-4 py-2 text-[12.5px] text-[var(--color-text-muted)]">
-          <span>Missing calendar access:</span>
+          <span>{CALENDAR_ACCESS_BANNER}</span>
           {unauthorized.map((state) => (
             <a
               key={state.accountId}
-              href={`/api/nylas/connect?provider=${state.provider}&redirectTo=/`}
+              href={calendarReconnectHref(state)}
               className="inline-flex items-center gap-1 rounded-ui border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-0.5 text-[11.5px] text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
-              title={state.error || 'Reconnect to grant calendar access'}
+              title={state.error || 'Reconnect the account and select calendar access'}
             >
               {state.email || state.accountId.slice(0, 8)}
               <span className="text-[var(--color-accent)]">· reconnect</span>

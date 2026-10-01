@@ -1270,6 +1270,7 @@ export const USER_INLINE_TABLES = [
   'cloudFileOAuthStates',
   'cloudFileOAuthCompletions',
   'googleMailOAuthStates',
+  'googleSecurityAudit',
   'oauthCompletions',
   'documents',
   'documentSuggestions',

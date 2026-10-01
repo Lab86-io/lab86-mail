@@ -7,6 +7,9 @@ import { isNylasConfigured } from '@/lib/hosted/env';
 
 let client: Nylas | null = null;
 let routed: Nylas | null = null;
+let directOnly: Nylas | null = null;
+
+export const NYLAS_NOT_CONFIGURED = 'Nylas is not configured. Set NYLAS_API_KEY and NYLAS_CLIENT_ID.';
 
 const routedResources = new Set<string>(ROUTED_RESOURCES);
 
@@ -50,9 +53,44 @@ export function routeNylasClient<T extends object>(
   });
 }
 
+/**
+ * The client for a deployment with no Nylas keys. A call with a direct Google
+ * grant (`google:<UUID>`) goes to the Google adapter as usual. A call with a
+ * Nylas grant rejects with the configuration error, and any other part of
+ * the SDK (`auth`, `webhooks`, ...) throws it.
+ */
+export function nylasWithoutKeys(adapter: GoogleNylasAdapter = googleNylasAdapter): Nylas {
+  const failingResource = new Proxy(
+    {},
+    {
+      get(_target, method) {
+        if (typeof method !== 'string' || method === 'then') return undefined;
+        return () => Promise.reject(new Error(NYLAS_NOT_CONFIGURED));
+      },
+    },
+  );
+  const stub = new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        if (typeof prop !== 'string' || prop === 'then') return undefined;
+        if (routedResources.has(prop)) return failingResource;
+        throw new Error(NYLAS_NOT_CONFIGURED);
+      },
+    },
+  );
+  return routeNylasClient(stub, adapter) as Nylas;
+}
+
+/**
+ * The Nylas SDK client, routed: a direct Google grant goes to the Google
+ * adapter. Without Nylas keys, direct Google grants still work
+ * (`nylasWithoutKeys`); a Nylas grant fails with the configuration error.
+ */
 export function requireNylas() {
   if (!isNylasConfigured()) {
-    throw new Error('Nylas is not configured. Set NYLAS_API_KEY and NYLAS_CLIENT_ID.');
+    if (!directOnly) directOnly = nylasWithoutKeys();
+    return directOnly;
   }
   if (!client) {
     const timeoutSeconds = Number(process.env.NYLAS_TIMEOUT_SECONDS || 45);

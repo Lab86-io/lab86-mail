@@ -9,12 +9,17 @@
 //   state a dead Nylas grant gets) and throws a GoogleApiError with status 401.
 // - `invalidateGoogleAccessToken` drops the cached token, so the next call
 //   refreshes.
+// - Each refresh stores the identifiers of the refresh token, and, once, the
+//   Google account id (`sub`) of a grant from before that field. Google
+//   Cross-Account Protection events name an account or a token by these
+//   (lib/google/risc.ts).
 
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { markGrantNeedsReconnect } from '@/lib/nylas/grant-health';
 import { decryptSecret, encryptSecret } from '@/lib/security/crypto';
 import { GoogleApiError } from './errors';
-import { refreshGoogleAccessToken } from './oauth';
+import { fetchGoogleUserInfo, refreshGoogleAccessToken, subFromIdToken } from './oauth';
+import { refreshTokenIdentifiers } from './token-identifiers';
 import { isGoogleDirectGrant } from './transport';
 
 /** A token is refreshed this long before Google says it expires. */
@@ -30,6 +35,7 @@ export interface GoogleGrantCredentials {
   refreshTokenEncrypted?: string;
   expiresAt?: number;
   previousNylasGrantId?: string;
+  googleSub?: string;
 }
 
 const defaults = {
@@ -38,6 +44,7 @@ const defaults = {
   encryptSecret,
   decryptSecret,
   refreshGoogleAccessToken,
+  fetchGoogleUserInfo: (accessToken: string) => fetchGoogleUserInfo(accessToken),
   markGrantNeedsReconnect,
   now: () => Date.now(),
 };
@@ -92,10 +99,9 @@ async function load(grantId: string): Promise<string> {
     return token;
   }
   let refreshed: Awaited<ReturnType<typeof refreshGoogleAccessToken>>;
+  const refreshToken = deps.decryptSecret(credentials.refreshTokenEncrypted);
   try {
-    refreshed = await deps.refreshGoogleAccessToken({
-      refreshToken: deps.decryptSecret(credentials.refreshTokenEncrypted),
-    });
+    refreshed = await deps.refreshGoogleAccessToken({ refreshToken });
   } catch (err) {
     if ((err as GoogleApiError)?.reason === 'invalid_grant') {
       return await reconnectNeeded(grantId, 'the Google sign-in expired or was revoked.');
@@ -105,6 +111,7 @@ async function load(grantId: string): Promise<string> {
   refused.delete(grantId);
   const expiresAt = deps.now() + Math.max(60, Number(refreshed.expires_in) || 3600) * 1000;
   remember(grantId, refreshed.access_token, expiresAt);
+  const googleSub = credentials.googleSub ? undefined : await backfillSub(refreshed);
   // Other instances read the stored token. A failed write costs one extra
   // refresh there, so it does not fail this call.
   await deps
@@ -117,11 +124,25 @@ async function load(grantId: string): Promise<string> {
       ...(refreshed.refresh_token
         ? { refreshTokenEncrypted: deps.encryptSecret(refreshed.refresh_token) }
         : {}),
+      ...refreshTokenIdentifiers(refreshed.refresh_token || refreshToken),
+      ...(googleSub ? { googleSub } : {}),
     })
     .catch((err: any) =>
       console.warn('[google-tokens] could not store the access token', err?.message || err),
     );
   return refreshed.access_token;
+}
+
+/**
+ * The Google account id of a grant from before `googleSub`: from the ID token
+ * of the refresh, or else from the userinfo endpoint. Undefined when neither
+ * gives it; the next refresh tries again.
+ */
+async function backfillSub(refreshed: { access_token: string; id_token?: string }) {
+  const fromToken = subFromIdToken(refreshed.id_token);
+  if (fromToken) return fromToken;
+  const info = await deps.fetchGoogleUserInfo(refreshed.access_token).catch(() => null);
+  return info?.sub;
 }
 
 export async function getGoogleAccessToken(grantId: string): Promise<string> {

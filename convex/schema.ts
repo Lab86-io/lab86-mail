@@ -207,13 +207,31 @@ export default defineSchema({
     // When the cleanup deleted the Nylas grant. A rollback is not possible
     // after this time.
     nylasGrantRevokedAt: v.optional(v.number()),
+    // Google Cross-Account Protection (convex/googleSecurity.ts). The Google
+    // account id (`sub`) of a direct grant: stored at sign-in, and filled on
+    // the next token refresh for a grant from before this field.
+    googleSub: v.optional(v.string()),
+    // The two forms in which a Google `token-revoked` event names a refresh
+    // token: a SHA-256 of its first 16 characters, and its double SHA-512
+    // hash. Neither form gives the token back.
+    refreshTokenPrefixHash: v.optional(v.string()),
+    refreshTokenDoubleHash: v.optional(v.string()),
+    // Set when Google disabled the account (an `account-disabled` event);
+    // cleared by `account-enabled` or a new sign-in.
+    securityHoldAt: v.optional(v.number()),
+    // The last Google security event that put the connection in "Reconnect
+    // needed". A new sign-in clears it.
+    securityEvent: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId'])
-    .index('by_previous_nylas_grant', ['previousNylasGrantId']),
+    .index('by_previous_nylas_grant', ['previousNylasGrantId'])
+    .index('by_google_sub', ['googleSub'])
+    .index('by_refresh_prefix_hash', ['refreshTokenPrefixHash'])
+    .index('by_refresh_double_hash', ['refreshTokenDoubleHash']),
 
   nylasOAuthStates: defineTable({
     state: v.string(),
@@ -2106,6 +2124,13 @@ export default defineSchema({
     // The last provider error that does not need a reconnect (a missing
     // folder, a rate limit). It never changes `status`.
     lastError: v.optional(v.string()),
+    // Google Cross-Account Protection (convex/googleSecurity.ts): the Google
+    // account id (`sub`), the security hold, and the last security event that
+    // put the connection in "Reconnect needed". A new connection clears the
+    // hold and the event.
+    googleSub: v.optional(v.string()),
+    securityHoldAt: v.optional(v.number()),
+    securityEvent: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -2114,7 +2139,8 @@ export default defineSchema({
     .index('by_user_provider_account', ['userId', 'provider', 'accountKey'])
     .index('by_status', ['status'])
     // The Google revoke guard looks for other connections of one address.
-    .index('by_account_email', ['accountEmail']),
+    .index('by_account_email', ['accountEmail'])
+    .index('by_google_sub', ['googleSub']),
 
   cloudFileCredentials: defineTable({
     userId: v.string(),
@@ -2123,11 +2149,50 @@ export default defineSchema({
     accessTokenEncrypted: v.string(),
     refreshTokenEncrypted: v.optional(v.string()),
     expiresAt: v.optional(v.number()),
+    // The identifiers of a Google `token-revoked` event, as on providerGrants.
+    refreshTokenPrefixHash: v.optional(v.string()),
+    refreshTokenDoubleHash: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
-    .index('by_user_connection', ['userId', 'connectionId']),
+    .index('by_user_connection', ['userId', 'connectionId'])
+    .index('by_refresh_prefix_hash', ['refreshTokenPrefixHash'])
+    .index('by_refresh_double_hash', ['refreshTokenDoubleHash']),
+
+  // Google Cross-Account Protection (convex/googleSecurity.ts). One row for
+  // each Security Event Token, by its `jti`, so a second delivery does
+  // nothing. No subject data: the event names and the number of matches.
+  // Rows expire after 30 days.
+  googleSecurityEvents: defineTable({
+    jti: v.string(),
+    eventNames: v.array(v.string()),
+    issuedAt: v.optional(v.number()),
+    receivedAt: v.number(),
+    mode: v.union(v.literal('applied'), v.literal('logged')),
+    matchedMail: v.number(),
+    matchedDrive: v.number(),
+    applied: v.number(),
+    expiresAt: v.number(),
+  })
+    .index('by_jti', ['jti'])
+    .index('by_expires', ['expiresAt']),
+
+  // What a Google security event changed on one connection of one user.
+  // Account deletion removes the rows of the user; rows expire after 30 days.
+  googleSecurityAudit: defineTable({
+    userId: v.string(),
+    jti: v.string(),
+    eventName: v.string(),
+    target: v.union(v.literal('mail'), v.literal('drive')),
+    accountId: v.optional(v.string()),
+    connectionId: v.optional(v.string()),
+    action: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_expires', ['expiresAt']),
 
   // Direct Google mail sign-in (convex/googleDirect.ts). The Google callback
   // shares the Files redirect URI, so this state is separate from the Files

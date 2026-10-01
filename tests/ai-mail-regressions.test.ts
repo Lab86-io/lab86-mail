@@ -583,7 +583,9 @@ describe('compliance readiness', () => {
     // Global deployment bookkeeping is not user-owned and must survive an
     // individual account deletion. deploymentSettings holds operator choices
     // such as the mail classifier, shared by every account.
-    const exempt = new Set<string>(['dataMigrations', 'deploymentSettings']);
+    // googleSecurityEvents keeps one row for each Google security event `jti`
+    // (event names and counts, no user id); its rows expire after 30 days.
+    const exempt = new Set<string>(['dataMigrations', 'deploymentSettings', 'googleSecurityEvents']);
 
     expect(tables.length).toBeGreaterThan(10);
     for (const table of tables) {

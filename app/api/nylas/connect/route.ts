@@ -3,10 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { Provider, URLForAuthenticationConfig } from 'nylas';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { directGoogleConnectChoice, GoogleConnectError, startGoogleMailConnect } from '@/lib/google/connect';
+import { googleOAuthClient } from '@/lib/google/oauth';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { isNylasConfigured, nylasRedirectUri } from '@/lib/hosted/env';
 import { type MailProvider, mailProviderCapability } from '@/lib/mail/provider-capabilities';
-import { requireNylas } from '@/lib/nylas/client';
+import { NYLAS_NOT_CONFIGURED, requireNylas } from '@/lib/nylas/client';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { NATIVE_NYLAS_CALLBACK, sanitizeInternalPath } from '@/lib/security/redirect';
 
@@ -27,6 +28,8 @@ interface NylasConnectDependencies {
   // tests that cover only the Nylas flow.
   directGoogleConnectChoice?: typeof directGoogleConnectChoice;
   startGoogleMailConnect?: typeof startGoogleMailConnect;
+  /** True when the Google OAuth client of the direct flow is configured. */
+  isGoogleDirectConfigured?: () => boolean;
 }
 
 const defaultDependencies: NylasConnectDependencies = {
@@ -39,6 +42,7 @@ const defaultDependencies: NylasConnectDependencies = {
   randomState: () => randomBytes(24).toString('base64url'),
   directGoogleConnectChoice,
   startGoogleMailConnect,
+  isGoogleDirectConfigured: () => googleOAuthClient() !== null,
 };
 
 export function createNylasConnectGet(deps: NylasConnectDependencies = defaultDependencies) {
@@ -52,12 +56,23 @@ export function createNylasConnectGet(deps: NylasConnectDependencies = defaultDe
       }
       throw error;
     }
+    const url = new URL(req.url);
+    const provider = url.searchParams.get('provider') || 'google';
+    if (!PROVIDERS.has(provider)) {
+      return NextResponse.json({ ok: false, error: `Unsupported provider: ${provider}` }, { status: 400 });
+    }
+    // A Google connection can use the direct flow (docs/google-direct-transport.md),
+    // which needs no Nylas keys.
+    const directPossible = Boolean(
+      provider === 'google' &&
+        deps.directGoogleConnectChoice &&
+        deps.startGoogleMailConnect &&
+        deps.isGoogleDirectConfigured?.(),
+    );
+    const nylasReady = deps.isNylasConfigured();
     // Configuration problems should surface before any rate-limit quota is spent.
-    if (!deps.isNylasConfigured()) {
-      return NextResponse.json(
-        { ok: false, error: 'Nylas is not configured. Set NYLAS_API_KEY and NYLAS_CLIENT_ID.' },
-        { status: 503 },
-      );
+    if (!nylasReady && !directPossible) {
+      return NextResponse.json({ ok: false, error: NYLAS_NOT_CONFIGURED }, { status: 503 });
     }
     try {
       await deps.enforceUserRateLimit({
@@ -69,11 +84,6 @@ export function createNylasConnectGet(deps: NylasConnectDependencies = defaultDe
     } catch (err) {
       if (err instanceof RateLimitError) return rateLimitJson(err);
       throw err;
-    }
-    const url = new URL(req.url);
-    const provider = url.searchParams.get('provider') || 'google';
-    if (!PROVIDERS.has(provider)) {
-      return NextResponse.json({ ok: false, error: `Unsupported provider: ${provider}` }, { status: 400 });
     }
     const capability = mailProviderCapability(provider as MailProvider);
     if (!capability.connectable) {
@@ -117,6 +127,9 @@ export function createNylasConnectGet(deps: NylasConnectDependencies = defaultDe
           throw error;
         }
       }
+    }
+    if (!nylasReady) {
+      return NextResponse.json({ ok: false, error: NYLAS_NOT_CONFIGURED }, { status: 503 });
     }
     const state = deps.randomState();
     await deps.convexMutation(api.accounts.createOAuthState, {

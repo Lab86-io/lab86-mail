@@ -12,7 +12,9 @@ import {
   refreshGoogleAccessToken,
   requireGoogleOAuthClient,
   revokeGoogleToken,
+  subFromIdToken,
 } from '../lib/google/oauth';
+import { refreshTokenIdentifiers } from '../lib/google/token-identifiers';
 import {
   __setGoogleTokenDepsForTest,
   forgetGoogleAccessToken,
@@ -51,6 +53,7 @@ function harness(stored: Record<string, unknown> | null, refresh?: (token: strin
         ? refresh(refreshToken)
         : { access_token: `fresh-${calls.refreshes.length}`, expires_in: 3600 };
     }) as any,
+    fetchGoogleUserInfo: (async () => ({})) as any,
     markGrantNeedsReconnect: (async (grantId: string | undefined, detail: string) => {
       calls.marked.push({ grantId, detail });
       return true;
@@ -99,6 +102,8 @@ describe('getGoogleAccessToken', () => {
         accessTokenEncrypted: 'enc(fresh)',
         expiresAt: NOW + 3599 * 1000,
         refreshTokenEncrypted: 'enc(rotated)',
+        // The identifiers follow the rotated refresh token (lib/google/risc.ts).
+        ...refreshTokenIdentifiers('rotated'),
       },
     ]);
     advance(3599 * 1000 - 60_000);
@@ -224,8 +229,8 @@ describe('Google OAuth client', () => {
     expect(url.searchParams.get('scope')?.split(' ')).toHaveLength(8);
     expect(url.searchParams.get('access_type')).toBe('offline');
     expect(url.searchParams.get('prompt')).toBe('consent');
-    // No incremental grant: mail and Drive can share one OAuth client.
-    expect(url.searchParams.has('include_granted_scopes')).toBe(false);
+    // Incremental authorization: a new consent keeps the access given before.
+    expect(url.searchParams.get('include_granted_scopes')).toBe('true');
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(url.searchParams.get('code_challenge')).toBe(codeChallenge);
     expect(url.searchParams.get('login_hint')).toBe('ann@example.com');
@@ -342,5 +347,88 @@ describe('Google OAuth client', () => {
       'https://www.googleapis.com/auth/gmail.modify',
     ]);
     expect(grantedScopes({})).toEqual([]);
+  });
+});
+
+describe('the Google account id (sub) for Cross-Account Protection', () => {
+  const idToken = (claims: Record<string, unknown>) =>
+    `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
+
+  test('subFromIdToken reads a Google ID token and refuses others', () => {
+    expect(subFromIdToken(idToken({ iss: 'https://accounts.google.com', sub: '42' }))).toBe('42');
+    expect(subFromIdToken(idToken({ iss: 'accounts.google.com', sub: '43' }))).toBe('43');
+    expect(subFromIdToken(idToken({ iss: 'https://evil.example', sub: '42' }))).toBeUndefined();
+    expect(subFromIdToken(idToken({ iss: 'accounts.google.com', sub: '' }))).toBeUndefined();
+    expect(subFromIdToken('a.!!!.c')).toBeUndefined();
+    expect(subFromIdToken(undefined)).toBeUndefined();
+  });
+
+  test('fetchGoogleUserInfo returns the sub', async () => {
+    const info = await fetchGoogleUserInfo('token', (async () =>
+      Response.json({ sub: '42', email: 'ann@example.com', name: 'Ann', email_verified: true })) as any);
+    expect(info).toEqual({ sub: '42', email: 'ann@example.com', name: 'Ann', emailVerified: true });
+  });
+
+  function backfillHarness(
+    stored: Record<string, unknown>,
+    refreshed: Record<string, unknown>,
+    userinfo: any,
+  ) {
+    const saved: any[] = [];
+    const lookups: string[] = [];
+    __setGoogleTokenDepsForTest({
+      query: (async () => stored) as any,
+      mutate: (async (_fn: unknown, args: any) => {
+        saved.push(args);
+        return { updated: 1 };
+      }) as any,
+      encryptSecret: (value: string) => `enc(${value})`,
+      decryptSecret: (value: string) => value.replace(/^enc\((.*)\)$/, '$1'),
+      refreshGoogleAccessToken: (async () => ({
+        access_token: 'fresh',
+        expires_in: 3600,
+        ...refreshed,
+      })) as any,
+      fetchGoogleUserInfo: (async (token: string) => {
+        lookups.push(token);
+        if (userinfo instanceof Error) throw userinfo;
+        return userinfo;
+      }) as any,
+      markGrantNeedsReconnect: (async () => true) as any,
+      now: () => NOW,
+    });
+    return { saved, lookups };
+  }
+
+  test('a refresh fills the sub of an old grant from the ID token, with no extra call', async () => {
+    const { saved, lookups } = backfillHarness(
+      row(),
+      { id_token: idToken({ iss: 'https://accounts.google.com', sub: '42' }) },
+      { sub: 'unused' },
+    );
+    await getGoogleAccessToken(GRANT);
+    expect(saved[0]).toMatchObject({ googleSub: '42', ...refreshTokenIdentifiers('refresh-1') });
+    expect(lookups).toEqual([]);
+  });
+
+  test('without an ID token it asks userinfo once; a failure leaves the sub for the next refresh', async () => {
+    const first = backfillHarness(row(), {}, { sub: '77' });
+    await getGoogleAccessToken(GRANT);
+    expect(first.saved[0].googleSub).toBe('77');
+    expect(first.lookups).toEqual(['fresh']);
+
+    const failing = backfillHarness(row(), {}, new Error('userinfo down'));
+    await getGoogleAccessToken(GRANT);
+    expect(failing.saved[0].googleSub).toBeUndefined();
+    expect(failing.saved[0].refreshTokenPrefixHash).toBe(
+      refreshTokenIdentifiers('refresh-1').refreshTokenPrefixHash,
+    );
+  });
+
+  test('a grant that has its sub makes no lookup', async () => {
+    const { saved, lookups } = backfillHarness(row({ googleSub: '42' }), {}, { sub: 'other' });
+    await getGoogleAccessToken(GRANT);
+    expect(saved[0].googleSub).toBeUndefined();
+    expect(lookups).toEqual([]);
   });
 });

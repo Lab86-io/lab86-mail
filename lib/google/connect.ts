@@ -35,7 +35,9 @@ import {
   googleOAuthClient,
   grantedScopes,
   pkcePair,
+  subFromIdToken,
 } from './oauth';
+import { refreshTokenIdentifiers } from './token-identifiers';
 import { forgetGoogleAccessToken } from './tokens';
 import { isGoogleDirectEnabled, isGoogleDirectGrant, newGoogleDirectGrantId } from './transport';
 
@@ -258,6 +260,9 @@ export async function completeGoogleMailConnect(input: CompleteInput) {
     }
   }
   const userInfo = await deps.fetchGoogleUserInfo(tokens.access_token).catch(() => null);
+  // The Google account id lets a Cross-Account Protection event find this
+  // connection (lib/google/risc.ts).
+  const googleSub = userInfo?.sub || subFromIdToken(tokens.id_token);
   const result = await deps.mutate<{
     accountId: string;
     grantId: string;
@@ -276,6 +281,8 @@ export async function completeGoogleMailConnect(input: CompleteInput) {
     refreshTokenEncrypted: deps.encryptSecret(tokens.refresh_token),
     expiresAt: deps.now() + Math.max(60, Number(tokens.expires_in) || 3600) * 1000,
     historyId: profile.historyId,
+    ...(googleSub ? { googleSub } : {}),
+    ...refreshTokenIdentifiers(tokens.refresh_token),
   });
   forgetGoogleAccessToken(result.grantId);
   void Promise.resolve(

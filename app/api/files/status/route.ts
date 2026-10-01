@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { listCloudFileConnections } from '@/lib/files/connections';
+import { missingDriveCapabilities } from '@/lib/files/drive-capabilities';
 import {
   CLOUD_FILE_PROVIDER_DEFINITIONS,
   CLOUD_FILE_PROVIDERS,
@@ -22,6 +23,10 @@ export async function GET() {
       status: connection.status,
       lastAccessedAt: connection.lastAccessedAt,
       error: connection.error,
+      // Write access that the user did not give on the Google consent screen.
+      ...(connection.provider === 'google_drive'
+        ? { missingCapabilities: missingDriveCapabilities(connection.scopes) }
+        : {}),
     }));
     return NextResponse.json({
       ok: true,
