@@ -296,7 +296,7 @@ export function RichDocumentEditor({
                 placeholder="https://example.com"
                 inputMode="url"
                 autoComplete="off"
-                className="control-field h-9 w-full px-2 text-sm"
+                className="control-field h-9 w-full px-2 text-base sm:text-sm"
                 aria-invalid={Boolean(linkError)}
                 aria-describedby={linkError ? `${linkFieldId}-error` : undefined}
               />

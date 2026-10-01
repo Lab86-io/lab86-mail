@@ -752,7 +752,7 @@ describe('the writer stays safe against Google', () => {
     expect(doc.text()[1]).toBe('Launch in October.');
   });
 
-  test('an edit in Google just after the write is not corrected over', async () => {
+  test('an edit in Google just after the write is a conflict, not corrected over', async () => {
     const doc = brief();
     const google = simulatorFetch(doc);
     let wrote = false;
@@ -761,13 +761,32 @@ describe('the writer stays safe against Google', () => {
       else if (wrote && String(url).includes('docs.googleapis.com')) {
         doc.insertText(1, 'Shared ');
         doc.revision += 1;
+        wrote = false;
       }
       return google.fetch(url as any, init);
     }) as typeof globalThis.fetch;
-    doc.ignore.add('updateTextStyle');
+    __setGoogleDocumentDepsForTest({ getCloudFileAccess: access, fetch });
+    await expect(save(google, editedModel(doc))).rejects.toBeInstanceOf(GoogleDocumentConflictError);
+    expect(google.calls.filter((call) => call.url.endsWith(':batchUpdate'))).toHaveLength(1);
+    expect(doc.text()[0]).toBe('Shared Project brief');
+  });
+
+  test('a revision that Google changes on its own is still a save when the Doc matches', async () => {
+    const doc = brief();
+    const google = simulatorFetch(doc);
+    let wrote = false;
+    const fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).endsWith(':batchUpdate')) wrote = true;
+      else if (wrote && String(url).includes('docs.googleapis.com')) {
+        doc.revision += 1;
+        wrote = false;
+      }
+      return google.fetch(url as any, init);
+    }) as typeof globalThis.fetch;
     __setGoogleDocumentDepsForTest({ getCloudFileAccess: access, fetch });
     await save(google, editedModel(doc));
     expect(google.calls.filter((call) => call.url.endsWith(':batchUpdate'))).toHaveLength(1);
+    expect(doc.text()[1]).toBe('Launch in late October.');
   });
 
   test('a Doc with an open comment is not written', async () => {

@@ -184,8 +184,10 @@ async function writeGoogleDoc(
  * (lib/documents/google-doc-diff.ts). The write is bound to the revision that
  * the diff read. Then the Doc is read again: when it does not match the model
  * (Docs applied a request in an unexpected way), one more write corrects it,
- * and a second miss is an error. A revision that changed after the write
- * means another edit came in; that edit is not overwritten.
+ * and a second miss is an error. When the revision changed after the write,
+ * the writer does not correct: a Doc that matches is a save, and a Doc that
+ * does not match is a conflict (another edit came in, or Google changed the
+ * revision for its own reasons; either way the user reloads).
  */
 async function syncGoogleDoc(
   accessToken: string,
@@ -217,8 +219,12 @@ async function syncGoogleDoc(
     const reply = await writeGoogleDoc(accessToken, fileId, requests, revisionId);
     const written = reply?.writeControl?.requiredRevisionId;
     current = await googleJson(accessToken, googleDocUrl(fileId));
-    if (typeof written === 'string' && written && current.revisionId !== written) return;
     projection = projectGoogleDoc(current, 'rich');
+    if (typeof written === 'string' && written && current.revisionId !== written) {
+      if (projection.reasons.length || googleDocUpdateRequests(projection, target).length)
+        throw new GoogleDocumentConflictError();
+      return;
+    }
     if (projection.reasons.length) throw new GoogleDocumentSaveMismatchError();
     revisionId = typeof current.revisionId === 'string' ? current.revisionId : undefined;
   }

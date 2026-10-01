@@ -45,8 +45,9 @@ export function linkFromInput(input: string): string | null {
   const value = input.trim();
   if (!value || /\s/u.test(value)) return null;
   let candidate = value;
-  if (!/^[a-z][a-z0-9+.-]*:/iu.test(value))
-    candidate = /^[^@/]+@[^@/]+\.[^@/]+$/u.test(value) ? `mailto:${value}` : `https://${value}`;
+  // Keep only an allowed scheme; "example.com:8080" is a host and a port, not a scheme.
+  if (!/^(https?:\/\/|mailto:)/iu.test(value))
+    candidate = /^[^@/:]+@[^@/]+\.[^@/]+$/u.test(value) ? `mailto:${value}` : `https://${value}`;
   try {
     const url = new URL(candidate);
     if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) return null;

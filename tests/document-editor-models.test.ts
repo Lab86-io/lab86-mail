@@ -146,7 +146,17 @@ describe('rich document model fidelity', () => {
     expect(linkFromInput(' https://example.com ')).toBe('https://example.com/');
     expect(linkFromInput('team@example.com')).toBe('mailto:team@example.com');
     expect(linkFromInput('mailto:team@example.com')).toBe('mailto:team@example.com');
-    for (const value of ['', 'not a link', 'javascript:alert(1)', 'ftp://example.com', 'intranet']) {
+    expect(linkFromInput('example.com:8080/plan')).toBe('https://example.com:8080/plan');
+    expect(linkFromInput('localhost:3000')).toBe('https://localhost:3000/');
+    expect(linkFromInput('HTTPS://Example.com/A')).toBe('https://example.com/A');
+    for (const value of [
+      '',
+      'not a link',
+      'javascript:alert(1)',
+      'ftp://example.com',
+      'intranet',
+      'data:text/html,x',
+    ]) {
       expect(linkFromInput(value)).toBeNull();
     }
     expect(clampListLevel(12)).toBe(8);
