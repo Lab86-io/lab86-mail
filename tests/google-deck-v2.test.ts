@@ -7,29 +7,29 @@ import {
   updateGoogleNativeFile,
 } from '../lib/documents/google';
 import type { AlbatrossDocumentModel, AlbatrossDocumentRecord, DeckModelV2 } from '../lib/documents/model';
+import { GoogleDocsSimulator } from './google-docs-simulator';
 
 afterEach(() => __setGoogleDocumentDepsForTest());
 
 const connection = { connectionId: 'google-1', provider: 'google_drive', status: 'connected', scopes: [] };
 const access = { connection, accessToken: 'access-token' };
 
-/** A plain, losslessly editable Docs body, as the fidelity gate accepts it. */
-const editableDoc = {
-  revisionId: 'rev-1',
-  body: {
-    content: [
-      { startIndex: 1, endIndex: 8, paragraph: { elements: [{ textRun: { content: 'Source\n' } }] } },
-    ],
-  },
-};
-
 type Captured = { url: string; init?: RequestInit };
 
-function installPublisher(options: { docs?: unknown; version?: string } = {}) {
+function installPublisher(options: { empty?: boolean; version?: string } = {}) {
   const requests: Captured[] = [];
+  // A plain, losslessly editable Doc that applies each batchUpdate. A new Doc has one empty paragraph.
+  const docs = new GoogleDocsSimulator([{ text: options.empty ? '' : 'Source' }]);
   const fetchMock = async (url: string | URL | Request, init?: RequestInit) => {
     const endpoint = String(url);
     requests.push({ url: endpoint, init });
+    if (
+      endpoint.startsWith('https://docs.googleapis.com/v1/documents/') &&
+      endpoint.endsWith(':batchUpdate')
+    ) {
+      const result = docs.batchUpdate(JSON.parse(String(init?.body)));
+      return Response.json(result.body, { status: result.status });
+    }
     if (init?.method === 'POST') {
       if (endpoint === 'https://slides.googleapis.com/v1/presentations')
         return Response.json({ presentationId: 'created-deck' });
@@ -43,7 +43,7 @@ function installPublisher(options: { docs?: unknown; version?: string } = {}) {
       return Response.json({ slides: [{ objectId: 'old-slide' }] });
     if (endpoint.includes('sheets.googleapis.com'))
       return Response.json({ sheets: [{ properties: { sheetId: 0 } }, { properties: { sheetId: 9 } }] });
-    if (endpoint.includes('docs.googleapis.com')) return Response.json(options.docs ?? editableDoc);
+    if (endpoint.includes('docs.googleapis.com')) return Response.json(docs.toJson({ legacy: true }));
     return Response.json({ webViewLink: 'https://drive.google.com/open', version: options.version ?? '9' });
   };
   __setGoogleDocumentDepsForTest({
@@ -375,31 +375,29 @@ describe('Google Docs sync branches', () => {
     });
 
   test('a new document with an empty provider body writes every block style without a delete', async () => {
-    const requests = installPublisher({ docs: {} });
+    const requests = installPublisher({ empty: true });
     const published = await publishDocumentToGoogle({ userId: 'user-1', document: doc() });
     expect(published.fileId).toBe('created-doc');
     const body = batchBody(requests, 'documents/created-doc:batchUpdate') as Record<string, any>;
     expect(body.requests.some((request: any) => request.deleteContentRange)).toBe(false);
-    expect(body.writeControl).toBeUndefined();
+    expect(body.writeControl).toEqual({ requiredRevisionId: 'rev-1' });
+    // Only what differs from the copied paragraph style is set.
     const paragraphStyles = body.requests
       .filter((request: any) => request.updateParagraphStyle)
       .map((request: any) => request.updateParagraphStyle.paragraphStyle);
-    expect(paragraphStyles.map((style: any) => style.namedStyleType).filter(Boolean)).toEqual([
-      'HEADING_3',
-      'NORMAL_TEXT',
-      'NORMAL_TEXT',
-      'NORMAL_TEXT',
-      'NORMAL_TEXT',
+    expect(paragraphStyles).toEqual([
+      { namedStyleType: 'HEADING_3' },
+      { indentStart: { magnitude: 24, unit: 'PT' } },
     ]);
-    expect(paragraphStyles.at(-1)).toEqual({ indentStart: { magnitude: 24, unit: 'PT' } });
     expect(
       body.requests
         .filter((request: any) => request.createParagraphBullets)
         .map((request: any) => request.createParagraphBullets.bulletPreset),
-    ).toEqual(['BULLET_DISC_CIRCLE_SQUARE', 'NUMBERED_DECIMAL_NESTED']);
-    expect(
-      body.requests.find((request: any) => request.updateTextStyle).updateTextStyle.textStyle.italic,
-    ).toBe(true);
+    ).toEqual(['BULLET_DISC_CIRCLE_SQUARE', 'NUMBERED_DECIMAL_ALPHA_ROMAN']);
+    const quoteStyle = body.requests.find((request: any) => request.updateTextStyle?.textStyle.italic);
+    expect(quoteStyle.updateTextStyle.textStyle.foregroundColor).toBeDefined();
+    // The writer read the Doc again and found it equal: one write only.
+    expect(requests.filter((request) => request.url.endsWith(':batchUpdate'))).toHaveLength(1);
   });
 
   test('an existing document republishes in place when the Google version still matches', async () => {

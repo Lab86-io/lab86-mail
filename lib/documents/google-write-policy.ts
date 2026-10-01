@@ -18,6 +18,10 @@ export function googleNativeEditor(mimeType: string, officeEnabled: boolean): Go
   return officeEnabled ? 'office' : 'albatross';
 }
 
+/** The notice over a Google Doc in the Albatross editor. */
+export const GOOGLE_DOC_EDITING_NOTICE =
+  'Albatross saves your edits to the Google Doc. You can change text, headings, lists, links and text styles (bold, italic, underline, strikethrough and code).';
+
 /** Shown when a Google Doc comes to the Office working copy, for example from an old page. */
 export const GOOGLE_DOC_OFFICE_OPEN_REFUSED =
   'Albatross opens a Google Doc in its own editor, which saves your edits to the Doc. Go back to Files and open the Doc again.';
@@ -33,21 +37,35 @@ export const RICH_DOCUMENT_GOOGLE_PUBLISH_LIMITATION =
 export const RICH_DECK_GOOGLE_PUBLISH_LIMITATION =
   'Google publishing is unavailable for this presentation because its backgrounds, shape styling, speaker notes, or colors cannot yet be preserved by Google sync. Download PPTX instead; the original presentation remains unchanged.';
 
-/** Return a user-visible reason whenever the provider writer would lose data. */
-export function googleModelWriteLimitation(model: unknown): string | null {
+export const QUOTE_FORMAT_GOOGLE_PUBLISH_LIMITATION =
+  'Google publishing is unavailable for this document because a quote has bold, italic, link or other inline formatting. Google sync writes a quote as plain italic text. Remove that formatting from the quote, or download DOCX instead.';
+
+const RUN_MARKS = ['bold', 'italic', 'underline', 'strike', 'code'] as const;
+
+function runIsFormatted(run: any) {
+  return Boolean(run) && (RUN_MARKS.some((mark) => run[mark] === true) || Boolean(run.link));
+}
+
+/**
+ * Return a user-visible reason whenever the provider writer would lose data.
+ * `rich` is the writer of the web editor and of Albatross documents: it keeps
+ * inline formatting, links, nested lists, and title and subtitle styles. `plain`
+ * is for a client that shows text only (the iOS app): its model must be plain.
+ */
+export function googleModelWriteLimitation(model: unknown, mode: 'plain' | 'rich' = 'rich'): string | null {
   if (typeof model !== 'object' || model === null) return null;
   const value = model as Record<string, any>;
   if (value.kind === 'sheet' && value.version === 2) return ENGINE_GOOGLE_PUBLISH_LIMITATION;
   if (value.kind === 'doc' && Array.isArray(value.blocks)) {
-    const marked = value.blocks.some(
-      (block: any) =>
-        Array.isArray(block?.runs) &&
-        block.runs.some(
-          (run: any) =>
-            run && ['bold', 'italic', 'underline', 'strike', 'code'].some((mark) => run[mark] === true),
-        ),
-    );
-    if (marked) return RICH_DOCUMENT_GOOGLE_PUBLISH_LIMITATION;
+    const formatted = (block: any) => Array.isArray(block?.runs) && block.runs.some(runIsFormatted);
+    if (mode === 'plain') {
+      const rich = value.blocks.some(
+        (block: any) => formatted(block) || Number(block?.listLevel) > 0 || Boolean(block?.variant),
+      );
+      if (rich) return RICH_DOCUMENT_GOOGLE_PUBLISH_LIMITATION;
+    } else if (value.blocks.some((block: any) => block?.type === 'quote' && formatted(block))) {
+      return QUOTE_FORMAT_GOOGLE_PUBLISH_LIMITATION;
+    }
   }
   if (value.kind === 'deck' && Array.isArray(value.slides)) {
     const unsupported = value.slides.some((slide: any) => {

@@ -54,6 +54,36 @@ describe('document and presentation editing exports', () => {
     expect(xml).toContain('next &amp; &lt;line&gt;');
   });
 
+  test('DOCX keeps links, nested list levels and the title style', async () => {
+    const model: AlbatrossDocumentModel = {
+      kind: 'doc',
+      version: 1,
+      blocks: [
+        { id: 'title', type: 'heading', level: 1, variant: 'title', text: 'Plan' },
+        {
+          id: 'link',
+          type: 'paragraph',
+          text: 'See the plan.',
+          runs: [{ text: 'See the ' }, { text: 'plan', link: 'https://example.com/plan' }, { text: '.' }],
+        },
+        { id: 'top', type: 'numbered', text: 'Step' },
+        { id: 'inner', type: 'numbered', text: 'Detail', listLevel: 1 },
+        { id: 'bullet', type: 'bullet', text: 'Deep', listLevel: 2 },
+      ],
+    };
+    const file = await exportDocument(record(model));
+    const archive = await JSZip.loadAsync(file.bytes);
+    const xml = await archive.file('word/document.xml')?.async('string');
+    const relations = await archive.file('word/_rels/document.xml.rels')?.async('string');
+    const numbering = await archive.file('word/numbering.xml')?.async('string');
+    expect(xml).toContain('<w:hyperlink');
+    expect(relations).toContain('https://example.com/plan');
+    expect(xml).toContain('w:val="Title"');
+    expect(xml).toContain('<w:ilvl w:val="1"/>');
+    expect(xml).toContain('<w:ilvl w:val="2"/>');
+    expect(numbering).toContain('lowerLetter');
+  });
+
   test('DOCX exports heading and list styles without removing inline marks', async () => {
     const model: AlbatrossDocumentModel = {
       kind: 'doc',

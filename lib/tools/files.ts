@@ -169,6 +169,7 @@ export const googleFileImport = defineTool({
       connectionId: args.connectionId,
       fileId: args.fileId,
       mimeType: args.mimeType,
+      mode: 'rich',
     });
     const webUrl = imported.webUrl || args.webUrl;
     const { document, linked } = await dependencies.createAndLinkGoogleDocument({

@@ -1,7 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { getCloudFileAccess } from '@/lib/files/connections';
 import { truncateText } from '@/lib/shared/text';
-import { googleDocBlockType, googleFileEditability } from './google-fidelity';
+import { googleDocHasOpenComments } from './google-comments';
+import {
+  GOOGLE_DOC_OPEN_COMMENTS_REASON,
+  GOOGLE_DOC_UNCHECKED_COMMENTS_REASON,
+  type GoogleDocMode,
+  type GoogleDocProjection,
+  googleFileEditability,
+  googlePreviewReason,
+  projectGoogleDoc,
+} from './google-fidelity';
 import {
   type AlbatrossDocumentModel,
   type DeckElement,
@@ -74,34 +83,12 @@ async function googleDriveMetadata(accessToken: string, fileId: string) {
   };
 }
 
-function importGoogleDoc(payload: any): AlbatrossDocumentModel {
-  const blocks = (Array.isArray(payload?.body?.content) ? payload.body.content : [])
-    .filter((entry: any) => entry?.paragraph)
-    .map((entry: any, index: number) => {
-      const paragraph = entry.paragraph;
-      const text = (Array.isArray(paragraph.elements) ? paragraph.elements : [])
-        .map((element: any) => String(element?.textRun?.content || ''))
-        .join('')
-        .replace(/\n$/u, '');
-      const namedStyle = String(paragraph?.paragraphStyle?.namedStyleType || '');
-      const heading = /^HEADING_([123])$/u.exec(namedStyle);
-      // The writer's own shapes (numbered lists, quotes) read back as the same
-      // block type; anything else falls back to a preview projection.
-      const exact = googleDocBlockType(paragraph, payload?.lists);
-      return {
-        id: `google-paragraph-${index + 1}-${randomUUID().slice(0, 8)}`,
-        type:
-          exact && exact !== 'paragraph'
-            ? exact
-            : heading
-              ? ('heading' as const)
-              : paragraph.bullet
-                ? ('bullet' as const)
-                : ('paragraph' as const),
-        text,
-        ...(heading ? { level: Number(heading[1]) as 1 | 2 | 3 } : {}),
-      };
-    });
+/** The editor model of a Doc. A Doc that is not editable gets its readable paragraphs as a preview. */
+export function googleDocModel(projection: GoogleDocProjection): AlbatrossDocumentModel {
+  const blocks = projection.paragraphs.map((paragraph, index) => ({
+    id: `google-paragraph-${index + 1}-${randomUUID().slice(0, 8)}`,
+    ...paragraph.block,
+  }));
   return {
     kind: 'doc',
     version: 1,
@@ -109,6 +96,24 @@ function importGoogleDoc(payload: any): AlbatrossDocumentModel {
       ? blocks
       : [{ id: `google-paragraph-${randomUUID().slice(0, 8)}`, type: 'paragraph', text: '' }],
   };
+}
+
+/** Editability of a Doc: the content check, then a check for open comments. */
+async function googleDocEditability(
+  accessToken: string,
+  fileId: string,
+  projection: GoogleDocProjection,
+): Promise<{ editable: boolean; reason?: string }> {
+  let reasons = projection.reasons;
+  if (!reasons.length) {
+    try {
+      if (await googleDocHasOpenComments((endpoint) => googleJson(accessToken, endpoint), fileId))
+        reasons = [GOOGLE_DOC_OPEN_COMMENTS_REASON];
+    } catch {
+      reasons = [GOOGLE_DOC_UNCHECKED_COMMENTS_REASON];
+    }
+  }
+  return reasons.length ? { editable: false, reason: googlePreviewReason(reasons) } : { editable: true };
 }
 
 function columnName(index: number) {
@@ -270,6 +275,11 @@ export async function importGoogleNativeFile(input: {
   connectionId: string;
   fileId: string;
   mimeType: GoogleNativeMime;
+  /**
+   * `rich` for a client that edits inline formatting (the web editor, tools
+   * and imports). The default `plain` keeps a Doc with formatting a preview.
+   */
+  mode?: GoogleDocMode;
 }) {
   const kind = GOOGLE_NATIVE_MIME[input.mimeType];
   if (!kind) throw new Error('Only Google Docs, Sheets, and Slides can be edited inline.');
@@ -284,13 +294,14 @@ export async function importGoogleNativeFile(input: {
   if (kind === 'doc') {
     const payload = await googleJson(
       access.accessToken,
-      `https://docs.googleapis.com/v1/documents/${encodeURIComponent(input.fileId)}`,
+      `https://docs.googleapis.com/v1/documents/${encodeURIComponent(input.fileId)}?includeTabsContent=true`,
     );
+    const projection = projectGoogleDoc(payload, input.mode ?? 'plain');
     return {
       kind,
       title: String(driveMetadata.title || payload.title || 'Untitled document'),
-      model: importGoogleDoc(payload),
-      editability: googleFileEditability(kind, payload),
+      model: googleDocModel(projection),
+      editability: await googleDocEditability(access.accessToken, input.fileId, projection),
       webUrl: driveMetadata.webUrl,
       providerVersion: driveMetadata.providerVersion,
     };

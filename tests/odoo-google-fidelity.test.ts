@@ -8,6 +8,7 @@ import { GoogleDocumentFidelityError } from '../lib/documents/google-fidelity';
 import {
   ENGINE_GOOGLE_PUBLISH_LIMITATION,
   googleModelWriteLimitation,
+  QUOTE_FORMAT_GOOGLE_PUBLISH_LIMITATION,
   RICH_DECK_GOOGLE_PUBLISH_LIMITATION,
   RICH_DOCUMENT_GOOGLE_PUBLISH_LIMITATION,
 } from '../lib/documents/google-write-policy';
@@ -89,7 +90,7 @@ test('document-create size failures return an actionable 413', async () => {
   expect(await response.json()).toMatchObject({ ok: false, error: expect.stringContaining('limit') });
 });
 
-test('rich document formatting is never silently discarded by Google publication or writeback', async () => {
+test('a client that shows text only can never write formatting to Google', async () => {
   const calls = mock(() => {
     throw new Error('Provider access must not run');
   });
@@ -104,32 +105,71 @@ test('rich document formatting is never silently discarded by Google publication
     version: 1,
     blocks: [{ id: 'p1', type: 'paragraph', text: 'Important', runs: [{ text: 'Important', bold: true }] }],
   };
+  // The iOS app saves without `rich`: a model with formatting stops before any Google call.
+  for (const model of [
+    rich,
+    { kind: 'doc', version: 1, blocks: [{ id: 'b', type: 'bullet', text: 'Deep', listLevel: 1 }] },
+    {
+      kind: 'doc',
+      version: 1,
+      blocks: [{ id: 'h', type: 'heading', level: 1, variant: 'title', text: 'Plan' }],
+    },
+    {
+      kind: 'doc',
+      version: 1,
+      blocks: [
+        { id: 'l', type: 'paragraph', text: 'Site', runs: [{ text: 'Site', link: 'https://example.com' }] },
+      ],
+    },
+  ]) {
+    await expect(
+      updateGoogleNativeFile({
+        userId: 'owner',
+        connectionId: 'drive',
+        fileId: 'rich',
+        kind: 'doc',
+        title: 'Rich',
+        model,
+        expectedProviderVersion: '2',
+      }),
+    ).rejects.toThrow(RICH_DOCUMENT_GOOGLE_PUBLISH_LIMITATION);
+  }
+  // The rich writer keeps inline formatting, but a quote is written as plain italic text.
+  expect(googleModelWriteLimitation(rich)).toBeNull();
+  expect(googleModelWriteLimitation(rich, 'plain')).toBe(RICH_DOCUMENT_GOOGLE_PUBLISH_LIMITATION);
+  const formattedQuote = {
+    kind: 'doc',
+    version: 1,
+    blocks: [{ id: 'q', type: 'quote', text: 'Said', runs: [{ text: 'Said', bold: true }] }],
+  };
+  expect(googleModelWriteLimitation(formattedQuote)).toBe(QUOTE_FORMAT_GOOGLE_PUBLISH_LIMITATION);
   await expect(
     publishDocumentToGoogle({
       userId: 'owner',
       document: {
-        documentId: 'rich',
+        documentId: 'quote',
         kind: 'doc',
-        title: 'Rich',
-        model: rich as any,
+        title: 'Quote',
+        model: formattedQuote as any,
         currentRevision: 1,
         sourceRefs: [],
         createdAt: 1,
         updatedAt: 1,
       },
     }),
-  ).rejects.toThrow(RICH_DOCUMENT_GOOGLE_PUBLISH_LIMITATION);
+  ).rejects.toThrow(QUOTE_FORMAT_GOOGLE_PUBLISH_LIMITATION);
   await expect(
     updateGoogleNativeFile({
       userId: 'owner',
       connectionId: 'drive',
-      fileId: 'rich',
+      fileId: 'quote',
       kind: 'doc',
-      title: 'Rich',
-      model: rich,
+      title: 'Quote',
+      model: formattedQuote,
       expectedProviderVersion: '2',
+      mode: 'rich',
     }),
-  ).rejects.toThrow(RICH_DOCUMENT_GOOGLE_PUBLISH_LIMITATION);
+  ).rejects.toThrow(QUOTE_FORMAT_GOOGLE_PUBLISH_LIMITATION);
   expect(calls).not.toHaveBeenCalled();
 });
 

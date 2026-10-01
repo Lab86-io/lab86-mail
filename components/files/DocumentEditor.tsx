@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { DocumentSaveStatus } from '@/components/files/DocumentSaveStatus';
+import { keepUnchangedFormatting } from '@/components/files/editors/doc-rich-text';
 import { PresentationEditor } from '@/components/files/editors/PresentationEditor';
 import { RichDocumentEditor } from '@/components/files/editors/RichDocumentEditor';
 import { OdooSpreadsheetEditor } from '@/components/files/OdooSpreadsheetEditor';
@@ -933,6 +934,8 @@ function SemanticGoogleDocumentEditor({
         connectionId: source.connectionId,
         fileId: source.fileId,
         mimeType: source.mimeType,
+        // This editor shows and keeps inline formatting, links and nested lists.
+        format: 'rich',
       });
       return fetchJson<{ ok: true; file: GoogleEditorFile }>(`/api/files/google/editor?${params}`);
     },
@@ -1011,6 +1014,7 @@ function SemanticGoogleDocumentEditor({
           title: input.title,
           model: input.model,
           expectedProviderVersion: versionRef.current,
+          format: 'rich',
         }),
       }),
     onSuccess: ({ file: saved }, submitted) => {
@@ -1093,6 +1097,7 @@ function SemanticGoogleDocumentEditor({
             title: draft.title,
             model: draft.model,
             expectedProviderVersion: draft.base || undefined,
+            format: 'rich',
           }),
         });
         void queryClient.invalidateQueries({ queryKey });
@@ -1321,7 +1326,7 @@ function SemanticGoogleDocumentEditor({
       <div className="grid min-h-0 flex-1 grid-cols-1">
         <div className="min-h-0 overflow-hidden bg-[var(--color-content)]">
           {model.kind === 'doc' ? (
-            <RichDocumentEditor model={model} onChange={editModel} plainTextOnly />
+            <RichDocumentEditor model={model} onChange={editModel} target="google" />
           ) : null}
           {model.kind === 'sheet' && model.version === 1 ? (
             <SheetEditor model={model} onChange={editModel} />
@@ -1374,7 +1379,7 @@ function SemanticGoogleDocumentEditor({
                     }
                     titleRef.current = suggestion.title;
                     setTitle(suggestion.title);
-                    editModel(suggestion.model);
+                    editModel(keepUnchangedFormatting(model, suggestion.model));
                     dismissSuggestion(suggestion.suggestionId);
                   }}
                 >

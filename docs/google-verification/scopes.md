@@ -272,6 +272,14 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
     (<https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/get>,
     <https://developers.google.com/workspace/slides/api/reference/rest/v1/presentations/get>).
     Thus Albatross does not ask for `spreadsheets` or `presentations`.
+  - Before a Google Doc opens for edits, and before each save to it,
+    Albatross reads the status of the Doc comments
+    (`lib/documents/google-comments.ts:9-32`, Drive v3 `comments.list` with
+    `fields=comments(resolved,deleted,anchor)`). It reads no comment text. A
+    Doc with an open anchored comment opens as a preview, because an edit can
+    detach the comment from its text. `comments.list` accepts
+    `drive.readonly`
+    (<https://developers.google.com/workspace/drive/api/reference/rest/v3/comments/list>).
 - **Narrower scope.**
   - `drive.file` includes only files that the app made or that the user opened
     through the app. The user browses and searches all Drive files.
@@ -317,10 +325,12 @@ Albatross does not ask for `spreadsheets`, `presentations`, or the full
 - **Code.**
   - Read: `lib/documents/google-import.ts:287`.
   - Write back to an existing Doc: `updateGoogleNativeFile`
-    (`lib/documents/google.ts:643-685`) calls `syncGoogleDoc`, which sends
-    `documents.batchUpdate` (`:229`). Only a Doc can go back to its Google
-    original (`lib/documents/google.ts:654`,
-    `lib/documents/google-write-policy.ts:80-90`).
+    (`lib/documents/google.ts:629`) calls `syncGoogleDoc` (`:190`), which
+    sends `documents.batchUpdate` (`writeGoogleDoc`, `:158`). The request
+    changes only the text and styles that the user changed
+    (`lib/documents/google-doc-diff.ts`), and `writeControl.requiredRevisionId`
+    binds it to the revision that Albatross read. Only a Doc can go back to
+    its Google original (`lib/documents/google-write-policy.ts`).
   - A Google Doc always opens in the Albatross editor, also when the Office
     editor is on (`googleNativeEditor`, `lib/documents/google-write-policy.ts:16`,
     used by `components/files/DocumentEditor.tsx:843`). Albatross makes no

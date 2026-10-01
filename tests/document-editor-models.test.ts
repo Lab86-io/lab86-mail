@@ -25,12 +25,17 @@ import {
   upgradeDeckModel,
 } from '../components/files/editors/deck-model';
 import {
+  blockStyleOf,
+  clampListLevel,
   docModelsEqual,
   docModelToEditorJson,
   editorJsonToDocModel,
   effectiveRuns,
+  keepUnchangedFormatting,
+  linkFromInput,
   moveDocBlock,
   normalizeRuns,
+  validDocLink,
 } from '../components/files/editors/doc-rich-text';
 import { SlideSurface } from '../components/files/editors/SlideRenderer';
 import { DECK_THEMES, referenceDeck } from '../lib/documents/deck-fixtures';
@@ -69,6 +74,124 @@ describe('rich document model fidelity', () => {
     ]);
     expect(editorJsonToDocModel(json)).toEqual(doc);
     expect(parseDocumentModel(doc)).toEqual(doc);
+  });
+  test('links, list levels, title and subtitle round-trip through editor JSON', () => {
+    const google = {
+      kind: 'doc' as const,
+      version: 1 as const,
+      blocks: [
+        { id: 't', type: 'heading' as const, level: 1 as const, variant: 'title' as const, text: 'Plan' },
+        { id: 's', type: 'heading' as const, level: 2 as const, variant: 'subtitle' as const, text: 'Draft' },
+        {
+          id: 'l',
+          type: 'paragraph' as const,
+          text: 'See the plan.',
+          runs: [
+            { text: 'See the ' },
+            { text: 'plan', link: 'https://example.com/plan', bold: true },
+            { text: '.' },
+          ],
+        },
+        { id: 'b1', type: 'bullet' as const, text: 'Top' },
+        { id: 'b2', type: 'bullet' as const, text: 'Inner', listLevel: 2 },
+        { id: 'n1', type: 'numbered' as const, text: 'Step', listLevel: 1 },
+      ],
+    };
+    const json = docModelToEditorJson(google);
+    expect(json.content?.[0].attrs).toMatchObject({ level: 1, variant: 'title' });
+    expect(json.content?.[3].content?.[1].attrs).toEqual({ listLevel: 2 });
+    expect(editorJsonToDocModel(json)).toEqual(google);
+    expect(parseDocumentModel(google)).toEqual(google);
+    expect(blockStyleOf(google.blocks[0])).toBe('title');
+    expect(blockStyleOf({ type: 'heading', level: 3 })).toBe('heading3');
+    for (const change of [
+      { listLevel: 1 },
+      { variant: undefined },
+      { runs: [{ text: 'Plan', link: 'https://example.com/other' }] },
+    ]) {
+      const other = structuredClone(google);
+      Object.assign(other.blocks[change.listLevel ? 4 : 0], change);
+      expect(docModelsEqual(google, other)).toBe(false);
+    }
+    // An empty list item keeps its level; a link the model cannot hold is dropped.
+    const read = editorJsonToDocModel({
+      type: 'doc',
+      content: [
+        { type: 'bulletList', content: [{ type: 'listItem', attrs: { listLevel: 3 }, content: [] }] },
+        {
+          type: 'paragraph',
+          attrs: { blockId: 'x' },
+          content: [
+            { type: 'text', text: 'Run', marks: [{ type: 'link', attrs: { href: 'javascript:alert(1)' } }] },
+          ],
+        },
+      ],
+    });
+    expect(read.blocks.map(({ id: _id, ...block }) => block)).toEqual([
+      { type: 'bullet', text: '', listLevel: 3 },
+      { type: 'paragraph', text: 'Run' },
+    ]);
+    expect(() =>
+      parseDocumentModel({
+        ...google,
+        blocks: [{ ...google.blocks[2], runs: [{ text: 'See the plan.', link: 'ftp://x' }] }],
+      }),
+    ).toThrow();
+    expect(() =>
+      parseDocumentModel({ ...google, blocks: [{ ...google.blocks[4], listLevel: 9 }] }),
+    ).toThrow();
+  });
+  test('a typed link becomes an address the model can hold', () => {
+    expect(linkFromInput('example.com/plan')).toBe('https://example.com/plan');
+    expect(linkFromInput(' https://example.com ')).toBe('https://example.com/');
+    expect(linkFromInput('team@example.com')).toBe('mailto:team@example.com');
+    expect(linkFromInput('mailto:team@example.com')).toBe('mailto:team@example.com');
+    for (const value of ['', 'not a link', 'javascript:alert(1)', 'ftp://example.com', 'intranet']) {
+      expect(linkFromInput(value)).toBeNull();
+    }
+    expect(clampListLevel(12)).toBe(8);
+    expect(clampListLevel('-2')).toBe(0);
+    expect(validDocLink('https://example.com')).toBe('https://example.com');
+    expect(validDocLink(42)).toBeUndefined();
+  });
+  test('a suggestion that leaves out formatting keeps it on blocks it did not change', () => {
+    const current = {
+      kind: 'doc' as const,
+      version: 1 as const,
+      blocks: [
+        { id: 't', type: 'heading' as const, level: 1 as const, variant: 'title' as const, text: 'Plan' },
+        { id: 'p', type: 'paragraph' as const, text: 'Bold', runs: [{ text: 'Bold', bold: true }] },
+        { id: 'b', type: 'bullet' as const, text: 'Deep', listLevel: 2 },
+        { id: 'e', type: 'paragraph' as const, text: 'Old', runs: [{ text: 'Old', italic: true }] },
+      ],
+    };
+    const proposed = {
+      kind: 'doc' as const,
+      version: 1 as const,
+      blocks: [
+        { id: 't', type: 'heading' as const, level: 1 as const, text: 'Plan' },
+        { id: 'p', type: 'paragraph' as const, text: 'Bold' },
+        { id: 'b', type: 'bullet' as const, text: 'Deep' },
+        { id: 'e', type: 'paragraph' as const, text: 'New text' },
+        { id: 'n', type: 'paragraph' as const, text: 'Added' },
+      ],
+    };
+    expect(
+      keepUnchangedFormatting(current, proposed).kind === 'doc' && keepUnchangedFormatting(current, proposed),
+    ).toEqual({
+      ...proposed,
+      blocks: [
+        current.blocks[0],
+        current.blocks[1],
+        current.blocks[2],
+        proposed.blocks[3],
+        proposed.blocks[4],
+      ],
+    });
+    const same = { ...current, blocks: [...current.blocks] };
+    expect(keepUnchangedFormatting(current, same)).toBe(same);
+    const deck = createDefaultDocumentModel('deck');
+    expect(keepUnchangedFormatting(current, deck)).toBe(deck);
   });
   test('duplicate pasted IDs get new identities without changing prior blocks', () => {
     const json = docModelToEditorJson(doc);
