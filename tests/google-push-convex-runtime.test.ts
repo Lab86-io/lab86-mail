@@ -440,9 +440,13 @@ describe('renewal plan', () => {
 describe('poll health', () => {
   test('the calendar plan marks an account healthy only when each calendar has a live, verified channel', async () => {
     const t = harness();
-    expect(await t.query(api.googlePush.calendarPollPlan, { internalSecret: SECRET, userId: USER })).toEqual(
-      [],
-    );
+    expect(
+      await t.query(api.googlePush.calendarPollPlan, {
+        internalSecret: SECRET,
+        userId: USER,
+        now: Date.now(),
+      }),
+    ).toEqual([]);
     await seedAccount(t);
     await seedCalendar(t, 'primary@example.com');
     await seedCalendar(t, 'team@example.com');
@@ -461,19 +465,31 @@ describe('poll health', () => {
         updatedAt: 1,
       });
     });
-    let plan = await t.query(api.googlePush.calendarPollPlan, { internalSecret: SECRET, userId: USER });
+    let plan = await t.query(api.googlePush.calendarPollPlan, {
+      internalSecret: SECRET,
+      userId: USER,
+      now: Date.now(),
+    });
     expect(plan).toEqual([
       { accountId: ACCOUNT, healthy: false, state: { lastSyncedAt: 5, lastFullSyncAt: 4, windowEnd: 3 } },
     ]);
     await seedRow(t, { channelId: 'team-channel', calendarId: 'team@example.com' });
-    plan = await t.query(api.googlePush.calendarPollPlan, { internalSecret: SECRET, userId: USER });
+    plan = await t.query(api.googlePush.calendarPollPlan, {
+      internalSecret: SECRET,
+      userId: USER,
+      now: Date.now(),
+    });
     expect(plan[0].healthy).toBe(true);
   });
 
   test('a calendar account without a sync state reports no state', async () => {
     const t = harness();
     await seedAccount(t);
-    const plan = await t.query(api.googlePush.calendarPollPlan, { internalSecret: SECRET, userId: USER });
+    const plan = await t.query(api.googlePush.calendarPollPlan, {
+      internalSecret: SECRET,
+      userId: USER,
+      now: Date.now(),
+    });
     expect(plan).toEqual([{ accountId: ACCOUNT, healthy: false, state: null }]);
   });
 
@@ -487,7 +503,9 @@ describe('poll health', () => {
       lastMessageAt: undefined,
     });
     await seedRow(t, { kind: 'gmail', channelId: 'pending', accountId: 'acct_pending', status: 'pending' });
-    expect(await t.query(internal.googlePush.healthyGmailAccounts, {})).toEqual([`${USER}:${ACCOUNT}`]);
+    expect(await t.query(internal.googlePush.healthyGmailAccounts, { now: Date.now() })).toEqual([
+      `${USER}:${ACCOUNT}`,
+    ]);
   });
 });
 

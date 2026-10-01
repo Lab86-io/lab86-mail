@@ -389,10 +389,12 @@ export const channelsForConnection = query({
  * account (lib/google/push/calendar-poll.ts).
  */
 export const calendarPollPlan = query({
-  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  // The caller passes the time: a query result must not depend on a clock
+  // that Convex does not see (a cached result would get old).
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), now: v.number() },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const ts = now();
+    const ts = args.now;
     const accounts = (await directAccounts(ctx, args.userId)).filter((row) => row.status === 'connected');
     if (!accounts.length) return [];
     const channels = (
@@ -439,9 +441,10 @@ export const calendarPollPlan = query({
  * cron reads these mailboxes only on their fallback tick.
  */
 export const healthyGmailAccounts = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const ts = now();
+  // The caller passes the time, for the same reason as calendarPollPlan.
+  args: { now: v.number() },
+  handler: async (ctx, args) => {
+    const ts = args.now;
     const rows = await ctx.db
       .query('googlePushChannels')
       .withIndex('by_kind_status', (q) => q.eq('kind', 'gmail').eq('status', 'active'))

@@ -923,8 +923,10 @@ export const historyTick = internalAction({
       {},
     );
     if (!targets.length) return { requested: 0, ok: 0 };
-    const healthy = new Set<string>(await ctx.runQuery(internal.googlePush.healthyGmailAccounts, {}));
     const ts = now();
+    const healthy = new Set<string>(
+      await ctx.runQuery(internal.googlePush.healthyGmailAccounts, { now: ts }),
+    );
     const due = targets.filter((target) => {
       const key = `${target.userId}:${target.accountId}`;
       return gmailPollDue({ now: ts, key, healthy: healthy.has(key) });

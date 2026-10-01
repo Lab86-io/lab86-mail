@@ -82,7 +82,7 @@ describe('calendar poll back-off', () => {
       }) as any,
     });
     expect(await calendarPushPollSkips('user_1')).toEqual(['healthy']);
-    expect(reads).toEqual([['googlePush:calendarPollPlan', { userId: 'user_1' }]]);
+    expect(reads).toEqual([['googlePush:calendarPollPlan', { userId: 'user_1', now: NOW }]]);
   });
 
   test('a failed read polls every account', async () => {

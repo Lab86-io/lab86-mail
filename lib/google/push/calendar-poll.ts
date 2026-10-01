@@ -52,8 +52,8 @@ export function __setCalendarPushPollDepsForTest(overrides: Partial<typeof defau
 export async function calendarPushPollSkips(userId: string): Promise<string[]> {
   if (!deps.flags().calendar) return [];
   try {
-    const rows = await deps.query<CalendarPollPlanRow[]>(api.googlePush.calendarPollPlan, { userId });
     const now = deps.now();
+    const rows = await deps.query<CalendarPollPlanRow[]>(api.googlePush.calendarPollPlan, { userId, now });
     return (rows || [])
       .filter((row) =>
         calendarPushPollSkipped({
