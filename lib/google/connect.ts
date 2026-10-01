@@ -37,6 +37,7 @@ import {
   pkcePair,
   subFromIdToken,
 } from './oauth';
+import { forgetGmailSendAs } from './send-as';
 import { refreshTokenIdentifiers } from './token-identifiers';
 import { forgetGoogleAccessToken } from './tokens';
 import { isGoogleDirectEnabled, isGoogleDirectGrant, newGoogleDirectGrantId } from './transport';
@@ -285,6 +286,8 @@ export async function completeGoogleMailConnect(input: CompleteInput) {
     ...refreshTokenIdentifiers(tokens.refresh_token),
   });
   forgetGoogleAccessToken(result.grantId);
+  // A reconnect can change the Gmail send-as list too.
+  forgetGmailSendAs(result.grantId);
   void Promise.resolve(
     deps.afterConnect({ userId: input.userId, accountId: result.accountId, outcome: result.outcome }),
   ).catch(() => undefined);

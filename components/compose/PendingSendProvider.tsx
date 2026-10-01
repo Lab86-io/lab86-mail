@@ -28,6 +28,8 @@ type PendingReceipt = {
 export type DurableComposeDraft = {
   mode: ComposeMode;
   account: string;
+  // The send-as address the message was going out from.
+  fromAddress?: string;
   to: string;
   cc: string;
   bcc: string;
@@ -94,6 +96,7 @@ export function PendingSendProvider({ children }: { children: ReactNode }) {
         bcc: draft.bcc,
         subject: draft.subject,
         body: draft.body,
+        ...(draft.fromAddress ? { fromAddress: draft.fromAddress } : {}),
       };
       // One atomic update preserves the sending account, reply anchor, and files.
       useClientStore.setState({

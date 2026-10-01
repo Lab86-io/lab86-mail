@@ -15,6 +15,7 @@ import {
   requireConnectedAccount,
   resolveConnectedAccount,
   searchNylasThreads,
+  sendFromField,
   sendNylasMessage,
   stopNylasScheduledMessage,
   updateNylasMessage,
@@ -856,6 +857,47 @@ describe('sending mail', () => {
       });
       expect(send?.body.send_at).toBeUndefined();
     });
+  });
+
+  test('a Nylas mailbox sends from its own address only: no from field, another address refused', async () => {
+    await withHarness(async (h) => {
+      h.onConvex('accounts:getConnectedAccount', () => account());
+      h.onNylas('POST', /\/v3\/grants\/grant_1\/messages\/send$/, () => ({
+        json: { request_id: 'req_s', data: { id: 'msg_sent', subject: 'hi' } },
+      }));
+      await sendNylasMessage({
+        userId: 'user_1',
+        account: 'acct_1',
+        fromAddress: 'ANN@example.com',
+        to: 'bob@y.com',
+        subject: 'hi',
+        body: 'hello',
+      });
+      const send = h.nylasCalls.find((call) => call.url.pathname.endsWith('/messages/send'));
+      expect(send?.body.from).toBeUndefined();
+      h.nylasCalls.length = 0;
+      await expect(
+        sendNylasMessage({
+          userId: 'user_1',
+          account: 'acct_1',
+          fromAddress: 'ann@work.example',
+          to: 'bob@y.com',
+          subject: 'hi',
+          body: 'hello',
+        }),
+      ).rejects.toMatchObject({ code: 'from_unsupported', statusCode: 400 });
+      expect(h.nylasCalls).toEqual([]);
+    });
+  });
+
+  test('a direct Google mailbox passes the send-as address on to the adapter', () => {
+    const google = { email: 'ann@example.com', grantId: 'google:11111111-1111-1111-1111-111111111111' };
+    expect(sendFromField(google, ' ann@work.example ')).toEqual([{ name: '', email: 'ann@work.example' }]);
+    expect(sendFromField(google, '')).toBeUndefined();
+    expect(sendFromField(google, undefined)).toBeUndefined();
+    expect(
+      sendFromField({ email: 'ann@example.com', grantId: 'grant_1' }, 'Ann@Example.com'),
+    ).toBeUndefined();
   });
 
   test('clamps stale send_at values into the future and surfaces scheduleId', async () => {

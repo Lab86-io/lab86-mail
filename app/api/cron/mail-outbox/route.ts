@@ -3,6 +3,7 @@ import { runWithAiRequestContext } from '@/lib/ai/context';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { sendNylasMessage } from '@/lib/nylas/provider';
 import { claimOutbox, completeOutbox, type OutboxPayload } from '@/lib/send/outbox';
+import { isSendAsError } from '@/lib/shared/send-as';
 import { writeAudit } from '@/lib/store/audit';
 import { upsertMessage } from '@/lib/store/messages';
 import { upsertThread } from '@/lib/store/threads';
@@ -63,9 +64,11 @@ export function createDispatchPost(deps = defaults) {
           agent: 'user',
         })
         .catch(() => undefined);
-    } catch {
+    } catch (error) {
       // A timeout after handoff is uncertain, never permission to send again.
-      await deps.completeOutbox(userId, key, handedOff ? 'unknown' : 'failed');
+      // A From address that the mailbox cannot send from stops the send before
+      // the provider gets it, so that send surely failed.
+      await deps.completeOutbox(userId, key, handedOff && !isSendAsError(error) ? 'unknown' : 'failed');
     }
     return NextResponse.json({ ok: true });
   };

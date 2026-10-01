@@ -612,6 +612,118 @@
         }
       }
     },
+    "/api/mobile/v1/accounts/{accountID}/send-as": {
+      "get": {
+        "operationId": "getMobileSendAs",
+        "description": "The addresses the mailbox can send from. Put a usable address in the fromAddress field of POST /api/compose.",
+        "parameters": [
+          {
+            "name": "accountID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
+          {
+            "name": "messageID",
+            "in": "query",
+            "required": false,
+            "description": "The message a reply or a forward answers. It sets defaultAddress.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
+          {
+            "name": "threadID",
+            "in": "query",
+            "required": false,
+            "description": "The thread of a reply. Without messageID, its newest message sets defaultAddress.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The send-as addresses and the address to select first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileSendAsPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown mailbox",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/mobile/v1/today/summary": {
       "get": {
         "operationId": "getMobileTodaySummary",
@@ -682,6 +794,173 @@
   },
   "components": {
     "schemas": {
+      "ComposeFromErrorCode": {
+        "type": "string",
+        "enum": [
+          "from_unknown",
+          "from_unverified",
+          "from_unsupported"
+        ]
+      },
+      "ComposeFromFields": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "fromAddress": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 320,
+            "pattern": "^[^\\s@<>,;\"]+@[^\\s@<>,;\"]+$"
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "additionalProperties": false
+      },
+      "MobileSendAsIdentity": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 320
+          },
+          "displayName": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "isPrimary": {
+            "type": "boolean"
+          },
+          "isDefault": {
+            "type": "boolean"
+          },
+          "verificationStatus": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "pending",
+              "unknown"
+            ]
+          },
+          "replyTo": {
+            "type": "string",
+            "maxLength": 320
+          },
+          "hasProviderSignature": {
+            "type": "boolean"
+          },
+          "usable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "email",
+          "isPrimary",
+          "isDefault",
+          "verificationStatus",
+          "hasProviderSignature",
+          "usable"
+        ],
+        "additionalProperties": false
+      },
+      "MobileSendAsPage": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "const": 1
+          },
+          "accountID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "aliasesSupported": {
+            "type": "boolean"
+          },
+          "partial": {
+            "type": "boolean"
+          },
+          "identities": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "email": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 320
+                },
+                "displayName": {
+                  "type": "string",
+                  "maxLength": 240
+                },
+                "isPrimary": {
+                  "type": "boolean"
+                },
+                "isDefault": {
+                  "type": "boolean"
+                },
+                "verificationStatus": {
+                  "type": "string",
+                  "enum": [
+                    "accepted",
+                    "pending",
+                    "unknown"
+                  ]
+                },
+                "replyTo": {
+                  "type": "string",
+                  "maxLength": 320
+                },
+                "hasProviderSignature": {
+                  "type": "boolean"
+                },
+                "usable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "email",
+                "isPrimary",
+                "isDefault",
+                "verificationStatus",
+                "hasProviderSignature",
+                "usable"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "defaultAddress": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 320
+          },
+          "serverTime": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        },
+        "required": [
+          "version",
+          "accountID",
+          "aliasesSupported",
+          "partial",
+          "identities",
+          "defaultAddress",
+          "serverTime"
+        ],
+        "additionalProperties": false
+      },
       "AssistantRouteRequest": {
         "type": "object",
         "properties": {

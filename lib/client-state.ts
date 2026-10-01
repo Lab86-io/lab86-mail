@@ -15,6 +15,8 @@ export interface ComposePrefill {
   bcc?: string;
   subject?: string;
   body?: string;
+  // The send-as address of a restored draft.
+  fromAddress?: string;
 }
 
 export type ComposeMode = 'new' | 'reply' | 'reply_all' | 'forward';

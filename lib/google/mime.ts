@@ -2,8 +2,9 @@
 //
 // Headers are ASCII: a non-ASCII subject or display name becomes an RFC 2047
 // encoded word, and a non-ASCII file name uses RFC 2231. Bodies and
-// attachments are base64 with 76-character lines. Gmail adds the From
-// header (the account's own name and address) and the Message-ID.
+// attachments are base64 with 76-character lines. Gmail adds the
+// Message-ID. A message without a From header gets the From of the mailbox
+// address; a send from a send-as address writes its own From header.
 
 import { randomBytes } from 'node:crypto';
 import { htmlToText } from 'html-to-text';
@@ -22,6 +23,8 @@ export interface MimeAttachment {
 }
 
 export interface MimeMessageInput {
+  /** The From header. Omit it to let Gmail write the mailbox address. */
+  from?: MimeAddress;
   to?: MimeAddress[];
   cc?: MimeAddress[];
   bcc?: MimeAddress[];
@@ -171,6 +174,7 @@ function multipart(type: string, boundary: string, parts: string[]) {
 export function buildMimeMessage(input: MimeMessageInput): string {
   const boundary = input.boundary ?? randomBoundary;
   const headers = [
+    input.from ? addressHeader('From', [input.from]) : null,
     addressHeader('To', input.to),
     addressHeader('Cc', input.cc),
     addressHeader('Bcc', input.bcc),

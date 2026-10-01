@@ -194,7 +194,43 @@ describe('buildMimeMessage', () => {
   test('empty lists and a missing subject are left out or empty', () => {
     const mime = buildMimeMessage({ to: [{ email: '' }], isPlaintext: true });
     expect(mime).not.toContain('To:');
+    expect(mime).not.toContain('From:');
     expect(mime).toContain('Subject: \r\n');
+  });
+
+  test('a send-as From is the first header, with its name', () => {
+    const mime = buildMimeMessage({
+      from: { name: 'Ann at Work', email: 'ann@work.example' },
+      to: [{ email: 'bob@x.org' }],
+      replyTo: [{ email: 'team@work.example' }],
+      subject: 's',
+      isPlaintext: true,
+      date: DATE,
+    });
+    const headers = headersOf(mime);
+    expect(headers[0]).toBe('From: Ann at Work <ann@work.example>');
+    expect(headers).toContain('Reply-To: team@work.example');
+    expect(buildMimeMessage({ from: { email: 'ann@work.example' }, isPlaintext: true })).toContain(
+      'From: ann@work.example\r\n',
+    );
+  });
+
+  test('a non-ASCII From name is an RFC 2047 encoded word; a special name is quoted', () => {
+    const mime = buildMimeMessage({
+      from: { name: 'Zoë Ünal', email: 'zoe@work.example' },
+      isPlaintext: true,
+    });
+    const from = headersOf(mime)[0];
+    expect(from).toBe(`From: =?UTF-8?B?${Buffer.from('Zoë Ünal').toString('base64')}?= <zoe@work.example>`);
+    expect(buildMimeMessage({ from: { name: 'Lee, Ann', email: 'a@x.org' }, isPlaintext: true })).toContain(
+      'From: "Lee, Ann" <a@x.org>\r\n',
+    );
+    // A line break in the name cannot add a header.
+    expect(
+      headersOf(
+        buildMimeMessage({ from: { name: 'Ann\r\nBcc: x@y.org', email: 'a@x.org' }, isPlaintext: true }),
+      ),
+    ).not.toContain('Bcc: x@y.org');
   });
 });
 
