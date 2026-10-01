@@ -169,8 +169,22 @@ These rules add to the decisions above or make them exact.
   never change. A thread's labels are the union of its message labels.
 - **Send.** The adapter sends RFC 2822 MIME through the upload endpoint (up
   to 35 MB) with the thread id of the parent message. A 5xx answer is not
-  retried, because Gmail can send the message and still answer 5xx. Gmail
-  writes the From header.
+  retried, because Gmail can send the message and still answer 5xx. Without
+  a `from` address, Gmail writes the From header (the mailbox address).
+- **Send-as addresses.** `lib/google/send-as.ts` reads the Gmail "Send mail
+  as" list (`users.settings.sendAs.list`, which the `gmail.modify` scope can
+  read) and keeps it for 10 minutes for each grant. A reconnect and a grant
+  removal clear it. Only the primary address and the addresses with
+  `verificationStatus` `accepted` can send. A send with a `from` address
+  writes a From header with the display name (RFC 2047 for a name that is
+  not ASCII) and the Reply-To of the address when the request has none. An
+  address that is not in the list or that Gmail did not accept is a
+  `SendAsError` (400) before Gmail gets the message. The compose route
+  (`lib/mail/send-as.ts`) picks the default: for a reply or a forward, the
+  user's address in the From, To, Cc, or Delivered-To of the original; else
+  Gmail's default send-as address. Scheduled and held sends keep the address
+  in the outbox payload (`fromAddress`). Nylas mailboxes send only from their
+  own address. Signatures stay Albatross signatures.
 - **Scheduled send.** A held send is a `mailOutbox` row with `scheduled` and
   `accountId`. Its outbox key is the schedule id. A disconnect cancels the
   held sends of the mailbox and deletes their stored messages. The grant

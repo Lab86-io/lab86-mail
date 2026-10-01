@@ -223,6 +223,7 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
     // Native never pulled changes, polled a command, undid one, or read the
     // typed thread detail, so those endpoints are gone (NAT-10).
     expect(Object.keys(document.paths).sort()).toEqual([
+      '/api/mobile/v1/accounts/{accountID}/send-as',
       '/api/mobile/v1/assistant/route',
       '/api/mobile/v1/bootstrap',
       '/api/mobile/v1/commands',

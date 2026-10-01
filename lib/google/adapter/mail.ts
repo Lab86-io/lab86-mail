@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { assertOutboundSendEnabled } from '@/lib/hosted/controls';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { decryptSecret } from '@/lib/security/crypto';
+import { normalizeAddress, requireUsableSendAs, type SendAsIdentity } from '@/lib/shared/send-as';
 import { GoogleApiError } from '../errors';
 import {
   decodeBase64Url,
@@ -24,7 +25,7 @@ import {
   threadLabelIds,
 } from '../gmail-message';
 import { GMAIL_API, googleJson, googleUrl } from '../http';
-import { buildMimeMessage, type MimeAttachment, replyReferences } from '../mime';
+import { buildMimeMessage, type MimeAddress, type MimeAttachment, replyReferences } from '../mime';
 import { revokeGoogleToken } from '../oauth';
 import { stopGooglePushForGrant } from '../push/renewal';
 import {
@@ -34,6 +35,7 @@ import {
   nylasScheduledMessage,
   scheduleGoogleSend,
 } from '../scheduled';
+import { forgetGmailSendAs, listGmailSendAs } from '../send-as';
 import { driveUsesMailGrant, googleRevokeBlockedReason } from '../shared-grant';
 import { forgetGoogleAccessToken, type GoogleGrantCredentials, loadGoogleGrantCredentials } from '../tokens';
 import type { GoogleNylasAdapter } from './types';
@@ -71,6 +73,7 @@ const defaults = {
   listGoogleScheduledSends,
   findGoogleScheduledSend,
   cancelGoogleScheduledSend,
+  listSendAs: listGmailSendAs,
   boundary: () => `lab86_upload_${randomBytes(12).toString('hex')}`,
   now: () => Date.now(),
   sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
@@ -454,6 +457,44 @@ async function updateMessage(args: any) {
   return { data: gmailMessageToNylas(updated, grantId), requestId: REQUEST_ID };
 }
 
+interface SendFrom {
+  /** The From header to write, or undefined to let Gmail write it. */
+  header?: MimeAddress;
+  /** The Reply-To of the send-as address, used when the request has none. */
+  replyTo?: string;
+  /** The From of the sent shape. */
+  shape: NylasEmailName[];
+}
+
+/**
+ * The From of a send. Without a `from` address in the request, Gmail writes
+ * the From header (the mailbox address), as before. A `from` address must be
+ * a usable send-as address of the mailbox (SendAsError otherwise). The
+ * header is written for a send-as address that is not the mailbox address,
+ * and for the mailbox address when Gmail's default is a different address.
+ * When the list cannot load, the mailbox address still sends without a
+ * header; a different address fails, because it cannot be checked.
+ */
+async function sendFrom(grantId: string, primaryEmail: string, body: any): Promise<SendFrom> {
+  const fallback: SendFrom = { shape: [{ name: '', email: primaryEmail }] };
+  const requested = recipients(body.from)[0]?.email;
+  if (!requested) return fallback;
+  const isPrimary = normalizeAddress(requested) === normalizeAddress(primaryEmail);
+  let identities: SendAsIdentity[];
+  try {
+    identities = await deps.listSendAs(grantId, primaryEmail);
+  } catch (err) {
+    if (isPrimary) return fallback;
+    throw err;
+  }
+  const identity = requireUsableSendAs(identities, requested);
+  if (identity.isPrimary && identity.isDefault) return fallback;
+  // Gmail gives an alias without a name the name of the mailbox address.
+  const name = identity.displayName || identities.find((entry) => entry.isPrimary)?.displayName || '';
+  const address = { name, email: identity.email };
+  return { header: address, replyTo: identity.replyTo, shape: [address] };
+}
+
 async function sendMessage(args: any) {
   // sendNylasMessage checks this too. The check here also covers a caller of
   // the routed client that does not go through it (LAB86_DISABLE_OUTBOUND_SEND).
@@ -461,7 +502,9 @@ async function sendMessage(args: any) {
   const grantId = String(args?.identifier);
   const body = args?.requestBody || {};
   const credentials = await requireCredentials(grantId);
-  const from = [{ name: '', email: credentials.email }];
+  // A held send keeps its `from`, so the address is checked now and again when it goes out.
+  const fromAddress = await sendFrom(grantId, credentials.email, body);
+  const from = fromAddress.shape;
   const sendAtSeconds = Number(body.sendAt ?? body.send_at);
   if (Number.isFinite(sendAtSeconds) && sendAtSeconds * 1000 > deps.now() + SCHEDULE_THRESHOLD_MS) {
     const receipt = await deps.scheduleGoogleSend(credentials, body, sendAtSeconds * 1000);
@@ -489,11 +532,16 @@ async function sendMessage(args: any) {
       )
     : null;
   const parentMessageId = parent ? headerValue(parent.payload?.headers, 'Message-ID') : undefined;
+  const replyTo = recipients(body.replyTo ?? body.reply_to);
   const mime = buildMimeMessage({
+    from: fromAddress.header,
     to: recipients(body.to),
     cc: recipients(body.cc),
     bcc: recipients(body.bcc),
-    replyTo: recipients(body.replyTo ?? body.reply_to),
+    replyTo:
+      replyTo.length || !fromAddress.header || !fromAddress.replyTo
+        ? replyTo
+        : [{ email: fromAddress.replyTo }],
     subject: String(body.subject ?? ''),
     body: String(body.body ?? ''),
     isPlaintext: body.isPlaintext === true || body.is_plaintext === true,
@@ -743,6 +791,7 @@ async function destroyGrant(args: any) {
     else await revokeWithRetry(plain);
   }
   forgetGoogleAccessToken(grantId);
+  forgetGmailSendAs(grantId);
   labelCache.delete(grantId);
   const removed = await deps.mutate<{ removed: number; previousNylasGrantIds: string[] }>(
     api.googleDirect.removeGrant,

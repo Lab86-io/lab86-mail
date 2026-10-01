@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarClock,
   Pencil as EditIcon,
@@ -29,6 +29,12 @@ import { type ComposeMode, useClientStore } from '@/lib/client-state';
 import { fireSendEffect } from '@/lib/effects/send-effect';
 import { sanitizeOutgoingHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
+import {
+  composerFromChoices,
+  isBareAddress,
+  type SendAsPage,
+  selectedFromChoice,
+} from '@/lib/shared/send-as';
 import { DEFAULT_UNDO_SEND_SECONDS } from '@/lib/shared/sending';
 import { applyDraftReply } from '@/lib/shell/draft-reply';
 import { cn } from '@/lib/utils';
@@ -54,6 +60,8 @@ interface InlineComposerProps {
     bcc?: string;
     subject?: string;
     body?: string;
+    // The send-as address of a restored draft.
+    fromAddress?: string;
   };
   // Optional bump value: when the parent supplies a new nonce, we re-seed
   // the body field from initialPrefill.body. Lets the agent's draft_reply
@@ -101,6 +109,9 @@ export function InlineComposer({
   const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [composerMode, setComposerMode] = useState<ComposeMode>(mode);
   const [fromAccount, setFromAccount] = useState<string>(account);
+  // The send-as address that the user selected. Null uses the mailbox default
+  // (for a reply, the address the original was sent to).
+  const [fromAddress, setFromAddress] = useState<string | null>(initialPrefill?.fromAddress || null);
   // The mailbox signature is added by the server when the message goes out.
   // The composer shows it and can leave it off for this one message.
   const [includeSignature, setIncludeSignature] = useState(true);
@@ -116,6 +127,7 @@ export function InlineComposer({
   // different anchor account (new thread, new reply target, etc.).
   useEffect(() => {
     setFromAccount(account);
+    setFromAddress(null);
   }, [account]);
 
   // Authed accounts (for the "From" selector). The Rail already fetches this
@@ -155,6 +167,53 @@ export function InlineComposer({
     if (fromAccount && !list.includes(fromAccount)) list.unshift(fromAccount);
     return list;
   }, [authedAccounts, fromAccount, account]);
+  // The send-as addresses of each mailbox (Gmail "Send mail as"). The anchor
+  // mailbox of a reply or forward also gets the address the original was
+  // sent to as its default.
+  const anchored = mode !== 'new' && Boolean(anchorMessageId || threadId);
+  const sendAsData = useQueries({
+    queries: fromOptions.map((accountId) => {
+      const anchor = anchored && accountId === account ? { messageId: anchorMessageId, threadId } : null;
+      return {
+        queryKey: ['send-as', accountId, anchor?.messageId || null, anchor?.threadId || null],
+        queryFn: () => fetchSendAsPage(accountId, anchor),
+        enabled: Boolean(accountId) && accountId !== '__all__',
+        staleTime: 5 * 60_000,
+        retry: false,
+      };
+    }),
+    combine: (results) => results.map((result) => result.data),
+  });
+  const sendAsPages = useMemo(
+    () =>
+      Object.fromEntries(fromOptions.map((accountId, index) => [accountId, sendAsData[index]])) as Record<
+        string,
+        SendAsPage | undefined
+      >,
+    [fromOptions, sendAsData],
+  );
+  const fromChoices = useMemo(
+    () =>
+      composerFromChoices(
+        fromOptions.map((accountId) => {
+          const row = accountsQuery.data?.accounts.find((item) => item.accountId === accountId);
+          return { accountId, email: row?.email, displayName: row?.displayName };
+        }),
+        sendAsPages,
+      ),
+    [accountsQuery.data?.accounts, fromOptions, sendAsPages],
+  );
+  const currentFromAccount = fromAccount || account;
+  const currentSendAs = sendAsPages[currentFromAccount];
+  const selectedFrom = selectedFromChoice(
+    fromChoices,
+    currentFromAccount,
+    fromAddress ?? currentSendAs?.defaultAddress ?? null,
+  );
+  // The address that goes out is the one the control shows. Before the
+  // list loads, only an address that the user selected goes; without one the
+  // server picks the same default.
+  const sendFromAddress = currentSendAs ? (selectedFrom?.email ?? null) : fromAddress;
 
   // Seed once on mount and again whenever a fresh prefill arrives. We let
   // the user keep their edits in between — only nonce bumps overwrite.
@@ -172,6 +231,7 @@ export function InlineComposer({
     }
     if (initialPrefill.subject !== undefined) setSubject(initialPrefill.subject);
     if (initialPrefill.body !== undefined) setBody(initialPrefill.body);
+    if (initialPrefill.fromAddress) setFromAddress(initialPrefill.fromAddress);
   }, [prefillNonce]);
 
   const queryClient = useQueryClient();
@@ -325,6 +385,7 @@ export function InlineComposer({
       sendSnapshot.current = {
         mode: composerMode,
         account: fromAccount || account,
+        ...(sendFromAddress ? { fromAddress: sendFromAddress } : {}),
         to,
         cc,
         bcc,
@@ -353,6 +414,7 @@ export function InlineComposer({
       }
       if (composerNeedsSubject) fd.set('subject', subject);
       fd.set('body', body);
+      if (sendFromAddress) fd.set('fromAddress', sendFromAddress);
       if (!includeSignature) fd.set('signature', '0');
       if (!sendAt && undoSendSeconds > 0) {
         const id = `outbox:${crypto.randomUUID()}`;
@@ -612,18 +674,37 @@ export function InlineComposer({
           </span>
           <span className="flex min-w-0 items-center gap-1 text-[11px] text-[var(--color-text-faint)]">
             <span className="shrink-0">from</span>
-            {fromOptions.length > 1 ? (
-              <Select value={fromAccount || account} onValueChange={setFromAccount}>
+            {fromChoices.length > 1 ? (
+              <Select
+                value={selectedFrom?.key}
+                onValueChange={(key) => {
+                  const choice = fromChoices.find((item) => item.key === key);
+                  if (!choice) return;
+                  setFromAccount(choice.accountId);
+                  // A mailbox row without a known address leaves the choice to the server.
+                  setFromAddress(isBareAddress(choice.email) ? choice.email : null);
+                }}
+              >
                 <SelectTrigger
                   size="sm"
-                  className="h-7 max-w-[11rem] gap-1 border-[var(--color-control-border)] bg-[var(--color-control)] px-2 py-0 text-[11px] text-[var(--color-text)] shadow-[var(--shadow-control)]"
+                  aria-label="From address"
+                  className="h-7 max-w-[15rem] gap-1 border-[var(--color-control-border)] bg-[var(--color-control)] px-2 py-0 text-[11px] text-[var(--color-text)] shadow-[var(--shadow-control)]"
                 >
-                  <SelectValue placeholder={account} />
+                  <SelectValue placeholder={account}>
+                    <span className="truncate">{selectedFrom?.email || account}</span>
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent align="start">
-                  {fromOptions.map((accountId) => (
-                    <SelectItem key={accountId} value={accountId} className="text-[12px]">
-                      {accountAliasById[accountId] || accountId}
+                  {fromChoices.map((choice) => (
+                    <SelectItem key={choice.key} value={choice.key} className="text-[12px]">
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate">{choice.email}</span>
+                        {choice.name ? (
+                          <span className="truncate text-[11px] text-[var(--color-text-faint)]">
+                            {choice.name}
+                          </span>
+                        ) : null}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -969,6 +1050,20 @@ export function InlineComposer({
       </Dialog>
     </motion.section>
   );
+}
+
+/** The send-as page of one mailbox (GET /api/mail/send-as). */
+async function fetchSendAsPage(
+  accountId: string,
+  anchor: { messageId?: string | null; threadId?: string | null } | null,
+): Promise<SendAsPage> {
+  const params = new URLSearchParams({ account: accountId });
+  if (anchor?.messageId) params.set('messageId', anchor.messageId);
+  if (anchor?.threadId) params.set('threadId', anchor.threadId);
+  const res = await fetch(`/api/mail/send-as?${params}`, { cache: 'no-store' });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || data?.ok === false) throw new Error(data?.error || 'The From addresses are not available.');
+  return data as SendAsPage;
 }
 
 /** The signature the server will add for this mailbox, when it is on. */

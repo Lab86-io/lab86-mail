@@ -83,6 +83,18 @@ describe('outbox payload of a scheduled send', () => {
     } as any);
   });
 
+  test('the send-as address is held with the message', async () => {
+    const payload = await outboxPayloadFromSendRequest(CREDENTIALS, {
+      from: [{ name: '', email: 'ann@work.example' }],
+      to: [{ email: 'bob@x.org' }],
+      body: 'hi',
+      isPlaintext: true,
+    });
+    expect(payload.fromAddress).toBe('ann@work.example');
+    const plain = await outboxPayloadFromSendRequest(CREDENTIALS, { to: [], body: 'hi', isPlaintext: true });
+    expect(plain).not.toHaveProperty('fromAddress');
+  });
+
   test('a plain body has no html, and unknown content is refused', async () => {
     const payload = await outboxPayloadFromSendRequest(CREDENTIALS, {
       to: [],

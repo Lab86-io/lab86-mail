@@ -8,7 +8,9 @@ import {
 } from '../lib/google/adapter/mail';
 import { encodeAttachmentId } from '../lib/google/gmail-message';
 import { __setGoogleHttpDepsForTest, GOOGLE_REQUEST_TIMEOUT_MS, GoogleApiError } from '../lib/google/http';
+import { __setGoogleSendAsDepsForTest } from '../lib/google/send-as';
 import { routeNylasClient } from '../lib/nylas/client';
+import { SendAsError } from '../lib/shared/send-as';
 import {
   b64url,
   filePart,
@@ -523,6 +525,131 @@ describe('send', () => {
       .send({ identifier: GRANT, requestBody: { to: [], attachments: [{ filename: 'x', content: 7 }] } })
       .catch((e: unknown) => e)) as GoogleApiError;
     expect(refused.statusCode).toBe(400);
+  });
+
+  describe('send-as From', () => {
+    const PRIMARY = {
+      sendAsEmail: 'ann@example.com',
+      displayName: 'Ann Lee',
+      isPrimary: true,
+      isDefault: true,
+    };
+    const WORK = {
+      sendAsEmail: 'ann@work.example',
+      displayName: 'Ann at Work',
+      replyToAddress: 'team@work.example',
+      verificationStatus: 'accepted',
+    };
+    const PENDING = { sendAsEmail: 'side@club.example', verificationStatus: 'pending' };
+
+    function sendAs(entries: unknown[] | null) {
+      __setGoogleSendAsDepsForTest();
+      gmail.on('GET', /\/settings\/sendAs$/, () =>
+        entries ? { json: { sendAs: entries } } : { status: 400, json: { error: { message: 'Bad' } } },
+      );
+      gmail.on('POST', /\/messages\/send$/, () => ({ json: { id: 'sent-a', threadId: 'sent-a' } }));
+    }
+    const upload = () => gmail.calls.find((call) => call.path.endsWith('/send'));
+    const send = (from: string, extra: Record<string, unknown> = {}) =>
+      messages.send({
+        identifier: GRANT,
+        requestBody: {
+          from: [{ name: '', email: from }],
+          to: [{ email: 'bob@x.org' }],
+          subject: 's',
+          body: 'b',
+          isPlaintext: true,
+          ...extra,
+        },
+      });
+
+    test('a verified alias writes its From header, name, and Reply-To', async () => {
+      sendAs([PRIMARY, WORK]);
+      const result = await send('ANN@work.example');
+      expect(upload()?.raw).toContain('From: Ann at Work <ann@work.example>\r\n');
+      expect(upload()?.raw).toContain('Reply-To: team@work.example\r\n');
+      expect(result.data.from).toEqual([{ name: 'Ann at Work', email: 'ann@work.example' }]);
+    });
+
+    test("the request's own Reply-To wins over the alias Reply-To", async () => {
+      sendAs([PRIMARY, WORK]);
+      await send('ann@work.example', { replyTo: [{ email: 'me@x.org' }] });
+      expect(upload()?.raw).toContain('Reply-To: me@x.org\r\n');
+      expect(upload()?.raw).not.toContain('team@work.example');
+    });
+
+    test('an alias without a name gets the name of the mailbox address; a non-ASCII name is encoded', async () => {
+      sendAs([
+        { ...PRIMARY, displayName: 'Zoë' },
+        { ...WORK, displayName: '' },
+      ]);
+      await send('ann@work.example');
+      expect(upload()?.raw).toContain(
+        `From: =?UTF-8?B?${Buffer.from('Zoë').toString('base64')}?= <ann@work.example>`,
+      );
+    });
+
+    test('the mailbox address that is also the default writes no From header, as before', async () => {
+      sendAs([PRIMARY, WORK]);
+      const result = await send('ann@example.com');
+      expect(upload()?.raw).not.toContain('From:');
+      expect(result.data.from).toEqual([{ name: '', email: 'ann@example.com' }]);
+    });
+
+    test("the mailbox address writes a From header while Gmail's default is an alias", async () => {
+      sendAs([
+        { ...PRIMARY, isDefault: false },
+        { ...WORK, isDefault: true },
+      ]);
+      await send('ann@example.com');
+      expect(upload()?.raw).toContain('From: Ann Lee <ann@example.com>\r\n');
+      expect(upload()?.raw).not.toContain('Reply-To:');
+    });
+
+    test('an unknown or unverified address is refused with 400 before Gmail gets a message', async () => {
+      sendAs([PRIMARY, WORK, PENDING]);
+      for (const [address, code] of [
+        ['stranger@x.org', 'from_unknown'],
+        ['side@club.example', 'from_unverified'],
+      ] as const) {
+        const error = (await send(address).catch((e: unknown) => e)) as SendAsError;
+        expect(error).toBeInstanceOf(SendAsError);
+        expect(error.statusCode).toBe(400);
+        expect(error.code).toBe(code);
+      }
+      expect(upload()).toBeUndefined();
+    });
+
+    test('when the list cannot load, the mailbox address still sends and an alias fails', async () => {
+      sendAs(null);
+      await send('ann@example.com');
+      expect(upload()?.raw).not.toContain('From:');
+      gmail.calls.length = 0;
+      const error = (await send('ann@work.example').catch((e: unknown) => e)) as GoogleApiError;
+      expect(error.statusCode).toBe(400);
+      expect(upload()).toBeUndefined();
+    });
+
+    test('a scheduled send checks the alias now and holds it with the message', async () => {
+      sendAs([PRIMARY, WORK, PENDING]);
+      const sendAt = 1_800_000_000 + 3600;
+      const result = await send('ann@work.example', { sendAt });
+      expect(adapterCalls.schedule[0].body.from).toEqual([{ name: '', email: 'ann@work.example' }]);
+      expect(result.data.from).toEqual([{ name: 'Ann at Work', email: 'ann@work.example' }]);
+      await expect(send('side@club.example', { sendAt })).rejects.toBeInstanceOf(SendAsError);
+      expect(adapterCalls.schedule).toHaveLength(1);
+    });
+
+    test('the list is read once for many sends, and a removed grant forgets it', async () => {
+      sendAs([PRIMARY, WORK]);
+      await send('ann@work.example');
+      await send('ann@work.example');
+      const reads = () => gmail.calls.filter((call) => call.path.endsWith('/settings/sendAs')).length;
+      expect(reads()).toBe(1);
+      await googleMailAdapter.grants!.destroy({ grantId: GRANT });
+      await send('ann@work.example');
+      expect(reads()).toBe(2);
+    });
   });
 
   test('without a token row the send needs a reconnect', async () => {

@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { resolveComposeFrom, SendAsUnavailableError } from '@/lib/mail/send-as';
 import { withAccountSignature } from '@/lib/mail/signature';
 import { sendNylasMessage } from '@/lib/nylas/provider';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -15,6 +16,7 @@ import {
 } from '@/lib/send/anchor';
 import { enqueueOutbox } from '@/lib/send/outbox';
 import { sanitizeFilename } from '@/lib/shared/files';
+import { isSendAsError } from '@/lib/shared/send-as';
 import { DEFAULT_UNDO_SEND_SECONDS, normalizeUndoSendSeconds } from '@/lib/shared/sending';
 import { truncateText } from '@/lib/shared/text';
 import type { Message } from '@/lib/shared/types';
@@ -52,6 +54,8 @@ const defaults = {
   cacheSentMessage,
   prepareComposeSend,
   applySignature: withAccountSignature,
+  resolveFrom: resolveComposeFrom,
+  resolveAnchor: resolveSendAnchor,
 };
 export function createComposePost(overrides: Partial<typeof defaults> = {}) {
   const deps = { ...defaults, ...overrides };
@@ -75,6 +79,9 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
     const html = (form.get('html') as string | null) || undefined;
     const threadId = (form.get('threadId') as string | null) || undefined;
     const messageId = (form.get('messageId') as string | null) || undefined;
+    // The send-as address to send from (optional). Without it the server
+    // picks the default (lib/mail/send-as.ts).
+    const fromAddress = String(form.get('fromAddress') ?? '').trim() || undefined;
     // The mailbox signature goes on by default; `signature=0` leaves it off
     // for this one message.
     const includeSignature = String(form.get('signature') ?? '1') !== '0';
@@ -135,6 +142,7 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
       };
       const auditArgs = {
         mode: mode || 'new',
+        ...(fromAddress ? { fromAddress } : {}),
         to,
         cc,
         bcc,
@@ -147,7 +155,9 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
       // a missing anchor must fail the request, not a timer five minutes later.
       const prepared = await runWithAiRequestContext(requestContext, () =>
         deps.prepareComposeSend({
+          userId: user.userId,
           account,
+          fromAddress,
           mode,
           to,
           cc,
@@ -160,6 +170,8 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
           attachments,
           includeSignature,
           sign: deps.applySignature,
+          resolveFrom: deps.resolveFrom,
+          resolveAnchor: deps.resolveAnchor,
         }),
       );
 
@@ -237,7 +249,13 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
     } catch (err: any) {
       if (err instanceof RateLimitError) return rateLimitJson(err);
       const status =
-        err instanceof AuthRequiredError ? 401 : err instanceof ComposeRequestError ? err.status : 500;
+        err instanceof AuthRequiredError
+          ? 401
+          : err instanceof ComposeRequestError
+            ? err.status
+            : isSendAsError(err) || err instanceof SendAsUnavailableError
+              ? err.statusCode
+              : 500;
       await deps
         .writeAudit({
           tool: `compose_route:${mode || 'new'}:nylas`,
@@ -250,8 +268,16 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
           agent: 'user',
         })
         .catch(() => undefined);
+      // The app writes the text of a From refusal, so the answer keeps it.
+      // `code` names the refusal for a client (from_unknown, from_unverified,
+      // from_unsupported).
+      const fallback = err instanceof SendAsUnavailableError ? err.message : 'send failed';
       return NextResponse.json(
-        { ok: false, error: errorAnswerMessage(status, err, 'send failed', '[compose] send failed') },
+        {
+          ok: false,
+          error: errorAnswerMessage(status, err, fallback, '[compose] send failed'),
+          ...(isSendAsError(err) ? { code: err.code } : {}),
+        },
         { status },
       );
     }
@@ -268,7 +294,9 @@ async function sendPrepared(userId: string, prepared: PreparedSend, sendAt?: num
 }
 
 async function prepareComposeSend({
+  userId,
   account,
+  fromAddress,
   mode,
   to,
   cc,
@@ -281,8 +309,12 @@ async function prepareComposeSend({
   attachments,
   includeSignature = true,
   sign = withAccountSignature,
+  resolveFrom = resolveComposeFrom,
+  resolveAnchor = resolveSendAnchor,
 }: {
+  userId: string;
   account: string;
+  fromAddress?: string;
   mode: string;
   to: string;
   cc?: string;
@@ -295,7 +327,11 @@ async function prepareComposeSend({
   attachments: NylasAttachment[];
   includeSignature?: boolean;
   sign?: typeof withAccountSignature;
+  resolveFrom?: typeof resolveComposeFrom;
+  resolveAnchor?: typeof resolveSendAnchor;
 }): Promise<PreparedSend> {
+  const withFrom = (from: { fromAddress?: string }) =>
+    from.fromAddress ? { fromAddress: from.fromAddress } : {};
   // The signature goes below what the user wrote. For a forward that is the
   // note above the forwarded message, so it is added before quoting.
   const signed = await sign({ account, body, html, include: includeSignature });
@@ -304,10 +340,13 @@ async function prepareComposeSend({
   if (mode === 'reply' || mode === 'reply_all') {
     if (!messageId && !threadId)
       throw new ComposeRequestError('messageId or threadId is required for reply/reply_all');
-    const anchor = await resolveSendAnchor({ account, messageId, threadId });
-    const target = mode === 'reply_all' ? replyAllTargetFor(anchor, account) : replyTargetFor(anchor);
+    const anchor = await resolveAnchor({ account, messageId, threadId });
+    const from = await resolveFrom({ userId, account, fromAddress, anchor });
+    const target =
+      mode === 'reply_all' ? replyAllTargetFor(anchor, account, from.selfAddresses) : replyTargetFor(anchor);
     return {
       account,
+      ...withFrom(from),
       to: to || target.to,
       cc,
       bcc,
@@ -322,10 +361,12 @@ async function prepareComposeSend({
   if (mode === 'forward') {
     if (!messageId) throw new ComposeRequestError('messageId is required for forward');
     if (!to) throw new ComposeRequestError('to is required for forward');
-    const original = await resolveSendAnchor({ account, messageId, threadId });
+    const original = await resolveAnchor({ account, messageId, threadId });
+    const from = await resolveFrom({ userId, account, fromAddress, anchor: original });
     const quoted = buildForwardMessagePayload(original, { body, html });
     return {
       account,
+      ...withFrom(from),
       to,
       cc,
       bcc,
@@ -338,7 +379,8 @@ async function prepareComposeSend({
 
   if (!to) throw new ComposeRequestError('to is required');
   if (!subject) throw new ComposeRequestError('subject is required');
-  return { account, to, cc, bcc, subject, body, html, attachments };
+  const from = await resolveFrom({ userId, account, fromAddress });
+  return { account, ...withFrom(from), to, cc, bcc, subject, body, html, attachments };
 }
 
 async function cacheSentMessage(account: string, sent: Message) {

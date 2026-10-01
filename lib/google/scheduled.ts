@@ -85,9 +85,13 @@ export async function outboxPayloadFromSendRequest(
       content: await contentBase64(attachment.content),
     });
   }
+  // The send-as address goes with the held message, so it goes out From the
+  // address that the user selected.
+  const fromAddress = String(requestBody?.from?.[0]?.email || '').trim();
   return {
     userId: credentials.userId,
     account: credentials.accountId,
+    ...(fromAddress ? { fromAddress } : {}),
     to: recipientsToString(requestBody?.to) || '',
     cc: recipientsToString(requestBody?.cc),
     bcc: recipientsToString(requestBody?.bcc),

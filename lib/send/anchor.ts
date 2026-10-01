@@ -51,16 +51,24 @@ export function replyTargetFor(anchor: Message) {
   return { to, subject: replySubject(anchor.subject), replyToMessageId: anchor._id };
 }
 
-export function replyAllTargetFor(anchor: Message, account: string) {
-  const self = account.toLowerCase();
+/**
+ * The recipients of a reply-all: the sender and every To and Cc address,
+ * without the user's own addresses (`account`, and `selfAddresses`, which
+ * holds the mailbox address and its send-as addresses).
+ */
+export function replyAllTargetFor(anchor: Message, account: string, selfAddresses: string[] = []) {
+  const self = new Set([account, ...selfAddresses].map((value) => value.trim().toLowerCase()));
   const recipients = new Set<string>();
   for (const field of [anchor.from, anchor.to, anchor.cc]) {
     for (const item of String(field || '').split(/[,;]/)) {
       const email = emailFromHeader(item) || item.trim();
-      if (!email || email.toLowerCase() === self) continue;
+      if (!email || self.has(email.toLowerCase())) continue;
       recipients.add(email);
     }
   }
+  // A message from the user to only the user's own addresses goes back to its sender.
+  const sender = emailFromHeader(anchor.from);
+  if (!recipients.size && sender) recipients.add(sender);
   return {
     to: [...recipients].join(', '),
     subject: replySubject(anchor.subject),

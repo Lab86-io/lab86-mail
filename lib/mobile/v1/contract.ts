@@ -761,9 +761,72 @@ export const ContactStatusPageSchema = z
 export const ContactResyncRequestSchema = z.object({ accountID: identifier }).strict();
 export const ContactResyncReceiptSchema = z.object({ accountID: identifier, started: z.boolean() }).strict();
 
+// The addresses one mailbox can send from:
+// GET /api/mobile/v1/accounts/{accountID}/send-as?messageID=&threadID=.
+// A direct Google mailbox lists its Gmail "Send mail as" addresses; another
+// mailbox lists only its own address (`aliasesSupported` false). Only a
+// `usable` address can go in the `fromAddress` field of POST /api/compose.
+// `defaultAddress` is the address to select first: with `messageID` or
+// `threadID` (a reply or a forward), the user's address that the original
+// was sent to; else Gmail's default send-as address. `partial` is true when
+// the Gmail list did not load: `identities` then holds only the mailbox
+// address. Signatures stay Albatross signatures; `hasProviderSignature`
+// only tells that Gmail has one.
+export const MobileSendAsIdentitySchema = z
+  .object({
+    email: z.string().min(3).max(320),
+    displayName: z.string().max(240).optional(),
+    isPrimary: z.boolean(),
+    isDefault: z.boolean(),
+    verificationStatus: z.enum(['accepted', 'pending', 'unknown']),
+    replyTo: z.string().max(320).optional(),
+    hasProviderSignature: z.boolean(),
+    usable: z.boolean(),
+  })
+  .strict();
+export type MobileSendAsIdentityV1 = z.infer<typeof MobileSendAsIdentitySchema>;
+
+export const MobileSendAsPageSchema = z
+  .object({
+    version: z.literal(1),
+    accountID: identifier,
+    aliasesSupported: z.boolean(),
+    partial: z.boolean(),
+    identities: z.array(MobileSendAsIdentitySchema).min(1).max(100),
+    defaultAddress: z.string().min(3).max(320),
+    serverTime: isoTimestamp,
+  })
+  .strict();
+export type MobileSendAsPageV1 = z.infer<typeof MobileSendAsPageSchema>;
+
+// POST /api/compose is the multipart send form that web and native share
+// (it is not a v1 path). `fromAddress` is an optional text field of that
+// form: a usable address from MobileSendAsPage. Without it the server uses
+// the same default as `defaultAddress`. A refused address gets HTTP 400
+// with `{ ok: false, error, code }`, where `code` is a ComposeFromErrorCode.
+// Scheduled and held (undo) sends keep the address.
+export const ComposeFromFieldsSchema = z
+  .object({
+    account: identifier,
+    fromAddress: z
+      .string()
+      .trim()
+      .min(3)
+      .max(320)
+      .regex(/^[^\s@<>,;"]+@[^\s@<>,;"]+$/)
+      .optional(),
+  })
+  .strict();
+
+export const ComposeFromErrorCodeSchema = z.enum(['from_unknown', 'from_unverified', 'from_unsupported']);
+
 export const MobileContractV1 = {
   version: 1 as const,
   schemas: {
+    ComposeFromErrorCode: ComposeFromErrorCodeSchema,
+    ComposeFromFields: ComposeFromFieldsSchema,
+    MobileSendAsIdentity: MobileSendAsIdentitySchema,
+    MobileSendAsPage: MobileSendAsPageSchema,
     AssistantRouteRequest: AssistantRouteRequestSchema,
     AssistantRouteVerdict: AssistantRouteVerdictSchema,
     BriefEditionKind: BriefEditionKindSchema,

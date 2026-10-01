@@ -55,6 +55,28 @@ describe('send anchor resolution (SEND-1)', () => {
     );
     expect(() => replyTargetFor({ ...anchor, from: '' })).toThrow(/sender is missing/);
   });
+
+  test("reply all leaves out the user's send-as addresses, but never ends with no recipient", () => {
+    const anchor = corpusMessage({
+      _id: 'm10',
+      subject: 'Plans',
+      from: 'Bob <bob@example.com>',
+      to: 'Ann <ANN@work.example>, carl@example.com',
+      cc: 'ann@gmail.com',
+    }) as any;
+    expect(replyAllTargetFor(anchor, 'acct-1', ['ann@gmail.com', 'ann@work.example']).to).toBe(
+      'bob@example.com, carl@example.com',
+    );
+    const toSelf = corpusMessage({
+      _id: 'm11',
+      from: 'ann@gmail.com',
+      to: 'ann@work.example',
+      cc: '',
+    }) as any;
+    expect(replyAllTargetFor(toSelf, 'acct-1', ['ann@gmail.com', 'ann@work.example']).to).toBe(
+      'ann@gmail.com',
+    );
+  });
 });
 
 describe('corpus-backed message resolver (KV-1)', () => {

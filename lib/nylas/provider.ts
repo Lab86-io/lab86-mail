@@ -22,6 +22,7 @@ import {
   filterCorpusMessagesByAst,
 } from '@/lib/mail/search/local';
 import { parseMailSearchQuery } from '@/lib/mail/search/parser';
+import { normalizeAddress, SendAsError } from '@/lib/shared/send-as';
 import { rerankMail } from '../jev/search';
 import { matchingMailExcerpt } from '../mail/search/ranking';
 import { requireNylas } from './client';
@@ -989,6 +990,22 @@ async function updateNylasThreadFoldersInternal({
   return folderChange(before, folders);
 }
 
+/**
+ * The `from` of a send request. The mailbox address needs none. A direct
+ * Google mailbox passes a different address to the adapter, which checks it
+ * against the Gmail send-as list. A Nylas mailbox has no send-as support.
+ */
+export function sendFromField(
+  row: Pick<NylasAccountRow, 'email' | 'grantId'>,
+  fromAddress: string | undefined,
+): Array<{ name: string; email: string }> | undefined {
+  const address = String(fromAddress || '').trim();
+  if (!address) return undefined;
+  if (isGoogleDirectGrant(row.grantId)) return [{ name: '', email: address }];
+  if (normalizeAddress(address) === normalizeAddress(row.email)) return undefined;
+  throw new SendAsError('from_unsupported');
+}
+
 export async function sendNylasMessage({
   userId,
   account,
@@ -1002,9 +1019,16 @@ export async function sendNylasMessage({
   sendAt,
   useDraft,
   attachments,
+  fromAddress,
 }: {
   userId?: string | null;
   account: string;
+  /**
+   * The send-as address to send from. A direct Google mailbox checks it
+   * against its Gmail send-as list. Other mailboxes send only from their own
+   * address, so a different address is a SendAsError.
+   */
+  fromAddress?: string;
   to: string;
   cc?: string;
   bcc?: string;
@@ -1019,6 +1043,7 @@ export async function sendNylasMessage({
   assertOutboundSendEnabled();
   const row = await getNylasAccount(userId, account);
   if (!row) return null;
+  const from = sendFromField(row, fromAddress);
   // Nylas rejects send_at values that are not in the future AT VALIDATION
   // TIME ("provided send_at field is less than current epoch time"). Short
   // undo windows plus request/upload latency made stale timestamps common, so
@@ -1041,6 +1066,7 @@ export async function sendNylasMessage({
       sendAt: sendAtSeconds,
       useDraft,
       attachments,
+      ...(from ? { from } : {}),
     },
   });
   const normalized = normalizeNylasMessage(result.data, row.accountId);

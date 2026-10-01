@@ -199,6 +199,44 @@ export function mobileOpenAPIV1() {
           },
         },
       },
+      '/api/mobile/v1/accounts/{accountID}/send-as': {
+        get: {
+          operationId: 'getMobileSendAs',
+          description:
+            'The addresses the mailbox can send from. Put a usable address in the fromAddress field of POST /api/compose.',
+          parameters: [
+            {
+              name: 'accountID',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', minLength: 1, maxLength: 240 },
+            },
+            {
+              name: 'messageID',
+              in: 'query',
+              required: false,
+              description: 'The message a reply or a forward answers. It sets defaultAddress.',
+              schema: { type: 'string', minLength: 1, maxLength: 240 },
+            },
+            {
+              name: 'threadID',
+              in: 'query',
+              required: false,
+              description:
+                'The thread of a reply. Without messageID, its newest message sets defaultAddress.',
+              schema: { type: 'string', minLength: 1, maxLength: 240 },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The send-as addresses and the address to select first',
+              content: jsonContent('MobileSendAsPage'),
+            },
+            '404': { description: 'Unknown mailbox', content: jsonContent('MobileErrorEnvelope') },
+            ...errorResponses,
+          },
+        },
+      },
       '/api/mobile/v1/today/summary': {
         get: {
           operationId: 'getMobileTodaySummary',
