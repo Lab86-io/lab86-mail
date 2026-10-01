@@ -17,6 +17,9 @@ struct ComposeDraftSnapshot: Codable, Hashable, Sendable {
     // Set when the message came from an inline Albatross draft. Undo then
     // returns to that artifact instead of opening the global composer.
     var assistantDraftKey: String? = nil
+    // The send-as address the message was going out from. Optional so a
+    // record saved before send-as still decodes.
+    var fromAddress: String? = nil
 
     var composePrefill: ComposePrefill {
         ComposePrefill(
@@ -31,7 +34,8 @@ struct ComposeDraftSnapshot: Codable, Hashable, Sendable {
             messageID: messageID,
             replyAll: replyAll,
             attachmentsKey: attachmentsKey,
-            draftID: draftID
+            draftID: draftID,
+            fromAddress: fromAddress
         )
     }
 }
@@ -121,7 +125,8 @@ enum ComposeTransportFailure: Equatable, Sendable {
             case .invalidResponse:
                 self = .ambiguous(message)
             }
-        case is SessionAuthenticationError:
+        case is SessionAuthenticationError, is ComposeFromRefusal:
+            // A refused From address stops the send before the provider gets it.
             self = .rejected(message)
         case let url as URLError:
             switch url.code {

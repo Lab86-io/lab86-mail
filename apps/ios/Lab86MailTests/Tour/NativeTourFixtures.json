@@ -1187,6 +1187,28 @@
       }
     }
   },
+  "sendAs": {
+      "acct-work": {
+        "version": 1, "accountID": "acct-work", "aliasesSupported": true, "partial": false,
+        "identities": [
+          { "email": "casey@northwind.example", "displayName": "Casey Morgan", "isPrimary": true, "isDefault": true, "verificationStatus": "accepted", "hasProviderSignature": false, "usable": true },
+          { "email": "events@northwind.example", "displayName": "Northwind Events", "isPrimary": false, "isDefault": false, "verificationStatus": "accepted", "hasProviderSignature": false, "usable": true },
+          { "email": "press@northwind.example", "displayName": "Northwind Press", "isPrimary": false, "isDefault": false, "verificationStatus": "pending", "hasProviderSignature": false, "usable": false }
+        ],
+        "defaultAddress": "casey@northwind.example", "serverTime": "@iso:now"
+      }
+  },
+  "sendAsAnchored": {
+      "acct-work": {
+        "version": 1, "accountID": "acct-work", "aliasesSupported": true, "partial": false,
+        "identities": [
+          { "email": "casey@northwind.example", "displayName": "Casey Morgan", "isPrimary": true, "isDefault": true, "verificationStatus": "accepted", "hasProviderSignature": false, "usable": true },
+          { "email": "events@northwind.example", "displayName": "Northwind Events", "isPrimary": false, "isDefault": false, "verificationStatus": "accepted", "hasProviderSignature": false, "usable": true },
+          { "email": "press@northwind.example", "displayName": "Northwind Press", "isPrimary": false, "isDefault": false, "verificationStatus": "pending", "hasProviderSignature": false, "usable": false }
+        ],
+        "defaultAddress": "events@northwind.example", "serverTime": "@iso:now"
+      }
+  },
   "scenarios": {
     "today-empty": {
       "tools": { "get_latest_daily_report": { "report": null } }

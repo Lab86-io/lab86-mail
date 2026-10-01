@@ -167,6 +167,8 @@ struct ComposePrefill: Hashable, Sendable {
     let replyAll: Bool
     let attachmentsKey: String?
     let draftID: String?
+    // The send-as address of a restored draft. Nil uses the mailbox default.
+    var fromAddress: String? = nil
 }
 
 enum SheetDestination: Identifiable, Sendable {

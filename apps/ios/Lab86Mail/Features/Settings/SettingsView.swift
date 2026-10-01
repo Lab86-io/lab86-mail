@@ -190,6 +190,7 @@ struct SettingsView: View {
                     await environment.assistantDrafts.clear(ownerID: ownerID)
                     environment.accountStore.clear()
                     environment.trust.clear()
+                    environment.sendAs.removeAll()
                     TodayWidgetBridge.clear()
                     try? await environment.notificationResponseOutbox.purge()
                     if let ownerID {
@@ -285,6 +286,7 @@ private struct AccountDeletionView: View {
             await environment.assistantDrafts.clear(ownerID: ownerID)
             environment.accountStore.clear()
             environment.trust.clear()
+            environment.sendAs.removeAll()
             TodayWidgetBridge.clear()
             try? await environment.notificationResponseOutbox.purge()
             if let ownerID {

@@ -152,6 +152,8 @@ actor BackendClient {
         let decoded = try? JSONDecoder().decode(JSONValue.self, from: data)
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 401 { throw BackendError.unauthorized }
+            // POST /api/compose names a refused From address with a `code`.
+            if let refusal = ComposeFromRefusal(status: http.statusCode, body: decoded) { throw refusal }
             let message = decoded?["error"]?.stringValue ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
             throw BackendError.server(status: http.statusCode, message: message)
         }
