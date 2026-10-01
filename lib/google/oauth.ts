@@ -78,9 +78,8 @@ export function buildGoogleMailAuthorizationUrl(input: {
   url.searchParams.set('scope', GOOGLE_MAIL_SCOPES.join(' '));
   url.searchParams.set('access_type', 'offline');
   url.searchParams.set('prompt', 'consent');
-  // Incremental authorization: the new token also carries the access that
-  // the user gave this client before, so a second consent never narrows it.
-  url.searchParams.set('include_granted_scopes', 'true');
+  // No include_granted_scopes: mail and Drive share one OAuth client, and each
+  // stored token must carry only the scopes of its own feature (commit faf5667d).
   url.searchParams.set('state', input.state);
   url.searchParams.set('code_challenge', input.codeChallenge);
   url.searchParams.set('code_challenge_method', 'S256');

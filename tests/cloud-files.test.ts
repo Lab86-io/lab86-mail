@@ -43,7 +43,7 @@ describe('cloud file provider contracts', () => {
     expect(url.searchParams.get('scope')).not.toContain('/auth/spreadsheets');
     expect(url.searchParams.get('scope')).not.toContain('/auth/presentations');
     // Incremental authorization: a reconnect keeps the access given before.
-    expect(url.searchParams.get('include_granted_scopes')).toBe('true');
+    expect(url.searchParams.has('include_granted_scopes')).toBe(false);
   });
 
   test('OneDrive authorization asks for delegated read/write access', () => {

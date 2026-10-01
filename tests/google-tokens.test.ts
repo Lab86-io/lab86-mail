@@ -230,7 +230,7 @@ describe('Google OAuth client', () => {
     expect(url.searchParams.get('access_type')).toBe('offline');
     expect(url.searchParams.get('prompt')).toBe('consent');
     // Incremental authorization: a new consent keeps the access given before.
-    expect(url.searchParams.get('include_granted_scopes')).toBe('true');
+    expect(url.searchParams.has('include_granted_scopes')).toBe(false);
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(url.searchParams.get('code_challenge')).toBe(codeChallenge);
     expect(url.searchParams.get('login_hint')).toBe('ann@example.com');

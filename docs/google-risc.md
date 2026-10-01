@@ -279,11 +279,12 @@ To stop the stream later, send `{"status": "disabled"}` to
 
 ## Consent rules that go with this change
 
-- The mail and Drive authorization URLs send `include_granted_scopes=true`
-  (incremental authorization). The scope lists do not change. A shared OAuth
-  client then gives one token the access of the two features. A revoke
-  already ends both (`lib/google/shared-grant.ts`). This reverses commit
-  `faf5667d` of 2026-07-27, which removed the parameter from the Drive URL.
+- The mail and Drive authorization URLs do not send `include_granted_scopes`.
+  Mail and Drive share one OAuth client. Without the parameter, each stored
+  token carries only the scopes of its own feature (least privilege). This
+  keeps the decision of commit `faf5667d` of 2026-07-27. A revoke still ends
+  both features, because Google revokes the grant of the whole project
+  (`lib/google/shared-grant.ts`).
 - Google Drive: a consent without `drive.readonly` is refused, and nothing is
   stored. Without `drive.file` or `documents` the connection is made; Files
   shows "Reconnect Google Drive to let Albatross ...", and "Publish to Google"
