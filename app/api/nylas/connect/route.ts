@@ -7,7 +7,7 @@ import { googleOAuthClient } from '@/lib/google/oauth';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { isNylasConfigured, nylasRedirectUri } from '@/lib/hosted/env';
 import { type MailProvider, mailProviderCapability } from '@/lib/mail/provider-capabilities';
-import { requireNylas } from '@/lib/nylas/client';
+import { NYLAS_NOT_CONFIGURED, requireNylas } from '@/lib/nylas/client';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { NATIVE_NYLAS_CALLBACK, sanitizeInternalPath } from '@/lib/security/redirect';
 
@@ -31,8 +31,6 @@ interface NylasConnectDependencies {
   /** True when the Google OAuth client of the direct flow is configured. */
   isGoogleDirectConfigured?: () => boolean;
 }
-
-const NYLAS_NOT_CONFIGURED = 'Nylas is not configured. Set NYLAS_API_KEY and NYLAS_CLIENT_ID.';
 
 const defaultDependencies: NylasConnectDependencies = {
   requireCurrentUser,

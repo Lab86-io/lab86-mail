@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash, generateKeyPairSync, type KeyObject, sign } from 'node:crypto';
 import { getFunctionName } from 'convex/server';
 import { NextRequest } from 'next/server';
-import { createRiscReceiver } from '../app/api/google/risc/route';
+import { createRiscReceiver, readLimitedBody } from '../app/api/google/risc/route';
 import {
   __setRiscDepsForTest,
   handleRiscDelivery,
@@ -239,6 +239,7 @@ describe('verifySecurityEventToken', () => {
       [token(claims(), { alg: 'HS256' }), 'invalid_request'],
       [token(claims(), { kid: null }), 'invalid_key'],
       [token([1, 2, 3]), 'invalid_request'],
+      [token(claims(), { header: { crit: ['exp'] } }), 'invalid_request'],
     ];
     for (const [value, code] of cases) {
       const error = await refusal(verifySecurityEventToken(value));
@@ -503,6 +504,68 @@ describe('the RISC route', () => {
     expect(large.status).toBe(400);
     const declared = await post('good', { 'content-length': '999999' });
     expect(declared.status).toBe(400);
+  });
+
+  test('a chunked body with no Content-Length stops at the byte limit', async () => {
+    let pulls = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(4096));
+      },
+    });
+    const request = new Request('https://mail.lab86.io/api/google/risc', {
+      method: 'POST',
+      body: endless,
+      duplex: 'half',
+    } as RequestInit);
+    expect(request.headers.get('content-length')).toBeNull();
+    expect(await readLimitedBody(request, 16_384)).toBeNull();
+    expect(pulls).toBeLessThan(10);
+    const handled: string[] = [];
+    const route = createRiscReceiver((async ({ body }: { body: string }) => {
+      handled.push(body);
+      return { status: 202, jti: 'j', duplicate: false, applied: false };
+    }) as any);
+    const big = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(4096));
+      },
+    });
+    const response = await route(
+      new NextRequest('https://mail.lab86.io/api/google/risc', {
+        method: 'POST',
+        body: big,
+        duplex: 'half',
+      } as any),
+    );
+    expect(response.status).toBe(400);
+    expect(handled).toEqual([]);
+  });
+
+  test('the body reader returns an empty body for no body or a broken stream', async () => {
+    expect(await readLimitedBody(new Request('https://mail.lab86.io/api/google/risc'), 10)).toBe('');
+    const broken = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new Error('reset'));
+      },
+    });
+    expect(
+      await readLimitedBody(
+        new Request('https://mail.lab86.io/api/google/risc', {
+          method: 'POST',
+          body: broken,
+          duplex: 'half',
+        } as RequestInit),
+        10,
+      ),
+    ).toBe('');
+    expect(
+      await readLimitedBody(
+        new Request('https://mail.lab86.io/api/google/risc', { method: 'POST', body: 'héllo' }),
+        10,
+      ),
+    ).toBe('héllo');
   });
 
   test('the default route verifies a real token end to end', async () => {

@@ -276,6 +276,11 @@ export async function verifySecurityEventToken(
   if (header?.alg !== 'RS256') {
     throw new SecurityEventTokenError('invalid_request', 'The token must use RS256.');
   }
+  // RFC 7515 4.1.11: a receiver must refuse critical header extensions that it
+  // does not know. This receiver knows none.
+  if (header.crit !== undefined) {
+    throw new SecurityEventTokenError('invalid_request', 'The token has a critical header extension.');
+  }
   if (typeof header.kid !== 'string' || !header.kid) {
     throw new SecurityEventTokenError('invalid_key', 'The token has no key id.');
   }

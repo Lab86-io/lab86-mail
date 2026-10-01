@@ -383,8 +383,14 @@ export const updateCredentials = mutation({
       accessTokenEncrypted: args.accessTokenEncrypted,
       ...(args.refreshTokenEncrypted ? { refreshTokenEncrypted: args.refreshTokenEncrypted } : {}),
       ...(args.expiresAt !== undefined ? { expiresAt: args.expiresAt } : {}),
-      ...(args.refreshTokenPrefixHash ? { refreshTokenPrefixHash: args.refreshTokenPrefixHash } : {}),
-      ...(args.refreshTokenDoubleHash ? { refreshTokenDoubleHash: args.refreshTokenDoubleHash } : {}),
+      // A new refresh token replaces both identifiers, so no identifier of
+      // the old token stays. Without a new token, given identifiers fill in.
+      ...(args.refreshTokenEncrypted || args.refreshTokenPrefixHash || args.refreshTokenDoubleHash
+        ? {
+            refreshTokenPrefixHash: args.refreshTokenPrefixHash,
+            refreshTokenDoubleHash: args.refreshTokenDoubleHash,
+          }
+        : {}),
       updatedAt: now(),
     });
     // A Google Drive connection from before `googleSub` gets it on its next

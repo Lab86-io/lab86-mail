@@ -20,7 +20,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit",
-    "typecheck:tests": "tsc --noEmit -p tsconfig.tests.json",
+    "typecheck:tests": "NODE_OPTIONS=--max-old-space-size=4096 tsc --noEmit -p tsconfig.tests.json",
     "dev:preview": "bun scripts/preview-app-workspace.mjs"
   },
   "dependencies": {

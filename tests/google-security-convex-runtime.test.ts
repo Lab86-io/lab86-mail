@@ -575,6 +575,39 @@ describe('retention and backfill', () => {
     expect(after.drives[0]?.googleSub).toBe('1234567890');
   });
 
+  test('a rotated Drive refresh token never keeps the identifiers of the old token', async () => {
+    const t = newHarness();
+    await seedDrive(t);
+    await t.mutation(api.cloudFiles.updateCredentials, {
+      internalSecret: SECRET,
+      userId: USER,
+      connectionId: DRIVE,
+      accessTokenEncrypted: 'enc-fresh',
+      refreshTokenEncrypted: 'enc-rotated-no-ids',
+    });
+    let after = await snapshot(t);
+    expect(after.credentials[0]?.refreshTokenEncrypted).toBe('enc-rotated-no-ids');
+    expect(after.credentials[0]?.refreshTokenPrefixHash).toBeUndefined();
+    expect(after.credentials[0]?.refreshTokenDoubleHash).toBeUndefined();
+    // A refresh with no new token and no identifiers keeps what is stored.
+    const ids = refreshTokenIdentifiers('1//0g-rotated-no-ids');
+    await t.mutation(api.cloudFiles.updateCredentials, {
+      internalSecret: SECRET,
+      userId: USER,
+      connectionId: DRIVE,
+      accessTokenEncrypted: 'enc-fresh-2',
+      ...ids,
+    });
+    await t.mutation(api.cloudFiles.updateCredentials, {
+      internalSecret: SECRET,
+      userId: USER,
+      connectionId: DRIVE,
+      accessTokenEncrypted: 'enc-fresh-3',
+    });
+    after = await snapshot(t);
+    expect(after.credentials[0]).toMatchObject({ accessTokenEncrypted: 'enc-fresh-3', ...ids });
+  });
+
   test('a mail refresh fills googleSub once and stores the token identifiers', async () => {
     const t = newHarness();
     await seedMail(t, { googleSub: '' });
