@@ -345,6 +345,18 @@ describe('stop plans', () => {
     expect(plan?.sharedMailbox).toBe(true);
   });
 
+  test('a Nylas connection of the address also counts as shared; a grant without an account row counts as shared', async () => {
+    const t = harness();
+    await seedAccount(t);
+    await seedRow(t, { kind: 'gmail', channelId: 'g1', tokenHash: undefined });
+    await seedAccount(t, { userId: USER_B, accountId: 'acct_n', grantId: 'nylas-grant-b', status: 'error' });
+    let plan = await t.query(api.googlePush.stopPlanForGrant, { internalSecret: SECRET, grantId: GRANT });
+    expect(plan?.sharedMailbox).toBe(true);
+    await seedRow(t, { kind: 'gmail', channelId: 'orphan', grantId: GRANT_B, tokenHash: undefined });
+    plan = await t.query(api.googlePush.stopPlanForGrant, { internalSecret: SECRET, grantId: GRANT_B });
+    expect(plan?.sharedMailbox).toBe(true);
+  });
+
   test('a Drive connection lists only its own channels, without the token hash', async () => {
     const t = harness();
     await seedRow(t, { kind: 'drive', channelId: 'd1', connectionId: 'conn_1', accountId: undefined });
@@ -402,6 +414,45 @@ describe('renewal plan', () => {
     expect(plan.contentEnabled).toBe(true);
     expect(plan.channels).toHaveLength(1);
     expect(JSON.stringify(plan)).not.toContain(HASH);
+  });
+
+  test('each account tells if another connection or a kept Nylas grant has its mailbox', async () => {
+    const t = harness();
+    await seedAccount(t);
+    await seedAccount(t, { accountId: 'acct_switched', email: 'bob@example.com', grantId: GRANT_B });
+    await seedAccount(t, { accountId: 'acct_alone', email: 'cy@example.com', grantId: 'google:alone' });
+    // Another user's direct connection of ann@: shared, but no Nylas grant.
+    await seedAccount(t, { userId: USER_B, accountId: 'acct_b', grantId: 'google:b' });
+    await t.run(async (ctx) => {
+      await ctx.db.insert('providerGrants', {
+        userId: USER,
+        accountId: 'acct_switched',
+        provider: 'google',
+        grantId: GRANT_B,
+        email: 'bob@example.com',
+        scopes: [],
+        previousNylasGrantId: 'nylas-kept',
+        createdAt: 1,
+        updatedAt: 1,
+      } as any);
+    });
+    const plan = await t.query(api.googlePush.userPlan, { internalSecret: SECRET, userId: USER });
+    const byId = Object.fromEntries(plan.accounts.map((row) => [row.accountId, row]));
+    expect(byId[ACCOUNT]).toMatchObject({ sharedMailbox: true, nylasMailbox: false });
+    expect(byId.acct_switched).toMatchObject({ sharedMailbox: false, nylasMailbox: true });
+    expect(byId.acct_alone).toMatchObject({ sharedMailbox: false, nylasMailbox: false });
+    // A Nylas connection of the same address, of any user, is a Nylas mailbox.
+    await seedAccount(t, {
+      userId: 'nylas_user',
+      accountId: 'acct_n',
+      email: 'cy@example.com',
+      grantId: 'nylas-cy',
+    });
+    const next = await t.query(api.googlePush.userPlan, { internalSecret: SECRET, userId: USER });
+    expect(next.accounts.find((row) => row.accountId === 'acct_alone')).toMatchObject({
+      sharedMailbox: true,
+      nylasMailbox: true,
+    });
   });
 
   test('a user without accounts gets an empty plan; content indexing off is reported', async () => {

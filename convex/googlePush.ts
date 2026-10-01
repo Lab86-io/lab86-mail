@@ -62,6 +62,46 @@ async function directAccounts(ctx: ReadCtx, userId: string) {
   return rows.filter((row) => row.provider === 'google' && isDirectGrant(row.grantId));
 }
 
+/**
+ * Who else uses the Gmail address of a grant. Gmail keeps one watch for each
+ * mailbox and Google Cloud project, and the Nylas Google connector is in the
+ * same project as the direct client. Thus a watch call can replace a watch of
+ * Nylas, and a stop can end it.
+ * - `shared`: another live Google connection of any user (Nylas or direct)
+ *   has the address. A Gmail stop must not run.
+ * - `nylas`: a Nylas grant still has the address: another live Nylas
+ *   connection, or the Nylas grant that this connection kept for a rollback
+ *   (until the Nylas grant cleanup). A Gmail watch must not start.
+ */
+async function mailboxSharing(
+  ctx: ReadCtx,
+  account: { userId: string; accountId: string; email?: string; grantId: string },
+) {
+  let shared = false;
+  let nylas = false;
+  const email = account.email?.trim() || '';
+  for (const value of new Set(email ? [email, email.toLowerCase()] : [])) {
+    const others = await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_email', (q) => q.eq('email', value))
+      .take(50);
+    for (const row of others) {
+      if (row.provider !== 'google' || row.status === 'disconnected' || row.grantId === account.grantId)
+        continue;
+      shared = true;
+      if (!isDirectGrant(row.grantId)) nylas = true;
+    }
+  }
+  const grant = await ctx.db
+    .query('providerGrants')
+    .withIndex('by_user_account', (q) => q.eq('userId', account.userId).eq('accountId', account.accountId))
+    .unique();
+  if (grant?.grantId === account.grantId && (grant.previousNylasGrantId || grant.nylasGrantDeletePending)) {
+    nylas = true;
+  }
+  return { shared, nylas };
+}
+
 // ---------------------------------------------------------------------------
 // Renewal plan and registration
 // ---------------------------------------------------------------------------
@@ -75,12 +115,19 @@ export const userPlan = query({
   args: { internalSecret: v.optional(v.string()), userId: v.string() },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const accounts = (await directAccounts(ctx, args.userId)).map((row) => ({
-      accountId: row.accountId,
-      grantId: row.grantId,
-      email: row.email,
-      status: row.status,
-    }));
+    const accounts = await Promise.all(
+      (await directAccounts(ctx, args.userId)).map(async (row) => {
+        const sharing = await mailboxSharing(ctx, row);
+        return {
+          accountId: row.accountId,
+          grantId: row.grantId,
+          email: row.email,
+          status: row.status,
+          sharedMailbox: sharing.shared,
+          nylasMailbox: sharing.nylas,
+        };
+      }),
+    );
     const live = new Set(accounts.filter((row) => row.status === 'connected').map((row) => row.accountId));
     const calendars = live.size
       ? (
@@ -328,9 +375,9 @@ export const recordGmailPush = mutation({
 
 /**
  * The Gmail watch and Calendar channels of one direct grant, before the grant
- * goes. `sharedMailbox` is true when another connected direct account (of any
- * user) has the same address: a Gmail stop ends the watch of the mailbox for
- * this project, so it would end the push of that account too.
+ * goes. `sharedMailbox` is true when another live Google connection of any
+ * user (Nylas or direct) has the same address: a Gmail stop ends the watch of
+ * the mailbox for this project, so it would end the push of that connection.
  */
 export const stopPlanForGrant = query({
   args: { internalSecret: v.optional(v.string()), grantId: v.string() },
@@ -346,22 +393,9 @@ export const stopPlanForGrant = query({
       .query('connectedAccounts')
       .withIndex('by_grant', (q) => q.eq('grantId', args.grantId))
       .first();
-    let sharedMailbox = false;
-    if (account?.email) {
-      for (const value of new Set([account.email, account.email.toLowerCase()])) {
-        const others = await ctx.db
-          .query('connectedAccounts')
-          .withIndex('by_email', (q) => q.eq('email', value))
-          .take(50);
-        sharedMailbox ||= others.some(
-          (row) =>
-            row.grantId !== args.grantId &&
-            row.provider === 'google' &&
-            row.status === 'connected' &&
-            isDirectGrant(row.grantId),
-        );
-      }
-    }
+    // Without the account row the address is not known: a stop could end the
+    // watch of another connection, so it counts as shared.
+    const sharedMailbox = account ? (await mailboxSharing(ctx, account)).shared : true;
     return { userId: channels[0].userId, sharedMailbox, channels: channels.map(planRow) };
   },
 });

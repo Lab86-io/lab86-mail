@@ -71,6 +71,10 @@ interface PlanAccount {
   grantId: string;
   email: string;
   status: string;
+  /** Another live Google connection (Nylas or direct, any user) has the address. */
+  sharedMailbox?: boolean;
+  /** A Nylas grant still has the address (convex/googlePush.ts, mailboxSharing). */
+  nylasMailbox?: boolean;
 }
 
 interface PlanDrive {
@@ -186,21 +190,29 @@ async function reconcileGmail(run: RunContext, enabled: boolean) {
   const config = enabled ? deps.gmailConfig() : null;
   const live = liveAccounts(run.plan);
   const rows = run.plan.channels.filter((row) => row.kind === 'gmail');
+  // Gmail keeps one watch for each mailbox and Google Cloud project, and the
+  // Nylas connector is in the same project. While a Nylas grant has the
+  // address, a watch call here could replace the watch of Nylas, so the
+  // mailbox gets no push. The Nylas grant cleanup ends this state.
+  const wanted = (account: PlanAccount | undefined): boolean =>
+    Boolean(config && account && !account.nylasMailbox);
   if (config) {
     const byAccount = new Map(rows.map((row) => [row.accountId, row]));
     for (const account of live.values()) {
+      if (!wanted(account)) continue;
       const row = byAccount.get(account.accountId);
       if (row && row.grantId === account.grantId && !gmailWatchDue(row, run.now)) continue;
       if (run.budget <= 0) break;
       run.budget -= 1;
-      const channelId = row?.channelId ?? deps.newChannelId();
-      await deps.mutate(api.googlePush.beginRegistration, {
+      const begun = await deps.mutate<{ channelId?: string }>(api.googlePush.beginRegistration, {
         userId: run.userId,
         kind: 'gmail',
-        channelId,
+        channelId: row?.channelId ?? deps.newChannelId(),
         accountId: account.accountId,
         grantId: account.grantId,
       });
+      // Convex keeps one row for each mailbox and answers with its id.
+      const channelId = String(begun?.channelId || row?.channelId || '');
       try {
         const watch = await deps.watchGmailMailbox(account.grantId, config.topic);
         await deps.mutate(api.googlePush.finishRegistration, {
@@ -227,11 +239,20 @@ async function reconcileGmail(run: RunContext, enabled: boolean) {
   }
   for (const row of rows) {
     const account = row.accountId ? live.get(row.accountId) : undefined;
-    if (config && account) continue;
+    if (wanted(account)) continue;
     run.remove.add(row.channelId);
-    // Only a live sign-in can stop the watch. Without one, the watch ends by
-    // itself within 7 days, and the route finds no direct account for it.
-    if (!config && account && account.grantId === row.grantId && row.status !== 'failed') {
+    // Only a live sign-in can stop the watch, and a stop ends the watch of
+    // every connection of the mailbox in this project. So a stop runs only
+    // for an unshared mailbox; else the watch ends by itself within 7 days,
+    // and the route finds no direct account for it or only the others.
+    if (
+      !config &&
+      account &&
+      account.grantId === row.grantId &&
+      row.status !== 'failed' &&
+      !account.sharedMailbox &&
+      !account.nylasMailbox
+    ) {
       try {
         await deps.stopGmailMailbox(account.grantId);
         run.summary.stopped += 1;

@@ -395,12 +395,13 @@ Answers:
   other answers are 204: also for a body that is not correct, and for an
   address that has no direct account. Thus Pub/Sub does not send bad input
   again.
-- The Calendar and Drive routes always answer 204, because Google does not
-  send a message again after a 2xx answer. A message with an incorrect token,
-  an incorrect resource, or an unknown channel does nothing.
+- The Calendar and Drive routes answer 204, because Google does not send a
+  message again after a 2xx answer. A message with an incorrect token, an
+  incorrect resource, or an unknown channel does nothing.
 - These two routes are public. Thus each app instance reads at most 600
   channel rows in one minute from Convex. It keeps a checked row in memory for
-  5 minutes, and an unknown channel id for 10 minutes.
+  5 minutes, and an unknown channel id for 10 minutes. A message over the read
+  budget gets 503 before a read, and Google sends it again later.
 
 What a message does:
 
@@ -442,6 +443,13 @@ steps for the user:
   "exclude"`), because Gmail changes a draft many times while a person writes.
   A watch ends after 7 days. Google recommends one watch call each day, so the
   cron calls `users.watch` again after 20 hours.
+- Gmail and Nylas: Gmail keeps one watch for each mailbox and Google Cloud
+  project. The Nylas Google connector is in the same project, so a watch call
+  of the app can replace a watch of Nylas, and a stop can end it. Thus a
+  mailbox gets no Gmail watch while a Nylas grant has its address: a live
+  Nylas connection of any user, or the Nylas grant that a switched account
+  keeps for the rollback. The Nylas grant cleanup (section "Cleanup") ends
+  that state for a switched account.
 - Calendar (`LAB86_GOOGLE_CALENDAR_PUSH=1`): it calls `events.watch` for each
   calendar of each connected direct account. A channel has a life of 7 days.
   Two days before the end, the cron makes a new channel (a new id and a new
@@ -466,7 +474,8 @@ Stop:
 - A mail disconnect (`grants.destroy`, also in the account deletion) stops the
   Gmail watch and the Calendar channels of the grant before the revoke. A
   Gmail stop ends the watch for all of the mailbox. Thus the app does not stop
-  the watch while a different connected direct account has the same address.
+  the watch while a different live Google connection (Nylas or direct, any
+  user) has the same address. The same rule applies when a flag is off.
 - A Drive disconnect (`/api/files/disconnect`) stops the Drive channel before
   the revoke.
 - Without a sign-in that works (after a rollback to Nylas, a revoked grant, or
@@ -511,6 +520,10 @@ accepts only HTTPS. Thus a local server makes no channel.
 
 Do the steps in this order. Steps 1 and 2 change only Google Cloud. The app
 does not change until step 3.
+
+Before you start, run the Nylas grant cleanup for the switched mailboxes
+(section "Cleanup", dry run first). A mailbox whose old Nylas grant still
+exists gets no Gmail watch.
 
 1. In Cloud Shell, as `jakob@lab86.io`, make the topic, the publisher
    binding, the invoker service account, the token creator binding, and the

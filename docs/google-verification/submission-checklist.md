@@ -127,6 +127,10 @@ gcloud iam service-accounts get-iam-policy \
       `LAB86_GOOGLE_PUBSUB_AUDIENCE=https://mail.lab86.io/api/google/push/gmail`,
       `LAB86_GOOGLE_PUBSUB_SERVICE_ACCOUNT=gmail-push-invoker@lab86-mail-production.iam.gserviceaccount.com`,
       and `LAB86_GOOGLE_GMAIL_PUSH=1`.
+- [ ] Run the Nylas grant cleanup of the switched mailboxes before Gmail
+      push (`docs/google-direct-transport.md`, section "Cleanup"). A mailbox
+      whose Nylas grant still exists gets no Gmail watch, because a watch of
+      the app could replace the watch of Nylas in the same project.
 - [ ] Set `LAB86_GOOGLE_GMAIL_PUSH=1` only after you make the subscription.
       Until then, the 2-minute History poll is the sync path. Calendar push
       (`LAB86_GOOGLE_CALENDAR_PUSH=1`) and Drive push

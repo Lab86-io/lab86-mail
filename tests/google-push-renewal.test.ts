@@ -287,6 +287,64 @@ describe('Gmail watch renewal', () => {
     expect(summary).toMatchObject({ stopped: 1, removed: 3 });
   });
 
+  test('the finish call uses the mailbox row id that Convex returns', async () => {
+    world.flags.gmail = true;
+    __setGooglePushRenewalDepsForTest({
+      flags: () => world.flags,
+      gmailConfig: () => world.config,
+      query: (async () => world.plan) as any,
+      mutate: (async (fn: unknown, args: any) => {
+        const name = getFunctionName(fn as any);
+        world.mutations.push({ name, args });
+        return name === 'googlePush:beginRegistration'
+          ? { channelId: 'stored-gmail-row', requestedAt: NOW }
+          : {};
+      }) as any,
+      watchGmailMailbox: (async () => ({ expiration: NOW + 7 * DAY })) as any,
+      newChannelId: () => 'local-id',
+      now: () => NOW,
+    });
+    await reconcileGooglePush(USER);
+    expect(world.mutations.map((m) => [m.name, m.args.channelId])).toEqual([
+      ['googlePush:beginRegistration', 'local-id'],
+      ['googlePush:finishRegistration', 'stored-gmail-row'],
+    ]);
+  });
+
+  test('a mailbox that a Nylas grant still has gets no watch, and its row goes without a stop', async () => {
+    world.flags.gmail = true;
+    world.plan = plan({
+      accounts: [account({ nylasMailbox: true, sharedMailbox: true })],
+      channels: [channel({ kind: 'gmail', channelId: 'g1', calendarId: undefined })],
+    });
+    const summary = await reconcileGooglePush(USER);
+    expect(callNames()).toEqual([]);
+    expect(removed()).toEqual(['g1']);
+    expect(summary).toMatchObject({ registered: 0, stopped: 0, removed: 1 });
+  });
+
+  test('flag off: a shared mailbox keeps its watch; only the row goes', async () => {
+    world.plan = plan({
+      accounts: [
+        account({ sharedMailbox: true }),
+        account({ accountId: 'acct_2', grantId: 'google:2', nylasMailbox: true }),
+      ],
+      channels: [
+        channel({ kind: 'gmail', channelId: 'g1', calendarId: undefined }),
+        channel({
+          kind: 'gmail',
+          channelId: 'g2',
+          accountId: 'acct_2',
+          grantId: 'google:2',
+          calendarId: undefined,
+        }),
+      ],
+    });
+    await reconcileGooglePush(USER);
+    expect(callNames()).toEqual([]);
+    expect(removed().sort()).toEqual(['g1', 'g2']);
+  });
+
   test('flag on without the Pub/Sub settings counts as off', async () => {
     world.flags.gmail = true;
     world.config = null;

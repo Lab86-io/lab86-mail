@@ -10,9 +10,10 @@
 //   calendar sync of the account or the content sync of the Drive connection.
 //
 // Each route answers fast with 204. Bad input gets 204 too, so Google does
-// not send it again. Only a Gmail push without a valid token gets 401. A
-// message never carries data that the sync uses: it only starts the existing
-// sync, which reads the changes from Google.
+// not send it again. Only a Gmail push without a valid token gets 401, and a
+// channel message over the read budget of the minute gets 503 (Google sends it
+// again later). A message never carries data that the sync uses: it only
+// starts the existing sync, which reads the changes from Google.
 
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { syncCalendarAccount } from '@/lib/calendar/sync';
@@ -59,7 +60,7 @@ export interface GmailPushMessage {
 }
 
 export interface PushHandling {
-  status: 204 | 401;
+  status: 204 | 401 | 503;
   reason: string;
   /** The background work after the answer: the lookup, the checks, and the kick. */
   done: Promise<string>;
@@ -152,6 +153,7 @@ const recordedAt = new Map<string, number>();
 const unknownChannels = new Map<string, number>();
 const knownChannels = new Map<string, { at: number; row: ChannelRow }>();
 let lookupWindow = { start: 0, count: 0 };
+let warnedBudgetWindow = -1;
 let warnedNotConfigured = false;
 
 export function __setGooglePushReceiveDepsForTest(overrides: Partial<Deps> = {}) {
@@ -162,6 +164,7 @@ export function __setGooglePushReceiveDepsForTest(overrides: Partial<Deps> = {})
   unknownChannels.clear();
   knownChannels.clear();
   lookupWindow = { start: 0, count: 0 };
+  warnedBudgetWindow = -1;
   warnedNotConfigured = false;
 }
 
@@ -173,7 +176,7 @@ function remember<V>(map: Map<string, V>, key: string, value: V) {
   map.set(key, value);
 }
 
-function handled(status: 204 | 401, reason: string, done: Promise<string> = Promise.resolve(reason)) {
+function handled(status: 204 | 401 | 503, reason: string, done: Promise<string> = Promise.resolve(reason)) {
   return { status, reason, done };
 }
 
@@ -294,13 +297,29 @@ interface ChannelMessage {
 }
 
 /** The stored row of a channel, from memory or from Convex. `limited` when the read budget is spent. */
-async function channelRow(channelId: string): Promise<ChannelRow | null | 'limited'> {
-  const now = deps.now();
+/** The row of a channel in memory, if it is fresh. */
+function cachedChannelRow(channelId: string): ChannelRow | null {
   const cached = knownChannels.get(channelId);
-  if (cached && now - cached.at < KNOWN_CHANNEL_MS) return cached.row;
+  return cached && deps.now() - cached.at < KNOWN_CHANNEL_MS ? cached.row : null;
+}
+
+/**
+ * Takes one Convex read from the budget of this minute. This runs before the
+ * answer, so a message over the budget gets 503 and Google sends it again.
+ */
+function reserveChannelLookup(): boolean {
+  const now = deps.now();
   if (now - lookupWindow.start >= 60_000) lookupWindow = { start: now, count: 0 };
-  if (lookupWindow.count >= CHANNEL_LOOKUPS_PER_MINUTE) return 'limited';
+  if (lookupWindow.count >= CHANNEL_LOOKUPS_PER_MINUTE) return false;
   lookupWindow.count += 1;
+  return true;
+}
+
+/** The stored row of a channel: from memory, or from Convex with a read that the caller reserved. */
+async function channelRow(channelId: string): Promise<ChannelRow | null> {
+  const cached = cachedChannelRow(channelId);
+  if (cached) return cached;
+  const now = deps.now();
   const row = await deps.query<ChannelRow | null>(api.googlePush.channelForPush, { channelId });
   // A pending row has no resource id yet; read it again next time.
   if (row?.resourceId) remember(knownChannels, channelId, { at: now, row });
@@ -309,7 +328,6 @@ async function channelRow(channelId: string): Promise<ChannelRow | null | 'limit
 
 async function deliverChannel(kind: 'calendar' | 'drive', message: ChannelMessage): Promise<string> {
   const row = await channelRow(message.channelId);
-  if (row === 'limited') return 'rate_limited';
   if (!row || row.kind !== kind) {
     remember(unknownChannels, message.channelId, deps.now());
     return 'unknown_channel';
@@ -342,7 +360,10 @@ async function deliverChannel(kind: 'calendar' | 'drive', message: ChannelMessag
   return 'no_target';
 }
 
-/** One Calendar or Drive channel message. The answer is always 204. */
+/**
+ * One Calendar or Drive channel message. The answer is 204, or 503 when the
+ * Convex read budget of this minute is used up (Google sends the message again).
+ */
 export function handleChannelPush(
   kind: 'calendar' | 'drive',
   headers: { get(name: string): string | null },
@@ -359,6 +380,15 @@ export function handleChannelPush(
   const unknownAt = unknownChannels.get(channelId);
   if (unknownAt !== undefined && deps.now() - unknownAt < UNKNOWN_CHANNEL_MS) {
     return handled(204, 'unknown_channel');
+  }
+  // The routes are public: a flood of random ids must not use all the reads.
+  // Over the budget, 503 makes Google send a real message again later.
+  if (!cachedChannelRow(channelId) && !reserveChannelLookup()) {
+    if (lookupWindow.start !== warnedBudgetWindow) {
+      warnedBudgetWindow = lookupWindow.start;
+      console.warn('[google-push] channel reads are over the budget of this minute; answering 503');
+    }
+    return handled(503, 'rate_limited');
   }
   const done = deliverChannel(kind, { channelId, token, resourceId, state }).catch((err: any) => {
     console.error(`[google-push] ${kind} message delivery failed`, err?.message || err);

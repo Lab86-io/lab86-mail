@@ -428,11 +428,34 @@ describe('Calendar and Drive channel routes', () => {
         'unknown_channel',
       );
     }
+    // Over the budget: 503 before any read, so Google sends a real message again.
     const over = channelHeaders({ 'X-Goog-Channel-ID': id(CHANNEL_LOOKUPS_PER_MINUTE) });
-    expect(await handleChannelPush('calendar', over).done).toBe('rate_limited');
+    const original = console.warn;
+    const warned: unknown[] = [];
+    console.warn = (...args: unknown[]) => warned.push(args);
+    try {
+      const first = handleChannelPush('calendar', over);
+      expect(first).toMatchObject({ status: 503, reason: 'rate_limited' });
+      expect(handleChannelPush('drive', over).status).toBe(503);
+    } finally {
+      console.warn = original;
+    }
+    expect(warned).toHaveLength(1);
     expect(world.queries).toHaveLength(CHANNEL_LOOKUPS_PER_MINUTE);
     world.now += 60_000;
     expect(await handleChannelPush('calendar', over).done).toBe('unknown_channel');
+  });
+
+  test('a row in memory needs no read budget', async () => {
+    world.channel = calendarRow();
+    expect(await handleChannelPush('calendar', channelHeaders()).done).toBe('kicked');
+    const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    for (let n = 1; n < CHANNEL_LOOKUPS_PER_MINUTE; n += 1) {
+      await handleChannelPush('calendar', channelHeaders({ 'X-Goog-Channel-ID': id(n) })).done;
+    }
+    const result = handleChannelPush('calendar', channelHeaders());
+    expect(result.status).toBe(204);
+    expect(await result.done).toBe('kicked');
   });
 
   test('a checked row stays in memory; a pending row is read again', async () => {
