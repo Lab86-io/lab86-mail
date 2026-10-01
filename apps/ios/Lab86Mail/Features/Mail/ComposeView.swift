@@ -765,8 +765,11 @@ struct ComposeView: View {
             dismiss()
         } catch let refusal as ComposeFromRefusal {
             // The draft stays open. The list may have changed in Gmail, so
-            // the From control reads it again.
+            // the From control reads it again. Without a new list, the next
+            // send leaves the address to the server.
             errorMessage = refusal.localizedDescription
+            fromAddress = nil
+            sendAsPages[accountID] = nil
             environment.sendAs.invalidate(accountID: accountID)
             await loadSendAs()
         } catch { errorMessage = error.localizedDescription }
