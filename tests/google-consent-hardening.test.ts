@@ -443,5 +443,12 @@ describe('direct Google grants without Nylas keys', () => {
       expect(response.status).toBe(503);
     }
     expect(rateLimited).toBe(before);
+
+    // An unknown provider is a 400, also without Nylas keys.
+    const unknown = await createNylasConnectGet(deps({ mode: 'new' }) as any)(
+      new NextRequest('http://localhost/api/nylas/connect?provider=yahoo'),
+    );
+    expect(unknown.status).toBe(400);
+    expect(rateLimited).toBe(before);
   });
 });

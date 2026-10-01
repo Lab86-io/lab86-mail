@@ -58,6 +58,9 @@ export function createNylasConnectGet(deps: NylasConnectDependencies = defaultDe
     }
     const url = new URL(req.url);
     const provider = url.searchParams.get('provider') || 'google';
+    if (!PROVIDERS.has(provider)) {
+      return NextResponse.json({ ok: false, error: `Unsupported provider: ${provider}` }, { status: 400 });
+    }
     // A Google connection can use the direct flow (docs/google-direct-transport.md),
     // which needs no Nylas keys.
     const directPossible = Boolean(
@@ -81,9 +84,6 @@ export function createNylasConnectGet(deps: NylasConnectDependencies = defaultDe
     } catch (err) {
       if (err instanceof RateLimitError) return rateLimitJson(err);
       throw err;
-    }
-    if (!PROVIDERS.has(provider)) {
-      return NextResponse.json({ ok: false, error: `Unsupported provider: ${provider}` }, { status: 400 });
     }
     const capability = mailProviderCapability(provider as MailProvider);
     if (!capability.connectable) {
