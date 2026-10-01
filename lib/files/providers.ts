@@ -110,9 +110,8 @@ export function buildCloudFileAuthorizationUrl(input: {
   if (input.provider === 'google_drive') {
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('prompt', 'consent');
-    // Incremental authorization: the new token also carries the access that
-    // the user gave this client before, so a reconnect never narrows it.
-    url.searchParams.set('include_granted_scopes', 'true');
+    // No include_granted_scopes: mail and Drive share one OAuth client, and each
+    // stored token must carry only the scopes of its own feature (commit faf5667d).
   } else {
     url.searchParams.set('response_mode', 'query');
   }
