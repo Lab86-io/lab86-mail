@@ -513,6 +513,7 @@ test('each unsupported part of a Doc keeps it a preview and is named in the noti
     [docJson([styled({ weightedFontFamily: { fontFamily: 'Lobster', weight: 400 } })]), 'fonts'],
     [docJson([styled({ baselineOffset: 'SUPERSCRIPT' })]), 'superscript or subscript text'],
     [docJson([styled({ smallCaps: true })]), 'small caps'],
+    [docJson([styled({ futureTextStyle: { value: 1 } })]), 'text styles that Albatross cannot keep'],
     [docJson([styled({ link: { headingId: 'h.abc' } })]), 'links to places in the document'],
     [docJson([styled({ link: { url: 'ftp://example.com/file' } })]), 'links that Albatross cannot keep'],
     [docJson([paragraphStyled({ alignment: 'CENTER' })]), 'paragraph alignment, spacing or indents'],
