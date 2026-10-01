@@ -190,4 +190,13 @@ crons.interval(
   {},
 );
 
+// Google Cross-Account Protection rows (googleSecurityEvents and
+// googleSecurityAudit) expire after 30 days.
+crons.daily(
+  'google security event sweep',
+  { hourUTC: 10, minuteUTC: 37 },
+  internal.googleSecurity.sweepExpired,
+  {},
+);
+
 export default crons;

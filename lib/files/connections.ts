@@ -1,7 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { googleRevokeBlockedReason, mailUsesDriveGrant } from '@/lib/google/shared-grant';
+import { refreshTokenIdentifiers } from '@/lib/google/token-identifiers';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { decryptSecret, encryptSecret } from '@/lib/security/crypto';
+import {
+  DriveCapabilityError,
+  DriveConsentError,
+  driveCapabilities,
+  driveWriteRefusal,
+} from './drive-capabilities';
 import {
   CLOUD_FILE_PROVIDER_DEFINITIONS,
   type CloudFileProvider,
@@ -210,6 +217,9 @@ async function cloudFileAccountProfile(provider: CloudFileProvider, accessToken:
     const id = typeof payload.id === 'string' ? payload.id : email || 'google-account';
     return {
       accountKey: id,
+      // The userinfo `id` is the Google account id (`sub`) that a Google
+      // Cross-Account Protection event names (lib/google/risc.ts).
+      googleSub: typeof payload.id === 'string' && payload.id ? payload.id : undefined,
       // Trimmed and in lower case, as Convex stores it (cloudFiles.driveAccountEmail):
       // the Google revoke guard finds a shared address only in this form.
       accountEmail: email?.trim().toLowerCase() || undefined,
@@ -229,16 +239,40 @@ async function cloudFileAccountProfile(provider: CloudFileProvider, accessToken:
   };
 }
 
+/** The scopes of a token response, or the requested scopes when the provider sends none. */
+export function grantedCloudFileScopes(
+  provider: CloudFileProvider,
+  tokens: Pick<OAuthTokenResponse, 'scope'>,
+) {
+  return tokens.scope
+    ? tokens.scope.split(/\s+/u).filter(Boolean)
+    : CLOUD_FILE_PROVIDER_DEFINITIONS[provider].scopes;
+}
+
+/**
+ * Google lets the user clear each box on the consent screen. Without
+ * `drive.readonly` the connection can do nothing, so it is refused (and not
+ * stored). Without `drive.file` or `documents` it connects; the Files surface
+ * and the write routes show "Reconnect Google Drive to let Albatross ..."
+ * (lib/files/drive-capabilities.ts).
+ */
+export function assertCloudFileConsent(
+  provider: CloudFileProvider,
+  tokens: Pick<OAuthTokenResponse, 'scope'>,
+) {
+  if (provider !== 'google_drive') return;
+  if (!driveCapabilities(grantedCloudFileScopes(provider, tokens)).read) throw new DriveConsentError();
+}
+
 export async function saveCloudFileConnection(input: {
   userId: string;
   provider: CloudFileProvider;
   tokens: OAuthTokenResponse;
 }) {
+  assertCloudFileConsent(input.provider, input.tokens);
   const profile = await cloudFileAccountProfile(input.provider, input.tokens.access_token);
   const connectionId = connectionIdFor(input.userId, input.provider, profile.accountKey);
-  const scopes = input.tokens.scope
-    ? input.tokens.scope.split(/\s+/u).filter(Boolean)
-    : CLOUD_FILE_PROVIDER_DEFINITIONS[input.provider].scopes;
+  const scopes = grantedCloudFileScopes(input.provider, input.tokens);
   const expiresAt =
     typeof input.tokens.expires_in === 'number'
       ? dependencies.now() + input.tokens.expires_in * 1_000
@@ -259,12 +293,42 @@ export async function saveCloudFileConnection(input: {
       ? dependencies.encryptSecret(input.tokens.refresh_token)
       : undefined,
     expiresAt,
+    ...(input.provider === 'google_drive' && 'googleSub' in profile && profile.googleSub
+      ? { googleSub: profile.googleSub }
+      : {}),
+    ...(input.provider === 'google_drive' ? refreshTokenIdentifiers(input.tokens.refresh_token) : {}),
   });
   return { connectionId: result.connectionId || connectionId, ...profile };
 }
 
 export async function listCloudFileConnections(userId: string) {
   return dependencies.convexQuery<CloudFileConnectionRow[]>(cloudFilesApi.listConnections, { userId });
+}
+
+/**
+ * Before a write to Google: the error for a Drive connection that does not
+ * have the access the write needs, or null. The connection is the one that
+ * the publish flow picks (the named one, the linked one, or the first Google
+ * Drive connection). A failed lookup returns null, so Google decides.
+ */
+export async function driveWriteCheck(input: {
+  userId: string;
+  connectionId?: string;
+  kind: string;
+  /** The Google file that the write changes. A write without one makes a new file. */
+  linked?: { connectionId?: string; fileId?: string } | null;
+}): Promise<DriveCapabilityError | null> {
+  const rows = await listCloudFileConnections(input.userId).catch(() => null);
+  if (!rows) return null;
+  const connectionId =
+    input.connectionId ||
+    input.linked?.connectionId ||
+    rows.find((row) => row.provider === 'google_drive')?.connectionId;
+  const row = rows.find((item) => item.connectionId === connectionId && item.provider === 'google_drive');
+  if (!row) return null;
+  const newFile = !input.linked?.fileId || input.linked.connectionId !== connectionId;
+  const refusal = driveWriteRefusal({ scopes: row.scopes, newFile, kind: input.kind });
+  return refusal ? new DriveCapabilityError(refusal) : null;
 }
 
 async function refreshCloudFileToken(input: {
@@ -306,6 +370,9 @@ async function refreshCloudFileToken(input: {
     accessTokenEncrypted: dependencies.encryptSecret(next.access_token),
     refreshTokenEncrypted: next.refresh_token ? dependencies.encryptSecret(next.refresh_token) : undefined,
     expiresAt,
+    // The identifiers of the refresh token in use, also for a connection
+    // from before them (lib/google/risc.ts).
+    ...(provider === 'google_drive' ? refreshTokenIdentifiers(next.refresh_token || input.refreshToken) : {}),
   });
   if (!persisted?.ok) {
     throw new Error('File access expired. Reconnect this account.');

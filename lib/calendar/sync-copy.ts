@@ -97,3 +97,25 @@ export function isPendingEventRow(
   if (typeof lastSyncedAt !== 'number') return false;
   return Number(row.createdAt) > lastSyncedAt;
 }
+
+// Calendar access is missing (sync status `unauthorized`). Google lets the
+// user clear the calendar box on the consent screen, and an old Nylas account
+// can lack the scope. The copy names no cause that the app cannot know.
+export const CALENDAR_ACCESS_TITLE = 'No calendar access';
+export const CALENDAR_ACCESS_BODY =
+  'Albatross cannot read the calendars of these accounts. This occurs if calendar access was off when you connected the account. Reconnect the account and select calendar access. You can continue to use mail.';
+export const CALENDAR_ACCESS_BANNER = 'No calendar access:';
+
+/**
+ * The reconnect link for one account. It names the account, so the connect
+ * route reconnects that account through its own transport: a direct Google
+ * account stays direct, and a Nylas account stays on Nylas.
+ */
+export function calendarReconnectHref(state: { provider?: string; accountId: string }, redirectTo = '/') {
+  const params = new URLSearchParams({
+    provider: state.provider || 'google',
+    account: state.accountId,
+    redirectTo,
+  });
+  return `/api/nylas/connect?${params.toString()}`;
+}

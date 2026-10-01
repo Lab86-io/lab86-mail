@@ -5,6 +5,7 @@ import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { GoogleDocumentConflictError, publishDocumentToGoogle } from '@/lib/documents/google';
 import { GoogleDocumentFidelityError } from '@/lib/documents/google-fidelity';
 import { getDocument } from '@/lib/documents/service';
+import { driveWriteCheck } from '@/lib/files/connections';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -26,6 +27,20 @@ export async function POST(req: NextRequest, context: { params: Promise<{ docume
     const input = inputSchema.parse(await req.json().catch(() => ({})));
     const document = await getDocument(user.userId, documentId);
     if (!document) return NextResponse.json({ ok: false, error: 'Document not found.' }, { status: 404 });
+    // A Drive connection without write access gets "Reconnect Google Drive to
+    // let Albatross ..." before any call to Google.
+    const refusal = await driveWriteCheck({
+      userId: user.userId,
+      connectionId: input.connectionId,
+      kind: document.kind,
+      linked: document.google,
+    });
+    if (refusal) {
+      return NextResponse.json(
+        { ok: false, error: refusal.message, code: refusal.code },
+        { status: refusal.status },
+      );
+    }
     const google = await publishDocumentToGoogle({
       userId: user.userId,
       document,

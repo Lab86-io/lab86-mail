@@ -22,7 +22,8 @@ export async function DELETE() {
       return NextResponse.json(
         {
           ok: false,
-          error: 'One or more mail providers could not be disconnected. Account deletion was aborted.',
+          error:
+            'Albatross could not disconnect one or more connected accounts, so it did not delete your account. Try again.',
           disconnected: result.disconnected,
         },
         { status: 502 },

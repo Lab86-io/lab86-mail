@@ -7,6 +7,7 @@ import {
   exchangeCloudFileAuthorizationCode,
   saveCloudFileConnection,
 } from '@/lib/files/connections';
+import { DriveConsentError } from '@/lib/files/drive-capabilities';
 import { CLOUD_FILE_PROVIDER_DEFINITIONS } from '@/lib/files/providers';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
@@ -68,6 +69,9 @@ export function createCloudFileOAuthFinalize(dependencies: typeof defaultDepende
       }
       if (error instanceof z.ZodError) {
         return NextResponse.json({ ok: false, error: 'Invalid authorization completion.' }, { status: 400 });
+      }
+      if (error instanceof DriveConsentError) {
+        return NextResponse.json({ ok: false, error: error.message }, { status: 403 });
       }
       console.error('[files/oauth/finalize] failed', describeModelError(error));
       return NextResponse.json(

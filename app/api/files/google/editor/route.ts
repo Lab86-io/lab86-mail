@@ -11,6 +11,7 @@ import {
   importGoogleNativeFile,
 } from '@/lib/documents/google-import';
 import { type AlbatrossDocumentRecord, parseDocumentModel } from '@/lib/documents/model';
+import { driveWriteCheck } from '@/lib/files/connections';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -114,6 +115,18 @@ export async function PATCH(req: NextRequest) {
     });
     const input = patchSchema.parse(await req.json().catch(() => ({})));
     const kind = GOOGLE_NATIVE_MIME[input.mimeType];
+    const refusal = await driveWriteCheck({
+      userId: user.userId,
+      connectionId: input.connectionId,
+      kind,
+      linked: { connectionId: input.connectionId, fileId: input.fileId },
+    });
+    if (refusal) {
+      return NextResponse.json(
+        { ok: false, error: refusal.message, code: refusal.code },
+        { status: refusal.status },
+      );
+    }
     const updated = await updateGoogleNativeFile({
       userId: user.userId,
       connectionId: input.connectionId,

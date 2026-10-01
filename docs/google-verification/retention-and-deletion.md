@@ -19,6 +19,8 @@ deployed. "Open item" identifies a problem that no workstream of this round owns
   connection of the same address uses the same Google project. A failed
   revoke does not stop the disconnect.
 - Account deletion deletes all data of the user in Convex, and the Clerk user.
+  It also asks Google to revoke each Google Drive token, with the rules of a
+  Drive disconnect.
 - A mailbox that stays in an error state for 30 days loses its mail data.
 - Webhook rows, OAuth states, one-time codes, and rate-limit rows expire.
 - Albatross never deletes mail, events, contacts, or files at Google because of
@@ -80,6 +82,8 @@ the file with `cache-control: private, no-store`
 | `cloudFileOAuthStates` | 10 minutes | `lib/files/connections.ts:102`; `convex/retention.ts:90-97` |
 | `cloudFileOAuthCompletions` | 5 minutes, single use | `lib/files/connections.ts:141` |
 | `rateLimits` | Window start plus two windows | `convex/rateLimits.ts:21`; `convex/retention.ts:71-76` |
+| `googleSecurityEvents` (event names and counts, no subject data) | 30 days | `convex/googleSecurity.ts` (`sweepExpired`); daily cron `google security event sweep` in `convex/crons.ts` |
+| `googleSecurityAudit` (user id, connection, action) | 30 days; account deletion deletes the rows of the user | `convex/googleSecurity.ts`; `convex/accounts.ts` (`USER_INLINE_TABLES`) |
 
 ## Mailbox disconnect
 
@@ -147,13 +151,21 @@ Entry point: Settings > Account > "Delete account"
 1. `DELETE /api/account` (`app/api/account/route.ts:10-38`) calls
    `deleteUserData` (`lib/security/account-deletion.ts:29-45`).
 2. `deleteUserData` disconnects each mailbox as above.
-3. If a disconnect throws, the deletion stops. The user can try again.
-4. `deleteUserCascade` (`convex/accounts.ts:552-640`) stops active brief jobs,
+3. `deleteUserData` then disconnects each file connection with
+   `disconnectCloudFileConnection` (`lib/security/account-deletion.ts`). For
+   Google Drive this is the Drive disconnect above: the revoke at Google
+   comes first, with the same rules (`lib/google/shared-grant.ts`). Only the
+   production deployment revokes. There is no revoke while another live
+   Google connection of any user in the deployment uses the address. The
+   mailboxes of this user are gone at this step, so they do not stop the
+   revoke. A failed revoke is logged, and the rows go.
+4. If a disconnect throws, the deletion stops. The user can try again.
+5. `deleteUserCascade` (`convex/accounts.ts:552-640`) stops active brief jobs,
    deletes the small tables and their files in storage, deletes agent uploads with
    their files, deletes boards and cards, and deletes the `users` row. It
    schedules `purgeUserDataBatch` for the large tables (`convex/accounts.ts:441-477`).
-5. The route then deletes the Clerk user (`app/api/account/route.ts:30-31`).
-6. If the user is deleted in Clerk first, the Clerk `user.deleted` webhook runs
+6. The route then deletes the Clerk user (`app/api/account/route.ts:30-31`).
+7. If the user is deleted in Clerk first, the Clerk `user.deleted` webhook runs
    the same deletion (`app/api/clerk/webhook/route.ts:44-57`).
 
 A test fails when a Convex table with a user id is not in the cascade
@@ -162,9 +174,10 @@ A test fails when a Convex table with a user id is not in the cascade
 
 Open items for account deletion:
 
-- Account deletion does not revoke the Google Drive token at Google. It
-  deletes the encrypted token rows only.
 - `mailWebhookEvents` rows without a user id expire by their TTL.
+
+Closed on 2026-10-01: account deletion revokes the Google Drive token at
+Google (step 3).
 
 ## 30-day dead-account purge
 
@@ -208,6 +221,7 @@ These gaps are not in the list of work for the casa-prep round:
 2. The dead-account purge keeps `providerGrants` (encrypted tokens) and does
    not destroy the Nylas grant.
 3. Drive disconnect keeps `officeDocuments` and `officeVersions`.
-4. Account deletion does not revoke Google Drive tokens at Google.
+4. Closed on 2026-10-01: account deletion revokes Google Drive tokens at
+   Google, with the Drive disconnect rules.
 5. `app/privacy/page.tsx:94-102` says that disconnect deletes "index rows".
    This is correct only after the casa-prep round.

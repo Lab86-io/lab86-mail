@@ -7,6 +7,7 @@ import {
   saveCloudFileConnection,
   saveCloudFileOAuthCompletion,
 } from '@/lib/files/connections';
+import { DriveConsentError } from '@/lib/files/drive-capabilities';
 import { CLOUD_FILE_PROVIDER_DEFINITIONS } from '@/lib/files/providers';
 import { handleGoogleMailCallback } from '@/lib/google/connect';
 import { hostedPublicUrl } from '@/lib/hosted/env';
@@ -104,6 +105,10 @@ export function createCloudFileOAuthCallback(dependencies: typeof defaultDepende
         nativeCallback,
       );
     } catch (error) {
+      if (error instanceof DriveConsentError) {
+        console.warn('[files/oauth/callback] Google Drive read access was not given');
+        return filesRedirect(redirectTo, 'files_error', error.message, nativeCallback);
+      }
       console.error('[files/oauth/callback] failed', describeModelError(error));
       return filesRedirect(
         redirectTo,

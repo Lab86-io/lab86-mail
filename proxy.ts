@@ -30,6 +30,8 @@ export const isPublicRoute = createRouteMatcher([
   '/api/nylas/callback',
   '/api/nylas/webhook',
   '/api/billing/webhook',
+  // Google Cross-Account Protection: the handler verifies Google's signature.
+  '/api/google/risc',
   // Convex scheduled actions call these; they authenticate with the internal
   // secret in-handler, so they must bypass Clerk (which would 302 → sign-in).
   '/api/cron(.*)',
@@ -203,6 +205,8 @@ export function shouldRequireBasicAuth(req: Request, pathname: string) {
   // never satisfy development basic auth.
   if (pathname === '/api/nylas/webhook') return false;
   if (pathname === '/api/billing/webhook') return false;
+  // Google signs each security event token; the handler verifies it.
+  if (pathname === '/api/google/risc') return false;
   // Internal cron callbacks authenticate via the internal secret, not basic auth.
   if (pathname.startsWith('/api/cron')) return false;
   return true;

@@ -19,6 +19,7 @@ import {
   saveCloudFileOAuthCompletion,
   saveCloudFileOAuthState,
 } from '../lib/files/connections';
+import { refreshTokenIdentifiers } from '../lib/google/token-identifiers';
 
 const originalEnvironment = {
   GOOGLE_DRIVE_CLIENT_ID: process.env.GOOGLE_DRIVE_CLIENT_ID,
@@ -189,7 +190,7 @@ describe('cloud file connection service', () => {
     const fetchMock = mock(async (url: string | URL | Request) => {
       const endpoint = String(url);
       if (endpoint.includes('googleapis.com')) {
-        return Response.json({ id: 'google-account', email: ' Drive@Example.TEST ', name: 'Drive User' });
+        return Response.json({ id: '1234567890', email: ' Drive@Example.TEST ', name: 'Drive User' });
       }
       return Response.json({
         id: 'microsoft-account',
@@ -212,7 +213,7 @@ describe('cloud file connection service', () => {
         access_token: 'google-access',
         refresh_token: 'google-refresh',
         expires_in: 120,
-        scope: 'openid email',
+        scope: 'openid email https://www.googleapis.com/auth/drive.readonly',
       },
     });
     const microsoft = await saveCloudFileConnection({
@@ -222,7 +223,8 @@ describe('cloud file connection service', () => {
     });
 
     expect(google).toMatchObject({
-      accountKey: 'google-account',
+      accountKey: '1234567890',
+      googleSub: '1234567890',
       accountEmail: 'drive@example.test',
       displayName: 'Drive User',
     });
@@ -238,8 +240,14 @@ describe('cloud file connection service', () => {
       accessTokenEncrypted: 'encrypted:google-access',
       refreshTokenEncrypted: 'encrypted:google-refresh',
       expiresAt: 130_000,
-      scopes: ['openid', 'email'],
+      scopes: ['openid', 'email', 'https://www.googleapis.com/auth/drive.readonly'],
+      // Cross-Account Protection (lib/google/risc.ts): the Google account id
+      // and the identifiers of the refresh token.
+      googleSub: '1234567890',
+      ...refreshTokenIdentifiers('google-refresh'),
     });
+    expect(mutation.mock.calls[1][1].googleSub).toBeUndefined();
+    expect(mutation.mock.calls[1][1].refreshTokenPrefixHash).toBeUndefined();
     expect(mutation.mock.calls[1][1].scopes).toContain('Files.ReadWrite');
   });
 

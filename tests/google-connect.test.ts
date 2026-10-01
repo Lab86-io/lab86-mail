@@ -13,6 +13,7 @@ import {
   startGoogleMailConnect,
 } from '../lib/google/connect';
 import { GMAIL_MODIFY_SCOPE } from '../lib/google/oauth';
+import { refreshTokenIdentifiers } from '../lib/google/token-identifiers';
 
 const USER = 'user-1';
 const NYLAS_ACCOUNT = {
@@ -57,6 +58,7 @@ function setup(
     consumeState?: any;
     activation?: any;
     defaultAfterConnect?: boolean;
+    userInfo?: any;
   } = {},
 ): Harness {
   const harness: Harness = { mutations: [], afterConnect: [], exchanges: [], completions: [] };
@@ -96,7 +98,10 @@ function setup(
       );
     }) as any,
     fetchGmailProfile: async () => overrides.profile ?? { emailAddress: 'Ann@Example.com', historyId: '777' },
-    fetchGoogleUserInfo: async () => ({ name: 'Ann Lee' }),
+    fetchGoogleUserInfo: async () => {
+      if (overrides.userInfo instanceof Error) throw overrides.userInfo;
+      return overrides.userInfo ?? { name: 'Ann Lee' };
+    },
     requireCurrentUser: (async () => {
       if (overrides.session === null) throw new Error('signed out');
       return overrides.session ?? { userId: USER };
@@ -263,6 +268,49 @@ describe('directGoogleConnectChoice', () => {
 });
 
 describe('completeGoogleMailConnect', () => {
+  const idToken = (claims: Record<string, unknown>) =>
+    `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
+
+  test('stores the Google account id from userinfo, for Cross-Account Protection', async () => {
+    const harness = setup({ userInfo: { sub: '1102484', name: 'Ann Lee' } });
+    await completeGoogleMailConnect({ userId: USER, mode: 'new', code: 'c', codeVerifier: 'v' });
+    const activation = harness.mutations.find((m) => m.name === 'googleDirect:activateGoogleAccount');
+    expect(activation?.args).toMatchObject({ googleSub: '1102484', ...refreshTokenIdentifiers('refresh') });
+  });
+
+  test('takes the Google account id from the ID token when userinfo fails', async () => {
+    const harness = setup({
+      userInfo: new Error('userinfo down'),
+      tokens: {
+        access_token: 'access',
+        refresh_token: 'refresh',
+        scope: GMAIL_MODIFY_SCOPE,
+        id_token: idToken({ iss: 'https://accounts.google.com', sub: '42' }),
+      },
+    });
+    await completeGoogleMailConnect({ userId: USER, mode: 'new', code: 'c', codeVerifier: 'v' });
+    const activation = harness.mutations.find((m) => m.name === 'googleDirect:activateGoogleAccount');
+    expect(activation?.args.googleSub).toBe('42');
+    expect(activation?.args.displayName).toBeUndefined();
+  });
+
+  test('connects with Calendar cleared on the consent screen; calendar sync shows the reconnect state', async () => {
+    const harness = setup({
+      userInfo: {},
+      tokens: { access_token: 'access', refresh_token: 'refresh', scope: `openid ${GMAIL_MODIFY_SCOPE}` },
+    });
+    const result = await completeGoogleMailConnect({
+      userId: USER,
+      mode: 'new',
+      code: 'c',
+      codeVerifier: 'v',
+    });
+    expect(result.outcome).toBe('created');
+    const activation = harness.mutations.find((m) => m.name === 'googleDirect:activateGoogleAccount');
+    expect(activation?.args.scopes).toEqual(['openid', GMAIL_MODIFY_SCOPE]);
+    expect(activation?.args.googleSub).toBeUndefined();
+  });
+
   test('a switch checks the Gmail address and stores the tokens with the History id', async () => {
     const harness = setup();
     const result = await completeGoogleMailConnect({
@@ -289,6 +337,8 @@ describe('completeGoogleMailConnect', () => {
       refreshTokenEncrypted: 'enc(refresh)',
       expiresAt: 1_800_000_000_000 + 3599 * 1000,
       historyId: '777',
+      // A Cross-Account Protection `token-revoked` event names the token by these.
+      ...refreshTokenIdentifiers('refresh'),
     });
     expect(harness.afterConnect).toEqual([{ userId: USER, accountId: 'acct-1', outcome: 'switched' }]);
   });

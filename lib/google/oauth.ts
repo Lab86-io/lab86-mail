@@ -78,6 +78,9 @@ export function buildGoogleMailAuthorizationUrl(input: {
   url.searchParams.set('scope', GOOGLE_MAIL_SCOPES.join(' '));
   url.searchParams.set('access_type', 'offline');
   url.searchParams.set('prompt', 'consent');
+  // Incremental authorization: the new token also carries the access that
+  // the user gave this client before, so a second consent never narrows it.
+  url.searchParams.set('include_granted_scopes', 'true');
   url.searchParams.set('state', input.state);
   url.searchParams.set('code_challenge', input.codeChallenge);
   url.searchParams.set('code_challenge_method', 'S256');
@@ -178,11 +181,14 @@ export async function revokeGoogleToken(token: string, fetcher: FetchLike = fetc
   throw new GoogleApiError(response.status, `Google token revoke returned ${response.status}.`);
 }
 
-/** The name and email of the signed-in Google user, from the OpenID userinfo endpoint. */
+/**
+ * The Google account id (`sub`), name, and email of the signed-in Google
+ * user, from the OpenID userinfo endpoint.
+ */
 export async function fetchGoogleUserInfo(
   accessToken: string,
   fetcher: FetchLike = fetch,
-): Promise<{ email?: string; name?: string; emailVerified?: boolean }> {
+): Promise<{ sub?: string; email?: string; name?: string; emailVerified?: boolean }> {
   const response = await fetcher(GOOGLE_USERINFO_URL, {
     headers: { authorization: `Bearer ${accessToken}` },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -190,6 +196,7 @@ export async function fetchGoogleUserInfo(
   if (!response.ok) throw new GoogleApiError(response.status, 'Could not read the Google account profile.');
   const body: any = await response.json().catch(() => ({}));
   return {
+    sub: typeof body?.sub === 'string' && body.sub ? body.sub : undefined,
     email: typeof body?.email === 'string' ? body.email : undefined,
     name: typeof body?.name === 'string' ? body.name : undefined,
     emailVerified: typeof body?.email_verified === 'boolean' ? body.email_verified : undefined,
@@ -222,4 +229,23 @@ export function grantedScopes(token: Pick<GoogleTokenResponse, 'scope'>): string
         .filter(Boolean),
     ),
   ];
+}
+
+/**
+ * The Google account id (`sub`) in the ID token of a token response, or
+ * undefined. The token came straight from Google's token endpoint over TLS,
+ * so OpenID Connect Core 3.1.3.7 lets the client skip the signature check.
+ * The issuer must still be Google.
+ */
+export function subFromIdToken(idToken: string | undefined | null): string | undefined {
+  const payload = String(idToken || '').split('.')[1];
+  if (!payload) return undefined;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    const issuer = String(claims?.iss || '').replace(/^https:\/\//, '');
+    if (issuer !== 'accounts.google.com') return undefined;
+    return typeof claims.sub === 'string' && claims.sub ? claims.sub : undefined;
+  } catch {
+    return undefined;
+  }
 }
