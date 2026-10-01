@@ -777,6 +777,29 @@ describe('grants', () => {
     await expect(googleMailAdapter.grants!.find({ grantId: GRANT })).rejects.toThrow('No grant found');
   });
 
+  test('destroy stops the Google push of the grant before the revoke', async () => {
+    const order: string[] = [];
+    __setGoogleMailAdapterDepsForTest({
+      loadCredentials: async () => {
+        order.push('load');
+        return CREDENTIALS;
+      },
+      decryptSecret: (value: string) => value,
+      stopGooglePushForGrant: async (grantId: string) => {
+        order.push(`stop:${grantId}`);
+      },
+      revokeGoogleToken: async () => {
+        order.push('revoke');
+        return true;
+      },
+      driveUsesMailGrant: async () => false,
+      googleRevokeBlockedReason: async () => null,
+      mutate: (async () => ({ removed: 1, previousNylasGrantIds: [] })) as any,
+    });
+    await googleMailAdapter.grants!.destroy({ grantId: GRANT });
+    expect(order).toEqual([`stop:${GRANT}`, 'load', 'revoke']);
+  });
+
   test('destroy revokes the token, removes the row, and destroys the old Nylas grant', async () => {
     await googleMailAdapter.grants!.destroy({ grantId: GRANT });
     expect(adapterCalls.sharedChecks).toEqual([{ userId: 'user-1', email: 'ann@example.com' }]);

@@ -458,6 +458,18 @@ describe('syncCalendarAccount', () => {
 });
 
 describe('syncAllCalendarAccounts', () => {
+  test('leaves out the accounts that Google push keeps current', async () => {
+    await withHarness(async (h) => {
+      h.onConvex('accounts:listConnectedAccounts', () => [account({ accountId: 'acct_push' })]);
+      const results = await syncAllCalendarAccounts('user_1', {
+        reason: 'cron',
+        skipAccountIds: ['acct_push'],
+      });
+      expect(results).toEqual([]);
+      expect(h.convexCalls.map((call) => call.path)).toEqual(['accounts:listConnectedAccounts']);
+    });
+  });
+
   test('skips disconnected accounts and folds per-account failures into results', async () => {
     await withHarness(async (h) => {
       h.onConvex('accounts:listConnectedAccounts', () => [

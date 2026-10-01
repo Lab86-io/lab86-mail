@@ -69,8 +69,10 @@ folder describe them as "(after the casa-prep round)".
 
 ## Step 3: Google Cloud setup for the direct transport
 
-Run these commands as `jakob@lab86.io`. Replace `<PUSH_PATH>` with the push
-route that the Gmail workstream ships. Do not guess the path.
+Run these commands as `jakob@lab86.io`, in Cloud Shell. The Gmail push route
+is `/api/google/push/gmail`. The full runbook, with the checks and the order
+of the Railway variables, is in `docs/google-direct-transport.md`, section
+"Runbook: enable push".
 
 ```bash
 gcloud config set project lab86-mail-production
@@ -102,23 +104,38 @@ gcloud iam service-accounts add-iam-policy-binding \
 # Push subscription to Albatross. The route checks the OIDC token.
 gcloud pubsub subscriptions create gmail-push-albatross \
   --topic=gmail-push \
-  --push-endpoint="https://mail.lab86.io/<PUSH_PATH>" \
+  --push-endpoint="https://mail.lab86.io/api/google/push/gmail" \
   --push-auth-service-account="gmail-push-invoker@lab86-mail-production.iam.gserviceaccount.com" \
-  --push-auth-token-audience="https://mail.lab86.io/<PUSH_PATH>" \
+  --push-auth-token-audience="https://mail.lab86.io/api/google/push/gmail" \
   --ack-deadline=20 \
-  --message-retention-duration=1d
+  --message-retention-duration=1d \
+  --min-retry-delay=10s \
+  --max-retry-delay=600s
 
 # Check the result.
 gcloud pubsub topics get-iam-policy gmail-push
-gcloud pubsub subscriptions describe gmail-push-albatross
+gcloud pubsub subscriptions describe gmail-push-albatross \
+  --format="yaml(pushConfig,ackDeadlineSeconds,messageRetentionDuration,retryPolicy)"
+gcloud iam service-accounts get-iam-policy \
+  gmail-push-invoker@lab86-mail-production.iam.gserviceaccount.com
 ```
 
-- [ ] Put the topic name (`projects/lab86-mail-production/topics/gmail-push`)
-      and the expected audience in the Railway variables that the Gmail
-      workstream names. Use the Railway dashboard, so the values stay out of
-      shell history.
-- [ ] Turn on the push route only after you make the subscription. Until then,
-      the 2-minute History poll is the sync path.
+- [ ] In the Railway dashboard (`lab86-mail`, `production`, service `web`),
+      set these variables in one change. Use the dashboard, so the values stay
+      out of shell history:
+      `LAB86_GOOGLE_PUBSUB_TOPIC=projects/lab86-mail-production/topics/gmail-push`,
+      `LAB86_GOOGLE_PUBSUB_AUDIENCE=https://mail.lab86.io/api/google/push/gmail`,
+      `LAB86_GOOGLE_PUBSUB_SERVICE_ACCOUNT=gmail-push-invoker@lab86-mail-production.iam.gserviceaccount.com`,
+      and `LAB86_GOOGLE_GMAIL_PUSH=1`.
+- [ ] Run the Nylas grant cleanup of the switched mailboxes before Gmail
+      push (`docs/google-direct-transport.md`, section "Cleanup"). A mailbox
+      whose Nylas grant still exists gets no Gmail watch, because a watch of
+      the app could replace the watch of Nylas in the same project.
+- [ ] Set `LAB86_GOOGLE_GMAIL_PUSH=1` only after you make the subscription.
+      Until then, the 2-minute History poll is the sync path. Calendar push
+      (`LAB86_GOOGLE_CALENDAR_PUSH=1`) and Drive push
+      (`LAB86_GOOGLE_DRIVE_PUSH=1`) need no Google Cloud step. Turn them on
+      one at a time, after Gmail push works.
 - [ ] In Google Auth Platform > Clients, check that the OAuth client of the
       mail flow has the redirect URI `https://mail.lab86.io/api/files/oauth/callback`.
 - [ ] In Google Auth Platform > Branding, keep `lab86.io` in the authorized

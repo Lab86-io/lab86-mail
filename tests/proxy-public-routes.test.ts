@@ -9,7 +9,7 @@ const ROOT = join(import.meta.dir, '..');
 // A handler with one of these marks authenticates its caller with something
 // other than a Clerk session, so Clerk must not redirect it to sign-in.
 const NON_CLERK_AUTH =
-  /isInternalCronRequest\(|x-lab86-internal-secret|verifyConsumeToken|verifyWebhook\(|consume\w*OAuthState|x-nylas-signature/;
+  /isInternalCronRequest\(|x-lab86-internal-secret|verifyConsumeToken|verifyWebhook\(|consume\w*OAuthState|x-nylas-signature|handle(?:Gmail|Channel)Push\(/;
 
 function routeFiles(dir: string): string[] {
   const out: string[] = [];
@@ -49,6 +49,10 @@ describe('Clerk public routes', () => {
       '/api/files/oauth/callback',
       '/api/mail/corpus/backfill',
       '/api/mail/corpus/reconcile',
+      '/api/google/push/gmail',
+      '/api/google/push/calendar',
+      '/api/google/push/drive',
+      '/api/cron/google-push',
     ]) {
       expect(isPublic(pathname), pathname).toBe(true);
     }
@@ -69,6 +73,8 @@ describe('Clerk public routes', () => {
     expect(isPublic('/api/files/oauth/finalize')).toBe(false);
     expect(isPublic('/api/nylas/finalize')).toBe(false);
     expect(isPublic('/api/mcp/oauth/finalize')).toBe(false);
+    // Only the push routes under /api/google are public; the connect flow needs a session.
+    expect(isPublic('/api/google/connect')).toBe(false);
     expect(isPublic('/api/mobile/one-time-codes')).toBe(false);
   });
 });

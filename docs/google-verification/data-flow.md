@@ -98,9 +98,26 @@ correct only when the named work of that round is merged and deployed.
   - Schedules in `convex/crons.ts`: calendar at 15-minute intervals (`:39`),
     contacts at 1-hour intervals (`:43`), mail repair at 30-minute intervals (`:149`).
 - **After the casa-prep round (direct Google).** A schedule reads the Gmail
-  History API at 2-minute intervals for each direct account. A Pub/Sub push route
-  is in the code but stays off until the owner makes a subscription
-  (`docs/google-direct-transport.md`, section "Sync").
+  History API at 2-minute intervals for each direct account (`convex/crons.ts`,
+  `lib/google/history-sync.ts`).
+- **Push (in the code, off by default).** Three flags turn on push:
+  `LAB86_GOOGLE_GMAIL_PUSH`, `LAB86_GOOGLE_CALENDAR_PUSH`, and
+  `LAB86_GOOGLE_DRIVE_PUSH`. With a flag off, its route answers 204 and does
+  nothing.
+  - Gmail push comes from Cloud Pub/Sub to `/api/google/push/gmail`. The route
+    checks the Pub/Sub OIDC token (signature, issuer, audience, service
+    account, expiry) in `lib/google/push/oidc.ts`.
+  - Calendar and Drive push come to `/api/google/push/calendar` and
+    `/api/google/push/drive`. The route checks the channel id, the channel
+    token, and the resource id (`lib/google/push/receive.ts`). Convex keeps
+    only the SHA-256 hash of the channel token.
+  - A Gmail message holds only the mailbox address and a History id. A Calendar
+    or Drive message holds only channel headers. No message holds mail, event,
+    or file content. A message starts the same sync as the schedule.
+  - Convex keeps the channel state in `googlePushChannels`
+    (`convex/googlePushSchema.ts`). The account deletion deletes these rows.
+  - The OAuth scopes do not change (`docs/google-direct-transport.md`, section
+    "Push").
 
 ## 4. Storage in Convex
 

@@ -3,6 +3,7 @@ import { runWithAiRequestContext } from '@/lib/ai/context';
 import { describeModelError } from '@/lib/ai/log-error';
 import { calendarCronStartDelayMs, syncAllCalendarAccounts } from '@/lib/calendar/sync';
 import { isInternalCronRequest } from '@/lib/cron-auth';
+import { calendarPushPollSkips } from '@/lib/google/push/calendar-poll';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,14 +29,17 @@ export async function POST(req: NextRequest) {
   // Persistent server: the sync outlives the response, so we ACK immediately.
   // Each user starts after its own small offset, so the polls of all users do
   // not reach Nylas and Convex at the same moment. The poll syncs the hot
-  // window, and the full window once a day for each account.
+  // window, and the full window once a day for each account. An account with
+  // healthy Google Calendar push is polled about once an hour, and for its
+  // daily full pass (lib/google/push/calendar-poll.ts).
   const delayMs = calendarCronStartDelayMs(userId);
   setTimeout(() => {
-    void runWithAiRequestContext({ userId, agent: 'ai' }, () =>
-      syncAllCalendarAccounts(userId, { reason: 'cron', window: 'auto' }).catch((err) => {
-        console.error('[cron/calendar-sync] sync failed', userId, describeModelError(err));
-      }),
-    );
+    void runWithAiRequestContext({ userId, agent: 'ai' }, async () => {
+      const skipAccountIds = await calendarPushPollSkips(userId);
+      return await syncAllCalendarAccounts(userId, { reason: 'cron', window: 'auto', skipAccountIds });
+    }).catch((err) => {
+      console.error('[cron/calendar-sync] sync failed', userId, describeModelError(err));
+    });
   }, delayMs);
   return NextResponse.json({ ok: true, started: true, userId, delayMs }, { status: 202 });
 }

@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { gmailPollDue } from '../lib/google/push/rules';
 import { internal } from './_generated/api';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
@@ -902,10 +903,15 @@ export const advanceHistoryId = mutation({
   },
 });
 
-/** Every 2 minutes: ask the app to read the Gmail History of each direct account. */
+/**
+ * Every 2 minutes: ask the app to read the Gmail History of each direct
+ * account. A mailbox with healthy Gmail push (googlePush.healthyGmailAccounts)
+ * is read only on its fallback tick, about every 15 minutes; push brings its
+ * changes between. When the push stops, the mailbox is read on each tick again.
+ */
 export const historyTick = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ requested: number; ok: number }> => {
+  handler: async (ctx): Promise<{ requested: number; ok: number; deferred?: number }> => {
     const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
     if (!appUrl || !secret) {
@@ -917,10 +923,21 @@ export const historyTick = internalAction({
       {},
     );
     if (!targets.length) return { requested: 0, ok: 0 };
-    const ok = await fanOutInternalPost(`${appUrl}/api/cron/google-history`, secret, targets, {
-      label: 'google-history cron',
+    const ts = now();
+    const healthy = new Set<string>(
+      await ctx.runQuery(internal.googlePush.healthyGmailAccounts, { now: ts }),
+    );
+    const due = targets.filter((target) => {
+      const key = `${target.userId}:${target.accountId}`;
+      return gmailPollDue({ now: ts, key, healthy: healthy.has(key) });
     });
-    return { requested: targets.length, ok };
+    const deferred = targets.length - due.length;
+    const ok = due.length
+      ? await fanOutInternalPost(`${appUrl}/api/cron/google-history`, secret, due, {
+          label: 'google-history cron',
+        })
+      : 0;
+    return { requested: due.length, ok, ...(deferred ? { deferred } : {}) };
   },
 });
 

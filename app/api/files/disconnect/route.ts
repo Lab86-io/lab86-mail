@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { disconnectCloudFileConnection } from '@/lib/files/connections';
+import { stopDrivePushForConnection } from '@/lib/google/push/renewal';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -23,6 +24,8 @@ export async function POST(req: Request) {
     if (!connectionId) {
       return NextResponse.json({ ok: false, error: 'connectionId required' }, { status: 400 });
     }
+    // A Drive changes channel stops while the token still works. This step never throws.
+    await stopDrivePushForConnection(user.userId, connectionId);
     await disconnectCloudFileConnection(user.userId, connectionId);
     return NextResponse.json({ ok: true });
   } catch (error) {
