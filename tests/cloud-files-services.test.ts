@@ -362,6 +362,58 @@ describe('cloud file connection service', () => {
     );
   });
 
+  test('a refused refresh token marks the connection for a reconnect; a server error does not', async () => {
+    const row = (refreshTokenEncrypted?: string) => ({
+      connection: {
+        connectionId: 'google-1',
+        provider: 'google_drive' as const,
+        status: 'connected' as const,
+        scopes: [],
+      },
+      credentials: { accessTokenEncrypted: 'encrypted:expired', refreshTokenEncrypted, expiresAt: 1 },
+    });
+    const run = async (stored: ReturnType<typeof row>, answer: Response) => {
+      const mutation = mock(async (..._args: unknown[]) => ({ ok: true }));
+      __setCloudFileConnectionDepsForTest({
+        convexMutation: mutation as any,
+        convexQuery: (async () => stored) as any,
+        decryptSecret: ((value: string) => value.replace('encrypted:', '')) as any,
+        encryptSecret: ((value: string) => `encrypted:${value}`) as any,
+        fetch: (async () => answer) as any,
+        now: () => 100_000,
+      });
+      await expect(getCloudFileAccess({ userId: 'user-1', connectionId: 'google-1' })).rejects.toThrow(
+        'File access expired. Reconnect this account.',
+      );
+      return mutation.mock.calls.map((call) => call[1]);
+    };
+
+    const refused = await run(
+      row('encrypted:refresh'),
+      Response.json(
+        { error: 'invalid_grant', error_description: 'Token has been expired or revoked.' },
+        { status: 400 },
+      ),
+    );
+    expect(refused).toEqual([
+      {
+        userId: 'user-1',
+        connectionId: 'google-1',
+        error: 'File access expired. Reconnect this account.',
+        reconnect: true,
+      },
+    ]);
+
+    const outage = await run(
+      row('encrypted:refresh'),
+      Response.json({ error: 'backend_error' }, { status: 503 }),
+    );
+    expect(outage).toEqual([]);
+
+    const noRefreshToken = await run(row(), Response.json({}));
+    expect(noRefreshToken).toEqual([expect.objectContaining({ connectionId: 'google-1', reconnect: true })]);
+  });
+
   test('adds provider timeouts without overriding a caller signal', async () => {
     const fetchMock = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.signal).toBeInstanceOf(AbortSignal);

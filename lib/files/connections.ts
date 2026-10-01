@@ -331,6 +331,14 @@ export async function driveWriteCheck(input: {
   return refusal ? new DriveCapabilityError(refusal) : null;
 }
 
+const EXPIRED_ACCESS = 'File access expired. Reconnect this account.';
+
+async function markReconnectNeeded(userId: string, connectionId: string) {
+  await markCloudFileConnectionAccess(userId, connectionId, EXPIRED_ACCESS, { reconnect: true }).catch(
+    () => undefined,
+  );
+}
+
 async function refreshCloudFileToken(input: {
   userId: string;
   row: StoredCloudFileConnection;
@@ -359,7 +367,12 @@ async function refreshCloudFileToken(input: {
   );
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload?.access_token) {
-    throw new Error('File access expired. Reconnect this account.');
+    // invalid_grant: the provider revoked or ended the refresh token. Only a
+    // new connection helps, so the connection shows "Reconnect needed". A
+    // server error or a rate limit does not change the connection.
+    if (payload?.error === 'invalid_grant')
+      await markReconnectNeeded(input.userId, input.row.connection.connectionId);
+    throw new Error(EXPIRED_ACCESS);
   }
   const next = payload as OAuthTokenResponse;
   const expiresAt =
@@ -375,7 +388,7 @@ async function refreshCloudFileToken(input: {
     ...(provider === 'google_drive' ? refreshTokenIdentifiers(next.refresh_token || input.refreshToken) : {}),
   });
   if (!persisted?.ok) {
-    throw new Error('File access expired. Reconnect this account.');
+    throw new Error(EXPIRED_ACCESS);
   }
   return next.access_token;
 }
@@ -389,7 +402,8 @@ export async function getCloudFileAccess(input: { userId: string; connectionId: 
   let accessToken = dependencies.decryptSecret(row.credentials.accessTokenEncrypted);
   if (row.credentials.expiresAt !== undefined && row.credentials.expiresAt <= dependencies.now() + 60_000) {
     if (!row.credentials.refreshTokenEncrypted) {
-      throw new Error('File access expired. Reconnect this account.');
+      await markReconnectNeeded(input.userId, input.connectionId);
+      throw new Error(EXPIRED_ACCESS);
     }
     const refreshKey = `${input.userId}:${input.connectionId}`;
     let refresh = tokenRefreshes.get(refreshKey);
