@@ -298,6 +298,8 @@ struct ComposeView: View {
         // bordered button) doubled it and collided with the avatar.
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
+        // The address of a send in progress does not change.
+        .disabled(isSending)
         .accessibilityLabel(fromAccessibilityLabel)
     }
 
@@ -705,6 +707,9 @@ struct ComposeView: View {
         }
         isSending = true
         defer { isSending = false }
+        // The request, the held-send record, and a refusal all use the
+        // mailbox of this send, even when the selection changes later.
+        let submittedAccountID = accountID
         do {
             let attachmentKey = attachmentsKey ?? (attachments.isEmpty ? nil : "compose-\(UUID().uuidString)")
             if let attachmentKey {
@@ -716,7 +721,7 @@ struct ComposeView: View {
             let from = sendFromAddress
             let submission = try await environment.store.sendCompose(
                 mode: mode == "reply" && replyAll ? "reply_all" : mode,
-                accountID: accountID,
+                accountID: submittedAccountID,
                 threadID: sourceThreadID,
                 messageID: sourceMessageID,
                 to: to,
@@ -742,7 +747,7 @@ struct ComposeView: View {
                     subject: subject,
                     body: bodyText,
                     mode: mode,
-                    accountID: accountID,
+                    accountID: submittedAccountID,
                     threadID: sourceThreadID,
                     messageID: sourceMessageID,
                     replyAll: replyAll,
@@ -768,9 +773,9 @@ struct ComposeView: View {
             // the From control reads it again. Without a new list, the next
             // send leaves the address to the server.
             errorMessage = refusal.localizedDescription
-            fromAddress = nil
-            sendAsPages[accountID] = nil
-            environment.sendAs.invalidate(accountID: accountID)
+            if accountID == submittedAccountID { fromAddress = nil }
+            sendAsPages[submittedAccountID] = nil
+            environment.sendAs.invalidate(accountID: submittedAccountID)
             await loadSendAs()
         } catch { errorMessage = error.localizedDescription }
     }
