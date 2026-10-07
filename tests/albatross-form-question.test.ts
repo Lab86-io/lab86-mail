@@ -322,3 +322,25 @@ describe('thread contract', () => {
     expect(item.kind === 'run' && item.continues).toBe(false);
   });
 });
+
+describe('formAnswerText modes', () => {
+  const values = {
+    class: { choices: ['mon'] },
+    phone: '+15555550100',
+    employer: 'Acme',
+  } as Record<string, any>;
+
+  test('record mode never shows a detail value', () => {
+    const text = formAnswerText(classForm, values, ['Phone'], { details: 'record' });
+    expect(text).toContain('Phone: saved to your personal details');
+    expect(text).toContain('Employer: given in the form');
+    expect(text).not.toContain('555');
+    expect(text).not.toContain('Acme');
+  });
+
+  test('run mode keeps unsaved detail values so the run can type them', () => {
+    const text = formAnswerText(classForm, values, ['Phone'], { details: 'run' });
+    expect(text).toContain("Phone: saved to the user's personal details (read it with personal_details_get)");
+    expect(text).toContain('Employer: Acme');
+  });
+});

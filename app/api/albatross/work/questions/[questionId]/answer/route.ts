@@ -23,6 +23,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ questi
     const { questionId } = await context.params;
     const body = await req.json();
     let answer = String(body.answer || '').trim();
+    let runNote: string | undefined;
     let answeredOptionId = typeof body.answeredOptionId === 'string' ? body.answeredOptionId : undefined;
     // A whole form (docs/albatross-thread.md, "Questions are forms").
     if (body.form && typeof body.form === 'object') {
@@ -37,6 +38,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ questi
           { status: result.status },
         );
       answer = result.answer;
+      runNote = result.note;
       answeredOptionId = result.answeredOptionId;
     }
     if (!answer) return Response.json({ ok: false, error: 'answer required' }, { status: 400 });
@@ -58,7 +60,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ questi
         userId: user.userId,
         workId: answered.workId,
         questionId,
-        answer,
+        answer: runNote ?? answer,
       }).catch(() => null);
       if (runId) return Response.json({ ok: true, status: 'answered', ...answered, runId });
     }

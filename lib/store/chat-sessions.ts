@@ -1,5 +1,9 @@
 import { isHitlToolName, toolPartName } from '../albatross/teach-ui';
-import { isWorkThreadSessionId, workThreadSessionId } from '../albatross/thread-contract';
+import {
+  isPersonalDetailKey,
+  isWorkThreadSessionId,
+  workThreadSessionId,
+} from '../albatross/thread-contract';
 import { kvDelete, kvGet, kvList, kvUpsert } from './kv';
 
 // Persistent AI chat sessions. Each session stores the AI SDK UIMessage array
@@ -40,6 +44,37 @@ const MAX_PRESENTATION_CHOICES_BYTES = 32_000;
 // A researched plan/partial recovery must survive the next picker round trip.
 const MAX_PRESENTATION_PLAN_BYTES = 128_000;
 const MAX_SESSIONS_LISTED = 30;
+/** personal_details_save input without the values: the keys and labels say what was saved. */
+function withoutDetailValues(input: unknown): unknown {
+  const details = (input as { details?: unknown } | null)?.details;
+  if (!Array.isArray(details)) return input;
+  return {
+    details: details.map((entry: any) => ({
+      key: String(entry?.key ?? ''),
+      ...(typeof entry?.label === 'string' ? { label: entry.label } : {}),
+    })),
+  };
+}
+
+/**
+ * An ask_form answer without the values of personal-detail fields (fields with
+ * a detailKey). Other answers stay. Null when there is nothing to change.
+ */
+function withoutBoundFormValues(input: unknown, output: unknown): Record<string, unknown> | null {
+  const values = (output as { values?: unknown } | null)?.values;
+  const fields = (input as { fields?: unknown } | null)?.fields;
+  if (!values || typeof values !== 'object' || !Array.isArray(fields)) return null;
+  const bound = fields
+    .filter((field: any) => typeof field?.id === 'string' && isPersonalDetailKey(field?.detailKey))
+    .map((field: any) => field.id as string)
+    .filter((id) => id in (values as Record<string, unknown>));
+  if (!bound.length) return null;
+  const marker = (output as { save?: unknown }).save === true ? 'Saved to your details' : 'Given in the form';
+  const redacted = { ...(values as Record<string, unknown>) };
+  for (const id of bound) redacted[id] = marker;
+  return { ...(output as Record<string, unknown>), values: redacted };
+}
+
 /** Tools whose output never goes into saved history. */
 const PRIVATE_OUTPUT_TOOLS: ReadonlySet<string> = new Set(['personal_details_get']);
 const MAX_SESSIONS_SCANNED = 1_000;
@@ -71,6 +106,13 @@ export function compactMessage(message: any): any {
               message:
                 'Personal details were read. Read them again with personal_details_get when a form needs them.',
             };
+          return compact;
+        }
+        if (toolPartName(part) === 'personal_details_save') compact.input = withoutDetailValues(part.input);
+        const formOutput =
+          toolPartName(part) === 'ask_form' ? withoutBoundFormValues(part.input, part.output) : null;
+        if (formOutput) {
+          compact.output = formOutput;
           return compact;
         }
         try {

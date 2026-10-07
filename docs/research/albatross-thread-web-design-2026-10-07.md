@@ -1,5 +1,11 @@
 # Albatross thread, web design note (2026-10-07)
 
+> **Lead decisions override this note.** `docs/albatross-thread.md`, section "Cross-platform
+> decisions (lead review, 2026-10-07)", settles the open questions. Where this note differs, the
+> decisions win: no "sent your note to the run" row (decision 8), "Dismiss" for a run handoff and
+> "Skip" for a chat form (decisions 3 and 4), and no "Check the page" in the thread (decision 5).
+> The sections below are updated to match.
+
 Status: design only. No production code changed. The brief is `docs/albatross-thread.md`. The
 contract is `lib/albatross/thread-contract.ts`. The run states come from
 `docs/albatross-step-runner.md`. This note decides how the web thread looks and behaves. The iOS

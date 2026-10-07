@@ -1,5 +1,11 @@
 # The Albatross thread, iOS design note (2026-10-07)
 
+> **Lead decisions override this note.** `docs/albatross-thread.md`, section "Cross-platform
+> decisions (lead review, 2026-10-07)", settles the open questions. Where this note differs, the
+> decisions win: no "sent your note to the run" row (decision 8), "Dismiss" for a run handoff and
+> "Skip" for a chat form (decisions 3 and 4), and no "Check the page" in the thread (decision 5).
+> The sections below are updated to match.
+
 Status: design only. No production code changes. Branch `claude/albatross-chat`.
 
 This note decides how the Albatross thread (`docs/albatross-thread.md`) looks and behaves on
@@ -392,8 +398,7 @@ Zoom, all $70. The court date is November 2.
 ### S8. Talk while it works
 
 - With the run open, the user writes "use the Monday class". The message appears as a bubble.
-  The assistant answers in one line: "Noted. I will use the Monday class." Its turn shows one
-  row "Sent your note to the run".
+  Albatross answers in one line: "Noted. I will use the Monday class." No extra row appears.
 - The run block shows a new log row with the quote style: "Read your note: use the Monday class".
 - No second run block appears. The plan line does not change.
 
@@ -585,7 +590,7 @@ the header as tertiary text after a middle dot.
 | skipped (chat `ask_form` only) | "Skipped." one line | none |
 | save failed | the card stays; a red line "The answer did not send. Try again." | enabled |
 
-"Not now" (skip) shows only for chat `ask_form`. A runner question has no skip; the user can
+"Skip" shows only for chat `ask_form`. A runner question has no skip; the user can
 answer in the composer instead. A field error shows under its field in red `.caption`.
 
 ### 5.3 Page sheet
@@ -599,7 +604,7 @@ answer in the composer instead. A field error shows under its field in red `.cap
 | checking | accent-2 | "Albatross checks the page…" | disabled | unchanged |
 | closed | none | "The page is closed. Press Continue. Albatross opens a new one when the step needs it." | "Continue" when a handoff waits | medium |
 | error | none | "The page could not load. Open the site in Safari." with "Open in Safari" | "Close" only | medium |
-| user owned (from the plan sheet) | accent | "Your turn on the page. Albatross follows along." | "Check the page" | large |
+| user owned (from the plan sheet) | accent | "Your turn on the page. Albatross follows along." | none (the done label resumes the run) | large |
 | user owned, verified | green | "Verified. The step is checked off." | none | large |
 
 ### 5.4 Thread
@@ -660,7 +665,7 @@ answer in the composer instead. A field error shows under its field in red `.cap
   the card stays with the red line.
 - A chat `ask_form`: `answerQuestion(id, output: FormAnswer JSON)` resumes the turn; the server
   saves bound values when `save` is true.
-- "Not now" sends `{ values: {}, save: false, skipped: true }`.
+- "Skip" sends `{ values: {}, save: false, skipped: true }`.
 
 ### 6.5 Personal details
 
@@ -952,7 +957,7 @@ here." and a "Use the account name" control.
 | form, source lines | "From your account", "From your details", "From your email signature" |
 | form, save toggle | "Save to my details" / "Albatross uses saved details in later forms." |
 | form, submit | `submitLabel` or "Continue" / "Sending…" |
-| form, skip (chat only) | "Not now" |
+| form, skip (chat only) | "Skip" |
 | form, receipts | "Answered in the chat.", "No longer needed.", "Skipped." |
 | form, errors | "The answer did not send. Try again.", "Enter a phone number with at least 7 digits.", "Enter an email address like name@example.com.", "Enter a first and a last name.", "Enter the street, city, state, and postal code.", "Enter a name and a phone number." |
 | details receipt | "Saved to your details: {labels}" / "Undo" / "Removed from your details: {labels}" |

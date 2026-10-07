@@ -14,6 +14,7 @@ import {
   formQuestionSchema,
   isPersonalDetailKey,
   nameValueSchema,
+  PERSONAL_DETAIL_LABELS,
   type PersonalDetailKey,
   phoneValueSchema,
 } from './thread-contract';
@@ -207,10 +208,39 @@ export function formAnswerText(
   form: FormQuestion,
   values: Record<string, FormFieldValue>,
   savedLabels: readonly string[] = [],
+  options: {
+    /**
+     * `record`: the text the Work question keeps; a personal-detail field shows
+     * no value. `run`: the note for the run; a saved detail names the tool to
+     * read it, and an unsaved one keeps its value (the run must type it).
+     * Default: every value (tests and the planner).
+     */
+    details?: 'record' | 'run';
+  } = {},
 ): string {
+  const saved = new Set(savedLabels);
   const lines = form.fields
     .filter((field) => values[field.id] !== undefined)
-    .map((field) => `${field.label}: ${describeValue(field, values[field.id])}`);
+    .map((field) => {
+      const bound = Boolean(field.detailKey && isPersonalDetailKey(field.detailKey));
+      if (bound && options.details) {
+        const wasSaved = saved.has(detailSaveLabel(field));
+        if (wasSaved)
+          return options.details === 'run'
+            ? `${field.label}: saved to the user's personal details (read it with personal_details_get)`
+            : `${field.label}: saved to your personal details`;
+        if (options.details === 'record') return `${field.label}: given in the form`;
+      }
+      return `${field.label}: ${describeValue(field, values[field.id])}`;
+    });
   if (savedLabels.length) lines.push(`Saved to the user's personal details: ${savedLabels.join(', ')}.`);
   return lines.join('\n') || 'The user answered.';
+}
+
+/** The label the store gives a saved detail: the catalog label, or the field label for a custom fact. */
+export function detailSaveLabel(field: FormField): string {
+  const key = field.detailKey;
+  if (key && key in PERSONAL_DETAIL_LABELS)
+    return PERSONAL_DETAIL_LABELS[key as keyof typeof PERSONAL_DETAIL_LABELS];
+  return field.label;
 }

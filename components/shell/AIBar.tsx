@@ -533,22 +533,31 @@ export function AssistantChat({
     sessionIdRef.current = threadSessionId;
     setMessages(threadInitial as never);
   }, [preview, threadSessionId, threadInitial, setMessages]);
+  // The thread saves only after its stored copy loaded: a save with base 0
+  // before then would race the load (docs/albatross-thread.md, "The timeline").
+  const [threadReady, setThreadReady] = useState(false);
   useEffect(() => {
     if (!threadSessionId || !threadWorkId || preview) return;
     let cancelled = false;
     sessionIdRef.current = threadSessionId;
     restoredRef.current = true;
+    setThreadReady(false);
     const generation = ++sessionLoadGenerationRef.current;
+    const settled = () => !cancelled && generation === sessionLoadGenerationRef.current;
     fetch(`/api/chats?workThread=${encodeURIComponent(threadWorkId)}`)
       .then((res) => res.json())
       .then((data) => {
-        if (cancelled || generation !== sessionLoadGenerationRef.current) return;
+        if (!settled()) return;
         if (data?.ok && data.session && Array.isArray(data.session.messages)) {
           baseUpdatedAtRef.current = Number(data.session.updatedAt) || 0;
-          setMessages(data.session.messages);
+          // A message the user sent while the copy loaded stays: merge, do not replace.
+          setMessages((current) => addMergedThreadMessages(data.session.messages, current));
         }
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (settled()) setThreadReady(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -557,6 +566,7 @@ export function AssistantChat({
   // Autosave once the stream settles (debounced so multi-step turns save once).
   useEffect(() => {
     if (preview || status === 'streaming' || status === 'submitted') return;
+    if (thread && !threadReady) return;
     if (!messages.length || !sessionIdRef.current) return;
     if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
     const id = sessionIdRef.current;
@@ -588,7 +598,18 @@ export function AssistantChat({
     return () => {
       if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
     };
-  }, [preview, thread, chatScopeAreaId, chatScopeKind, chatScopeWorkId, messages, status, qc, setMessages]);
+  }, [
+    preview,
+    thread,
+    threadReady,
+    chatScopeAreaId,
+    chatScopeKind,
+    chatScopeWorkId,
+    messages,
+    status,
+    qc,
+    setMessages,
+  ]);
 
   const startNewChat = useCallback(() => {
     if (busy) return;

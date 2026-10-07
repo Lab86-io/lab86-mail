@@ -205,6 +205,39 @@ interface SessionRow {
   stepKey?: string | null;
 }
 
+/**
+ * The runner's prepareStep for steer notes. generateText rebuilds each step
+ * from the first messages plus the step responses, so a message added in one
+ * prepareStep is gone in the next. This keeps every note at the point where it
+ * arrived (between two complete steps, so no tool call loses its result) for
+ * all later steps. Notes read before this attempt sit after the first messages.
+ */
+export function steerPrepareStep(input: {
+  received: string[];
+  initialCount: number;
+  take: () => Promise<Array<{ text: string }>>;
+  log: (line: string) => Promise<void>;
+}) {
+  const inserts: Array<{ at: number; message: ModelMessage }> = input.received.length
+    ? [{ at: input.initialCount, message: steerMessage([...input.received]) }]
+    : [];
+  return async ({ messages: stepMessages }: { messages: ModelMessage[] }) => {
+    const notes = (await input.take()) || [];
+    if (notes.length) {
+      const texts = notes.map((note) => note.text);
+      for (const text of texts) await input.log(`Read your note: ${truncateText(text, 160)}`);
+      input.received.push(...texts);
+      inserts.push({ at: stepMessages.length, message: steerMessage(texts) });
+    }
+    if (!inserts.length) return undefined;
+    const out = [...stepMessages];
+    // From the highest index down, so each earlier index is still correct.
+    for (const insert of [...inserts].sort((a, b) => b.at - a.at))
+      out.splice(Math.min(insert.at, out.length), 0, insert.message);
+    return { messages: out };
+  };
+}
+
 /** The handoff when the run produced no step_handoff call. */
 export function fallbackHandoff(text: string, artifacts: RunArtifact[]): SettleInput {
   const summary =
@@ -531,6 +564,9 @@ export async function runStepRun(
 
     let result: Awaited<ReturnType<typeof generateText>> | null = null;
     let lastError: unknown;
+    // Notes the run already read. A failover attempt starts from the first
+    // messages again, so it gets these notes at once.
+    const receivedNotes: string[] = [];
     for (let index = 0; index < runtimes.length && !result; index += 1) {
       const runtime = runtimes[index];
       try {
@@ -551,15 +587,17 @@ export async function runStepRun(
                 system,
                 messages,
                 tools,
-                // A note the user writes while the run works reaches the next model step.
-                prepareStep: async ({ messages: stepMessages }: { messages: ModelMessage[] }) => {
-                  const notes = await deps
-                    .convexMutation<Array<{ text: string }>>(api.albatrossStepRuns.takeSteerNotes, fence)
-                    .catch(() => []);
-                  if (!notes?.length) return undefined;
-                  for (const note of notes) await log(`Read your note: ${truncateText(note.text, 160)}`);
-                  return { messages: [...stepMessages, steerMessage(notes.map((note) => note.text))] };
-                },
+                // A note the user writes while the run works reaches the next model
+                // step and stays for every step after it (steerPrepareStep).
+                prepareStep: steerPrepareStep({
+                  received: receivedNotes,
+                  initialCount: messages.length,
+                  take: () =>
+                    deps
+                      .convexMutation<Array<{ text: string }>>(api.albatrossStepRuns.takeSteerNotes, fence)
+                      .catch(() => []),
+                  log,
+                }),
                 stopWhen: [hasToolCall('step_handoff'), stepCountIs(STEP_RUN_MAX_MODEL_STEPS)],
                 abortSignal: signal,
                 maxOutputTokens: maxOutputTokensForFeature(feature),

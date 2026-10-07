@@ -159,3 +159,19 @@ describe('the chat tools', () => {
     ).rejects.toThrow(/signed-in/);
   });
 });
+
+describe('handleStepFromThread picks the newest run of the step', () => {
+  test('an old handoff whose continuation already finished is not resumed', async () => {
+    const { deps, mutations } = fakeDeps([
+      { id: 'run-old', workId: 'work-1', state: 'handed_off', stepKey: 'step-1', next: { kind: 'sign_in' } },
+      { id: 'run-new', workId: 'work-1', state: 'failed', stepKey: 'step-1', parentRunId: 'run-old' },
+    ]);
+    expect((await handleStepFromThread({ ...base, note: 'Go' }, deps)).action).toBe('started');
+    expect(mutations[0][1]).toMatchObject({ trigger: 'user' });
+  });
+
+  test('without a stepKey, a handoff on another step is not resumed', async () => {
+    const { deps } = fakeDeps([{ id: 'run-x', workId: 'work-1', state: 'handed_off', stepKey: 'step-0' }]);
+    expect((await handleStepFromThread({ ...base, note: 'Go' }, deps)).action).toBe('started');
+  });
+});

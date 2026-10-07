@@ -345,24 +345,8 @@ export function PersonalDetailsSection({ accountName }: { accountName?: string |
           .mutateAsync(key)
           .then(async () => {
             await refresh();
-            toast.success(PERSONAL_DETAILS_COPY.deleted(label), {
-              action: {
-                label: 'Undo',
-                onClick: () => {
-                  void fetch('/api/personal-details', {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ action: 'undo', key }),
-                  })
-                    .then(readJson)
-                    .then(async () => {
-                      await refresh();
-                      toast.success(PERSONAL_DETAILS_COPY.restored(label));
-                    })
-                    .catch((cause: Error) => toast.error(cause.message || 'Could not restore the detail.'));
-                },
-              },
-            });
+            // A delete from Settings is final: the row is gone, so there is no Undo.
+            toast.success(PERSONAL_DETAILS_COPY.deleted(label));
           })
           .catch((cause: Error) =>
             setError({ key, message: cause.message || 'Could not delete this detail.' }),

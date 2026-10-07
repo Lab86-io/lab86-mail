@@ -932,13 +932,18 @@ describe('runner helpers', () => {
 });
 
 describe('the thread round (docs/albatross-thread.md)', () => {
-  test('a note the user writes while the run works reaches the next model step, once', async () => {
+  test('a note the user writes while the run works reaches the next model step and stays', async () => {
     let injected: any;
     let second: any;
     const h = harness(
       async (opts) => {
         injected = await opts.prepareStep({ messages: [{ role: 'user', content: 'Work on the step.' }] });
-        second = await opts.prepareStep({ messages: [] });
+        second = await opts.prepareStep({
+          messages: [
+            { role: 'user', content: 'Work on the step.' },
+            { role: 'assistant', content: 'Opened the page.' },
+          ],
+        });
         await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'Wrote it.', evidence: 'doc-1' });
         return { text: '', usage };
       },
@@ -949,10 +954,14 @@ describe('the thread round (docs/albatross-thread.md)', () => {
       role: 'user',
       content: expect.stringContaining('The user says while you work:\n- Use the Monday class.'),
     });
-    expect(second).toBeUndefined();
-    expect(h.calls('albatrossStepRuns:progress').map((args) => args.line)).toContain(
-      'Read your note: Use the Monday class.',
-    );
+    // The next step still has the note, at the point where it arrived.
+    expect(second.messages.map((message: any) => message.role)).toEqual(['user', 'user', 'assistant']);
+    expect(second.messages[1].content).toContain('Use the Monday class.');
+    expect(
+      h
+        .calls('albatrossStepRuns:progress')
+        .filter((args) => args.line === 'Read your note: Use the Monday class.'),
+    ).toHaveLength(1);
   });
 
   test('a form question is stored with the form and the run id as its salt', async () => {
@@ -1103,5 +1112,64 @@ describe('runner reads for the thread', () => {
     );
     expect(await readThreadUserNotes(userId, 'k5abc')).toEqual(['A Monday or a Wednesday would be best.']);
     expect(await readThreadUserNotes(userId, 'k6none')).toEqual([]);
+  });
+});
+
+describe('steerPrepareStep', () => {
+  test('notes keep their place between complete steps across later steps', async () => {
+    const { steerPrepareStep } = await import('../lib/albatross/step-runner');
+    const queue = [[{ text: 'First note' }], [], [{ text: 'Second note' }], []];
+    const received: string[] = [];
+    const prepare = steerPrepareStep({
+      received,
+      initialCount: 1,
+      take: async () => queue.shift() || [],
+      log: async () => {},
+    });
+    const base = [{ role: 'user', content: 'Task' }] as any[];
+    const step1 = await prepare({ messages: base });
+    expect(step1?.messages.map((message: any) => message.content)).toEqual([
+      'Task',
+      expect.stringContaining('First note'),
+    ]);
+    const afterStep1 = [...base, { role: 'assistant', content: 'A1' }] as any[];
+    const step2 = await prepare({ messages: afterStep1 });
+    expect(step2?.messages.map((message: any) => message.content)).toEqual([
+      'Task',
+      expect.stringContaining('First note'),
+      'A1',
+    ]);
+    const afterStep2 = [...afterStep1, { role: 'assistant', content: 'A2' }] as any[];
+    const step3 = await prepare({ messages: afterStep2 });
+    expect(step3?.messages.map((message: any) => message.content)).toEqual([
+      'Task',
+      expect.stringContaining('First note'),
+      'A1',
+      'A2',
+      expect.stringContaining('Second note'),
+    ]);
+    expect(received).toEqual(['First note', 'Second note']);
+  });
+
+  test('no notes, no change; a failover attempt gets the notes read before it', async () => {
+    const { steerPrepareStep } = await import('../lib/albatross/step-runner');
+    const quiet = steerPrepareStep({
+      received: [],
+      initialCount: 1,
+      take: async () => [],
+      log: async () => {},
+    });
+    expect(await quiet({ messages: [{ role: 'user', content: 'Task' }] as any })).toBeUndefined();
+    const again = steerPrepareStep({
+      received: ['Use Monday'],
+      initialCount: 1,
+      take: async () => [],
+      log: async () => {},
+    });
+    const step = await again({ messages: [{ role: 'user', content: 'Task' }] as any });
+    expect(step?.messages.map((message: any) => message.content)).toEqual([
+      'Task',
+      expect.stringContaining('Use Monday'),
+    ]);
   });
 });

@@ -7,7 +7,7 @@
 // "Save … to my details" appears when a bound value is new or different.
 // Answered, it collapses to a receipt with label and value rows.
 
-import { type ReactNode, useId, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useId, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -62,6 +62,8 @@ export interface FormQuestionCardProps {
 }
 
 const inputClass = 'h-8 text-[12.5px]';
+/** One empty list for the default, so the prefill memo does not change on every render. */
+const NO_DETAILS: readonly PersonalDetailView[] = [];
 
 export function FormQuestionCard(props: FormQuestionCardProps) {
   if (props.receipt)
@@ -71,7 +73,7 @@ export function FormQuestionCard(props: FormQuestionCardProps) {
 
 function FormQuestionForm({
   form,
-  details = [],
+  details = NO_DETAILS,
   mode,
   busy,
   errors: serverErrors,
@@ -81,6 +83,20 @@ function FormQuestionForm({
 }: FormQuestionCardProps) {
   const initial = useMemo(() => prefillForm(form, details), [form, details]);
   const [values, setValues] = useState<Record<string, FormFieldValue>>(initial.values);
+  // The fields the user changed. Saved details that load after the form
+  // appears fill only the other fields.
+  const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    setValues((current) => {
+      let next: Record<string, FormFieldValue> | null = null;
+      for (const [id, value] of Object.entries(initial.values)) {
+        if (touched.has(id) || current[id] !== undefined) continue;
+        next ??= { ...current };
+        next[id] = value;
+      }
+      return next ?? current;
+    });
+  }, [initial.values, touched]);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
   const [save, setSave] = useState(true);
@@ -88,6 +104,7 @@ function FormQuestionForm({
   const errors = { ...localErrors, ...(serverErrors ?? {}) };
   const toSave = fieldsToSave(form, values, initial.prefilled);
   const setValue = (field: FormField, value: FormFieldValue | undefined) => {
+    setTouched((current) => (current.has(field.id) ? current : new Set(current).add(field.id)));
     setValues((current) => {
       const next = { ...current };
       if (value === undefined) delete next[field.id];
@@ -620,6 +637,7 @@ export function FormReceiptCard({
 }) {
   const [busy, setBusy] = useState(false);
   const [undone, setUndone] = useState(Boolean(receipt.undone));
+  const [undoError, setUndoError] = useState<string | null>(null);
   const rows = receipt.values ? formReceiptRows(form, receipt.values) : (receipt.rows ?? []);
   return (
     <section
@@ -659,9 +677,12 @@ export function FormReceiptCard({
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
+                setUndoError(null);
                 try {
                   await receipt.onUndoSave?.();
                   setUndone(true);
+                } catch (cause) {
+                  setUndoError(cause instanceof Error ? cause.message : 'The save was not undone.');
                 } finally {
                   setBusy(false);
                 }
@@ -673,6 +694,11 @@ export function FormReceiptCard({
           ) : undone ? (
             <span className="text-[var(--color-accent-3)]">Undone</span>
           ) : null}
+          {undoError ? (
+            <span role="alert" className="text-[var(--color-danger)]">
+              {undoError}
+            </span>
+          ) : null}
         </div>
       ) : null}
       {children}
@@ -680,8 +706,13 @@ export function FormReceiptCard({
   );
 }
 
-/** Undo the newest chat save of these personal details. */
+/**
+ * Undo the newest chat or form save of these personal details. Throws when the
+ * server undid nothing (the one-day window ended, or Settings saved since), so
+ * the receipt never claims an Undo that did not happen.
+ */
 export async function undoPersonalDetails(keys: readonly string[]): Promise<void> {
+  let undoneAny = false;
   for (const key of keys.slice(0, 12)) {
     const response = await fetch('/api/personal-details', {
       method: 'POST',
@@ -690,5 +721,7 @@ export async function undoPersonalDetails(keys: readonly string[]): Promise<void
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || body?.ok === false) throw new Error(body?.error || 'The save was not undone.');
+    if (body?.undone === 'restored' || body?.undone === 'removed') undoneAny = true;
   }
+  if (!undoneAny) throw new Error('There is nothing to undo now.');
 }

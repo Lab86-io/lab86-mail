@@ -245,10 +245,12 @@ export async function handleStepFromThread(
     });
     if (steered) return { action: 'steered', runId: open.id };
   }
-  const waiting = newestFirst.find(
-    (run) => run.state === 'handed_off' && (!input.stepKey || run.stepKey === input.stepKey),
-  );
-  if (waiting && (!input.stepKey || waiting.stepKey === input.stepKey)) {
+  // Only the newest run of the target step can continue: an older handoff (its
+  // continuation already ran) or another step's handoff is not the one waiting.
+  const targetStepKey = input.stepKey ?? (await loadStep(deps, input.userId, input.workId)).step?.key;
+  const newest = targetStepKey ? newestFirst.find((run) => run.stepKey === targetStepKey) : undefined;
+  const waiting = newest?.state === 'handed_off' ? newest : undefined;
+  if (waiting) {
     const questionId = waiting.next?.target?.kind === 'question' ? waiting.next.target.id : null;
     if (questionId && note && waiting.question?.status === 'pending') {
       // The chat answered the run's question; the form shows it as answered.

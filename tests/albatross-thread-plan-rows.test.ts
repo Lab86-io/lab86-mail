@@ -34,3 +34,15 @@ describe('plan rows and waiting runs', () => {
     expect(first.runnable).toBe(false);
   });
 });
+
+describe('saved detail labels', () => {
+  test('a fixed key uses its catalog label; a custom key keeps the form label', async () => {
+    const { savedDetailLabel } = await import('../components/albatross/thread/RunBlock');
+    expect(savedDetailLabel({ label: 'Mobile phone', detailKey: 'phone' })).toBe('Phone');
+    expect(savedDetailLabel({ label: 'Home address on file', detailKey: 'home_address' })).toBe(
+      'Home address',
+    );
+    expect(savedDetailLabel({ label: 'Employer', detailKey: 'custom:employer' })).toBe('Employer');
+    expect(savedDetailLabel({ label: 'Note' })).toBe('Note');
+  });
+});

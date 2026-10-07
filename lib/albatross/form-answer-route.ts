@@ -30,7 +30,15 @@ const defaults: FormAnswerDependencies = {
 };
 
 export type FormAnswerResult =
-  | { ok: true; answer: string; answeredOptionId?: string; savedLabels: string[] }
+  | {
+      ok: true;
+      /** The text the Work question keeps: personal-detail fields show no value. */
+      answer: string;
+      /** The note for the run: an unsaved detail keeps its value, so the run can type it. */
+      note?: string;
+      answeredOptionId?: string;
+      savedLabels: string[];
+    }
   | { ok: false; status: 400 | 404 | 409; error: string; errors?: Record<string, string> };
 
 export async function answerFromForm(
@@ -83,7 +91,8 @@ export async function answerFromForm(
   }
   return {
     ok: true,
-    answer: truncateText(formAnswerText(form, checked.values, savedLabels), 2_000),
+    answer: truncateText(formAnswerText(form, checked.values, savedLabels, { details: 'record' }), 2_000),
+    note: truncateText(formAnswerText(form, checked.values, savedLabels, { details: 'run' }), 2_000),
     savedLabels,
   };
 }

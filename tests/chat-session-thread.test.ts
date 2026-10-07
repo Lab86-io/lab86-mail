@@ -145,3 +145,83 @@ describe('merged messages reach the client', () => {
     expect(ids(addMergedThreadMessages([at('a', 1)], [at('a', 1)]))).toEqual(['a']);
   });
 });
+
+describe('saved history keeps no personal detail values', () => {
+  test('personal_details_save input keeps keys and labels only', () => {
+    const message = compactMessage({
+      id: 'a',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-personal_details_save',
+          toolCallId: 'c',
+          state: 'output-available',
+          input: {
+            details: [
+              { key: 'phone', value: '+15555550100' },
+              { key: 'custom', label: 'Employer', value: 'Acme' },
+            ],
+          },
+          output: {
+            ok: true,
+            saved: [{ key: 'phone', label: 'Phone', display: '(555) 555-0100' }],
+            rejected: [],
+          },
+        },
+      ],
+    });
+    expect(message.parts[0].input).toEqual({
+      details: [{ key: 'phone' }, { key: 'custom', label: 'Employer' }],
+    });
+    expect(JSON.stringify(message.parts[0].input)).not.toContain('5555550100');
+  });
+
+  test('ask_form answers lose the values of detail fields and keep the others', () => {
+    const input = {
+      title: 'Which class?',
+      fields: [
+        {
+          id: 'class',
+          label: 'Class',
+          kind: 'choice',
+          options: [
+            { id: 'mon', label: 'Monday' },
+            { id: 'wed', label: 'Wednesday' },
+          ],
+        },
+        { id: 'phone', label: 'Phone', kind: 'phone', detailKey: 'phone' },
+      ],
+    };
+    const saved = compactMessage({
+      id: 'a',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-ask_form',
+          toolCallId: 'c',
+          state: 'output-available',
+          input,
+          output: { values: { class: { choices: ['mon'] }, phone: '555 555 0100' }, save: true },
+        },
+      ],
+    });
+    expect(saved.parts[0].output).toEqual({
+      values: { class: { choices: ['mon'] }, phone: 'Saved to your details' },
+      save: true,
+    });
+    const given = compactMessage({
+      id: 'b',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-ask_form',
+          toolCallId: 'd',
+          state: 'output-available',
+          input,
+          output: { values: { phone: '555 555 0100' }, save: false },
+        },
+      ],
+    });
+    expect(given.parts[0].output.values.phone).toBe('Given in the form');
+  });
+});

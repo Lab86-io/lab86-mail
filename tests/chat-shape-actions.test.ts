@@ -137,6 +137,7 @@ describe('undo_personal_details', () => {
       ...h.deps,
       undoPersonalDetail: async (key) => {
         undone.push(key);
+        return key === 'phone' ? 'restored' : 'none';
       },
     });
     expect(result).toEqual({ kind: 'done', label: 'Undone' });
@@ -158,6 +159,11 @@ describe('undo_personal_details', () => {
       );
       expect(result.kind).toBe('done');
       expect(posted).toEqual([['/api/personal-details', { action: 'undo', key: 'phone' }]]);
+      // Too late: the server undid nothing, so the action says so.
+      globalThis.fetch = (async () => Response.json({ ok: true, undone: 'none' })) as any;
+      expect(
+        await executeShapeAction({ kind: 'undo_personal_details', keys: ['phone'] }, harness().deps),
+      ).toEqual({ kind: 'error', message: 'There is nothing to undo now.' });
       globalThis.fetch = (async () =>
         Response.json({ ok: false, error: 'Nothing to undo.' }, { status: 400 })) as any;
       expect(

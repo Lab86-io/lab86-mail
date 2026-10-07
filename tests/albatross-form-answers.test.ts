@@ -146,23 +146,36 @@ describe('applyFormAnswers (chat)', () => {
 describe('answerFromForm (Work questions)', () => {
   const pending = { status: 'pending', prompt: form.title, form };
 
-  test('a typed form is checked, saved when asked, and written as text', async () => {
+  test('a typed form is checked, saved when asked, and written without detail values', async () => {
     const { calls, save } = saver();
     const result = await answerFromForm(
       user,
       'q1',
       { values: { class: 'wed', phone: '555 555 0100' }, save: true },
-      {
-        readQuestion: async () => pending,
-        saveDetails: save,
-      },
+      { readQuestion: async () => pending, saveDetails: save },
     );
     expect(calls).toHaveLength(1);
     expect(result).toEqual({
       ok: true,
-      answer: "Class: Wednesday\nPhone: (555) 555-0100\nSaved to the user's personal details: Phone.",
+      answer:
+        "Class: Wednesday\nPhone: saved to your personal details\nSaved to the user's personal details: Phone.",
+      note: "Class: Wednesday\nPhone: saved to the user's personal details (read it with personal_details_get)\nSaved to the user's personal details: Phone.",
       savedLabels: ['Phone'],
     });
+  });
+
+  test('an unsaved detail stays out of the record but reaches the run', async () => {
+    const { save } = saver([]);
+    const result = await answerFromForm(
+      user,
+      'q1',
+      { values: { class: 'mon', phone: '555 555 0100' }, save: false },
+      { readQuestion: async () => pending, saveDetails: save },
+    );
+    if (!result.ok) throw new Error('expected an answer');
+    expect(result.answer).toBe('Class: Monday\nPhone: given in the form');
+    expect(result.answer).not.toContain('555');
+    expect(result.note).toBe('Class: Monday\nPhone: (555) 555-0100');
   });
 
   test('bad fields come back per field, and nothing is saved', async () => {

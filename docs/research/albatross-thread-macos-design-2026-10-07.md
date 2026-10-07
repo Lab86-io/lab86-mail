@@ -1,5 +1,11 @@
 # The Albatross thread, macOS design note (2026-10-07)
 
+> **Lead decisions override this note.** `docs/albatross-thread.md`, section "Cross-platform
+> decisions (lead review, 2026-10-07)", settles the open questions. Where this note differs, the
+> decisions win: no "sent your note to the run" row (decision 8), "Dismiss" for a run handoff and
+> "Skip" for a chat form (decisions 3 and 4), and no "Check the page" in the thread (decision 5).
+> The sections below are updated to match.
+
 Status: design, no code. The product brief is `docs/albatross-thread.md`. The contract is
 `lib/albatross/thread-contract.ts`. The earlier Mac note for the step runner is
 `step-runner-macos-design-2026-10-07.md`; this note replaces its Work page decisions and keeps
@@ -83,7 +89,7 @@ Forms in the conversation:
   A form card in the transcript: a title, a help line, radio rows, "Reject" and "Submit". The
   details pane at the right lists Source, Created, Model, and Files. Taken: the form card with
   the submit at the trailing edge, and the details pane with Files. Rejected: "Reject"; a
-  runner question has no skip, and a chat form has a quiet "Not now". Drives decisions 3.3 and
+  runner question has no skip, and a chat form has a quiet "Skip". Drives decisions 3.3 and
   5.2.
 - Unify, numbered choice form ([screen](https://mobbin.com/screens/66df7194-18ef-479e-9679-03955deba055)).
   Each option shows a number key at the trailing edge. "Submit" shows its shortcut. Taken: the
@@ -437,7 +443,7 @@ for it (`readingMeasure: CGFloat?`).
 - Field layout: `#if os(macOS)` a two-column `Grid` (label column 140 points, control column
   flexible) when the card is ≥ 560 wide; iOS stacks label over control.
 - "Save to my details": `#if os(macOS)` `.toggleStyle(.checkbox)`; iOS keeps the switch.
-- The submit at the trailing edge; "Not now" (chat forms only) quiet at the leading edge of the
+- The submit at the trailing edge; "Skip" (chat forms only) quiet at the leading edge of the
   same row (Mac sheet button order). iOS keeps its own row.
 - The submit button: `.keyboardShortcut(.defaultAction)` only while `@FocusState` is inside the
   card; `waitingActionShortcut()` always.
@@ -534,7 +540,7 @@ the page row "Albatross is on the page · aliveat25.com" with "Hide the page" wh
 open. If the details pane was open, the page takes its place; the Details toggle turns off.
 
 **S8. Talk while it works.** The user writes "use the Monday class" and presses Return. The
-message goes to the run as a steer note. The reply shows the row "Sent your note to the run" and
+message goes to the run as a steer note. The reply is
 one line: "Noted. I will use the Monday class." The run block adds "9:42  Read your note: use the
 Monday class". The composer stays ready. No second block appears.
 
@@ -692,12 +698,12 @@ same value with "Albatross does not keep this number here." under the field.
 |---|---|---|---|---|
 | Opening (session row not yet read) | accent-2 | "Opening the shared browser…" | none | spinner on the subtle surface |
 | Albatross has the page | accent-2 | the session detail, else "Albatross has the page." | "Take over", "Larger view ⌄" | live view, interactive |
-| Your turn (handoff `sign_in` or `finish_on_page`) | accent | the handoff detail ("Sign in on the page. Albatross does not see your password.") | the done label ("I signed in", "I paid"), else "Continue"; "Check the page"; "Larger view ⌄" | live view |
+| Your turn (handoff `sign_in` or `finish_on_page`) | accent | the handoff detail ("Sign in on the page. Albatross does not see your password.") | the done label ("I signed in", "I paid"), else "Continue"; "Larger view ⌄" | live view |
 | Your turn after Take over | accent | "You have the page. Press Continue when Albatross should go on." | "Continue", "Larger view ⌄" | live view |
 | Checking | accent-2 | "Albatross checks the page…" | all disabled | live view |
-| User owned (from the plan popover's "Open the site") | accent | "Your turn on the page. Albatross follows along." | "Check the page" | live view |
+| User owned (from the plan popover's "Open the site") | accent | "Your turn on the page. Albatross follows along." | none (the done label resumes the run) | live view |
 | Checked, satisfied | green | "Verified. The step is checked off." | "Close the page" | live view |
-| Checked, not yet | accent | "Not yet: {reason}" | "Continue", "Check the page" | live view |
+| Checked, not yet | accent | "Not yet: {reason}" | "Continue" | live view |
 | Closed (no session, run ended) | none | "The page is closed." | "Continue" when a handoff waits, "Close the pane" | the placeholder "Albatross opens a new page when a step needs one." |
 | No page yet (run open, no session) | none | "Albatross has not opened a page yet." | none | placeholder "The live view shows here when it does." |
 | Error (session failed, live view did not load) | red | "The page could not load. Open the site in Safari." | "Open in Safari", "Close the pane" | placeholder |
@@ -705,8 +711,8 @@ same value with "Albatross does not keep this number here." under the field.
 Rules:
 
 - The pane never starts or ends a session. The run owns the session (PR #319).
-- "Take over" sends `cancel`. The done label and "Continue" send `resume`. "Check the page" calls
-  the verify route of the session. "Close the page" ends a user-owned session.
+- "Take over" sends `cancel`. The done label and "Continue" send `resume`, and the resumed run
+  checks the page itself. "Close the page" ends a user-owned session.
 - The small menu under "Larger view ⌄": "Larger view" (the sheet), "Open in its own window"
   (phase 2), "Copy the page address", divider, "Close the page".
 - The pane keeps its session while the user switches to details and back. The session follower
@@ -918,7 +924,7 @@ Window at 1440 by 900, sidebar 260, conversation 540, pane 616.
 │                      │                               │ Monday     │ │ │                             │ │
 │                      │                               │ class      │ │ │                             │ │
 │                      │                               └────────────┘ │ │                             │ │
-│                      │ Sent your note to the run                    │ │                             │ │
+│                      │ Noted. I will use the Monday class.          │ │                             │ │
 │                      │ Noted. I will use the Monday class.          │ └─────────────────────────────┘ │
 │                      │                                              │                                 │
 │                      │ ┌──────────────────────────────────────────┐ │                                 │
@@ -970,7 +976,7 @@ calendar note moves to the trailing edge of the option row.
 ├──────────────────────┼──────────────────────────────────────────────┼─────────────────────────────────┤
 │ …                    │ ┃ Your turn · Started by you · 9:52          │ ● Everything is filled in.      │
 │                      │ ┃ I filled in the form for Monday, October   │   Check it and pay the $70.     │
-│                      │ ┃ 19 with your name, email, phone, and       │  [Check the page]  [I paid]  ⌄  │
+│                      │ ┃ 19 with your name, email, phone, and       │                    [I paid]  ⌄  │
 │                      │ ┃ address.                                   ├─────────────────────────────────┤
 │                      │ ┃ Everything is filled in. Check it and pay  │ ┌─────────────────────────────┐ │
 │                      │ ┃ the $70.                                   │ │ Reserve a Spot              │ │
@@ -1112,7 +1118,7 @@ Shared lines are in the iOS note's copy table. These are Mac only.
 | Page toggle help | "Show the page (Control-Command-P)", "Hide the page", "Albatross is on the page", "Your turn on the page", "No page", "The page is in its own window" |
 | Details toggle help | "Show the details (Control-Command-I)", "Hide the details" |
 | Pane bar, Mac only | "Opening the shared browser…", "Albatross has not opened a page yet.", "The live view shows here when it does.", "The page is closed.", "Albatross opens a new page when a step needs one.", "You have the page. Press Continue when Albatross should go on.", "Verified. The step is checked off.", "Not yet: {reason}" |
-| Pane controls | "Take over", "Continue", "Check the page", "Larger view", "Open in its own window", "Copy the page address", "Close the page", "Close the pane", "Open in Safari" |
+| Pane controls | "Take over", "Continue", "Larger view", "Open in its own window", "Copy the page address", "Close the page", "Close the pane", "Open in Safari" |
 | Pane hint | "Albatross still has the page. Press Take over to act yourself." |
 | Page row, Mac | "Show the page", "Hide the page" |
 | Block context menu | "Copy the summary", "Copy the log", "Dismiss" |

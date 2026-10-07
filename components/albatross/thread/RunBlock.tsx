@@ -21,6 +21,7 @@ import {
 } from '@/lib/albatross/step-run-client';
 import {
   type FormAnswer,
+  PERSONAL_DETAIL_LABELS,
   type PersonalDetailView,
   type ThreadRunView,
   threadQuestionForm,
@@ -316,8 +317,10 @@ function RunQuestion({
   const receipt: FormReceipt | null = useMemo(() => {
     if (question.status === 'pending') return null;
     const savedLabels = savedLabelsFromAnswer(question.answer);
+    // The server names saved details by their catalog label ("Phone"), which
+    // can differ from the label the form gave the field ("Mobile phone").
     const keys = form.fields
-      .filter((field) => field.detailKey && savedLabels.includes(field.label))
+      .filter((field) => field.detailKey && savedLabels.includes(savedDetailLabel(field)))
       .map((field) => String(field.detailKey));
     return {
       values: null,
@@ -375,4 +378,12 @@ function ArtifactRow({
       </button>
     </li>
   );
+}
+
+/** The label the server uses when it saves this field's detail. */
+export function savedDetailLabel(field: { label: string; detailKey?: string }): string {
+  const key = field.detailKey;
+  if (key && key in PERSONAL_DETAIL_LABELS)
+    return PERSONAL_DETAIL_LABELS[key as keyof typeof PERSONAL_DETAIL_LABELS];
+  return field.label;
 }

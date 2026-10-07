@@ -6,7 +6,7 @@ export default function PrivacyPage() {
       <article className="mx-auto max-w-3xl space-y-5">
         <h1 className="text-2xl font-semibold">Privacy Policy</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
-          Effective June 2026. Updated September 29, 2026.
+          Effective June 2026. Updated October 7, 2026.
         </p>
         <p>
           {PRODUCT_NAME} is hosted email and personal operations software from {COMPANY_NAME}. This policy

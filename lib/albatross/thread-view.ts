@@ -631,7 +631,6 @@ export const PERSONAL_DETAILS_COPY = {
   note: 'A detail you give in a conversation or a form is saved with Undo. Delete one here at any time.',
   deleted: (label: string) => `${label} deleted`,
   saved: (label: string) => `${label} saved`,
-  restored: (label: string) => `${label} restored`,
   loading: 'Loading your details…',
   loadError: 'Could not load your details.',
   accountName: (name: string) => `Account name: ${name}`,
