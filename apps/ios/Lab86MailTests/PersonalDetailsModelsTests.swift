@@ -4,6 +4,7 @@ import Testing
 
 // Personal details on the wire: keys, values, the settings rows, the source
 // lines, and the save errors. Invented data only.
+@MainActor
 struct PersonalDetailsModelsTests {
     @Test func keysRoundTripThroughTheirWireWords() {
         for key in PersonalDetailKey.fixed {

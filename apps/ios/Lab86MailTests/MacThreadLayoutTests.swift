@@ -8,6 +8,7 @@ import Testing
 // page, the View menu items, and the page sheet of a narrow window. The
 // shared thread rules are in RunBlockPresentationTests; these are the Mac
 // additions.
+@MainActor
 struct MacThreadLayoutTests {
     // MARK: - Room
 

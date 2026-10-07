@@ -5,6 +5,7 @@ import Testing
 // The thread contract on the wire: form questions, Work questions, runs with
 // their questions, the canonical session id, and the `step_run` shape. The
 // contract is lib/albatross/thread-contract.ts.
+@MainActor
 struct ThreadModelsTests {
     private static let formJSON: JSONValue = .object([
         "title": .string("Which class?"),

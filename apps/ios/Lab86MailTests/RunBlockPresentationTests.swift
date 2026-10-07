@@ -5,6 +5,7 @@ import Testing
 // The thread's pure rules: the block each run state draws and its words
 // (docs/albatross-thread.md, decision 6), the thread state and its plan
 // line, the composer placeholder, the jump pill, and the step words.
+@MainActor
 struct RunBlockPresentationTests {
     private static func run(
         state: StepRunView.State,
