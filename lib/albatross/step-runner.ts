@@ -201,6 +201,13 @@ export function normalizeHandoff(
   context: { artifacts: RunArtifact[]; sessionId?: string | null; questionId?: string | null },
 ): SettleInput {
   const next = handoff.next ? { ...handoff.next } : undefined;
+  // Models fill optional fields with empty strings; an empty target is no target.
+  if (next?.target) {
+    const target = Object.fromEntries(
+      Object.entries(next.target).filter(([, value]) => typeof value !== 'string' || value.trim()),
+    ) as NonNullable<typeof next.target>;
+    next.target = target.id || target.url ? target : undefined;
+  }
   if (next && !next.target) {
     const find = (kind: RunArtifact['kind']) =>
       [...context.artifacts].reverse().find((artifact) => artifact.kind === kind);

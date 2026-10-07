@@ -620,6 +620,36 @@ describe('runner helpers', () => {
         { artifacts, sessionId: 'bb' },
       ).next?.target,
     ).toEqual({ kind: 'session', id: 'bb' });
+    expect(
+      normalizeHandoff(
+        {
+          outcome: 'ready_for_you',
+          summary: 's',
+          next: {
+            kind: 'review',
+            label: 'Read result',
+            detail: 'd',
+            target: { kind: 'url', url: 'https://x.example', accountId: '' },
+          },
+        },
+        { artifacts },
+      ).next?.target,
+    ).toEqual({ kind: 'url', url: 'https://x.example' });
+    expect(
+      normalizeHandoff(
+        {
+          outcome: 'ready_for_you',
+          summary: 's',
+          next: {
+            kind: 'review_document',
+            label: 'Open',
+            detail: 'd',
+            target: { kind: 'document', id: ' ' },
+          },
+        },
+        { artifacts },
+      ).next?.target,
+    ).toEqual({ kind: 'document', id: 'doc', url: '/documents/doc' });
     expect(normalizeHandoff({ outcome: 'done', summary: 's' }, { artifacts })).toEqual({
       outcome: 'done',
       summary: 's',
