@@ -32,7 +32,8 @@ describe('native tool grammar', () => {
   test('every tool the native grammar names exists for the native agent', () => {
     for (const platform of ['ios', 'macos'] as const) {
       const lifted = new Set(
-        Object.keys(liftToolsForAgent('b', 'UTC', undefined, { clientPlatform: platform })),
+        // The native apps send the ask_form capability (AssistantChatModel.requestBody).
+        Object.keys(liftToolsForAgent('b', 'UTC', undefined, { clientPlatform: platform, askForm: true })),
       );
       expect(names.filter((name) => !TOOLS[name] && !lifted.has(name))).toEqual([]);
     }
