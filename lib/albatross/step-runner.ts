@@ -396,7 +396,7 @@ export async function runStepRun(
         try {
           session = await deps.createBrowserSession(fetch, options);
         } catch (error) {
-          await deps.releaseWriter(userId, options);
+          await deps.releaseWriter(userId, options).catch(() => undefined);
           throw error;
         }
         try {
@@ -413,7 +413,7 @@ export async function runStepRun(
           });
         } catch (error) {
           await deps.releaseBrowserSession(session.sessionId).catch(() => undefined);
-          await deps.releaseWriter(userId, options);
+          await deps.releaseWriter(userId, options).catch(() => undefined);
           throw error;
         }
         sessionId = session.sessionId;

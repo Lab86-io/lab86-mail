@@ -117,6 +117,18 @@ describe('work session route: review round two', () => {
     expect(deps.wait).toHaveBeenCalledWith(2_000);
   });
 
+  test('a cleanup error never hides the start error', async () => {
+    const { deps } = makeDeps({
+      bindWriter: mock(async () => false) as any,
+      releaseWriter: mock(async () => {
+        throw new Error('cleanup failed');
+      }) as any,
+    });
+    const response = await createWorkSessionPost(deps as any)(start(), context);
+    expect(response.status).toBe(500);
+    expect(deps.releaseBrowserSession).toHaveBeenCalledWith('bb-1');
+  });
+
   test('a failed bind or ledger write rolls the new browser back', async () => {
     const unbound = makeDeps({ bindWriter: mock(async () => false) as any });
     expect((await createWorkSessionPost(unbound.deps as any)(start(), context)).status).toBe(500);

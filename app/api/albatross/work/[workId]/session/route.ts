@@ -156,7 +156,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
         try {
           session = await deps.createBrowserSession(fetch, options);
         } catch (error) {
-          await deps.releaseWriter(userId, options);
+          await deps.releaseWriter(userId, options).catch(() => undefined);
           throw error;
         }
         // Roll back on any later failure: an unbound writer place, or a
@@ -175,7 +175,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           });
         } catch (error) {
           await deps.releaseBrowserSession(session.sessionId).catch(() => undefined);
-          await deps.releaseWriter(userId, options);
+          await deps.releaseWriter(userId, options).catch(() => undefined);
           throw error;
         }
         const targetUrl = step?.url || null;
