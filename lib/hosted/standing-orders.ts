@@ -497,6 +497,22 @@ export async function pausedAssistantRisks(
   }
 }
 
+/**
+ * The paused risk classes for background writers (plan apply, step runs). A
+ * failed read throws: unlike chat, no person sees an approval card here, so
+ * an unknown switch must stop the write, not allow it.
+ */
+export async function pausedAssistantRisksStrict(
+  userId: string,
+  read?: (userId: string) => Promise<StandingOrderSwitches>,
+): Promise<Set<ToolRisk>> {
+  const switches = await loadStandingOrderSwitches(userId, read);
+  const paused = new Set<ToolRisk>();
+  for (const risk of ['write_self', 'reach_person', 'destructive'] as const)
+    if (switches[`risk:${risk}`]) paused.add(risk);
+  return paused;
+}
+
 /** True when the user paused the morning Brief, the mail watches, or automatic step runs. A failed read runs them. */
 export async function isStandingOrderPaused(
   userId: string,

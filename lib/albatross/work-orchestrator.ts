@@ -1,7 +1,7 @@
 import type { ToolRisk } from '../ai/approval';
 import { newOperationBatchId } from '../ai/operations';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
-import { pausedAssistantRisks } from '../hosted/standing-orders';
+import { pausedAssistantRisksStrict } from '../hosted/standing-orders';
 import { albatrossApplyIntentPlan } from '../tools/albatross';
 import { invokeTool } from '../tools/registry';
 import type { generateAreaLivingBrief } from './area-living-brief';
@@ -26,7 +26,8 @@ const defaultWorkOrchestratorDependencies: WorkOrchestratorDependencies = {
   generateIntentPlan,
   invokeTool,
   newOperationBatchId,
-  pausedRisks: (userId) => pausedAssistantRisks(userId),
+  // A failed read throws, so advanceWork takes its error path and applies nothing.
+  pausedRisks: (userId) => pausedAssistantRisksStrict(userId),
   generateAreaLivingBrief: async ({ userId, areaId }) => {
     const { enqueueBriefJob } = await import('../mail/brief-jobs');
     return enqueueBriefJob({ userId, kind: 'area', areaId, force: false });

@@ -29,13 +29,18 @@ import { describeModelError, redactModelErrorMessage } from '../ai/log-error';
 import { liftToolsForAgent } from '../ai/loop';
 import { BriefBudgetExhaustedError, BriefEditionMeter, runWithBriefMeter } from '../brief/budget';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
-import { pausedAssistantRisks } from '../hosted/standing-orders';
+import { pausedAssistantRisksStrict } from '../hosted/standing-orders';
 import { resolveBriefTimezone } from '../mail/brief-timezone';
 import { dispatchNativeNotification } from '../notifications/native-delivery';
 import { truncateText } from '../shared/text';
 import { AgentBrowser, type AgentConnector, playwrightAgentConnector } from './browser-agent';
 import { bindSessionWriter, releaseSessionWriter, sessionOptionsForUser } from './browser-contexts';
-import { browserSessionsConfigured, createBrowserSession, sessionConnectUrl } from './browser-session';
+import {
+  browserSessionsConfigured,
+  createBrowserSession,
+  releaseBrowserSession,
+  sessionConnectUrl,
+} from './browser-session';
 import { evidenceSatisfies } from './evidence-gate';
 import { completeWorkStep } from './step-execution';
 import {
@@ -104,12 +109,13 @@ export interface StepRunnerDependencies {
   resolveAgentRuntimes: typeof resolveAgentRuntimes;
   generateText: typeof generateText;
   liftTools: typeof liftToolsForAgent;
-  pausedRisks: typeof pausedAssistantRisks;
+  pausedRisks: typeof pausedAssistantRisksStrict;
   resolveTimezone: typeof resolveBriefTimezone;
   evidenceSatisfies: typeof evidenceSatisfies;
   completeWorkStep: typeof completeWorkStep;
   browserConfigured: typeof browserSessionsConfigured;
   createBrowserSession: typeof createBrowserSession;
+  releaseBrowserSession: typeof releaseBrowserSession;
   sessionOptions: typeof sessionOptionsForUser;
   bindWriter: typeof bindSessionWriter;
   releaseWriter: typeof releaseSessionWriter;
@@ -128,12 +134,14 @@ const defaults: StepRunnerDependencies = {
   resolveAgentRuntimes,
   generateText,
   liftTools: liftToolsForAgent,
-  pausedRisks: pausedAssistantRisks,
+  // A failed read fails the run: a background writer never guesses a switch.
+  pausedRisks: pausedAssistantRisksStrict,
   resolveTimezone: resolveBriefTimezone,
   evidenceSatisfies,
   completeWorkStep,
   browserConfigured: browserSessionsConfigured,
   createBrowserSession,
+  releaseBrowserSession,
   sessionOptions: (userId) => sessionOptionsForUser(userId),
   bindWriter: (userId, options, sessionId) => bindSessionWriter(userId, options, sessionId),
   releaseWriter: (userId, options) => releaseSessionWriter(userId, options),
@@ -378,8 +386,10 @@ export async function runStepRun(
     const paused = await deps.pausedRisks(userId);
     const lifted = deps.liftTools(runId, timezone, undefined, { clientPlatform: 'ios', pausedRisks: paused });
 
-    const openBrowser = async (): Promise<AgentBrowser> => {
-      if (browser) return browser;
+    // One open for the whole run: parallel browser calls in one model step
+    // share the same promise instead of each starting a session.
+    let opening: Promise<AgentBrowser> | null = null;
+    const startBrowser = async (): Promise<AgentBrowser> => {
       if (!sessionId) {
         const options = await deps.sessionOptions(userId);
         let session: Awaited<ReturnType<typeof deps.createBrowserSession>>;
@@ -389,16 +399,23 @@ export async function runStepRun(
           await deps.releaseWriter(userId, options);
           throw error;
         }
-        await deps.bindWriter(userId, options, session.sessionId);
-        await deps.convexMutation(api.albatrossBrowserSessions.openSession, {
-          userId,
-          workId: run.workId,
-          stepKey: run.stepKey,
-          stepIdentity: run.stepIdentity,
-          sessionId: session.sessionId,
-          liveViewUrl: session.liveViewUrl,
-          replayUrl: session.replayUrl,
-        });
+        try {
+          if (!(await deps.bindWriter(userId, options, session.sessionId)))
+            throw new Error('The saved sign-in place could not be bound.');
+          await deps.convexMutation(api.albatrossBrowserSessions.openSession, {
+            userId,
+            workId: run.workId,
+            stepKey: run.stepKey,
+            stepIdentity: run.stepIdentity,
+            sessionId: session.sessionId,
+            liveViewUrl: session.liveViewUrl,
+            replayUrl: session.replayUrl,
+          });
+        } catch (error) {
+          await deps.releaseBrowserSession(session.sessionId).catch(() => undefined);
+          await deps.releaseWriter(userId, options);
+          throw error;
+        }
         sessionId = session.sessionId;
         await deps.convexMutation(api.albatrossStepRuns.progress, { ...fence, browserSessionId: sessionId });
       }
@@ -408,6 +425,14 @@ export async function runStepRun(
       browser = new AgentBrowser(page);
       usedPage = true;
       return browser;
+    };
+    const openBrowser = (): Promise<AgentBrowser> => {
+      if (browser) return Promise.resolve(browser);
+      opening ??= startBrowser().catch((error) => {
+        opening = null;
+        throw error;
+      });
+      return opening;
     };
 
     const tools = buildRunnerTools(lifted, {
@@ -542,10 +567,25 @@ export async function runStepRun(
 
     // A cancel or a lost lease shows only at the next heartbeat. Ask now, before
     // anything checks the step off or tells the user about it.
-    const stillOwned = await deps
-      .convexMutation<boolean>(api.albatrossStepRuns.heartbeat, fence)
-      .catch(() => false);
-    if (!stillOwned) throw new RunCancelled();
+    // false means stopped or lost; null means the check itself failed twice.
+    const heartbeatOnce = () => deps.convexMutation<boolean>(api.albatrossStepRuns.heartbeat, fence);
+    const ownership: boolean | null = await heartbeatOnce()
+      .catch(() => heartbeatOnce())
+      .catch(() => null);
+    if (ownership === false) throw new RunCancelled();
+    // Ownership unknown: check nothing off and tell nobody. A done claim
+    // waits for the user; settle is fenced, so it decides who owns the run.
+    if (ownership === null && settled.outcome === 'done') {
+      settled = {
+        outcome: 'ready_for_you',
+        summary: settled.summary,
+        next: {
+          kind: 'review',
+          label: 'Check the result',
+          detail: 'I think the step is done. Check it, then mark the step done.',
+        },
+      };
+    }
     if (settled.outcome === 'done') {
       settled = await proveDone({
         deps,
@@ -570,11 +610,12 @@ export async function runStepRun(
       );
     }
     const outcome = await settle(settled);
-    if (outcome?.state) await notifyHandoff(deps, userId, run, settled, deps.now() - startedAt);
+    if (outcome?.state && ownership) await notifyHandoff(deps, userId, run, settled, deps.now() - startedAt);
     return outcome;
   } catch (error) {
     if (cancel.signal.aborted || error instanceof RunCancelled) {
-      // The user stopped the run; the cancel already closed the row. The page is theirs.
+      // The user stopped the run (the cancel closed the row), or the lease
+      // moved to another attempt. The page is the user's either way.
       await setSessionStatus('user', 'You have the page.');
       return { state: 'cancelled' };
     }

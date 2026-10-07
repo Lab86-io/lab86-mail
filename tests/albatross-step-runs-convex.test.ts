@@ -520,15 +520,19 @@ describe('saved sign-ins', () => {
     expect(
       await t.mutation(api.albatrossStepRuns.saveBrowserContext, { ...caller, contextId: 'ctx-2' }),
     ).toEqual({
-      contextId: 'ctx-2',
+      // Two first sessions raced: the first saved context stays, and the
+      // other is recorded for deletion so no cookies stay without a record.
+      contextId: 'ctx-1',
       created: false,
     });
+    expect(await t.query(internal.albatrossStepRuns.pendingContextDeletions, {})).toEqual(['ctx-2']);
     expect(await asUser.query(api.albatrossStepRuns.browserContext, {})).toMatchObject({
-      contextId: 'ctx-2',
+      contextId: 'ctx-1',
     });
     expect(await asUser.mutation(api.albatrossStepRuns.forgetBrowserContext, {})).toEqual({
-      contextIds: ['ctx-2'],
+      contextIds: ['ctx-1'],
     });
+    expect(await t.query(internal.albatrossStepRuns.pendingContextDeletions, {})).toEqual(['ctx-2', 'ctx-1']);
     expect(await asUser.query(api.albatrossStepRuns.browserContext, {})).toBeNull();
     await expect(t.query(api.albatrossStepRuns.browserContext, {})).rejects.toThrow('Not authenticated');
   });

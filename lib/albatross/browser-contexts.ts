@@ -82,16 +82,19 @@ export async function bindSessionWriter(
   options: SessionStartOptions,
   sessionId: string,
   overrides: Partial<BrowserContextDependencies> = {},
-) {
-  if (!options.writerToken) return;
+): Promise<boolean> {
+  if (!options.writerToken) return true;
   const deps = { ...defaults, ...overrides };
-  await deps
-    .convexMutation(api.albatrossStepRuns.bindContextWriter, {
+  // An unbound writer place could never be freed by its session's end, so
+  // the caller rolls the session back when this is false.
+  return deps
+    .convexMutation<boolean>(api.albatrossStepRuns.bindContextWriter, {
       userId,
       token: options.writerToken,
       sessionId,
     })
-    .catch(() => undefined);
+    .then((bound) => bound === true)
+    .catch(() => false);
 }
 
 /** The session did not start: give the writer place back at once. */

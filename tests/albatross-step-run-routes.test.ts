@@ -54,6 +54,25 @@ describe('POST /api/albatross/work/[workId]/run', () => {
     return { deps, mutations };
   }
 
+  test('a start or a resume that queued nothing answers 409 with a reason', async () => {
+    const { deps } = makeDeps({
+      startStepRun: mock(async () => ({ runId: null, created: false, reason: 'no_step' })) as any,
+      resumeStepRun: mock(async () => ({ runId: null, created: false })) as any,
+    });
+    const started = await createStepRunPost(deps)(request({ action: 'start', stepKey: 'step-1' }), context);
+    expect(started.status).toBe(409);
+    expect(await started.json()).toEqual({
+      ok: false,
+      error: 'Albatross could not start on this step now. Try again.',
+    });
+    const resumed = await createStepRunPost(deps)(request({ action: 'resume', runId: 'run-1' }), context);
+    expect(resumed.status).toBe(409);
+    expect(await resumed.json()).toEqual({
+      ok: false,
+      error: 'Albatross could not continue this step now. Try again.',
+    });
+  });
+
   test('start runs the step with the user trigger', async () => {
     const { deps } = makeDeps();
     const response = await createStepRunPost(deps)(

@@ -57,8 +57,9 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       browserSessionsConfigured: () => true,
       createBrowserSession: mock(async () => sessionInfo) as any,
       sessionOptions: mock(async () => ({ contextId: 'ctx-1', persist: true, writerToken: 'w-1' })) as any,
-      bindWriter: mock(async () => undefined) as any,
+      bindWriter: mock(async () => true) as any,
       releaseWriter: mock(async () => undefined) as any,
+      wait: mock(async () => undefined) as any,
       connectUrl: (sessionId: string) => `wss://connect.example/${sessionId}?key`,
       releaseBrowserSession: mock(async () => undefined) as any,
       navigateSession: mock(async () => undefined) as any,
@@ -77,6 +78,62 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     },
   };
 }
+
+describe('work session route: review round two', () => {
+  const start = () => sessionRequest({ action: 'start', stepKey: step.key });
+  const withPrevious = (overrides: Record<string, unknown> = {}) => {
+    const statuses: string[] = [];
+    const made = makeDeps({
+      convexQuery: mock(async (fn: any, args: any) => {
+        if (isWorkDetail(fn)) return args.workId === 'work-1' ? detail : null;
+        if (isActiveSession(fn)) return { sessionId: 'bb-old' };
+        return null;
+      }) as any,
+      convexMutation: mock(async (fn: any, args: any) => {
+        if (getFunctionName(fn) === 'albatrossBrowserSessions:setSessionStatus')
+          statuses.push(`${args.sessionId}:${args.status}`);
+        return undefined;
+      }) as any,
+      ...overrides,
+    });
+    return { ...made, statuses };
+  };
+
+  test('a previous browser that did not close keeps its row and its writer place', async () => {
+    const { deps, statuses } = withPrevious({
+      releaseBrowserSession: mock(async () => {
+        throw new Error('Browserbase is down');
+      }) as any,
+    });
+    await createWorkSessionPost(deps as any)(start(), context);
+    expect(statuses.filter((entry) => entry.startsWith('bb-old'))).toEqual([]);
+    expect(deps.wait).not.toHaveBeenCalled();
+  });
+
+  test('a closed previous browser ends its row and waits for the context to save', async () => {
+    const { deps, statuses } = withPrevious();
+    await createWorkSessionPost(deps as any)(start(), context);
+    expect(statuses).toContain('bb-old:ended');
+    expect(deps.wait).toHaveBeenCalledWith(2_000);
+  });
+
+  test('a failed bind or ledger write rolls the new browser back', async () => {
+    const unbound = makeDeps({ bindWriter: mock(async () => false) as any });
+    expect((await createWorkSessionPost(unbound.deps as any)(start(), context)).status).toBe(500);
+    expect(unbound.deps.releaseBrowserSession).toHaveBeenCalledWith('bb-1');
+    expect(unbound.deps.releaseWriter).toHaveBeenCalled();
+
+    const noLedger = makeDeps({
+      convexMutation: mock(async (fn: any) => {
+        if (getFunctionName(fn) === 'albatrossBrowserSessions:openSession') throw new Error('Convex down');
+        return undefined;
+      }) as any,
+    });
+    expect((await createWorkSessionPost(noLedger.deps as any)(start(), context)).status).toBe(500);
+    expect(noLedger.deps.releaseBrowserSession).toHaveBeenCalledWith('bb-1');
+    expect(noLedger.deps.releaseWriter).toHaveBeenCalled();
+  });
+});
 
 describe('work session route', () => {
   test('start opens the session with the saved sign-in context', async () => {

@@ -719,11 +719,12 @@ export const saveBrowserContext = mutation({
     const ts = now();
     const row = await contextRow(ctx, userId);
     if (row) {
-      await ctx.db.patch(row._id, {
-        lastUsedAt: ts,
-        ...(row.contextId === args.contextId ? {} : { contextId: args.contextId }),
-      });
-      return { contextId: args.contextId, created: false };
+      await ctx.db.patch(row._id, { lastUsedAt: ts });
+      // Two first sessions can create two contexts at once. The first saved
+      // one stays; the other is recorded for deletion, so no cookies of the
+      // user stay at Browserbase without a record.
+      if (row.contextId !== args.contextId) await recordContextDeletion(ctx, args.contextId);
+      return { contextId: row.contextId, created: false };
     }
     await ctx.db.insert('albatrossBrowserContexts', {
       userId,
@@ -734,6 +735,15 @@ export const saveBrowserContext = mutation({
     return { contextId: args.contextId, created: true };
   },
 });
+
+async function recordContextDeletion(ctx: MutationCtx, contextId: string) {
+  const pending = await ctx.db
+    .query('albatrossContextDeletions')
+    .withIndex('by_context', (q) => q.eq('contextId', contextId))
+    .first();
+  if (!pending)
+    await ctx.db.insert('albatrossContextDeletions', { contextId, requestedAt: now(), attempts: 0 });
+}
 
 /**
  * Claim the one writer place of the user's context. Atomic: of two sessions
@@ -813,18 +823,8 @@ export const forgetBrowserContext = mutation({
       .query('albatrossBrowserContexts')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .take(5);
-    const ts = now();
     for (const row of rows) {
-      const pending = await ctx.db
-        .query('albatrossContextDeletions')
-        .withIndex('by_context', (q) => q.eq('contextId', row.contextId))
-        .first();
-      if (!pending)
-        await ctx.db.insert('albatrossContextDeletions', {
-          contextId: row.contextId,
-          requestedAt: ts,
-          attempts: 0,
-        });
+      await recordContextDeletion(ctx, row.contextId);
       await ctx.db.delete(row._id);
     }
     return { contextIds: rows.map((row) => row.contextId) };

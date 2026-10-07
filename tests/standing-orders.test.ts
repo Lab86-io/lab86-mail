@@ -25,6 +25,7 @@ import {
   loadStandingOrderSwitches,
   normalizeStandingOrderSwitches,
   pausedAssistantRisks,
+  pausedAssistantRisksStrict,
   resetStandingOrderCacheForTest,
   type StandingOrderDependencies,
   StandingOrderError,
@@ -500,6 +501,15 @@ describe('enforcement reads', () => {
     expect((await pausedAssistantRisks('u2', failing)).size).toBe(0);
     expect(await isStandingOrderPaused('u3', 'brief', failing)).toBe(false);
     expect(await isStandingOrderPaused('u4', 'watches', async () => ({ ...NONE, watches: true }))).toBe(true);
+  });
+
+  test('background writers read the switches strictly: a failed read throws', async () => {
+    const read = async () => ({ ...NONE, 'risk:write_self': true });
+    expect([...(await pausedAssistantRisksStrict('s1', read))]).toEqual(['write_self']);
+    const failing = async () => {
+      throw new Error('offline');
+    };
+    await expect(pausedAssistantRisksStrict('s2', failing)).rejects.toThrow('offline');
   });
 
   test('the default store round-trips the switch document', async () => {

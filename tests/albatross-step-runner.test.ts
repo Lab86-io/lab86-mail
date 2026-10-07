@@ -182,8 +182,9 @@ function harness(
       replayUrl: 'https://replay',
     })) as any,
     sessionOptions: (async () => ({ contextId: 'ctx-1', persist: true, writerToken: 'writer-1' })) as any,
-    bindWriter: mock(async () => undefined) as any,
+    bindWriter: mock(async () => true) as any,
     releaseWriter: mock(async () => undefined) as any,
+    releaseBrowserSession: mock(async () => undefined) as any,
     connectUrl: (id: string) => `wss://connect/${id}`,
     connector,
     notify: mock(async () => ({ ok: true })),
@@ -733,6 +734,102 @@ describe('review fixes', () => {
       writerToken: 'writer-1',
     });
     expect(h.deps.bindWriter).not.toHaveBeenCalled();
+  });
+});
+
+describe('review round two', () => {
+  test('parallel browser calls in one step share one session', async () => {
+    let sessions = 0;
+    const h = harness(
+      async (opts) => {
+        const [a, b] = await Promise.all([
+          opts.tools.browser_open.execute({ url: 'https://venue.example/a' }),
+          opts.tools.browser_open.execute({ url: 'https://venue.example/b' }),
+        ]);
+        expect(a).toMatchObject({ ok: true });
+        expect(b).toMatchObject({ ok: true });
+        await opts.tools.step_handoff.execute({
+          outcome: 'your_turn',
+          summary: 'I opened the pages.',
+          next: { kind: 'sign_in', label: 'Sign in', detail: 'Sign in, then press Continue.' },
+        });
+        return { text: '', usage };
+      },
+      { browser: true },
+    );
+    h.deps.createBrowserSession = (async () => {
+      sessions += 1;
+      return {
+        sessionId: `bb-${sessions}`,
+        connectUrl: 'wss://x',
+        liveViewUrl: 'https://live',
+        replayUrl: 'r',
+      };
+    }) as any;
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(sessions).toBe(1);
+    expect(h.calls('albatrossBrowserSessions:openSession')).toHaveLength(1);
+  });
+
+  test('a failed bind rolls the new browser back', async () => {
+    const h = harness(
+      async (opts) => {
+        expect(await opts.tools.browser_open.execute({ url: 'https://venue.example/a' })).toMatchObject({
+          ok: false,
+        });
+        await opts.tools.step_handoff.execute({
+          outcome: 'your_turn',
+          summary: 'The browser did not open.',
+          next: { kind: 'do_offline', label: 'Book it', detail: 'Book it yourself.' },
+        });
+        return { text: '', usage };
+      },
+      { browser: true },
+    );
+    h.deps.bindWriter = mock(async () => false) as any;
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.deps.releaseBrowserSession).toHaveBeenCalledWith('bb-1');
+    expect(h.deps.releaseWriter).toHaveBeenCalled();
+    expect(h.calls('albatrossBrowserSessions:openSession')).toEqual([]);
+  });
+
+  test('a heartbeat that fails twice is not a cancel: nothing is checked off, the handoff is kept', async () => {
+    const h = harness(
+      async (opts) => {
+        await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'I wrote it.' });
+        return { text: '', usage };
+      },
+      { run: { trigger: 'conductor' } },
+    );
+    const base = h.deps.convexMutation!;
+    h.deps.convexMutation = (async (fn: any, args: any) => {
+      if (getFunctionName(fn) === 'albatrossStepRuns:heartbeat') throw new Error('Convex blinked');
+      return (base as any)(fn, args);
+    }) as any;
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.deps.completeWorkStep).not.toHaveBeenCalled();
+    expect(h.calls('albatrossNotifications:queueStepRunHandoff')).toEqual([]);
+    expect(h.settled()).toMatchObject({ outcome: 'ready_for_you', next: { label: 'Check the result' } });
+  });
+
+  test('one failed heartbeat call is retried', async () => {
+    const h = harness(async (opts) => {
+      await opts.tools.document_create.execute({ title: 'Proposal' });
+      await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'I wrote it.' });
+      return { text: '', usage };
+    });
+    const base = h.deps.convexMutation!;
+    let failures = 0;
+    h.deps.convexMutation = (async (fn: any, args: any) => {
+      if (getFunctionName(fn) === 'albatrossStepRuns:heartbeat' && failures === 0) {
+        failures += 1;
+        throw new Error('Convex blinked');
+      }
+      return (base as any)(fn, args);
+    }) as any;
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.deps.completeWorkStep).toHaveBeenCalled();
+    expect(h.settled()).toMatchObject({ outcome: 'done' });
   });
 });
 

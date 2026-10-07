@@ -114,6 +114,18 @@ describe('sessionOptionsForUser', () => {
 });
 
 describe('the writer place', () => {
+  test('bind answers whether the place is bound', async () => {
+    const { deps } = makeDeps();
+    expect(await bindSessionWriter('user-1', { persist: false }, 'bb-1', deps)).toBe(true);
+    expect(await bindSessionWriter('user-1', { writerToken: 't' }, 'bb-1', deps)).toBe(true);
+    deps.convexMutation = mock(async () => false) as any;
+    expect(await bindSessionWriter('user-1', { writerToken: 't' }, 'bb-1', deps)).toBe(false);
+    deps.convexMutation = mock(async () => {
+      throw new Error('Convex down');
+    }) as any;
+    expect(await bindSessionWriter('user-1', { writerToken: 't' }, 'bb-1', deps)).toBe(false);
+  });
+
   test('bind and release act only for a session that holds the place', async () => {
     const { deps, mutations } = makeDeps();
     await bindSessionWriter('user-1', { contextId: 'ctx-1', persist: false }, 'bb-1', deps);

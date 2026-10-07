@@ -53,12 +53,22 @@ export function createStepRunPost(overrides: Partial<StepRunRouteDependencies> =
         const stepKey = text(body?.stepKey);
         if (!stepKey) return Response.json({ ok: false, error: 'stepKey is required.' }, { status: 400 });
         const result = await deps.startStepRun({ userId, workId, stepKey, trigger: 'user' });
+        if (!result.created || !result.runId)
+          return Response.json(
+            { ok: false, error: 'Albatross could not start on this step now. Try again.' },
+            { status: 409 },
+          );
         return Response.json({ ok: true, runId: result.runId });
       }
       if (action === 'resume') {
         const runId = text(body?.runId);
         if (!runId) return Response.json({ ok: false, error: 'runId is required.' }, { status: 400 });
         const result = await deps.resumeStepRun({ userId, workId, runId, note: text(body?.note, 2_000) });
+        if (!result.runId)
+          return Response.json(
+            { ok: false, error: 'Albatross could not continue this step now. Try again.' },
+            { status: 409 },
+          );
         return Response.json({ ok: true, runId: result.runId });
       }
       if (action === 'cancel' || action === 'dismiss') {

@@ -83,6 +83,32 @@ describe('advanceWork orchestration', () => {
     }
   });
 
+  test('a failed standing-order read applies nothing', async () => {
+    const state = harness({
+      intent: { _id: 'work_1', rawText: 'Ship', title: 'Ship', questions: [] },
+      plan: {
+        _id: 'plan_1',
+        status: 'ready',
+        outcome: 'Released',
+        digitalActions: [{ actionKey: 'step_1', kind: 'task', title: 'Deploy' }],
+        sourceRefs: [],
+      },
+    });
+    const restore = setWorkOrchestratorDependenciesForTest({
+      pausedRisks: async () => {
+        throw new Error('Convex down');
+      },
+    });
+    try {
+      await expect(advanceWork(input)).rejects.toThrow('Convex down');
+      expect(state.applyCalls()).toBe(0);
+      expect(state.mutations.at(-1)).toMatchObject({ agentState: 'error' });
+    } finally {
+      restore();
+      state.restore();
+    }
+  });
+
   test('a paused order for other risk classes still applies the plan', async () => {
     const state = harness(
       {

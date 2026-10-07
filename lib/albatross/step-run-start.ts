@@ -122,6 +122,8 @@ export async function resumeStepRun(
   if (missingWork) throw new StepRunStartError('Albatross Work not found.', 404);
   if (!step) throw new StepRunStartError('This step is no longer in the plan.', 404);
   if (step.done) throw new StepRunStartError('This step is already done.', 409);
+  // The plan may have changed since the handoff.
+  if (!stepAcceptsTrigger(step, 'resume')) throw new StepRunStartError('This step stays with you.', 403);
   const result = await deps.convexMutation<EnqueueResult>(api.albatrossStepRuns.enqueue, {
     userId: input.userId,
     workId: input.workId,

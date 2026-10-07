@@ -190,8 +190,12 @@ describe('enterMaySubmit', () => {
   test('search boxes and search-like names may submit', () => {
     expect(enterMaySubmit({ role: 'searchbox', name: '' })).toBe(true);
     expect(enterMaySubmit({ role: 'textbox', name: 'Find a store' })).toBe(true);
-    expect(enterMaySubmit({ role: 'textbox', name: 'ZIP code' })).toBe(true);
-    expect(enterMaySubmit({ role: 'combobox', name: 'City' })).toBe(true);
+  });
+
+  test('address fields may not submit: they sit in checkout forms too', () => {
+    expect(enterMaySubmit({ role: 'textbox', name: 'ZIP code' })).toBe(false);
+    expect(enterMaySubmit({ role: 'combobox', name: 'City' })).toBe(false);
+    expect(enterMaySubmit({ role: 'textbox', name: 'Search by ZIP code' })).toBe(true);
   });
 
   test('other fields and null may not submit', () => {

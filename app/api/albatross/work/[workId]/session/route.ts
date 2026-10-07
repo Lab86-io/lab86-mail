@@ -25,6 +25,9 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
+/** Browserbase advises a short wait after a persisted session closes. */
+const CONTEXT_SYNC_WAIT_MS = 2_000;
+
 interface WorkSessionDependencies {
   requireCurrentUser: typeof requireCurrentUser;
   enforceUserRateLimit: typeof enforceUserRateLimit;
@@ -35,6 +38,7 @@ interface WorkSessionDependencies {
   sessionOptions: typeof sessionOptionsForUser;
   bindWriter: typeof bindSessionWriter;
   releaseWriter: typeof releaseSessionWriter;
+  wait: (ms: number) => Promise<void>;
   connectUrl: (sessionId: string) => string;
   releaseBrowserSession: typeof releaseBrowserSession;
   navigateSession: typeof navigateSession;
@@ -55,6 +59,7 @@ const defaults: WorkSessionDependencies = {
   sessionOptions: (userId) => sessionOptionsForUser(userId),
   bindWriter: (userId, options, sessionId) => bindSessionWriter(userId, options, sessionId),
   releaseWriter: (userId, options) => releaseSessionWriter(userId, options),
+  wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   connectUrl: sessionConnectUrl,
   releaseBrowserSession,
   navigateSession,
@@ -125,16 +130,25 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           })
           .catch(() => null);
         if (previous?.sessionId) {
-          await deps.releaseBrowserSession(previous.sessionId).catch(() => undefined);
-          // End the old row first, so it frees the saved sign-in writer place
-          // that the new session claims next.
-          await deps
-            .convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
-              userId,
-              sessionId: previous.sessionId,
-              status: 'ended',
-            })
-            .catch(() => undefined);
+          const released = await deps
+            .releaseBrowserSession(previous.sessionId)
+            .then(() => true)
+            .catch(() => false);
+          // Only a browser that really ended frees its saved sign-in writer
+          // place. If the release failed, the old row keeps the place and the
+          // new session reads the sign-ins without saving.
+          if (released) {
+            await deps
+              .convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
+                userId,
+                sessionId: previous.sessionId,
+                status: 'ended',
+              })
+              .catch(() => undefined);
+            // Browserbase saves the context when the session closes; give it
+            // a moment before the next session loads it.
+            await deps.wait(CONTEXT_SYNC_WAIT_MS);
+          }
         }
         // Saved sign-ins: the session starts with the user's context.
         const options = await deps.sessionOptions(userId);
@@ -145,16 +159,25 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           await deps.releaseWriter(userId, options);
           throw error;
         }
-        await deps.bindWriter(userId, options, session.sessionId);
-        await deps.convexMutation(api.albatrossBrowserSessions.openSession, {
-          userId,
-          workId,
-          stepKey: step?.key,
-          stepIdentity: step?.identity,
-          sessionId: session.sessionId,
-          liveViewUrl: session.liveViewUrl,
-          replayUrl: session.replayUrl,
-        });
+        // Roll back on any later failure: an unbound writer place, or a
+        // session without a ledger row, could never be ended or freed.
+        try {
+          if (!(await deps.bindWriter(userId, options, session.sessionId)))
+            throw new Error('The saved sign-in place could not be bound.');
+          await deps.convexMutation(api.albatrossBrowserSessions.openSession, {
+            userId,
+            workId,
+            stepKey: step?.key,
+            stepIdentity: step?.identity,
+            sessionId: session.sessionId,
+            liveViewUrl: session.liveViewUrl,
+            replayUrl: session.replayUrl,
+          });
+        } catch (error) {
+          await deps.releaseBrowserSession(session.sessionId).catch(() => undefined);
+          await deps.releaseWriter(userId, options);
+          throw error;
+        }
         const targetUrl = step?.url || null;
         deps.schedule(async () => {
           try {

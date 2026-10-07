@@ -87,7 +87,9 @@ export function isFinalAction(element: SnapshotElement | null): boolean {
 export function enterMaySubmit(element: SnapshotElement | null): boolean {
   if (!element) return false;
   if (element.role === 'searchbox') return true;
-  return /search|find|look ?up|zip|postal|city|location|query|keyword/i.test(element.name);
+  // Address names (ZIP, city) are checkout and application fields too, where
+  // Enter submits the whole form. A finder has a Search or Find control.
+  return /search|find|look ?up|query|keyword/i.test(element.name);
 }
 
 /** Only web pages: no file, data, javascript, or browser-internal URLs. */

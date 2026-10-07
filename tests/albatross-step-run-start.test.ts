@@ -325,6 +325,16 @@ describe('resumeStepRun', () => {
     ).toEqual({ status: 409, message: 'This step is already done.' });
   });
 
+  test('a step that now stays with the user is 403', async () => {
+    const offline = makeDeps({
+      run: parent,
+      details: { 'work-1': detailFor([{ ...agentStep, stepMode: 'you_do_offline' }]) },
+    });
+    expect(
+      await startError(resumeStepRun({ userId: 'user-1', workId: 'work-1', runId: 'run-1' }, offline.deps)),
+    ).toEqual({ status: 403, message: 'This step stays with you.' });
+  });
+
   test('passes the parent run, the trimmed note, and the browser session', async () => {
     const { deps, enqueued } = makeDeps({
       run: parent,
