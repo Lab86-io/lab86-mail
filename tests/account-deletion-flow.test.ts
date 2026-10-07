@@ -41,7 +41,7 @@ describe('deleteUserData', () => {
     const deps = deletionDeps({
       forgetSavedSignIns: mock(async () => {
         order.push('sign-ins');
-        return { forgotten: 1 };
+        return { forgotten: 1, pending: 1 };
       }),
       deleteUserCascade: mock(async () => {
         order.push('cascade');
@@ -49,7 +49,9 @@ describe('deleteUserData', () => {
       }),
     });
     const result = await deleteUserData('user_1', deps);
-    expect(result).toMatchObject({ ok: true, signIns: { ok: true } });
+    // A delete that Browserbase has not confirmed stays recorded outside the
+    // cascade, so the account deletion goes on and reports it as pending.
+    expect(result).toMatchObject({ ok: true, signIns: { ok: true, pending: 1 } });
     expect(order).toEqual(['sign-ins', 'cascade']);
 
     const failing = deletionDeps({

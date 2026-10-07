@@ -5,6 +5,7 @@ import {
   openWorkPage,
   performNextBehaviour,
   type StepRunNavigatorDeps,
+  webUrl,
 } from '../lib/albatross/step-run-navigation';
 
 function fakeDeps(drafts: any[] = []) {
@@ -100,6 +101,27 @@ describe('a document opens in Files', () => {
     expect(openDocumentPath(deps, null, 'doc 2')).toBe(true);
     expect(calls[2]).toEqual(['push', '/files/doc%202']);
     expect(openDocumentPath(deps, 'https://evil.example/x', null)).toBe(false);
+    // A protocol-relative path is another origin: it falls back to the id.
+    expect(openDocumentPath(deps, '//evil.example/x', null)).toBe(false);
+    expect(openDocumentPath(deps, '/\\evil.example/x', 'doc_3')).toBe(true);
+    expect(calls.at(-2)).toEqual(['push', '/files/doc_3']);
+  });
+});
+
+describe('only web pages open in a new window', () => {
+  test('webUrl keeps http and https and refuses everything else', () => {
+    expect(webUrl(' https://x.example/a ')).toBe('https://x.example/a');
+    expect(webUrl('http://x.example')).toBe('http://x.example');
+    expect(webUrl('javascript:alert(1)')).toBeNull();
+    expect(webUrl('data:text/html,hi')).toBeNull();
+    expect(webUrl('not a url')).toBeNull();
+    expect(webUrl(null)).toBeNull();
+  });
+
+  test('open_url refuses a script URL', async () => {
+    const { deps, calls } = fakeDeps();
+    expect(await performNextBehaviour({ kind: 'open_url', url: 'javascript:alert(1)' }, deps)).toBe(false);
+    expect(calls).toEqual([]);
   });
 });
 

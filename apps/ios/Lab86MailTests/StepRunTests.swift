@@ -59,6 +59,7 @@ struct StepRunTests {
     /// A run on the wire, in one state, for the card rules.
     private static func runJSON(
         id: String = "run_x",
+        stepKey: String = "step-letter",
         state: String,
         outcome: String? = nil,
         stoppedBy: String? = nil,
@@ -68,7 +69,7 @@ struct StepRunTests {
         var row: [String: JSONValue] = [
             "id": .string(id),
             "workId": .string("work_1"),
-            "stepKey": .string("step-letter"),
+            "stepKey": .string(stepKey),
             "stepTitle": .string("Send the dispute letter"),
             "state": .string(state),
             "trigger": .string("user"),
@@ -483,6 +484,17 @@ struct StepRunTests {
         #expect(next.execution.activeRun == nil)
         #expect(next.execution.currentStep?.run?.state == .cancelled)
         #expect(try Self.cardState(next) == .eligible)
+    }
+
+    @Test func anOpenRunOnAnotherStepLeavesThisStepQuiet() throws {
+        let subject = try Self.detail(
+            run: nil,
+            active: Self.runJSON(id: "run_9", stepKey: "step-else", state: "running"),
+            runnable: false
+        )
+        let state = try Self.cardState(subject)
+        #expect(state == .quiet)
+        #expect(state.hidesStepActions == false)
     }
 
     @Test func aRunOnAnotherStepLeavesTheActiveRunAlone() throws {

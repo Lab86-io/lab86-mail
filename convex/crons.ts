@@ -5,6 +5,8 @@ const crons = cronJobs();
 crons.interval('recover brief jobs', { minutes: 1 }, internal.briefJobs.recover, {});
 // Step runs: requeue lost leases and deliver due runs (convex/albatrossStepRuns.ts).
 crons.interval('recover step runs', { minutes: 1 }, internal.albatrossStepRuns.recover, {});
+// Saved sign-ins that still wait for their Browserbase delete.
+crons.interval('saved sign-in deletions', { hours: 1 }, internal.albatrossStepRuns.contextDeletionTick, {});
 // Durable cursors/leases make interrupted narrative runs resumable. No opted-in users = no work.
 crons.interval('shared narrative memory', { hours: 1 }, internal.narrative.tick, {});
 

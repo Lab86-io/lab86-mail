@@ -1,6 +1,10 @@
 import { after, type NextRequest } from 'next/server';
 import { describeModelError } from '@/lib/ai/log-error';
-import { sessionOptionsForUser } from '@/lib/albatross/browser-contexts';
+import {
+  bindSessionWriter,
+  releaseSessionWriter,
+  sessionOptionsForUser,
+} from '@/lib/albatross/browser-contexts';
 import {
   browserSessionsConfigured,
   createBrowserSession,
@@ -29,6 +33,8 @@ interface WorkSessionDependencies {
   browserSessionsConfigured: typeof browserSessionsConfigured;
   createBrowserSession: typeof createBrowserSession;
   sessionOptions: typeof sessionOptionsForUser;
+  bindWriter: typeof bindSessionWriter;
+  releaseWriter: typeof releaseSessionWriter;
   connectUrl: (sessionId: string) => string;
   releaseBrowserSession: typeof releaseBrowserSession;
   navigateSession: typeof navigateSession;
@@ -47,6 +53,8 @@ const defaults: WorkSessionDependencies = {
   browserSessionsConfigured,
   createBrowserSession,
   sessionOptions: (userId) => sessionOptionsForUser(userId),
+  bindWriter: (userId, options, sessionId) => bindSessionWriter(userId, options, sessionId),
+  releaseWriter: (userId, options) => releaseSessionWriter(userId, options),
   connectUrl: sessionConnectUrl,
   releaseBrowserSession,
   navigateSession,
@@ -118,9 +126,26 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           .catch(() => null);
         if (previous?.sessionId) {
           await deps.releaseBrowserSession(previous.sessionId).catch(() => undefined);
+          // End the old row first, so it frees the saved sign-in writer place
+          // that the new session claims next.
+          await deps
+            .convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
+              userId,
+              sessionId: previous.sessionId,
+              status: 'ended',
+            })
+            .catch(() => undefined);
         }
         // Saved sign-ins: the session starts with the user's context.
-        const session = await deps.createBrowserSession(fetch, await deps.sessionOptions(userId));
+        const options = await deps.sessionOptions(userId);
+        let session: Awaited<ReturnType<typeof deps.createBrowserSession>>;
+        try {
+          session = await deps.createBrowserSession(fetch, options);
+        } catch (error) {
+          await deps.releaseWriter(userId, options);
+          throw error;
+        }
+        await deps.bindWriter(userId, options, session.sessionId);
         await deps.convexMutation(api.albatrossBrowserSessions.openSession, {
           userId,
           workId,

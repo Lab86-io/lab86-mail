@@ -533,31 +533,148 @@ describe('saved sign-ins', () => {
     await expect(t.query(api.albatrossStepRuns.browserContext, {})).rejects.toThrow('Not authenticated');
   });
 
-  test('liveSessionCount counts only live, fresh sessions', async () => {
+  test('one writer at a time; an ended session frees the place', async () => {
     const t = harness();
+    await t.mutation(api.albatrossStepRuns.saveBrowserContext, { ...caller, contextId: 'ctx-1' });
+    const first = await t.mutation(api.albatrossStepRuns.claimContextWriter, { ...caller, token: 'a' });
+    expect(first).toEqual({ contextId: 'ctx-1', persist: true });
+    expect(await t.mutation(api.albatrossStepRuns.claimContextWriter, { ...caller, token: 'b' })).toEqual({
+      contextId: 'ctx-1',
+      persist: false,
+    });
+    expect(
+      await t.mutation(api.albatrossStepRuns.bindContextWriter, { ...caller, token: 'b', sessionId: 'x' }),
+    ).toBe(false);
+    expect(
+      await t.mutation(api.albatrossStepRuns.bindContextWriter, { ...caller, token: 'a', sessionId: 'bb-1' }),
+    ).toBe(true);
+    // The writer's session ends: the place is free for the next session.
     const now = Date.now();
-    await t.run(async (ctx) => {
-      const base = { userId, workId: 'w', liveViewUrl: 'l', replayUrl: 'r', updatedAt: now };
-      await ctx.db.insert('albatrossBrowserSessions', {
-        ...base,
-        sessionId: 'a',
+    await t.run((ctx) =>
+      ctx.db.insert('albatrossBrowserSessions', {
+        userId,
+        workId: 'w',
+        sessionId: 'bb-1',
+        liveViewUrl: 'l',
+        replayUrl: 'r',
         status: 'user',
         createdAt: now,
-      });
-      await ctx.db.insert('albatrossBrowserSessions', {
-        ...base,
-        sessionId: 'b',
-        status: 'ended',
-        createdAt: now,
-      });
-      await ctx.db.insert('albatrossBrowserSessions', {
-        ...base,
-        sessionId: 'c',
-        status: 'agent',
-        createdAt: 1,
-      });
+        updatedAt: now,
+      }),
+    );
+    await t.mutation(api.albatrossBrowserSessions.setSessionStatus, {
+      ...caller,
+      sessionId: 'bb-1',
+      status: 'ended',
     });
-    expect(await t.query(api.albatrossBrowserSessions.liveSessionCount, { ...caller })).toBe(1);
+    expect(await t.mutation(api.albatrossStepRuns.claimContextWriter, { ...caller, token: 'c' })).toEqual({
+      contextId: 'ctx-1',
+      persist: true,
+    });
+    // A session that did not start gives the place back.
+    expect(await t.mutation(api.albatrossStepRuns.releaseContextWriter, { ...caller, token: 'wrong' })).toBe(
+      false,
+    );
+    expect(await t.mutation(api.albatrossStepRuns.releaseContextWriter, { ...caller, token: 'c' })).toBe(
+      true,
+    );
+    // A new session for the same Work supersedes the old row and frees its place.
+    await t.mutation(api.albatrossStepRuns.claimContextWriter, { ...caller, token: 'd' });
+    await t.mutation(api.albatrossStepRuns.bindContextWriter, { ...caller, token: 'd', sessionId: 'bb-2' });
+    await t.mutation(api.albatrossBrowserSessions.openSession, {
+      ...caller,
+      workId: 'w2',
+      sessionId: 'bb-2',
+      liveViewUrl: 'l',
+      replayUrl: 'r',
+    });
+    await t.mutation(api.albatrossBrowserSessions.openSession, {
+      ...caller,
+      workId: 'w2',
+      sessionId: 'bb-3',
+      liveViewUrl: 'l',
+      replayUrl: 'r',
+    });
+    expect(
+      await t.mutation(api.albatrossStepRuns.claimContextWriter, { ...caller, token: 'e' }),
+    ).toMatchObject({
+      persist: true,
+    });
+    // An expired lease frees the place too.
+    await t.run(async (ctx) => {
+      const row = await ctx.db.query('albatrossBrowserContexts').first();
+      await ctx.db.patch(row!._id, { writerUntil: 1 });
+    });
+    expect(
+      await t.mutation(api.albatrossStepRuns.claimContextWriter, { ...caller, token: 'f' }),
+    ).toMatchObject({
+      persist: true,
+    });
+    // No context: nothing to claim. Clients never claim, bind, or release.
+    const other = { internalSecret: SECRET, userId: 'nobody' };
+    expect(await t.mutation(api.albatrossStepRuns.claimContextWriter, { ...other, token: 'z' })).toBeNull();
+    expect(
+      await t.mutation(api.albatrossStepRuns.bindContextWriter, { ...other, token: 'z', sessionId: 's' }),
+    ).toBe(false);
+    expect(await t.mutation(api.albatrossStepRuns.releaseContextWriter, { ...other, token: 'z' })).toBe(
+      false,
+    );
+    const asUser = t.withIdentity({ subject: userId });
+    await expect(asUser.mutation(api.albatrossStepRuns.claimContextWriter, { token: 'x' })).rejects.toThrow(
+      'Only the server',
+    );
+    await expect(
+      asUser.mutation(api.albatrossStepRuns.bindContextWriter, { token: 'x', sessionId: 's' }),
+    ).rejects.toThrow('Only the server');
+    await expect(asUser.mutation(api.albatrossStepRuns.releaseContextWriter, { token: 'x' })).rejects.toThrow(
+      'Only the server',
+    );
+  });
+
+  test('forgotten contexts stay recorded for deletion until Browserbase confirms', async () => {
+    const t = harness();
+    await t.mutation(api.albatrossStepRuns.saveBrowserContext, { ...caller, contextId: 'ctx-1' });
+    expect(await t.mutation(api.albatrossStepRuns.forgetBrowserContext, { ...caller })).toEqual({
+      contextIds: ['ctx-1'],
+    });
+    expect(await t.query(internal.albatrossStepRuns.pendingContextDeletions, {})).toEqual(['ctx-1']);
+    // The record has no userId: the account cascade cannot drop it.
+    const record = await t.run((ctx) => ctx.db.query('albatrossContextDeletions').first());
+    expect(record).not.toHaveProperty('userId');
+    await t.mutation(api.albatrossStepRuns.failContextDeletion, {
+      internalSecret: SECRET,
+      contextId: 'ctx-1',
+      error: 'Browserbase is down',
+    });
+    expect(await t.run((ctx) => ctx.db.query('albatrossContextDeletions').first())).toMatchObject({
+      attempts: 1,
+      lastError: 'Browserbase is down',
+    });
+    // Forgetting again does not add a second record for the same context.
+    await t.mutation(api.albatrossStepRuns.saveBrowserContext, { ...caller, contextId: 'ctx-1' });
+    await t.mutation(api.albatrossStepRuns.forgetBrowserContext, { ...caller });
+    expect(await t.query(internal.albatrossStepRuns.pendingContextDeletions, {})).toEqual(['ctx-1']);
+    expect(
+      await t.mutation(api.albatrossStepRuns.completeContextDeletion, {
+        internalSecret: SECRET,
+        contextId: 'ctx-1',
+      }),
+    ).toBe(1);
+    expect(await t.query(internal.albatrossStepRuns.pendingContextDeletions, {})).toEqual([]);
+    await t.mutation(api.albatrossStepRuns.failContextDeletion, {
+      internalSecret: SECRET,
+      contextId: 'gone',
+      error: 'x',
+    });
+  });
+
+  test('only the server queues a run', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const { internalSecret: _secret, ...asClient } = enqueueArgs(workId);
+    await expect(
+      t.withIdentity({ subject: userId }).mutation(api.albatrossStepRuns.enqueue, asClient as any),
+    ).rejects.toThrow('Only the server queues a step run.');
   });
 });
 
@@ -581,5 +698,34 @@ describe('the handoff notice', () => {
       entityKind: 'work',
       deepLink: '/?view=albatrosses&work=work-1',
     });
+  });
+});
+
+describe('approval dedupe', () => {
+  test('a retried writer gets the same approval back', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const args = {
+      ...caller,
+      kind: 'calendar_invite' as const,
+      title: 'Send the invite: Review',
+      intentId: workId,
+      operationBatchId: 'run-1',
+      artifactKind: 'step_run',
+      artifactId: 'run-1:abcd1234',
+      toolName: 'calendar_create_event',
+      toolArgs: { title: 'Review' },
+      dedupe: true,
+    };
+    const first = await t.mutation(api.albatrossWork.enqueueApproval, args);
+    const again = await t.mutation(api.albatrossWork.enqueueApproval, args);
+    expect(again).toBe(first);
+    const other = await t.mutation(api.albatrossWork.enqueueApproval, {
+      ...args,
+      artifactId: 'run-1:ffff0000',
+    });
+    expect(other).not.toBe(first);
+    const plain = await t.mutation(api.albatrossWork.enqueueApproval, { ...args, dedupe: undefined });
+    expect(plain).not.toBe(first);
   });
 });

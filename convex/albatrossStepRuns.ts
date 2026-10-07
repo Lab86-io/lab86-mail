@@ -202,6 +202,9 @@ export const enqueue = mutation({
     browserSessionId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // Only the server queues runs: the app route checks the switches, the
+    // standing order, and the step mode before it calls this.
+    if (!args.internalSecret) throw new Error('Only the server queues a step run.');
     const userId = await resolveUserId(ctx, args);
     const work = await workRow(ctx, userId, args.workId);
     if (!work) throw new Error('Work not found.');
@@ -551,12 +554,16 @@ export const autoCandidates = internalQuery({
   handler: async (ctx, args) => {
     const ts = now();
     const limit = Math.min(Math.max(args.limit ?? 6, 1), 20);
+    // Least recently checked first, so a checked Work moves to the back and
+    // every Work gets its turn. The window is wide enough that Work the filter
+    // refuses (no plan, open questions, untouched) does not hide the rest.
     const rows = await ctx.db
       .query('albatrossIntents')
-      .withIndex('by_work_state_conductor', (q) => q.eq('workState', 'active'))
-      .take(250);
+      .withIndex('by_work_state_step_check', (q) => q.eq('workState', 'active'))
+      .take(500);
     const open = rows
       .filter((row) => {
+        if ((row.workState || 'active') !== 'active') return false;
         if (!row.latestPlanId || row.planError || row.status === 'planning') return false;
         if ((row.questions || []).some((question) => !question.answer)) return false;
         if (shapePlans(row.shape) === 'no') return false;
@@ -685,14 +692,21 @@ export const recover = internalAction({
 // Saved sign-ins: one Browserbase context per user.
 // ---------------------------------------------------------------------------
 
+/** A shared browser lives one hour; the writer lease never outlives it. */
+export const CONTEXT_WRITER_LEASE_MS = 70 * 60_000;
+
+async function contextRow(ctx: QueryCtx | MutationCtx, userId: string) {
+  return ctx.db
+    .query('albatrossBrowserContexts')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .first();
+}
+
 export const browserContext = query({
   args: callerArgs,
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    const row = await ctx.db
-      .query('albatrossBrowserContexts')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .first();
+    const row = await contextRow(ctx, userId);
     return row ? { contextId: row.contextId, createdAt: row.createdAt, lastUsedAt: row.lastUsedAt } : null;
   },
 });
@@ -703,10 +717,7 @@ export const saveBrowserContext = mutation({
     const userId = await resolveUserId(ctx, args);
     if (!args.internalSecret) throw new Error('Only the server saves a sign-in context.');
     const ts = now();
-    const row = await ctx.db
-      .query('albatrossBrowserContexts')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .first();
+    const row = await contextRow(ctx, userId);
     if (row) {
       await ctx.db.patch(row._id, {
         lastUsedAt: ts,
@@ -724,7 +735,76 @@ export const saveBrowserContext = mutation({
   },
 });
 
-/** Forget the saved sign-ins. Returns the context id so the server deletes it at Browserbase too. */
+/**
+ * Claim the one writer place of the user's context. Atomic: of two sessions
+ * that start at the same time, one gets persist and the other only reads.
+ */
+export const claimContextWriter = mutation({
+  args: { ...callerArgs, token: v.string() },
+  handler: async (ctx, args) => {
+    if (!args.internalSecret) throw new Error('Only the server claims a sign-in context.');
+    const userId = await resolveUserId(ctx, args);
+    const row = await contextRow(ctx, userId);
+    if (!row) return null;
+    const ts = now();
+    const free = !row.writerToken || (row.writerUntil ?? 0) <= ts;
+    if (!free) return { contextId: row.contextId, persist: false };
+    await ctx.db.patch(row._id, {
+      writerToken: args.token,
+      writerSessionId: undefined,
+      writerUntil: ts + CONTEXT_WRITER_LEASE_MS,
+      lastUsedAt: ts,
+    });
+    return { contextId: row.contextId, persist: true };
+  },
+});
+
+/** Tie the claimed writer place to the session that got it. */
+export const bindContextWriter = mutation({
+  args: { ...callerArgs, token: v.string(), sessionId: v.string() },
+  handler: async (ctx, args) => {
+    if (!args.internalSecret) throw new Error('Only the server binds a sign-in context.');
+    const userId = await resolveUserId(ctx, args);
+    const row = await contextRow(ctx, userId);
+    if (!row || row.writerToken !== args.token) return false;
+    await ctx.db.patch(row._id, { writerSessionId: args.sessionId });
+    return true;
+  },
+});
+
+/** Give the writer place back (the session did not start). */
+export const releaseContextWriter = mutation({
+  args: { ...callerArgs, token: v.string() },
+  handler: async (ctx, args) => {
+    if (!args.internalSecret) throw new Error('Only the server releases a sign-in context.');
+    const userId = await resolveUserId(ctx, args);
+    const row = await contextRow(ctx, userId);
+    if (!row || row.writerToken !== args.token) return false;
+    await ctx.db.patch(row._id, {
+      writerToken: undefined,
+      writerSessionId: undefined,
+      writerUntil: undefined,
+    });
+    return true;
+  },
+});
+
+/** A session ended: its writer place is free. Called where session rows end. */
+export async function releaseContextWriterForSession(ctx: MutationCtx, userId: string, sessionId: string) {
+  const row = await contextRow(ctx, userId);
+  if (row?.writerSessionId === sessionId)
+    await ctx.db.patch(row._id, {
+      writerToken: undefined,
+      writerSessionId: undefined,
+      writerUntil: undefined,
+    });
+}
+
+/**
+ * Forget the saved sign-ins. The context rows go at once, so no new session
+ * uses them; a deletion record (without a userId, so it outlives the account
+ * cascade) keeps each id until Browserbase confirms the delete.
+ */
 export const forgetBrowserContext = mutation({
   args: callerArgs,
   handler: async (ctx, args) => {
@@ -733,7 +813,72 @@ export const forgetBrowserContext = mutation({
       .query('albatrossBrowserContexts')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .take(5);
-    for (const row of rows) await ctx.db.delete(row._id);
+    const ts = now();
+    for (const row of rows) {
+      const pending = await ctx.db
+        .query('albatrossContextDeletions')
+        .withIndex('by_context', (q) => q.eq('contextId', row.contextId))
+        .first();
+      if (!pending)
+        await ctx.db.insert('albatrossContextDeletions', {
+          contextId: row.contextId,
+          requestedAt: ts,
+          attempts: 0,
+        });
+      await ctx.db.delete(row._id);
+    }
     return { contextIds: rows.map((row) => row.contextId) };
+  },
+});
+
+/** Browserbase confirmed the delete (or the context was already gone). */
+export const completeContextDeletion = mutation({
+  args: { internalSecret: v.string(), contextId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('albatrossContextDeletions')
+      .withIndex('by_context', (q) => q.eq('contextId', args.contextId))
+      .take(5);
+    for (const row of rows) await ctx.db.delete(row._id);
+    return rows.length;
+  },
+});
+
+export const failContextDeletion = mutation({
+  args: { internalSecret: v.string(), contextId: v.string(), error: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db
+      .query('albatrossContextDeletions')
+      .withIndex('by_context', (q) => q.eq('contextId', args.contextId))
+      .first();
+    if (row)
+      await ctx.db.patch(row._id, { attempts: row.attempts + 1, lastError: truncateText(args.error, 300) });
+  },
+});
+
+export const pendingContextDeletions = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query('albatrossContextDeletions').withIndex('by_requested').take(50);
+    return rows.map((row) => row.contextId);
+  },
+});
+
+/** Hourly: retry the Browserbase deletes that did not finish. */
+export const contextDeletionTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) return;
+    const contextIds = await ctx.runQuery(internal.albatrossStepRuns.pendingContextDeletions, {});
+    if (!contextIds.length) return;
+    await fanOutInternalPost(`${appUrl}/api/cron/browser-contexts`, secret, [{ contextIds }], {
+      label: 'saved sign-in deletions',
+      timeoutMs: 60_000,
+      concurrency: 1,
+    });
   },
 });

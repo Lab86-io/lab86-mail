@@ -835,9 +835,11 @@ export function WorkDetail({ workId }: { workId: string }) {
             showQuestion: openAttachedChat,
             markDone: () => void completeGuidedStep(step.key),
             resume: () => void runAction('resume', { runId: current.id }),
-          }).then((opened) => {
-            if (!opened) setRunError('Albatross could not open that. Ask about it in the Work chat.');
-          });
+          })
+            .catch(() => false)
+            .then((opened) => {
+              if (!opened) setRunError('Albatross could not open that. Ask about it in the Work chat.');
+            });
         }}
       />
     );

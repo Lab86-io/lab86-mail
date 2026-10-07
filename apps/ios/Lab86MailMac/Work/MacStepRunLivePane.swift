@@ -83,7 +83,7 @@ struct MacStepRunSplit<Content: View>: View {
     let workID: String
     let run: StepRunView?
     let busy: Bool
-    let onTakeOver: (StepRunView) async -> Void
+    let onTakeOver: (StepRunView) async -> Bool
     let onContinue: (StepRunView) async -> Void
     let onEnlarge: (StepRunView) -> Void
     @ViewBuilder let content: () -> Content
@@ -124,7 +124,7 @@ struct MacStepRunLivePane: View {
     let workID: String
     let run: StepRunView
     let busy: Bool
-    let onTakeOver: () async -> Void
+    let onTakeOver: () async -> Bool
     let onContinue: () async -> Void
     let onEnlarge: () -> Void
 
@@ -219,8 +219,7 @@ struct MacStepRunLivePane: View {
     private func takeOver() async {
         acting = true
         defer { acting = false }
-        await onTakeOver()
-        tookOver = true
+        if await onTakeOver() { tookOver = true }
     }
 
     private func proceed() async {
@@ -241,16 +240,28 @@ private struct MacLiveViewWebView: NSViewRepresentable {
         return url
     }
 
+    /// The address the view loaded last. A resumed run can bring a new
+    /// session, and the pane keeps its identity, so a new address reloads.
+    final class Coordinator {
+        var loaded: String?
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         if let url = secureURL {
             webView.load(URLRequest(url: url))
+            context.coordinator.loaded = urlString
         }
         return webView
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        guard let url = secureURL, webView.url == nil else { return }
+        guard let url = secureURL, context.coordinator.loaded != urlString else { return }
         webView.load(URLRequest(url: url))
+        context.coordinator.loaded = urlString
     }
 }

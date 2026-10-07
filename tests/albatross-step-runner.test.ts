@@ -3,6 +3,7 @@ import { getFunctionName } from 'convex/server';
 import { z } from 'zod';
 import type { AgentConnector, AgentPage } from '../lib/albatross/browser-agent';
 import {
+  approvalKey,
   fallbackHandoff,
   isRetryableRunError,
   normalizeHandoff,
@@ -65,6 +66,7 @@ function harness(
     run?: Record<string, unknown> | null;
     detail?: any;
     verdict?: { satisfies: boolean; reason: string; unavailable?: boolean };
+    pageVerdict?: { satisfies: boolean; reason: string; unavailable?: boolean };
     browser?: boolean;
     heartbeatOk?: boolean;
     parent?: any;
@@ -167,8 +169,10 @@ function harness(
     })) as any,
     pausedRisks: (async () => new Set()) as any,
     resolveTimezone: (async () => 'America/New_York') as any,
-    evidenceSatisfies: (async () =>
-      options.verdict || { satisfies: true, reason: 'The document exists.' }) as any,
+    evidenceSatisfies: (async (input: any) =>
+      input.evidenceText.startsWith('Page:') && options.pageVerdict
+        ? options.pageVerdict
+        : options.verdict || { satisfies: true, reason: 'The document exists.' }) as any,
     completeWorkStep: mock(async () => ({ ok: true })) as any,
     browserConfigured: () => options.browser === true,
     createBrowserSession: (async () => ({
@@ -177,7 +181,9 @@ function harness(
       liveViewUrl: 'https://live',
       replayUrl: 'https://replay',
     })) as any,
-    sessionOptions: (async () => ({ contextId: 'ctx-1', persist: true })) as any,
+    sessionOptions: (async () => ({ contextId: 'ctx-1', persist: true, writerToken: 'writer-1' })) as any,
+    bindWriter: mock(async () => undefined) as any,
+    releaseWriter: mock(async () => undefined) as any,
     connectUrl: (id: string) => `wss://connect/${id}`,
     connector,
     notify: mock(async () => ({ ok: true })),
@@ -311,6 +317,8 @@ describe('runStepRun', () => {
       sourceId: 'run-1',
       trust: 'inferred',
       stepIdentity: step.identity,
+      // The agent's own account checks the step but never closes the Work.
+      settleContract: false,
     });
     expect(h.deps.completeWorkStep).toHaveBeenCalledWith({
       userId: 'user-1',
@@ -585,6 +593,146 @@ describe('runStepRun', () => {
     expect(system).toContain('The shared browser is open from the earlier run.');
     expect(h.generateOptions().messages[0].content).toContain('Continue the step');
     expect(h.settled().next.target).toEqual({ kind: 'session', id: 'bb-9' });
+  });
+});
+
+describe('review fixes', () => {
+  test('a step that stays with the user is refused at run time', async () => {
+    const h = harness(async () => ({}), {
+      detail: { ...detail, execution: { guideSteps: [{ ...step, stepMode: 'you_do_offline' }] } },
+    });
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.settled()).toMatchObject({ error: 'This step stays with you.' });
+    expect(h.generateOptions()).toBeUndefined();
+  });
+
+  test('a retried attempt sees what the first attempt did', async () => {
+    const h = harness(
+      async (opts) => {
+        await opts.tools.step_handoff.execute({
+          outcome: 'ready_for_you',
+          summary: 'Done.',
+          next: { kind: 'review', label: 'Open', detail: 'Open it.' },
+        });
+        return { text: '', usage };
+      },
+      {
+        run: {
+          attempts: 2,
+          log: [{ at: 1, text: 'Saved a draft: “The proposal”.' }],
+          artifacts: [{ kind: 'draft', id: 'draft-1', title: 'The proposal' }],
+        },
+      },
+    );
+    await runStepRun('user-1', 'run-1', h.deps);
+    const system = h.generateOptions().system;
+    expect(system).toContain('An earlier attempt of this run stopped before it finished.');
+    expect(system).toContain('Saved a draft: “The proposal”.');
+    expect(system).toContain('draft: The proposal (id draft-1)');
+  });
+
+  test('an invite approval carries a dedupe key built from the call', async () => {
+    const args = { account: 'acct-1', title: 'Review', attendees: [{ email: 'dana@example.test' }] };
+    const h = harness(async (opts) => {
+      await opts.tools.calendar_create_event.execute(args);
+      await opts.tools.step_handoff.execute({
+        outcome: 'ready_for_you',
+        summary: 'I prepared the invite.',
+        next: { kind: 'approve', label: 'Approve the invite', detail: 'Approve it.' },
+      });
+      return { text: '', usage };
+    });
+    await runStepRun('user-1', 'run-1', h.deps);
+    const call = h.calls('albatrossWork:enqueueApproval')[0];
+    expect(call.dedupe).toBe(true);
+    expect(call.artifactId).toBe(`run-1:${approvalKey('calendar_create_event', args)}`);
+  });
+
+  test('approvalKey ignores key order and changes with the arguments', () => {
+    expect(approvalKey('t', { a: 1, b: [{ c: 2, d: 3 }] })).toBe(
+      approvalKey('t', { b: [{ d: 3, c: 2 }], a: 1 }),
+    );
+    expect(approvalKey('t', { a: 1 })).not.toBe(approvalKey('t', { a: 2 }));
+    expect(approvalKey('t', { a: 1 })).not.toBe(approvalKey('u', { a: 1 }));
+    expect(approvalKey('t', { a: 1 })).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  test('a run that lost its lease checks nothing off and tells nobody', async () => {
+    const h = harness(
+      async (opts) => {
+        await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'I wrote it.' });
+        return { text: '', usage };
+      },
+      { heartbeatOk: false, run: { trigger: 'conductor' } },
+    );
+    expect(await runStepRun('user-1', 'run-1', h.deps)).toEqual({ state: 'cancelled' });
+    expect(h.deps.completeWorkStep).not.toHaveBeenCalled();
+    expect(h.calls('albatrossWorkV2:attachProof')).toEqual([]);
+    expect(h.calls('albatrossNotifications:queueStepRunHandoff')).toEqual([]);
+    expect(h.settled()).toBeUndefined();
+  });
+
+  test('"Verified on the page" needs the page alone to pass', async () => {
+    const pageDone = (pageVerdict: { satisfies: boolean; reason: string }) =>
+      harness(
+        async (opts) => {
+          await opts.tools.browser_open.execute({ url: 'https://venue.example/book' });
+          await opts.tools.step_handoff.execute({
+            outcome: 'done',
+            summary: 'I booked the room.',
+            evidence: 'Reference BK-42.',
+          });
+          return { text: '', usage };
+        },
+        { browser: true, pageVerdict },
+      );
+    const shown = pageDone({ satisfies: true, reason: 'The page shows BK-42.' });
+    await runStepRun('user-1', 'run-1', shown.deps);
+    expect(shown.calls('albatrossWorkV2:attachProof')[0]).toMatchObject({
+      sourceKind: 'browser_session',
+      sourceId: 'bb-1',
+      trust: 'observed',
+      settleContract: true,
+    });
+    expect(shown.deps.bindWriter).toHaveBeenCalledWith(
+      'user-1',
+      { contextId: 'ctx-1', persist: true, writerToken: 'writer-1' },
+      'bb-1',
+    );
+
+    const notShown = pageDone({ satisfies: false, reason: 'No reference on the page.' });
+    await runStepRun('user-1', 'run-1', notShown.deps);
+    expect(notShown.calls('albatrossWorkV2:attachProof')[0]).toMatchObject({
+      sourceKind: 'step_run',
+      trust: 'inferred',
+      settleContract: false,
+    });
+  });
+
+  test('a session that fails to start gives the writer place back', async () => {
+    const h = harness(
+      async (opts) => {
+        const opened = await opts.tools.browser_open.execute({ url: 'https://venue.example/book' });
+        expect(opened).toMatchObject({ ok: false });
+        await opts.tools.step_handoff.execute({
+          outcome: 'your_turn',
+          summary: 'The browser did not open.',
+          next: { kind: 'do_offline', label: 'Book it', detail: 'Book the room yourself.' },
+        });
+        return { text: '', usage };
+      },
+      { browser: true },
+    );
+    h.deps.createBrowserSession = (async () => {
+      throw new Error('Browserbase is down');
+    }) as any;
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.deps.releaseWriter).toHaveBeenCalledWith('user-1', {
+      contextId: 'ctx-1',
+      persist: true,
+      writerToken: 'writer-1',
+    });
+    expect(h.deps.bindWriter).not.toHaveBeenCalled();
   });
 });
 

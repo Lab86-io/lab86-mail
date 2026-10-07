@@ -3,6 +3,7 @@ import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
+import { releaseContextWriterForSession } from './albatrossStepRuns';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 const callerArgs = {
@@ -61,6 +62,7 @@ export const openSession = mutation({
     for (const row of existing) {
       if (row.status !== 'ended' && row.status !== 'failed') {
         await ctx.db.patch(row._id, { status: 'ended', endedAt: ts, updatedAt: ts });
+        await releaseContextWriterForSession(ctx, userId, row.sessionId);
       }
     }
     return ctx.db.insert('albatrossBrowserSessions', {
@@ -106,6 +108,9 @@ export const setSessionStatus = mutation({
       ...(args.status === 'ended' || args.status === 'failed' ? { endedAt: ts } : {}),
       updatedAt: ts,
     });
+    // An ended session frees the saved sign-in writer place.
+    if (args.status === 'ended' || args.status === 'failed')
+      await releaseContextWriterForSession(ctx, userId, args.sessionId);
     return { status: args.status };
   },
 });
@@ -131,29 +136,6 @@ export const activeSessionForWork = query({
       replayUrl: live.replayUrl,
       updatedAt: live.updatedAt,
     };
-  },
-});
-
-/**
- * Live sessions of one user across all Work. Only one live session may save
- * cookies back to the user's sign-in context at a time; a second one reads
- * the saved sign-ins without saving.
- */
-export const liveSessionCount = query({
-  args: callerArgs,
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const rows = await ctx.db
-      .query('albatrossBrowserSessions')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .order('desc')
-      .take(40);
-    return rows.filter(
-      (row) =>
-        row.status !== 'ended' &&
-        row.status !== 'failed' &&
-        row.createdAt > now() - BROWSER_SESSION_STALE_AFTER_MS,
-    ).length;
   },
 });
 

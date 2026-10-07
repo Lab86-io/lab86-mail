@@ -146,7 +146,7 @@ struct WorkDetailView: View {
             StepRunBrowserSheet(
                 workID: route.workID,
                 run: request.run,
-                onTakeOver: { await stopRun(request.run) },
+                onTakeOver: { await takeOverRun(request.run) },
                 onContinue: { await resumeRun(request.run) }
             )
             #if os(macOS)
@@ -624,7 +624,7 @@ struct WorkDetailView: View {
             workID: route.workID,
             run: runState.run,
             busy: isMutating,
-            onTakeOver: { run in await stopRun(run) },
+            onTakeOver: { run in await takeOverRun(run) },
             onContinue: { run in await resumeRun(run) },
             onEnlarge: { run in runBrowser = StepRunBrowserRequest(run: run) },
             content: content
@@ -713,6 +713,20 @@ struct WorkDetailView: View {
         } else {
             runNotice = environment.store.workError
         }
+    }
+
+    /// "Take over" in the shared browser: true only when the run stopped, so
+    /// the bar never offers "Continue" while Albatross still has the page.
+    private func takeOverRun(_ run: StepRunView) async -> Bool {
+        runNotice = nil
+        isMutating = true
+        defer { isMutating = false }
+        if await environment.store.cancelStepRun(route.workID, run: run) {
+            detail = environment.store.cachedWorkDetail(route.workID) ?? detail
+            return true
+        }
+        runNotice = environment.store.workError
+        return false
     }
 
     private func resumeRun(_ run: StepRunView) async {

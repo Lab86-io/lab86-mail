@@ -136,13 +136,18 @@ function ReadyForYouLive({ className }: { className?: string }) {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ action: 'resume', runId: row.runId }),
-            }).then((response) => {
-              if (!response.ok) openWorkPage(deps, row.workId);
-            });
+            })
+              .then((response) => response.ok)
+              .catch(() => false)
+              .then((ok) => {
+                if (!ok) openWorkPage(deps, row.workId);
+              });
           },
-        }).then((opened) => {
-          if (!opened) openWorkPage(deps, row.workId);
-        });
+        })
+          .catch(() => false)
+          .then((opened) => {
+            if (!opened) openWorkPage(deps, row.workId);
+          });
       }}
     />
   );

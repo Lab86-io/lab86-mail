@@ -62,13 +62,30 @@ export async function openSavedDraft(
   return true;
 }
 
+/** The URL when it is an http or https page, otherwise null. */
+export function webUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw.trim());
+    return url.protocol === 'http:' || url.protocol === 'https:' ? raw.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A document opens in Files, the way a tool result does. */
 export function openDocumentPath(
   deps: Pick<StepRunNavigatorDeps, 'getState' | 'pushPath' | 'dispatch'>,
   url: string | null,
   id: string | null,
 ) {
-  const path = url?.startsWith('/') ? url : id ? `/files/${encodeURIComponent(id)}` : null;
+  // Only a same-origin path: "//host/x" is another origin, and pushState throws on it.
+  const path =
+    url?.startsWith('/') && !url.startsWith('//') && !url.startsWith('/\\')
+      ? url
+      : id
+        ? `/files/${encodeURIComponent(id)}`
+        : null;
   if (!path) return false;
   deps.pushPath(path);
   deps.getState().setPrimaryView('files');
@@ -93,9 +110,13 @@ export async function performNextBehaviour(
     case 'open_approval':
       deps.getState().setPrimaryView('notifications');
       return true;
-    case 'open_url':
-      deps.openWindow(behaviour.url);
+    case 'open_url': {
+      // Only web pages: a javascript: or data: URL never reaches window.open.
+      const url = webUrl(behaviour.url);
+      if (!url) return false;
+      deps.openWindow(url);
       return true;
+    }
     case 'open_card':
       deps.getState().setPendingOpenCardId(behaviour.id);
       deps.getState().setPrimaryView('tasks');

@@ -493,9 +493,24 @@ export const enqueueApproval = mutation({
     toolArgs: v.any(),
     risk: v.optional(v.string()),
     undoExpiresAt: v.optional(v.number()),
+    // One approval for each (operationBatchId, toolName, artifactId): a retried
+    // writer gets the existing row back instead of a second approval.
+    dedupe: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
+    if (args.dedupe && args.operationBatchId && args.artifactId) {
+      const existing = await ctx.db
+        .query('albatrossApprovals')
+        .withIndex('by_user_batch', (q) =>
+          q.eq('userId', userId).eq('operationBatchId', args.operationBatchId),
+        )
+        .take(50);
+      const match = existing.find(
+        (row) => row.toolName === args.toolName && row.artifactId === bounded(args.artifactId, 240),
+      );
+      if (match) return match._id;
+    }
     if (args.intentId) {
       const id = ctx.db.normalizeId('albatrossIntents', args.intentId);
       const work = id ? await ctx.db.get(id) : null;

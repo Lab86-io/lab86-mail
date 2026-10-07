@@ -585,7 +585,14 @@ describe('compliance readiness', () => {
     // such as the mail classifier, shared by every account.
     // googleSecurityEvents keeps one row for each Google security event `jti`
     // (event names and counts, no user id); its rows expire after 30 days.
-    const exempt = new Set<string>(['dataMigrations', 'deploymentSettings', 'googleSecurityEvents']);
+    // albatrossContextDeletions holds Browserbase context ids (no user id)
+    // that must outlive the cascade until Browserbase confirms each delete.
+    const exempt = new Set<string>([
+      'dataMigrations',
+      'deploymentSettings',
+      'googleSecurityEvents',
+      'albatrossContextDeletions',
+    ]);
 
     expect(tables.length).toBeGreaterThan(10);
     for (const table of tables) {

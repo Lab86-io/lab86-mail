@@ -249,12 +249,14 @@ export function InlineComposer({
   const [, setDraftSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   const draftIdRef = useRef<string | null>(null);
   const draftSaveChain = useRef(Promise.resolve());
-  // A reopened draft keeps its id, so the next save updates it in place.
+  // A reopened draft keeps its id, so the next save updates it in place. A new
+  // prefill without an id is a new message: it must never write into the
+  // draft that the composer held before.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the id is a value-only seed bumped via prefillNonce, like the fields above.
   useEffect(() => {
-    if (!initialPrefill?.draftId) return;
-    draftIdRef.current = initialPrefill.draftId;
-    setDraftId(initialPrefill.draftId);
+    const id = initialPrefill?.draftId ?? null;
+    draftIdRef.current = id;
+    setDraftId(id);
   }, [prefillNonce]);
   const [customSendAt, setCustomSendAt] = useState('');
   const customSendAtMin = toDatetimeLocalValue(Date.now() + 60_000);

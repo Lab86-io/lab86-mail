@@ -34,7 +34,7 @@ import { resolveBriefTimezone } from '../mail/brief-timezone';
 import { dispatchNativeNotification } from '../notifications/native-delivery';
 import { truncateText } from '../shared/text';
 import { AgentBrowser, type AgentConnector, playwrightAgentConnector } from './browser-agent';
-import { sessionOptionsForUser } from './browser-contexts';
+import { bindSessionWriter, releaseSessionWriter, sessionOptionsForUser } from './browser-contexts';
 import { browserSessionsConfigured, createBrowserSession, sessionConnectUrl } from './browser-session';
 import { evidenceSatisfies } from './evidence-gate';
 import { completeWorkStep } from './step-execution';
@@ -43,6 +43,7 @@ import {
   STEP_RUN_MAX_MODEL_STEPS,
   STEP_RUN_NOTIFY_AFTER_MS,
   type StepRunTrigger,
+  stepAcceptsTrigger,
   stepRunFeature,
   stepRunLimits,
   stepRunsEnabled,
@@ -110,6 +111,8 @@ export interface StepRunnerDependencies {
   browserConfigured: typeof browserSessionsConfigured;
   createBrowserSession: typeof createBrowserSession;
   sessionOptions: typeof sessionOptionsForUser;
+  bindWriter: typeof bindSessionWriter;
+  releaseWriter: typeof releaseSessionWriter;
   connectUrl: (sessionId: string) => string;
   connector: AgentConnector;
   notify: (userId: string, notificationId: string) => Promise<unknown>;
@@ -132,6 +135,8 @@ const defaults: StepRunnerDependencies = {
   browserConfigured: browserSessionsConfigured,
   createBrowserSession,
   sessionOptions: (userId) => sessionOptionsForUser(userId),
+  bindWriter: (userId, options, sessionId) => bindSessionWriter(userId, options, sessionId),
+  releaseWriter: (userId, options) => releaseSessionWriter(userId, options),
   connectUrl: sessionConnectUrl,
   connector: playwrightAgentConnector,
   notify: dispatchNativeNotification,
@@ -337,12 +342,27 @@ export async function runStepRun(
     );
     if (!detail?.work || !step) return await settle({ error: 'This step is no longer in the plan.' });
     if (step.done) return await settle({ outcome: 'done', summary: 'The step was already done.' });
+    // The queue is server-only, but the step may have changed since: a run
+    // never works a step that stays with the user.
+    if (!stepAcceptsTrigger(step as any, run.trigger === 'resume' ? 'user' : run.trigger))
+      return await settle({ error: 'This step stays with you.' });
 
-    const previous: PreviousRun | null = run.parentRunId
+    const parent: PreviousRun | null = run.parentRunId
       ? await deps
           .convexQuery<any>(api.albatrossStepRuns.get, { userId, id: run.parentRunId })
           .catch(() => null)
       : null;
+    // A retried attempt of this same run continues from what the first attempt
+    // did (its log and its artifacts), instead of doing the step again.
+    const previous: PreviousRun | null =
+      run.attempts > 1 && ((run.log || []).length || (run.artifacts || []).length)
+        ? {
+            summary: `An earlier attempt of this run stopped before it finished.${parent?.summary ? ` Before that: ${parent.summary}` : ''}`,
+            log: run.log,
+            artifacts: run.artifacts,
+            next: parent?.next ?? null,
+          }
+        : parent;
     // A resumed run picks up the earlier run's shared browser when it is still open.
     if (sessionId) {
       const live = await deps
@@ -362,7 +382,14 @@ export async function runStepRun(
       if (browser) return browser;
       if (!sessionId) {
         const options = await deps.sessionOptions(userId);
-        const session = await deps.createBrowserSession(fetch, options);
+        let session: Awaited<ReturnType<typeof deps.createBrowserSession>>;
+        try {
+          session = await deps.createBrowserSession(fetch, options);
+        } catch (error) {
+          await deps.releaseWriter(userId, options);
+          throw error;
+        }
+        await deps.bindWriter(userId, options, session.sessionId);
         await deps.convexMutation(api.albatrossBrowserSessions.openSession, {
           userId,
           workId: run.workId,
@@ -404,7 +431,9 @@ export async function runStepRun(
             intentId: run.workId,
             operationBatchId: runId,
             artifactKind: 'step_run',
-            artifactId: runId,
+            // One approval for each call: a retried attempt gets the same row back.
+            artifactId: `${runId}:${approvalKey(input.toolName, input.toolArgs)}`,
+            dedupe: true,
             toolName: input.toolName,
             toolArgs: input.toolArgs,
             risk: 'Reaches other people. It runs only after you approve it.',
@@ -511,6 +540,12 @@ export async function runStepRun(
         )
       : fallbackHandoff(result.text || '', artifacts);
 
+    // A cancel or a lost lease shows only at the next heartbeat. Ask now, before
+    // anything checks the step off or tells the user about it.
+    const stillOwned = await deps
+      .convexMutation<boolean>(api.albatrossStepRuns.heartbeat, fence)
+      .catch(() => false);
+    if (!stillOwned) throw new RunCancelled();
     if (settled.outcome === 'done') {
       settled = await proveDone({
         deps,
@@ -535,7 +570,7 @@ export async function runStepRun(
       );
     }
     const outcome = await settle(settled);
-    await notifyHandoff(deps, userId, run, settled, deps.now() - startedAt);
+    if (outcome?.state) await notifyHandoff(deps, userId, run, settled, deps.now() - startedAt);
     return outcome;
   } catch (error) {
     if (cancel.signal.aborted || error instanceof RunCancelled) {
@@ -566,7 +601,7 @@ export async function runStepRun(
         budget: { timeMs: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, calls: 0, exhausted },
       };
       const outcome = await settle(stopped);
-      await notifyHandoff(deps, userId, run, stopped, deps.now() - startedAt);
+      if (outcome?.state) await notifyHandoff(deps, userId, run, stopped, deps.now() - startedAt);
       return outcome;
     }
     // No model access (no plan, no key, the month's budget is used up): the
@@ -586,6 +621,27 @@ export async function runStepRun(
     meter.finish();
     if (connection) await (connection as Awaited<ReturnType<AgentConnector>>).close().catch(() => undefined);
   }
+}
+
+/** A stable key for one tool call, for approval dedupe across attempts. */
+export function approvalKey(toolName: string, args: unknown): string {
+  const stable = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.keys(value as Record<string, unknown>)
+              .sort()
+              .map((key) => [key, stable((value as Record<string, unknown>)[key])]),
+          )
+        : value;
+  const text = `${toolName}:${JSON.stringify(stable(args))}`;
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
 }
 
 /** Provider hiccups and lost connections may retry once; argument and access errors may not. */
@@ -655,7 +711,21 @@ async function proveDone(input: {
       },
     };
   }
-  const onPage = Boolean(page && input.sessionId);
+  // "Verified on the page" needs the page alone to show it. The combined
+  // check above includes the agent's own words, so it proves less.
+  const pageVerdict =
+    page && input.sessionId
+      ? await deps
+          .evidenceSatisfies({
+            userId,
+            workTitle: String(input.detail?.plan?.outcome || input.detail?.work?.title || ''),
+            outcome: input.detail?.plan?.outcome ?? null,
+            requirement: step.doneWhen || `"${step.title}" is complete.`,
+            evidenceText: `Page: ${page.url}\nTitle: ${page.title}\n${page.text}`,
+          })
+          .catch(() => ({ satisfies: false, reason: '', unavailable: true }))
+      : null;
+  const onPage = Boolean(page && pageVerdict?.satisfies && !pageVerdict.unavailable);
   await deps
     .convexMutation(api.albatrossWorkV2.attachProof, {
       userId,
@@ -670,7 +740,9 @@ async function proveDone(input: {
       sourceId: onPage ? input.sessionId! : run._id,
       stepIdentity: run.stepIdentity,
       trust: onPage ? 'observed' : 'inferred',
-      settleContract: true,
+      // Only proof the page shows may settle the Work's contract. The agent's
+      // own account checks the step, but it never closes the Work.
+      settleContract: onPage,
     })
     .catch((error) => deps.reportError('[step-runner] proof failed', run._id, describeModelError(error)));
   await deps

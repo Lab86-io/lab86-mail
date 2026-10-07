@@ -142,7 +142,7 @@ struct StepRunBrowserRequest: Identifiable {
 struct StepRunBrowserSheet: View {
     let workID: String
     let run: StepRunView
-    let onTakeOver: () async -> Void
+    let onTakeOver: () async -> Bool
     let onContinue: () async -> Void
 
     @Environment(AppEnvironment.self) private var environment
@@ -245,8 +245,7 @@ struct StepRunBrowserSheet: View {
     private func takeOver() async {
         busy = true
         defer { busy = false }
-        await onTakeOver()
-        tookOver = true
+        if await onTakeOver() { tookOver = true }
     }
 
     private func proceed() async {

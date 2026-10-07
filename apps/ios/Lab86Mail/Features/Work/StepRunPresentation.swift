@@ -41,7 +41,12 @@ enum StepRunCardState: Equatable, Sendable {
 enum StepRunCardPolicy {
     static func state(step: WorkDetail.ExecutionStep, execution: WorkDetail.Execution) -> StepRunCardState {
         guard execution.runnerIsEnabled else { return .quiet }
-        if let active = execution.activeRun, active.state.isOpen { return .open(active) }
+        // The open run belongs to the whole Work; it shows here only under its
+        // own step. Another step's run leaves this step quiet (the server marks
+        // it not runnable while that run is open).
+        if let active = execution.activeRun, active.state.isOpen, active.stepKey == step.id {
+            return .open(active)
+        }
         if let run = step.run {
             switch run.state {
             case .queued, .running:

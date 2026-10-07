@@ -1100,7 +1100,25 @@ export default defineSchema({
     contextId: v.string(),
     createdAt: v.number(),
     lastUsedAt: v.number(),
+    // The one session that may save cookies back to the context. Browserbase
+    // keeps the last writer, so a second live session only reads. The lease
+    // ends when that session ends, or at the session lifetime.
+    writerToken: v.optional(v.string()),
+    writerSessionId: v.optional(v.string()),
+    writerUntil: v.optional(v.number()),
   }).index('by_user', ['userId']),
+
+  // Saved sign-ins that must still be deleted at Browserbase. The row has no
+  // userId on purpose: it outlives the account cascade, and an hourly cron
+  // retries the remote delete until Browserbase confirms it.
+  albatrossContextDeletions: defineTable({
+    contextId: v.string(),
+    requestedAt: v.number(),
+    attempts: v.number(),
+    lastError: v.optional(v.string()),
+  })
+    .index('by_context', ['contextId'])
+    .index('by_requested', ['requestedAt']),
 
   albatrossEvidence: defineTable({
     userId: v.string(),
@@ -1607,6 +1625,7 @@ export default defineSchema({
     .index('by_user_primary_area', ['userId', 'primaryAreaId'])
     .index('by_user_work_state', ['userId', 'workState'])
     .index('by_work_state_conductor', ['workState', 'lastConductorAt'])
+    .index('by_work_state_step_check', ['workState', 'lastStepRunCheckAt'])
     .index('by_user_project', ['userId', 'primaryProjectId'])
     .index('by_pending_step_evidence', ['pendingStepEvidenceAt'])
     .index('by_mail_watch', ['mailWatchAt'])
