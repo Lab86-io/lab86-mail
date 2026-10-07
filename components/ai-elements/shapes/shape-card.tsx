@@ -16,6 +16,7 @@ import { FilesCard } from './FilesCard';
 import { ReceiptCard } from './ReceiptCard';
 import { SlotsCard } from './SlotsCard';
 import { SourcesCard } from './SourcesCard';
+import { StepRunCard } from './StepRunCard';
 import { ShapeActionsContext, useShapeActions } from './shape-actions';
 import { TaskCard } from './TaskCard';
 import { TasksCard } from './TasksCard';
@@ -63,6 +64,8 @@ export function ShapeCardBody({ shape }: { shape: ToolShape }) {
       return <SourcesCard shape={shape} />;
     case 'text':
       return <TextCard shape={shape} />;
+    case 'step_run':
+      return <StepRunCard shape={shape} />;
     default:
       return null;
   }

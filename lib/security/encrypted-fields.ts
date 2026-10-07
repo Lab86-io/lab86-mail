@@ -40,6 +40,12 @@ export const ENCRYPTED_FIELDS: readonly EncryptedField[] = [
   },
   { table: 'mcpOAuthStates', path: ['payloadEncrypted'], holds: 'Tool OAuth transaction (minutes)' },
   { table: 'officeDocuments', path: ['google', 'session'], holds: 'Google working copy session' },
+  { table: 'personalDetails', path: ['valueEncrypted'], holds: 'Personal detail (name, phone, address)' },
+  {
+    table: 'personalDetails',
+    path: ['previousEncrypted'],
+    holds: 'Personal detail before the newest save (one day, for Undo)',
+  },
   {
     table: 'officeDocuments',
     path: ['google', 'pendingSave', 'session'],

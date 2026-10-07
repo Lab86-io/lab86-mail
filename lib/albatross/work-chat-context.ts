@@ -23,6 +23,27 @@ export interface WorkChatContextData {
     assumptions?: string[];
   } | null;
   questions?: Array<{ _id?: string; status?: string; prompt?: string; reason?: string }>;
+  /** Plan steps with their newest run (docs/albatross-thread.md). */
+  execution?: {
+    guideSteps?: Array<{
+      key?: string;
+      title?: string;
+      done?: boolean;
+      runnable?: boolean;
+      run?: {
+        state?: string;
+        outcome?: string | null;
+        summary?: string | null;
+        next?: {
+          kind?: string;
+          label?: string;
+          detail?: string;
+          target?: { kind?: string; id?: string } | null;
+        } | null;
+        log?: Array<{ text?: string }>;
+      } | null;
+    }>;
+  } | null;
   evidence?: Array<{
     _id?: string;
     title?: string;
@@ -61,7 +82,11 @@ function line(label: string, value: unknown, max?: number) {
  * Formats only server-resolved, user-owned data. Clients attach an id; they do
  * not get to inject a counterfeit plan or evidence list into the system prompt.
  */
-export function formatWorkChatContext(detail: WorkChatContextData): string {
+export function formatWorkChatContext(
+  detail: WorkChatContextData,
+  options: { audience?: 'chat' | 'runner' } = {},
+): string {
+  const forChat = options.audience !== 'runner';
   const workId = clean(detail.work._id, 180);
   const plan = detail.plan;
   const pendingQuestions = (detail.questions || []).filter((question) => question.status === 'pending');
@@ -104,10 +129,50 @@ export function formatWorkChatContext(detail: WorkChatContextData): string {
       sections.push(`${index + 1}. [${action.kind}] ${action.title}`);
     });
   }
+  const guideSteps = detail.execution?.guideSteps || [];
+  const runQuestionIds = new Set(
+    guideSteps
+      .map((step) =>
+        step.run?.state === 'handed_off' && step.run.next?.target?.kind === 'question'
+          ? step.run.next.target.id
+          : null,
+      )
+      .filter((id): id is string => Boolean(id)),
+  );
+  // The runner gets its own plan section (lib/albatross/step-run-prompt.ts).
+  if (forChat && guideSteps.length) {
+    sections.push('', 'Steps and their runs (stepKey in brackets):');
+    guideSteps.slice(0, 24).forEach((step, index) => {
+      const run = step.run;
+      const state = step.done
+        ? 'done'
+        : run
+          ? run.state === 'queued' || run.state === 'running'
+            ? 'a run works on it now'
+            : run.state === 'handed_off'
+              ? `waits on the user (${clean(run.next?.kind, 40)}: ${clean(run.next?.label, 60)})`
+              : clean(run.state, 40)
+          : step.runnable
+            ? 'Albatross can do it'
+            : 'the user does it';
+      sections.push(`${index + 1}. [${clean(step.key, 200)}] ${clean(step.title, 240)} — ${state}`);
+      if (run?.summary) sections.push(`   Last run: ${clean(run.summary, 400)}`);
+      if (run && (run.state === 'queued' || run.state === 'running')) {
+        const latest = (run.log || []).at(-1)?.text;
+        if (latest) sections.push(`   Now: ${clean(latest, 200)}`);
+      }
+      if (run?.state === 'handed_off' && run.next?.detail)
+        sections.push(`   It asked: ${clean(run.next.detail, 400)}`);
+    });
+  }
   if (pendingQuestions.length) {
     sections.push('', 'Open questions:');
     pendingQuestions.slice(0, 8).forEach((question) => {
-      sections.push(`- [questionId: ${clean(question._id, 180)}] ${clean(question.prompt, 500)}`);
+      const id = clean(question._id, 180);
+      const fromRun = forChat && runQuestionIds.has(String(question._id || ''));
+      sections.push(
+        `- [questionId: ${id}]${fromRun ? ' [asked by a step run: answer with albatross_handle_step]' : ''} ${clean(question.prompt, 500)}`,
+      );
     });
   }
   if (evidence.length) {
@@ -120,8 +185,10 @@ export function formatWorkChatContext(detail: WorkChatContextData): string {
     });
   }
 
+  sections.push('--- END UNTRUSTED WORK REFERENCE DATA ---');
+  // The chat's rules name chat tools; a step run has none of them.
+  if (!forChat) return sections.join('\n');
   sections.push(
-    '--- END UNTRUSTED WORK REFERENCE DATA ---',
     '',
     'Behavior for this attached Work:',
     `- Keep this Work attached unless the user explicitly broadens the conversation.`,
@@ -133,6 +200,11 @@ export function formatWorkChatContext(detail: WorkChatContextData): string {
     `- A missing artifact does not invalidate the user's report. Record the user-confirmed claim even when corroborating evidence is unavailable, and state that evidence limit plainly.`,
     `- Replanning creates a new version of the plan for the same Work. Never create a replacement Work item.`,
     `- Questions and corrections happen in this chat. Do not create or imitate a chat inside the plan document.`,
+    `- This chat is the Albatross conversation. Albatross does steps in background runs that report into this conversation. To do a step, to pass on what a run asked for, to tell a run that the user did their part ("I signed in", "I paid"), or to change how a run works, call albatross_handle_step with this workId and a note in the user's words. A run in progress reads the note before its next action.`,
+    `- Never do a website step yourself, and never offer to email someone instead of filling a web form: the run fills forms in the shared browser.`,
+    `- A question marked "asked by a step run" is answered with albatross_handle_step (it records the answer and continues the run). Do not put that answer in albatross_record_progress.`,
+    `- When the user states a personal detail (name, phone, address, emergency contact), call personal_details_save as well, so the run can type it.`,
+    `- While a run works, keep replies to one or two short sentences. The run block shows its own progress.`,
   );
 
   return sections.join('\n');

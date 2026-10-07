@@ -33,6 +33,7 @@ import {
   albatrossSplitWork,
   albatrossUpdateProject,
 } from './albatross';
+import { albatrossHandleStep } from './albatross-runs';
 import {
   areaAddFact,
   areaArchive,
@@ -155,6 +156,7 @@ import { githubSearch, mcpConnectionStatus, mcpCreateTask, mcpListItems, mcpSear
 import { forget, listMemories, recall, remember } from './memories';
 import { NARRATIVE_TOOLS } from './narrative';
 import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
+import { personalDetailsGet, personalDetailsSave } from './personal-details';
 import { resolvePhotos } from './photos';
 import { presentationPlan } from './presentations';
 import type { AnyTool } from './registry';
@@ -324,6 +326,9 @@ const allTools: AnyTool[] = [
   nlTask,
   remember,
   recall,
+  personalDetailsGet,
+  personalDetailsSave,
+  albatrossHandleStep,
   forget,
   listMemories,
   calendarFreeBusy,

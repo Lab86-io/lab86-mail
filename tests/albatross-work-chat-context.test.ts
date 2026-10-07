@@ -53,7 +53,8 @@ describe('Albatross Work chat context', () => {
     const context = formatWorkChatContext({
       work: { _id: 'work_1', rawText: 'x'.repeat(5_000) },
     });
-    expect(context.length).toBeLessThan(4_600);
+    // About 3,500 characters of fixed rules plus at most 2,000 of request text.
+    expect(context.length).toBeLessThan(5_800);
   });
 });
 

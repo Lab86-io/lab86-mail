@@ -13,6 +13,7 @@ import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { normalizeClientPlatform } from '@/lib/ai/system-prompt';
 import { initialToolGroups } from '@/lib/ai/tool-groups';
 import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
+import { applyFormAnswers } from '@/lib/albatross/form-answers';
 import { readWorkChatContext, WorkContextNotFoundError } from '@/lib/albatross/work-chat-context';
 import { reconcileWorkTurn } from '@/lib/albatross/work-turn-reconcile';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
@@ -168,8 +169,10 @@ export async function POST(req: NextRequest) {
       limit: 60,
       windowMs: 60_000,
     });
+    // A form answer with "Save to my details" saves before the model reads it.
+    const answered = await applyFormAnswers(user, body.messages).catch(() => body.messages);
     const prepared = prepareAgentMessages(
-      body.continuation === true ? body.messages.map(compactMessage) : body.messages,
+      body.continuation === true ? answered.map(compactMessage) : answered,
     );
     const compactionNote =
       prepared.omitted || prepared.compacted

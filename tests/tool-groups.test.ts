@@ -96,18 +96,19 @@ describe('tool groups', () => {
     const scoped = liftToolsForAgent('batch', 'UTC', undefined, {
       scopeGroups: ['narrative', 'areas', 'projects_routines'],
     });
+    // With all three scope groups loaded, three tools of room are left.
     const first = await scoped[ENABLE_TOOLS_NAME].execute(
-      { groups: ['calendar_admin', 'display_media'] },
+      { groups: ['ui_extras', 'display_media'] },
       {} as any,
     );
-    expect(first.enabled).toEqual(['calendar_admin']);
+    expect(first.enabled).toEqual(['ui_extras']);
     expect(first.evicted).toEqual(['display_media']);
     expect(first.summary).toContain('Could not load display_media');
-    const second = await scoped[ENABLE_TOOLS_NAME].execute({ groups: ['cloud_files'] }, {} as any);
-    expect(second.enabled).toEqual(['cloud_files']);
-    expect(second.evicted).toEqual(['calendar_admin', 'display_media']);
+    const second = await scoped[ENABLE_TOOLS_NAME].execute({ groups: ['ask_forms'] }, {} as any);
+    expect(second.enabled).toEqual(['ask_forms']);
+    expect(second.evicted).toEqual(['ui_extras', 'display_media']);
     expect(second.summary).toBe(
-      'Loaded cloud_files. Those tools are available from the next step. Unloaded calendar_admin to make room; enable it again if you still need it.',
+      'Loaded ask_forms. Those tools are available from the next step. Unloaded ui_extras to make room; enable it again if you still need it.',
     );
   });
 

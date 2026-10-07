@@ -13,6 +13,7 @@ import { useReducedMotion } from 'motion/react';
 import {
   createContext,
   memo,
+  type ReactNode,
   useCallback,
   useContext,
   useEffect,
@@ -23,10 +24,17 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-prompt';
+import {
+  FormQuestionCard,
+  type FormReceipt,
+  undoPersonalDetails,
+} from '@/components/ai-elements/form-question-card';
 import { HitlPart, isToolApprovalPart, ToolApprovalPart } from '@/components/ai-elements/hitl-parts';
 import { RevealDot } from '@/components/ai-elements/reveal-dot';
+import { ShapeCard } from '@/components/ai-elements/shapes/shape-card';
 import { ToolActivityRow } from '@/components/ai-elements/tool-activity';
 import { TOOL_UI_RENDERED_TOOLS, ToolUiDisplayPart } from '@/components/ai-elements/tool-ui-part';
+import { usePersonalDetails } from '@/components/ai-elements/use-personal-details';
 import { WorkLog } from '@/components/ai-elements/work-log';
 import {
   ChatContainer,
@@ -72,6 +80,7 @@ import {
   validateChatFiles,
 } from '@/lib/ai/chat-attachments';
 import { routeEmailPreviewThread } from '@/lib/ai/email-preview-routing';
+import type { ToolShape } from '@/lib/ai/tool-shapes';
 import { type HoldCard, holdText, kickAdvance } from '@/lib/albatross/capture-client';
 import {
   createHitlAutoContinueGuard,
@@ -80,8 +89,28 @@ import {
   toolActivityState,
   toolPartName,
 } from '@/lib/albatross/teach-ui';
+import {
+  addMergedThreadMessages,
+  type FormAnswer,
+  formQuestionSchema,
+  mergeThreadTimeline,
+  type PersonalDetailView,
+  type ThreadRunView,
+} from '@/lib/albatross/thread-contract';
+import {
+  EARLIER_CHAT_DIVIDER,
+  FORM_COPY,
+  messageCreatedAt,
+  startedRunIds,
+} from '@/lib/albatross/thread-view';
 import { groupMessageParts, reasoningLabel, toolPartSignature } from '@/lib/chat/work-log';
-import { assistantLauncherPlacement, isAssistantShortcut, useClientStore } from '@/lib/client-state';
+import {
+  assistantLauncherPlacement,
+  assistantShortcutTarget,
+  isAssistantShortcut,
+  isWorkThreadOpen,
+  useClientStore,
+} from '@/lib/client-state';
 import { mailSearchShortcutLabel } from '@/lib/mail/search/focus-contract';
 import { formatDate } from '@/lib/shared/format';
 import { assistantPageContext, assistantPhrases } from '@/lib/shell/assistant-context';
@@ -142,6 +171,7 @@ export function AIBarTrigger() {
   const readerOpen = useClientStore((s) => !!(s.selectedThreadId || s.compose.mode));
   const primaryView = useClientStore((s) => s.primaryView);
   const assistantDocument = useClientStore((s) => s.assistantDocument);
+  const workThreadOpen = useClientStore((s) => isWorkThreadOpen(s));
   const [shortcut, setShortcut] = useState('⌘K');
   useEffect(() => {
     setShortcut(mailSearchShortcutLabel(navigator.platform).replace('F', 'K'));
@@ -153,6 +183,11 @@ export function AIBarTrigger() {
     const handler = (e: KeyboardEvent) => {
       if (isAssistantShortcut(e)) {
         e.preventDefault();
+        // On the Work thread the page is the chat: the shortcut goes to its composer.
+        if (assistantShortcutTarget(useClientStore.getState()) === 'thread') {
+          document.querySelector<HTMLTextAreaElement>('[data-thread-composer] textarea')?.focus();
+          return;
+        }
         if (!aiBarOpen) {
           const launcher = document.querySelector<HTMLButtonElement>('[data-assistant-launcher]');
           if (launcher) {
@@ -181,6 +216,7 @@ export function AIBarTrigger() {
     threadFullscreen,
     capturePillVisible: false,
     readerOpen,
+    workThreadOpen,
   });
   if (placement === 'hidden') return null;
 
@@ -199,6 +235,28 @@ export function AIBarTrigger() {
   );
 }
 
+/**
+ * The Work thread mounts the same chat with a fixed session and an attached
+ * Work (docs/albatross-thread.md). The runs merge into the message list by
+ * time; a run that a message started renders inside that message.
+ */
+export interface ThreadChatProps {
+  /** `work-<workId>`: loaded from `/api/chats?workThread=` on mount and saved with `baseUpdatedAt`. */
+  sessionId: string;
+  scope: { kind: 'work'; workId: string; label: string };
+  runs: readonly ThreadRunView[];
+  renderRun: (run: ThreadRunView, continues: boolean) => ReactNode;
+  /** Above the first item: the plan block. */
+  intro?: ReactNode;
+  /** Below the last item: the closing line of a done Albatross. */
+  outro?: ReactNode;
+  placeholder?: string;
+  /** The control over the composer (the jump pill). Rendered inside the chat container. */
+  scrollButton?: ReactNode;
+  /** The dev harness: messages to show in preview mode, where nothing loads. */
+  initialMessages?: UIMessage[];
+}
+
 // One conversation owner across corner, split, and chat-only presentations.
 // AssistantWorkspace owns the outer frame; transport, tool cards, attachments
 // and composer state stay mounted here when that presentation changes.
@@ -207,11 +265,13 @@ export function AssistantChat({
   preview = false,
   clerkEnabled = false,
   userName,
+  thread,
 }: {
   transport?: ChatTransport<UIMessage>;
   preview?: boolean;
   clerkEnabled?: boolean;
   userName?: string;
+  thread?: ThreadChatProps;
 } = {}) {
   const reduceMotion = useReducedMotion() ?? false;
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
@@ -227,12 +287,19 @@ export function AssistantChat({
   const briefContext = useClientStore((s) => s.assistantBriefContext);
   const primaryView = useClientStore((s) => s.primaryView);
   const assistantDocument = useClientStore((s) => s.assistantDocument);
-  const chatScopeKind = useClientStore((s) => s.chatScopeKind);
-  const chatScopeAreaId = useClientStore((s) => s.chatScopeAreaId);
-  const chatScopeWorkId = useClientStore((s) => s.chatScopeWorkId);
-  const chatScopeLabel = useClientStore((s) => s.chatScopeLabel);
+  const storeScopeKind = useClientStore((s) => s.chatScopeKind);
+  const storeScopeAreaId = useClientStore((s) => s.chatScopeAreaId);
+  const storeScopeWorkId = useClientStore((s) => s.chatScopeWorkId);
+  const storeScopeLabel = useClientStore((s) => s.chatScopeLabel);
   const setChatScope = useClientStore((s) => s.setChatScope);
+  // The thread's scope comes from its props, never from the shared store: the
+  // inert global chat must not re-scope when a Work opens.
+  const chatScopeKind: 'global' | 'area' | 'work' = thread ? 'work' : storeScopeKind;
+  const chatScopeAreaId = thread ? null : storeScopeAreaId;
+  const chatScopeWorkId = thread ? thread.scope.workId : storeScopeWorkId;
+  const chatScopeLabel = thread ? thread.scope.label : storeScopeLabel;
   const scopeKey = `${chatScopeKind}:${chatScopeAreaId || ''}:${chatScopeWorkId || ''}`;
+  const personalDetails = usePersonalDetails(!preview);
 
   const setQuery = useClientStore((s) => s.setQuery);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
@@ -436,7 +503,7 @@ export function AssistantChat({
   // a bug, not a continuation; stale sessions stay in history instead.
   const CHAT_RESTORE_WINDOW_MS = 30 * 60_000;
   useEffect(() => {
-    if (preview || !aiBarOpen || restoredRef.current) return;
+    if (preview || thread || !aiBarOpen || restoredRef.current) return;
     restoredRef.current = true;
     const fresh = lastChatAt && Date.now() - lastChatAt < CHAT_RESTORE_WINDOW_MS;
     if (
@@ -450,7 +517,40 @@ export function AssistantChat({
       sessionIdRef.current = lastChatId;
       void loadSession(lastChatId);
     }
-  }, [preview, aiBarOpen, chatScopeKind, lastChatId, lastChatAt, messages.length, loadSession]);
+  }, [preview, thread, aiBarOpen, chatScopeKind, lastChatId, lastChatAt, messages.length, loadSession]);
+
+  // The thread: one canonical session, loaded once. `baseUpdatedAt` is the
+  // copy this client saw, so a save from two devices merges instead of
+  // overwriting (docs/albatross-thread.md, "Saving").
+  const baseUpdatedAtRef = useRef(0);
+  const threadSessionId = thread?.sessionId ?? null;
+  const threadWorkId = thread?.scope.workId ?? null;
+  const threadInitial = thread?.initialMessages;
+  useEffect(() => {
+    if (!preview || !threadSessionId || !threadInitial) return;
+    sessionIdRef.current = threadSessionId;
+    setMessages(threadInitial as never);
+  }, [preview, threadSessionId, threadInitial, setMessages]);
+  useEffect(() => {
+    if (!threadSessionId || !threadWorkId || preview) return;
+    let cancelled = false;
+    sessionIdRef.current = threadSessionId;
+    restoredRef.current = true;
+    const generation = ++sessionLoadGenerationRef.current;
+    fetch(`/api/chats?workThread=${encodeURIComponent(threadWorkId)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled || generation !== sessionLoadGenerationRef.current) return;
+        if (data?.ok && data.session && Array.isArray(data.session.messages)) {
+          baseUpdatedAtRef.current = Number(data.session.updatedAt) || 0;
+          setMessages(data.session.messages);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [threadSessionId, threadWorkId, preview, setMessages]);
 
   // Autosave once the stream settles (debounced so multi-step turns save once).
   useEffect(() => {
@@ -469,15 +569,24 @@ export function AssistantChat({
           scopeKind: chatScopeKind,
           areaId: chatScopeAreaId || undefined,
           workId: chatScopeWorkId || undefined,
+          ...(thread ? { baseUpdatedAt: baseUpdatedAtRef.current } : {}),
         }),
       })
-        .then(() => qc.invalidateQueries({ queryKey: ['chat-sessions'] }))
+        .then(async (res) => {
+          const data = await res.json().catch(() => null);
+          const at = Number(data?.session?.updatedAt);
+          if (thread && Number.isFinite(at) && at > 0) baseUpdatedAtRef.current = at;
+          // Messages another device wrote: keep them, or the next save drops them.
+          if (thread && Array.isArray(data?.mergedMessages) && data.mergedMessages.length)
+            setMessages((current) => addMergedThreadMessages(current, data.mergedMessages as typeof current));
+          return qc.invalidateQueries({ queryKey: ['chat-sessions'] });
+        })
         .catch(() => undefined);
     }, 600);
     return () => {
       if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
     };
-  }, [preview, chatScopeAreaId, chatScopeKind, chatScopeWorkId, messages, status, qc]);
+  }, [preview, thread, chatScopeAreaId, chatScopeKind, chatScopeWorkId, messages, status, qc, setMessages]);
 
   const startNewChat = useCallback(() => {
     if (busy) return;
@@ -498,7 +607,7 @@ export function AssistantChat({
       const data = await res.json();
       return (data?.sessions || []) as ChatSessionSummary[];
     },
-    enabled: aiBarOpen && !preview,
+    enabled: aiBarOpen && !preview && !thread,
     staleTime: 30_000,
   });
   const chatSessions = sessionsData || [];
@@ -517,10 +626,12 @@ export function AssistantChat({
   const [door, setDoor] = useState<DoorRequest | null>(null);
   useEffect(() => {
     if (!captureOpen) return;
+    // On the Work thread the page is the chat: its composer takes the door.
+    if (!thread && isWorkThreadOpen(useClientStore.getState())) return;
     setDoor((current) => ({ seed: captureSeed, nonce: (current?.nonce ?? 0) + 1 }));
-    setAiBarOpen(true);
+    if (!thread) setAiBarOpen(true);
     setCaptureOpen(false);
-  }, [captureOpen, captureSeed, setAiBarOpen, setCaptureOpen]);
+  }, [captureOpen, captureSeed, thread, setAiBarOpen, setCaptureOpen]);
 
   // Hold from the bar: one capture with the chat conversation as its source.
   // The response carries the parsed cards for the landing. New Work gets its
@@ -537,14 +648,27 @@ export function AssistantChat({
   messageSnapshot.current = messages;
   const toolSignature = toolPartSignature(messages);
 
+  const threadRuns = thread?.runs;
+  const threadRenderRun = thread?.renderRun;
   const partHandlers = useMemo<ChatPartHandlers>(
     () => ({
       answer: answerHitl,
       respondApproval,
       openDraft: (draft) => openComposeNew(draft),
       openThread: (target) => routeEmailPreviewThread(target, { setThreadAccount, setSelectedThread }),
+      personalDetails: personalDetails.data?.details,
+      stepRun: threadRuns && threadRenderRun ? { runs: threadRuns, render: threadRenderRun } : undefined,
     }),
-    [answerHitl, respondApproval, openComposeNew, setThreadAccount, setSelectedThread],
+    [
+      answerHitl,
+      respondApproval,
+      openComposeNew,
+      setThreadAccount,
+      setSelectedThread,
+      personalDetails.data?.details,
+      threadRuns,
+      threadRenderRun,
+    ],
   );
 
   // --- UI tool intercept ---
@@ -739,7 +863,12 @@ export function AssistantChat({
     pendingFilesRef.current = [];
     setPendingFiles([]);
     void sendMessage(
-      { text: trimmed || 'Use the attached file(s).', ...(files ? { files } : {}) } as any,
+      {
+        text: trimmed || 'Use the attached file(s).',
+        ...(files ? { files } : {}),
+        // The thread sorts messages and runs by this time (docs/albatross-thread.md).
+        metadata: { createdAt: Date.now() },
+      } as any,
       {
         body: {
           extraSystem: [contextLines, uploadContext].filter(Boolean).join('\n\n') || undefined,
@@ -763,6 +892,7 @@ export function AssistantChat({
   sendRef.current = send;
   useEffect(() => {
     if (preview || !assistantPrompt || busy) return;
+    if (!thread && isWorkThreadOpen(useClientStore.getState())) return;
     const prompt = useClientStore.getState().claimAssistantPrompt();
     if (!prompt) return; // Atomic claim also prevents Strict Mode double submission.
     restoredRef.current = true;
@@ -771,10 +901,10 @@ export function AssistantChat({
       if (chatScopeKind === 'global') setLastChatId(sessionIdRef.current);
     }
     void sendRef.current(prompt);
-  }, [preview, assistantPrompt, busy, chatScopeKind, setLastChatId]);
+  }, [preview, thread, assistantPrompt, busy, chatScopeKind, setLastChatId]);
 
   useEffect(() => {
-    if (!pendingBriefResponse || busy) return;
+    if (!pendingBriefResponse || busy || thread) return;
     if (chatScopeKind !== 'global') {
       // Finish and save the existing scoped turn before opening this distinct
       // handoff. Otherwise a response about Work B would be saved under Work A.
@@ -805,7 +935,10 @@ export function AssistantChat({
       if (chatScopeKind === 'global') setLastChatId(sessionIdRef.current);
     }
     void sendMessage(
-      { text: `Regarding “${request.title}”:\n${request.response}` },
+      {
+        text: `Regarding “${request.title}”:\n${request.response}`,
+        metadata: { createdAt: Date.now() },
+      } as any,
       {
         body: {
           briefResponse: request.reference,
@@ -818,6 +951,7 @@ export function AssistantChat({
   }, [
     pendingBriefResponse,
     busy,
+    thread,
     sendMessage,
     chatScopeKind,
     chatScopeAreaId,
@@ -829,6 +963,55 @@ export function AssistantChat({
 
   const last = messages[messages.length - 1];
   const waitingForContent = busy && (last?.role !== 'assistant' || !hasVisibleContent(last));
+  const lastMessageId = last?.id;
+  const holdFor = (message: any, index: number) =>
+    message.role === 'assistant' && sessionIdRef.current
+      ? {
+          conversationId: sessionIdRef.current,
+          userText: precedingUserText(messages, index),
+          onKept: afterHeld,
+        }
+      : undefined;
+  const timeline = thread
+    ? mergeThreadTimeline(messages, thread.runs, {
+        createdAt: (message) => messageCreatedAt(message as { metadata?: unknown }),
+        startedRunIds: (message) => startedRunIds(message as { parts?: unknown[] }),
+      })
+    : null;
+  const earlierCount = timeline
+    ? timeline.filter((item) => item.kind === 'message' && item.at === null).length
+    : 0;
+  const messageIndex = new Map(messages.map((message, index) => [message.id, index]));
+  const tail = (
+    <>
+      {waitingForContent ? (
+        <div className="flex items-center gap-2 px-1 py-0.5 text-[12px] text-[var(--color-text-muted)]">
+          <span role="status" aria-label="Working">
+            <RevealDot />
+          </span>
+        </div>
+      ) : null}
+      {error ? (
+        <div className="space-y-1.5 rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
+          <div>
+            {/network|fetch|connection|terminated/i.test(error.message)
+              ? 'Connection interrupted. Continue checks saved work before proceeding.'
+              : error.message}
+          </div>
+          {/* Long conversations can hit a limit mid-turn; let the user
+              pick up where it stopped (the server windows the transcript,
+              so the retry fits). */}
+          <button
+            type="button"
+            onClick={() => sendMessage(undefined, { body: { continuation: true } })}
+            className="rounded border border-[var(--color-danger)]/40 px-2 py-0.5 font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/15"
+          >
+            Continue
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
 
   return (
     <section
@@ -851,127 +1034,173 @@ export function AssistantChat({
         }
       }}
     >
-      <header
-        data-assistant-header
-        className="mx-3 mb-1 mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2 py-1.5"
-      >
-        <div className="flex min-w-0 items-center gap-2 text-[13px]">
-          <span
-            aria-hidden
-            className={cn(
-              'flex shrink-0 items-center justify-center',
-              !streaming && '[&_.siri-orb::before]:[animation-play-state:paused]',
-            )}
-          >
-            <SiriOrb size="30px" animationDuration={7} colors={ORB_COLORS} variant="ambient" />
-          </span>
-          <button
-            type="button"
-            title={
-              chatScopeKind === 'global' ? 'Global Albatross conversation' : 'Return to global conversation'
-            }
-            onClick={() => {
-              if (chatScopeKind !== 'global') setChatScope({ kind: 'global' });
-            }}
-            disabled={busy || chatScopeKind === 'global'}
-            className="truncate font-medium text-[var(--color-text)] enabled:hover:underline disabled:cursor-default disabled:opacity-70"
-          >
-            {chatScopeKind === 'global'
-              ? 'Albatross'
-              : chatScopeLabel || (chatScopeKind === 'work' ? 'Attached Work' : 'Attached Area')}
-          </button>
-        </div>
-        <ButtonGroup aria-label="Chat controls" className="assistant-header-actions ml-auto rounded-ui">
-          <Button
-            variant="outline"
-            size="icon-sm"
-            onClick={() => setPresentation(presentation === 'full' ? 'split' : 'full')}
-            title={presentation === 'full' ? 'Show current page' : 'Focus on chat'}
-            aria-label={presentation === 'full' ? 'Show current page' : 'Focus on chat'}
-            className="hidden md:inline-flex"
-          >
-            {presentation === 'full' ? (
-              <PanelLeftOpen className="size-4" />
-            ) : (
-              <PanelLeftClose className="size-4" />
-            )}
-          </Button>
-          <Button
-            variant="outline"
-            size="icon-sm"
-            onClick={() => setPresentation(presentation === 'corner' ? 'split' : 'corner')}
-            title={presentation === 'corner' ? 'Expand chat beside this page' : 'Return to corner chat'}
-            aria-label={presentation === 'corner' ? 'Expand chat beside this page' : 'Return to corner chat'}
-            className="hidden md:inline-flex"
-          >
-            {presentation === 'corner' ? <Maximize2 className="size-4" /> : <Minimize2 className="size-4" />}
-          </Button>
-          <Button
-            variant="outline"
-            size="icon-sm"
-            onClick={startNewChat}
-            disabled={busy}
-            title="New chat"
-            className="size-11 text-[var(--color-text-muted)] hover:text-[var(--color-text)] md:size-8"
-          >
-            <RowIcon icon={PlusIcon} size={14} />
-            <span className="sr-only">New chat</span>
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon-sm"
-                disabled={busy}
-                title="Chat history"
-                className="size-11 text-[var(--color-text-muted)] hover:text-[var(--color-text)] md:size-8"
-              >
-                <RowIcon icon={HistoryIcon} size={14} />
-                <span className="sr-only">Chat history</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="max-h-80 w-72 overflow-y-auto">
-              <DropdownMenuLabel>Previous chats</DropdownMenuLabel>
-              {chatSessions.length === 0 ? (
-                <DropdownMenuItem disabled>No saved chats yet</DropdownMenuItem>
-              ) : (
-                chatSessions.map((session) => (
-                  <DropdownMenuItem
-                    key={session._id}
-                    onSelect={() => void loadSession(session._id)}
-                    disabled={busy}
-                    className="flex flex-col items-start gap-0.5"
-                  >
-                    <span className="w-full truncate text-[12.5px] text-[var(--color-text)]">
-                      {session.title || 'Untitled chat'}
-                    </span>
-                    <span className="text-[10.5px] text-[var(--color-text-faint)]">
-                      {formatDate(session.updatedAt)} · {session.messageCount} message
-                      {session.messageCount === 1 ? '' : 's'}
-                    </span>
-                  </DropdownMenuItem>
-                ))
+      {thread ? null : (
+        <header
+          data-assistant-header
+          className="mx-3 mb-1 mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2 py-1.5"
+        >
+          <div className="flex min-w-0 items-center gap-2 text-[13px]">
+            <span
+              aria-hidden
+              className={cn(
+                'flex shrink-0 items-center justify-center',
+                !streaming && '[&_.siri-orb::before]:[animation-play-state:paused]',
               )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={startNewChat} disabled={busy}>
-                Start a new chat
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            variant="outline"
-            size="icon-sm"
-            onClick={() => setAiBarOpen(false)}
-            title="Close (⌘K)"
-            className="size-11 text-[var(--color-text-muted)] hover:text-[var(--color-text)] md:size-8"
-          >
-            <X className="h-3.5 w-3.5" />
-            <span className="sr-only">Close</span>
-          </Button>
-        </ButtonGroup>
-      </header>
+            >
+              <SiriOrb size="30px" animationDuration={7} colors={ORB_COLORS} variant="ambient" />
+            </span>
+            <button
+              type="button"
+              title={
+                chatScopeKind === 'global' ? 'Global Albatross conversation' : 'Return to global conversation'
+              }
+              onClick={() => {
+                if (chatScopeKind !== 'global') setChatScope({ kind: 'global' });
+              }}
+              disabled={busy || chatScopeKind === 'global'}
+              className="truncate font-medium text-[var(--color-text)] enabled:hover:underline disabled:cursor-default disabled:opacity-70"
+            >
+              {chatScopeKind === 'global'
+                ? 'Albatross'
+                : chatScopeLabel || (chatScopeKind === 'work' ? 'Attached Work' : 'Attached Area')}
+            </button>
+          </div>
+          <ButtonGroup aria-label="Chat controls" className="assistant-header-actions ml-auto rounded-ui">
+            <Button
+              variant="outline"
+              size="icon-sm"
+              onClick={() => setPresentation(presentation === 'full' ? 'split' : 'full')}
+              title={presentation === 'full' ? 'Show current page' : 'Focus on chat'}
+              aria-label={presentation === 'full' ? 'Show current page' : 'Focus on chat'}
+              className="hidden md:inline-flex"
+            >
+              {presentation === 'full' ? (
+                <PanelLeftOpen className="size-4" />
+              ) : (
+                <PanelLeftClose className="size-4" />
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="icon-sm"
+              onClick={() => setPresentation(presentation === 'corner' ? 'split' : 'corner')}
+              title={presentation === 'corner' ? 'Expand chat beside this page' : 'Return to corner chat'}
+              aria-label={
+                presentation === 'corner' ? 'Expand chat beside this page' : 'Return to corner chat'
+              }
+              className="hidden md:inline-flex"
+            >
+              {presentation === 'corner' ? (
+                <Maximize2 className="size-4" />
+              ) : (
+                <Minimize2 className="size-4" />
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="icon-sm"
+              onClick={startNewChat}
+              disabled={busy}
+              title="New chat"
+              className="size-11 text-[var(--color-text-muted)] hover:text-[var(--color-text)] md:size-8"
+            >
+              <RowIcon icon={PlusIcon} size={14} />
+              <span className="sr-only">New chat</span>
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  disabled={busy}
+                  title="Chat history"
+                  className="size-11 text-[var(--color-text-muted)] hover:text-[var(--color-text)] md:size-8"
+                >
+                  <RowIcon icon={HistoryIcon} size={14} />
+                  <span className="sr-only">Chat history</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-h-80 w-72 overflow-y-auto">
+                <DropdownMenuLabel>Previous chats</DropdownMenuLabel>
+                {chatSessions.length === 0 ? (
+                  <DropdownMenuItem disabled>No saved chats yet</DropdownMenuItem>
+                ) : (
+                  chatSessions.map((session) => (
+                    <DropdownMenuItem
+                      key={session._id}
+                      onSelect={() => void loadSession(session._id)}
+                      disabled={busy}
+                      className="flex flex-col items-start gap-0.5"
+                    >
+                      <span className="w-full truncate text-[12.5px] text-[var(--color-text)]">
+                        {session.title || 'Untitled chat'}
+                      </span>
+                      <span className="text-[10.5px] text-[var(--color-text-faint)]">
+                        {formatDate(session.updatedAt)} · {session.messageCount} message
+                        {session.messageCount === 1 ? '' : 's'}
+                      </span>
+                    </DropdownMenuItem>
+                  ))
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={startNewChat} disabled={busy}>
+                  Start a new chat
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              variant="outline"
+              size="icon-sm"
+              onClick={() => setAiBarOpen(false)}
+              title="Close (⌘K)"
+              className="size-11 text-[var(--color-text-muted)] hover:text-[var(--color-text)] md:size-8"
+            >
+              <X className="h-3.5 w-3.5" />
+              <span className="sr-only">Close</span>
+            </Button>
+          </ButtonGroup>
+        </header>
+      )}
 
-      {briefContext || pendingBriefResponse ? (
+      {thread && timeline ? (
+        <ChatContainer className="relative flex-1" scrollButton={thread.scrollButton ?? null}>
+          <ChatContainerContent data-thread-column className="gap-4 px-4 py-4">
+            <ChatPartContext.Provider value={partHandlers}>
+              {thread.intro}
+              {earlierCount ? <TimelineDivider label={EARLIER_CHAT_DIVIDER} /> : null}
+              {timeline.map((item, index) => {
+                if (item.kind === 'run') {
+                  return (
+                    <ChatContainerMessage key={`run:${item.run.id}`} data-timeline-run={item.run.id}>
+                      {thread.renderRun(item.run, item.continues)}
+                    </ChatContainerMessage>
+                  );
+                }
+                const message = item.message as any;
+                const ownIndex = messageIndex.get(message.id) ?? index;
+                return (
+                  <ChatContainerMessage key={message.id}>
+                    <MessageView
+                      message={message}
+                      streaming={streaming && message.id === lastMessageId}
+                      // A message that started a run is a command, not knowledge to hold.
+                      hold={
+                        startedRunIds(message as { parts?: unknown[] }).length
+                          ? undefined
+                          : holdFor(message, ownIndex)
+                      }
+                    />
+                  </ChatContainerMessage>
+                );
+              })}
+              {tail}
+              {thread.outro}
+            </ChatPartContext.Provider>
+          </ChatContainerContent>
+        </ChatContainer>
+      ) : null}
+
+      {!thread && (briefContext || pendingBriefResponse) ? (
         <div
           className="mx-3 mb-2 flex items-center justify-between gap-2 text-[11px] text-[var(--color-text-muted)]"
           data-assistant-brief-context
@@ -993,7 +1222,7 @@ export function AssistantChat({
           </Button>
         </div>
       ) : null}
-      {messages.length === 0 ? (
+      {thread ? null : messages.length === 0 ? (
         <div className="scrollable flex flex-1 flex-col items-center justify-center gap-5 px-5 py-8 text-center">
           <AssistantGreeting
             phrase={invitation || assistantPhrases(primaryView, assistantDocument)[0]}
@@ -1029,53 +1258,24 @@ export function AssistantChat({
                   <MessageView
                     message={m}
                     streaming={streaming && i === messages.length - 1}
-                    hold={
-                      m.role === 'assistant' && sessionIdRef.current
-                        ? {
-                            conversationId: sessionIdRef.current,
-                            userText: precedingUserText(messages, i),
-                            onKept: afterHeld,
-                          }
-                        : undefined
-                    }
+                    hold={holdFor(m, i)}
                   />
                 </ChatContainerMessage>
               ))}
             </ChatPartContext.Provider>
-            {waitingForContent ? (
-              <div className="flex items-center gap-2 px-1 py-0.5 text-[12px] text-[var(--color-text-muted)]">
-                <span role="status" aria-label="Working">
-                  <RevealDot />
-                </span>
-              </div>
-            ) : null}
-            {error ? (
-              <div className="space-y-1.5 rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
-                <div>
-                  {/network|fetch|connection|terminated/i.test(error.message)
-                    ? 'Connection interrupted. Continue checks saved work before proceeding.'
-                    : error.message}
-                </div>
-                {/* Long conversations can hit a limit mid-turn; let the user
-                    pick up where it stopped (the server windows the transcript,
-                    so the retry fits). */}
-                <button
-                  type="button"
-                  onClick={() => sendMessage(undefined, { body: { continuation: true } })}
-                  className="rounded border border-[var(--color-danger)]/40 px-2 py-0.5 font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/15"
-                >
-                  Continue
-                </button>
-              </div>
-            ) : null}
+            {tail}
           </ChatContainerContent>
         </ChatContainer>
       )}
 
       {/* Composer: a rounded floating field pinned to the panel bottom —
             no hard border-t seam, it hovers over the translucent surface. */}
-      <div ref={inputWrapRef}>
-        {primaryView === 'files' && assistantDocument ? (
+      <div
+        ref={inputWrapRef}
+        data-thread-composer={thread ? '' : undefined}
+        className={thread ? 'mx-auto w-full max-w-[680px] px-1' : undefined}
+      >
+        {!thread && primaryView === 'files' && assistantDocument ? (
           <p
             data-assistant-document-context
             className="mb-2 truncate px-1 text-[11px] text-[var(--color-text-muted)]"
@@ -1087,9 +1287,10 @@ export function AssistantChat({
         ) : null}
         <ChatComposer
           placeholder={
-            primaryView === 'files' && assistantDocument
+            thread?.placeholder ??
+            (primaryView === 'files' && assistantDocument
               ? 'Describe the changes you have in mind…'
-              : undefined
+              : undefined)
           }
           busy={busy}
           streaming={streaming}
@@ -1102,7 +1303,7 @@ export function AssistantChat({
           reduceMotion={reduceMotion}
           before={
             <>
-              {chatScopeKind !== 'global' ? (
+              {chatScopeKind !== 'global' && !thread ? (
                 <div className="flex px-1 pt-1">
                   <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-ui border border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] px-2.5 py-1 text-[10.5px] text-[var(--color-accent)]">
                     <span className="truncate">
@@ -1277,7 +1478,12 @@ export const MessageView = memo(
                 renderRich={renderRichTool}
               />
             ) : segment.part.type === 'reasoning' || segment.part.type === 'thinking' ? null : (
-              <Part key={`${message.id}-${segment.index}`} part={segment.part} streaming={streaming} />
+              <Part
+                key={`${message.id}-${segment.index}`}
+                part={segment.part}
+                shape={segment.shape ?? null}
+                streaming={streaming}
+              />
             ),
           )}
           {hold && replyText ? (
@@ -1389,13 +1595,92 @@ function userTextFromMessage(message: any): string {
 
 // Lets the deeply-nested Part renderer hand human-in-the-loop answers back to
 // useChat, and route "open this draft" requests into the real composer.
-interface ChatPartHandlers {
+export interface ChatPartHandlers {
   answer: (tool: string, toolCallId: string, output: Record<string, unknown>) => void;
   respondApproval?: (approvalId: string, approved: boolean) => void;
   openDraft?: (draft: { to?: string; cc?: string; bcc?: string; subject?: string; body?: string }) => void;
   openThread?: (target: { account: string; threadId: string }) => void;
+  /** The saved personal details, so an `ask_form` fills its bound fields. */
+  personalDetails?: readonly PersonalDetailView[];
+  /** The thread's live runs: a `step_run` shape renders its run block in place. */
+  stepRun?: { runs: readonly ThreadRunView[]; render: (run: ThreadRunView, continues: boolean) => ReactNode };
 }
-const ChatPartContext = createContext<ChatPartHandlers>({ answer: () => {} });
+export const ChatPartContext = createContext<ChatPartHandlers>({ answer: () => {} });
+
+function TimelineDivider({ label }: { label: string }) {
+  return (
+    <div
+      data-slot="timeline-divider"
+      className="flex items-center gap-3 py-1 text-[11px] text-[var(--color-text-faint)]"
+    >
+      <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
+      <span>{label}</span>
+      <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
+    </div>
+  );
+}
+
+// The chat's `ask_form`: one typed form, answered through addToolResult. The
+// receipt shows "Saved to your details" from its own save flag before the
+// server fills `savedToDetails` (docs/albatross-thread.md).
+function AskFormPart({ part }: { part: any }) {
+  const { answer, personalDetails } = useContext(ChatPartContext);
+  const parsed = useMemo(() => formQuestionSchema.safeParse(part.input), [part.input]);
+  if (part.state === 'input-streaming' || !parsed.success) return null;
+  const form = parsed.data;
+  const answered = part.state === 'output-available';
+  const output = (part.output || {}) as Partial<FormAnswer> & { savedToDetails?: string[] };
+  let receipt: FormReceipt | null = null;
+  if (answered) {
+    const values = output.skipped ? null : ((output.values ?? {}) as FormAnswer['values']);
+    const boundFields = output.save
+      ? form.fields.filter((field) => field.detailKey && values && values[field.id] !== undefined)
+      : [];
+    const savedLabels = output.savedToDetails ?? boundFields.map((field) => field.label);
+    const keys = boundFields.map((field) => String(field.detailKey));
+    receipt = {
+      values,
+      stateLine: output.skipped ? FORM_COPY.skipped : 'Answered',
+      savedLabels,
+      onUndoSave: keys.length ? () => undoPersonalDetails(keys) : undefined,
+    };
+  }
+  return (
+    <div className="max-w-[520px]">
+      <FormQuestionCard
+        form={form}
+        mode="chat"
+        details={personalDetails}
+        receipt={receipt}
+        onSubmit={(result) =>
+          answer('ask_form', part.toolCallId, result as unknown as Record<string, unknown>)
+        }
+        onSkip={() => answer('ask_form', part.toolCallId, { values: {}, save: false, skipped: true })}
+      />
+    </div>
+  );
+}
+
+// `albatross_handle_step`: the run block renders in place inside the thread.
+// A steered note shows nothing extra (the run log says "Read your note"). In
+// the global chat the compact card opens the Albatross.
+function StepRunPart({ part, shape }: { part: any; shape: ToolShape | null }) {
+  const { stepRun } = useContext(ChatPartContext);
+  const state = part.state || 'input-available';
+  if (!shape || shape.kind !== 'step_run') {
+    if (state === 'output-available' && part.output?.ok !== false) return null;
+    return (
+      <ToolActivityRow
+        activity={toolActivityLine(toolPartName(part), part.input, state, part.output, part.errorText)}
+      />
+    );
+  }
+  if (shape.action === 'steered') return null;
+  const run = stepRun?.runs.find((row) => row.id === shape.runId);
+  if (run && stepRun)
+    return <div data-inline-run={run.id}>{stepRun.render(run, Boolean(run.parentRunId))}</div>;
+  return <ShapeCard shape={shape} />;
+}
 
 // Renders the agent's questionnaire (the ask_user HITL tool) — up to four
 // questions, each choice-based or free-text. Answers go back via addToolResult,
@@ -1419,7 +1704,15 @@ function AskUserPart({ part }: { part: any }) {
   );
 }
 
-const Part = memo(function Part({ part, streaming = false }: { part: any; streaming?: boolean }) {
+const Part = memo(function Part({
+  part,
+  shape = null,
+  streaming = false,
+}: {
+  part: any;
+  shape?: ToolShape | null;
+  streaming?: boolean;
+}) {
   const type = part.type;
   if (type === 'text') {
     const text = part.text || '';
@@ -1437,6 +1730,8 @@ const Part = memo(function Part({ part, streaming = false }: { part: any; stream
   if (type === 'dynamic-tool' || (typeof type === 'string' && type.startsWith('tool-'))) {
     const toolName = toolPartName(part);
     if (toolName === 'ask_user') return <AskUserPart part={part} />;
+    if (toolName === 'ask_form') return <AskFormPart part={part} />;
+    if (toolName === 'albatross_handle_step') return <StepRunPart part={part} shape={shape} />;
     if (isHitlToolName(toolName)) return <HitlToolPart toolName={toolName} part={part} />;
     if (isToolApprovalPart(part)) return <ToolApprovalCardPart toolName={toolName} part={part} />;
     // Successful display tools render their designed tool-ui component; the

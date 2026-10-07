@@ -5,6 +5,7 @@
 
 import { Readable } from 'node:stream';
 import JSZip from 'jszip';
+import { listPersonalDetails } from '../personal-details/store';
 import { api, convexQuery } from './convex';
 import { exportPageSize, REDACTED } from './export-redaction';
 import { COMPANY_NAME, PRODUCT_NAME, SUPPORT_EMAIL } from './plans';
@@ -24,13 +25,33 @@ export interface DataExportDependencies {
     numItems: number;
   }): Promise<ExportPage>;
   now(): Date;
+  /**
+   * The saved personal details, decrypted for their owner. The personalDetails
+   * table holds only ciphertext, so the export writes this readable file instead.
+   */
+  personalDetails(
+    userId: string,
+  ): Promise<Array<{ key: string; label: string; value: unknown; source: string; updatedAt: number | null }>>;
 }
 
 export const dataExportDefaults: DataExportDependencies = {
   tables: () => convexQuery<string[]>(api.accounts.exportTableList, {}),
   page: (input) => convexQuery<ExportPage>(api.accounts.exportUserTablePage, input),
   now: () => new Date(),
+  personalDetails: (userId) => exportPersonalDetails(userId),
 };
+
+/** The saved personal details of a user, decrypted, for the export file. Account defaults are left out. */
+export async function exportPersonalDetails(
+  userId: string,
+  list: typeof listPersonalDetails = listPersonalDetails,
+) {
+  return (await list({ userId }))
+    .filter((detail) => detail.saved)
+    .map(({ key, label, value, source, updatedAt }) => ({ key, label, value, source, updatedAt }));
+}
+
+export const PERSONAL_DETAILS_FILE = 'data/personal-details.json';
 
 /**
  * Read one page, halving the page size while Convex refuses it as too large.
@@ -81,6 +102,7 @@ export function exportReadme(exportedAt: Date): string {
     `Each file in data/ is one table that ${PRODUCT_NAME} keeps about you, as a JSON array of rows.`,
     'summary.json lists every file with its row count.',
     'Mail: data/mailCorpusMessages.json has the headers, snippet, and labels of each message.',
+    `Personal details (name, phone, address, and others you saved) are in ${PERSONAL_DETAILS_FILE}.`,
     'data/mailCorpusBodies.json has the text and HTML body of each message.',
     '',
     'What is not in this file:',
@@ -113,6 +135,16 @@ export async function buildDataExport(
   for (const table of tables)
     zip.file(`data/${table}.json`, Readable.from(tableJson(deps, userId, table, counts)));
   zip.file(
+    PERSONAL_DETAILS_FILE,
+    Readable.from(
+      (async function* personalDetails() {
+        const rows = await deps.personalDetails(userId);
+        counts[PERSONAL_DETAILS_FILE] = rows.length;
+        yield `${JSON.stringify(rows, null, 2)}\n`;
+      })(),
+    ),
+  );
+  zip.file(
     'summary.json',
     Readable.from(
       (async function* summary() {
@@ -120,7 +152,10 @@ export async function buildDataExport(
           {
             product: PRODUCT_NAME,
             exportedAt: exportedAt.toISOString(),
-            files: tables.map((table) => ({ file: `data/${table}.json`, rows: counts[table] ?? 0 })),
+            files: [
+              ...tables.map((table) => ({ file: `data/${table}.json`, rows: counts[table] ?? 0 })),
+              { file: PERSONAL_DETAILS_FILE, rows: counts[PERSONAL_DETAILS_FILE] ?? 0 },
+            ],
           },
           null,
           2,

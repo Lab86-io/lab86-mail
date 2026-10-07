@@ -93,7 +93,6 @@ client.setQueryData(['brief', 'weather'], {
 const requests: unknown[] = [];
 (globalThis as any).__todayRequests = requests;
 (globalThis as any).__todayState = () => ({
-  guidedWorkId: useClientStore.getState().guidedWorkId,
   selectedWorkId: useClientStore.getState().selectedWorkId,
   captureSeed: useClientStore.getState().captureSeed,
 });

@@ -272,8 +272,10 @@ describe('work session route', () => {
       stepIdentity: 'step:task:submit the form',
       sourceId: 'bb-1',
       trust: 'observed',
-      url: 'https://browserbase.com/sessions/bb-1',
+      summary: expect.stringContaining('Seen at '),
     });
+    // Sessions are not recorded, so the proof carries no replay link.
+    expect(proof.url).toBeUndefined();
     expect(deps.completeWorkStep).toHaveBeenCalledWith({
       userId: 'user-1',
       workId: 'work-1',

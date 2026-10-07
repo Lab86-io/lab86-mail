@@ -137,6 +137,19 @@ content has no second, app-level encryption.
 | Search index text and vectors | `contentItems`, `contentChunks` | `convex/contentSchema.ts:9-46` |
 | Daily Brief editions, chat history | `userDocs` | `lib/store/daily-reports.ts`, `lib/store/chat-sessions.ts` |
 | Tokens (encrypted) | `providerGrants`, `cloudFileCredentials` | `convex/schema.ts:175-190` |
+| Personal details that the user saved for forms: name, email, phone, home address, emergency contact, plain custom facts (encrypted) | `personalDetails` | `convex/personalDetails.ts`, `lib/personal-details/store.ts` |
+
+**Personal details** (2026-10-07, `docs/albatross-thread.md`).
+
+- The user saves them in Settings, in a chat message, or in an Albatross form with "Save to my
+  details". Each value is encrypted with AES-256-GCM and the key id before Convex receives it
+  (`lib/personal-details/store.ts`). The sealed text holds the user id and the detail key, so a
+  value opens only for its own row. Convex holds no clear value.
+- Only the Next server decrypts, for the signed-in owner. Every Convex function of the table needs
+  the server secret (`convex/personalDetails.ts`), so a signed-in browser cannot read the rows.
+- Refused on save: passwords, sign-in codes, card numbers, bank and routing numbers, Social
+  Security and other ID numbers, and API keys (`lib/personal-details/policy.ts`).
+- The rows rotate with the other encrypted fields (`lib/security/encrypted-fields.ts`).
 
 **Attachments.**
 
@@ -163,6 +176,11 @@ content has no second, app-level encryption.
 - Convex keeps the vectors in `contentChunks` (`convex/contentSchema.ts:38-46`).
 
 ## 5. Model calls
+
+- **Personal details.** The system prompt holds the user's name, email, and only the names of the
+  other saved details. A model reads the values through the `personal_details_get` tool, on the
+  turns where a form needs them (`lib/tools/personal-details.ts`). Saved chats drop that tool's
+  output (`lib/store/chat-sessions.ts`), and no card shows the values.
 
 - **Gateway.** All model calls go through `lib/ai/gateway.ts` and
   `lib/ai/client.ts`. The OpenRouter base URL is `https://openrouter.ai/api/v1`
@@ -251,9 +269,15 @@ Browserbase directly. Three features use Browserbase:
    The model writes the search words or the URL. The words can come from the
    user's question or from mail that the model read.
 2. **The guided-work browser.** It opens the URL of a work step in a
-   Browserbase session that Browserbase records
-   (`lib/albatross/browser-session.ts:84-94`). Albatross reads up to 6,000
+   Browserbase session. Since 2026-10-07 the session is not recorded
+   (`recordSession: false`, `lib/albatross/browser-session.ts`), because runs
+   type personal details there and users sign in there. Albatross reads up to 6,000
    characters of page text back (`lib/albatross/browser-session.ts:185-202`).
+   The step runner (`lib/albatross/step-runner.ts`) uses the same session. It
+   types the user's saved personal details into a web form when a step needs
+   them (for example a course registration). It never types a password, a
+   sign-in code, or card data, and it stops before any payment or final submit
+   (`lib/albatross/browser-agent.ts`).
 3. **Slide render.** Albatross renders a deck in a Browserbase browser when
    Browserbase is set up (`lib/documents/deck-render.ts:137-178`). A deck can
    hold text from mail if the user made the deck from mail.

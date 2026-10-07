@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { awakeWork, shelfWork, type WorkListItem } from '../components/albatross/AlbatrossesSurface';
-import { sameHorizon, visibleHorizon } from '../components/albatross/WorkDetail';
+import { sameHorizon, visibleHorizon } from '../lib/albatross/work-view';
 
 const repoRoot = join(import.meta.dir, '..');
 const read = (relative: string) => readFileSync(join(repoRoot, relative), 'utf8');
@@ -74,12 +74,12 @@ describe('the Work detail owns the horizon control', () => {
     expect(sameHorizon({ kind: 'now' }, null)).toBe(false);
   });
 
-  test('the control sits in the actions cluster and saves through setHorizon', () => {
-    const detail = read('components/albatross/WorkDetail.tsx');
-    expect(detail).toContain('<HorizonControl');
-    expect(detail).toContain('api.albatrossWorkV2.setHorizon');
-    expect(detail.indexOf('Put it down')).toBeLessThan(detail.indexOf('<HorizonControl'));
-    expect(detail.indexOf('<HorizonControl')).toBeLessThan(detail.indexOf('<WorkDetailRecovery'));
+  test('the control opens from the header menu and saves through setHorizon', () => {
+    const thread = read('components/albatross/WorkThread.tsx');
+    expect(thread).toContain('<HorizonControl');
+    expect(thread).toContain("horizon: 'Change the horizon'");
+    expect(thread.indexOf('{THREAD_COPY.horizon}')).toBeLessThan(thread.indexOf('{THREAD_COPY.putDown}'));
+    expect(read('components/albatross/thread/use-work-shape.ts')).toContain('api.albatrossWorkV2.setHorizon');
   });
 
   test('one responsive shell mounts the wake nudge once, and the bell stays quiet', () => {

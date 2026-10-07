@@ -268,9 +268,9 @@ describe('coming back after time away', () => {
 
 describe('the surfaces use it', () => {
   test('the Albatross page offers putting it down', () => {
-    const detail = readFileSync('components/albatross/WorkDetail.tsx', 'utf8');
-    expect(detail).toContain('ReleaseSheet');
-    expect(detail).toContain('Put it down');
+    const thread = readFileSync('components/albatross/WorkThread.tsx', 'utf8');
+    expect(thread).toContain('ReleaseSheet');
+    expect(thread).toContain('Put it down');
   });
 
   test('the Work page carries the review, and Today does not', () => {

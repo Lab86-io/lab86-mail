@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { conductorMayMove } from '../lib/albatross/conductor-quiet';
 import { shapePlans } from '../lib/albatross/shape-policy';
+import { CHAT_ANSWER_PREFIX } from '../lib/albatross/thread-contract';
 import { isTerminalWork } from '../lib/albatross/work-lifecycle';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
@@ -79,6 +80,7 @@ const nextValidator = v.object({
   ),
   label: v.string(),
   detail: v.string(),
+  doneLabel: v.optional(v.string()),
   target: v.optional(
     v.object({
       kind: v.union(
@@ -145,11 +147,13 @@ export function stepRunView(run: RunDoc) {
           kind: run.next.kind,
           label: run.next.label,
           detail: run.next.detail,
+          doneLabel: run.next.doneLabel ?? null,
           target: run.next.target ?? null,
         }
       : null,
     artifacts: run.artifacts,
     browserSessionId: run.browserSessionId ?? null,
+    parentRunId: run.parentRunId ? String(run.parentRunId) : null,
     stoppedBy: run.budget?.exhausted ?? null,
     error: run.error ?? null,
     createdAt: run.createdAt,
@@ -396,6 +400,9 @@ export const settle = mutation({
               kind: args.next.kind,
               label: truncateText(args.next.label, 48),
               detail: truncateText(args.next.detail, 500),
+              ...(args.next.doneLabel?.trim()
+                ? { doneLabel: truncateText(args.next.doneLabel.trim(), 32) }
+                : {}),
               ...(args.next.target
                 ? {
                     target: {
@@ -488,6 +495,96 @@ export const runsForWork = query({
       .order('desc')
       .take(40);
     return latestRunPerStep(rows).map(stepRunView);
+  },
+});
+
+/** Steer notes a run keeps. */
+const STEER_MAX = 10;
+const STEER_TEXT_MAX = 2_000;
+/** Runs the thread shows, newest last. */
+const THREAD_RUNS_MAX = 30;
+
+/**
+ * Every run of a Work for the thread (docs/albatross-thread.md), oldest
+ * first, with the question each waiting run asked.
+ */
+export const runsForWorkHistory = query({
+  args: { ...callerArgs, workId: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const limit = Math.max(1, Math.min(THREAD_RUNS_MAX, Math.floor(args.limit ?? THREAD_RUNS_MAX)));
+    const rows = await ctx.db
+      .query('albatrossStepRuns')
+      .withIndex('by_user', (q) => q.eq('userId', userId).eq('workId', args.workId))
+      .order('desc')
+      .take(limit);
+    const views = await Promise.all(
+      rows.reverse().map(async (run) => {
+        const view = stepRunView(run);
+        const questionId =
+          run.next?.target?.kind === 'question' && run.next.target.id
+            ? ctx.db.normalizeId('albatrossWorkQuestions', run.next.target.id)
+            : null;
+        const question = questionId ? await ctx.db.get(questionId) : null;
+        return {
+          ...view,
+          question:
+            question && question.userId === userId
+              ? {
+                  id: String(question._id),
+                  form: question.form ?? null,
+                  prompt: question.prompt,
+                  reason: question.reason ?? null,
+                  options: question.options ?? null,
+                  status: question.status,
+                  answer: question.status === 'answered' ? (question.answer ?? null) : null,
+                  answeredIn:
+                    question.status !== 'answered'
+                      ? null
+                      : String(question.answer || '').startsWith(CHAT_ANSWER_PREFIX)
+                        ? ('chat' as const)
+                        : ('form' as const),
+                }
+              : null,
+        };
+      }),
+    );
+    return views;
+  },
+});
+
+/**
+ * A note from the user to a run that works now. Returns false when the run is
+ * not open; the caller then resumes or starts a run with the note instead.
+ */
+export const steer = mutation({
+  args: { ...callerArgs, id: v.id('albatrossStepRuns'), text: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const run = await ctx.db.get(args.id);
+    if (!run || run.userId !== userId) throw new Error('Run not found.');
+    if (run.state !== 'queued' && run.state !== 'running') return false;
+    const text = truncateText(args.text.trim(), STEER_TEXT_MAX);
+    if (!text) return false;
+    const steer = [...(run.steer || []), { at: now(), text }].slice(-STEER_MAX);
+    await ctx.db.patch(run._id, { steer, updatedAt: now() });
+    return true;
+  },
+});
+
+/** The runner takes the notes it has not read yet, and marks them read (fenced). */
+export const takeSteerNotes = mutation({
+  args: fenceArgs,
+  handler: async (ctx, args) => {
+    const run = await ownedRun(ctx, args);
+    if (!run?.steer?.length) return [];
+    const unread = run.steer.filter((note) => !note.readAt);
+    if (!unread.length) return [];
+    const ts = now();
+    await ctx.db.patch(run._id, {
+      steer: run.steer.map((note) => (note.readAt ? note : { ...note, readAt: ts })),
+    });
+    return unread.map((note) => ({ at: note.at, text: note.text }));
   },
 });
 

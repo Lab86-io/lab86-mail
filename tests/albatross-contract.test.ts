@@ -188,9 +188,9 @@ describe('every closing rule is explained in plain words', () => {
 
 describe('the surfaces carry it', () => {
   test('the Albatross page shows the contract and the proof timeline', () => {
-    const detail = readFileSync('components/albatross/WorkDetail.tsx', 'utf8');
-    expect(detail).toContain('OutcomeContractCard');
-    expect(detail).toContain('ProofTimeline');
+    const details = readFileSync('components/albatross/thread/DetailsPanel.tsx', 'utf8');
+    expect(details).toContain('OutcomeContractCard');
+    expect(details).toContain('ProofTimeline');
   });
 
   test('mail offers itself as proof', () => {
@@ -210,10 +210,13 @@ describe('the surfaces carry it', () => {
     expect(server).toContain('attachProof');
   });
 
-  test('guided work names what only the user can do', () => {
-    const guided = readFileSync('components/albatross/GuidedStep.tsx', 'utf8');
-    expect(guided).toContain('Only you can do');
-    expect(guided).toContain('Mark this step done');
-    expect(guided).toContain('You stay in control of every external site');
+  test('the thread names what is yours: payment, a signature, a sign-in, and the offline part', () => {
+    const view = readFileSync('lib/albatross/work-view.ts', 'utf8');
+    expect(view).toContain('Payment, a signature, or a sign-in on the page is yours.');
+    expect(view).toContain('Complete the real-world part and return here to record it.');
+    expect(readFileSync('lib/albatross/thread-view.ts', 'utf8')).toContain("yours: 'Yours, offline'");
+    expect(readFileSync('lib/albatross/step-run-client.ts', 'utf8')).toContain(
+      "do_offline: 'Mark this step done'",
+    );
   });
 });

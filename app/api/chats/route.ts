@@ -8,6 +8,7 @@ import {
   type ChatSessionScope,
   deleteChatSession,
   getChatSession,
+  getWorkThreadSession,
   listChatSessions,
   listScopedChatSessions,
   saveChatSession,
@@ -38,8 +39,14 @@ function errorResponse(err: any) {
 
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get('id');
+  const workThread = (req.nextUrl.searchParams.get('workThread') || '').trim().slice(0, 64);
   try {
     return await withUser(async () => {
+      // The conversation of one Work (docs/albatross-thread.md).
+      if (workThread) {
+        const session = await getWorkThreadSession(workThread);
+        return NextResponse.json({ ok: true, session });
+      }
       if (id) {
         const session = await getChatSession(id);
         return NextResponse.json({ ok: true, session });
@@ -70,6 +77,8 @@ export async function POST(req: NextRequest) {
     scopeKind?: string;
     areaId?: string;
     workId?: string;
+    /** Work threads: the updatedAt of the copy the client loaded, so the save merges. */
+    baseUpdatedAt?: number;
   };
   try {
     body = await req.json();
@@ -107,10 +116,18 @@ export async function POST(req: NextRequest) {
     await enforceUserRateLimit({ userId: user.userId, key: 'chat-save', limit: 120, windowMs: 60_000 });
     const session = await runWithAiRequestContext(
       { userId: user.userId, userEmail: user.email, userName: user.name, agent: 'user' },
-      () => saveChatSession(id, body.messages as any[], body.title, scope),
+      () =>
+        saveChatSession(id, body.messages as any[], body.title, scope, {
+          baseUpdatedAt:
+            typeof body.baseUpdatedAt === 'number' && Number.isFinite(body.baseUpdatedAt)
+              ? body.baseUpdatedAt
+              : undefined,
+        }),
     );
-    const { messages: _messages, ...summary } = session;
-    return NextResponse.json({ ok: true, session: summary });
+    const { messages: _messages, mergedMessages, ...summary } = session;
+    // A Work thread save that kept another device's messages returns them, so
+    // the client adds them (docs/albatross-thread.md, "The timeline").
+    return NextResponse.json({ ok: true, session: summary, ...(mergedMessages ? { mergedMessages } : {}) });
   } catch (err: any) {
     return errorResponse(err);
   }

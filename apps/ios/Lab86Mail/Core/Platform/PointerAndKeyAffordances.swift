@@ -27,6 +27,18 @@ extension View {
         #endif
     }
 
+    /// Command-Return does the one action that waits in the Albatross thread
+    /// on the Mac: a handoff's button, or a form's submit. Plain Return stays
+    /// with the composer. `active` false leaves the button without it, so one
+    /// block can give the key to one of two buttons.
+    func waitingActionShortcut(_ active: Bool = true) -> some View {
+        #if os(macOS)
+        return keyboardShortcut(active ? KeyboardShortcut.waitingAction : nil)
+        #else
+        return self
+        #endif
+    }
+
     /// A context menu for a secondary click on the Mac. The phone keeps its
     /// long press for text selection, so it gets no menu here.
     func pointerMenu<Items: View>(@ViewBuilder _ items: () -> Items) -> some View {
@@ -41,6 +53,13 @@ extension View {
     /// the content on each side, so the text keeps its column.
     func hoverHighlight(cornerRadius: CGFloat = 8, inset: CGFloat = 8) -> some View {
         modifier(HoverHighlightModifier(cornerRadius: cornerRadius, inset: inset))
+    }
+}
+
+extension KeyboardShortcut {
+    /// Command-Return: the one action that waits in the Albatross thread.
+    static var waitingAction: KeyboardShortcut {
+        KeyboardShortcut(.return, modifiers: .command)
     }
 }
 

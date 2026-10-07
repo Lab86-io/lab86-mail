@@ -41,9 +41,9 @@ import {
   shapeShowsPlan,
 } from '../components/albatross/shapes/ShapeFrame';
 import { ShapePicker, stepShape } from '../components/albatross/shapes/ShapePicker';
-import { mergeMetricEntries, visibleMilestones, visibleShape } from '../components/albatross/WorkDetail';
 import { SHAPE_MEANING } from '../lib/albatross/shape-policy';
 import { WORK_SHAPES, type WorkShape } from '../lib/albatross/work-shape';
+import { mergeMetricEntries, visibleMilestones, visibleShape } from '../lib/albatross/work-view';
 
 const repoRoot = join(import.meta.dir, '..');
 const read = (relative: string) => readFileSync(join(repoRoot, relative), 'utf8');
@@ -596,16 +596,17 @@ describe('the shape facts and the policy gates', () => {
     for (const line of Object.values(SHAPE_STATUS_LINE)) expect(line).not.toMatch(/\bAI\b/);
   });
 
-  test('WorkDetail gates the plan sections, the proof, and the completion card on the shape', () => {
-    const source = read('components/albatross/WorkDetail.tsx');
-    expect(source).toContain('{!showsPlan ? null : detail.execution.currentStep ? (');
-    expect(source).toContain('{showsPlan && detail.execution.currentStep ? (');
-    expect(source).toContain('{!showsPlan ? null : document ? (');
-    expect(source).toContain('{showsPlan && !document && plan?.digitalActions?.length ? (');
-    expect(source).toContain("{kind !== 'milestones' && detail.evidence?.length ? (");
-    expect(source).toContain('{open && finishes ? (');
-    expect(source).toContain('<ShapeBodySwap shape={shape}>');
+  test('the thread gates the plan steps, the shape body, and the completion item on the shape', () => {
+    const source = read('components/albatross/WorkThread.tsx');
+    // The plan steps show only for shapes with a plan; the shape body replaces them otherwise.
+    expect(source).toContain('steps={showsPlan ? stepRows : []}');
+    expect(source).toContain('const shapeBody = showsPlan ? null : <ShapeBody');
+    expect(source).toContain('switch (shapeDetail(shape.shape)) {');
+    // "Mark it complete" sits in the header menu only for shapes that finish.
+    expect(source).toContain('{finishes ? (');
     expect(source).toContain('<ShapePicker');
+    const details = read('components/albatross/thread/DetailsPanel.tsx');
+    expect(details).toContain('{shapeBody ? <section className="py-4">{shapeBody}</section> : null}');
   });
 
   test('the harness is dev-only', () => {

@@ -1261,6 +1261,7 @@ export const USER_INLINE_TABLES = [
   'albatrossBrowserSessions',
   'albatrossStepRuns',
   'albatrossBrowserContexts',
+  'personalDetails',
   'areas',
   'mcpConnections',
   'mcpCredentials',
@@ -1359,6 +1360,8 @@ export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
   mailAttachmentBackfills: 'The page cursor of the attachment file queue, not user content.',
   albatrossBrowserContexts:
     'The Browserbase id of the saved sign-ins. It is a service handle to browser cookies, not user content, so it never leaves the service.',
+  personalDetails:
+    'The rows hold only encrypted values. The export writes them decrypted in personal-details.json instead (lib/hosted/data-export.ts).',
 };
 
 /**

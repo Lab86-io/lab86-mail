@@ -1,6 +1,7 @@
 # Albatross step runner
 
-Status: in build on `claude/agentic-steps` (2026-10-07). Owner decisions are at the end.
+Status: shipped in PR #319 (v0.16.24, 2026-10-07). The thread round (`docs/albatross-thread.md`)
+adds the fields in "Thread round additions". Owner decisions are at the end.
 
 ## The idea
 
@@ -222,6 +223,24 @@ delivery is the usual path.
 - Use concrete verbs: "Handle it", "Read and send", "Sign in", "Continue", "Stop", "Take over".
 - Use registry components (`@ai-elements`, `@tool-ui`) for the live log and the progress state
   before you write custom code.
+
+## Thread round additions (docs/albatross-thread.md)
+
+- `StepRunView.parentRunId`: the run this run continues, or `null`.
+- `next.doneLabel`: for `sign_in` and `finish_on_page`, the button the user presses after doing
+  their part on the page ("I signed in", "I paid"). `null` means "Continue". The thread has no
+  "Check the page" button; the resumed run checks the page itself.
+- Run questions are forms: `step_handoff.question.form` (`FormQuestion`). The server stores it on
+  the Work question (`albatrossWorkQuestions.form`, dedupe salted with the run id). The answer
+  route takes `{ form: { values, save } }`.
+- Steer notes: `POST /run { action: 'steer', runId, note }` and the chat tool
+  `albatross_handle_step` add a note to a run in progress. The runner reads new notes between
+  model steps and logs "Read your note: …".
+- `albatrossStepRuns.runsForWorkHistory` and `GET /api/albatross/work/[workId]/runs`: every run of
+  a Work, oldest first, each with its question (`ThreadRunView`).
+- The runner context adds "About the user" (names of saved personal details) and the user's newest
+  messages in the Work thread. It reads values with `personal_details_get`.
+- Shared browser sessions are no longer recorded (`recordSession: false`).
 
 ## Owner decisions (Jakob, 2026-10-07)
 

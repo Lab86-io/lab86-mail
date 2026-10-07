@@ -126,3 +126,48 @@ describe('actionable chat results', () => {
     expect(split.more.at(-1)?.confirm).toBe(true);
   });
 });
+
+describe('undo_personal_details', () => {
+  const action: ShapeAction = { kind: 'undo_personal_details', keys: ['phone', 'home_address'] };
+
+  test('it undoes each key, refreshes the details, and reads as Undo', async () => {
+    const h = harness();
+    const undone: string[] = [];
+    const result = await executeShapeAction(action, {
+      ...h.deps,
+      undoPersonalDetail: async (key) => {
+        undone.push(key);
+      },
+    });
+    expect(result).toEqual({ kind: 'done', label: 'Undone' });
+    expect(undone).toEqual(['phone', 'home_address']);
+    expect(planActionEntries([action])[0]).toMatchObject({ label: 'Undo', mutating: true });
+  });
+
+  test('without an override it posts the undo to the personal details route', async () => {
+    const realFetch = globalThis.fetch;
+    const posted: unknown[] = [];
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      posted.push([url, JSON.parse(String(init.body))]);
+      return Response.json({ ok: true, undone: 'restored' });
+    }) as any;
+    try {
+      const result = await executeShapeAction(
+        { kind: 'undo_personal_details', keys: ['phone'] },
+        harness().deps,
+      );
+      expect(result.kind).toBe('done');
+      expect(posted).toEqual([['/api/personal-details', { action: 'undo', key: 'phone' }]]);
+      globalThis.fetch = (async () =>
+        Response.json({ ok: false, error: 'Nothing to undo.' }, { status: 400 })) as any;
+      expect(
+        await executeShapeAction({ kind: 'undo_personal_details', keys: ['phone'] }, harness().deps),
+      ).toEqual({
+        kind: 'error',
+        message: 'Nothing to undo.',
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});

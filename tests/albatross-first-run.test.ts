@@ -105,9 +105,9 @@ describe('the bird appears only where it belongs', () => {
 
 describe('a plan reads as a guess', () => {
   test('the detail page says the plan can be wrong', () => {
-    const detail = read('components/albatross/WorkDetail.tsx');
-    expect(detail).toContain('best guess at the way through');
-    expect(detail).toContain('will find another one');
+    const details = read('components/albatross/thread/DetailsPanel.tsx');
+    expect(details).toContain('best guess at the way through');
+    expect(details).toContain('will find another one');
   });
 });
 

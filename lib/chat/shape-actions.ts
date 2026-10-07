@@ -35,6 +35,18 @@ export interface ShapeActionDeps {
   now?: () => number;
   /** The account to use for hold_slot when the shape has none. */
   defaultAccount?: string;
+  /** Undo the newest chat save of one personal detail. Default: POST /api/personal-details. */
+  undoPersonalDetail?: (key: string) => Promise<void>;
+}
+
+async function undoPersonalDetailOverHttp(key: string): Promise<void> {
+  const response = await fetch('/api/personal-details', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'undo', key }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body?.ok === false) throw new Error(body?.error || 'The save was not undone.');
 }
 
 export interface ShapeActionOptions {
@@ -86,6 +98,7 @@ export function actionLabel(action: ShapeAction, rsvp?: RsvpStatus): string {
     case 'import_file':
       return 'Import';
     case 'undo_operation':
+    case 'undo_personal_details':
       return 'Undo';
     case 'remember_sender':
       return 'Remember';
@@ -311,6 +324,12 @@ export async function executeShapeAction(
         await deps.callTool('undo_operation', { operationId: action.operationId });
         deps.invalidate([...MAIL_KEYS, 'calendar', 'tasks']);
         return { kind: 'done', label: 'Undone' };
+      case 'undo_personal_details': {
+        const undo = deps.undoPersonalDetail ?? undoPersonalDetailOverHttp;
+        for (const key of action.keys.slice(0, 12)) await undo(key);
+        deps.invalidate(['personal-details']);
+        return { kind: 'done', label: 'Undone' };
+      }
       case 'remember_sender': {
         const notes = (options.note || '').trim();
         if (!notes) return { kind: 'error', message: 'Write the note first.' };

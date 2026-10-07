@@ -436,6 +436,18 @@ const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
   ],
   ['remember', { email: 'ada@x.test', notes: 'Likes tea' }, { ok: true, memory: {} }, 'receipt'],
   ['forget', { email: 'ada@x.test' }, { ok: true }, 'receipt'],
+  [
+    'personal_details_save',
+    { details: [{ key: 'phone', value: '(555) 555-0100' }] },
+    { ok: true, saved: [{ key: 'phone', label: 'Phone', display: '(555) 555-0100' }], rejected: [] },
+    'receipt',
+  ],
+  [
+    'albatross_handle_step',
+    { workId: 'work_1', note: 'Use the Monday class.' },
+    { ok: true, action: 'steered', runId: 'run_1', workId: 'work_1', message: 'The note went to the run.' },
+    'step_run',
+  ],
   ['recall', { email: 'ada@x.test' }, { memory: { email: 'ada@x.test', notes: 'Likes tea' } }, 'text'],
   [
     'mcp_search',

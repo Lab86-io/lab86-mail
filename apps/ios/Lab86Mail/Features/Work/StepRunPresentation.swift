@@ -1,68 +1,9 @@
-import Foundation
+import SwiftUI
 
-// The pure rules behind the step runner surfaces: which card the "Do this
-// next" section draws, what the primary button of a handoff does, and the
-// words each state uses. Views stay thin and these rules stay testable.
-// The web pins the same rules in `components/albatross/StepRunPanel`.
-
-/// What the "Do this next" section shows for the current step.
-enum StepRunCardState: Equatable, Sendable {
-    /// No run controls: the runner is off, or the step is not runnable.
-    case quiet
-    /// The step is runnable. The section offers "Handle it".
-    case eligible
-    /// The run works. The section shows the log and "Stop".
-    case open(StepRunView)
-    /// The run ended with a handoff. The section shows the handoff card.
-    case handedOff(StepRunView)
-    /// The run hit its time or cost limit. The section offers "Continue".
-    case stopped(StepRunView)
-    /// The run failed. The section shows the error and "Try again".
-    case failed(StepRunView)
-
-    var run: StepRunView? {
-        switch self {
-        case .quiet, .eligible: nil
-        case .open(let run), .handedOff(let run), .stopped(let run), .failed(let run): run
-        }
-    }
-
-    /// The usual step buttons ("Mark this step done", the site buttons) hide
-    /// while Albatross works or a handoff waits. "Dismiss" brings them back.
-    /// A failed run keeps them: the user can still do the step by hand.
-    var hidesStepActions: Bool {
-        switch self {
-        case .quiet, .eligible, .failed: false
-        case .open, .handedOff, .stopped: true
-        }
-    }
-}
-
-enum StepRunCardPolicy {
-    static func state(step: WorkDetail.ExecutionStep, execution: WorkDetail.Execution) -> StepRunCardState {
-        guard execution.runnerIsEnabled else { return .quiet }
-        // The open run belongs to the whole Work; it shows here only under its
-        // own step. Another step's run leaves this step quiet (the server marks
-        // it not runnable while that run is open).
-        if let active = execution.activeRun, active.state.isOpen, active.stepKey == step.id {
-            return .open(active)
-        }
-        if let run = step.run {
-            switch run.state {
-            case .queued, .running:
-                return .open(run)
-            case .handedOff:
-                if run.stoppedBy != nil || run.outcome == .stopped { return .stopped(run) }
-                return .handedOff(run)
-            case .failed:
-                return .failed(run)
-            case .done, .cancelled, .closed, .unknown:
-                break
-            }
-        }
-        return step.isRunnable ? .eligible : .quiet
-    }
-}
+// The pure rules behind the run surfaces: what the primary button of a
+// handoff does, the words the Brief and the thread share, the shared browser
+// bar, the log rows, and the open helpers. Views stay thin and these rules
+// stay testable. The web pins the same rules in its thread components.
 
 /// What the primary button of a handoff does on this client. The contract's
 /// next-action table, as a value the views switch on.
@@ -70,9 +11,9 @@ enum StepRunNextBehaviour: Equatable, Sendable {
     case openDraft(id: String, accountID: String?)
     case openDocument(id: String?, url: String?)
     case openApproval(id: String?)
-    /// `sign_in` and `finish_on_page`: the shared browser, then "Continue".
+    /// `sign_in` and `finish_on_page`: the page, then the done label.
     case openBrowser
-    /// The Work question with its choices; the answer resumes the run.
+    /// The Work question with its form; the answer resumes the run.
     case showQuestion(id: String?)
     /// `do_offline`: the usual step check.
     case markStepDone
@@ -112,8 +53,8 @@ enum StepRunNextBehaviour: Equatable, Sendable {
         }
     }
 
-    /// The card draws a primary button for these. A question shows its
-    /// choices instead, and the artifacts already list themselves.
+    /// The block draws a primary button for these. A question shows its
+    /// form instead, and the artifacts already list themselves.
     var showsPrimaryButton: Bool {
         switch self {
         case .showQuestion, .showArtifacts, .none: false
@@ -121,7 +62,8 @@ enum StepRunNextBehaviour: Equatable, Sendable {
         }
     }
 
-    /// "Continue" is a second button after the user did their part on a page.
+    /// The done label ("I paid", "Continue") is a second button after the
+    /// user did their part on a page.
     static func showsContinue(_ next: StepRunView.Next?) -> Bool {
         switch next?.kind {
         case .signIn, .finishOnPage: true
@@ -130,58 +72,26 @@ enum StepRunNextBehaviour: Equatable, Sendable {
     }
 }
 
-/// The words of each state. One table for the Work page and the Brief.
+/// The words the Brief and the thread share. The run block's own words are
+/// in `RunBlockCopy`; these delegate to them so the two never drift.
 enum StepRunCopy {
-    static func sectionTitle(_ state: StepRunCardState) -> String {
-        switch state {
-        case .open: "Albatross works on this"
-        case .quiet, .eligible, .handedOff, .stopped, .failed: "Do this next"
-        }
-    }
-
-    /// The headline of a handoff, stopped, or failed card.
+    /// The headline of a run: "Your turn", "Stopped", "Did not finish".
     static func headline(_ run: StepRunView) -> String {
-        switch run.state {
-        case .failed:
-            return "This run did not finish."
-        case .handedOff:
-            if let line = limitLine(run.stoppedBy) { return line }
-            switch run.outcome {
-            case .yourTurn: return "Your turn"
-            case .needsAnswer: return "Albatross needs one answer"
-            case .stopped: return "Albatross stopped. Continue when you are ready."
-            case .readyForYou, .done, .unknown, .none: return "Ready for you"
-            }
-        case .queued:
-            return "Waiting to start."
-        case .running:
-            return "Albatross works on this step."
-        case .done:
-            return "Done"
-        case .cancelled:
-            return "Stopped"
-        case .closed, .unknown:
-            return "Ready for you"
-        }
+        RunBlockCopy.headline(run)
     }
 
     static func limitLine(_ stoppedBy: StepRunView.StoppedBy?) -> String? {
-        switch stoppedBy {
-        case .time: "Albatross stopped at its time limit."
-        case .cost: "Albatross stopped at its cost limit."
-        case .unknown: "Albatross stopped at a limit."
-        case .none: nil
-        }
+        RunBlockCopy.limitLine(stoppedBy)
     }
 
     /// The one line under an open run: the newest log line, or the state.
     static func progressLine(_ run: StepRunView) -> String {
-        if let line = run.latestLogLine { return line.text }
-        return run.state == .queued ? "Waiting to start." : "Albatross works on this step."
+        RunBlockCopy.progressLine(run)
     }
 
+    /// "In progress: {step}".
     static func workingLine(_ run: StepRunView) -> String {
-        "Working on: \(run.stepTitle)"
+        "In progress: \(run.stepTitle)"
     }
 
     static func triggerLine(_ run: StepRunView) -> String {
@@ -217,8 +127,8 @@ enum StepRunCopy {
     }
 }
 
-/// The status bar of the shared browser while a run owns or hands over the
-/// page: who has it, and which one control the toolbar offers.
+/// The status bar of the page while a run owns or hands over it: who has
+/// it, and which one control the bar offers.
 struct StepRunBrowserPresentation: Equatable, Sendable {
     let agentHasPage: Bool
     let statusLine: String
@@ -245,7 +155,132 @@ struct StepRunBrowserPresentation: Equatable, Sendable {
             liveViewURL = nil
             agentHasPage = false
             showsContinue = followed && (run.isHandoff || tookOver)
-            statusLine = followed ? "The shared browser is closed." : "Opening the shared browser…"
+            statusLine = followed ? "The page is closed." : "Opening the shared browser…"
         }
+    }
+}
+
+/// The live lines of a run, oldest first, each with its time.
+struct StepRunLogView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let lines: [StepRunView.LogLine]
+    var limit: Int?
+
+    private var shown: [StepRunView.LogLine] {
+        guard let limit, lines.count > limit else { return lines }
+        return Array(lines.suffix(limit))
+    }
+
+    /// A note the run read from the user ("Read your note: …") shows in the
+    /// primary colour, so it stands out from the run's own lines.
+    private static func isNote(_ line: StepRunView.LogLine) -> Bool {
+        line.text.hasPrefix("Read your note")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, line in
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 2) {
+                        lineText(line)
+                        timeText(line)
+                    }
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        timeText(line)
+                            .frame(width: 56, alignment: .leading)
+                        lineText(line)
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func timeText(_ line: StepRunView.LogLine) -> some View {
+        Text(line.at.map { $0.formatted(date: .omitted, time: .shortened) } ?? "")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.tertiary)
+    }
+
+    private func lineText(_ line: StepRunView.LogLine) -> some View {
+        Text(line.text)
+            .font(.caption)
+            .foregroundStyle(Self.isNote(line) ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// What a handoff's primary button opens on this client. Shared by the
+/// thread and the Brief's "Ready for you" list, so one tap means the same
+/// thing on both.
+@MainActor
+enum StepRunActions {
+    /// Returns false when this surface cannot do it here; the caller then
+    /// opens the thread, where the page and the form live.
+    static func open(
+        _ behaviour: StepRunNextBehaviour,
+        environment: AppEnvironment,
+        openURL: OpenURLAction
+    ) async -> Bool {
+        switch behaviour {
+        case .openDraft(let id, let accountID):
+            guard let prefill = await environment.store.loadDraftPrefill(draftID: id, accountID: accountID) else {
+                return false
+            }
+            environment.navigation.pendingCompose = prefill
+            environment.navigation.sheet = .compose
+            return true
+        case .openDocument(let id, let url):
+            if let documentID = id ?? StepRunCopy.documentID(fromURL: url) {
+                environment.navigation.openDocument(id: documentID)
+                return true
+            }
+            return openWebURL(url, openURL: openURL)
+        case .openApproval:
+            environment.navigation.sheet = .activity
+            return true
+        case .openURL(let raw):
+            return openWebURL(raw, openURL: openURL)
+        case .openBrowser, .showQuestion, .markStepDone, .showArtifacts, .resume, .none:
+            return false
+        }
+    }
+
+    static func open(
+        _ artifact: StepRunView.Artifact,
+        environment: AppEnvironment,
+        openURL: OpenURLAction
+    ) async -> Bool {
+        switch artifact.kind {
+        case .draft:
+            guard let id = artifact.referenceID else { return false }
+            return await open(.openDraft(id: id, accountID: artifact.accountID), environment: environment, openURL: openURL)
+        case .document:
+            return await open(.openDocument(id: artifact.referenceID, url: artifact.url), environment: environment, openURL: openURL)
+        case .approval:
+            return await open(.openApproval(id: artifact.referenceID), environment: environment, openURL: openURL)
+        case .event:
+            guard let accountID = artifact.accountID, let eventID = artifact.referenceID else {
+                return openWebURL(artifact.url, openURL: openURL)
+            }
+            environment.navigation.openEvent(
+                accountID: accountID,
+                eventID: eventID,
+                calendarID: nil,
+                preview: nil,
+                preservingCurrentRoot: true
+            )
+            return true
+        case .page, .card, .unknown:
+            return openWebURL(artifact.url, openURL: openURL)
+        }
+    }
+
+    private static func openWebURL(_ raw: String?, openURL: OpenURLAction) -> Bool {
+        guard let raw, let url = URL(string: raw),
+              ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return false }
+        openURL(url)
+        return true
     }
 }

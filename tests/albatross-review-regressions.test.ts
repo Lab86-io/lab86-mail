@@ -55,14 +55,19 @@ describe('CodeRabbit Albatross regressions', () => {
   });
 
   test('artifact and answer controls retain their security and accessibility contracts', () => {
-    const detail = read('components/albatross/WorkDetail.tsx');
+    const thread = read('components/albatross/WorkThread.tsx');
+    const details = read('components/albatross/thread/DetailsPanel.tsx');
+    const page = read('components/albatross/thread/PagePane.tsx');
     const companion = read('components/albatross/AlbatrossCompanion.tsx');
-    expect(detail).toContain('<BriefCanvas value={document} embedded />');
-    expect(detail).toContain('<LegacyPlanNotice');
-    expect(detail).not.toContain('<iframe');
-    expect(detail).not.toContain('aria-label="Answer in your own words"');
-    expect(detail).toContain('aria-label="Answer in chat about this Albatross"');
-    // Work questions now leave the document for the attached conversation.
+    expect(details).toContain('<BriefCanvas value={document} embedded />');
+    expect(details).toContain('<LegacyPlanNotice');
+    // The live view is the page pane's alone, sandboxed.
+    expect(thread).not.toContain('<iframe');
+    expect(page).toContain('sandbox="allow-same-origin allow-scripts allow-forms allow-popups"');
+    expect(thread).not.toContain('aria-label="Answer in your own words"');
+    // Work questions are forms in the thread itself; no detached chat answers them.
+    expect(thread).not.toContain('Answer in chat');
+    expect(thread).not.toContain('setChatScope');
     // The legacy picture-in-picture input remains separately accessible.
     expect(companion.match(/aria-label="Answer Albatross in your own words"/g)).toHaveLength(1);
   });

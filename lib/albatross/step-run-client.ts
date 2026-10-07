@@ -324,7 +324,7 @@ export function readyForYouRows(items: readonly StepRunHandoffItem[]): ReadyForY
         runId: run.id,
         workId: item.workId,
         workTitle: item.workTitle,
-        stepTitle: `Working on: ${run.stepTitle}`,
+        stepTitle: `In progress: ${run.stepTitle}`,
         line: workingLine(run),
         working: true,
         action: null,

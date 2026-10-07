@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { approvalConditionMet } from '../ai/approval';
 import { truncateText } from '../shared/text';
 import { type AgentBrowser, BrowserHandoffRequired, type PageView } from './browser-agent';
+import { formQuestionSchema } from './thread-contract';
 
 /** Registry tools a step run may use. Nothing here sends mail, deletes, or reaches a person alone. */
 export const RUNNER_REGISTRY_TOOLS = [
@@ -39,6 +40,8 @@ export const RUNNER_REGISTRY_TOOLS = [
   'recall',
   'list_memories',
   'remember',
+  'personal_details_get',
+  'personal_details_save',
   'contact_lookup',
   'expand_alias',
   // Calendar: read, private holds, and invites through approval.
@@ -146,6 +149,13 @@ export const handoffInputSchema = z.object({
         .min(1)
         .max(500)
         .describe('What the user does next, and what you do after that. One or two sentences.'),
+      doneLabel: z
+        .string()
+        .max(32)
+        .optional()
+        .describe(
+          'sign_in and finish_on_page only: the button the user presses after doing their part on the page, for example "I signed in" or "I paid". Default "Continue".',
+        ),
       target: z
         .object({
           kind: z.enum(['draft', 'document', 'approval', 'session', 'question', 'url', 'card', 'event']),
@@ -160,14 +170,24 @@ export const handoffInputSchema = z.object({
     .describe('Required unless outcome is done.'),
   question: z
     .object({
-      prompt: z.string().min(1).max(400),
+      form: formQuestionSchema
+        .optional()
+        .describe(
+          'Preferred: one form with typed fields. A choice that belongs to the user (dates, times, plans) with calendar notes, plus the missing personal details (detailKey), together.',
+        ),
+      prompt: z
+        .string()
+        .min(1)
+        .max(400)
+        .optional()
+        .describe('Only for a single plain question without form.'),
       options: z
         .array(z.object({ id: z.string().min(1).max(60), label: z.string().min(1).max(120) }))
         .max(5)
         .optional(),
     })
     .optional()
-    .describe('Required when outcome is needs_answer: one question, with two to four choices when you can.'),
+    .describe('Required when outcome is needs_answer: a form (preferred), or one prompt with choices.'),
   evidence: z
     .string()
     .max(1500)
@@ -380,8 +400,12 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
           ok: false,
           message: 'next is required unless the outcome is done. Call step_handoff again.',
         };
-      if (input.outcome === 'needs_answer' && !input.question)
-        return { ok: false, message: 'question is required for needs_answer. Call step_handoff again.' };
+      if (input.outcome === 'needs_answer' && !input.question?.form && !input.question?.prompt)
+        return {
+          ok: false,
+          message:
+            'question.form (or question.prompt) is required for needs_answer. Call step_handoff again.',
+        };
       finished = true;
       host.finish(input);
       return { ok: true };

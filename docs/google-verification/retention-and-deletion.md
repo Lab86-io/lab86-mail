@@ -73,6 +73,16 @@ the file with `cache-control: private, no-store`
 | `officeDocuments`, `officeVersions` | Office working copies of Drive files | No age limit | No (open item) | Yes |
 | `documents` linked to Google | Albatross documents imported from Drive | Kept until the user deletes the document | No | Yes |
 
+### Personal details
+
+| Table | Content | Retention rule | Disconnect | 30 d | Delete |
+|---|---|---|---|---|---|
+| `personalDetails` (`convex/schema.ts`, `convex/personalDetails.ts`) | Name, email, phone, home address, emergency contact, plain custom facts that the user saved, encrypted with the key id | Until the user deletes the detail (Settings, Personal details) or the account. The value before a chat or form save is kept for one day for Undo, then replaced at the next save | No (not mailbox data) | No | Yes (`USER_INLINE_TABLES`) |
+
+"Export my data" writes the saved details decrypted in `data/personal-details.json`
+(`lib/hosted/data-export.ts`). The raw table rows are not in the export, because
+they hold only ciphertext.
+
 ### Short-lived rows
 
 | Table | Retention rule | Code |
@@ -206,7 +216,7 @@ Google (step 3).
 | Nylas | Today, Nylas holds the Google tokens and caches mail for its API. Disconnect destroys the grant. | Confirm the Nylas data retention terms. |
 | OpenRouter and model providers | The setting is `data_collection: deny` (after the casa-prep round). With it, OpenRouter does not use a provider that can train on the data or store it for a long time. This is not zero data retention. A provider can keep a request for a short time for abuse checks. OpenAI and Anthropic keep requests for up to 30 days. | Turn on the same setting for the OpenRouter account. |
 | Railway logs | Kept under the Railway plan. Logs do not hold mail intentionally (see `data-flow.md`, step 7). | Confirm the Railway log retention. |
-| Browserbase | Session recordings of the guided-work browser. | Confirm the Browserbase retention for recordings. |
+| Browserbase | No session recordings since 2026-10-07 (`recordSession: false`). The saved sign-in context (cookies) stays until the user forgets it in Settings or deletes the account. | Confirm that recordings made before 2026-10-07 expire under the Browserbase plan. |
 | Resend | The brief e-mail, if the user turned it on. | Confirm the Resend log retention. |
 | Convex backups | Under the Convex plan. | Confirm the backup retention. |
 

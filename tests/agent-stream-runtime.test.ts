@@ -481,3 +481,37 @@ test('a turn with no runtime ends with an error and records nothing', async () =
   expect(events.some((event) => event.type === 'error')).toBe(true);
   expect(usage).not.toHaveBeenCalled();
 });
+
+test('a new reply carries its creation time; a continuation keeps its first time', async () => {
+  const before = Date.now();
+  const { events } = await run([model([...textParts('Hello.'), finish()])]);
+  const start = events.find((event) => event.type === 'start');
+  expect(start?.messageMetadata?.createdAt).toBeGreaterThanOrEqual(before);
+
+  const runtimeSpy = spyOn(gateway, 'resolveAgentRuntimes').mockResolvedValue([
+    {
+      userId: 'owner',
+      source: 'lab86',
+      provider: 'openai',
+      modelName: 'model-0',
+      model: model([...textParts('Done.'), finish()]),
+    },
+  ] as any);
+  const usage = spyOn(gateway, 'recordAgentUsage').mockResolvedValue(undefined);
+  const context = spyOn(narrative, 'narrativePrompt').mockResolvedValue('');
+  const memory = spyOn(memories, 'listMemories').mockResolvedValue([]);
+  for (const spy of [runtimeSpy, usage, context, memory]) restores.push(() => spy.mockRestore());
+  const continued = await runAgent({
+    runId: 'continue-run',
+    userId: 'owner',
+    messages: [
+      { role: 'user', content: 'Register me' },
+      { role: 'assistant', content: 'One question first.' },
+    ],
+  });
+  const lines = (await continued.toUIMessageStreamResponse().text())
+    .split('\n')
+    .filter((line) => line.startsWith('data: {'))
+    .map((line) => JSON.parse(line.slice(6)));
+  expect(lines.find((event) => event.type === 'start')?.messageMetadata).toBeUndefined();
+});

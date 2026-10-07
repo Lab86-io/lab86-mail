@@ -1370,16 +1370,23 @@ export const upsertQuestion = mutation({
       v.array(v.object({ id: v.string(), label: v.string(), description: v.optional(v.string()) })),
     ),
     sourceRefs: v.optional(v.array(sourceRefValidator)),
+    // A typed form from a step run. The caller checks it (formQuestionSchema).
+    form: v.optional(v.any()),
+    // Keeps two asks with the same title apart (a step run passes its run id),
+    // so a new run never receives an earlier run's answer.
+    dedupeSalt: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
     if (isTerminalWork(work)) return;
-    const dedupeKey = questionDedupeKey({
+    const baseKey = questionDedupeKey({
       workId: String(args.workId),
       kind: args.kind,
       prompt: args.prompt,
     });
+    const dedupeKey = args.dedupeSalt ? `${baseKey}:${args.dedupeSalt.slice(0, 80)}` : baseKey;
+    const form = args.form && JSON.stringify(args.form).length <= 24_000 ? args.form : undefined;
     const duplicate = await ctx.db
       .query('albatrossWorkQuestions')
       .withIndex('by_user_dedupe', (q) => q.eq('userId', userId).eq('dedupeKey', dedupeKey))
@@ -1395,6 +1402,7 @@ export const upsertQuestion = mutation({
           label: truncateText(option.label, 180),
           description: bounded(option.description, 400),
         })),
+        form: form ?? duplicate.form,
         sourceRefs: args.sourceRefs || duplicate.sourceRefs,
         updatedAt: ts,
       };
@@ -1473,6 +1481,7 @@ export const upsertQuestion = mutation({
         label: truncateText(option.label, 180),
         description: bounded(option.description, 400),
       })),
+      ...(form ? { form } : {}),
       status: 'pending',
       sourceRefs: args.sourceRefs || [],
       createdAt: ts,
@@ -1481,6 +1490,25 @@ export const upsertQuestion = mutation({
     await ctx.db.patch(args.workId, { agentState: 'needs_input', status: 'needs_answers', updatedAt: ts });
     await bindGateQuestionId(ctx, args.workId, args.legacyQuestionId, String(questionId));
     return questionId;
+  },
+});
+
+/** One question of the user, for the answer route: its form, or the prompt and options to build one. */
+export const questionForAnswer = query({
+  args: { ...callerArgs, questionId: v.id('albatrossWorkQuestions') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const question = await ctx.db.get(args.questionId);
+    if (!question || question.userId !== userId) return null;
+    return {
+      id: String(question._id),
+      workId: question.workId ? String(question.workId) : null,
+      status: question.status,
+      prompt: question.prompt,
+      reason: question.reason ?? null,
+      options: question.options ?? null,
+      form: question.form ?? null,
+    };
   },
 });
 

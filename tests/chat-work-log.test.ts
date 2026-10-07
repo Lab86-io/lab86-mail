@@ -46,6 +46,35 @@ describe('chat work log', () => {
     expect(groupMessageParts(parts).map((segment) => segment.kind)).toEqual(['work-log', 'part', 'work-log']);
   });
 
+  test('a step run stays a block of its own and keeps its shape', () => {
+    const shape = {
+      kind: 'step_run',
+      title: 'Started',
+      activity: { running: '', done: '', failed: '' },
+      actions: [],
+      runId: 'r1',
+      workId: 'w1',
+      action: 'started',
+    };
+    const parts = [
+      tool('a'),
+      {
+        type: 'tool-albatross_handle_step',
+        toolCallId: 'h',
+        state: 'output-available',
+        input: {},
+        output: { ok: true },
+      },
+      { type: 'data-tool-shape', id: 'h', data: shape },
+      tool('b'),
+    ];
+    const segments = groupMessageParts(parts);
+    expect(segments.map((segment) => segment.kind)).toEqual(['work-log', 'part', 'work-log']);
+    const standalone = segments[1];
+    if (standalone.kind !== 'part') throw new Error('Expected a standalone part');
+    expect(standalone.shape).toEqual<unknown>(shape);
+  });
+
   test('collapses only completed groups without failures', () => {
     const segment = groupMessageParts([tool('a'), tool('b'), tool('c')])[0];
     if (segment.kind !== 'work-log') throw new Error('Expected work log');

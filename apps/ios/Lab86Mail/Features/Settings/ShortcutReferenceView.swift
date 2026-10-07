@@ -11,8 +11,10 @@ struct ShortcutReferenceView: View {
         ("⌘4", "Albatrosses"),
         ("⇧⌘A", "Activity"),
         ("⌘,", "Settings"),
-        ("↩", "Do the next action of a handoff"),
+        ("⌘↩", "Do the action that waits in an Albatross"),
         ("⌘.", "Stop Albatross on a step"),
+        ("⌃⌘P", "Show or hide the page"),
+        ("⌃⌘I", "Show or hide the details"),
     ]
 
     var body: some View {
