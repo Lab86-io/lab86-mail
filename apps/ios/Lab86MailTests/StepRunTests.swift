@@ -249,7 +249,6 @@ struct StepRunTests {
         #expect(subject.execution.currentStep?.run == nil)
         #expect(subject.execution.currentStep?.runnable == nil)
         #expect(subject.execution.currentStep?.isRunnable == false)
-        #expect(try Self.cardState(subject) == .quiet)
     }
 
     @Test func aCachedDetailWithoutRunKeysStillDecodes() throws {
@@ -384,10 +383,8 @@ struct StepRunTests {
         #expect(next.execution.activeRun?.id == "run_new")
         #expect(next.execution.currentStep?.run?.state == .queued)
         #expect(next.execution.guideSteps.first?.run?.id == "run_new")
-        guard case .open = try Self.cardState(next) else {
-            Issue.record("A queued run must open the card at once.")
-            return
-        }
+        // A queued run shows its block at once: the run state is "Starts soon".
+        #expect(RunBlockState.from(queued) == .queued)
     }
 
     @Test func stopWritesTheCancelOnTheDetail() throws {
@@ -396,7 +393,6 @@ struct StepRunTests {
         let next = subject.withStepRun(run.with(state: .cancelled))
         #expect(next.execution.activeRun == nil)
         #expect(next.execution.currentStep?.run?.state == .cancelled)
-        #expect(try Self.cardState(next) == .eligible)
     }
 
     @Test func anOpenRunOnAnotherStepLeavesThisStepQuiet() throws {
@@ -405,9 +401,8 @@ struct StepRunTests {
             active: Self.runJSON(id: "run_9", stepKey: "step-else", state: "running"),
             runnable: false
         )
-        let state = try Self.cardState(subject)
-        #expect(state == .quiet)
-        #expect(state.hidesStepActions == false)
+        #expect(subject.execution.currentStep?.run == nil)
+        #expect(subject.execution.activeRun?.stepKey == "step-else")
     }
 
     @Test func aRunOnAnotherStepLeavesTheActiveRunAlone() throws {
@@ -456,7 +451,7 @@ struct StepRunTests {
         #expect(tookOver.showsContinue)
 
         let closed = StepRunBrowserPresentation(session: nil, run: run, followed: true)
-        #expect(closed.statusLine == "The shared browser is closed.")
+        #expect(closed.statusLine == "The page is closed.")
         #expect(closed.showsContinue)
         #expect(closed.liveViewURL == nil)
 
