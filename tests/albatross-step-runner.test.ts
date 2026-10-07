@@ -500,6 +500,20 @@ describe('runStepRun', () => {
     expect(failing.settled()).toMatchObject({ error: 'The run failed. Try again.', retryable: true });
   });
 
+  test('no model access settles with the gateway message and no retry', async () => {
+    const h = harness(async () => ({}));
+    h.deps.resolveAgentRuntimes = (async () => {
+      throw Object.assign(new Error('This month’s Intelligence chat budget is used up.'), {
+        name: 'AiAccessError',
+      });
+    }) as any;
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.settled()).toEqual(
+      expect.objectContaining({ error: 'This month’s Intelligence chat budget is used up.' }),
+    );
+    expect(h.settled().retryable).toBeUndefined();
+  });
+
   test('the shared browser opens with saved sign-ins and goes to the user at sign-in', async () => {
     const h = harness(
       async (opts) => {

@@ -18,6 +18,7 @@ import { randomUUID } from 'node:crypto';
 import { generateText, hasToolCall, type ModelMessage, stepCountIs } from 'ai';
 import { runWithAiRequestContext } from '../ai/context';
 import {
+  AiAccessError,
   agentProviderOptions,
   canFailOverAgentRuntime,
   maxOutputTokensForFeature,
@@ -568,6 +569,12 @@ export async function runStepRun(
       await notifyHandoff(deps, userId, run, stopped, deps.now() - startedAt);
       return outcome;
     }
+    // No model access (no plan, no key, the month's budget is used up): the
+    // gateway's message is user copy, and another attempt cannot succeed.
+    if (error instanceof AiAccessError || (error as Error)?.name === 'AiAccessError')
+      return await settle({ error: truncateText((error as Error).message, 300) }).catch(() => ({
+        state: null,
+      }));
     deps.reportError('[step-runner] run failed', runId, describeModelError(error));
     return await settle({
       error: 'The run failed. Try again.',
