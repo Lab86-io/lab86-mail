@@ -86,17 +86,7 @@ struct AssistantShapeCardView: View {
         case .count(let value, let label):
             Text(value.formatted()).font(.title.weight(.semibold))
             detail(label)
-        case .receipt(let surface, _, _):
-            if !shape.personalDetailKeys.isEmpty {
-                // "Saved to your details: Phone", with "Undo" among the actions.
-                Text("Saved to your details: \(PersonalDetailsStore.labels(for: shape.personalDetailKeys).joined(separator: ", "))")
-                    .font(.footnote.weight(.medium))
-            } else {
-                detail(surface.capitalized)
-            }
-        case .stepRun:
-            // The work-log row draws the run block for this shape.
-            EmptyView()
+        case .receipt(let surface, _, _): detail(surface.capitalized)
         case .sources(let items):
             ForEach(Array(items.prefix(8).enumerated()), id: \.offset) { _, row in
                 VStack(alignment: .leading, spacing: 5) {

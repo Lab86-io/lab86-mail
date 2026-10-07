@@ -16,14 +16,6 @@ struct AlbatrossCommands: Commands {
             .keyboardShortcut("n", modifiers: .command)
 
             Button("Ask or Hold…") {
-                #if os(macOS)
-                // An open Albatross thread is the conversation: ⌘K goes to
-                // its composer, not to the corner chat.
-                if environment.navigation.showsWorkThread {
-                    MacRequests.shared.requestComposerFocus()
-                    return
-                }
-                #endif
                 environment.toggleAssistantChatPanel()
             }
             .keyboardShortcut("k", modifiers: .command)

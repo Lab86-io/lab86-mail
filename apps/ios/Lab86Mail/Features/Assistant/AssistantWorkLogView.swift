@@ -82,65 +82,28 @@ struct AssistantWorkLogView: View {
 
 struct AssistantWorkLogRowView: View {
     @Environment(AppEnvironment.self) private var environment
-    @Environment(\.workThread) private var thread
     let row: AssistantToolRow
     var sessionID: String? = nil
     var showsSentence = true
 
     var body: some View {
-        if let stepRun = row.shape?.stepRun {
-            stepRunBody(stepRun)
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                if showsSentence {
-                    sentence
+        VStack(alignment: .leading, spacing: 8) {
+            if showsSentence {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    indicator
+                        .frame(width: 12, alignment: .center)
+                    Text(row.sentence)
+                        .font(.footnote)
+                        .foregroundStyle(sentenceColor)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                if let card = row.card {
-                    AssistantToolCardView(card: card, sessionID: sessionID)
-                } else if let shape = row.shape {
-                    AssistantShapeCardView(shape: shape)
-                        .environment(\.assistantShapeActionScope, "\(sessionID ?? "chat"):\(row.callID)")
-                }
+                .accessibilityElement(children: .combine)
             }
-        }
-    }
-
-    private var sentence: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            indicator
-                .frame(width: 12, alignment: .center)
-            Text(row.sentence)
-                .font(.footnote)
-                .foregroundStyle(sentenceColor)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    /// `albatross_handle_step`: inside the Albatross thread the run block
-    /// draws in place of the row. A steer note leaves no row at all; the run
-    /// log says "Read your note". Outside the thread the row offers "Open".
-    @ViewBuilder private func stepRunBody(_ shape: ThreadStepRunShape) -> some View {
-        if shape.action == .steered {
-            EmptyView()
-        } else if let thread, let view = thread.store.run(id: shape.runID) {
-            RunBlockView(
-                view: view,
-                step: thread.step(for: view.run),
-                busy: thread.store.busy,
-                pageShown: thread.pageRun?.id == view.id,
-                questionState: thread.questionState(for: view),
-                actions: thread.actions
-            )
-        } else {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                sentence
-                if thread == nil, !shape.workID.isEmpty {
-                    Spacer(minLength: 8)
-                    Button("Open") { environment.navigation.openWork(id: shape.workID, title: nil) }
-                        .buttonStyle(.borderless)
-                        .font(.footnote.weight(.medium))
-                }
+            if let card = row.card {
+                AssistantToolCardView(card: card, sessionID: sessionID)
+            } else if let shape = row.shape {
+                AssistantShapeCardView(shape: shape)
+                    .environment(\.assistantShapeActionScope, "\(sessionID ?? "chat"):\(row.callID)")
             }
         }
     }

@@ -115,11 +115,7 @@ struct WorkView: View {
         // The list is now a place you open an Albatross from, so the detail has
         // to be reachable here and not only from inside an Area.
         .navigationDestination(item: $navigation.workRoute) { route in
-            #if os(macOS)
-            MacWorkThreadView(route: route)
-            #else
-            WorkThreadView(route: route)
-            #endif
+            WorkDetailView(route: route)
         }
         .sheet(item: $horizonTarget) { item in
             HorizonSheet(title: item.displayTitle, initial: item.horizon) { horizon in

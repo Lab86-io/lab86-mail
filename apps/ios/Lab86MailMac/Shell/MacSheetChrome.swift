@@ -18,18 +18,6 @@ struct MacSheetSize: Equatable, Sendable {
     // The shared browser: a remote page at a desktop size, with one status
     // bar over it. A web view has no size of its own.
     static let liveBrowser = MacSheetSize(minWidth: 1_180, minHeight: 760)
-    // The smallest page sheet. Below this a page is not usable.
-    static let liveBrowserFloor = CGSize(width: 480, height: 400)
-
-    /// The page sheet clamped to a window that cannot hold the full size (a
-    /// narrow Albatross thread window).
-    static func liveBrowser(fitting window: CGSize) -> MacSheetSize {
-        let inset: CGFloat = 48
-        return MacSheetSize(
-            minWidth: min(liveBrowser.minWidth, max(liveBrowserFloor.width, window.width - inset)),
-            minHeight: min(liveBrowser.minHeight, max(liveBrowserFloor.height, window.height - inset))
-        )
-    }
 }
 
 extension View {

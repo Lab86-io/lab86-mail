@@ -32,7 +32,6 @@ struct SettingsView: View {
                     PlanSettingsRows()
                     NavigationLink("Mailboxes") { MailboxesSettingsView() }
                     NavigationLink("Connections") { ConnectionsSettingsView() }
-                    NavigationLink(PersonalDetailsCopy.title) { PersonalDetailsSettingsView() }
                     DataExportButton()
                     Button("Sign out", role: .destructive) {
                         Task { await signOut() }
@@ -71,7 +70,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Trust")
                 } footer: {
-                    Text("Everything Albatross does on its own, with a pause switch for each. Saved sign-ins keep the shared browser signed in; Albatross never sees a password. Personal details, under Account, are what Albatross types into forms.")
+                    Text("Everything Albatross does on its own, with a pause switch for each. Saved sign-ins keep the shared browser signed in; Albatross never sees a password.")
                 }
 
                 Section("Personalization") {
@@ -192,7 +191,6 @@ struct SettingsView: View {
                     await environment.assistantDrafts.clear(ownerID: ownerID)
                     environment.accountStore.clear()
                     environment.trust.clear()
-                    environment.personalDetails.clear()
                     environment.sendAs.removeAll()
                     TodayWidgetBridge.clear()
                     try? await environment.notificationResponseOutbox.purge()
@@ -289,7 +287,6 @@ private struct AccountDeletionView: View {
             await environment.assistantDrafts.clear(ownerID: ownerID)
             environment.accountStore.clear()
             environment.trust.clear()
-            environment.personalDetails.clear()
             environment.sendAs.removeAll()
             TodayWidgetBridge.clear()
             try? await environment.notificationResponseOutbox.purge()

@@ -30,14 +30,6 @@ struct MacShellView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
-        // The Albatross thread collapses the source list when its pane needs
-        // the room, and restores it after. The shell mirrors the live state.
-        .onChange(of: MacRequests.shared.sidebarToken) { _, _ in
-            columnVisibility = MacRequests.shared.sidebarVisible ? .all : .detailOnly
-        }
-        .onChange(of: columnVisibility, initial: true) { _, visibility in
-            MacRequests.shared.sidebarShown = visibility != .detailOnly
-        }
         .overlay(alignment: .bottom) {
             ShellStatusOverlay()
                 .padding(.horizontal, 16)

@@ -140,9 +140,6 @@ struct AssistantChatMessage: Identifiable, Equatable, Sendable {
     // Web or connector sources the reply cited.
     var sources: [AssistantSourceLink] = []
     var endedTextIDs: Set<String> = []
-    /// `metadata.createdAt`: when the message was made. The Albatross thread
-    /// sorts on it; a message without one comes from an earlier chat.
-    var createdAt: Date? = nil
 
     init(id: String, role: Role, text: String = "", parts: [AssistantChatPart]? = nil) {
         self.id = id
@@ -178,21 +175,6 @@ struct AssistantChatMessage: Identifiable, Equatable, Sendable {
             return nil
         }
     }
-
-    /// The runs this message started: an `albatross_handle_step` row whose
-    /// shape is `step_run` with action started or resumed. The thread renders
-    /// those runs inside this message, not again in the merged list.
-    var startedRunIDs: [String] {
-        toolRows.compactMap { row in
-            guard let shape = row.shape?.stepRun, shape.rendersRunInline else { return nil }
-            return shape.runID
-        }
-    }
-
-    /// Epoch milliseconds of `createdAt`, for the timeline merge.
-    var createdAtMilliseconds: Double? {
-        createdAt.map { ($0.timeIntervalSince1970 * 1_000).rounded() }
-    }
 }
 
 // One intent conversation with the Albatross agent. Streams the server's
@@ -210,12 +192,6 @@ final class AssistantChatModel {
     private(set) var lastFailedUserText: String?
     private(set) var canContinue = false
     var canRetry: Bool { lastFailedUserText != nil || lastFailedApprovalID != nil }
-    /// The `updatedAt` of the stored copy this transcript started from. A save
-    /// of a Work thread sends it, so the server merges two devices instead of
-    /// one overwriting the other. Zero for a new thread.
-    private(set) var baseUpdatedAt: Double = 0
-    /// True once a Work thread was read from the server (even when empty).
-    private(set) var threadLoaded = false
 
     // The bar route, the Hold landing, and the receipts. Receipts are client
     // state; a Hold never writes a chat message.
@@ -303,9 +279,7 @@ final class AssistantChatModel {
         currentApprovalContinuationID = nil
         resumesLastTurn = false
         canContinue = false
-        var userMessage = AssistantChatMessage(id: Self.newMessageID(), role: .user, text: text)
-        userMessage.createdAt = clock()
-        messages.append(userMessage)
+        messages.append(AssistantChatMessage(id: Self.newMessageID(), role: .user, text: text))
         let replyID = appendAssistantReply()
         streamTask = Task { [weak self] in
             await self?.streamReply(into: replyID)
@@ -473,11 +447,6 @@ final class AssistantChatModel {
               activeReplyID == replyID,
               let index = messages.firstIndex(where: { $0.id == replyID }) else { return }
         switch type {
-        case "start", "message-metadata":
-            // The server stamps the reply's time in the stream start chunk.
-            if let created = Self.transcriptTimestamp(event["messageMetadata"]?["createdAt"]) {
-                messages[index].createdAt = created
-            }
         case "text-start":
             partCounter += 1
             let id = event["id"]?.stringValue.map { "\(replyID)-text-\($0)" } ?? "\(replyID)-t\(partCounter)"
@@ -795,8 +764,6 @@ final class AssistantChatModel {
             "messages": transcriptJSON(),
             "timezone": .string(TimeZone.current.identifier),
             "clientPlatform": .string(Self.clientPlatform),
-            // This app renders ask_form; the server offers it only to clients that say so.
-            "clientCapabilities": .array([.string("ask_form")]),
         ]
         if resumesLastTurn { body["continuation"] = .bool(true) }
         let scopeLine: String?
@@ -882,15 +849,11 @@ final class AssistantChatModel {
                 }
             }
             guard !parts.isEmpty else { return nil }
-            var saved: [String: JSONValue] = [
+            return .object([
                 "id": .string(message.id),
                 "role": .string(message.role.rawValue),
                 "parts": .array(parts),
-            ]
-            if let created = message.createdAtMilliseconds {
-                saved["metadata"] = .object(["createdAt": .number(created)])
-            }
-            return .object(saved)
+            ])
         })
     }
 
@@ -1051,99 +1014,17 @@ final class AssistantChatModel {
     private func persistTranscript() async {
         guard case let .array(items) = transcriptJSON(includeDisplayParts: true), !items.isEmpty else { return }
         let title = messages.first(where: { $0.role == .user }).map { String($0.text.prefix(64)) }
-        var body: [String: JSONValue] = [
-            "id": .string(sessionID),
-            "title": title.map(JSONValue.string) ?? .null,
-            "messages": .array(items),
-            "scopeKind": .string(scope.kind.rawValue),
-            "areaId": scope.kind == .area ? scope.contextID.map(JSONValue.string) ?? .null : .null,
-            "workId": scope.kind == .work ? scope.contextID.map(JSONValue.string) ?? .null : .null,
-        ]
-        // A Work thread is shared by every device: the server merges by
-        // message id from the copy this save started from.
-        if WorkThreadSession.isThreadID(sessionID) {
-            body["baseUpdatedAt"] = .number(baseUpdatedAt)
-        }
-        guard let result = try? await backend.post(path: "/api/chats", body: .object(body)) else { return }
-        if let updated = Self.updatedAtMilliseconds(result["session"] ?? result) {
-            baseUpdatedAt = updated
-        }
-        // Messages that another device wrote and the merge kept: add them now,
-        // or the next save counts them as removed (docs/albatross-thread.md).
-        if WorkThreadSession.isThreadID(sessionID), !isStreaming,
-           let merged = result["mergedMessages"]?.arrayValue, !merged.isEmpty {
-            messages = Self.addingMergedMessages(merged.compactMap(Self.message(from:)), to: messages)
-        }
-    }
-
-    /// The client's messages plus the unknown ones from a merged save, placed
-    /// by `createdAt`. A message without a time keeps its place.
-    static func addingMergedMessages(
-        _ merged: [AssistantChatMessage],
-        to current: [AssistantChatMessage]
-    ) -> [AssistantChatMessage] {
-        let known = Set(current.map(\.id))
-        let extra = merged.filter { !known.contains($0.id) }
-        guard !extra.isEmpty else { return current }
-        typealias Stamped = (message: AssistantChatMessage, at: Double, source: Int, index: Int)
-        func stamped(_ list: [AssistantChatMessage], source: Int) -> [Stamped] {
-            var last: Double = 0
-            var result: [Stamped] = []
-            for (index, message) in list.enumerated() {
-                if let at = message.createdAtMilliseconds { last = at }
-                result.append((message: message, at: message.createdAtMilliseconds ?? last, source: source, index: index))
-            }
-            return result
-        }
-        return (stamped(current, source: 0) + stamped(extra, source: 1))
-            .sorted { left, right in
-                if left.at != right.at { return left.at < right.at }
-                if left.source != right.source { return left.source < right.source }
-                return left.index < right.index
-            }
-            .map(\.message)
-    }
-
-    /// The stored copy's `updatedAt` in epoch milliseconds, from a session
-    /// object or a save result.
-    static func updatedAtMilliseconds(_ json: JSONValue?) -> Double? {
-        guard let raw = json?["updatedAt"] else { return nil }
-        if let number = raw.doubleValue, number.isFinite, number > 0 { return number }
-        guard let date = CalendarDateParser.date(raw) else { return nil }
-        return (date.timeIntervalSince1970 * 1_000).rounded()
-    }
-
-    /// Opens the canonical conversation of a Work (`work-<workId>`). The
-    /// server moves an older Work chat into it on the first read. An empty
-    /// answer is a new thread; the composer still works.
-    func restoreWorkThread(workID: String) async {
-        guard !isStreaming, !isUploading else { return }
-        sessionID = WorkThreadSession.id(for: workID)
-        let encoded = workID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? workID
-        do {
-            let result = try await backend.get(path: "/api/chats?workThread=\(encoded)")
-            let session = result["session"]
-            let restored = (session?["messages"]?.arrayValue ?? []).compactMap(Self.message(from:))
-            messages = restored
-            baseUpdatedAt = Self.updatedAtMilliseconds(session) ?? 0
-            errorMessage = nil
-            lastFailedUserText = nil
-            lastFailedApprovalID = nil
-            currentApprovalContinuationID = nil
-            canContinue = false
-            threadLoaded = true
-            for message in restored {
-                for part in message.parts {
-                    switch part {
-                    case .card(_, let card, _): ingestDraft(card)
-                    case .toolRow(let row): if let card = row.card { ingestDraft(card) }
-                    default: continue
-                    }
-                }
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        _ = try? await backend.post(
+            path: "/api/chats",
+            body: .object([
+                "id": .string(sessionID),
+                "title": title.map(JSONValue.string) ?? .null,
+                "messages": .array(items),
+                "scopeKind": .string(scope.kind.rawValue),
+                "areaId": scope.kind == .area ? scope.contextID.map(JSONValue.string) ?? .null : .null,
+                "workId": scope.kind == .work ? scope.contextID.map(JSONValue.string) ?? .null : .null,
+            ])
+        )
     }
 
     // MARK: - Ask or hold
@@ -1471,7 +1352,6 @@ final class AssistantChatModel {
         }
         var message = AssistantChatMessage(id: id, role: role, parts: parts)
         message.sources = sources
-        message.createdAt = transcriptTimestamp(json["metadata"]?["createdAt"])
         return message
     }
 

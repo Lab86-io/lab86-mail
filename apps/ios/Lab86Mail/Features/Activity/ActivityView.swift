@@ -8,10 +8,6 @@ enum ActivityInbox {
 }
 
 struct ActivityView: View {
-    // A Work question answered here, until Today reloads it away.
-    @State private var answeredQuestionIDs: Set<String> = []
-    @State private var questionErrors: [String: String] = [:]
-    @State private var sendingQuestionID: String?
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
     @State private var checkinText = ""
@@ -177,15 +173,24 @@ struct ActivityView: View {
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                     if !showsArchived {
-                                        // NAT-12: answer with the form here,
-                                        // not only in the Albatross thread.
-                                        FormQuestionCard(
-                                            form: ThreadQuestion(legacy: item.question).resolvedForm,
-                                            receipt: answeredQuestionIDs.contains(item.question.id) ? .answeredText(nil) : nil,
-                                            sendError: questionErrors[item.question.id],
-                                            isSending: sendingQuestionID == item.question.id,
-                                            onSubmit: { answer, _ in
-                                                Task { await answerQuestion(item.question, form: answer) }
+                                        // NAT-12: answer with the options
+                                        // here, not only in chat.
+                                        WorkQuestionOptionsView(
+                                            question: item.question,
+                                            onAnswered: { await environment.store.refreshToday() },
+                                            onAnswerInChat: {
+                                                dismiss()
+                                                if let workID = item.workID {
+                                                    environment.startAssistantChat(
+                                                        scope: AssistantChatScope(
+                                                            kind: .work,
+                                                            contextID: workID,
+                                                            label: item.workTitle
+                                                        )
+                                                    )
+                                                } else {
+                                                    environment.startAssistantChat()
+                                                }
                                             }
                                         )
                                     }
@@ -309,29 +314,6 @@ struct ActivityView: View {
                 await environment.store.refreshExecution()
                 await changes?.load()
             }
-        }
-    }
-
-    /// The form answer of a Work question (`POST …/questions/[id]/answer`
-    /// with `{ form }`). The server resumes the run that waits on it.
-    private func answerQuestion(_ question: WorkDetail.Question, form: FormAnswer) async {
-        sendingQuestionID = question.id
-        questionErrors[question.id] = nil
-        defer { sendingQuestionID = nil }
-        do {
-            let exchange = try await environment.backend.exchange(
-                method: "POST",
-                path: WorkThreadStore.answerPath(questionID: question.id),
-                body: .object(["form": form.json, "timezone": .string(TimeZone.current.identifier)])
-            )
-            guard exchange.isSuccess else {
-                questionErrors[question.id] = exchange.errorMessage
-                return
-            }
-            answeredQuestionIDs.insert(question.id)
-            await environment.store.refreshToday()
-        } catch {
-            questionErrors[question.id] = error.localizedDescription
         }
     }
 

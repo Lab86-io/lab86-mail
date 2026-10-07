@@ -123,66 +123,6 @@ final class NativeTourMacTests: XCTestCase {
         try await tour(screen)
     }
 
-    func testMacTour14WorkThreadRun() async throws {
-        // The Albatross thread (S6 to S8) in a wide window: the outcome block,
-        // the run block inside the reply that started it, and the page pane
-        // at the right. Without Convex the pane shows its closed state.
-        var screen = Screen(id: "mac-work-thread-run", title: "The Albatross thread while a run works", section: "Tasks and Work", tab: .work)
-        screen.scenarioID = "work-thread-run"
-        screen.afterAppear = { environment in
-            environment.navigation.openWork(id: "w-course-run", title: "Register for the Alive at 25 course", intent: .openPage)
-        }
-        try await tour(screen)
-    }
-
-    func testMacTour15WorkThreadForm() async throws {
-        // The form (S9 and S10) in a wide window: the class choice with its
-        // calendar notes, the prefilled details, and the empty phone.
-        var screen = Screen(id: "mac-work-thread-form", title: "The Albatross thread with a form", section: "Tasks and Work", tab: .work)
-        screen.scenarioID = "work-thread-form"
-        screen.afterAppear = { environment in
-            environment.navigation.openWork(id: "w-course-form", title: "Register for the Alive at 25 course")
-        }
-        try await tour(screen)
-    }
-
-    func testMacTour16WorkThreadHandoff() async throws {
-        // The final page (S13): the answered form, the continued run, "Check
-        // and pay" and "I paid", and the page pane.
-        var screen = Screen(id: "mac-work-thread-handoff", title: "The Albatross thread at the final page", section: "Tasks and Work", tab: .work)
-        screen.scenarioID = "work-thread-handoff"
-        screen.afterAppear = { environment in
-            environment.navigation.openWork(id: "w-course-handoff", title: "Register for the Alive at 25 course", intent: .openPage)
-        }
-        try await tour(screen)
-    }
-
-    func testMacTour17WorkThreadNarrow() async throws {
-        // A narrow window: no pane. The page row offers "Open" (the sheet),
-        // and the Details toggle opens a popover.
-        var screen = Screen(id: "mac-work-thread-narrow", title: "The Albatross thread in a narrow window", section: "Tasks and Work", tab: .work)
-        screen.scenarioID = "work-thread-handoff"
-        screen.windowSize = NSSize(width: 760, height: 700)
-        screen.afterAppear = { environment in
-            environment.navigation.openWork(id: "w-course-handoff", title: "Register for the Alive at 25 course")
-        }
-        try await tour(screen)
-    }
-
-    func testMacTour18SettingsPersonalDetails() async throws {
-        // Settings, Account, Personal details (S21) as a grouped Mac form:
-        // each detail with where it came from, one trailing button per row.
-        var screen = Screen(id: "mac-settings-personal-details", title: "Settings, Personal details", section: "Settings", tab: .today)
-        screen.windowSize = NSSize(width: 640, height: 640)
-        screen.rootView = {
-            AnyView(
-                NavigationStack { PersonalDetailsSettingsView() }
-                    .formStyle(.grouped)
-            )
-        }
-        try await tour(screen)
-    }
-
     // MARK: - Screens
 
     private struct Screen {
@@ -191,15 +131,6 @@ final class NativeTourMacTests: XCTestCase {
         let section: String
         var tab: PrimaryTab = .today
         var calendarMode: String?
-        /// The fixture scenario, when it is not the screen id. The thread
-        /// screens share the iOS scenarios.
-        var scenarioID: String?
-        /// The window, when it is not the desktop size (the narrow thread,
-        /// a settings page).
-        var windowSize: NSSize?
-        /// A screen that is not the shell (a Settings subpage): the view to
-        /// host instead of `MacShellView`.
-        var rootView: (@MainActor () -> AnyView)?
         var setUp: (@MainActor (AppEnvironment) async -> Void)?
         var afterAppear: (@MainActor (AppEnvironment) async -> Void)?
 
@@ -215,9 +146,7 @@ final class NativeTourMacTests: XCTestCase {
 
     private static let screenOrder = [
         "mac-today", "mac-mail", "mac-compose", "mac-calendar-week", "mac-calendar-month", "mac-tasks", "mac-work",
-        "mac-work-detail", "mac-work-detail-run", "mac-work-detail-handoff", "mac-work-thread-run",
-        "mac-work-thread-form", "mac-work-thread-handoff", "mac-work-thread-narrow", "mac-files", "mac-chat",
-        "mac-settings", "mac-settings-personal-details",
+        "mac-work-detail", "mac-work-detail-run", "mac-work-detail-handoff", "mac-files", "mac-chat", "mac-settings",
     ]
 
     // MARK: - The tour
@@ -243,9 +172,8 @@ final class NativeTourMacTests: XCTestCase {
         fixtures: JSONValue,
         directory: URL
     ) async throws {
-        let backend = TourBackend(routes: TourRoutes(fixtures: fixtures, scenarioID: screen.scenarioID ?? screen.id))
+        let backend = TourBackend(routes: TourRoutes(fixtures: fixtures, scenarioID: screen.id))
         defer { backend.tearDown() }
-        let size = screen.windowSize ?? Self.windowSize
         let suite = "NativeTourMacTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -272,9 +200,8 @@ final class NativeTourMacTests: XCTestCase {
         await environment.store.bootstrap(cacheOwner: ownerID)
         if let setUp = screen.setUp { await setUp(environment) }
 
-        let root = screen.rootView?() ?? AnyView(MacShellView())
         let controller = NSHostingController(rootView: AnyView(
-            root
+            MacShellView()
                 .tint(environment.theme.accentColor)
                 .environment(environment)
                 .environment(Clerk.shared)
@@ -282,7 +209,7 @@ final class NativeTourMacTests: XCTestCase {
         // The window's toolbar and title come from the SwiftUI content, as
         // in the app's window group.
         controller.sceneBridgingOptions = [.toolbars, .title]
-        let frame = NSRect(origin: NSPoint(x: 40, y: 40), size: size)
+        let frame = NSRect(origin: NSPoint(x: 40, y: 40), size: Self.windowSize)
         let window = TourMacWindow(
             contentRect: frame,
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -294,7 +221,7 @@ final class NativeTourMacTests: XCTestCase {
         window.toolbarStyle = .unified
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         window.contentViewController = controller
-        window.setContentSize(size)
+        window.setContentSize(Self.windowSize)
         window.orderFrontRegardless()
         defer {
             if let sheet = window.attachedSheet { window.endSheet(sheet) }
@@ -338,9 +265,9 @@ final class NativeTourMacTests: XCTestCase {
             orientation: "window",
             appearance: dark ? "dark" : "light",
             textSize: "default",
-            width: Double(size.width),
-            height: Double(size.height),
-            scale: Double(image.pixelsWide) / Double(max(1, size.width)),
+            width: Double(Self.windowSize.width),
+            height: Double(Self.windowSize.height),
+            scale: Double(image.pixelsWide) / Double(max(1, Self.windowSize.width)),
             captureMethod: "cacheDisplay",
             distinctBytes: distinct,
             blankWarning: distinct <= TourPixels.blankThreshold,

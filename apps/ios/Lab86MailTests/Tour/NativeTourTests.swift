@@ -160,7 +160,7 @@ final class NativeTourTests: XCTestCase {
     }
 
     func testTour20WorkDetailRun() async throws {
-        // The thread while a step runs: the run block with the live log and "Stop".
+        // The step runner at work: the live log and "Stop" in "Do this next".
         var screen = Screen(id: "work-detail-run", title: "One Albatross while a step runs", section: "Tasks and Work", tab: .work) { environment in
             environment.navigation.openWork(id: "w-dispute-run", title: "Dispute the duplicate charge")
         }
@@ -177,47 +177,6 @@ final class NativeTourTests: XCTestCase {
         try await tour(screen)
     }
 
-    func testTour22WorkThreadRun() async throws {
-        // The Albatross thread (S6 to S8): the outcome block, the user's
-        // message, and the run block inside the reply that started it, with
-        // the page row and "Stop".
-        var screen = Screen(id: "work-thread-run", title: "The Albatross thread while a run works", section: "Tasks and Work", tab: .work) { environment in
-            environment.navigation.openWork(id: "w-course-run", title: "Register for the Alive at 25 course")
-        }
-        screen.fullPage = true
-        try await tour(screen)
-    }
-
-    func testTour23WorkThreadForm() async throws {
-        // The form (S9 and S10): the class choice with calendar notes, the
-        // prefilled details, the empty phone, and "Save to my details".
-        var screen = Screen(id: "work-thread-form", title: "The Albatross thread with a form", section: "Tasks and Work", tab: .work) { environment in
-            environment.navigation.openWork(id: "w-course-form", title: "Register for the Alive at 25 course")
-        }
-        screen.fullPage = true
-        try await tour(screen)
-    }
-
-    func testTour24WorkThreadHandoff() async throws {
-        // The final page (S13): the answered form, the continued run, "Check
-        // and pay" and "I paid".
-        var screen = Screen(id: "work-thread-handoff", title: "The Albatross thread at the final page", section: "Tasks and Work", tab: .work) { environment in
-            environment.navigation.openWork(id: "w-course-handoff", title: "Register for the Alive at 25 course")
-        }
-        screen.fullPage = true
-        try await tour(screen)
-    }
-
-    func testTour25SettingsPersonalDetails() async throws {
-        // Settings, Account, Personal details (S21): each detail with where it
-        // came from, and "Add" for a missing one.
-        var screen = Screen(id: "settings-personal-details", title: "Settings, Personal details", section: "Settings", tab: .today)
-        screen.rootView = {
-            AnyView(NavigationStack { PersonalDetailsSettingsView() })
-        }
-        try await tour(screen)
-    }
-
     // MARK: - Screens and variants
 
     private struct Screen {
@@ -231,9 +190,6 @@ final class NativeTourTests: XCTestCase {
         var fullPage = false
         var setUp: (@MainActor (AppEnvironment) async -> Void)?
         var afterAppear: (@MainActor (AppEnvironment) async -> Void)?
-        /// A screen that is not the shell (a Settings subpage): the view to
-        /// host instead of `AppShellView`.
-        var rootView: (@MainActor () -> AnyView)?
 
         init(
             id: String,
@@ -330,8 +286,7 @@ final class NativeTourTests: XCTestCase {
     private static let screenOrder = [
         "shell-sidebar", "today-brief", "today-empty", "today-error", "mail-list", "mail-thread", "mail-empty",
         "mail-error", "compose-new", "compose-reply", "calendar-day", "calendar-week", "calendar-month", "tasks",
-        "work", "work-detail", "work-detail-run", "work-detail-handoff", "work-thread-run", "work-thread-form",
-        "work-thread-handoff", "files", "chat", "settings", "settings-personal-details",
+        "work", "work-detail", "work-detail-run", "work-detail-handoff", "files", "chat", "settings",
     ]
 
     // MARK: - The tour
@@ -390,9 +345,8 @@ final class NativeTourTests: XCTestCase {
         await environment.store.bootstrap(cacheOwner: ownerID)
         if let setUp = screen.setUp { await setUp(environment) }
 
-        let root = screen.rootView?() ?? AnyView(AppShellView())
         let controller = UIHostingController(rootView: AnyView(
-            root
+            AppShellView()
                 .tint(environment.theme.accentColor)
                 .environment(environment)
                 .environment(Clerk.shared)

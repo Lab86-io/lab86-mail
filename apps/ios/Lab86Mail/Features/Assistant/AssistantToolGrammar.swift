@@ -248,23 +248,6 @@ enum AssistantToolGrammar {
         },
         "tasks_delete_card": fixed("Deleting the task", "Deleted the task", "Deleting the task failed"),
 
-        // The Albatross thread (docs/albatross-thread.md)
-        "albatross_handle_step": { _, out in
-            switch out["action"]?.stringValue {
-            case "resumed":
-                return ShapeActivity(running: "Albatross continues the step", done: "Continued the step", failed: "Could not continue the step")
-            case "steered":
-                return ShapeActivity(running: "Albatross reads your note", done: "Read your note", failed: "Could not pass your note to the run")
-            case "stopped":
-                return ShapeActivity(running: "Albatross stops the run", done: "Stopped the run", failed: "Could not stop the run")
-            default:
-                return ShapeActivity(running: "Albatross starts the step", done: "Started the step", failed: "Could not start the step")
-            }
-        },
-        "personal_details_get": fixed("Reads your details", "Read your details", "Could not read your details"),
-        "personal_details_save": fixed("Saves to your details", "Saved to your details", "Could not save to your details"),
-        "ask_form": fixed("Asks you one form", "You answered", "The form failed"),
-
         // Albatross work and areas
         "albatross_record_progress": fixed("Recording progress", "Recorded progress", "Recording progress failed"),
         "albatross_replan_work": fixed("Replanning the Work", "Replanned the Work", "Replanning failed"),

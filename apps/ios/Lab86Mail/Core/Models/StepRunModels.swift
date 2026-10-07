@@ -165,16 +165,12 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         let label: String
         let detail: String?
         let target: Target?
-        /// The button that ends the user's part of a page handoff ("I paid",
-        /// "I signed in"). Nil when the server sends none: "Continue".
-        let doneLabel: String?
 
-        init(kind: Kind, label: String? = nil, detail: String? = nil, target: Target? = nil, doneLabel: String? = nil) {
+        init(kind: Kind, label: String? = nil, detail: String? = nil, target: Target? = nil) {
             self.kind = kind
             self.label = String((label?.nilIfBlank ?? kind.defaultLabel).prefix(Self.labelLimit))
             self.detail = detail
             self.target = target
-            self.doneLabel = doneLabel?.nilIfBlank.map { String($0.prefix(Self.labelLimit)) }
         }
 
         init?(json: JSONValue) {
@@ -184,7 +180,6 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
             label = String((json["label"]?.stringValue?.nilIfBlank ?? kind.defaultLabel).prefix(Self.labelLimit))
             detail = json["detail"]?.stringValue?.nilIfBlank
             target = json["target"].flatMap { Target(json: $0) }
-            doneLabel = json["doneLabel"]?.stringValue?.nilIfBlank.map { String($0.prefix(Self.labelLimit)) }
         }
     }
 
@@ -259,9 +254,6 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
     let createdAt: Date?
     let updatedAt: Date?
     let finishedAt: Date?
-    /// The run this one continues ("Continue" after a handoff). Optional so
-    /// cached runs from older servers keep decoding.
-    let parentRunID: String?
 
     init(
         id: String,
@@ -281,8 +273,7 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         error: String? = nil,
         createdAt: Date? = nil,
         updatedAt: Date? = nil,
-        finishedAt: Date? = nil,
-        parentRunID: String? = nil
+        finishedAt: Date? = nil
     ) {
         self.id = id
         self.workID = workID
@@ -302,7 +293,6 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.finishedAt = finishedAt
-        self.parentRunID = parentRunID
     }
 
     init?(json: JSONValue) {
@@ -328,7 +318,6 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         createdAt = CalendarDateParser.date(json["createdAt"])
         updatedAt = CalendarDateParser.date(json["updatedAt"])
         finishedAt = CalendarDateParser.date(json["finishedAt"])
-        parentRunID = json["parentRunId"]?.stringValue?.nilIfBlank
     }
 
     /// The run ended with a handoff and still waits for the user.
@@ -358,8 +347,7 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
             error: error,
             createdAt: createdAt,
             updatedAt: updatedAt,
-            finishedAt: finishedAt,
-            parentRunID: parentRunID
+            finishedAt: finishedAt
         )
     }
 
