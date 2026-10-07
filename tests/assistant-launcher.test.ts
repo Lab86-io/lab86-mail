@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { assistantLauncherPlacement, capturePillHidden, isAssistantShortcut } from '../lib/client-state';
+import {
+  assistantLauncherPlacement,
+  assistantShortcutTarget,
+  capturePillHidden,
+  isAssistantShortcut,
+  isWorkThreadOpen,
+} from '../lib/client-state';
 
 // The floating "Ask Assistant" door on the web shell, and its ⌘K twin.
 describe('the assistant launcher', () => {
@@ -15,6 +21,11 @@ describe('the assistant launcher', () => {
     expect(assistantLauncherPlacement({ ...free, aiBarOpen: true, capturePillVisible: true })).toBe('hidden');
   });
 
+  test('hides on the Work thread, where the page is the chat', () => {
+    expect(assistantLauncherPlacement({ ...free, workThreadOpen: true })).toBe('hidden');
+    expect(assistantLauncherPlacement({ ...free, workThreadOpen: false })).toBe('corner');
+  });
+
   test('stacks above the New Intent pill and an open reader instead of overlapping', () => {
     expect(assistantLauncherPlacement({ ...free, capturePillVisible: true })).toBe('stacked');
     expect(assistantLauncherPlacement({ ...free, readerOpen: true })).toBe('stacked');
@@ -27,6 +38,21 @@ describe('the assistant launcher', () => {
     // Collapsed rail or mobile: the capture pill is back, so stack.
     const railCollapsed = !capturePillHidden(false, false, false, false);
     expect(assistantLauncherPlacement({ ...free, capturePillVisible: railCollapsed })).toBe('stacked');
+  });
+});
+
+describe('the Work thread', () => {
+  test('is open when one Albatross is selected on the Albatrosses or Areas page', () => {
+    expect(isWorkThreadOpen({ primaryView: 'albatrosses', selectedWorkId: 'w1' })).toBe(true);
+    expect(isWorkThreadOpen({ primaryView: 'areas', selectedWorkId: 'w1' })).toBe(true);
+    expect(isWorkThreadOpen({ primaryView: 'albatrosses', selectedWorkId: null })).toBe(false);
+    expect(isWorkThreadOpen({ primaryView: 'mail', selectedWorkId: 'w1' })).toBe(false);
+  });
+
+  test('takes the shortcut: ⌘K focuses the thread composer there, and toggles the panel elsewhere', () => {
+    expect(assistantShortcutTarget({ primaryView: 'albatrosses', selectedWorkId: 'w1' })).toBe('thread');
+    expect(assistantShortcutTarget({ primaryView: 'today', selectedWorkId: 'w1' })).toBe('assistant');
+    expect(assistantShortcutTarget({ primaryView: 'albatrosses', selectedWorkId: null })).toBe('assistant');
   });
 });
 

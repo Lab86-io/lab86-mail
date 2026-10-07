@@ -119,7 +119,9 @@ export async function createBrowserSession(
       keepAlive: true,
       timeout: SESSION_TIMEOUT_SECONDS,
       browserSettings: {
-        recordSession: true,
+        // No recording: a run types personal details into forms, and the user
+        // signs in here. Proof is the page text the runner reads, not a replay.
+        recordSession: false,
         viewport: { width: 1280, height: 800 },
         ...(options.contextId
           ? { context: { id: options.contextId, persist: options.persist === true } }

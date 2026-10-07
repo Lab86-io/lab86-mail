@@ -280,7 +280,6 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
               claim: `${step.title}: ${reason || 'the page shows the completion state'}`.slice(0, 400),
               title: page.title || 'Verified on the page',
               summary: `Seen at ${page.url}`.slice(0, 600),
-              url: session.replayUrl,
               sourceKind: 'browser_session',
               sourceId: sessionId,
               stepIdentity: step.identity,

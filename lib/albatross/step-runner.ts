@@ -32,7 +32,9 @@ import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { pausedAssistantRisksStrict } from '../hosted/standing-orders';
 import { resolveBriefTimezone } from '../mail/brief-timezone';
 import { dispatchNativeNotification } from '../notifications/native-delivery';
+import { aboutUserBlock, listPersonalDetails } from '../personal-details/store';
 import { truncateText } from '../shared/text';
+import { getChatSession } from '../store/chat-sessions';
 import { AgentBrowser, type AgentConnector, playwrightAgentConnector } from './browser-agent';
 import { bindSessionWriter, releaseSessionWriter, sessionOptionsForUser } from './browser-contexts';
 import {
@@ -59,8 +61,11 @@ import {
   runnerContext,
   runnerTaskMessage,
   STEP_RUNNER_RULES,
+  steerMessage,
+  threadUserNotes,
 } from './step-run-prompt';
 import { buildRunnerTools, type HandoffInput, type RunArtifact } from './step-run-tools';
+import { workThreadSessionId } from './thread-contract';
 
 const HEARTBEAT_MS = 30_000;
 
@@ -89,6 +94,7 @@ export interface SettleInput {
     kind: NonNullable<HandoffInput['next']>['kind'];
     label: string;
     detail: string;
+    doneLabel?: string;
     target?: { kind: string; id?: string; url?: string; accountId?: string };
   };
   budget?: {
@@ -126,6 +132,28 @@ export interface StepRunnerDependencies {
   now: () => number;
   heartbeatMs: number;
   reportError: typeof console.error;
+  /** The account name and email (the users table), for personal details and the prompt. */
+  readUser: (userId: string) => Promise<{ name: string | null; email: string | null }>;
+  /** The saved personal details, for the "About the user" block (names only). */
+  listDetails: typeof listPersonalDetails;
+  /** The newest user messages of the Work thread, oldest first. */
+  readThreadNotes: (userId: string, workId: string) => Promise<string[]>;
+}
+
+/** The account name and email of a user, for the run's request context. Null fields when unknown. */
+export async function readUserProfile(userId: string, query: typeof convexQuery = convexQuery) {
+  const row = await query<{ name?: string | null; email?: string | null } | null>(api.users.getByClerkId, {
+    userId,
+  }).catch(() => null);
+  return { name: row?.name ?? null, email: row?.email ?? null };
+}
+
+/** The user's newest messages in the Work thread, read from its canonical chat session. */
+export async function readThreadUserNotes(userId: string, workId: string): Promise<string[]> {
+  const session = await runWithAiRequestContext({ userId, agent: 'ai' }, () =>
+    getChatSession(workThreadSessionId(workId)),
+  );
+  return threadUserNotes(session?.messages || []);
 }
 
 const defaults: StepRunnerDependencies = {
@@ -152,6 +180,9 @@ const defaults: StepRunnerDependencies = {
   now: Date.now,
   heartbeatMs: HEARTBEAT_MS,
   reportError: console.error,
+  readUser: (userId) => readUserProfile(userId),
+  listDetails: listPersonalDetails,
+  readThreadNotes: readThreadUserNotes,
 };
 
 class RunCancelled extends Error {
@@ -172,6 +203,39 @@ interface SessionRow {
   sessionId: string;
   status: string;
   stepKey?: string | null;
+}
+
+/**
+ * The runner's prepareStep for steer notes. generateText rebuilds each step
+ * from the first messages plus the step responses, so a message added in one
+ * prepareStep is gone in the next. This keeps every note at the point where it
+ * arrived (between two complete steps, so no tool call loses its result) for
+ * all later steps. Notes read before this attempt sit after the first messages.
+ */
+export function steerPrepareStep(input: {
+  received: string[];
+  initialCount: number;
+  take: () => Promise<Array<{ text: string }>>;
+  log: (line: string) => Promise<void>;
+}) {
+  const inserts: Array<{ at: number; message: ModelMessage }> = input.received.length
+    ? [{ at: input.initialCount, message: steerMessage([...input.received]) }]
+    : [];
+  return async ({ messages: stepMessages }: { messages: ModelMessage[] }) => {
+    const notes = (await input.take()) || [];
+    if (notes.length) {
+      const texts = notes.map((note) => note.text);
+      for (const text of texts) await input.log(`Read your note: ${truncateText(text, 160)}`);
+      input.received.push(...texts);
+      inserts.push({ at: stepMessages.length, message: steerMessage(texts) });
+    }
+    if (!inserts.length) return undefined;
+    const out = [...stepMessages];
+    // From the highest index down, so each earlier index is still correct.
+    for (const insert of [...inserts].sort((a, b) => b.at - a.at))
+      out.splice(Math.min(insert.at, out.length), 0, insert.message);
+    return { messages: out };
+  };
 }
 
 /** The handoff when the run produced no step_handoff call. */
@@ -385,6 +449,14 @@ export async function runStepRun(
     const timezone = await deps.resolveTimezone(userId, undefined).catch(() => 'UTC');
     const paused = await deps.pausedRisks(userId);
     const lifted = deps.liftTools(runId, timezone, undefined, { clientPlatform: 'ios', pausedRisks: paused });
+    const profile = await deps.readUser(userId).catch(() => ({ name: null, email: null }));
+    const [aboutUser, threadNotes] = await Promise.all([
+      deps
+        .listDetails({ userId, name: profile.name, email: profile.email })
+        .then(aboutUserBlock)
+        .catch(() => ''),
+      deps.readThreadNotes(userId, run.workId).catch(() => [] as string[]),
+    ]);
 
     // One open for the whole run: parallel browser calls in one model step
     // share the same promise instead of each starting a session.
@@ -480,6 +552,8 @@ export async function runStepRun(
         browserAvailable,
         sessionOpen: Boolean(sessionId),
         limits,
+        aboutUser,
+        threadNotes,
       }),
     ].join('\n\n');
     const messages: ModelMessage[] = [{ role: 'user', content: runnerTaskMessage(step, Boolean(previous)) }];
@@ -490,11 +564,22 @@ export async function runStepRun(
 
     let result: Awaited<ReturnType<typeof generateText>> | null = null;
     let lastError: unknown;
+    // Notes the run already read. A failover attempt starts from the first
+    // messages again, so it gets these notes at once.
+    const receivedNotes: string[] = [];
     for (let index = 0; index < runtimes.length && !result; index += 1) {
       const runtime = runtimes[index];
       try {
         result = await runWithAiRequestContext(
-          { userId, agent: 'ai', runId, operationBatchId: runId, userTimezone: timezone },
+          {
+            userId,
+            userName: profile.name,
+            userEmail: profile.email,
+            agent: 'ai',
+            runId,
+            operationBatchId: runId,
+            userTimezone: timezone,
+          },
           () =>
             runWithBriefMeter(meter, () =>
               deps.generateText({
@@ -502,6 +587,17 @@ export async function runStepRun(
                 system,
                 messages,
                 tools,
+                // A note the user writes while the run works reaches the next model
+                // step and stays for every step after it (steerPrepareStep).
+                prepareStep: steerPrepareStep({
+                  received: receivedNotes,
+                  initialCount: messages.length,
+                  take: () =>
+                    deps
+                      .convexMutation<Array<{ text: string }>>(api.albatrossStepRuns.takeSteerNotes, fence)
+                      .catch(() => []),
+                  log,
+                }),
                 stopWhen: [hasToolCall('step_handoff'), stepCountIs(STEP_RUN_MAX_MODEL_STEPS)],
                 abortSignal: signal,
                 maxOutputTokens: maxOutputTokensForFeature(feature),
@@ -534,17 +630,20 @@ export async function runStepRun(
     const finalHandoff = handoff as HandoffInput | null;
     let questionId: string | null = null;
     if (finalHandoff?.outcome === 'needs_answer' && finalHandoff.question) {
+      const form = finalHandoff.question.form;
       questionId = await deps
         .convexMutation<string>(api.albatrossWorkV2.upsertQuestion, {
           userId,
           workId: run.workId,
           kind: 'clarification',
-          prompt: finalHandoff.question.prompt,
-          reason: `Needed to continue the step "${truncateText(run.stepTitle, 160)}".`,
-          options: (finalHandoff.question.options || []).map((option) => ({
-            id: option.id,
-            label: option.label,
-          })),
+          prompt: form?.title || finalHandoff.question.prompt || 'Albatross needs an answer to continue.',
+          reason: form?.detail || `Needed to continue the step "${truncateText(run.stepTitle, 160)}".`,
+          options: form
+            ? undefined
+            : (finalHandoff.question.options || []).map((option) => ({ id: option.id, label: option.label })),
+          ...(form ? { form } : {}),
+          // A new run's question never receives an earlier run's answer.
+          dedupeSalt: runId,
         })
         .then((id) => (id ? String(id) : null))
         .catch(() => null);

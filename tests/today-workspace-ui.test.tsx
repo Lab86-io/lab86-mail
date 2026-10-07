@@ -99,7 +99,7 @@ describe('Today working surface', () => {
   });
   test('source cards show dates and trust, work is distinct from suggestions', () => {
     const html = render(<WorkspaceThreadCard thread={thread} at={100} stamp="s" />);
-    expect(html).toContain('Open guided work');
+    expect(html).toContain('Open the Albatross');
     expect(html).toContain('Mark work done');
     expect(html).toContain('Existing work');
     expect(html).toContain('User-reported');
@@ -122,8 +122,7 @@ describe('Today working surface', () => {
         stamp="s"
       />,
     );
-    expect(html).toContain('Open work');
-    expect(html).not.toContain('Open guided work');
+    expect(html).toContain('Open the Albatross');
     expect(html).not.toContain('Mark work done');
   });
   test('generated workspace can be quiet and disappears when disabled', () => {
@@ -156,18 +155,16 @@ describe('Today working surface', () => {
       'Mark work done',
     );
   });
-  test('guided navigation is transient and does not execute work', () => {
-    openWorkspaceWork('work', true);
+  test('opening a Work from Today lands on its thread and closes the corner chat', () => {
+    useClientStore.setState({ aiBarOpen: true });
+    openWorkspaceWork('work');
     expect(useClientStore.getState()).toMatchObject({
       selectedWorkId: 'work',
-      guidedWorkId: 'work',
       primaryView: 'albatrosses',
+      aiBarOpen: false,
     });
     expect(persistedClientState(useClientStore.getState())).not.toHaveProperty('guidedWorkId');
-    useClientStore.getState().setSelectedWorkId('different-work');
-    expect(useClientStore.getState().guidedWorkId).toBeNull();
-    openWorkspaceWork('other', false);
-    expect(useClientStore.getState().guidedWorkId).toBeNull();
+    expect(useClientStore.getState()).not.toHaveProperty('guidedWorkId');
   });
   test('weather shows explicit place, units, high/low and attribution, never invented zeroes', () => {
     const data = {

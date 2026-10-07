@@ -6,7 +6,7 @@ export default function PrivacyPage() {
       <article className="mx-auto max-w-3xl space-y-5">
         <h1 className="text-2xl font-semibold">Privacy Policy</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
-          Effective June 2026. Updated September 29, 2026.
+          Effective June 2026. Updated October 7, 2026.
         </p>
         <p>
           {PRODUCT_NAME} is hosted email and personal operations software from {COMPANY_NAME}. This policy
@@ -35,6 +35,13 @@ export default function PrivacyPage() {
             signatures, and settings.
           </li>
           <li>
+            <strong>Personal details you save:</strong> your name, email address, phone number, home address,
+            emergency contact, and other plain facts that you save in Settings, in a conversation, or in a
+            form.
+            {PRODUCT_NAME} types them into web forms when a task needs them. It does not keep passwords,
+            sign-in codes, card numbers, bank numbers, or ID numbers with them.
+          </li>
+          <li>
             <strong>Billing data:</strong> your plan and billing entitlement records. Stripe processes card
             payments through Clerk Billing. {COMPANY_NAME} does not receive or store card numbers.
           </li>
@@ -58,6 +65,11 @@ export default function PrivacyPage() {
           vectors, drafts, and other results. Hosted requests go through OpenRouter. OpenRouter sends each
           request only to a model host that does not train models on the data. Some of these hosts keep
           requests for a limited time under their own policies, for example to find abuse.
+        </p>
+        <p>
+          When a task fills in a web form for you, the personal details it needs go to the model provider with
+          that request, and {PRODUCT_NAME} types them into the page in the shared browser. Other requests
+          carry only your name, your email address, and the names of the details you saved.
         </p>
         <p>
           If you add your own OpenRouter key, the same rule applies. If you add your own OpenAI or Anthropic
@@ -104,7 +116,8 @@ export default function PrivacyPage() {
           <li>
             <strong>Browserbase:</strong> runs the web browser for web search, for the web pages that you or
             the assistant open, for guided work, and for slide images. It receives the search words, the page
-            addresses, and the slide content. It records the browser sessions of guided work.
+            addresses, the slide content, and the personal details that a task types into a web form. It does
+            not record these browser sessions.
           </li>
           <li>
             <strong>Apple Push Notification service:</strong> receives the device token of your iPhone, iPad,
@@ -156,8 +169,8 @@ export default function PrivacyPage() {
         <p>
           Data moves between your device, {PRODUCT_NAME}, and our service providers over encrypted (TLS)
           connections. Convex stores the data, including the attachment copies, encrypted at rest. Model
-          provider keys that you add are encrypted before we store them. Access to production systems is
-          limited to the people who operate the service.
+          provider keys and the personal details that you save are encrypted before we store them. Access to
+          production systems is limited to the people who operate the service.
         </p>
 
         <h2 className="pt-2 text-lg font-semibold">Retention and deletion</h2>
@@ -186,6 +199,7 @@ export default function PrivacyPage() {
         <h2 className="pt-2 text-lg font-semibold">Your choices</h2>
         <ul className="list-disc space-y-2 pl-5">
           <li>Export your data from Settings at any time.</li>
+          <li>See, change, or delete your personal details in Settings.</li>
           <li>Disconnect a mailbox and its calendar from Settings, or Google Drive from Files.</li>
           <li>Delete your account from Settings, or ask us to delete it.</li>
           <li>

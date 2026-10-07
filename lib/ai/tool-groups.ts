@@ -46,8 +46,9 @@ export const TOOL_GROUPS = {
     ],
   },
   smart_labels: {
-    label: 'Smart labels, rules, and classification corrections',
+    label: 'Smart labels, rules, classification corrections, and mail in one smart category',
     tools: [
+      'list_smart_category',
       'list_smart_labels',
       'create_smart_label',
       'preview_smart_label',
@@ -97,8 +98,9 @@ export const TOOL_GROUPS = {
     ],
   },
   calendar_admin: {
-    label: 'Calendar sync, primary lookup, series deletion, and unsubscribe',
+    label: 'Calendar event counts, sync, primary lookup, series deletion, and unsubscribe',
     tools: [
+      'calendar_count_events',
       'calendar_sync_now',
       'calendar_get_primary',
       'calendar_delete_recurring_series',
@@ -107,7 +109,7 @@ export const TOOL_GROUPS = {
   },
   mail_more: {
     label:
-      "Scheduled send list and cancel, snoozed mail list, undo send, the user's saved replies, natural-language search, bulk triage, bulk archive or trash, translation, critique, action items, thread timeline",
+      "Scheduled send list and cancel, snoozed mail list, undo send, the user's saved replies, bulk archive or trash",
     tools: [
       'bulk_move_threads',
       'list_saved_replies',
@@ -115,6 +117,12 @@ export const TOOL_GROUPS = {
       'cancel_scheduled',
       'list_snoozed',
       'undo_send',
+    ],
+  },
+  mail_insight: {
+    label:
+      'Natural-language mail search, bulk triage, translation, draft critique, action items, thread timeline',
+    tools: [
       'nl_search',
       'bulk_triage',
       'translate_thread',

@@ -35,6 +35,7 @@ import { ContactsStatusLine } from '@/components/settings/ContactsStatusLine';
 import { JevSection } from '@/components/settings/JevSection';
 import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
 import { McpReconnectNote, McpSyncProblemNote } from '@/components/settings/McpConnectionNotes';
+import { PersonalDetailsSection } from '@/components/settings/PersonalDetailsSection';
 import { SavedRepliesSettings } from '@/components/settings/SavedRepliesSettings';
 import { SignatureSettings } from '@/components/settings/SignatureSettings';
 import { StandingOrdersSection } from '@/components/settings/StandingOrdersSection';
@@ -130,8 +131,15 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   narrative: () => <NarrativeSettings />,
   shortcuts: () => <ShortcutsSection />,
   advanced: () => <AdvancedSection />,
+  personal: () => <PersonalDetailsTab />,
   account: () => <AccountSection />,
 };
+
+/** The account name feeds the legal-name hint (S23); without Clerk there is none. */
+function PersonalDetailsTab() {
+  const { user } = useUser();
+  return <PersonalDetailsSection accountName={user?.fullName ?? null} />;
+}
 
 // Surfaces that are not part of the product's spine. The board is one: a place
 // the user has to maintain, which is the opposite of what Albatross is for.

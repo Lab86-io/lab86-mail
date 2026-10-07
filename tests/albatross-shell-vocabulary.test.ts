@@ -110,8 +110,9 @@ describe('the product names itself', () => {
     expect(capture).not.toContain('IntentCaptureLauncher');
     const bar = read('components/shell/AIBar.tsx');
     expect(bar).toContain('useClientStore((s) => s.captureOpen)');
+    // On the Work thread the thread composer takes the door; elsewhere the panel opens.
     expect(bar).toMatch(
-      /setDoor\(\(current\) => \(\{ seed: captureSeed, nonce: \(current\?\.nonce \?\? 0\) \+ 1 \}\)\);\s*setAiBarOpen\(true\);\s*setCaptureOpen\(false\);/,
+      /setDoor\(\(current\) => \(\{ seed: captureSeed, nonce: \(current\?\.nonce \?\? 0\) \+ 1 \}\)\);\s*if \(!thread\) setAiBarOpen\(true\);\s*setCaptureOpen\(false\);/,
     );
     const composer = read('components/shell/AskHoldComposer.tsx');
     expect(composer).toContain("prediction.preset('hold')");
@@ -179,13 +180,17 @@ describe('no surface tallies open work', () => {
   });
 });
 
-describe('the questions use the main attached conversation', () => {
-  test('the Albatross page routes waiting questions to chat', () => {
-    const detail = read('components/albatross/WorkDetail.tsx');
-    expect(detail).toContain('Answer in chat');
-    expect(detail).toMatch(/setChatScope\(\{\s*kind: 'work',\s*workId,/);
-    expect(detail).not.toContain('WorkQuestionCard');
-    expect(detail).not.toContain('hasFrontierGate');
+describe('the Albatross is one conversation', () => {
+  test('the Work page is the thread: questions are forms in it, and no floating chat opens over it', () => {
+    const thread = read('components/albatross/WorkThread.tsx');
+    expect(thread).toContain('<AssistantChat');
+    expect(thread).toContain("scope: { kind: 'work', workId, label: title }");
+    expect(thread).not.toContain('Answer in chat');
+    expect(thread).not.toContain('setChatScope');
+    expect(thread).not.toContain('setAiBarOpen(true)');
+    expect(thread).not.toContain('WorkQuestionCard');
+    expect(thread).not.toContain('hasFrontierGate');
+    expect(read('components/albatross/thread/RunBlock.tsx')).toContain('<FormQuestionCard');
   });
 
   test('attached Work cannot be detached while its request is active', () => {

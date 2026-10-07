@@ -99,6 +99,7 @@ describe('the next action', () => {
     kind: 'review',
     label: 'Open',
     detail: '',
+    doneLabel: null,
     target: null,
     ...over,
   });
@@ -241,7 +242,7 @@ describe('the Brief list', () => {
     expect(rows.map((row) => row.workId)).toEqual(['work_claim', 'work_lease', 'work_bank', 'work_plans']);
     expect(rows[0]).toMatchObject({
       working: true,
-      stepTitle: 'Working on: Send the dispute letter to the insurer',
+      stepTitle: 'In progress: Send the dispute letter to the insurer',
       line: 'Filled the policy number and the claim reference',
       action: null,
     });

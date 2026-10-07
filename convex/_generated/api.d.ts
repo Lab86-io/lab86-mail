@@ -67,6 +67,7 @@ import type * as narrativeSchema from "../narrativeSchema.js";
 import type * as oauthCompletions from "../oauthCompletions.js";
 import type * as officeDocuments from "../officeDocuments.js";
 import type * as operations from "../operations.js";
+import type * as personalDetails from "../personalDetails.js";
 import type * as rateLimits from "../rateLimits.js";
 import type * as retention from "../retention.js";
 import type * as smart from "../smart.js";
@@ -142,6 +143,7 @@ declare const fullApi: ApiFromModules<{
   oauthCompletions: typeof oauthCompletions;
   officeDocuments: typeof officeDocuments;
   operations: typeof operations;
+  personalDetails: typeof personalDetails;
   rateLimits: typeof rateLimits;
   retention: typeof retention;
   smart: typeof smart;

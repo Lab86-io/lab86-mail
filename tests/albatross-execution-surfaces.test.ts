@@ -4,17 +4,31 @@ import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LapsePrompt } from '../components/albatross/Forgiveness';
-import { GuidedStepPane } from '../components/albatross/GuidedStep';
+import { PlanIntro } from '../components/albatross/thread/PlanIntro';
+import { visibleExecutionNotifications } from '../components/shell/NotificationCenter';
+import { CONTINUOUS_EXECUTION_CRON_NAMES } from '../convex/crons';
+import { planStepRows } from '../lib/albatross/thread-view';
 import {
   guideStepsWithOptimisticCompletion,
   type WorkDetailData,
-  WorkDetailRecovery,
   workDetailRecoveryPrompt,
-} from '../components/albatross/WorkDetail';
-import { visibleExecutionNotifications } from '../components/shell/NotificationCenter';
-import { CONTINUOUS_EXECUTION_CRON_NAMES } from '../convex/crons';
+} from '../lib/albatross/work-view';
 
 const repoRoot = join(import.meta.dir, '..');
+
+/** The thread mounts LapsePrompt from the same prompt helper. */
+function RecoveryForTest({
+  detail,
+  workId,
+  nowMs,
+}: {
+  detail: WorkDetailData;
+  workId: string;
+  nowMs: number;
+}) {
+  const prompt = workDetailRecoveryPrompt(detail, workId, nowMs);
+  return prompt ? createElement(LapsePrompt, prompt) : null;
+}
 const read = (relative: string) => readFileSync(join(repoRoot, relative), 'utf8');
 
 function workDetail(endAt: number, workState = 'active'): WorkDetailData {
@@ -54,39 +68,44 @@ function workDetail(endAt: number, workState = 'active'): WorkDetailData {
 }
 
 describe('the execution loop owns the visible product surfaces', () => {
-  test('guided execution renders the current step, progress, context, and official URL', () => {
+  test('the thread plan block renders the steps, the current one with Handle it, and the offline one as yours', () => {
+    const steps: WorkDetailData['execution']['guideSteps'] = [
+      {
+        key: 'open-form',
+        kind: 'task',
+        title: 'Open the official renewal form',
+        detail: 'Use the government portal and stop before payment.',
+        url: 'https://example.gov/renew',
+        done: false,
+        cardId: null,
+        stepMode: 'agent_does',
+        runnable: true,
+      },
+      {
+        key: 'save-receipt',
+        kind: 'physical',
+        title: 'Save the receipt',
+        detail: null,
+        url: null,
+        done: false,
+        cardId: null,
+        stepMode: 'you_do_offline',
+      },
+    ];
     const html = renderToStaticMarkup(
-      createElement(GuidedStepPane, {
-        steps: [
-          {
-            id: 'open-form',
-            title: 'Open the official renewal form',
-            detail: 'Use the government portal and stop before payment.',
-            url: 'https://example.gov/renew',
-            knows: ['Your appointment date'],
-            needsYou: ['Review the legal declaration'],
-            done: false,
-          },
-          {
-            id: 'save-receipt',
-            title: 'Save the receipt',
-            knows: [],
-            needsYou: [],
-            done: false,
-          },
-        ],
-        activeId: 'open-form',
-        onComplete: () => undefined,
-        onDiscuss: () => undefined,
+      createElement(PlanIntro, {
+        outcome: 'Renew the passport',
+        steps: planStepRows(steps, { runnerEnabled: true }),
+        state: 'ready',
+        onHandle: () => undefined,
       }),
     );
 
-    expect(html).toContain('Guided work');
+    expect(html).toContain('What Albatross understood');
     expect(html).toContain('Open the official renewal form');
-    expect(html).toContain('Use the government portal');
-    expect(html).toContain('https://example.gov/renew');
-    expect(html).toContain('Mark this step done');
-    expect(html).toContain('Discuss this');
+    expect(html).toContain('Save the receipt');
+    expect(html).toContain('Handle it');
+    expect(html).toContain('Yours, offline');
   });
 
   test('guided execution checks a step locally before the server projection refreshes', () => {
@@ -143,7 +162,7 @@ describe('the execution loop owns the visible product surfaces', () => {
     });
     expect(
       renderToStaticMarkup(
-        createElement(WorkDetailRecovery, {
+        createElement(RecoveryForTest, {
           detail: elapsed,
           workId: 'passport',
           nowMs,
@@ -155,7 +174,7 @@ describe('the execution loop owns the visible product surfaces', () => {
     expect(workDetailRecoveryPrompt(workDetail(nowMs - 1, 'done'), 'passport', nowMs)).toBeNull();
     expect(
       renderToStaticMarkup(
-        createElement(WorkDetailRecovery, {
+        createElement(RecoveryForTest, {
           detail: workDetail(nowMs - 1, 'archived'),
           workId: 'passport',
           nowMs,
@@ -179,13 +198,13 @@ describe('the execution loop owns the visible product surfaces', () => {
 
   test('guided work and recovery are mounted on every execution surface', () => {
     const today = read('components/report/Today.tsx');
-    const detail = read('components/albatross/WorkDetail.tsx');
+    const detail = read('components/albatross/WorkThread.tsx');
     const calendar = read('components/calendar/CalendarSurface.tsx');
-    // Today shows the day, the mail, and one next move. Recovery lives in the Work detail.
+    // Today shows the day, the mail, and one next move. Recovery lives in the Work thread.
     expect(today).not.toContain('LapsePrompt');
     expect(today).not.toContain('missedMoves');
     expect(detail).toContain('<LapsePrompt');
-    // Missed moves live only in the Work detail. The calendar grid has no banner.
+    // Missed moves live only in the Work thread. The calendar grid has no banner.
     expect(calendar).not.toContain('LapsePrompt');
     expect(calendar).toContain('<SyncStatus');
     expect(calendar).toContain('<SyncStatus');

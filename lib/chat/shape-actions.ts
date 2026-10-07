@@ -35,6 +35,25 @@ export interface ShapeActionDeps {
   now?: () => number;
   /** The account to use for hold_slot when the shape has none. */
   defaultAccount?: string;
+  /**
+   * Undo the newest chat save of one personal detail and say what happened.
+   * Default: POST /api/personal-details.
+   */
+  undoPersonalDetail?: (key: string) => Promise<PersonalDetailUndo>;
+}
+
+/** What an Undo did: put the earlier value back, removed a new row, or nothing (too late). */
+export type PersonalDetailUndo = 'restored' | 'removed' | 'none';
+
+async function undoPersonalDetailOverHttp(key: string): Promise<PersonalDetailUndo> {
+  const response = await fetch('/api/personal-details', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'undo', key }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body?.ok === false) throw new Error(body?.error || 'The save was not undone.');
+  return body?.undone === 'restored' || body?.undone === 'removed' ? body.undone : 'none';
 }
 
 export interface ShapeActionOptions {
@@ -86,6 +105,7 @@ export function actionLabel(action: ShapeAction, rsvp?: RsvpStatus): string {
     case 'import_file':
       return 'Import';
     case 'undo_operation':
+    case 'undo_personal_details':
       return 'Undo';
     case 'remember_sender':
       return 'Remember';
@@ -311,6 +331,16 @@ export async function executeShapeAction(
         await deps.callTool('undo_operation', { operationId: action.operationId });
         deps.invalidate([...MAIL_KEYS, 'calendar', 'tasks']);
         return { kind: 'done', label: 'Undone' };
+      case 'undo_personal_details': {
+        const undo = deps.undoPersonalDetail ?? undoPersonalDetailOverHttp;
+        const results: PersonalDetailUndo[] = [];
+        for (const key of action.keys.slice(0, 12)) results.push(await undo(key));
+        deps.invalidate(['personal-details']);
+        // The Undo window is one day, and a later save from Settings ends it.
+        if (results.every((result) => result === 'none'))
+          return { kind: 'error', message: 'There is nothing to undo now.' };
+        return { kind: 'done', label: 'Undone' };
+      }
       case 'remember_sender': {
         const notes = (options.note || '').trim();
         if (!notes) return { kind: 'error', message: 'Write the note first.' };

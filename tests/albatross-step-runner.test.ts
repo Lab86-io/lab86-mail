@@ -73,8 +73,12 @@ function harness(
     liveSession?: any;
     runtimes?: any[];
     page?: Partial<AgentPage>;
+    steerNotes?: Array<{ text: string }>[];
+    details?: any[];
+    notes?: string[];
   } = {},
 ): Harness {
+  const steerQueue = [...(options.steerNotes || [])];
   const mutations: Array<{ fn: string; args: any }> = [];
   let generateOptions: any;
   const page: AgentPage = {
@@ -113,6 +117,8 @@ function harness(
           return 'question-1';
         case 'albatrossNotifications:queueStepRunHandoff':
           return { created: true, notificationId: 'note-1' };
+        case 'albatrossStepRuns:takeSteerNotes':
+          return steerQueue.shift() || [];
         default:
           return true;
       }
@@ -191,6 +197,9 @@ function harness(
     recordUsage: mock(async () => undefined) as any,
     heartbeatMs: 60_000,
     reportError: mock(() => undefined),
+    readUser: async () => ({ name: 'Sam Rivera', email: 'sam.rivera@example.com' }),
+    listDetails: (async () => options.details ?? []) as any,
+    readThreadNotes: async () => options.notes ?? [],
   };
   return {
     deps,
@@ -919,5 +928,248 @@ describe('runner helpers', () => {
     expect(isRetryableRunError(Object.assign(new Error('x'), { statusCode: 429 }))).toBe(true);
     expect(isRetryableRunError(new Error('socket hang up'))).toBe(true);
     expect(isRetryableRunError(new Error('Invalid args for save_draft'))).toBe(false);
+  });
+});
+
+describe('the thread round (docs/albatross-thread.md)', () => {
+  test('a note the user writes while the run works reaches the next model step and stays', async () => {
+    let injected: any;
+    let second: any;
+    const h = harness(
+      async (opts) => {
+        injected = await opts.prepareStep({ messages: [{ role: 'user', content: 'Work on the step.' }] });
+        second = await opts.prepareStep({
+          messages: [
+            { role: 'user', content: 'Work on the step.' },
+            { role: 'assistant', content: 'Opened the page.' },
+          ],
+        });
+        await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'Wrote it.', evidence: 'doc-1' });
+        return { text: '', usage };
+      },
+      { steerNotes: [[{ text: 'Use the Monday class.' }]] },
+    );
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(injected.messages.at(-1)).toEqual({
+      role: 'user',
+      content: expect.stringContaining('The user says while you work:\n- Use the Monday class.'),
+    });
+    // The next step still has the note, at the point where it arrived.
+    expect(second.messages.map((message: any) => message.role)).toEqual(['user', 'user', 'assistant']);
+    expect(second.messages[1].content).toContain('Use the Monday class.');
+    expect(
+      h
+        .calls('albatrossStepRuns:progress')
+        .filter((args) => args.line === 'Read your note: Use the Monday class.'),
+    ).toHaveLength(1);
+  });
+
+  test('a form question is stored with the form and the run id as its salt', async () => {
+    const form = {
+      title: 'Which class?',
+      detail: 'All three are 4-hour Zoom sessions.',
+      fields: [
+        {
+          id: 'class',
+          label: 'Class',
+          kind: 'choice',
+          options: [
+            { id: 'mon', label: 'Monday, October 19', recommended: 'Matches what you said' },
+            { id: 'wed', label: 'Wednesday, October 21' },
+          ],
+        },
+        { id: 'phone', label: 'Phone', kind: 'phone', detailKey: 'phone' },
+      ],
+    };
+    const h = harness(async (opts) => {
+      const result = await opts.tools.step_handoff.execute({
+        outcome: 'needs_answer',
+        summary: 'Found three classes.',
+        next: { kind: 'answer', label: 'Answer', detail: 'Pick a class.' },
+        question: { form },
+      });
+      expect(result).toEqual({ ok: true });
+      return { text: '', usage };
+    });
+    await runStepRun('user-1', 'run-1', h.deps);
+    const [question] = h.calls('albatrossWorkV2:upsertQuestion');
+    expect(question).toMatchObject({
+      prompt: 'Which class?',
+      reason: form.detail,
+      form,
+      dedupeSalt: 'run-1',
+    });
+    expect(question.options).toBeUndefined();
+  });
+
+  test('a needs_answer without a form or a prompt is refused', async () => {
+    const h = harness(async (opts) => {
+      const refused = await opts.tools.step_handoff.execute({
+        outcome: 'needs_answer',
+        summary: 'Need a fact.',
+        next: { kind: 'answer', label: 'Answer', detail: 'x' },
+        question: {},
+      });
+      expect(refused.ok).toBe(false);
+      return { text: '', usage };
+    });
+    await runStepRun('user-1', 'run-1', h.deps);
+  });
+
+  test('the run context names the user, the saved details, and what the user said in the thread', async () => {
+    const h = harness(
+      async (opts) => {
+        await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'Done.', evidence: 'doc-1' });
+        return { text: '', usage };
+      },
+      {
+        details: [
+          {
+            key: 'name',
+            label: 'Name',
+            value: {},
+            display: 'Sam Rivera',
+            source: 'settings',
+            saved: true,
+            updatedAt: 1,
+          },
+          {
+            key: 'phone',
+            label: 'Phone',
+            value: '+15555550100',
+            display: '(555) 555-0100',
+            source: 'chat',
+            saved: true,
+            updatedAt: 1,
+          },
+        ],
+        notes: ['A Monday or a Wednesday would be best.'],
+      },
+    );
+    await runStepRun('user-1', 'run-1', h.deps);
+    const system = h.generateOptions().system as string;
+    expect(system).toContain('## About the user');
+    expect(system).toContain('Name: Sam Rivera');
+    expect(system).not.toContain('555');
+    expect(system).toContain(
+      '## What the user said in the thread (oldest first)\n- A Monday or a Wednesday would be best.',
+    );
+    expect(system).toContain('Choices that belong to the user');
+    // The chat's own rules (its tools) stay out of the run.
+    expect(system).not.toContain('albatross_handle_step');
+  });
+
+  test('a finish_on_page handoff keeps its done label', async () => {
+    const h = harness(async (opts) => {
+      await opts.tools.step_handoff.execute({
+        outcome: 'your_turn',
+        summary: 'Filled the form.',
+        next: { kind: 'finish_on_page', label: 'Check and pay', detail: 'Pay the fee.', doneLabel: 'I paid' },
+      });
+      return { text: '', usage };
+    });
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.settled()).toMatchObject({ next: { kind: 'finish_on_page', doneLabel: 'I paid' } });
+  });
+});
+
+describe('runner reads for the thread', () => {
+  test('readUserProfile returns the account name and email, or nulls', async () => {
+    const { readUserProfile } = await import('../lib/albatross/step-runner');
+    expect(
+      await readUserProfile('user-1', (async () => ({
+        name: 'Sam Rivera',
+        email: 'sam.rivera@example.com',
+      })) as any),
+    ).toEqual({ name: 'Sam Rivera', email: 'sam.rivera@example.com' });
+    expect(await readUserProfile('user-1', (async () => null) as any)).toEqual({ name: null, email: null });
+    expect(
+      await readUserProfile('user-1', (async () => {
+        throw new Error('down');
+      }) as any),
+    ).toEqual({ name: null, email: null });
+  });
+
+  test('readThreadUserNotes reads the user lines of the canonical thread', async () => {
+    const { readThreadUserNotes } = await import('../lib/albatross/step-runner');
+    const { runWithAiRequestContext } = await import('../lib/ai/context');
+    const { saveChatSession } = await import('../lib/store/chat-sessions');
+    const userId = `runner-notes-${Date.now()}`;
+    await runWithAiRequestContext({ userId, agent: 'user' }, () =>
+      saveChatSession(
+        'work-k5abc',
+        [
+          {
+            id: 'u1',
+            role: 'user',
+            parts: [{ type: 'text', text: 'A Monday or a Wednesday would be best.' }],
+          },
+          { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'Noted.' }] },
+        ],
+        undefined,
+        { kind: 'work', workId: 'k5abc' },
+      ),
+    );
+    expect(await readThreadUserNotes(userId, 'k5abc')).toEqual(['A Monday or a Wednesday would be best.']);
+    expect(await readThreadUserNotes(userId, 'k6none')).toEqual([]);
+  });
+});
+
+describe('steerPrepareStep', () => {
+  test('notes keep their place between complete steps across later steps', async () => {
+    const { steerPrepareStep } = await import('../lib/albatross/step-runner');
+    const queue = [[{ text: 'First note' }], [], [{ text: 'Second note' }], []];
+    const received: string[] = [];
+    const prepare = steerPrepareStep({
+      received,
+      initialCount: 1,
+      take: async () => queue.shift() || [],
+      log: async () => {},
+    });
+    const base = [{ role: 'user', content: 'Task' }] as any[];
+    const step1 = await prepare({ messages: base });
+    expect(step1?.messages.map((message: any) => message.content)).toEqual([
+      'Task',
+      expect.stringContaining('First note'),
+    ]);
+    const afterStep1 = [...base, { role: 'assistant', content: 'A1' }] as any[];
+    const step2 = await prepare({ messages: afterStep1 });
+    expect(step2?.messages.map((message: any) => message.content)).toEqual([
+      'Task',
+      expect.stringContaining('First note'),
+      'A1',
+    ]);
+    const afterStep2 = [...afterStep1, { role: 'assistant', content: 'A2' }] as any[];
+    const step3 = await prepare({ messages: afterStep2 });
+    expect(step3?.messages.map((message: any) => message.content)).toEqual([
+      'Task',
+      expect.stringContaining('First note'),
+      'A1',
+      'A2',
+      expect.stringContaining('Second note'),
+    ]);
+    expect(received).toEqual(['First note', 'Second note']);
+  });
+
+  test('no notes, no change; a failover attempt gets the notes read before it', async () => {
+    const { steerPrepareStep } = await import('../lib/albatross/step-runner');
+    const quiet = steerPrepareStep({
+      received: [],
+      initialCount: 1,
+      take: async () => [],
+      log: async () => {},
+    });
+    expect(await quiet({ messages: [{ role: 'user', content: 'Task' }] as any })).toBeUndefined();
+    const again = steerPrepareStep({
+      received: ['Use Monday'],
+      initialCount: 1,
+      take: async () => [],
+      log: async () => {},
+    });
+    const step = await again({ messages: [{ role: 'user', content: 'Task' }] as any });
+    expect(step?.messages.map((message: any) => message.content)).toEqual([
+      'Task',
+      expect.stringContaining('Use Monday'),
+    ]);
   });
 });

@@ -37,7 +37,7 @@ describe('browser session REST client', () => {
     expect(browserSessionsConfigured()).toBe(false);
   });
 
-  test('create opens a keep-alive recorded session and resolves the live view', async () => {
+  test('create opens a keep-alive session without a recording and resolves the live view', async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const fetcher = mock(async (url: any, init?: any) => {
       calls.push({ url: String(url), init });
@@ -59,7 +59,8 @@ describe('browser session REST client', () => {
     expect(body).toMatchObject({
       keepAlive: true,
       timeout: 3_600,
-      browserSettings: { recordSession: true },
+      // Runs type personal details and users sign in here: no recording.
+      browserSettings: { recordSession: false },
     });
     expect((createCall.init?.headers as any)['x-bb-api-key']).toBe('bb-test-key');
     expect(calls[1].url).toBe('https://api.browserbase.com/v1/sessions/bb-1/debug');

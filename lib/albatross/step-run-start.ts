@@ -6,6 +6,7 @@
 
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { isStandingOrderPaused } from '../hosted/standing-orders';
+import { truncateText } from '../shared/text';
 import {
   automaticStepRunsEnabledFor,
   isAutomaticTrigger,
@@ -13,6 +14,7 @@ import {
   stepAcceptsTrigger,
   stepRunsEnabled,
 } from './step-run-policy';
+import { CHAT_ANSWER_PREFIX } from './thread-contract';
 
 export class StepRunStartError extends Error {
   constructor(
@@ -58,7 +60,14 @@ async function loadStep(deps: StepRunStartDependencies, userId: string, workId: 
 
 /** Start a run on one step. A user start explains every refusal; an automatic start returns a reason. */
 export async function startStepRun(
-  input: { userId: string; workId: string; stepKey?: string; trigger: 'user' | 'brief' | 'conductor' },
+  input: {
+    userId: string;
+    workId: string;
+    stepKey?: string;
+    trigger: 'user' | 'brief' | 'conductor';
+    /** What the user asked for, from the thread (docs/albatross-thread.md). */
+    note?: string;
+  },
   overrides: Partial<StepRunStartDependencies> = {},
 ): Promise<StartResult> {
   const deps = { ...defaults, ...overrides };
@@ -96,6 +105,7 @@ export async function startStepRun(
     stepIdentity: step.identity || step.key,
     stepTitle: step.title,
     trigger: input.trigger,
+    ...(!automatic && input.note?.trim() ? { resumeNote: input.note.trim() } : {}),
   });
   if (!automatic && !result.created) {
     if (result.reason === 'active') throw new StepRunStartError('Albatross is already working on this.', 409);
@@ -202,4 +212,103 @@ export async function startAutomaticRuns(
     }
   }
   return { started, reasons };
+}
+
+export type HandleStepAction = 'started' | 'resumed' | 'steered' | 'working';
+
+/**
+ * The thread's one control for runs (docs/albatross-thread.md, "One voice,
+ * background runs"). With a run open, the note goes to that run (or, with no
+ * note, nothing changes). With a handoff waiting on the step, the run
+ * continues with the note, and a question it asked counts as answered by the
+ * chat. Otherwise a new run starts with the note.
+ */
+export async function handleStepFromThread(
+  input: { userId: string; workId: string; stepKey?: string; note?: string },
+  overrides: Partial<StepRunStartDependencies> = {},
+): Promise<{ action: HandleStepAction; runId: string }> {
+  const deps = { ...defaults, ...overrides };
+  if (!stepRunsEnabled()) throw new StepRunStartError('Step runs are off.', 403);
+  const note = input.note?.trim() || '';
+  const runs = await deps.convexQuery<any[]>(api.albatrossStepRuns.runsForWorkHistory, {
+    userId: input.userId,
+    workId: input.workId,
+  });
+  const newestFirst = [...(runs || [])].reverse();
+  const open = newestFirst.find((run) => run.state === 'queued' || run.state === 'running');
+  if (open) {
+    if (!note) return { action: 'working', runId: open.id };
+    const steered = await deps.convexMutation<boolean>(api.albatrossStepRuns.steer, {
+      userId: input.userId,
+      id: open.id,
+      text: note,
+    });
+    if (steered) return { action: 'steered', runId: open.id };
+  }
+  // Only the newest run of the target step can continue: an older handoff (its
+  // continuation already ran) or another step's handoff is not the one waiting.
+  const targetStepKey = input.stepKey ?? (await loadStep(deps, input.userId, input.workId)).step?.key;
+  const newest = targetStepKey ? newestFirst.find((run) => run.stepKey === targetStepKey) : undefined;
+  const waiting = newest?.state === 'handed_off' ? newest : undefined;
+  if (waiting) {
+    const questionId = waiting.next?.target?.kind === 'question' ? waiting.next.target.id : null;
+    if (questionId && note && waiting.question?.status === 'pending') {
+      // The chat answered the run's question; the form shows it as answered.
+      await deps
+        .convexMutation(api.albatrossWorkV2.answerQuestion, {
+          userId: input.userId,
+          questionId,
+          expectedWorkId: input.workId,
+          answer: truncateText(`${CHAT_ANSWER_PREFIX}${note}`, 2_000),
+        })
+        .catch(() => undefined);
+    }
+    const resumed = await resumeStepRun(
+      { userId: input.userId, workId: input.workId, runId: waiting.id, note: note || undefined },
+      deps,
+    );
+    if (!resumed.runId) throw new StepRunStartError('The run could not continue now. Try again.', 409);
+    return { action: 'resumed', runId: resumed.runId };
+  }
+  const started = await startStepRun(
+    {
+      userId: input.userId,
+      workId: input.workId,
+      stepKey: input.stepKey,
+      trigger: 'user',
+      note: note || undefined,
+    },
+    deps,
+  );
+  if (!started.runId) throw new StepRunStartError('The run did not start. Try again.', 409);
+  return { action: 'started', runId: started.runId };
+}
+
+/** Stop the open run of a Work from the thread. Returns the stopped run id, or null. */
+export async function stopStepFromThread(
+  input: { userId: string; workId: string },
+  overrides: Partial<StepRunStartDependencies> = {},
+): Promise<string | null> {
+  const deps = { ...defaults, ...overrides };
+  const runs = await deps.convexQuery<any[]>(api.albatrossStepRuns.runsForWorkHistory, {
+    userId: input.userId,
+    workId: input.workId,
+  });
+  const open = [...(runs || [])].reverse().find((run) => run.state === 'queued' || run.state === 'running');
+  if (!open) return null;
+  const cancelled = await deps.convexMutation<{ cancelled: boolean; browserSessionId: string | null }>(
+    api.albatrossStepRuns.cancel,
+    { userId: input.userId, id: open.id },
+  );
+  // The page goes to the user at once, as with "Take over".
+  if (cancelled?.browserSessionId)
+    await deps
+      .convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
+        userId: input.userId,
+        sessionId: cancelled.browserSessionId,
+        status: 'user',
+        statusDetail: 'You have the page.',
+      })
+      .catch(() => undefined);
+  return open.id;
 }

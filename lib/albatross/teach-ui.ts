@@ -22,6 +22,7 @@ export type SettingsTabId =
   | 'narrative'
   | 'shortcuts'
   | 'advanced'
+  | 'personal'
   | 'account';
 
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> = [
@@ -38,6 +39,7 @@ export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> 
   { id: 'narrative', label: 'Narrative' },
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'advanced', label: 'Advanced' },
+  { id: 'personal', label: 'Personal details' },
   { id: 'account', label: 'Account' },
 ];
 
@@ -88,6 +90,7 @@ export function toolPartName(part: { type?: unknown; toolName?: unknown } | null
 
 export const HITL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'ask_user',
+  'ask_form',
   'ask_approval',
   'ask_parameters',
   'ask_preferences',
@@ -628,6 +631,35 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
   },
   forget: fixed('Forgetting that note', 'Forgot that note', 'Forgetting the note failed'),
   list_memories: fixed('Listing saved notes', 'Listed the saved notes', 'Listing notes failed'),
+  albatross_handle_step: (_args, out) => ({
+    running: 'Passing this to the step',
+    done:
+      out.action === 'stopped'
+        ? 'Stopped the step'
+        : out.action === 'steered'
+          ? 'Passed your note to the step in progress'
+          : out.action === 'resumed'
+            ? 'Continued the step'
+            : out.action === 'working'
+              ? 'The step is in progress'
+              : 'Started on the step',
+    failed: 'Starting the step failed',
+  }),
+  personal_details_get: fixed(
+    'Reading your personal details',
+    'Read your personal details',
+    'Reading your personal details failed',
+  ),
+  personal_details_save: (_args, out) => {
+    const labels = Array.isArray(out.saved)
+      ? out.saved.map((entry: any) => str(entry?.label)).filter(Boolean)
+      : [];
+    return {
+      running: 'Saving to your details',
+      done: labels.length ? `Saved to your details: ${labels.join(', ')}` : 'Saved nothing to your details',
+      failed: 'Saving to your details failed',
+    };
+  },
 
   // --- Calendar ---
   calendar_free_busy: fixed(

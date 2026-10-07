@@ -55,8 +55,6 @@ export interface ClientState {
   // Opening Work replaces the Area body while keeping Areas as the primary
   // navigation context. Persisted so a refresh returns to the same Work.
   selectedWorkId: string | null;
-  // One-shot navigation request. Opening guided work never starts execution.
-  guidedWorkId: string | null;
   // A one-shot request to open a specific intent on the Plans surface. The
   // Area Brief's capture bar sets this after creating an area-bound intent;
   // AppShell consumes it (switch to Plans + select) and clears it. Transient,
@@ -170,7 +168,6 @@ export interface ClientState {
   setSmartCategory: (category: string | null) => void;
   setSelectedAreaId: (areaId: string | null) => void;
   setSelectedWorkId: (workId: string | null) => void;
-  setGuidedWorkId: (workId: string | null) => void;
   setPendingOpenIntentId: (intentId: string | null) => void;
   setPendingOpenWorkId: (workId: string | null) => void;
   setPendingOpenCardId: (cardId: string | null) => void;
@@ -272,9 +269,32 @@ export function assistantLauncherPlacement(input: {
   threadFullscreen: boolean;
   capturePillVisible: boolean;
   readerOpen: boolean;
+  /** The Work thread is open: it is the chat, so the launcher hides. */
+  workThreadOpen?: boolean;
 }): AssistantLauncherPlacement {
-  if (input.aiBarOpen || input.threadFullscreen) return 'hidden';
+  if (input.aiBarOpen || input.threadFullscreen || input.workThreadOpen) return 'hidden';
   return input.capturePillVisible || input.readerOpen ? 'stacked' : 'corner';
+}
+
+/** True while one Albatross is open as its own conversation (the Work thread). */
+export function isWorkThreadOpen(state: {
+  primaryView: PrimaryView;
+  selectedWorkId: string | null;
+}): boolean {
+  return (
+    Boolean(state.selectedWorkId) && (state.primaryView === 'albatrosses' || state.primaryView === 'areas')
+  );
+}
+
+/**
+ * What ⌘K does: on the Work thread it focuses the thread composer (the page
+ * is the chat); everywhere else it toggles the assistant panel.
+ */
+export function assistantShortcutTarget(state: {
+  primaryView: PrimaryView;
+  selectedWorkId: string | null;
+}): 'thread' | 'assistant' {
+  return isWorkThreadOpen(state) ? 'thread' : 'assistant';
 }
 
 /** ⌘K / Ctrl+K, and nothing else, toggles the assistant panel. */
@@ -349,7 +369,6 @@ export const useClientStore = create<ClientState>()(
       smartCategory: 'main',
       selectedAreaId: null,
       selectedWorkId: null,
-      guidedWorkId: null,
       pendingOpenIntentId: null,
       pendingOpenWorkId: null,
       pendingOpenCardId: null,
@@ -480,12 +499,10 @@ export const useClientStore = create<ClientState>()(
           querySource: smartCategory ? 'category' : 'typed',
         })),
       setSelectedAreaId: (selectedAreaId) => set({ selectedAreaId }),
+      // The Work page is its own conversation (docs/albatross-thread.md): the
+      // corner chat never floats over it, so opening a Work closes the chat.
       setSelectedWorkId: (selectedWorkId) =>
-        set((state) => ({
-          selectedWorkId,
-          guidedWorkId: state.guidedWorkId === selectedWorkId ? state.guidedWorkId : null,
-        })),
-      setGuidedWorkId: (guidedWorkId) => set({ guidedWorkId }),
+        set(selectedWorkId ? { selectedWorkId, aiBarOpen: false } : { selectedWorkId }),
       setPendingOpenIntentId: (pendingOpenIntentId) => set({ pendingOpenIntentId }),
       setPendingOpenWorkId: (pendingOpenWorkId) => set({ pendingOpenWorkId }),
       setPendingOpenCardId: (pendingOpenCardId) => set({ pendingOpenCardId }),

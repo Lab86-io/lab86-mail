@@ -7,8 +7,10 @@ import {
   streamText,
 } from 'ai';
 import { z } from 'zod';
+import { formQuestionSchema } from '../albatross/thread-contract';
 import { pausedAssistantRisks } from '../hosted/standing-orders';
 import { narrativePrompt } from '../narrative/service';
+import { aboutUserBlock, listPersonalDetails } from '../personal-details/store';
 import { withDeadline } from '../shared/deadline';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
@@ -144,6 +146,8 @@ export const AGENT_TOOL_NAMES = new Set([
   'nl_search',
   'remember',
   'recall',
+  'personal_details_get',
+  'personal_details_save',
   'forget',
   'list_memories',
   'calendar_free_busy',
@@ -187,6 +191,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'albatross_create_sprint',
   'albatross_list_sprints',
   'albatross_get_work_context',
+  'albatross_handle_step',
   'albatross_complete_work',
   'albatross_record_progress',
   'albatross_replan_work',
@@ -323,6 +328,24 @@ export interface AgentToolOptions {
   clientPlatform?: ClientPlatform;
   /** Risk classes the user paused in Settings, Standing orders. Those calls change nothing. */
   pausedRisks?: ReadonlySet<ToolRisk>;
+  /**
+   * The client renders `ask_form` (it sent the `ask_form` capability). An older
+   * client would wait forever on a form it cannot show, so it never gets the tool.
+   */
+  askForm?: boolean;
+}
+
+/** Client capabilities the agent route accepts (AgentRequestBody.clientCapabilities). */
+export const CLIENT_CAPABILITIES = ['ask_form'] as const;
+export type ClientCapability = (typeof CLIENT_CAPABILITIES)[number];
+
+export function normalizeClientCapabilities(value: unknown): Set<ClientCapability> {
+  const known = new Set<string>(CLIENT_CAPABILITIES);
+  return new Set(
+    (Array.isArray(value) ? value : []).filter(
+      (entry): entry is ClientCapability => typeof entry === 'string' && known.has(entry),
+    ),
+  );
 }
 
 /** What a call in a paused risk class returns. The model reads it; nothing ran. */
@@ -514,6 +537,15 @@ export function liftToolsForAgent(
         .describe('1–4 distinct questions, asked together. Each can be choice-based or free-text.'),
     }),
   });
+  // One form with typed fields (docs/albatross-thread.md). Output:
+  // FormAnswer { values, save, skipped? }. The agent route saves the bound
+  // personal details before the model continues, and adds savedToDetails.
+  if (options.askForm)
+    lifted.ask_form = aiTool({
+      description:
+        "Ask the user ONE form and WAIT for the answer. Use it (instead of ask_user) when you need typed fields or several facts at once: a choice that belongs to the user (a date, a time slot, a plan, one of several matches) and any missing personal details, together. For a choice of dates or times, read the calendar first and give each option a calendar note (fit free or conflict). Put the option that matches what the user already said first. For a personal detail, set detailKey (name, email, phone, home_address, emergency_contact, or custom:<slug>) so the form fills it from saved details and offers 'Save to my details'. Call personal_details_get first and ask only for what is missing or unconfirmed. If you found a value (for example in an email signature), put it in value with valueSource. Never ask for passwords, codes, card numbers, or ID numbers.",
+      inputSchema: formQuestionSchema,
+    });
   // A yes/no gate for one consequential action. Renders an approval card and
   // waits. Output: { decision: 'approved' | 'denied' }.
   lifted.ask_approval = aiTool({
@@ -1065,6 +1097,8 @@ export interface AgentRunOpts {
   toolGroups?: string[];
   /** The client that renders this chat (default web). */
   clientPlatform?: ClientPlatform;
+  /** What the client can render beyond the base set (normalizeClientCapabilities). */
+  clientCapabilities?: ReadonlySet<ClientCapability>;
   signal?: AbortSignal;
 }
 
@@ -1097,8 +1131,10 @@ export async function runAgent({
   narrativeTopics,
   toolGroups,
   clientPlatform = 'web',
+  clientCapabilities,
   signal,
 }: AgentRunOpts): Promise<AgentRun> {
+  const askForm = clientCapabilities?.has('ask_form') ?? false;
   if (!hasPlatformAi() && !userId) {
     throw new Error(
       'Models are not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
@@ -1119,6 +1155,7 @@ export async function runAgent({
     scopeGroups: toolGroups,
     clientPlatform,
     pausedRisks,
+    askForm,
   });
 
   let resolveSteps: (steps: any[]) => void = () => undefined;
@@ -1137,7 +1174,13 @@ export async function runAgent({
         },
         stream: createUIMessageStream({
           execute: async ({ writer }) => {
-            writer.write({ type: 'start' });
+            // A new reply gets its time (the Work thread sorts by it). A reply that
+            // continues after a form answer keeps the time it started with.
+            writer.write(
+              messages.at(-1)?.role === 'user'
+                ? { type: 'start', messageMetadata: { createdAt: Date.now() } }
+                : { type: 'start' },
+            );
             let completed: any[] = [];
             const heartbeat = setInterval(
               () => writer.write({ type: 'data-agent-heartbeat', data: { runId }, transient: true }),
@@ -1146,25 +1189,38 @@ export async function runAgent({
             console.info('[agent-run-start]', { runId });
             try {
               const memoryQuery = narrativeQueryFromMessages(messages);
-              const [memories, narrative] = await Promise.all([
+              const [memories, narrative, aboutUser] = await Promise.all([
                 userId
                   ? runWithAiRequestContext(requestContext, () => listMemories().catch(() => [])).then(
                       (rows) => rows.slice(0, 30).map((row) => ({ email: row.email, notes: row.notes })),
                     )
                   : Promise.resolve([]),
                 boundedAgentNarrativeContext(userId, memoryQuery, narrativePrompt, narrativeTopics, signal),
+                // The names of the saved personal details, never their values.
+                userId
+                  ? listPersonalDetails({ userId, name: userName, email: userEmail })
+                      .then(aboutUserBlock)
+                      .catch(() => '')
+                  : Promise.resolve(''),
               ]);
               signal?.throwIfAborted();
               const base = buildSystemPrompt(
                 { name: userName, email: userEmail },
-                { memories, clientPlatform },
+                { memories, clientPlatform, askForm },
               );
               // Static instructions first, per-turn context last: providers cache the
               // shared prefix, so the parts that change every turn sit at the end.
               const choiceContext = presentationSession
                 ? `Presentation checkpoint state (authoritative confirmed user choices): ${JSON.stringify({ next: nextPresentationCheckpoint(presentationSession), presentationId: presentationSession.presentationId, brief: presentationSession.brief, design: presentationSession.design, storyboard: presentationSession.storyboard, visuals: presentationSession.visuals, guidance: presentationSession.guidance, delegated: presentationSession.delegate })}\nAsk only the next unanswered checkpoint shown here, once. Never restart the brief or change the presentationId. If next is null, no questions remain: gather any missing evidence, plan, create and visually verify the deck using the saved choices. Delegation remains in force; do not replace a disabled picker with ask_user or prose questions. If next is cancelled, stop presentation creation.`
                 : '';
-              const system = [base, extraSystem, narrative, choiceContext, agentTimeContext(timezone)]
+              const system = [
+                base,
+                extraSystem,
+                aboutUser,
+                narrative,
+                choiceContext,
+                agentTimeContext(timezone),
+              ]
                 .filter(Boolean)
                 .join('\n\n');
 

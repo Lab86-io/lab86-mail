@@ -71,6 +71,24 @@ export function createStepRunPost(overrides: Partial<StepRunRouteDependencies> =
           );
         return Response.json({ ok: true, runId: result.runId });
       }
+      if (action === 'steer') {
+        // A note to the run that works now (docs/albatross-thread.md).
+        const runId = text(body?.runId);
+        const note = text(body?.note, 2_000);
+        if (!runId || !note)
+          return Response.json({ ok: false, error: 'runId and note are required.' }, { status: 400 });
+        const steered = await deps
+          .convexMutation<boolean>(api.albatrossStepRuns.steer, { userId, id: runId, text: note })
+          .catch((error) => {
+            if (/Run not found|ArgumentValidationError|Invalid argument/i.test(String(error?.message)))
+              return null;
+            throw error;
+          });
+        if (steered === null) return Response.json({ ok: false, error: 'Run not found.' }, { status: 404 });
+        if (!steered)
+          return Response.json({ ok: false, error: 'This run is not working now.' }, { status: 409 });
+        return Response.json({ ok: true, runId });
+      }
       if (action === 'cancel' || action === 'dismiss') {
         const runId = text(body?.runId);
         if (!runId) return Response.json({ ok: false, error: 'runId is required.' }, { status: 400 });

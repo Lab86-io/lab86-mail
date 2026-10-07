@@ -41,6 +41,9 @@ if (process.env.STEP_RUN_ANSWER_ROUTE_TEST !== '1') {
     convexMutation: async (_fn: unknown, args: unknown) => answerQuestion(args),
   }));
   mock.module('../lib/albatross/step-run-start', () => ({ resumeRunForAnswer }));
+  let formResult: any = { ok: true, answer: 'Class: Monday', savedLabels: ['Phone'] };
+  const answerFromForm = mock(async (..._args: unknown[]) => formResult);
+  mock.module('../lib/albatross/form-answer-route', () => ({ answerFromForm }));
   mock.module('../lib/albatross/work-orchestrator', () => ({ advanceWork }));
 
   const { NextRequest } = await import('next/server');
@@ -95,6 +98,38 @@ if (process.env.STEP_RUN_ANSWER_ROUTE_TEST !== '1') {
       });
       expect(advanceWork).toHaveBeenCalledTimes(1);
       expect(advanceWork.mock.calls[0][0]).toMatchObject({ workId: 'work-1', timezone: 'America/New_York' });
+    });
+
+    test('a form answer is checked and written as text before the run continues', async () => {
+      answered = { workId: 'work-1', shouldAdvance: true };
+      waitingRunId = 'run-3';
+      formResult = { ok: true, answer: 'Class: Monday', savedLabels: ['Phone'] };
+      const response = await answer({
+        form: { values: { class: 'mon', phone: '555 555 0100' }, save: true },
+      });
+      expect((await response.json()).runId).toBe('run-3');
+      expect(answerFromForm.mock.calls.at(-1)).toEqual([
+        { userId: 'user-1', name: 'U', email: 'u@example.com' },
+        'question-1',
+        { values: { class: 'mon', phone: '555 555 0100' }, save: true },
+      ]);
+      expect(answerQuestion.mock.calls.at(-1)?.[0]).toMatchObject({ answer: 'Class: Monday' });
+    });
+
+    test('a form answer with bad fields is 400 with the field errors', async () => {
+      formResult = {
+        ok: false,
+        status: 400,
+        error: 'Check the answers.',
+        errors: { phone: 'Type a phone number.' },
+      };
+      const response = await answer({ form: { values: { phone: 'x' }, save: false } });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        ok: false,
+        error: 'Check the answers.',
+        errors: { phone: 'Type a phone number.' },
+      });
     });
 
     test('an empty answer is 400', async () => {

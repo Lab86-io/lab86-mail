@@ -27,6 +27,8 @@ const useChatContainer = () => {
 export type ChatContainerProps = React.ComponentProps<'div'> & {
   bottomThreshold?: number;
   autoScroll?: boolean;
+  /** The control that returns to the bottom. Default: the round chevron. `null` hides it. */
+  scrollButton?: React.ReactNode;
 };
 
 export function ChatContainer({
@@ -34,6 +36,7 @@ export function ChatContainer({
   className,
   bottomThreshold = 64,
   autoScroll = true,
+  scrollButton,
   ...props
 }: ChatContainerProps) {
   const reduceMotion = useReducedMotion();
@@ -114,7 +117,7 @@ export function ChatContainer({
               {children}
             </div>
           </div>
-          <ChatContainerScrollButton />
+          {scrollButton === undefined ? <ChatContainerScrollButton /> : scrollButton}
         </div>
       </div>
     </ChatContainerContext.Provider>

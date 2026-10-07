@@ -37,6 +37,7 @@ export const SETTINGS_TAB_META: Record<SettingsTabId, SettingsTabMeta> = {
   appearance: { group: 'you', description: 'Palette, type, and corners.' },
   shortcuts: { group: 'you', description: 'Every key that moves you.' },
   advanced: { group: 'you', description: 'Optional surfaces, off by default.' },
+  personal: { group: 'you', description: 'What Albatross types into forms for you.' },
   account: { group: 'you', description: 'Sign-in, sessions, and deletion.' },
 };
 

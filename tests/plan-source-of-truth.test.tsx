@@ -132,7 +132,7 @@ describe('one price and one name', () => {
 
   test('no surface hard-codes a plan price or the old product name', () => {
     const offenders: string[] = [];
-    const skip = ['lib/hosted/plans.ts', 'lib/documents/', 'components/albatross/GuidedStep'];
+    const skip = ['lib/hosted/plans.ts', 'lib/documents/'];
     for (const dir of ['app', 'components', 'lib']) {
       for (const file of files(path.join(ROOT, dir))) {
         const rel = path.relative(ROOT, file).split(path.sep).join('/');

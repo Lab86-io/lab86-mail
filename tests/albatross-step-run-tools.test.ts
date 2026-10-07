@@ -361,7 +361,7 @@ describe('buildRunnerTools', () => {
     });
     expect(missingQuestion).toEqual({
       ok: false,
-      message: 'question is required for needs_answer. Call step_handoff again.',
+      message: 'question.form (or question.prompt) is required for needs_answer. Call step_handoff again.',
     });
     expect(finish).not.toHaveBeenCalled();
 

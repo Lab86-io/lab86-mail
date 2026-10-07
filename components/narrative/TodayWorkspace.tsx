@@ -49,9 +49,12 @@ export async function workspaceRequest(body: Record<string, unknown>) {
   } else if (result.ok === true) return result;
   throw new Error('Could not update Today. Please try again.');
 }
-export function openWorkspaceWork(workId: string, guided: boolean) {
+/**
+ * Open one Albatross as its own conversation (docs/albatross-thread.md). The
+ * Work thread shows the plan and the runs; nothing starts by itself.
+ */
+export function openWorkspaceWork(workId: string) {
   const state = useClientStore.getState();
-  state.setGuidedWorkId(guided ? workId : null);
   state.setSelectedWorkId(workId);
   state.setPrimaryView('albatrosses');
 }
@@ -317,9 +320,9 @@ export function WorkspaceThreadCard({
               size="sm"
               type="button"
               className="text-xs"
-              onClick={() => openWorkspaceWork(thread.work!.id, !!open && thread.work!.guided)}
+              onClick={() => openWorkspaceWork(thread.work!.id)}
             >
-              {open && thread.work.guided ? 'Open guided work' : 'Open work'}
+              Open the Albatross
             </Button>
           ) : (
             <Button

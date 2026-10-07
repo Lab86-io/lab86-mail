@@ -244,6 +244,9 @@ function fakeExport(pages: Record<string, unknown[][]>): DataExportDependencies 
       };
     },
     now: () => new Date('2026-09-26T12:00:00Z'),
+    personalDetails: async () => [
+      { key: 'phone', label: 'Phone', value: '+15555550100', source: 'settings', updatedAt: 1 },
+    ],
   };
 }
 
@@ -256,7 +259,14 @@ describe('the ZIP', () => {
     expect(built.fileName).toBe('albatross-export-2026-09-26.zip');
     const zip = await JSZip.loadAsync(await collect(built.stream));
     expect(Object.keys(zip.files).sort()).toEqual(
-      ['README.txt', 'data/', 'data/areas.json', 'data/cards.json', 'summary.json'].sort(),
+      [
+        'README.txt',
+        'data/',
+        'data/areas.json',
+        'data/cards.json',
+        'data/personal-details.json',
+        'summary.json',
+      ].sort(),
     );
     expect(JSON.parse(await zip.file('data/areas.json')!.async('string'))).toEqual([
       { name: 'Home' },
@@ -267,12 +277,18 @@ describe('the ZIP', () => {
     expect(summary.files).toEqual([
       { file: 'data/areas.json', rows: 2 },
       { file: 'data/cards.json', rows: 0 },
+      { file: 'data/personal-details.json', rows: 1 },
+    ]);
+    // Personal details are stored encrypted; the export holds them readable for their owner.
+    expect(JSON.parse(await zip.file('data/personal-details.json')!.async('string'))).toEqual([
+      { key: 'phone', label: 'Phone', value: '+15555550100', source: 'settings', updatedAt: 1 },
     ]);
     const readme = await zip.file('README.txt')!.async('string');
     expect(readme).toContain('Albatross data export');
     expect(readme).toContain(REDACTED);
     expect(readme).not.toMatch(/\bAI\b/);
     expect(readme).toContain('data/mailCorpusBodies.json');
+    expect(readme).toContain('data/personal-details.json');
     expect(exportFileName(new Date('2031-01-02T00:00:00Z'))).toBe('albatross-export-2031-01-02.zip');
   });
 
@@ -355,5 +371,34 @@ describe('the export route', () => {
     } finally {
       console.error = error;
     }
+  });
+});
+
+describe('exportPersonalDetails', () => {
+  test('it keeps saved details only, with no account defaults', async () => {
+    const { exportPersonalDetails } = await import('../lib/hosted/data-export');
+    const rows = await exportPersonalDetails('user-1', (async () => [
+      {
+        key: 'name',
+        label: 'Name',
+        value: { first: 'Sam', last: 'Rivera' },
+        display: 'Sam Rivera',
+        source: 'account',
+        saved: false,
+        updatedAt: null,
+      },
+      {
+        key: 'phone',
+        label: 'Phone',
+        value: '+15555550100',
+        display: '(555) 555-0100',
+        source: 'settings',
+        saved: true,
+        updatedAt: 5,
+      },
+    ]) as any);
+    expect(rows).toEqual([
+      { key: 'phone', label: 'Phone', value: '+15555550100', source: 'settings', updatedAt: 5 },
+    ]);
   });
 });

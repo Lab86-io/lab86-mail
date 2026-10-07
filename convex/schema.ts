@@ -839,6 +839,10 @@ export default defineSchema({
     ),
     answer: v.optional(v.string()),
     answeredOptionId: v.optional(v.string()),
+    // A typed form (lib/albatross/thread-contract.ts FormQuestion), checked
+    // with zod before it is written. A question without one renders as a
+    // one-field form built from prompt and options.
+    form: v.optional(v.any()),
     sourceRefs: v.array(albatrossSourceRef),
     metadata: v.optional(v.any()),
     createdAt: v.number(),
@@ -1035,6 +1039,8 @@ export default defineSchema({
         ),
         label: v.string(),
         detail: v.string(),
+        // The button the user presses after doing it on the page ("I paid").
+        doneLabel: v.optional(v.string()),
         target: v.optional(
           v.object({
             kind: v.union(
@@ -1071,6 +1077,11 @@ export default defineSchema({
       }),
     ),
     browserSessionId: v.optional(v.string()),
+    // Notes from the user while the run works (docs/albatross-thread.md). The
+    // runner reads each note once between model steps and sets readAt.
+    steer: v.optional(
+      v.array(v.object({ at: v.number(), text: v.string(), readAt: v.optional(v.number()) })),
+    ),
     budget: v.optional(
       v.object({
         timeMs: v.number(),
@@ -1107,6 +1118,27 @@ export default defineSchema({
     writerSessionId: v.optional(v.string()),
     writerUntil: v.optional(v.number()),
   }).index('by_user', ['userId']),
+
+  // Personal details that forms ask for (name, phone, home address, ...), one
+  // row for each key (docs/albatross-thread.md). valueEncrypted is the
+  // encryptSecret output of { u: userId, k: key, v: value }, so a value only
+  // opens for its own row. Only the Next server decrypts; every function in
+  // convex/personalDetails.ts needs the server secret.
+  personalDetails: defineTable({
+    userId: v.string(),
+    key: v.string(),
+    valueEncrypted: v.string(),
+    source: v.union(v.literal('settings'), v.literal('chat'), v.literal('form')),
+    // One step of Undo for a save from the chat or a form: the value before
+    // the save (absent when the save created the row), until undoUntil.
+    previousEncrypted: v.optional(v.string()),
+    previousSource: v.optional(v.union(v.literal('settings'), v.literal('chat'), v.literal('form'))),
+    undoUntil: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_key', ['userId', 'key']),
 
   // Saved sign-ins that must still be deleted at Browserbase. The row has no
   // userId on purpose: it outlives the account cascade, and an hourly cron

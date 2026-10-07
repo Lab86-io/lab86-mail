@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { answerFromForm } from '@/lib/albatross/form-answer-route';
 import { resumeRunForAnswer } from '@/lib/albatross/step-run-start';
 import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
@@ -21,7 +22,25 @@ export async function POST(req: NextRequest, context: { params: Promise<{ questi
     });
     const { questionId } = await context.params;
     const body = await req.json();
-    const answer = String(body.answer || '').trim();
+    let answer = String(body.answer || '').trim();
+    let runNote: string | undefined;
+    let answeredOptionId = typeof body.answeredOptionId === 'string' ? body.answeredOptionId : undefined;
+    // A whole form (docs/albatross-thread.md, "Questions are forms").
+    if (body.form && typeof body.form === 'object') {
+      const result = await answerFromForm(
+        { userId: user.userId, name: user.name, email: user.email },
+        questionId,
+        body.form,
+      );
+      if (!result.ok)
+        return Response.json(
+          { ok: false, error: result.error, errors: result.errors },
+          { status: result.status },
+        );
+      answer = result.answer;
+      runNote = result.note;
+      answeredOptionId = result.answeredOptionId;
+    }
     if (!answer) return Response.json({ ok: false, error: 'answer required' }, { status: 400 });
     const answered = await convexMutation<{
       workId?: string;
@@ -32,7 +51,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ questi
       userId: user.userId,
       questionId,
       answer,
-      answeredOptionId: typeof body.answeredOptionId === 'string' ? body.answeredOptionId : undefined,
+      answeredOptionId,
     });
     // A step run that asked this question continues with the answer. The
     // run owns the step now, so the plan does not move under it.
@@ -41,7 +60,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ questi
         userId: user.userId,
         workId: answered.workId,
         questionId,
-        answer,
+        answer: runNote ?? answer,
       }).catch(() => null);
       if (runId) return Response.json({ ok: true, status: 'answered', ...answered, runId });
     }

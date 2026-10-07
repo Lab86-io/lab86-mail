@@ -23,8 +23,19 @@ export interface WorkLogRow {
 }
 
 export type MessageSegment =
-  | { kind: 'part'; index: number; part: any }
+  | { kind: 'part'; index: number; part: any; shape?: ToolShape | null }
   | { kind: 'work-log'; key: string; rows: WorkLogRow[] };
+
+/**
+ * Tools whose result is a block of its own in the thread: the run block of
+ * `albatross_handle_step` renders in place, never inside a collapsed
+ * "Did N things" (docs/albatross-thread.md, "The timeline").
+ */
+export const STANDALONE_TOOL_NAMES: ReadonlySet<string> = new Set(['albatross_handle_step']);
+
+export function isStandaloneToolName(name: string): boolean {
+  return STANDALONE_TOOL_NAMES.has(name);
+}
 
 function isToolPart(part: any): boolean {
   const type = part?.type;
@@ -48,6 +59,7 @@ export function groupMessageParts(parts: any[]): MessageSegment[] {
   const segments: MessageSegment[] = [];
   let run: WorkLogRow[] | null = null;
   const rowsById = new Map<string, WorkLogRow>();
+  const standaloneById = new Map<string, Extract<MessageSegment, { kind: 'part' }>>();
 
   const closeRun = () => {
     if (run?.length) segments.push({ kind: 'work-log', key: run[0].toolCallId, rows: run });
@@ -57,16 +69,22 @@ export function groupMessageParts(parts: any[]): MessageSegment[] {
   (parts || []).forEach((part, index) => {
     if (!part || typeof part.type !== 'string') return;
     if (part.type === 'data-tool-shape') {
-      const row = rowsById.get(String(part.id ?? ''));
-      if (row && part.data && typeof part.data === 'object') row.shape = part.data as ToolShape;
+      const id = String(part.id ?? '');
+      const shape = part.data && typeof part.data === 'object' ? (part.data as ToolShape) : null;
+      const row = rowsById.get(id);
+      if (row && shape) row.shape = shape;
+      const standalone = standaloneById.get(id);
+      if (standalone && shape) standalone.shape = shape;
       return;
     }
     if (part.type === 'step-start' || isBlankText(part)) return;
     if (isToolPart(part)) {
       const toolName = toolPartName(part);
-      if (isHitlToolName(toolName) || isToolApprovalPart(part)) {
+      if (isHitlToolName(toolName) || isStandaloneToolName(toolName) || isToolApprovalPart(part)) {
         closeRun();
-        segments.push({ kind: 'part', index, part });
+        const segment: Extract<MessageSegment, { kind: 'part' }> = { kind: 'part', index, part };
+        if (isStandaloneToolName(toolName)) standaloneById.set(String(part.toolCallId || ''), segment);
+        segments.push(segment);
         return;
       }
       const row: WorkLogRow = {

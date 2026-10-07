@@ -15,7 +15,7 @@ import { ActivitySurface } from '@/components/albatross/ActivitySurface';
 import { AlbatrossCompanion } from '@/components/albatross/AlbatrossCompanion';
 import { AlbatrossesSurface } from '@/components/albatross/AlbatrossesSurface';
 import { AreaHome } from '@/components/albatross/AreaHome';
-import { WorkDetail } from '@/components/albatross/WorkDetail';
+import { WorkThread } from '@/components/albatross/WorkThread';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FilesSurface } from '@/components/files/FilesSurface';
 import { RecordMailboxesConnected } from '@/components/hosted/HostedOnboarding';
@@ -392,11 +392,11 @@ function PrimarySurface({ view, selectedWorkId }: { view: PrimaryView; selectedW
         </SurfaceErrorBoundary>
       );
     case 'albatrosses':
-      // One Albatross when the user picked one, otherwise the whole list.
+      // One Albatross, as its own conversation, when the user picked one; otherwise the whole list.
       return (
         <SurfaceErrorBoundary surface="Albatrosses">
           {selectedWorkId ? (
-            <WorkDetail key={selectedWorkId} workId={selectedWorkId} />
+            <WorkThread key={selectedWorkId} workId={selectedWorkId} />
           ) : (
             <AlbatrossesSurface />
           )}
@@ -407,7 +407,7 @@ function PrimarySurface({ view, selectedWorkId }: { view: PrimaryView; selectedW
       // area. Management/teach flows live in /settings?tab=areas now.
       return (
         <SurfaceErrorBoundary surface="Areas">
-          {selectedWorkId ? <WorkDetail key={selectedWorkId} workId={selectedWorkId} /> : <AreaHome />}
+          {selectedWorkId ? <WorkThread key={selectedWorkId} workId={selectedWorkId} /> : <AreaHome />}
         </SurfaceErrorBoundary>
       );
     case 'activity':

@@ -28,7 +28,9 @@ export type ShapeAction =
   | { kind: 'import_file'; connectionId: string; fileId: string; mimeType?: string }
   | { kind: 'undo_operation'; operationId: string }
   /** notes: the saved note, so the card can prefill it and save the edit whole. */
-  | { kind: 'remember_sender'; email: string; notes?: string };
+  | { kind: 'remember_sender'; email: string; notes?: string }
+  /** Undo the newest chat save of these personal details (POST /api/personal-details { action: 'undo' }). */
+  | { kind: 'undo_personal_details'; keys: string[] };
 
 export interface ShapeActivity {
   running: string;
@@ -177,7 +179,14 @@ export type ToolShape =
       target?: Record<string, unknown>;
     })
   | (ShapeBase & { kind: 'sources'; items: SourceRow[] })
-  | (ShapeBase & { kind: 'text'; text: string });
+  | (ShapeBase & { kind: 'text'; text: string })
+  /** A step run that the chat started, continued, or steered: the client renders the live run block. */
+  | (ShapeBase & {
+      kind: 'step_run';
+      runId: string;
+      workId: string;
+      action: 'started' | 'resumed' | 'steered';
+    });
 
 export type ToolShapeKind = ToolShape['kind'];
 
@@ -1284,6 +1293,37 @@ const MAPPERS: Record<string, Mapper> = {
       str(input.notes) ? clip(str(input.notes), 160) : undefined,
     ),
   forget: (input, output, tool) => receipt(tool, input, output, 'memory', [], { email: str(input.email) }),
+  albatross_handle_step: (input, output, tool) => {
+    const runId = str(output.runId);
+    const workId = str(output.workId) || str(input.workId);
+    const action = str(output.action);
+    if (!runId || !workId || !['started', 'resumed', 'steered'].includes(action)) return null;
+    const activity = toolSentences(tool, input, output);
+    return {
+      kind: 'step_run',
+      title: activity.done,
+      activity,
+      actions: [{ kind: 'open_work', workId }],
+      runId,
+      workId,
+      action: action as 'started' | 'resumed' | 'steered',
+    };
+  },
+  // The receipt names the saved details, never their values.
+  personal_details_save: (input, output, tool) => {
+    const saved = asArray(output.saved);
+    const keys = saved.map((entry) => str(entry.key)).filter(Boolean);
+    if (!keys.length) return null;
+    return receipt(
+      tool,
+      input,
+      output,
+      'memory',
+      [{ kind: 'undo_personal_details', keys }],
+      { personalDetails: keys },
+      'Albatross fills these in on forms for you. Change them in Settings.',
+    );
+  },
   recall: (input, output, tool) => {
     const memory = asRecord(output.memory);
     const notes = str(memory.notes);
@@ -1369,7 +1409,8 @@ function genericShape(toolName: string, input: Rec, output: Rec): ToolShape | nu
  * show). Failures stay on the activity row; the row already carries the
  * failure detail.
  */
-const NO_SHAPE_NAMES = new Set(['enable_tools']);
+// personal_details_get has no card: its values stay off the screen and out of saved chats.
+const NO_SHAPE_NAMES = new Set(['enable_tools', 'personal_details_get']);
 
 export function resolveToolShape(toolName: string, input: unknown, output: unknown): ToolShape | null {
   if (NO_SHAPE_NAMES.has(toolName) || NO_SHAPE_PREFIXES.some((prefix) => toolName.startsWith(prefix)))
