@@ -23,7 +23,8 @@ import {
 import { resolveToolShape } from '../lib/ai/tool-shapes';
 import { toolActivityLine } from '../lib/albatross/teach-ui';
 
-const lifted = liftToolsForAgent('batch', 'UTC');
+// The largest set: a client that renders ask_form (the web app and current native apps).
+const lifted = liftToolsForAgent('batch', 'UTC', undefined, { askForm: true });
 const allNames = Object.keys(lifted);
 
 describe('tool groups', () => {
@@ -187,7 +188,7 @@ describe('tool groups', () => {
       a: { type: 'string' },
       b: [{}],
     });
-    const tools = liftToolsForAgent('b', 'UTC');
+    const tools = liftToolsForAgent('b', 'UTC', undefined, { askForm: true });
     for (const name of allNames) {
       const lifted = tools[name];
       const text = JSON.stringify(lifted.inputSchema.jsonSchema ?? {});

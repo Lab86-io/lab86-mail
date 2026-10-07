@@ -795,6 +795,8 @@ final class AssistantChatModel {
             "messages": transcriptJSON(),
             "timezone": .string(TimeZone.current.identifier),
             "clientPlatform": .string(Self.clientPlatform),
+            // This app renders ask_form; the server offers it only to clients that say so.
+            "clientCapabilities": .array([.string("ask_form")]),
         ]
         if resumesLastTurn { body["continuation"] = .bool(true) }
         let scopeLine: String?

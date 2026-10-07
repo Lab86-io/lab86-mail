@@ -140,10 +140,15 @@ export const FORM_FIELD_KINDS = [
 ] as const;
 export type FormFieldKind = (typeof FORM_FIELD_KINDS)[number];
 
+// A refinement, not .regex(): model-facing schemas carry no JSON-schema
+// pattern (the OpenAI Responses API rejects some patterns).
+const FIELD_ID = /^[a-z][a-z0-9_]{0,39}$/;
 const fieldId = z
   .string()
   .trim()
-  .regex(/^[a-z][a-z0-9_]{0,39}$/, 'Field ids are lower case letters, digits, and _.');
+  .min(1)
+  .max(40)
+  .refine((value) => FIELD_ID.test(value), 'Field ids are lower case letters, digits, and _.');
 
 export const formOptionSchema = z.object({
   id: z.string().trim().min(1).max(60),

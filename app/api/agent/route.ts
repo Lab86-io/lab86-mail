@@ -8,7 +8,7 @@ import { after, type NextRequest } from 'next/server';
 import { hydrateChatAttachments } from '@/lib/ai/chat-upload-content';
 import { readRecoveryContext, resolveAgentRunId } from '@/lib/ai/execution';
 import { describeModelError } from '@/lib/ai/log-error';
-import { runAgent } from '@/lib/ai/loop';
+import { normalizeClientCapabilities, runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { normalizeClientPlatform } from '@/lib/ai/system-prompt';
 import { initialToolGroups } from '@/lib/ai/tool-groups';
@@ -44,6 +44,8 @@ interface AgentRequestBody {
   contextAttachments?: Array<{ kind: 'work'; id: string }>;
   /** The client that renders the chat. Native clients get no web-only UI tools. Default web. */
   clientPlatform?: 'web' | 'ios' | 'macos';
+  /** What the client renders beyond the base set, for example 'ask_form'. Unknown names are ignored. */
+  clientCapabilities?: string[];
 }
 
 export class InvalidContextAttachmentError extends Error {
@@ -247,6 +249,7 @@ export async function POST(req: NextRequest) {
       userTimezone: typeof body.timezone === 'string' ? body.timezone : undefined,
       narrativeTopics,
       clientPlatform: normalizeClientPlatform(body.clientPlatform),
+      clientCapabilities: normalizeClientCapabilities(body.clientCapabilities),
       toolGroups: initialToolGroups({
         hasWorkContext: contextAttachments.some((attachment) => attachment.kind === 'work'),
         hasAreaContext: Boolean(body.areaDiscovery),

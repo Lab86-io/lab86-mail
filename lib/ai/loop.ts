@@ -328,6 +328,24 @@ export interface AgentToolOptions {
   clientPlatform?: ClientPlatform;
   /** Risk classes the user paused in Settings, Standing orders. Those calls change nothing. */
   pausedRisks?: ReadonlySet<ToolRisk>;
+  /**
+   * The client renders `ask_form` (it sent the `ask_form` capability). An older
+   * client would wait forever on a form it cannot show, so it never gets the tool.
+   */
+  askForm?: boolean;
+}
+
+/** Client capabilities the agent route accepts (AgentRequestBody.clientCapabilities). */
+export const CLIENT_CAPABILITIES = ['ask_form'] as const;
+export type ClientCapability = (typeof CLIENT_CAPABILITIES)[number];
+
+export function normalizeClientCapabilities(value: unknown): Set<ClientCapability> {
+  const known = new Set<string>(CLIENT_CAPABILITIES);
+  return new Set(
+    (Array.isArray(value) ? value : []).filter(
+      (entry): entry is ClientCapability => typeof entry === 'string' && known.has(entry),
+    ),
+  );
 }
 
 /** What a call in a paused risk class returns. The model reads it; nothing ran. */
@@ -522,11 +540,12 @@ export function liftToolsForAgent(
   // One form with typed fields (docs/albatross-thread.md). Output:
   // FormAnswer { values, save, skipped? }. The agent route saves the bound
   // personal details before the model continues, and adds savedToDetails.
-  lifted.ask_form = aiTool({
-    description:
-      "Ask the user ONE form and WAIT for the answer. Use it (instead of ask_user) when you need typed fields or several facts at once: a choice that belongs to the user (a date, a time slot, a plan, one of several matches) and any missing personal details, together. For a choice of dates or times, read the calendar first and give each option a calendar note (fit free or conflict). Put the option that matches what the user already said first. For a personal detail, set detailKey (name, email, phone, home_address, emergency_contact, or custom:<slug>) so the form fills it from saved details and offers 'Save to my details'. Call personal_details_get first and ask only for what is missing or unconfirmed. If you found a value (for example in an email signature), put it in value with valueSource. Never ask for passwords, codes, card numbers, or ID numbers.",
-    inputSchema: formQuestionSchema,
-  });
+  if (options.askForm)
+    lifted.ask_form = aiTool({
+      description:
+        "Ask the user ONE form and WAIT for the answer. Use it (instead of ask_user) when you need typed fields or several facts at once: a choice that belongs to the user (a date, a time slot, a plan, one of several matches) and any missing personal details, together. For a choice of dates or times, read the calendar first and give each option a calendar note (fit free or conflict). Put the option that matches what the user already said first. For a personal detail, set detailKey (name, email, phone, home_address, emergency_contact, or custom:<slug>) so the form fills it from saved details and offers 'Save to my details'. Call personal_details_get first and ask only for what is missing or unconfirmed. If you found a value (for example in an email signature), put it in value with valueSource. Never ask for passwords, codes, card numbers, or ID numbers.",
+      inputSchema: formQuestionSchema,
+    });
   // A yes/no gate for one consequential action. Renders an approval card and
   // waits. Output: { decision: 'approved' | 'denied' }.
   lifted.ask_approval = aiTool({
@@ -1078,6 +1097,8 @@ export interface AgentRunOpts {
   toolGroups?: string[];
   /** The client that renders this chat (default web). */
   clientPlatform?: ClientPlatform;
+  /** What the client can render beyond the base set (normalizeClientCapabilities). */
+  clientCapabilities?: ReadonlySet<ClientCapability>;
   signal?: AbortSignal;
 }
 
@@ -1110,8 +1131,10 @@ export async function runAgent({
   narrativeTopics,
   toolGroups,
   clientPlatform = 'web',
+  clientCapabilities,
   signal,
 }: AgentRunOpts): Promise<AgentRun> {
+  const askForm = clientCapabilities?.has('ask_form') ?? false;
   if (!hasPlatformAi() && !userId) {
     throw new Error(
       'Models are not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
@@ -1132,6 +1155,7 @@ export async function runAgent({
     scopeGroups: toolGroups,
     clientPlatform,
     pausedRisks,
+    askForm,
   });
 
   let resolveSteps: (steps: any[]) => void = () => undefined;
@@ -1182,7 +1206,7 @@ export async function runAgent({
               signal?.throwIfAborted();
               const base = buildSystemPrompt(
                 { name: userName, email: userEmail },
-                { memories, clientPlatform },
+                { memories, clientPlatform, askForm },
               );
               // Static instructions first, per-turn context last: providers cache the
               // shared prefix, so the parts that change every turn sit at the end.

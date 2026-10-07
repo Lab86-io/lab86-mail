@@ -353,6 +353,8 @@ export function AssistantChat({
           return response;
         }) as typeof fetch,
         body: () => ({
+          // This client renders ask_form; the server offers it only to clients that say so.
+          clientCapabilities: ['ask_form'],
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           briefResponse: useClientStore.getState().assistantBriefContext?.reference,
           areaDiscovery:
