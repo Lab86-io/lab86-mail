@@ -137,6 +137,10 @@ struct WorkDetailView: View {
                 detail = environment.store.cachedWorkDetail(route.workID) ?? detail
                 await load(initial: false)
             }
+            #if os(macOS)
+            // A web view has no size of its own; the Mac sheet names one.
+            .macSheet(.liveBrowser)
+            #endif
         }
         .sheet(item: $runBrowser) { request in
             StepRunBrowserSheet(
@@ -145,6 +149,9 @@ struct WorkDetailView: View {
                 onTakeOver: { await stopRun(request.run) },
                 onContinue: { await resumeRun(request.run) }
             )
+            #if os(macOS)
+            .macSheet(.liveBrowser)
+            #endif
         }
         .sheet(isPresented: $showsShapeSheet) {
             ShapePickerSheet(current: detail?.work.resolvedShape ?? .default) { shape in
@@ -507,6 +514,7 @@ struct WorkDetailView: View {
         // buttons, "Handle it", the live log, or a handoff card.
         let runState = StepRunCardPolicy.state(step: step, execution: execution)
         return documentSection(StepRunCopy.sectionTitle(runState)) {
+            stepRunLayout(runState) {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(step.title)
@@ -599,7 +607,31 @@ struct WorkDetailView: View {
                     }
                 }
             }
+            }
         }
+    }
+
+    /// On the Mac, a wide window puts the live browser beside the step while
+    /// a run owns the page or waits for the user on it. Elsewhere the step
+    /// stands alone, and the sheet is the browser.
+    @ViewBuilder
+    private func stepRunLayout<Content: View>(
+        _ runState: StepRunCardState,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        #if os(macOS)
+        MacStepRunSplit(
+            workID: route.workID,
+            run: runState.run,
+            busy: isMutating,
+            onTakeOver: { run in await stopRun(run) },
+            onContinue: { run in await resumeRun(run) },
+            onEnlarge: { run in runBrowser = StepRunBrowserRequest(run: run) },
+            content: content
+        )
+        #else
+        content()
+        #endif
     }
 
     @ViewBuilder
@@ -623,6 +655,7 @@ struct WorkDetailView: View {
             .buttonStyle(.borderedProminent)
             .disabled(isMutating)
             .frame(minHeight: 44)
+            .help("Albatross works this step and stops at the next action for you.")
 
             Button("Mark this step done") {
                 Task { await completeCurrentStep(step) }

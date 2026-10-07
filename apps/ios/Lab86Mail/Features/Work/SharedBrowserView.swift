@@ -194,16 +194,21 @@ struct StepRunBrowserSheet: View {
                     Button("Close") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
+                    // On the Mac: Command-period takes the page, Return goes on.
                     if presentation.agentHasPage {
                         Button(busy ? "Stopping…" : "Take over") {
                             Task { await takeOver() }
                         }
                         .disabled(busy)
+                        .stopShortcut()
+                        .help("Albatross stops. The page is yours.")
                     } else if presentation.showsContinue {
                         Button(busy ? "Continuing…" : "Continue") {
                             Task { await proceed() }
                         }
                         .disabled(busy)
+                        .primaryActionShortcut()
+                        .help("Albatross goes on from the page as it is now.")
                     }
                 }
             }

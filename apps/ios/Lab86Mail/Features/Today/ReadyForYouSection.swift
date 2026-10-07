@@ -99,7 +99,19 @@ struct ReadyForYouSection: View {
                 .padding(.bottom, 4)
                 ForEach(store.items) { item in
                     Divider()
+                    #if os(macOS)
+                    // The Mac row: the text at the left, one button at the
+                    // trailing edge, a hover fill, and a context menu.
+                    MacReadyForYouRow(
+                        item: item,
+                        busy: busyID == item.id,
+                        onOpen: { openWork(item) },
+                        onAct: { Task { await act(item) } },
+                        onDismiss: { Task { await dismiss(item) } }
+                    )
+                    #else
                     row(item)
+                    #endif
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -166,5 +178,14 @@ struct ReadyForYouSection: View {
         let behaviour = StepRunNextBehaviour.from(item.run.next)
         let opened = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)
         if !opened { openWork(item) }
+    }
+
+    /// "Dismiss" closes the handoff on the server; the row leaves at once.
+    private func dismiss(_ item: StepHandoffItem) async {
+        busyID = item.id
+        defer { busyID = nil }
+        if await environment.store.dismissStepRun(item.workID, run: item.run) {
+            store.remove(id: item.id)
+        }
     }
 }

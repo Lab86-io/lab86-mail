@@ -87,6 +87,25 @@ final class NativeTourMacTests: XCTestCase {
         try await tour(Screen(id: "mac-files", title: "Files", section: "Files", tab: .files))
     }
 
+    func testMacTour12WorkDetailRun() async throws {
+        // The step runner at work: the live log and "Stop" at the left, the
+        // live pane at the right. Without Convex the pane shows its empty state.
+        var screen = Screen(id: "mac-work-detail-run", title: "One Albatross while a step runs", section: "Tasks and Work", tab: .work)
+        screen.afterAppear = { environment in
+            environment.navigation.openWork(id: "w-dispute-run", title: "Dispute the duplicate charge")
+        }
+        try await tour(screen)
+    }
+
+    func testMacTour13WorkDetailHandoff() async throws {
+        // A handoff: the summary, the artifacts, and "Read and send".
+        var screen = Screen(id: "mac-work-detail-handoff", title: "One Albatross with a handoff", section: "Tasks and Work", tab: .work)
+        screen.afterAppear = { environment in
+            environment.navigation.openWork(id: "w-dispute-handoff", title: "Dispute the duplicate charge")
+        }
+        try await tour(screen)
+    }
+
     func testMacTour10Chat() async throws {
         var screen = Screen(id: "mac-chat", title: "Chat panel with tool cards", section: "Chat", tab: .today)
         screen.setUp = { environment in
@@ -127,7 +146,7 @@ final class NativeTourMacTests: XCTestCase {
 
     private static let screenOrder = [
         "mac-today", "mac-mail", "mac-compose", "mac-calendar-week", "mac-calendar-month", "mac-tasks", "mac-work",
-        "mac-work-detail", "mac-files", "mac-chat", "mac-settings",
+        "mac-work-detail", "mac-work-detail-run", "mac-work-detail-handoff", "mac-files", "mac-chat", "mac-settings",
     ]
 
     // MARK: - The tour

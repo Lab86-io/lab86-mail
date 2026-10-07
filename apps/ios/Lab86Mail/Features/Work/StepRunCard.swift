@@ -73,6 +73,8 @@ struct StepRunCardView: View {
         Button(busy ? "Stopping…" : "Stop") { onStop(run) }
             .buttonStyle(.bordered)
             .disabled(busy)
+            .stopShortcut()
+            .help("Albatross stops this run. Command-period.")
             .frame(minHeight: 44)
         Button("Discuss this") { onDiscuss() }
             .buttonStyle(.bordered)
@@ -128,14 +130,19 @@ struct StepRunCardView: View {
                 .foregroundStyle(.tertiary)
         }
         .accessibilityElement(children: .contain)
+        .pointerMenu {
+            cardMenu(run, behaviour: behaviour, continues: StepRunNextBehaviour.showsContinue(run.next))
+        }
     }
 
     @ViewBuilder
     private func handoffActions(_ run: StepRunView, behaviour: StepRunNextBehaviour) -> some View {
         if behaviour.showsPrimaryButton, let next = run.next {
+            // Return does the one next action on the Mac.
             Button(next.label) { onPrimary(run, behaviour) }
                 .buttonStyle(.borderedProminent)
                 .disabled(busy)
+                .primaryActionShortcut()
                 .frame(minHeight: 44)
         }
         if StepRunNextBehaviour.showsContinue(run.next) {
@@ -155,6 +162,23 @@ struct StepRunCardView: View {
         }
         .buttonStyle(.borderless)
         .font(.subheadline)
+    }
+
+    /// The same verbs as the card, for a secondary click on the Mac.
+    @ViewBuilder
+    private func cardMenu(_ run: StepRunView, behaviour: StepRunNextBehaviour, continues: Bool) -> some View {
+        if behaviour.showsPrimaryButton, let next = run.next {
+            Button(next.label) { onPrimary(run, behaviour) }
+        }
+        if continues {
+            Button("Continue") { onResume(run) }
+        }
+        if let summary = run.summary {
+            Button("Copy the summary") { PlatformPasteboard.copy(summary) }
+        }
+        Divider()
+        Button("Dismiss") { onDismiss(run) }
+        Button("Discuss this") { onDiscuss() }
     }
 
     @ViewBuilder
@@ -196,6 +220,7 @@ struct StepRunCardView: View {
             Button(busy ? "Continuing…" : "Continue") { onResume(run) }
                 .buttonStyle(.borderedProminent)
                 .disabled(busy)
+                .primaryActionShortcut()
                 .frame(minHeight: 44)
             quietActions(run)
             Text(StepRunCopy.triggerLine(run))
@@ -203,6 +228,7 @@ struct StepRunCardView: View {
                 .foregroundStyle(.tertiary)
         }
         .accessibilityElement(children: .contain)
+        .pointerMenu { cardMenu(run, behaviour: .none, continues: true) }
     }
 
     // MARK: - Failed
@@ -268,6 +294,7 @@ struct StepRunCardView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .hoverHighlight()
                     if offset < run.artifacts.count - 1 { Divider() }
                 }
             }

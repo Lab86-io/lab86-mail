@@ -38,10 +38,23 @@ struct SavedSignInsView: View {
                 Text(SavedSignInsCopy.explanation)
             }
             Section {
+                #if os(macOS)
+                // A Mac form puts the action at the trailing edge of its row,
+                // as System Settings does. The ellipsis says a confirmation
+                // follows.
+                LabeledContent("Forget saved sign-ins") {
+                    Button(isForgetting ? "Forgetting…" : "Forget…") {
+                        showsForgetConfirmation = true
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isForgetting || status?.saved != true)
+                }
+                #else
                 Button(isForgetting ? "Forgetting…" : "Forget saved sign-ins", role: .destructive) {
                     showsForgetConfirmation = true
                 }
                 .disabled(isForgetting || status?.saved != true)
+                #endif
                 if let errorMessage {
                     Text(errorMessage).font(.footnote).foregroundStyle(.red)
                 } else if let message {
