@@ -28,7 +28,7 @@ describe('step contract', () => {
 
   test('normalizes a digital action and keeps every other field', () => {
     expect(
-      normalizeDigitalStepContract({
+      normalizeDigitalStepContract<Record<string, unknown>>({
         actionKey: 'a1',
         kind: 'document',
         title: 'Draft the proposal',

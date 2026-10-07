@@ -85,7 +85,7 @@ describe('digital step contract in Convex', () => {
         ],
       }),
     );
-    const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId: String(intentId) });
+    const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId: intentId });
     const legacy = detail?.execution.guideSteps.find((step: any) => step.title === 'Old step');
     expect(legacy).toMatchObject({ stepMode: null, evidenceKind: null });
   });

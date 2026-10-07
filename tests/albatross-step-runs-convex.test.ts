@@ -112,14 +112,14 @@ describe('enqueue', () => {
     const first = await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(workId));
     expect(first).toMatchObject({ created: true, reason: null });
     const again = await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(workId));
-    expect(again).toEqual({ runId: first.runId, created: false, reason: 'active' });
+    expect(again as unknown).toEqual({ runId: first.runId, created: false, reason: 'active' });
 
     await t.mutation(api.albatrossStepRuns.cancel, { ...caller, id: first.runId as Id<'albatrossStepRuns'> });
     const auto = await t.mutation(
       api.albatrossStepRuns.enqueue,
       enqueueArgs(workId, { trigger: 'conductor' }),
     );
-    expect(auto).toEqual({ runId: first.runId, created: false, reason: 'already_ran' });
+    expect(auto as unknown).toEqual({ runId: first.runId, created: false, reason: 'already_ran' });
     const user = await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(workId));
     expect(user.created).toBe(true);
   });
@@ -346,7 +346,9 @@ describe('the lease', () => {
     const workId = String(await seedWork(t));
     const { runId } = await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(workId));
     const id = runId as Id<'albatrossStepRuns'>;
-    expect(await t.query(internal.albatrossStepRuns.targets, { ids: [id] })).toEqual([{ id: runId, userId }]);
+    expect(await t.query(internal.albatrossStepRuns.targets, { ids: [id] })).toEqual([
+      { id: runId!, userId },
+    ]);
     await claimRun(t, runId!);
     expect(await t.query(internal.albatrossStepRuns.targets, { ids: [id] })).toEqual([]);
   });

@@ -185,8 +185,8 @@ describe('copy', () => {
   test('the error line and the list line have fallbacks', () => {
     expect(runErrorLine(runs.failed)).toBe('The insurer site did not load after three tries.');
     expect(runErrorLine({ error: '  ' })).toBe(COPY.failed);
-    expect(handoffLine(runs.readyDraft)).toBe(runs.readyDraft.summary);
-    expect(handoffLine({ ...runs.signIn, summary: null })).toBe(runs.signIn.next!.detail);
+    expect(handoffLine(runs.readyDraft)).toBe(runs.readyDraft.summary as string);
+    expect(handoffLine({ ...runs.signIn, summary: null })).toBe(runs.signIn.next!.detail as string);
     expect(handoffLine({ ...runs.stoppedCost, summary: null, next: null })).toBe(COPY.stoppedCost);
   });
 
@@ -251,7 +251,7 @@ describe('the Brief list', () => {
     });
     expect(rows[2].action).toEqual({ label: 'Sign in', behaviour: { kind: 'open_work' } });
     expect(rows[3].action).toEqual({ label: 'Continue', behaviour: { kind: 'resume' } });
-    expect(rows[3].line).toBe(runs.stoppedTime.summary);
+    expect(rows[3].line).toBe(runs.stoppedTime.summary as string);
   });
 
   test('done, failed, and closed runs do not make rows; a missing label says Open', () => {
