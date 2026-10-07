@@ -105,11 +105,27 @@ struct AreaRoute: Identifiable, Hashable, Sendable {
 }
 
 struct WorkRoute: Identifiable, Hashable, Sendable {
+    /// What the thread does as soon as it opens. A "Ready for you" row with a
+    /// page handoff opens the page; a notification reply focuses the composer.
+    enum Intent: Hashable, Sendable {
+        case openPage
+        case focusComposer
+    }
+
     let workID: String
     let title: String?
+    var intent: Intent?
+
+    init(workID: String, title: String?, intent: Intent? = nil) {
+        self.workID = workID
+        self.title = title
+        self.intent = intent
+    }
 
     var id: String { workID }
 
+    // The intent and the title are not identity: a second open of the same
+    // Work with an intent updates the mounted thread instead of a new push.
     static func == (lhs: WorkRoute, rhs: WorkRoute) -> Bool { lhs.workID == rhs.workID }
 
     func hash(into hasher: inout Hasher) { hasher.combine(workID) }
@@ -224,6 +240,12 @@ final class NavigationModel {
     // macOS presents Albatross chat as a floating corner panel (with a
     // tear-out window), never as a tab. Unused on iOS.
     var chatPanelPresented = false
+    // A push for the open Albatross bumps this; the thread re-reads its runs.
+    private(set) var workRefreshToken = 0
+
+    func refreshOpenWork() {
+        workRefreshToken += 1
+    }
 
     var hasNestedDestination: Bool {
         threadRoute != nil || eventRoute != nil || workRoute != nil
@@ -322,14 +344,21 @@ final class NavigationModel {
         areaRoute = AreaRoute(areaID: id, name: name)
     }
 
-    func openWork(id: String, title: String?) {
+    func openWork(id: String, title: String?, intent: WorkRoute.Intent? = nil) {
         guard !id.isEmpty else { return }
         selectedTab = .work
         threadRoute = nil
         eventRoute = nil
         projectRoute = nil
         documentRoute = nil
-        workRoute = WorkRoute(workID: id, title: title)
+        // The same Albatross again (a push while it is open): the thread
+        // stays mounted, re-reads, and applies the intent.
+        if workRoute?.workID == id {
+            workRoute = WorkRoute(workID: id, title: title ?? workRoute?.title, intent: intent)
+            refreshOpenWork()
+            return
+        }
+        workRoute = WorkRoute(workID: id, title: title, intent: intent)
     }
 
     func openProject(_ project: ProjectSummary) {

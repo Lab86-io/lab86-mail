@@ -254,6 +254,18 @@ struct AssistantQuestionCard: View {
                 } else {
                     unavailable
                 }
+            case .form:
+                if let form = FormQuestion(json: question.input) {
+                    FormQuestionCard(
+                        form: form,
+                        receipt: question.answer.flatMap(FormAnswer.init(json:)).map { $0.skipped ? .skipped : .answered($0) },
+                        allowsSkip: true,
+                        onSubmit: { answer, _ in onAnswer(answer.json) },
+                        onSkip: { onAnswer(FormAnswer.skippedForm.json) }
+                    )
+                } else {
+                    unavailable
+                }
             }
         }
     }
@@ -267,7 +279,7 @@ struct AssistantQuestionCard: View {
     }
 }
 
-private struct QuestionShell<Content: View>: View {
+struct QuestionShell<Content: View>: View {
     let title: String?
     @ViewBuilder let content: Content
 
@@ -288,7 +300,7 @@ private struct QuestionShell<Content: View>: View {
 }
 
 /// The compact record of an answered question.
-private struct AnswerSummary: View {
+struct AnswerSummary: View {
     let rows: [(label: String, value: String)]
 
     var body: some View {
@@ -306,7 +318,7 @@ private struct AnswerSummary: View {
     }
 }
 
-private struct OptionRow: View {
+struct OptionRow: View {
     @Environment(AppEnvironment.self) private var environment
     let option: AskUserForm.Option
     let selected: Bool
@@ -340,10 +352,12 @@ private struct OptionRow: View {
     }
 }
 
-private struct SubmitButton: View {
+struct SubmitButton: View {
     @Environment(AppEnvironment.self) private var environment
     let label: String
     let enabled: Bool
+    /// A key equivalent on the Mac (the form card sets one). Nil elsewhere.
+    var shortcut: KeyboardShortcut? = nil
     let action: () -> Void
 
     var body: some View {
@@ -353,6 +367,7 @@ private struct SubmitButton: View {
                 .buttonStyle(.borderedProminent)
                 .tint(environment.theme.accentColor)
                 .disabled(!enabled)
+                .keyboardShortcut(shortcut)
         }
     }
 }

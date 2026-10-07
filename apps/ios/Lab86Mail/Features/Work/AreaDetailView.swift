@@ -51,7 +51,11 @@ struct AreaDetailView: View {
             }
         }
         .navigationDestination(item: $navigation.workRoute) { route in
-            WorkDetailView(route: route)
+            #if os(macOS)
+            MacWorkThreadView(route: route)
+            #else
+            WorkThreadView(route: route)
+            #endif
         }
         .navigationDestination(item: $navigation.eventRoute) { route in
             EventDetailView(route: route)

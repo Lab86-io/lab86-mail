@@ -17,8 +17,28 @@ final class MacRequests {
     // ⌘R "Sync Calendar". The calendar surface runs a manual sync per change.
     private(set) var syncCalendarToken = 0
 
-    // ⇧⌘H "Horizon…". The open Work detail shows its horizon popover.
+    // ⇧⌘H "Horizon…". The open Albatross shows its horizon control.
     private(set) var openHorizonToken = 0
+
+    // ⌘K while an Albatross thread is on screen. The thread focuses its
+    // composer instead of the corner chat.
+    private(set) var focusComposerToken = 0
+
+    // ⌃⌘P and ⌃⌘I from the View menu. The open thread shows or hides the
+    // pane named by `threadPaneTarget`.
+    private(set) var threadPaneToken = 0
+    private(set) var threadPaneTarget: MacThreadPaneMode = .page
+
+    // What the open thread's pane shows now, for the View menu titles. The
+    // thread writes it and clears it when it leaves the screen.
+    var threadPaneMode: MacThreadPaneMode = .none
+
+    // The source list. The thread collapses it when the pane needs the room
+    // and restores it when the pane closes. The shell mirrors the live state
+    // into `sidebarShown`.
+    private(set) var sidebarToken = 0
+    private(set) var sidebarVisible = true
+    var sidebarShown = true
 
     // A day the Calendar tab must select when it appears. Week-ahead prose
     // sets it; the calendar surface clears it once applied.
@@ -32,6 +52,20 @@ final class MacRequests {
 
     func requestHorizonPopover() {
         openHorizonToken += 1
+    }
+
+    func requestComposerFocus() {
+        focusComposerToken += 1
+    }
+
+    func requestThreadPane(_ target: MacThreadPaneMode) {
+        threadPaneTarget = target
+        threadPaneToken += 1
+    }
+
+    func requestSidebar(visible: Bool) {
+        sidebarVisible = visible
+        sidebarToken += 1
     }
 
     // The calendar surface calls this once. A second appearance of the

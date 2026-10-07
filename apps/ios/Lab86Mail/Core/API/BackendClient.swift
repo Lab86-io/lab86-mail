@@ -46,6 +46,28 @@ struct DownloadedFile: Sendable {
     let contentType: String?
 }
 
+/// The status and the decoded body of one request, for routes whose error
+/// body carries more than a message (a `code`, field `errors`).
+struct BackendExchange: Sendable {
+    let status: Int
+    let body: JSONValue?
+
+    var isSuccess: Bool { (200..<300).contains(status) }
+
+    /// The server's `error` line, else the status text.
+    var errorMessage: String {
+        body?["error"]?.stringValue?.nilIfBlank ?? HTTPURLResponse.localizedString(forStatusCode: status)
+    }
+}
+
+/// A client that can make one exchange. `BackendClient` is the production
+/// conformer; tests script one.
+protocol BackendExchanging: Sendable {
+    func exchange(method: String, path: String, body: JSONValue?) async throws -> BackendExchange
+}
+
+extension BackendClient: BackendExchanging {}
+
 actor BackendClient {
     private let baseURL: URL?
     private let session: URLSession
@@ -162,6 +184,18 @@ actor BackendClient {
     }
 
     private func request(method: String, path: String, body: JSONValue?) async throws -> JSONValue {
+        let exchange = try await exchange(method: method, path: path, body: body)
+        guard exchange.isSuccess else {
+            throw BackendError.server(status: exchange.status, message: exchange.errorMessage)
+        }
+        guard let decoded = exchange.body else { throw BackendError.invalidResponse }
+        return decoded
+    }
+
+    /// One request whose answer the caller reads itself: a 4xx with a body
+    /// (`code`, `errors`) comes back as a value, not as an error. Transport
+    /// failures and a 401 still throw.
+    func exchange(method: String, path: String, body: JSONValue?) async throws -> BackendExchange {
         guard let baseURL, let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
             throw BackendError.configuration
         }
@@ -175,14 +209,9 @@ actor BackendClient {
         }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw BackendError.invalidResponse }
+        if http.statusCode == 401 { throw BackendError.unauthorized }
         let decoded = try? JSONDecoder().decode(JSONValue.self, from: data)
-        guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 401 { throw BackendError.unauthorized }
-            let message = decoded?["error"]?.stringValue ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
-            throw BackendError.server(status: http.statusCode, message: message)
-        }
-        guard let decoded else { throw BackendError.invalidResponse }
-        return decoded
+        return BackendExchange(status: http.statusCode, body: decoded)
     }
 
     private func authenticate(_ request: inout URLRequest) async throws {

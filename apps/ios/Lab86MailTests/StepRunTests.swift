@@ -2,10 +2,10 @@ import Foundation
 import Testing
 @testable import Lab86Mail
 
-// The step runner on the phone: the wire shape (`StepRunView`), the card each
-// state draws in "Do this next", what each next action does, the shared
-// browser bar, and the Brief's "Ready for you" list. The contract is
-// docs/albatross-step-runner.md; the web pins the same rules for its panel.
+// The step runner on the phone: the wire shape (`StepRunView`), what each
+// next action does, the words the Brief and the thread share, the page bar,
+// and the Brief's "Ready for you" list. The contract is
+// docs/albatross-step-runner.md; the block rules are in RunBlockPresentationTests.
 struct StepRunTests {
     // MARK: - Fixtures
 
@@ -117,11 +117,6 @@ struct StepRunTests {
         runnable: Bool? = true
     ) throws -> WorkDetail {
         try #require(WorkDetail(json: detailJSON(run: run, active: active, runnerEnabled: runnerEnabled, runnable: runnable)))
-    }
-
-    private static func cardState(_ detail: WorkDetail) throws -> StepRunCardState {
-        let step = try #require(detail.execution.currentStep)
-        return StepRunCardPolicy.state(step: step, execution: detail.execution)
     }
 
     private static func next(
@@ -254,7 +249,6 @@ struct StepRunTests {
         #expect(subject.execution.currentStep?.run == nil)
         #expect(subject.execution.currentStep?.runnable == nil)
         #expect(subject.execution.currentStep?.isRunnable == false)
-        #expect(try Self.cardState(subject) == .quiet)
     }
 
     @Test func aCachedDetailWithoutRunKeysStillDecodes() throws {
@@ -293,88 +287,6 @@ struct StepRunTests {
         #expect(done.execution.guideSteps.first?.done == true)
         #expect(done.execution.guideSteps.first?.run?.id == "run_1")
         #expect(done.execution.runnerIsEnabled)
-    }
-
-    // MARK: - The card
-
-    @Test func theRunnerOffHidesEveryControl() throws {
-        let subject = try Self.detail(run: Self.fullRun, active: nil, runnerEnabled: false)
-        #expect(try Self.cardState(subject) == .quiet)
-    }
-
-    @Test func aRunnableStepOffersHandleIt() throws {
-        #expect(try Self.cardState(Self.detail(run: nil)) == .eligible)
-        #expect(try Self.cardState(Self.detail(run: nil, runnable: false)) == .quiet)
-    }
-
-    @Test func anOpenRunShowsTheLogAndStop() throws {
-        let active = try Self.detail(run: nil, active: Self.runJSON(id: "run_9", state: "queued"))
-        let state = try Self.cardState(active)
-        #expect(state.run?.id == "run_9")
-        #expect(state.hidesStepActions)
-        guard case .open = state else {
-            Issue.record("An active run must open the card.")
-            return
-        }
-        // The step's own run counts too, when the Work has no active run row.
-        let own = try Self.detail(run: Self.runJSON(state: "running"))
-        guard case .open = try Self.cardState(own) else {
-            Issue.record("A running step run must open the card.")
-            return
-        }
-    }
-
-    @Test func aHandoffShowsTheHandoffCard() throws {
-        let subject = try Self.detail(run: Self.fullRun)
-        let state = try Self.cardState(subject)
-        guard case .handedOff(let run) = state else {
-            Issue.record("A handed-off run must show the handoff card.")
-            return
-        }
-        #expect(run.id == "run_1")
-        #expect(state.hidesStepActions)
-        #expect(StepRunCopy.sectionTitle(state) == "Do this next")
-    }
-
-    @Test func aLimitShowsTheStoppedCard() throws {
-        let byTime = try Self.detail(run: Self.runJSON(state: "handed_off", outcome: "stopped", stoppedBy: "time"))
-        guard case .stopped(let run) = try Self.cardState(byTime) else {
-            Issue.record("A run stopped by its limit must show the stopped card.")
-            return
-        }
-        #expect(StepRunCopy.headline(run) == "Albatross stopped at its time limit.")
-        let byOutcome = try Self.detail(run: Self.runJSON(state: "handed_off", outcome: "stopped"))
-        guard case .stopped = try Self.cardState(byOutcome) else {
-            Issue.record("A stopped outcome without a limit word still shows the stopped card.")
-            return
-        }
-    }
-
-    @Test func aFailedRunShowsTryAgainAndKeepsTheStepButtons() throws {
-        let subject = try Self.detail(run: Self.runJSON(state: "failed", error: "The bank site did not answer."))
-        let state = try Self.cardState(subject)
-        guard case .failed(let run) = state else {
-            Issue.record("A failed run must show the failed card.")
-            return
-        }
-        #expect(run.error == "The bank site did not answer.")
-        #expect(!state.hidesStepActions)
-        #expect(StepRunCopy.headline(run) == "This run did not finish.")
-    }
-
-    @Test func aClosedRunMakesTheStepEligibleAgain() throws {
-        for word in ["done", "cancelled", "closed", "somethingnew"] {
-            let subject = try Self.detail(run: Self.runJSON(state: word))
-            #expect(try Self.cardState(subject) == .eligible)
-        }
-        #expect(try Self.cardState(Self.detail(run: Self.runJSON(state: "closed"), runnable: false)) == .quiet)
-    }
-
-    @Test func theSectionTitleChangesOnlyWhileAlbatrossWorks() throws {
-        let open = try Self.cardState(Self.detail(run: Self.runJSON(state: "running")))
-        #expect(StepRunCopy.sectionTitle(open) == "Albatross works on this")
-        #expect(StepRunCopy.sectionTitle(.eligible) == "Do this next")
-        #expect(StepRunCopy.sectionTitle(.quiet) == "Do this next")
     }
 
     // MARK: - Next actions
@@ -435,8 +347,8 @@ struct StepRunTests {
         }
         #expect(try StepRunCopy.headline(run("ready_for_you")) == "Ready for you")
         #expect(try StepRunCopy.headline(run("your_turn")) == "Your turn")
-        #expect(try StepRunCopy.headline(run("needs_answer")) == "Albatross needs one answer")
-        #expect(try StepRunCopy.headline(run("stopped", stoppedBy: "cost")) == "Albatross stopped at its cost limit.")
+        #expect(try StepRunCopy.headline(run("needs_answer")) == "Needs your answer")
+        #expect(try StepRunCopy.headline(run("stopped", stoppedBy: "cost")) == "Stopped")
         #expect(try StepRunCopy.headline(run(nil)) == "Ready for you")
         #expect(StepRunCopy.limitLine(nil) == nil)
         #expect(StepRunCopy.limitLine(.time) == "Albatross stopped at its time limit.")
@@ -444,12 +356,12 @@ struct StepRunTests {
 
     @Test func theProgressLineIsTheNewestLogLineOrTheState() throws {
         let queued = try #require(StepRunView(json: .object(["id": .string("r"), "state": .string("queued")])))
-        #expect(StepRunCopy.progressLine(queued) == "Waiting to start.")
+        #expect(StepRunCopy.progressLine(queued) == "Starts soon.")
         let running = try #require(StepRunView(json: .object(["id": .string("r"), "state": .string("running")])))
         #expect(StepRunCopy.progressLine(running) == "Albatross works on this step.")
         let logged = try #require(StepRunView(json: Self.runJSON(state: "running")))
         #expect(StepRunCopy.progressLine(logged) == "Starting")
-        #expect(StepRunCopy.workingLine(logged) == "Working on: Send the dispute letter")
+        #expect(StepRunCopy.workingLine(logged) == "In progress: Send the dispute letter")
         #expect(StepRunCopy.triggerLine(logged) == "Started by you")
     }
 
@@ -458,7 +370,7 @@ struct StepRunTests {
         #expect(StepRunCopy.readyRowTitle(handoff) == "Send the dispute letter")
         #expect(StepRunCopy.readyRowLine(handoff) == "I wrote the dispute letter and saved it as a draft.")
         let open = try #require(StepRunView(json: Self.runJSON(state: "running")))
-        #expect(StepRunCopy.readyRowTitle(open) == "Working on: Send the dispute letter")
+        #expect(StepRunCopy.readyRowTitle(open) == "In progress: Send the dispute letter")
         #expect(StepRunCopy.readyRowLine(open) == "Starting")
     }
 
@@ -471,10 +383,8 @@ struct StepRunTests {
         #expect(next.execution.activeRun?.id == "run_new")
         #expect(next.execution.currentStep?.run?.state == .queued)
         #expect(next.execution.guideSteps.first?.run?.id == "run_new")
-        guard case .open = try Self.cardState(next) else {
-            Issue.record("A queued run must open the card at once.")
-            return
-        }
+        // A queued run shows its block at once: the run state is "Starts soon".
+        #expect(RunBlockState.from(queued) == .queued)
     }
 
     @Test func stopWritesTheCancelOnTheDetail() throws {
@@ -483,7 +393,6 @@ struct StepRunTests {
         let next = subject.withStepRun(run.with(state: .cancelled))
         #expect(next.execution.activeRun == nil)
         #expect(next.execution.currentStep?.run?.state == .cancelled)
-        #expect(try Self.cardState(next) == .eligible)
     }
 
     @Test func anOpenRunOnAnotherStepLeavesThisStepQuiet() throws {
@@ -492,9 +401,8 @@ struct StepRunTests {
             active: Self.runJSON(id: "run_9", stepKey: "step-else", state: "running"),
             runnable: false
         )
-        let state = try Self.cardState(subject)
-        #expect(state == .quiet)
-        #expect(state.hidesStepActions == false)
+        #expect(subject.execution.currentStep?.run == nil)
+        #expect(subject.execution.activeRun?.stepKey == "step-else")
     }
 
     @Test func aRunOnAnotherStepLeavesTheActiveRunAlone() throws {
@@ -543,7 +451,7 @@ struct StepRunTests {
         #expect(tookOver.showsContinue)
 
         let closed = StepRunBrowserPresentation(session: nil, run: run, followed: true)
-        #expect(closed.statusLine == "The shared browser is closed.")
+        #expect(closed.statusLine == "The page is closed.")
         #expect(closed.showsContinue)
         #expect(closed.liveViewURL == nil)
 

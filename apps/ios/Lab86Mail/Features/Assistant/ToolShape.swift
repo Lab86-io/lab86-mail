@@ -34,6 +34,8 @@ enum ShapeAction: Equatable, Sendable, Identifiable {
     case undoOperation(operationID: String)
     /// notes: the saved note, so the field starts with it (AI-2).
     case rememberSender(email: String, notes: String?)
+    /// Puts the personal details back as they were before the save.
+    case undoPersonalDetails(keys: [String])
     case unknown(kind: String)
 
     /// The wire discriminator.
@@ -57,6 +59,7 @@ enum ShapeAction: Equatable, Sendable, Identifiable {
         case .importFile: "import_file"
         case .undoOperation: "undo_operation"
         case .rememberSender: "remember_sender"
+        case .undoPersonalDetails: "undo_personal_details"
         case .unknown(let kind): kind
         }
     }
@@ -82,6 +85,7 @@ enum ShapeAction: Equatable, Sendable, Identifiable {
         case .importFile(let connectionID, let fileID, _): "import_file:\(connectionID):\(fileID)"
         case .undoOperation(let operationID): "undo_operation:\(operationID)"
         case .rememberSender(let email, _): "remember_sender:\(email)"
+        case .undoPersonalDetails(let keys): "undo_personal_details:\(keys.joined(separator: ","))"
         case .unknown(let kind): "unknown:\(kind)"
         }
     }
@@ -107,6 +111,7 @@ enum ShapeAction: Equatable, Sendable, Identifiable {
         case .importFile: "Import"
         case .undoOperation: "Undo"
         case .rememberSender: "Remember"
+        case .undoPersonalDetails: "Undo"
         case .unknown: "Unavailable"
         }
     }
@@ -116,7 +121,7 @@ enum ShapeAction: Equatable, Sendable, Identifiable {
     var isMutation: Bool {
         switch self {
         case .archiveThread, .snoozeThread, .rsvpEvent, .deleteEvent, .holdSlot, .completeTask,
-             .importFile, .undoOperation, .rememberSender:
+             .importFile, .undoOperation, .rememberSender, .undoPersonalDetails:
             true
         default:
             false
@@ -128,7 +133,7 @@ extension ShapeAction: Decodable {
     private enum Keys: String, CodingKey {
         case kind, account, threadId, messageId, calendarId, eventId, startIso, endIso, title
         case boardId, cardId, workId, areaId, documentId, path, url, label, connectionId, fileId
-        case mimeType, operationId, email, notes
+        case mimeType, operationId, email, notes, keys
     }
 
     init(from decoder: Decoder) throws {
@@ -192,6 +197,10 @@ extension ShapeAction: Decodable {
         case "remember_sender":
             guard let email = text(.email) else { self = .unknown(kind: kind); return }
             self = .rememberSender(email: email, notes: text(.notes))
+        case "undo_personal_details":
+            let keys = ((try? values.decodeIfPresent([String].self, forKey: .keys)) ?? []).compactMap(\.nilIfBlank)
+            guard !keys.isEmpty else { self = .unknown(kind: kind); return }
+            self = .undoPersonalDetails(keys: keys)
         default:
             self = .unknown(kind: kind)
         }
@@ -455,6 +464,8 @@ struct ToolShape: Equatable, Sendable {
         case receipt(surface: String, operationID: String?, target: JSONValue?)
         case sources(items: [ShapeSourceRow])
         case text(String)
+        /// `albatross_handle_step`: the thread renders the run block in place.
+        case stepRun(ThreadStepRunShape)
         case unknown(kind: String)
     }
 
@@ -471,6 +482,18 @@ struct ToolShape: Equatable, Sendable {
     var isUnknown: Bool {
         if case .unknown = content { return true }
         return false
+    }
+
+    /// The run this shape stands for, when it is a `step_run` shape.
+    var stepRun: ThreadStepRunShape? {
+        if case .stepRun(let shape) = content { return shape }
+        return nil
+    }
+
+    /// The personal detail keys a memory receipt saved (`target.personalDetails`).
+    var personalDetailKeys: [String] {
+        guard case .receipt(_, _, let target) = content else { return [] }
+        return (target?["personalDetails"]?.arrayValue ?? []).compactMap { $0.stringValue?.nilIfBlank }
     }
 
     /// Decodes the `data` object of a `data-tool-shape` part. Returns nil only
@@ -494,6 +517,7 @@ extension ToolShape: Codable {
         case documentId, docKind, status, revision, path, webUrl
         case email, totalMessages, lastSeenIso, memory
         case value, label, surface, operationId, target, text
+        case runId, workId, action
     }
 
     init(from decoder: Decoder) throws {
@@ -594,6 +618,16 @@ extension ToolShape: Codable {
             content = .sources(items: rows(ShapeSourceRow.self))
         case "text":
             content = .text(text(.text) ?? summary ?? title)
+        case "step_run":
+            guard let runID = text(.runId) else {
+                content = .unknown(kind: kind)
+                return
+            }
+            content = .stepRun(ThreadStepRunShape(
+                runID: runID,
+                workID: text(.workId) ?? "",
+                action: ThreadStepRunShape.Action.from(text(.action))
+            ))
         default:
             content = .unknown(kind: kind)
         }

@@ -165,19 +165,19 @@ struct ReadyForYouSection: View {
         .accessibilityElement(children: .contain)
     }
 
-    private func openWork(_ item: StepHandoffItem) {
-        environment.navigation.openWork(id: item.workID, title: item.workTitle)
+    private func openWork(_ item: StepHandoffItem, intent: WorkRoute.Intent? = nil) {
+        environment.navigation.openWork(id: item.workID, title: item.workTitle, intent: intent)
     }
 
-    /// The primary button does what it does on the Work page. A browser or
-    /// question handoff opens the Work page, where the sheet and the
-    /// question live.
+    /// The primary button does what it does in the thread. A page handoff
+    /// opens the thread with its page; a question opens the thread, where
+    /// the form waits.
     private func act(_ item: StepHandoffItem) async {
         busyID = item.id
         defer { busyID = nil }
         let behaviour = StepRunNextBehaviour.from(item.run.next)
         let opened = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)
-        if !opened { openWork(item) }
+        if !opened { openWork(item, intent: behaviour == .openBrowser ? .openPage : nil) }
     }
 
     /// "Dismiss" closes the handoff on the server; the row leaves at once.
