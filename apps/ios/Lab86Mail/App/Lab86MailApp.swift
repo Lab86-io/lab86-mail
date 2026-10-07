@@ -37,6 +37,9 @@ struct Lab86MailApp: App {
         }
         .commands {
             AlbatrossCommands(environment: environment)
+            #if os(macOS)
+            MacThreadCommands(environment: environment)
+            #endif
         }
         #if os(macOS)
         // The torn-out chat panel. Shares the live conversation model with the

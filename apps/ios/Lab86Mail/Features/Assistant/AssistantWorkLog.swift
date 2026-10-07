@@ -140,6 +140,9 @@ struct AssistantQuestionPart: Identifiable, Equatable, Sendable {
         case parameters = "ask_parameters"
         case preferences = "ask_preferences"
         case questionFlow = "ask_question_flow"
+        /// A form with typed fields (docs/albatross-thread.md). The answer is
+        /// a `FormAnswer`.
+        case form = "ask_form"
     }
 
     let id: String

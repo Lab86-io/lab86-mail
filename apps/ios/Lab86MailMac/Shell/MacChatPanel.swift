@@ -50,7 +50,11 @@ struct MacChatOverlay: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                if environment.navigation.chatPanelPresented, let chat = environment.assistantChat {
+                // An Albatross thread is the conversation: no corner chat over
+                // it (decision 15). ⌘K goes to the thread's composer instead.
+                if environment.navigation.showsWorkThread {
+                    EmptyView()
+                } else if environment.navigation.chatPanelPresented, let chat = environment.assistantChat {
                     panel(chat: chat, containerSize: geometry.size)
                 } else {
                     chatButton

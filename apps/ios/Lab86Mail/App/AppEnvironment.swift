@@ -48,6 +48,9 @@ final class AppEnvironment {
     let sendAs: SendAsDirectory
     // The plan, the trial note, and the optional Files surface (round 2).
     let trust: AccountTrustStore
+    // The user's personal details: the form cards prefill from them, and
+    // Settings edits them. Read-through, never written to disk.
+    let personalDetails = PersonalDetailsStore()
     // The current Albatross conversation. Held here so switching destinations
     // does not discard an in-flight exchange; the sidebar plus starts a fresh
     // one. Distinct from intent capture, which stays a form.
@@ -208,6 +211,12 @@ final class AppEnvironment {
     }
 
     func startAssistantChat(scope: AssistantChatScope = .global, route: BarRoute = .ask) {
+        // A Work has one conversation: its thread. Open the Work instead of a
+        // second chat about it.
+        if scope.kind == .work, let workID = scope.contextID, !workID.isEmpty {
+            navigation.openWork(id: workID, title: scope.label)
+            return
+        }
         let model = makeAssistantChat(scope: scope)
         if route == .hold { model.presetRoute(.hold) }
         assistantChat = model

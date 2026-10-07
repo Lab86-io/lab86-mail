@@ -236,6 +236,9 @@ struct AssistantShapeActions: View {
         case .rememberSender(let email, _):
             try await invoke("remember", Self.rememberArguments(email: email, notes: notes, savedNoteLoaded: noteLoaded))
             return "Note saved"
+        case .undoPersonalDetails(let keys):
+            try await environment.personalDetails.undo(keys: keys, transport: environment.backend)
+            return "Put back"
         case .unknown: throw BackendError.invalidResponse
         }
         return "Opened"
