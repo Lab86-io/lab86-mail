@@ -46,10 +46,14 @@ export interface StartResult {
 
 async function loadStep(deps: StepRunStartDependencies, userId: string, workId: string, stepKey?: string) {
   const detail = await deps.convexQuery<any>(api.albatrossWorkV2.workDetail, { userId, workId });
-  if (!detail?.work) throw new StepRunStartError('Albatross Work not found.', 404);
+  if (!detail?.work) return { detail: null, step: null, missingWork: true };
   const steps: RunnableStepLike[] = detail.execution?.guideSteps || [];
   const step = stepKey ? steps.find((entry) => entry.key === stepKey) : detail.execution?.currentStep;
-  return { detail, step: (step || null) as (RunnableStepLike & { identity?: string }) | null };
+  return {
+    detail,
+    step: (step || null) as (RunnableStepLike & { identity?: string }) | null,
+    missingWork: false,
+  };
 }
 
 /** Start a run on one step. A user start explains every refusal; an automatic start returns a reason. */
@@ -69,7 +73,11 @@ export async function startStepRun(
     if (await deps.runsPaused(input.userId).catch(() => false))
       return { runId: null, created: false, reason: 'paused' };
   }
-  const { step } = await loadStep(deps, input.userId, input.workId, input.stepKey);
+  const { step, missingWork } = await loadStep(deps, input.userId, input.workId, input.stepKey);
+  if (missingWork) {
+    if (automatic) return { runId: null, created: false, reason: 'no_work' };
+    throw new StepRunStartError('Albatross Work not found.', 404);
+  }
   if (!step) {
     if (automatic) return { runId: null, created: false, reason: 'no_step' };
     throw new StepRunStartError('There is no such step.', 404);
@@ -110,7 +118,8 @@ export async function resumeStepRun(
     id: input.runId,
   });
   if (!parent || parent.workId !== input.workId) throw new StepRunStartError('Run not found.', 404);
-  const { step } = await loadStep(deps, input.userId, input.workId, parent.stepKey);
+  const { step, missingWork } = await loadStep(deps, input.userId, input.workId, parent.stepKey);
+  if (missingWork) throw new StepRunStartError('Albatross Work not found.', 404);
   if (!step) throw new StepRunStartError('This step is no longer in the plan.', 404);
   if (step.done) throw new StepRunStartError('This step is already done.', 409);
   const result = await deps.convexMutation<EnqueueResult>(api.albatrossStepRuns.enqueue, {

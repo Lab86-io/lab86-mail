@@ -463,7 +463,7 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
   });
   tools.browser_press = aiTool({
     description:
-      'Press one navigation key: Tab, Shift+Tab, Escape, arrows, PageDown, PageUp, Home, End, Space.',
+      'Press one navigation key: Tab, Shift+Tab, Escape, arrows, PageDown, PageUp, Home, End. To press a control, use browser_click.',
     inputSchema: z.object({ key: z.string().min(1).max(20) }),
     execute: pageAction(
       () => 'Working on the page',
