@@ -1,11 +1,13 @@
 import { after, type NextRequest } from 'next/server';
 import { describeModelError } from '@/lib/ai/log-error';
+import { sessionOptionsForUser } from '@/lib/albatross/browser-contexts';
 import {
   browserSessionsConfigured,
   createBrowserSession,
   navigateSession,
   readSessionPage,
   releaseBrowserSession,
+  sessionConnectUrl,
 } from '@/lib/albatross/browser-session';
 import { evidenceSatisfies } from '@/lib/albatross/evidence-gate';
 import { completeWorkStep } from '@/lib/albatross/step-execution';
@@ -26,6 +28,8 @@ interface WorkSessionDependencies {
   convexQuery: typeof convexQuery;
   browserSessionsConfigured: typeof browserSessionsConfigured;
   createBrowserSession: typeof createBrowserSession;
+  sessionOptions: typeof sessionOptionsForUser;
+  connectUrl: (sessionId: string) => string;
   releaseBrowserSession: typeof releaseBrowserSession;
   navigateSession: typeof navigateSession;
   readSessionPage: typeof readSessionPage;
@@ -42,6 +46,8 @@ const defaults: WorkSessionDependencies = {
   convexQuery,
   browserSessionsConfigured,
   createBrowserSession,
+  sessionOptions: (userId) => sessionOptionsForUser(userId),
+  connectUrl: sessionConnectUrl,
   releaseBrowserSession,
   navigateSession,
   readSessionPage,
@@ -113,7 +119,8 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
         if (previous?.sessionId) {
           await deps.releaseBrowserSession(previous.sessionId).catch(() => undefined);
         }
-        const session = await deps.createBrowserSession();
+        // Saved sign-ins: the session starts with the user's context.
+        const session = await deps.createBrowserSession(fetch, await deps.sessionOptions(userId));
         await deps.convexMutation(api.albatrossBrowserSessions.openSession, {
           userId,
           workId,
@@ -188,12 +195,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
         });
         // The session row stores no connectUrl (it is a credentialed endpoint);
         // reads go through a fresh create-time handle only. Re-derive it.
-        const connectUrl = `wss://connect.browserbase.com?apiKey=${encodeURIComponent(
-          process.env.BROWSERBASE_API_KEY ||
-            process.env.LAB86_BROWSERBASE_API_KEY ||
-            process.env.BB_API_KEY ||
-            '',
-        )}&sessionId=${encodeURIComponent(sessionId)}`;
+        const connectUrl = deps.connectUrl(sessionId);
         let satisfied = false;
         let reason = '';
         let checkRan = false;

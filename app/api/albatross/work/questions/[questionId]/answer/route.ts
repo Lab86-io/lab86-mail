@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { resumeRunForAnswer } from '@/lib/albatross/step-run-start';
 import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
@@ -33,6 +34,17 @@ export async function POST(req: NextRequest, context: { params: Promise<{ questi
       answer,
       answeredOptionId: typeof body.answeredOptionId === 'string' ? body.answeredOptionId : undefined,
     });
+    // A step run that asked this question continues with the answer. The
+    // run owns the step now, so the plan does not move under it.
+    if (answered.workId) {
+      const runId = await resumeRunForAnswer({
+        userId: user.userId,
+        workId: answered.workId,
+        questionId,
+        answer,
+      }).catch(() => null);
+      if (runId) return Response.json({ ok: true, status: 'answered', ...answered, runId });
+    }
     if (answered.shouldAdvance && answered.workId) {
       const result = await advanceWork({
         userId: user.userId,

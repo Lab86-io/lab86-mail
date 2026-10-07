@@ -3,6 +3,8 @@ import { internal } from './_generated/api';
 
 const crons = cronJobs();
 crons.interval('recover brief jobs', { minutes: 1 }, internal.briefJobs.recover, {});
+// Step runs: requeue lost leases and deliver due runs (convex/albatrossStepRuns.ts).
+crons.interval('recover step runs', { minutes: 1 }, internal.albatrossStepRuns.recover, {});
 // Durable cursors/leases make interrupted narrative runs resumable. No opted-in users = no work.
 crons.interval('shared narrative memory', { hours: 1 }, internal.narrative.tick, {});
 
@@ -66,6 +68,9 @@ crons.interval(
 // Local-time Albatross check-ins and their multi-channel delivery outbox.
 // Each target is deduped by user + local date, so a 15-minute cadence remains
 // safe across deploys, retries, and daylight-saving transitions.
+// The step-run conductor: starts a run on the current step of Work the user
+// touched, when an agent can carry that step. The app checks flags and orders.
+crons.interval('albatross step runs', { minutes: 15 }, internal.albatrossStepRuns.autoTick, {});
 crons.interval('albatross notifications', { minutes: 15 }, internal.albatrossNotifications.tick, {});
 
 // Check-in writes return as soon as Convex owns the user's words. These two

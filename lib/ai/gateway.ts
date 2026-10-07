@@ -80,6 +80,9 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   albatross_route: 60,
   albatross_shape_backfill: 2000,
   agent: 12000,
+  // Step runs (lib/albatross/step-runner.ts): an agent turn without a chat window.
+  albatross_step: 12000,
+  albatross_step_auto: 12000,
 };
 const DEFAULT_GENERATE_MAX_TOKENS = 4000;
 const DEFAULT_STREAM_MAX_TOKENS = 24000;
@@ -97,7 +100,12 @@ const DEFAULT_AGENT_FALLBACKS = [
 // Features that get retry + cross-provider failover. The interactive agent AND
 // the Daily Brief artifact both need it — a single provider blip on the brief
 // was silently degrading it to the plain native renderer.
-const FAILOVER_FEATURES = new Set(['agent', ...BRIEF_GENERATION_FEATURES]);
+const FAILOVER_FEATURES = new Set([
+  'agent',
+  'albatross_step',
+  'albatross_step_auto',
+  ...BRIEF_GENERATION_FEATURES,
+]);
 
 function capForFeature(feature: string, explicit: number | undefined, fallback: number): number {
   // Brief writers ignore small per-call ceilings: a shared reasoning and page

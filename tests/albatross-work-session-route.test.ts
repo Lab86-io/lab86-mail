@@ -56,6 +56,8 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       convexMutation: mock(async () => undefined) as any,
       browserSessionsConfigured: () => true,
       createBrowserSession: mock(async () => sessionInfo) as any,
+      sessionOptions: mock(async () => ({ contextId: 'ctx-1', persist: true })) as any,
+      connectUrl: (sessionId: string) => `wss://connect.example/${sessionId}?key`,
       releaseBrowserSession: mock(async () => undefined) as any,
       navigateSession: mock(async () => undefined) as any,
       readSessionPage: mock(async () => ({
@@ -75,6 +77,24 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
 }
 
 describe('work session route', () => {
+  test('start opens the session with the saved sign-in context', async () => {
+    const { deps } = makeDeps();
+    const post = createWorkSessionPost(deps as any);
+    const response = await post(
+      new Request('https://app.test/api/albatross/work/work-1/session', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'start', stepKey: detail.execution.guideSteps[0].key }),
+      }) as any,
+      { params: Promise.resolve({ workId: 'work-1' }) },
+    );
+    expect(response.status).toBe(200);
+    expect(deps.sessionOptions).toHaveBeenCalledWith('user-1');
+    expect((deps.createBrowserSession as any).mock.calls[0][1]).toEqual({
+      contextId: 'ctx-1',
+      persist: true,
+    });
+  });
+
   test('start opens a shared session, records it, and prepares the page', async () => {
     const { deps, scheduled } = makeDeps();
     const post = createWorkSessionPost(deps as any);

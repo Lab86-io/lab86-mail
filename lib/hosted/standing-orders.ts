@@ -20,6 +20,7 @@ import { api, convexMutation, convexQuery } from './convex';
 export const STANDING_ORDER_SWITCHES = [
   'brief',
   'watches',
+  'runs',
   'risk:write_self',
   'risk:reach_person',
   'risk:destructive',
@@ -36,7 +37,7 @@ export type StandingOrderGroup = 'schedule' | 'mail' | 'assistant';
 export type StandingOrderMode = 'runs_alone' | 'draft' | 'asks_first';
 
 export interface StandingOrder {
-  /** `brief`, `watches`, `sorting`, `prepare`, `code_cleanup`, `routine:<id>`, `rule:<id>`, or `risk:<class>`. */
+  /** `brief`, `watches`, `runs`, `sorting`, `prepare`, `code_cleanup`, `routine:<id>`, `rule:<id>`, or `risk:<class>`. */
   id: string;
   group: StandingOrderGroup;
   title: string;
@@ -195,6 +196,17 @@ export function buildStandingOrders(sources: StandingOrderSources): StandingOrde
         items: [],
       }),
     ),
+    {
+      id: 'runs',
+      group: 'schedule',
+      title: 'Work on steps by itself',
+      detail:
+        'Starts on steps it can do alone, from the Brief and on Albatrosses you touched today. It stops at sign-in, payment, and anything that reaches a person, and tells you the next step.',
+      mode: 'runs_alone',
+      paused: sources.switches.runs,
+      locked: false,
+      items: [],
+    },
     {
       id: 'sorting',
       group: 'mail',
@@ -485,10 +497,10 @@ export async function pausedAssistantRisks(
   }
 }
 
-/** True when the user paused the morning Brief or the mail watches. A failed read runs them. */
+/** True when the user paused the morning Brief, the mail watches, or automatic step runs. A failed read runs them. */
 export async function isStandingOrderPaused(
   userId: string,
-  id: 'brief' | 'watches',
+  id: 'brief' | 'watches' | 'runs',
   read?: (userId: string) => Promise<StandingOrderSwitches>,
 ): Promise<boolean> {
   try {

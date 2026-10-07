@@ -156,8 +156,13 @@ export function resolveEntitlementBudgetPolicy(input: {
   });
 }
 
+/**
+ * Agent turns the user asked for: chat, and step runs the user started
+ * (`albatross_step`). They stop when the month's credits run out. Automatic
+ * step runs (`albatross_step_auto`) are background work.
+ */
 export function isAiChatFeature(feature: string) {
-  return feature === 'agent' || feature === 'chat';
+  return feature === 'agent' || feature === 'chat' || feature === 'albatross_step';
 }
 
 export function shouldDepleteLab86Budget(source: 'lab86' | 'byok') {

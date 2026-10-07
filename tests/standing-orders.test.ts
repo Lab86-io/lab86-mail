@@ -274,6 +274,7 @@ describe('the standing orders list', () => {
     expect(orders.map((order) => order.id)).toEqual([
       'brief',
       'routine:rt1',
+      'runs',
       'sorting',
       'rule:r1',
       'watches',
@@ -293,6 +294,8 @@ describe('the standing orders list', () => {
       { id: 'w2', label: 'Passport', detail: 'Waits for a confirmation' },
     ]);
     expect(byId.get('code_cleanup')?.paused).toBe(true);
+    expect(byId.get('runs')).toMatchObject({ group: 'schedule', mode: 'runs_alone', paused: false });
+    expect(byId.get('runs')?.detail).toContain('stops at sign-in');
     expect(byId.get('prepare')?.mode).toBe('draft');
     expect(byId.get('risk:read')).toMatchObject({ locked: true, paused: false });
     expect(byId.get('risk:destructive')).toMatchObject({ paused: true, mode: 'asks_first' });
@@ -331,7 +334,9 @@ describe('the standing orders list', () => {
     );
     expect(routine({ cadence: 'custom', daysOfWeek: [] }).detail).toContain('On its own schedule');
     const ruleLine = (overrides: Partial<SmartRule>) =>
-      buildStandingOrders(sources({ rules: [rule(overrides)] }))[2].detail;
+      buildStandingOrders(sources({ rules: [rule(overrides)] })).find((order) =>
+        order.id.startsWith('rule:'),
+      )!.detail;
     expect(ruleLine({ effect: 'never_main', scope: 'domain', match: 'example.test' })).toBe(
       'Keeps mail from example.test out of Main.',
     );
@@ -461,7 +466,7 @@ describe('pausing and resuming', () => {
     );
     const unknown = await setStandingOrderPaused('u', 'nonsense', true, deps).catch((error) => error);
     expect(unknown).toMatchObject({ status: 404 });
-    expect((await listStandingOrders('u', deps)).length).toBe(11);
+    expect((await listStandingOrders('u', deps)).length).toBe(12);
   });
 
   test('a routine the list no longer has is reported as not found', async () => {

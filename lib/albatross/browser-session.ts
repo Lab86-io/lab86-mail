@@ -11,9 +11,14 @@
  * satisfies the step's doneWhen or the step stays open. The session replay
  * URL rides along as the evidence url.
  *
- * Boundary for this round: the agent navigates and verifies. Autonomous form
- * driving (act/prefill) is a named follow-up once the new Stagehand major
- * version is vetted; nothing here pretends to do it.
+ * The step runner drives the same session through lib/albatross/browser-agent.ts:
+ * it reads the page as an accessibility snapshot and acts by element ref, and
+ * it stops at sign-in, payment, and final submits for the user.
+ *
+ * Saved sign-ins: each user has one Browserbase context. A session that uses
+ * it with persist on keeps the cookies of the sites the user signed in to, so
+ * the next session starts signed in. The context holds browser data only;
+ * Albatross never receives a password. Forgetting deletes the context.
  */
 
 import { truncateText } from '../shared/text';
@@ -42,7 +47,7 @@ export function browserSessionsConfigured(): boolean {
 }
 
 async function browserbaseRequest<T>(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'DELETE',
   path: string,
   body?: Record<string, unknown>,
   fetcher: typeof fetch = fetch,
@@ -61,11 +66,25 @@ async function browserbaseRequest<T>(
     });
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(`Browserbase ${path} failed (${response.status}): ${truncateText(text, 200)}`);
+      throw new BrowserbaseRequestError(
+        `Browserbase ${path} failed (${response.status}): ${truncateText(text, 200)}`,
+        response.status,
+      );
     }
-    return (await response.json()) as T;
+    const text = await response.text();
+    return (text ? JSON.parse(text) : {}) as T;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+export class BrowserbaseRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'BrowserbaseRequestError';
   }
 }
 
@@ -80,8 +99,18 @@ export function sessionReplayUrl(sessionId: string) {
   return `https://browserbase.com/sessions/${sessionId}`;
 }
 
+export interface BrowserSessionOptions {
+  /** The user's saved sign-in context. */
+  contextId?: string;
+  /** Save the cookies of this session back to the context when it ends. */
+  persist?: boolean;
+}
+
 /** Create a session and resolve its interactive live view in one call. */
-export async function createBrowserSession(fetcher: typeof fetch = fetch): Promise<BrowserSessionInfo> {
+export async function createBrowserSession(
+  fetcher: typeof fetch = fetch,
+  options: BrowserSessionOptions = {},
+): Promise<BrowserSessionInfo> {
   const created = await browserbaseRequest<{ id: string; connectUrl: string }>(
     'POST',
     '/sessions',
@@ -89,7 +118,13 @@ export async function createBrowserSession(fetcher: typeof fetch = fetch): Promi
       ...(browserbaseProjectId() ? { projectId: browserbaseProjectId() } : {}),
       keepAlive: true,
       timeout: SESSION_TIMEOUT_SECONDS,
-      browserSettings: { recordSession: true, viewport: { width: 1280, height: 800 } },
+      browserSettings: {
+        recordSession: true,
+        viewport: { width: 1280, height: 800 },
+        ...(options.contextId
+          ? { context: { id: options.contextId, persist: options.persist === true } }
+          : {}),
+      },
     },
     fetcher,
   );
@@ -105,6 +140,36 @@ export async function createBrowserSession(fetcher: typeof fetch = fetch): Promi
     liveViewUrl: debug.debuggerFullscreenUrl,
     replayUrl: sessionReplayUrl(created.id),
   };
+}
+
+/** A new, empty sign-in context for one user. */
+export async function createBrowserContext(fetcher: typeof fetch = fetch): Promise<string> {
+  const created = await browserbaseRequest<{ id: string }>(
+    'POST',
+    '/contexts',
+    browserbaseProjectId() ? { projectId: browserbaseProjectId() } : {},
+    fetcher,
+  );
+  if (!created?.id) throw new Error('Browserbase returned no context id.');
+  return created.id;
+}
+
+/** Delete a sign-in context. A context that is already gone counts as deleted. */
+export async function deleteBrowserContext(contextId: string, fetcher: typeof fetch = fetch) {
+  try {
+    await browserbaseRequest('DELETE', `/contexts/${encodeURIComponent(contextId)}`, undefined, fetcher);
+  } catch (error) {
+    if (error instanceof BrowserbaseRequestError && error.status === 404) return;
+    throw error;
+  }
+}
+
+/**
+ * The CDP endpoint of an open session. It carries the API key, so it never
+ * reaches a client, a log line, or a stored row.
+ */
+export function sessionConnectUrl(sessionId: string) {
+  return `wss://connect.browserbase.com?apiKey=${encodeURIComponent(browserbaseKey())}&sessionId=${encodeURIComponent(sessionId)}`;
 }
 
 export async function releaseBrowserSession(sessionId: string, fetcher: typeof fetch = fetch) {

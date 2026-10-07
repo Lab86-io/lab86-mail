@@ -135,6 +135,29 @@ export const activeSessionForWork = query({
 });
 
 /**
+ * Live sessions of one user across all Work. Only one live session may save
+ * cookies back to the user's sign-in context at a time; a second one reads
+ * the saved sign-ins without saving.
+ */
+export const liveSessionCount = query({
+  args: callerArgs,
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const rows = await ctx.db
+      .query('albatrossBrowserSessions')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(40);
+    return rows.filter(
+      (row) =>
+        row.status !== 'ended' &&
+        row.status !== 'failed' &&
+        row.createdAt > now() - BROWSER_SESSION_STALE_AFTER_MS,
+    ).length;
+  },
+});
+
+/**
  * A Browserbase session lives one hour (`SESSION_TIMEOUT_SECONDS` in
  * lib/albatross/browser-session.ts). A live row older than that plus a margin
  * is stale: the pane would show a dead live view (WRK-8).

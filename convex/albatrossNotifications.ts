@@ -1349,6 +1349,56 @@ export const tomorrowPlanTick = internalAction({
   handler: (ctx) => runCheckinBackgroundTick(ctx, 'tomorrow'),
 });
 
+/**
+ * A step run handed the user the next action (convex/albatrossStepRuns.ts).
+ * One notice per run. It deep-links to the Work, where the handoff waits.
+ */
+export const queueStepRunHandoff = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    workId: v.string(),
+    runId: v.string(),
+    title: v.string(),
+    body: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const dedupeKey = `step-run:${args.runId}`;
+    const existing = await ctx.db
+      .query('albatrossNotifications')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', args.userId).eq('dedupeKey', dedupeKey))
+      .unique();
+    if (existing) return { created: false, notificationId: existing._id };
+    const preference = await ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .unique();
+    const ts = now();
+    const notificationId = await ctx.db.insert(
+      'albatrossNotifications',
+      notificationPayload({
+        userId: args.userId,
+        type: 'work_question',
+        title: truncateText(args.title, 180),
+        body: truncateText(args.body, 1_000),
+        entityKind: 'work',
+        entityId: args.workId,
+        deepLink: `/?view=albatrosses&work=${encodeURIComponent(args.workId)}`,
+        dedupeKey,
+        scheduledFor: ts,
+      }),
+    );
+    await ensureInAppDelivery(ctx, {
+      userId: args.userId,
+      notificationId,
+      enabled: preference?.inAppEnabled !== false,
+      timestamp: ts,
+    });
+    return { created: true, notificationId };
+  },
+});
+
 export const queueWorkConductorNotice = internalMutation({
   args: {
     userId: v.string(),
