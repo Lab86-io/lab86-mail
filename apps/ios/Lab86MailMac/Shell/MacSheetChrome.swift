@@ -15,16 +15,24 @@ struct MacSheetSize: Equatable, Sendable {
     static let editor = MacSheetSize(minWidth: 480, minHeight: 440)
     // A list the user works through, such as sender cleanup.
     static let workList = MacSheetSize(minWidth: 600, minHeight: 560)
+    // The shared browser: a remote page at a desktop size, with one status
+    // bar over it. A web view has no size of its own.
+    static let liveBrowser = MacSheetSize(minWidth: 1_180, minHeight: 760)
 }
 
 extension View {
     func macFormSheet(_ size: MacSheetSize = .settingsPage) -> some View {
         formStyle(.grouped)
-            .frame(
-                minWidth: size.minWidth,
-                idealWidth: size.minWidth,
-                minHeight: size.minHeight,
-                idealHeight: size.minHeight
-            )
+            .macSheet(size)
+    }
+
+    /// The size alone, for a sheet that is not a form.
+    func macSheet(_ size: MacSheetSize) -> some View {
+        frame(
+            minWidth: size.minWidth,
+            idealWidth: size.minWidth,
+            minHeight: size.minHeight,
+            idealHeight: size.minHeight
+        )
     }
 }

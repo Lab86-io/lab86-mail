@@ -1725,6 +1725,142 @@ final class ProductStore {
         )
     }
 
+    // MARK: - Step runs
+    //
+    // One POST route carries every run action. The cached detail changes at
+    // once where the outcome is certain (a queued run, a stop, a dismiss);
+    // the next `work_home` read settles the rest.
+
+    private func stepRunPath(_ workID: String) -> String {
+        "/api/albatross/work/\(workID)/run"
+    }
+
+    /// "Handle it". Returns the run id, or nil with `workError` set.
+    func startStepRun(_ workID: String, stepKey: String) async -> String? {
+        do {
+            let result = try await backend.post(
+                path: stepRunPath(workID),
+                body: .object(["action": .string("start"), "stepKey": .string(stepKey)])
+            )
+            guard let runID = result["runId"]?.stringValue?.nilIfBlank else {
+                throw BackendError.invalidResponse
+            }
+            if let detail = workDetails[workID] {
+                let title = detail.execution.guideSteps.first { $0.id == stepKey }?.title ?? "This step"
+                workDetails[workID] = detail.withStepRun(
+                    StepRunView.queued(id: runID, workID: workID, stepKey: stepKey, stepTitle: title)
+                )
+            }
+            _ = try? await loadWorkDetail(workID)
+            return runID
+        } catch {
+            workError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// "Continue" after a handoff or a stop. The server starts a new run and
+    /// returns its id.
+    func resumeStepRun(_ workID: String, runID: String, note: String? = nil) async -> String? {
+        var body: [String: JSONValue] = ["action": .string("resume"), "runId": .string(runID)]
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            body["note"] = .string(String(note.prefix(2_000)))
+        }
+        do {
+            let result = try await backend.post(path: stepRunPath(workID), body: .object(body))
+            let newRunID = result["runId"]?.stringValue?.nilIfBlank ?? runID
+            _ = try? await loadWorkDetail(workID)
+            return newRunID
+        } catch {
+            workError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// "Stop" on an open run, and "Take over" in the shared browser. The
+    /// server gives the page to the user.
+    func cancelStepRun(_ workID: String, run: StepRunView) async -> Bool {
+        do {
+            _ = try await backend.post(
+                path: stepRunPath(workID),
+                body: .object(["action": .string("cancel"), "runId": .string(run.id)])
+            )
+            if let detail = workDetails[workID] {
+                workDetails[workID] = detail.withStepRun(run.with(state: .cancelled))
+            }
+            _ = try? await loadWorkDetail(workID)
+            return true
+        } catch {
+            workError = error.localizedDescription
+            return false
+        }
+    }
+
+    /// "Dismiss" on a handoff card. The step is eligible again.
+    func dismissStepRun(_ workID: String, run: StepRunView) async -> Bool {
+        do {
+            _ = try await backend.post(
+                path: stepRunPath(workID),
+                body: .object(["action": .string("dismiss"), "runId": .string(run.id)])
+            )
+            if let detail = workDetails[workID] {
+                workDetails[workID] = detail.withStepRun(run.with(state: .closed))
+            }
+            _ = try? await loadWorkDetail(workID)
+            return true
+        } catch {
+            workError = error.localizedDescription
+            return false
+        }
+    }
+
+    /// The Brief's "Ready for you" rows: open runs and handoffs, newest first.
+    func loadHandoffs() async throws -> [StepHandoffItem] {
+        try await backend.listHandoffs()
+    }
+
+    /// Whether a saved sign-in context exists for the shared browser.
+    func browserContext() async throws -> BrowserContextStatus {
+        let json = try await backend.get(path: BrowserContextStatus.path)
+        return BrowserContextStatus(json: json)
+    }
+
+    /// "Forget saved sign-ins". The server deletes the browser context too.
+    func forgetBrowserContext() async throws {
+        _ = try await backend.delete(path: BrowserContextStatus.path, body: .object([:]))
+    }
+
+    /// The composer seed for a draft the runner saved, read from the mailbox
+    /// drafts. The composer keeps the id, so a save updates the same draft.
+    /// Nil when no mailbox holds the draft.
+    func loadDraftPrefill(draftID: String, accountID: String?) async -> ComposePrefill? {
+        let candidates = accountID.map { [$0] } ?? accounts.map(\.id)
+        for account in candidates {
+            guard let result = try? await tools.invoke("list_drafts", arguments: ["account": .string(account)]) else {
+                continue
+            }
+            for row in result["drafts"]?.arrayValue ?? [] {
+                let rowID = row["_id"]?.stringValue ?? row["id"]?.stringValue
+                guard rowID == draftID else { continue }
+                return ComposePrefill(
+                    recipient: row["to"]?.stringValue ?? "",
+                    cc: row["cc"]?.stringValue ?? "",
+                    bcc: row["bcc"]?.stringValue ?? "",
+                    subject: row["subject"]?.stringValue ?? "",
+                    body: row["body"]?.stringValue ?? "",
+                    mode: "new",
+                    accountID: account,
+                    threadID: nil,
+                    messageID: nil,
+                    replyAll: false,
+                    attachmentsKey: nil,
+                    draftID: draftID
+                )
+            }
+        }
+        return nil
+    }
+
     func proofMatches(
         subject: String,
         snippet: String,

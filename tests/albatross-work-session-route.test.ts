@@ -56,6 +56,11 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       convexMutation: mock(async () => undefined) as any,
       browserSessionsConfigured: () => true,
       createBrowserSession: mock(async () => sessionInfo) as any,
+      sessionOptions: mock(async () => ({ contextId: 'ctx-1', persist: true, writerToken: 'w-1' })) as any,
+      bindWriter: mock(async () => true) as any,
+      releaseWriter: mock(async () => undefined) as any,
+      wait: mock(async () => undefined) as any,
+      connectUrl: (sessionId: string) => `wss://connect.example/${sessionId}?key`,
       releaseBrowserSession: mock(async () => undefined) as any,
       navigateSession: mock(async () => undefined) as any,
       readSessionPage: mock(async () => ({
@@ -74,7 +79,139 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
   };
 }
 
+describe('work session route: review round two', () => {
+  const start = () => sessionRequest({ action: 'start', stepKey: step.key });
+  const withPrevious = (overrides: Record<string, unknown> = {}) => {
+    const statuses: string[] = [];
+    const made = makeDeps({
+      convexQuery: mock(async (fn: any, args: any) => {
+        if (isWorkDetail(fn)) return args.workId === 'work-1' ? detail : null;
+        if (isActiveSession(fn)) return { sessionId: 'bb-old' };
+        return null;
+      }) as any,
+      convexMutation: mock(async (fn: any, args: any) => {
+        if (getFunctionName(fn) === 'albatrossBrowserSessions:setSessionStatus')
+          statuses.push(`${args.sessionId}:${args.status}`);
+        return undefined;
+      }) as any,
+      ...overrides,
+    });
+    return { ...made, statuses };
+  };
+
+  test('a previous browser that did not close keeps its row and its writer place', async () => {
+    const { deps, statuses } = withPrevious({
+      releaseBrowserSession: mock(async () => {
+        throw new Error('Browserbase is down');
+      }) as any,
+    });
+    await createWorkSessionPost(deps as any)(start(), context);
+    expect(statuses.filter((entry) => entry.startsWith('bb-old'))).toEqual([]);
+    expect(deps.wait).not.toHaveBeenCalled();
+  });
+
+  test('a closed previous browser ends its row and waits for the context to save', async () => {
+    const { deps, statuses } = withPrevious();
+    await createWorkSessionPost(deps as any)(start(), context);
+    expect(statuses).toContain('bb-old:ended');
+    expect(deps.wait).toHaveBeenCalledWith(2_000);
+  });
+
+  test('a cleanup error never hides the start error', async () => {
+    const { deps } = makeDeps({
+      bindWriter: mock(async () => false) as any,
+      releaseWriter: mock(async () => {
+        throw new Error('cleanup failed');
+      }) as any,
+    });
+    const response = await createWorkSessionPost(deps as any)(start(), context);
+    expect(response.status).toBe(500);
+    expect(deps.releaseBrowserSession).toHaveBeenCalledWith('bb-1');
+  });
+
+  test('a failed bind or ledger write rolls the new browser back', async () => {
+    const unbound = makeDeps({ bindWriter: mock(async () => false) as any });
+    expect((await createWorkSessionPost(unbound.deps as any)(start(), context)).status).toBe(500);
+    expect(unbound.deps.releaseBrowserSession).toHaveBeenCalledWith('bb-1');
+    expect(unbound.deps.releaseWriter).toHaveBeenCalled();
+
+    const noLedger = makeDeps({
+      convexMutation: mock(async (fn: any) => {
+        if (getFunctionName(fn) === 'albatrossBrowserSessions:openSession') throw new Error('Convex down');
+        return undefined;
+      }) as any,
+    });
+    expect((await createWorkSessionPost(noLedger.deps as any)(start(), context)).status).toBe(500);
+    expect(noLedger.deps.releaseBrowserSession).toHaveBeenCalledWith('bb-1');
+    expect(noLedger.deps.releaseWriter).toHaveBeenCalled();
+  });
+});
+
 describe('work session route', () => {
+  test('start opens the session with the saved sign-in context', async () => {
+    const { deps } = makeDeps();
+    const post = createWorkSessionPost(deps as any);
+    const response = await post(
+      new Request('https://app.test/api/albatross/work/work-1/session', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'start', stepKey: detail.execution.guideSteps[0].key }),
+      }) as any,
+      { params: Promise.resolve({ workId: 'work-1' }) },
+    );
+    expect(response.status).toBe(200);
+    expect(deps.sessionOptions).toHaveBeenCalledWith('user-1');
+    expect((deps.createBrowserSession as any).mock.calls[0][1]).toEqual({
+      contextId: 'ctx-1',
+      persist: true,
+      writerToken: 'w-1',
+    });
+    expect(deps.bindWriter).toHaveBeenCalledWith(
+      'user-1',
+      { contextId: 'ctx-1', persist: true, writerToken: 'w-1' },
+      'bb-1',
+    );
+  });
+
+  test('a replaced session ends before the new one claims the writer place', async () => {
+    const order: string[] = [];
+    const { deps } = makeDeps({
+      convexQuery: mock(async (fn: any, args: any) => {
+        if (isWorkDetail(fn)) return args.workId === 'work-1' ? detail : null;
+        if (isActiveSession(fn)) return { sessionId: 'bb-old' };
+        return null;
+      }) as any,
+      convexMutation: mock(async (fn: any, args: any) => {
+        if (getFunctionName(fn) === 'albatrossBrowserSessions:setSessionStatus')
+          order.push(`${args.sessionId}:${args.status}`);
+        return undefined;
+      }) as any,
+      sessionOptions: mock(async () => {
+        order.push('claim');
+        return { contextId: 'ctx-1', persist: true, writerToken: 'w-1' };
+      }) as any,
+    });
+    const post = createWorkSessionPost(deps as any);
+    await post(sessionRequest({ action: 'start', stepKey: step.key }), context);
+    expect(order.slice(0, 2)).toEqual(['bb-old:ended', 'claim']);
+  });
+
+  test('a session that fails to start gives the writer place back', async () => {
+    const { deps } = makeDeps({
+      createBrowserSession: mock(async () => {
+        throw new Error('Browserbase is down');
+      }) as any,
+    });
+    const post = createWorkSessionPost(deps as any);
+    const response = await post(sessionRequest({ action: 'start', stepKey: step.key }), context);
+    expect(response.status).toBe(500);
+    expect(deps.releaseWriter).toHaveBeenCalledWith('user-1', {
+      contextId: 'ctx-1',
+      persist: true,
+      writerToken: 'w-1',
+    });
+    expect(deps.bindWriter).not.toHaveBeenCalled();
+  });
+
   test('start opens a shared session, records it, and prepares the page', async () => {
     const { deps, scheduled } = makeDeps();
     const post = createWorkSessionPost(deps as any);

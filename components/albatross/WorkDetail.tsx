@@ -2,13 +2,14 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { LapsePrompt, ReleaseSheet } from '@/components/albatross/Forgiveness';
 import { type GuidedSession, GuidedStepPane } from '@/components/albatross/GuidedStep';
 import { HORIZON_SAVE_ERROR, HorizonControl } from '@/components/albatross/HorizonControl';
 import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
 import { OutcomeHeader } from '@/components/albatross/primitives';
 import { SplitSheet } from '@/components/albatross/SplitSheet';
+import { StepRunPanel } from '@/components/albatross/StepRunPanel';
 import { LIST_SAVE_ERROR, ListBody, visibleListItems } from '@/components/albatross/shapes/ListBody';
 import type { ListItem } from '@/components/albatross/shapes/ListRow';
 import {
@@ -40,6 +41,14 @@ import type { WorkHorizon } from '@/lib/albatross/horizon';
 import { type MetricLike, type MetricSummary, metricSummary } from '@/lib/albatross/practice-review';
 import type { EvidenceLike } from '@/lib/albatross/proof';
 import { resolveShape } from '@/lib/albatross/shape-policy';
+import {
+  activeRunOf,
+  browserPaneState,
+  ledgerRunLabel,
+  runForStep,
+  type StepRunView,
+} from '@/lib/albatross/step-run-client';
+import { performNextBehaviour } from '@/lib/albatross/step-run-navigation';
 import type { WorkShape } from '@/lib/albatross/work-shape';
 import { workStateKey } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
@@ -65,6 +74,10 @@ export interface ExecutionStepRow {
     evidenceTitle: string | null;
     evidenceUrl: string | null;
   } | null;
+  /** The newest step run of this step (docs/albatross-step-runner.md). */
+  run?: StepRunView | null;
+  /** True when the user may press "Handle it". */
+  runnable?: boolean;
 }
 
 /**
@@ -143,6 +156,10 @@ export interface WorkDetailData {
     totalSteps: number;
     scheduledStartAt: number | null;
     scheduledEndAt: number | null;
+    /** The open run of the Work (queued or running), or null. */
+    activeRun?: StepRunView | null;
+    /** `enabled: false` hides every run control. */
+    runner?: { enabled: boolean };
   };
   contract: OutcomeContract | null;
   evidence: EvidenceLike[];
@@ -275,6 +292,26 @@ export function WorkDetail({ workId }: { workId: string }) {
     api.albatrossBrowserSessions.activeSessionForWork,
     isAuthenticated ? { workId } : 'skip',
   ) as GuidedSession | null | undefined;
+  // The step runner's live rows: the newest run of each step. The projection
+  // in `detail` carries the same data; the subscription keeps it current.
+  const liveRuns = useQuery(api.albatrossStepRuns.runsForWork, isAuthenticated ? { workId } : 'skip') as
+    | StepRunView[]
+    | undefined;
+  const [runBusy, setRunBusy] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+  const navDeps = useMemo(
+    () => ({
+      getState: () => useClientStore.getState(),
+      setState: (patch: Record<string, unknown>) => useClientStore.setState(patch as never),
+      callTool: (name: string, args: Record<string, unknown>) => callTool(name, args),
+      openWindow: (url: string) => {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      },
+      pushPath: (path: string) => window.history.pushState(window.history.state, '', path),
+      dispatch: (eventName: string) => window.dispatchEvent(new Event(eventName)),
+    }),
+    [],
+  );
   const [advancing, setAdvancing] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [splitting, setSplitting] = useState(false);
@@ -587,6 +624,49 @@ export function WorkDetail({ workId }: { workId: string }) {
   const startSession = (stepKey: string) =>
     void sessionAction({ action: 'start', stepKey }, 'The shared browser could not open.');
 
+  // The step runner's actions. The live subscription shows the result; the
+  // page only tracks which action is in flight and its error.
+  const runAction = async (
+    action: 'start' | 'cancel' | 'resume' | 'dismiss',
+    body: Record<string, unknown>,
+  ) => {
+    const fallback = {
+      start: 'Albatross could not start this step.',
+      cancel: 'The run did not stop.',
+      resume: 'The run did not continue.',
+      dismiss: 'The handoff did not close.',
+    }[action];
+    setRunBusy(action);
+    setRunError(null);
+    try {
+      await postJson(`/api/albatross/work/${encodeURIComponent(workId)}/run`, { action, ...body }, fallback);
+    } catch (cause) {
+      setRunError(cause instanceof Error ? cause.message : fallback);
+    } finally {
+      setRunBusy(null);
+    }
+  };
+
+  const answerRunQuestion = async (questionId: string, answer: string, optionId?: string) => {
+    setRunBusy('answer');
+    setRunError(null);
+    try {
+      await postJson(
+        `/api/albatross/work/questions/${encodeURIComponent(questionId)}/answer`,
+        {
+          answer,
+          answeredOptionId: optionId,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
+        'Could not save that answer.',
+      );
+    } catch (cause) {
+      setRunError(cause instanceof Error ? cause.message : 'Could not save that answer.');
+    } finally {
+      setRunBusy(null);
+    }
+  };
+
   const endSession = () => {
     if (!session) return;
     void sessionAction({ action: 'end', sessionId: session.sessionId }, 'The shared browser did not close.');
@@ -712,6 +792,76 @@ export function WorkDetail({ workId }: { workId: string }) {
     setAiBarOpen(true);
   };
 
+  const runnerEnabled = detail.execution.runner?.enabled ?? false;
+  const activeRun = activeRunOf(liveRuns, detail.execution.activeRun);
+  const activeGuideStep =
+    visibleGuideSteps.find((step) => step.key === (activeGuideId || visibleCurrentStep?.key)) ||
+    visibleGuideSteps[0] ||
+    null;
+
+  /** The step runner's panel for one step. The Work page and the guided pane share it. */
+  const renderRunPanel = (step: ExecutionStepRow | null) => {
+    if (!step || !runnerEnabled) return null;
+    const run = runForStep(liveRuns, step);
+    const questionId = run?.next?.target?.kind === 'question' ? run.next.target.id : undefined;
+    const question =
+      detail.questions.find((row) => row._id === questionId) ??
+      (run?.next?.kind === 'answer' ? pendingQuestions[0] : undefined) ??
+      null;
+    return (
+      <StepRunPanel
+        run={run}
+        stepDone={step.done}
+        enabled={runnerEnabled}
+        runnable={Boolean(step.runnable)}
+        activeRun={activeRun}
+        busy={runBusy}
+        error={runError}
+        question={question}
+        onStart={() => void runAction('start', { stepKey: step.key })}
+        onCancel={(runId) => void runAction('cancel', { runId })}
+        onResume={(runId) => void runAction('resume', { runId })}
+        onDismiss={(runId) => void runAction('dismiss', { runId })}
+        onDiscuss={openAttachedChat}
+        onAnswer={(questionId, answer, optionId) => void answerRunQuestion(questionId, answer, optionId)}
+        onNext={(behaviour, current) => {
+          const showStep = () => {
+            setActiveGuideId(step.key);
+            setGuided(true);
+          };
+          void performNextBehaviour(behaviour, navDeps, {
+            showBrowser: showStep,
+            showArtifacts: showStep,
+            showQuestion: openAttachedChat,
+            markDone: () => void completeGuidedStep(step.key),
+            resume: () => void runAction('resume', { runId: current.id }),
+          })
+            .catch(() => false)
+            .then((opened) => {
+              if (!opened) setRunError('Albatross could not open that. Ask about it in the Work chat.');
+            });
+        }}
+      />
+    );
+  };
+
+  const guidedBrowser = (() => {
+    if (!activeGuideStep || !runnerEnabled) return null;
+    const run = runForStep(liveRuns, activeGuideStep);
+    const state = browserPaneState(session, run);
+    if (!state) return null;
+    return {
+      ...state,
+      busy: runBusy === 'cancel' || runBusy === 'resume',
+      onTakeOver: () => {
+        if (run) void runAction('cancel', { runId: run.id });
+      },
+      onContinue: () => {
+        if (run) void runAction('resume', { runId: run.id });
+      },
+    };
+  })();
+
   if (guided && visibleGuideSteps.length) {
     return (
       <GuidedStepPane
@@ -727,7 +877,10 @@ export function WorkDetail({ workId }: { workId: string }) {
           doneWhen: step.doneWhen ?? null,
           evidenceKind: step.evidenceKind ?? null,
           verification: step.verification ?? null,
+          runLabel: runnerEnabled ? ledgerRunLabel(runForStep(liveRuns, step)) : null,
         }))}
+        runPanel={renderRunPanel(activeGuideStep)}
+        browser={guidedBrowser}
         activeId={activeGuideId || visibleCurrentStep?.key}
         onSelect={setActiveGuideId}
         onExit={() => setGuided(false)}
@@ -925,6 +1078,10 @@ export function WorkDetail({ workId }: { workId: string }) {
                             {detail.execution.currentStep.detail}
                           </p>
                         ) : null}
+                        {(() => {
+                          const panel = renderRunPanel(detail.execution.currentStep);
+                          return panel ? <div className="mt-3">{panel}</div> : null;
+                        })()}
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)]/70 pt-3">
                           <span className="text-[12px] text-[var(--color-text-muted)]">
                             {detail.execution.remainingSteps} of {detail.execution.totalSteps} steps remain

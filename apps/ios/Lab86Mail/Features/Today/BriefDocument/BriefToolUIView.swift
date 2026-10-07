@@ -210,6 +210,12 @@ enum BriefOwnerMounts {
             && !document.hasLiveSection("prepared_work")
     }
 
+    /// "Ready for you" (the step runner's handoffs) sits at the top of the
+    /// newest daily edition only. History editions never carry live rows.
+    static func mountsReadyForYou(hasReport: Bool, showsLatest: Bool) -> Bool {
+        hasReport && showsLatest
+    }
+
     /// Live modules belong only to the latest daily edition.
     @MainActor
     static func liveSections(

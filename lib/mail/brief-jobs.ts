@@ -4,6 +4,7 @@ import { BRIEF_JOB_MAX_ATTEMPTS } from '../../convex/briefJobState';
 import { runWithAiRequestContext } from '../ai/context';
 import { isTerminalAiError, resolveAiRuntime } from '../ai/gateway';
 import { generateAreaLivingBrief } from '../albatross/area-living-brief';
+import { startBriefStepRuns } from '../albatross/step-run-brief';
 import { type BriefEditionBudget, BriefEditionMeter, runWithBriefMeter } from '../brief/budget';
 import { generateWeeklyReview } from '../brief/weekly';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
@@ -97,6 +98,7 @@ const defaults = {
   readDaily: getDailyReport,
   notify: notifyBriefReady,
   email: deliverBriefEmail,
+  stepRuns: startBriefStepRuns,
   noAccess: writerHasNoAccess,
   now: () => Date.now(),
 };
@@ -203,6 +205,8 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
             throw new Error('Editorial writer needs another attempt');
           if (lost || !(await deps.mutation<boolean>(functions.heartbeat, owner))) return;
           await deps.notify(userId, job.edition, report, job.timezone);
+          // The Brief's step runs start in the background; the edition never waits on them.
+          void deps.stepRuns(userId, job.edition, report as any).catch(() => undefined);
           // Brief by email (FEATURES item 6). A failed send never fails the job.
           await deps.email(userId, report, job.timezone).catch(() => {
             console.error('[brief jobs] brief email failed', userId);

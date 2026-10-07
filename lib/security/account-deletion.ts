@@ -1,3 +1,4 @@
+import { forgetSavedSignIns } from '@/lib/albatross/browser-contexts';
 import { disconnectCloudFileConnection, listCloudFileConnections } from '@/lib/files/connections';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { deleteNylasAccount } from '@/lib/nylas/provider';
@@ -7,6 +8,8 @@ export interface AccountDeletionDeps {
   deleteNylasAccount(userId: string, accountId: string, grantId?: string): Promise<unknown>;
   listCloudFileConnections(userId: string): Promise<Array<{ connectionId: string; provider?: string }>>;
   disconnectCloudFileConnection(userId: string, connectionId: string): Promise<{ revoked: boolean }>;
+  /** Deletes the saved sign-ins (the Browserbase context) of the shared browser. */
+  forgetSavedSignIns(userId: string): Promise<{ pending?: number } | unknown>;
   deleteUserCascade(userId: string): Promise<unknown>;
 }
 
@@ -23,15 +26,22 @@ export type AccountDeletionResult =
       ok: true;
       disconnected: DisconnectResult[];
       drives: DriveDisconnectResult[];
+      signIns?: { ok: boolean; pending?: number; error?: string };
       cascade: unknown;
     }
-  | { ok: false; disconnected: DisconnectResult[]; drives: DriveDisconnectResult[] };
+  | {
+      ok: false;
+      disconnected: DisconnectResult[];
+      drives: DriveDisconnectResult[];
+      signIns?: { ok: boolean; pending?: number; error?: string };
+    };
 
 export const defaultAccountDeletionDeps: AccountDeletionDeps = {
   listConnectedAccounts: (userId) => convexQuery<any[]>(api.accounts.listConnectedAccounts, { userId }),
   deleteNylasAccount,
   listCloudFileConnections,
   disconnectCloudFileConnection,
+  forgetSavedSignIns: (userId) => forgetSavedSignIns(userId),
   deleteUserCascade: (userId) => convexMutation<any>(api.accounts.deleteUserCascade, { userId }),
 };
 
@@ -78,6 +88,18 @@ export async function deleteUserData(
     }
   }
   if (drives.some((item) => !item.ok)) return { ok: false, disconnected, drives };
+  // The saved sign-ins live at Browserbase. Forgetting them records each
+  // context in a deletion row without a userId, which outlives the cascade,
+  // so a remote delete that fails now is retried hourly until it succeeds.
+  // Only a failure to record them stops here for a retry.
+  let signIns: { ok: boolean; pending?: number; error?: string };
+  try {
+    const forgotten = (await deps.forgetSavedSignIns(userId)) as { pending?: number } | undefined;
+    signIns = { ok: true, pending: Number(forgotten?.pending) || 0 };
+  } catch (err: any) {
+    signIns = { ok: false, error: err?.message || 'saved sign-ins could not be deleted' };
+    return { ok: false, disconnected, drives, signIns };
+  }
   const cascade = await deps.deleteUserCascade(userId);
-  return { ok: true, disconnected, drives, cascade };
+  return { ok: true, disconnected, drives, signIns, cascade };
 }

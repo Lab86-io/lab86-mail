@@ -983,6 +983,143 @@ export default defineSchema({
     .index('by_user_session', ['userId', 'sessionId'])
     .index('by_status_created', ['status', 'createdAt']),
 
+  // Step runs: the agent works one plan step as far as it can, then hands the
+  // user one next action (convex/albatrossStepRuns.ts). The row is both the
+  // job (lease, attempts) and the handoff record every client reads.
+  albatrossStepRuns: defineTable({
+    userId: v.string(),
+    workId: v.string(),
+    stepKey: v.string(),
+    stepIdentity: v.string(),
+    stepTitle: v.string(),
+    trigger: v.union(v.literal('user'), v.literal('brief'), v.literal('conductor'), v.literal('resume')),
+    state: v.union(
+      v.literal('queued'),
+      v.literal('running'),
+      v.literal('handed_off'),
+      v.literal('done'),
+      v.literal('failed'),
+      v.literal('cancelled'),
+      // The handoff ended without the runner: the user finished the step or dismissed it.
+      v.literal('closed'),
+    ),
+    active: v.boolean(),
+    token: v.optional(v.string()),
+    availableAt: v.number(),
+    attempts: v.number(),
+    parentRunId: v.optional(v.id('albatrossStepRuns')),
+    resumeNote: v.optional(v.string()),
+    outcome: v.optional(
+      v.union(
+        v.literal('done'),
+        v.literal('ready_for_you'),
+        v.literal('your_turn'),
+        v.literal('needs_answer'),
+        v.literal('stopped'),
+      ),
+    ),
+    summary: v.optional(v.string()),
+    log: v.array(v.object({ at: v.number(), text: v.string() })),
+    next: v.optional(
+      v.object({
+        kind: v.union(
+          v.literal('review_draft'),
+          v.literal('review_document'),
+          v.literal('approve'),
+          v.literal('sign_in'),
+          v.literal('finish_on_page'),
+          v.literal('answer'),
+          v.literal('do_offline'),
+          v.literal('review'),
+          v.literal('continue'),
+        ),
+        label: v.string(),
+        detail: v.string(),
+        target: v.optional(
+          v.object({
+            kind: v.union(
+              v.literal('draft'),
+              v.literal('document'),
+              v.literal('approval'),
+              v.literal('session'),
+              v.literal('question'),
+              v.literal('url'),
+              v.literal('card'),
+              v.literal('event'),
+            ),
+            id: v.optional(v.string()),
+            url: v.optional(v.string()),
+            accountId: v.optional(v.string()),
+          }),
+        ),
+      }),
+    ),
+    artifacts: v.array(
+      v.object({
+        kind: v.union(
+          v.literal('document'),
+          v.literal('draft'),
+          v.literal('event'),
+          v.literal('card'),
+          v.literal('approval'),
+          v.literal('page'),
+        ),
+        id: v.optional(v.string()),
+        title: v.string(),
+        url: v.optional(v.string()),
+        accountId: v.optional(v.string()),
+      }),
+    ),
+    browserSessionId: v.optional(v.string()),
+    budget: v.optional(
+      v.object({
+        timeMs: v.number(),
+        costUsd: v.number(),
+        inputTokens: v.number(),
+        outputTokens: v.number(),
+        calls: v.number(),
+        exhausted: v.optional(v.union(v.literal('time'), v.literal('cost'))),
+      }),
+    ),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    startedAt: v.optional(v.number()),
+    finishedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId', 'workId', 'createdAt'])
+    .index('by_user_step', ['userId', 'workId', 'stepIdentity'])
+    .index('by_user_active', ['userId', 'active'])
+    .index('by_active_available', ['active', 'availableAt']),
+
+  // Saved sign-ins: one Browserbase context per user. The context keeps the
+  // cookies of sites the user signed in to inside the shared browser. No
+  // password passes through Albatross; the row holds only the context id.
+  albatrossBrowserContexts: defineTable({
+    userId: v.string(),
+    contextId: v.string(),
+    createdAt: v.number(),
+    lastUsedAt: v.number(),
+    // The one session that may save cookies back to the context. Browserbase
+    // keeps the last writer, so a second live session only reads. The lease
+    // ends when that session ends, or at the session lifetime.
+    writerToken: v.optional(v.string()),
+    writerSessionId: v.optional(v.string()),
+    writerUntil: v.optional(v.number()),
+  }).index('by_user', ['userId']),
+
+  // Saved sign-ins that must still be deleted at Browserbase. The row has no
+  // userId on purpose: it outlives the account cascade, and an hourly cron
+  // retries the remote delete until Browserbase confirms it.
+  albatrossContextDeletions: defineTable({
+    contextId: v.string(),
+    requestedAt: v.number(),
+    attempts: v.number(),
+    lastError: v.optional(v.string()),
+  })
+    .index('by_context', ['contextId'])
+    .index('by_requested', ['requestedAt']),
+
   albatrossEvidence: defineTable({
     userId: v.string(),
     targetKind: v.optional(
@@ -1006,6 +1143,9 @@ export default defineSchema({
       // Evidence an agent observed inside a shared browser session: the page
       // reached its confirmation state, with the session replay as the url.
       v.literal('browser_session'),
+      // Proof a step run made: the document, draft, or result the agent
+      // produced for the step. It reads as "Noted", never as confirmed.
+      v.literal('step_run'),
     ),
     sourceId: v.string(),
     connectionId: v.optional(v.string()),
@@ -1433,6 +1573,8 @@ export default defineSchema({
     // Scheduling conductor lease. An unscheduled plan is retried at most once
     // per window, while passed blocks wait for an explicit recovery choice.
     lastConductorAt: v.optional(v.number()),
+    // The last time the step-run conductor read this Work's current step.
+    lastStepRunCheckAt: v.optional(v.number()),
     // The visible plan is the last plan that applied successfully. A newly
     // generated revision waits here until its artifacts are ready, so a failed
     // regeneration cannot replace a usable guide with a half-built one.
@@ -1483,6 +1625,7 @@ export default defineSchema({
     .index('by_user_primary_area', ['userId', 'primaryAreaId'])
     .index('by_user_work_state', ['userId', 'workState'])
     .index('by_work_state_conductor', ['workState', 'lastConductorAt'])
+    .index('by_work_state_step_check', ['workState', 'lastStepRunCheckAt'])
     .index('by_user_project', ['userId', 'primaryProjectId'])
     .index('by_pending_step_evidence', ['pendingStepEvidenceAt'])
     .index('by_mail_watch', ['mailWatchAt'])

@@ -10,8 +10,12 @@ const input = {
   timezone: 'America/New_York',
 };
 
-function harness(workbench: any, options: { applications?: any[]; applyResult?: any; queue?: boolean } = {}) {
+function harness(
+  workbench: any,
+  options: { applications?: any[]; applyResult?: any; queue?: boolean; paused?: string[] } = {},
+) {
   const mutations: any[] = [];
+  let applyCalls = 0;
   let queryIndex = 0;
   let areaBriefs = 0;
   const restore = setWorkOrchestratorDependenciesForTest({
@@ -24,14 +28,19 @@ function harness(workbench: any, options: { applications?: any[]; applyResult?: 
       return queryIndex === 1 ? workbench : options.applications || [];
     }) as any,
     generateIntentPlan: (async () => undefined) as any,
-    invokeTool: (async () =>
-      options.applyResult || {
-        applicationId: 'application_1',
-        projectId: 'project_1',
-        operations: [{ tool: 'tasks_create_card' }],
-        approvals: [],
-        taskIdsByStepKey: { step_1: 'card_1' },
-      }) as any,
+    pausedRisks: async () => new Set((options.paused || []) as any),
+    invokeTool: (async () => {
+      applyCalls += 1;
+      return (
+        options.applyResult || {
+          applicationId: 'application_1',
+          projectId: 'project_1',
+          operations: [{ tool: 'tasks_create_card' }],
+          approvals: [],
+          taskIdsByStepKey: { step_1: 'card_1' },
+        }
+      );
+    }) as any,
     newOperationBatchId: () => 'batch_1',
     ...(options.queue
       ? {}
@@ -42,10 +51,86 @@ function harness(workbench: any, options: { applications?: any[]; applyResult?: 
           }) as any,
         }),
   });
-  return { mutations, restore, areaBriefs: () => areaBriefs };
+  return { mutations, restore, areaBriefs: () => areaBriefs, applyCalls: () => applyCalls };
 }
 
 describe('advanceWork orchestration', () => {
+  test('a paused "Change your own things" order keeps the plan saved and unapplied', async () => {
+    const state = harness(
+      {
+        intent: { _id: 'work_1', rawText: 'Ship', title: 'Ship', questions: [], primaryProjectId: 'p_1' },
+        plan: {
+          _id: 'plan_1',
+          status: 'ready',
+          outcome: 'Released',
+          digitalActions: [{ actionKey: 'step_1', kind: 'task', title: 'Deploy' }],
+          sourceRefs: [],
+        },
+      },
+      { paused: ['write_self'] },
+    );
+    try {
+      await expect(advanceWork(input)).resolves.toEqual({
+        status: 'paused',
+        workId: 'work_1',
+        planId: 'plan_1',
+      });
+      expect(state.applyCalls()).toBe(0);
+      expect(state.mutations.some((args) => args.agentState === 'applying')).toBe(false);
+      expect(state.mutations.at(-1)).toMatchObject({ agentState: 'idle', primaryProjectId: 'p_1' });
+    } finally {
+      state.restore();
+    }
+  });
+
+  test('a failed standing-order read applies nothing', async () => {
+    const state = harness({
+      intent: { _id: 'work_1', rawText: 'Ship', title: 'Ship', questions: [] },
+      plan: {
+        _id: 'plan_1',
+        status: 'ready',
+        outcome: 'Released',
+        digitalActions: [{ actionKey: 'step_1', kind: 'task', title: 'Deploy' }],
+        sourceRefs: [],
+      },
+    });
+    const restore = setWorkOrchestratorDependenciesForTest({
+      pausedRisks: async () => {
+        throw new Error('Convex down');
+      },
+    });
+    try {
+      await expect(advanceWork(input)).rejects.toThrow('Convex down');
+      expect(state.applyCalls()).toBe(0);
+      expect(state.mutations.at(-1)).toMatchObject({ agentState: 'error' });
+    } finally {
+      restore();
+      state.restore();
+    }
+  });
+
+  test('a paused order for other risk classes still applies the plan', async () => {
+    const state = harness(
+      {
+        intent: { _id: 'work_1', rawText: 'Ship', title: 'Ship', questions: [] },
+        plan: {
+          _id: 'plan_1',
+          status: 'ready',
+          outcome: 'Released',
+          digitalActions: [{ actionKey: 'step_1', kind: 'task', title: 'Deploy' }],
+          sourceRefs: [],
+        },
+      },
+      { paused: ['reach_person', 'destructive'] },
+    );
+    try {
+      await expect(advanceWork(input)).resolves.toMatchObject({ status: 'applied' });
+      expect(state.applyCalls()).toBe(1);
+    } finally {
+      state.restore();
+    }
+  });
+
   test('turns the first unanswered planning question into durable input', async () => {
     const state = harness({
       intent: {

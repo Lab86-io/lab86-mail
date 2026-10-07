@@ -1259,6 +1259,8 @@ export const USER_INLINE_TABLES = [
   'mobileSyncHeads',
   'albatrossDailyCheckins',
   'albatrossBrowserSessions',
+  'albatrossStepRuns',
+  'albatrossBrowserContexts',
   'areas',
   'mcpConnections',
   'mcpCredentials',
@@ -1355,6 +1357,8 @@ export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
   aiCostWatch: 'Cost samples for the owner alarm that protect the service, not user content.',
   mailAttachmentQueue: 'Work rows of the attachment file queue; mailAttachmentFiles has the stored files.',
   mailAttachmentBackfills: 'The page cursor of the attachment file queue, not user content.',
+  albatrossBrowserContexts:
+    'The Browserbase id of the saved sign-ins. It is a service handle to browser cookies, not user content, so it never leaves the service.',
 };
 
 /**

@@ -66,10 +66,11 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink("Standing orders") { StandingOrdersView() }
+                    NavigationLink("Saved sign-ins") { SavedSignInsView() }
                 } header: {
                     Text("Trust")
                 } footer: {
-                    Text("Everything Albatross does on its own, with a pause switch for each.")
+                    Text("Everything Albatross does on its own, with a pause switch for each. Saved sign-ins keep the shared browser signed in; Albatross never sees a password.")
                 }
 
                 Section("Personalization") {

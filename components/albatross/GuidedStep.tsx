@@ -1,7 +1,7 @@
 'use client';
 
 import { ExternalLink } from 'lucide-react';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { StepVerification } from '@/lib/albatross/step-verification';
 import { STEP_VERIFICATION_LABEL } from '@/lib/albatross/step-verification';
@@ -21,6 +21,17 @@ export interface GuidedStep {
   doneWhen?: string | null;
   evidenceKind?: string | null;
   verification?: StepVerification | null;
+  /** The step runner's state on this step, for the ledger: "Albatross is on it", "Ready for you". */
+  runLabel?: string | null;
+}
+
+/** The bar above the live view while a step run uses the shared browser. */
+export interface GuidedBrowserState {
+  line: string;
+  action: 'take_over' | 'continue' | null;
+  busy?: boolean;
+  onTakeOver?: () => void;
+  onContinue?: () => void;
 }
 
 export interface GuidedSession {
@@ -70,6 +81,8 @@ export function GuidedStepPane({
   onStartSession,
   onVerifySession,
   onEndSession,
+  runPanel,
+  browser,
 }: {
   steps: GuidedStep[];
   activeId?: string;
@@ -84,6 +97,10 @@ export function GuidedStepPane({
   onStartSession?: (id: string) => void;
   onVerifySession?: (id: string) => void;
   onEndSession?: () => void;
+  /** The step runner's panel for the active step (StepRunPanel). */
+  runPanel?: ReactNode;
+  /** Who has the page while a run uses the session; null keeps the usual line. */
+  browser?: GuidedBrowserState | null;
 }) {
   const active = steps.find((step) => step.id === (activeId || steps[0]?.id)) || steps[0];
   const [note, setNote] = useState('');
@@ -171,6 +188,13 @@ export function GuidedStepPane({
                       >
                         {STEP_VERIFICATION_LABEL[step.verification.level]}
                       </span>
+                    ) : !step.done && step.runLabel ? (
+                      <span
+                        data-slot="ledger-run-label"
+                        className="mt-0.5 block text-[10.5px] text-[var(--color-accent)]"
+                      >
+                        {step.runLabel}
+                      </span>
                     ) : null}
                   </span>
                 </button>
@@ -251,6 +275,7 @@ export function GuidedStepPane({
               />
             </div>
           ) : null}
+          {runPanel ? <div className="mt-3">{runPanel}</div> : null}
           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)]/70 pt-3">
             {!active.done && onComplete ? (
               <Button type="button" size="sm" disabled={saving} onClick={complete}>
@@ -277,7 +302,8 @@ export function GuidedStepPane({
         <div className="min-h-0 flex-1 bg-[var(--color-bg-subtle)] p-3">
           {session && session.status !== 'ended' && session.status !== 'failed' ? (
             <div className="flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-              <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
+              {/* The line keeps its width; the controls wrap under it in a narrow pane. */}
+              <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
                 <span
                   aria-hidden
                   className={cn(
@@ -287,15 +313,29 @@ export function GuidedStepPane({
                       : 'bg-[var(--color-accent)] animate-pulse',
                   )}
                 />
-                <span className="min-w-0 flex-1 truncate text-[12px]">
-                  {guidedSessionStatusLine(session)}
+                <span className="min-w-[14rem] flex-1 truncate text-[12px]">
+                  {browser?.line ?? guidedSessionStatusLine(session)}
                 </span>
+                {browser?.action === 'take_over' ? (
+                  <Button type="button" size="xs" disabled={browser.busy} onClick={browser.onTakeOver}>
+                    {browser.busy ? 'Stopping…' : 'Take over'}
+                  </Button>
+                ) : browser?.action === 'continue' ? (
+                  <Button type="button" size="xs" disabled={browser.busy} onClick={browser.onContinue}>
+                    {browser.busy ? 'Continuing…' : 'Continue'}
+                  </Button>
+                ) : null}
                 {!active.done && onVerifySession ? (
                   <Button
                     type="button"
                     size="xs"
                     variant="outline"
-                    disabled={sessionBusy || session.status === 'verifying' || session.status === 'starting'}
+                    disabled={
+                      sessionBusy ||
+                      session.status === 'verifying' ||
+                      session.status === 'starting' ||
+                      session.status === 'agent'
+                    }
                     onClick={() => onVerifySession(active.id)}
                   >
                     {session.status === 'verifying' ? 'Checking…' : 'Check the page'}

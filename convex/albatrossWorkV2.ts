@@ -17,6 +17,7 @@ import {
 import { matchingProofId } from '../lib/albatross/proof-match';
 import { questionDedupeKey, shouldAdvanceWorkAfterAnswer } from '../lib/albatross/question-dedupe';
 import { shapeAllows } from '../lib/albatross/shape-policy';
+import { normalizeStepEvidence, normalizeStepMode, stepModeAcceptsRun } from '../lib/albatross/step-contract';
 import {
   mergeStepProgress,
   planStepsForProgress,
@@ -36,6 +37,7 @@ import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
+import { closeHandoffsForStep, latestRunPerStep, stepRunView } from './albatrossStepRuns';
 import { completeCardForWork } from './boards';
 import { assertBriefJobOwner, briefJobFence } from './briefJobState';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
@@ -855,6 +857,8 @@ export const completeStep = mutation({
       if (!cardId) throw new Error('Plan card not found.');
       await completeCardForWork(ctx, userId, cardId, ts);
     }
+    // A checked step has nothing left to hand off.
+    await closeHandoffsForStep(ctx, userId, String(args.workId), selected.identity);
     const note = bounded(args.note, 2_000);
     if (note) {
       const dedupeKey = `stepnote:${String(args.workId)}:${selected.identity}`;
@@ -993,6 +997,7 @@ export const attachProof = mutation({
       v.literal('mcp_item'),
       v.literal('manual'),
       v.literal('browser_session'),
+      v.literal('step_run'),
     ),
     sourceId: v.string(),
     connectionId: v.optional(v.string()),
@@ -1724,12 +1729,17 @@ function projectedPlanSteps(
   // so no watcher or gate spends another check on it.
   const confirmedFor = (identity: string) =>
     Boolean(stepEvidence && hasConfirmedEvidence(identity, stepEvidence));
-  const contractFields = (action: PlanStepAction) => ({
-    stepMode: action.stepMode || null,
-    doneWhen: bounded(action.doneWhen, 300) || null,
-    evidenceKind: action.evidence?.kind || null,
-    evidenceHint: bounded(action.evidence?.hint, 300) || null,
-  });
+  // Rows saved before the contract check may carry any value here. A value
+  // outside the taxonomy reads as unknown (null), never as a guess.
+  const contractFields = (action: PlanStepAction) => {
+    const evidence = normalizeStepEvidence(action.evidence);
+    return {
+      stepMode: normalizeStepMode(action.stepMode) ?? null,
+      doneWhen: bounded(action.doneWhen, 300) || null,
+      evidenceKind: evidence?.kind ?? null,
+      evidenceHint: bounded(evidence?.hint, 300) || null,
+    };
+  };
   const digital = planSteps
     .filter((step) => step.kind === 'digital')
     .map(({ action, key, identity }) => {
@@ -2464,12 +2474,30 @@ export const workDetail = query({
     const completedCardIds = new Set(
       cards.filter((card) => Boolean(card?.completedAt)).map((card) => String(card!._id)),
     );
-    const guideSteps = projectedPlanSteps(
+    const projectedSteps = projectedPlanSteps(
       plan,
       completedCardIds,
       work.stepProgress as StepProgressEntry[] | undefined,
       evidence as StepEvidenceLike[],
     );
+    // Step runs (docs/albatross-step-runner.md): the newest run of each step,
+    // and whether the user may hand the step to the runner now.
+    const runRows = await ctx.db
+      .query('albatrossStepRuns')
+      .withIndex('by_user', (q) => q.eq('userId', userId).eq('workId', String(args.workId)))
+      .order('desc')
+      .take(40);
+    const latestRuns = new Map(
+      latestRunPerStep(runRows).map((row) => [row.stepKey, stepRunView(row)] as const),
+    );
+    const activeRunRow = runRows.find((row) => row.active);
+    const runnerEnabled =
+      (process.env.LAB86_STEP_RUNS || '').trim().toLowerCase() !== 'off' && !isTerminalWork(work);
+    const guideSteps = projectedSteps.map((step) => ({
+      ...step,
+      run: latestRuns.get(step.key) ?? null,
+      runnable: runnerEnabled && !activeRunRow && !step.done && stepModeAcceptsRun(step.stepMode, step.kind),
+    }));
     const { scheduledStartAt, scheduledEndAt } = scheduledWindow(plan);
     const application = applications.sort((a, b) => b.createdAt - a.createdAt)[0] || null;
     const entries =
@@ -2496,6 +2524,8 @@ export const workDetail = query({
         totalSteps: guideSteps.length,
         scheduledStartAt,
         scheduledEndAt,
+        activeRun: activeRunRow ? stepRunView(activeRunRow) : null,
+        runner: { enabled: runnerEnabled },
       },
       lapses,
       contract: work.contract ?? null,

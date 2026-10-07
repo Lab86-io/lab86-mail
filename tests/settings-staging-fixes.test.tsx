@@ -55,6 +55,8 @@ describe('Standing orders', () => {
       'On a schedule',
       'In your mail',
       'What the assistant may do in chat',
+      // Saved sign-ins (the step runner's shared browser) sit under the orders.
+      'In the shared browser',
     ]);
     for (const title of titles) {
       // first:mt-0 must never apply: no title is the first child of its parent.

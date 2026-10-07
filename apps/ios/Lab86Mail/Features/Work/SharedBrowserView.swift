@@ -125,6 +125,137 @@ struct SharedBrowserSheet: View {
     }
 }
 
+/// The sheet request for a run's shared browser, keyed on the run.
+struct StepRunBrowserRequest: Identifiable {
+    let run: StepRunView
+    var id: String { run.id }
+}
+
+/// The shared browser while a step run owns or hands over the page.
+///
+/// The run owns the session: this sheet never starts or ends one. It follows
+/// the live session row (`albatrossBrowserSessions:activeSessionForWork`).
+/// While the status is `agent`, Albatross drives the page and "Take over"
+/// cancels the run. At a handoff the status is `user`: the bar shows the
+/// handoff detail, and "Continue" resumes the run. Passwords go to the site
+/// only; Albatross never sees them.
+struct StepRunBrowserSheet: View {
+    let workID: String
+    let run: StepRunView
+    let onTakeOver: () async -> Bool
+    let onContinue: () async -> Void
+
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(\.dismiss) private var dismiss
+    @State private var session: WorkBrowserSessionPayload?
+    @State private var followed = false
+    @State private var tookOver = false
+    @State private var busy = false
+
+    private var presentation: StepRunBrowserPresentation {
+        StepRunBrowserPresentation(session: session, run: run, followed: followed, tookOver: tookOver)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(presentation.agentHasPage ? environment.theme.accent2Color : environment.theme.accentColor)
+                        .frame(width: 8, height: 8)
+                    Text(presentation.statusLine)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .accessibilityElement(children: .combine)
+                Divider()
+                if let liveViewURL = presentation.liveViewURL {
+                    LiveViewWebView(urlString: liveViewURL)
+                        .ignoresSafeArea(edges: .bottom)
+                } else if followed {
+                    ContentUnavailableView(
+                        "The shared browser is closed.",
+                        systemImage: "network.slash",
+                        description: Text("Press Continue. Albatross opens a new one when the step needs it.")
+                    )
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle(run.stepTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    // On the Mac: Command-period takes the page, Return goes on.
+                    if presentation.agentHasPage {
+                        Button(busy ? "Stopping…" : "Take over") {
+                            Task { await takeOver() }
+                        }
+                        .disabled(busy)
+                        .stopShortcut()
+                        .help("Albatross stops. The page is yours.")
+                    } else if presentation.showsContinue {
+                        Button(busy ? "Continuing…" : "Continue") {
+                            Task { await proceed() }
+                        }
+                        .disabled(busy)
+                        .primaryActionShortcut()
+                        .help("Albatross goes on from the page as it is now.")
+                    }
+                }
+            }
+        }
+        .interactiveDismissDisabled(busy)
+        .task { await follow() }
+    }
+
+    /// The live session row of this Work, as the web pane subscribes to it.
+    private func follow() async {
+        guard let convex = environment.convex else {
+            followed = true
+            return
+        }
+        do {
+            let updates = convex.subscribe(
+                to: "albatrossBrowserSessions:activeSessionForWork",
+                with: ["workId": workID],
+                yielding: Optional<WorkBrowserSessionPayload>.self
+            ).values
+            for try await payload in updates {
+                guard !Task.isCancelled else { return }
+                session = payload
+                followed = true
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            // The bar says the browser is closed; "Continue" still works.
+            followed = true
+        }
+    }
+
+    private func takeOver() async {
+        busy = true
+        defer { busy = false }
+        if await onTakeOver() { tookOver = true }
+    }
+
+    private func proceed() async {
+        busy = true
+        defer { busy = false }
+        await onContinue()
+        tookOver = false
+    }
+}
+
 /// A minimal wrapper: the live view URL is a self-contained remote-browser
 /// client, so the web view needs no navigation chrome of its own.
 private struct LiveViewWebView: UIViewRepresentable {

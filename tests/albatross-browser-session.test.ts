@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import {
+  BrowserbaseRequestError,
   browserSessionsConfigured,
+  createBrowserContext,
   createBrowserSession,
+  deleteBrowserContext,
   navigateSession,
   readSessionPage,
   releaseBrowserSession,
+  sessionConnectUrl,
   sessionReplayUrl,
 } from '../lib/albatross/browser-session';
 
@@ -85,6 +89,52 @@ describe('browser session REST client', () => {
     });
     await releaseBrowserSession('bb-9', fetcher as any);
     expect(calls).toEqual(['https://api.browserbase.com/v1/sessions/bb-9 REQUEST_RELEASE']);
+  });
+
+  test('a session with saved sign-ins carries the context and its persist flag', async () => {
+    const bodies: any[] = [];
+    const fetcher = mock(async (url: any, init?: any) => {
+      if (String(url).endsWith('/sessions')) {
+        bodies.push(JSON.parse(String(init?.body)));
+        return jsonResponse({ id: 'bb-2', connectUrl: 'wss://connect.example/bb-2' });
+      }
+      return jsonResponse({ debuggerFullscreenUrl: 'https://live.example/bb-2' });
+    });
+    await createBrowserSession(fetcher as any, { contextId: 'ctx-1', persist: true });
+    await createBrowserSession(fetcher as any, { contextId: 'ctx-1' });
+    expect(bodies[0].browserSettings.context).toEqual({ id: 'ctx-1', persist: true });
+    expect(bodies[1].browserSettings.context).toEqual({ id: 'ctx-1', persist: false });
+  });
+
+  test('contexts are created and deleted; a context that is gone counts as deleted', async () => {
+    const calls: string[] = [];
+    const fetcher = mock(async (url: any, init?: any) => {
+      calls.push(`${init?.method} ${String(url)}`);
+      if (init?.method === 'POST') return jsonResponse({ id: 'ctx-9' });
+      if (String(url).endsWith('/gone')) return new Response('missing', { status: 404 });
+      if (String(url).endsWith('/broken')) return new Response('boom', { status: 500 });
+      return new Response(null, { status: 204 });
+    });
+    expect(await createBrowserContext(fetcher as any)).toBe('ctx-9');
+    await deleteBrowserContext('ctx-9', fetcher as any);
+    await deleteBrowserContext('gone', fetcher as any);
+    const failed = await deleteBrowserContext('broken', fetcher as any).catch((error) => error);
+    expect(failed).toBeInstanceOf(BrowserbaseRequestError);
+    expect(failed.status).toBe(500);
+    expect(calls).toEqual([
+      'POST https://api.browserbase.com/v1/contexts',
+      'DELETE https://api.browserbase.com/v1/contexts/ctx-9',
+      'DELETE https://api.browserbase.com/v1/contexts/gone',
+      'DELETE https://api.browserbase.com/v1/contexts/broken',
+    ]);
+    const empty = mock(async () => jsonResponse({}));
+    await expect(createBrowserContext(empty as any)).rejects.toThrow('Browserbase returned no context id.');
+  });
+
+  test('the connect url carries the key and the session id, encoded', () => {
+    expect(sessionConnectUrl('bb 1')).toBe(
+      'wss://connect.browserbase.com?apiKey=bb-test-key&sessionId=bb%201',
+    );
   });
 
   test('replay url is the public session record', () => {

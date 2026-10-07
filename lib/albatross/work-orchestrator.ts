@@ -1,5 +1,7 @@
+import type { ToolRisk } from '../ai/approval';
 import { newOperationBatchId } from '../ai/operations';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
+import { pausedAssistantRisksStrict } from '../hosted/standing-orders';
 import { albatrossApplyIntentPlan } from '../tools/albatross';
 import { invokeTool } from '../tools/registry';
 import type { generateAreaLivingBrief } from './area-living-brief';
@@ -15,6 +17,7 @@ interface WorkOrchestratorDependencies {
   invokeTool: typeof invokeTool;
   newOperationBatchId: typeof newOperationBatchId;
   generateAreaLivingBrief: (input: Parameters<typeof generateAreaLivingBrief>[0]) => Promise<unknown>;
+  pausedRisks: (userId: string) => Promise<ReadonlySet<ToolRisk>>;
 }
 
 const defaultWorkOrchestratorDependencies: WorkOrchestratorDependencies = {
@@ -23,6 +26,8 @@ const defaultWorkOrchestratorDependencies: WorkOrchestratorDependencies = {
   generateIntentPlan,
   invokeTool,
   newOperationBatchId,
+  // A failed read throws, so advanceWork takes its error path and applies nothing.
+  pausedRisks: (userId) => pausedAssistantRisksStrict(userId),
   generateAreaLivingBrief: async ({ userId, areaId }) => {
     const { enqueueBriefJob } = await import('../mail/brief-jobs');
     return enqueueBriefJob({ userId, kind: 'area', areaId, force: false });
@@ -147,6 +152,21 @@ export async function advanceWork(input: AdvanceWorkInput) {
         primaryProjectId: work.primaryProjectId,
       });
       return { status: 'ready' as const, workId: input.workId, planId: plan._id };
+    }
+
+    // Applying a plan writes the user's own things: cards, private holds,
+    // drafts, and documents. A paused "Change your own things" standing order
+    // stops it here exactly as it stops the same tools in chat. The plan stays
+    // saved and unapplied, so a later advance applies it once the order runs.
+    const paused = await workOrchestratorDependencies.pausedRisks(input.userId);
+    if (paused.has('write_self')) {
+      await workOrchestratorDependencies.convexMutation(api.albatrossWorkV2.setAgentState, {
+        userId: input.userId,
+        workId: input.workId,
+        agentState: 'idle',
+        primaryProjectId: work.primaryProjectId,
+      });
+      return { status: 'paused' as const, workId: input.workId, planId: String(plan._id) };
     }
 
     await workOrchestratorDependencies.convexMutation(api.albatrossWorkV2.setAgentState, {

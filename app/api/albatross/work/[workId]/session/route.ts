@@ -1,11 +1,17 @@
 import { after, type NextRequest } from 'next/server';
 import { describeModelError } from '@/lib/ai/log-error';
 import {
+  bindSessionWriter,
+  releaseSessionWriter,
+  sessionOptionsForUser,
+} from '@/lib/albatross/browser-contexts';
+import {
   browserSessionsConfigured,
   createBrowserSession,
   navigateSession,
   readSessionPage,
   releaseBrowserSession,
+  sessionConnectUrl,
 } from '@/lib/albatross/browser-session';
 import { evidenceSatisfies } from '@/lib/albatross/evidence-gate';
 import { completeWorkStep } from '@/lib/albatross/step-execution';
@@ -19,6 +25,9 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
+/** Browserbase advises a short wait after a persisted session closes. */
+const CONTEXT_SYNC_WAIT_MS = 2_000;
+
 interface WorkSessionDependencies {
   requireCurrentUser: typeof requireCurrentUser;
   enforceUserRateLimit: typeof enforceUserRateLimit;
@@ -26,6 +35,11 @@ interface WorkSessionDependencies {
   convexQuery: typeof convexQuery;
   browserSessionsConfigured: typeof browserSessionsConfigured;
   createBrowserSession: typeof createBrowserSession;
+  sessionOptions: typeof sessionOptionsForUser;
+  bindWriter: typeof bindSessionWriter;
+  releaseWriter: typeof releaseSessionWriter;
+  wait: (ms: number) => Promise<void>;
+  connectUrl: (sessionId: string) => string;
   releaseBrowserSession: typeof releaseBrowserSession;
   navigateSession: typeof navigateSession;
   readSessionPage: typeof readSessionPage;
@@ -42,6 +56,11 @@ const defaults: WorkSessionDependencies = {
   convexQuery,
   browserSessionsConfigured,
   createBrowserSession,
+  sessionOptions: (userId) => sessionOptionsForUser(userId),
+  bindWriter: (userId, options, sessionId) => bindSessionWriter(userId, options, sessionId),
+  releaseWriter: (userId, options) => releaseSessionWriter(userId, options),
+  wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  connectUrl: sessionConnectUrl,
   releaseBrowserSession,
   navigateSession,
   readSessionPage,
@@ -111,18 +130,54 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           })
           .catch(() => null);
         if (previous?.sessionId) {
-          await deps.releaseBrowserSession(previous.sessionId).catch(() => undefined);
+          const released = await deps
+            .releaseBrowserSession(previous.sessionId)
+            .then(() => true)
+            .catch(() => false);
+          // Only a browser that really ended frees its saved sign-in writer
+          // place. If the release failed, the old row keeps the place and the
+          // new session reads the sign-ins without saving.
+          if (released) {
+            await deps
+              .convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
+                userId,
+                sessionId: previous.sessionId,
+                status: 'ended',
+              })
+              .catch(() => undefined);
+            // Browserbase saves the context when the session closes; give it
+            // a moment before the next session loads it.
+            await deps.wait(CONTEXT_SYNC_WAIT_MS);
+          }
         }
-        const session = await deps.createBrowserSession();
-        await deps.convexMutation(api.albatrossBrowserSessions.openSession, {
-          userId,
-          workId,
-          stepKey: step?.key,
-          stepIdentity: step?.identity,
-          sessionId: session.sessionId,
-          liveViewUrl: session.liveViewUrl,
-          replayUrl: session.replayUrl,
-        });
+        // Saved sign-ins: the session starts with the user's context.
+        const options = await deps.sessionOptions(userId);
+        let session: Awaited<ReturnType<typeof deps.createBrowserSession>>;
+        try {
+          session = await deps.createBrowserSession(fetch, options);
+        } catch (error) {
+          await deps.releaseWriter(userId, options).catch(() => undefined);
+          throw error;
+        }
+        // Roll back on any later failure: an unbound writer place, or a
+        // session without a ledger row, could never be ended or freed.
+        try {
+          if (!(await deps.bindWriter(userId, options, session.sessionId)))
+            throw new Error('The saved sign-in place could not be bound.');
+          await deps.convexMutation(api.albatrossBrowserSessions.openSession, {
+            userId,
+            workId,
+            stepKey: step?.key,
+            stepIdentity: step?.identity,
+            sessionId: session.sessionId,
+            liveViewUrl: session.liveViewUrl,
+            replayUrl: session.replayUrl,
+          });
+        } catch (error) {
+          await deps.releaseBrowserSession(session.sessionId).catch(() => undefined);
+          await deps.releaseWriter(userId, options).catch(() => undefined);
+          throw error;
+        }
         const targetUrl = step?.url || null;
         deps.schedule(async () => {
           try {
@@ -188,12 +243,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
         });
         // The session row stores no connectUrl (it is a credentialed endpoint);
         // reads go through a fresh create-time handle only. Re-derive it.
-        const connectUrl = `wss://connect.browserbase.com?apiKey=${encodeURIComponent(
-          process.env.BROWSERBASE_API_KEY ||
-            process.env.LAB86_BROWSERBASE_API_KEY ||
-            process.env.BB_API_KEY ||
-            '',
-        )}&sessionId=${encodeURIComponent(sessionId)}`;
+        const connectUrl = deps.connectUrl(sessionId);
         let satisfied = false;
         let reason = '';
         let checkRan = false;

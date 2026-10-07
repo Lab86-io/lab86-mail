@@ -12,6 +12,7 @@ import { Ring } from '@/components/loading-ui/ring';
 import { Switch } from '@/components/ui/switch';
 import type { StandingOrder, StandingOrderGroup, StandingOrderMode } from '@/lib/hosted/standing-orders';
 import { SectionHeading, SettingsCard, SettingsGroupTitle, SettingsNote, SettingsRow } from './primitives';
+import { SavedSignIns } from './SavedSignIns';
 
 const QUERY_KEY = ['standing-orders'];
 
@@ -159,6 +160,7 @@ export function StandingOrdersSection() {
               </Fragment>
             );
           })}
+          <SavedSignIns />
           <SettingsNote>
             Albatross always asks before it reaches another person or makes a change that cannot be undone.
             Every other change shows in{' '}

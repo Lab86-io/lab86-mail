@@ -3,6 +3,7 @@ import { conductorMayMove } from '../lib/albatross/conductor-quiet';
 import { planNeedsConductor } from '../lib/albatross/execution';
 import { bindPlanDocumentSteps } from '../lib/albatross/plan-frontier';
 import { shapePlans } from '../lib/albatross/shape-policy';
+import { normalizeDigitalStepContract } from '../lib/albatross/step-contract';
 import {
   mergeStepProgress,
   progressFromPlanCompletions,
@@ -507,7 +508,8 @@ export const savePlan = mutation({
       outcome: bounded(args.outcome, 1200),
       summary: bounded(args.summary, 2000),
       proposedProjectTitle: bounded(args.proposedProjectTitle, 180),
-      digitalActions: args.digitalActions,
+      // Digital actions are stored loosely; their step contract is checked here.
+      digitalActions: args.digitalActions.map(normalizeDigitalStepContract),
       physicalActions: args.physicalActions.map((action) => ({
         title: bounded(action.title, 200, 'Step')!,
         detail: bounded(action.detail, 1200),

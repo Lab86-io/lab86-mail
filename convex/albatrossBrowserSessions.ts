@@ -3,6 +3,7 @@ import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
+import { releaseContextWriterForSession } from './albatrossStepRuns';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 const callerArgs = {
@@ -61,6 +62,7 @@ export const openSession = mutation({
     for (const row of existing) {
       if (row.status !== 'ended' && row.status !== 'failed') {
         await ctx.db.patch(row._id, { status: 'ended', endedAt: ts, updatedAt: ts });
+        await releaseContextWriterForSession(ctx, userId, row.sessionId);
       }
     }
     return ctx.db.insert('albatrossBrowserSessions', {
@@ -106,6 +108,9 @@ export const setSessionStatus = mutation({
       ...(args.status === 'ended' || args.status === 'failed' ? { endedAt: ts } : {}),
       updatedAt: ts,
     });
+    // An ended session frees the saved sign-in writer place.
+    if (args.status === 'ended' || args.status === 'failed')
+      await releaseContextWriterForSession(ctx, userId, args.sessionId);
     return { status: args.status };
   },
 });

@@ -13,6 +13,7 @@ import { BriefSourceLine, briefEditionNotes } from '@/components/report/BriefSou
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { useBriefEditionRequest } from '@/components/report/brief-edition-request';
 import { PreparedWork } from '@/components/report/PreparedWork';
+import { ReadyForYou } from '@/components/report/ReadyForYou';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -1257,12 +1258,16 @@ export function DailyReport({
                   noiseCount={noiseCount}
                   belowMasthead={
                     selectedId ? null : (
-                      <BriefSourceLine
-                        reportId={report._id}
-                        notes={briefEditionNotes(report)}
-                        staleNote={staleNote}
-                        className="daily-brief-layout"
-                      />
+                      <>
+                        <BriefSourceLine
+                          reportId={report._id}
+                          notes={briefEditionNotes(report)}
+                          staleNote={staleNote}
+                          className="daily-brief-layout"
+                        />
+                        {/* Live, not part of the edition: a handoff after 7:00 still shows. */}
+                        <ReadyForYou className="daily-brief-layout" />
+                      </>
                     )
                   }
                   footer={
@@ -1299,12 +1304,15 @@ export function DailyReport({
                   noiseCount={noiseCount}
                   belowMasthead={
                     selectedId ? null : (
-                      <BriefSourceLine
-                        reportId={report._id}
-                        notes={briefEditionNotes(report)}
-                        staleNote={staleNote}
-                        className="daily-brief-layout"
-                      />
+                      <>
+                        <BriefSourceLine
+                          reportId={report._id}
+                          notes={briefEditionNotes(report)}
+                          staleNote={staleNote}
+                          className="daily-brief-layout"
+                        />
+                        <ReadyForYou className="daily-brief-layout" />
+                      </>
                     )
                   }
                   footer={

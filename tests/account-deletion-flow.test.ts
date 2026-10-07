@@ -24,6 +24,7 @@ function deletionDeps(overrides: Partial<AccountDeletionDeps> = {}): AccountDele
     disconnectCloudFileConnection: mock(async (_userId: string, connectionId: string) => ({
       revoked: connectionId === 'drive-1',
     })),
+    forgetSavedSignIns: mock(async () => ({ forgotten: 0 })),
     deleteUserCascade: mock(async () => ({ ok: true, counts: {} })),
     ...overrides,
   };
@@ -35,6 +36,34 @@ afterEach(() => {
 });
 
 describe('deleteUserData', () => {
+  test('deletes the saved sign-ins before the cascade, and stops when that fails', async () => {
+    const order: string[] = [];
+    const deps = deletionDeps({
+      forgetSavedSignIns: mock(async () => {
+        order.push('sign-ins');
+        return { forgotten: 1, pending: 1 };
+      }),
+      deleteUserCascade: mock(async () => {
+        order.push('cascade');
+        return { ok: true, counts: {} };
+      }),
+    });
+    const result = await deleteUserData('user_1', deps);
+    // A delete that Browserbase has not confirmed stays recorded outside the
+    // cascade, so the account deletion goes on and reports it as pending.
+    expect(result).toMatchObject({ ok: true, signIns: { ok: true, pending: 1 } });
+    expect(order).toEqual(['sign-ins', 'cascade']);
+
+    const failing = deletionDeps({
+      forgetSavedSignIns: mock(async () => {
+        throw new Error('Browserbase is down');
+      }),
+    });
+    const stopped = await deleteUserData('user_1', failing);
+    expect(stopped).toMatchObject({ ok: false, signIns: { ok: false, error: 'Browserbase is down' } });
+    expect(failing.deleteUserCascade).not.toHaveBeenCalled();
+  });
+
   test('disconnects every grant and file connection, then runs the cascade', async () => {
     const order: string[] = [];
     const deps = deletionDeps({

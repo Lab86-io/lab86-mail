@@ -1741,6 +1741,13 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let evidenceKind: String?
         let verificationLevel: String?
         let verificationEvidenceTitle: String?
+        // The step runner. The newest run of this step, and whether the user
+        // may press "Handle it". Both optional so cached snapshots and older
+        // servers keep decoding; a missing word reads as "no run controls".
+        let run: StepRunView?
+        let runnable: Bool?
+
+        var isRunnable: Bool { runnable ?? false }
 
         /// The honest words for how a completed step earned its check.
         var verificationLabel: String? {
@@ -1769,7 +1776,9 @@ struct WorkDetail: Hashable, Codable, Sendable {
             doneWhen: String?,
             evidenceKind: String?,
             verificationLevel: String?,
-            verificationEvidenceTitle: String?
+            verificationEvidenceTitle: String?,
+            run: StepRunView?,
+            runnable: Bool?
         ) {
             self.id = id
             self.kind = kind
@@ -1783,6 +1792,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
             self.evidenceKind = evidenceKind
             self.verificationLevel = verificationLevel
             self.verificationEvidenceTitle = verificationEvidenceTitle
+            self.run = run
+            self.runnable = runnable
         }
 
         init?(json: JSONValue) {
@@ -1800,6 +1811,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
             evidenceKind = json["evidenceKind"]?.stringValue?.nilIfBlank
             verificationLevel = json["verification"]?["level"]?.stringValue?.nilIfBlank
             verificationEvidenceTitle = json["verification"]?["evidenceTitle"]?.stringValue?.nilIfBlank
+            run = json["run"].flatMap { StepRunView(json: $0) }
+            runnable = json["runnable"]?.boolValue
         }
 
         func completing() -> ExecutionStep {
@@ -1815,7 +1828,30 @@ struct WorkDetail: Hashable, Codable, Sendable {
                 doneWhen: doneWhen,
                 evidenceKind: evidenceKind,
                 verificationLevel: verificationLevel ?? "reported",
-                verificationEvidenceTitle: verificationEvidenceTitle
+                verificationEvidenceTitle: verificationEvidenceTitle,
+                run: run,
+                runnable: runnable
+            )
+        }
+
+        /// The same step with a new run on it. The optimistic write after a
+        /// run action, before the next `work_home` read settles it.
+        func withRun(_ run: StepRunView?) -> ExecutionStep {
+            ExecutionStep(
+                id: id,
+                kind: kind,
+                title: title,
+                detail: detail,
+                url: url,
+                done: done,
+                cardID: cardID,
+                stepMode: stepMode,
+                doneWhen: doneWhen,
+                evidenceKind: evidenceKind,
+                verificationLevel: verificationLevel,
+                verificationEvidenceTitle: verificationEvidenceTitle,
+                run: run,
+                runnable: runnable
             )
         }
     }
@@ -1827,6 +1863,13 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let totalSteps: Int
         let scheduledStartAt: Date?
         let scheduledEndAt: Date?
+        // The step runner: the open run of the Work (queued or running), and
+        // whether the server shows run controls at all. Optional so cached
+        // snapshots and older servers keep decoding.
+        let activeRun: StepRunView?
+        let runnerEnabled: Bool?
+
+        var runnerIsEnabled: Bool { runnerEnabled ?? false }
 
         private init(
             currentStep: ExecutionStep?,
@@ -1834,7 +1877,9 @@ struct WorkDetail: Hashable, Codable, Sendable {
             remainingSteps: Int,
             totalSteps: Int,
             scheduledStartAt: Date?,
-            scheduledEndAt: Date?
+            scheduledEndAt: Date?,
+            activeRun: StepRunView?,
+            runnerEnabled: Bool?
         ) {
             self.currentStep = currentStep
             self.guideSteps = guideSteps
@@ -1842,6 +1887,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
             self.totalSteps = totalSteps
             self.scheduledStartAt = scheduledStartAt
             self.scheduledEndAt = scheduledEndAt
+            self.activeRun = activeRun
+            self.runnerEnabled = runnerEnabled
         }
 
         init(json: JSONValue?) {
@@ -1851,6 +1898,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
             totalSteps = max(0, Int(json?["totalSteps"]?.doubleValue ?? 0))
             scheduledStartAt = CalendarDateParser.date(json?["scheduledStartAt"])
             scheduledEndAt = CalendarDateParser.date(json?["scheduledEndAt"])
+            activeRun = json?["activeRun"].flatMap { StepRunView(json: $0) }
+            runnerEnabled = json?["runner"]?["enabled"]?.boolValue
         }
 
         func completing(stepID: String) -> Execution {
@@ -1863,7 +1912,38 @@ struct WorkDetail: Hashable, Codable, Sendable {
                 remainingSteps: nextSteps.filter { !$0.done }.count,
                 totalSteps: totalSteps,
                 scheduledStartAt: scheduledStartAt,
-                scheduledEndAt: scheduledEndAt
+                scheduledEndAt: scheduledEndAt,
+                activeRun: activeRun,
+                runnerEnabled: runnerEnabled
+            )
+        }
+
+        /// The same execution with one run written on its step. An open run
+        /// becomes the Work's active run; a run that ended clears it.
+        func withStepRun(_ run: StepRunView) -> Execution {
+            let nextSteps = guideSteps.map { step in
+                step.id == run.stepKey ? step.withRun(run) : step
+            }
+            let nextCurrent = currentStep.map { step in
+                step.id == run.stepKey ? step.withRun(run) : step
+            }
+            let nextActive: StepRunView?
+            if run.state.isOpen {
+                nextActive = run
+            } else if activeRun?.id == run.id {
+                nextActive = nil
+            } else {
+                nextActive = activeRun
+            }
+            return Execution(
+                currentStep: nextCurrent,
+                guideSteps: nextSteps,
+                remainingSteps: remainingSteps,
+                totalSteps: totalSteps,
+                scheduledStartAt: scheduledStartAt,
+                scheduledEndAt: scheduledEndAt,
+                activeRun: nextActive,
+                runnerEnabled: runnerEnabled
             )
         }
     }
@@ -2041,6 +2121,12 @@ struct WorkDetail: Hashable, Codable, Sendable {
 
     func completing(stepID: String) -> WorkDetail {
         copy(execution: execution.completing(stepID: stepID))
+    }
+
+    /// The same detail with one run written on its step. The optimistic write
+    /// after "Handle it", "Stop", or "Dismiss", before the server confirms.
+    func withStepRun(_ run: StepRunView) -> WorkDetail {
+        copy(execution: execution.withStepRun(run))
     }
 
     /// The same detail with a new horizon. The optimistic write while the
