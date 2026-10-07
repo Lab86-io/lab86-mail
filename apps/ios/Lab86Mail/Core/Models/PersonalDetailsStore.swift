@@ -106,7 +106,10 @@ final class PersonalDetailsStore {
     }
 
     /// Puts the details back as they were before a save ("Undo" on a receipt).
+    /// Throws when the server undid nothing (the one-day window ended, or a
+    /// save from Settings came after), so a receipt never claims a false Undo.
     func undo(keys: [String], transport: any BackendExchanging) async throws {
+        var undoneAny = false
         for key in keys {
             let exchange = try await transport.exchange(
                 method: "POST",
@@ -116,9 +119,17 @@ final class PersonalDetailsStore {
             guard exchange.isSuccess else {
                 throw BackendError.server(status: exchange.status, message: exchange.errorMessage)
             }
+            let undone = exchange.body?["undone"]?.stringValue
+            if undone == "restored" || undone == "removed" { undoneAny = true }
         }
         await load(transport, force: true)
+        guard undoneAny else {
+            throw BackendError.server(status: 409, message: Self.nothingToUndo)
+        }
     }
+
+    static let nothingToUndo = "There is nothing to undo now."
+
 
     /// The labels of keys on the wire, for a receipt line.
     static func labels(for keys: [String]) -> [String] {
