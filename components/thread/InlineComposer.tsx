@@ -62,6 +62,8 @@ interface InlineComposerProps {
     body?: string;
     // The send-as address of a restored draft.
     fromAddress?: string;
+    // A saved draft reopened by id (the step runner's handoff): saves update it.
+    draftId?: string;
   };
   // Optional bump value: when the parent supplies a new nonce, we re-seed
   // the body field from initialPrefill.body. Lets the agent's draft_reply
@@ -247,6 +249,13 @@ export function InlineComposer({
   const [, setDraftSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   const draftIdRef = useRef<string | null>(null);
   const draftSaveChain = useRef(Promise.resolve());
+  // A reopened draft keeps its id, so the next save updates it in place.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the id is a value-only seed bumped via prefillNonce, like the fields above.
+  useEffect(() => {
+    if (!initialPrefill?.draftId) return;
+    draftIdRef.current = initialPrefill.draftId;
+    setDraftId(initialPrefill.draftId);
+  }, [prefillNonce]);
   const [customSendAt, setCustomSendAt] = useState('');
   const customSendAtMin = toDatetimeLocalValue(Date.now() + 60_000);
   const customSendAtMs = useMemo(

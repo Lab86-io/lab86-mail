@@ -17,6 +17,8 @@ export interface ComposePrefill {
   body?: string;
   // The send-as address of a restored draft.
   fromAddress?: string;
+  // A saved draft reopened by id: the composer updates it instead of saving a second one.
+  draftId?: string;
 }
 
 export type ComposeMode = 'new' | 'reply' | 'reply_all' | 'forward';
