@@ -73,6 +73,11 @@ struct MacWorkThreadView: View {
             guard let model else { return }
             await model.followOpenRun()
         }
+        // A turn that ends may have started a run the poll did not see yet.
+        .onChange(of: model?.chat.isStreaming ?? false) { wasStreaming, isStreaming in
+            guard wasStreaming, !isStreaming, let model else { return }
+            Task { await model.turnDidEnd() }
+        }
         .task(id: model?.pageRun?.id) {
             checking = false
             tookOver = false
@@ -270,6 +275,8 @@ struct MacWorkThreadView: View {
                 view: view,
                 step: model.step(for: view.run),
                 continues: continues,
+                ownsWaitingShortcut: model.ownsWaitingShortcut(view),
+                hasContinuation: model.hasContinuation(view),
                 busy: model.store.busy,
                 pageShown: pageShown(view, model: model),
                 questionState: model.questionState(for: view),
@@ -563,7 +570,8 @@ struct MacWorkThreadView: View {
         acting = true
         checking = true
         defer { acting = false }
-        await model.resume(run)
+        // A refused "Continue" leaves the run id as it was: clear "checking" here.
+        if !(await model.resume(run)) { checking = false }
         tookOver = false
     }
 

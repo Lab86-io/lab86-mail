@@ -176,7 +176,8 @@ struct PageSheet: View {
     let run: ThreadRunView
     var busy = false
     let onTakeOver: (ThreadRunView) async -> Bool
-    let onDone: (ThreadRunView) async -> Void
+    /// Returns false when "Continue" failed, so the bar leaves "checking".
+    let onDone: (ThreadRunView) async -> Bool
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
@@ -260,7 +261,7 @@ struct PageSheet: View {
         acting = true
         checking = true
         defer { acting = false }
-        await onDone(run)
+        if !(await onDone(run)) { checking = false }
         tookOver = false
     }
 }

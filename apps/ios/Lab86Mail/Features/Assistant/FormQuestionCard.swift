@@ -103,7 +103,11 @@ struct FormQuestionCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Toggle(Self.saveToggle, isOn: Binding(
                     get: { self.draft?.save ?? true },
-                    set: { self.draft?.save = $0 }
+                    // A choice here is an edit: a late details reload must not reset it.
+                    set: {
+                        self.draft?.save = $0
+                        self.userEdited = true
+                    }
                 ))
                 .tint(environment.theme.accentColor)
                 .disabled(isSending)
@@ -171,7 +175,7 @@ struct FormQuestionCard: View {
         draft = current
         guard current.isComplete(form) else {
             if let first = form.fields.first(where: { current.error(for: $0) != nil }) {
-                focusedField = first.kind.isStructured ? "\(first.id).first" : first.id
+                focusedField = first.kind.firstFocusSuffix.map { "\(first.id).\($0)" } ?? first.id
             }
             return
         }

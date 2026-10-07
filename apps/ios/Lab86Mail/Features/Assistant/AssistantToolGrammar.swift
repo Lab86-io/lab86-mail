@@ -252,18 +252,18 @@ enum AssistantToolGrammar {
         "albatross_handle_step": { _, out in
             switch out["action"]?.stringValue {
             case "resumed":
-                return ShapeActivity(running: "Albatross continues the step", done: "Continued the step", failed: "Could not continue the step")
+                return ShapeActivity(running: "Continuing the step", done: "Continued the step", failed: "Continuing the step failed")
             case "steered":
-                return ShapeActivity(running: "Albatross reads your note", done: "Read your note", failed: "Could not pass your note to the run")
+                return ShapeActivity(running: "Passing your note to the step", done: "Passed your note to the step in progress", failed: "Passing your note failed")
             case "stopped":
-                return ShapeActivity(running: "Albatross stops the run", done: "Stopped the run", failed: "Could not stop the run")
+                return ShapeActivity(running: "Stopping the step", done: "Stopped the step", failed: "Stopping the step failed")
             default:
-                return ShapeActivity(running: "Albatross starts the step", done: "Started the step", failed: "Could not start the step")
+                return ShapeActivity(running: "Starting the step", done: "Started on the step", failed: "Starting the step failed")
             }
         },
-        "personal_details_get": fixed("Reads your details", "Read your details", "Could not read your details"),
-        "personal_details_save": fixed("Saves to your details", "Saved to your details", "Could not save to your details"),
-        "ask_form": fixed("Asks you one form", "You answered", "The form failed"),
+        "personal_details_get": fixed("Reading your personal details", "Read your personal details", "Reading your personal details failed"),
+        "personal_details_save": fixed("Saving to your details", "Saved to your details", "Saving to your details failed"),
+        "ask_form": fixed("Asking you a question", "You answered", "The question failed"),
 
         // Albatross work and areas
         "albatross_record_progress": fixed("Recording progress", "Recorded progress", "Recording progress failed"),

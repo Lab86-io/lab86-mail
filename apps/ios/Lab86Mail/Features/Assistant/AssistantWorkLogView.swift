@@ -127,6 +127,8 @@ struct AssistantWorkLogRowView: View {
             RunBlockView(
                 view: view,
                 step: thread.step(for: view.run),
+                ownsWaitingShortcut: thread.ownsWaitingShortcut(view),
+                hasContinuation: thread.hasContinuation(view),
                 busy: thread.store.busy,
                 pageShown: thread.pageRun?.id == view.id,
                 questionState: thread.questionState(for: view),

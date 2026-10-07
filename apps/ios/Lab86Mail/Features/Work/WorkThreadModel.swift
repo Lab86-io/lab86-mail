@@ -220,9 +220,33 @@ final class WorkThreadModel {
         await loadDetail()
     }
 
-    func resume(_ view: ThreadRunView, note: String? = nil) async {
-        _ = await store.resume(view, note: note, transport: transport)
+    /// "Continue" on a handoff. Returns false when the server refused it, so
+    /// the page bar can leave its "checking" state.
+    @discardableResult
+    func resume(_ view: ThreadRunView, note: String? = nil) async -> Bool {
+        let runID = await store.resume(view, note: note, transport: transport)
         syncPageRun()
+        return runID != nil
+    }
+
+    /// A chat turn ended. It may have started a run that the last poll did not
+    /// see (the poll task restarts when the turn ends and stops at once when no
+    /// run is open), so read the runs once now.
+    func turnDidEnd() async {
+        await store.load(transport)
+        syncPageRun()
+        applyAutoOpen()
+    }
+
+    /// Command-Return belongs to the newest run only, and only while no form
+    /// waits: an old block must never start a paid run.
+    func ownsWaitingShortcut(_ view: ThreadRunView) -> Bool {
+        store.newestRun?.id == view.id && pendingQuestion == nil
+    }
+
+    /// A run whose continuation is in the list offers no "Continue" of its own.
+    func hasContinuation(_ view: ThreadRunView) -> Bool {
+        store.runs.contains { $0.run.parentRunID == view.id }
     }
 
     func dismiss(_ view: ThreadRunView) async {

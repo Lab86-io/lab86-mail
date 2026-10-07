@@ -252,3 +252,12 @@ struct ThreadModelsTests {
         #expect(AssistantChatModel.updatedAtMilliseconds(nil) == nil)
     }
 }
+
+struct FormFocusTests {
+    @Test func structuredFieldsFocusTheirFirstSubField() {
+        #expect(FormField.Kind.name.firstFocusSuffix == "first")
+        #expect(FormField.Kind.address.firstFocusSuffix == "line1")
+        #expect(FormField.Kind.contact.firstFocusSuffix == "name")
+        #expect(FormField.Kind.phone.firstFocusSuffix == nil)
+    }
+}

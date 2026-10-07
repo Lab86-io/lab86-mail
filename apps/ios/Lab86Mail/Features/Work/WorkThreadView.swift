@@ -54,6 +54,11 @@ struct WorkThreadView: View {
             guard let model else { return }
             await model.followOpenRun()
         }
+        // A turn that ends may have started a run the poll did not see yet.
+        .onChange(of: model?.chat.isStreaming ?? false) { wasStreaming, isStreaming in
+            guard wasStreaming, !isStreaming, let model else { return }
+            Task { await model.turnDidEnd() }
+        }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, let model else { return }
             Task { await model.refresh() }
@@ -227,6 +232,8 @@ struct WorkThreadView: View {
                 view: view,
                 step: model.step(for: view.run),
                 continues: continues,
+                ownsWaitingShortcut: model.ownsWaitingShortcut(view),
+                hasContinuation: model.hasContinuation(view),
                 busy: model.store.busy,
                 pageShown: model.pageRun?.id == view.id,
                 questionState: model.questionState(for: view),

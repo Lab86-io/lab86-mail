@@ -5,6 +5,7 @@ import Testing
 // The form card's pure rules: the validators for each field kind, the prefill
 // from the personal details, the recommended option, the save toggle, and
 // the answer on the wire.
+@MainActor
 struct FormValidationTests {
     // MARK: - Validators
 

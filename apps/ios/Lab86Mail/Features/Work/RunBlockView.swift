@@ -26,6 +26,10 @@ struct RunBlockView: View {
     var step: WorkDetail.ExecutionStep? = nil
     /// True when this run continues the one before it in the thread.
     var continues = false
+    /// Command-Return goes to this block (the newest run, no form waiting).
+    var ownsWaitingShortcut = false
+    /// A later run continues this one: its "Continue" buttons hide.
+    var hasContinuation = false
     var busy = false
     var pageShown = false
     var questionState = WorkThreadModel.QuestionState()
@@ -219,14 +223,14 @@ struct RunBlockView: View {
             Button(next.label) { actions.primary(view, behaviour) }
                 .buttonStyle(.borderedProminent)
                 .disabled(busy)
-                .waitingActionShortcut(!StepRunNextBehaviour.showsContinue(run.next))
+                .waitingActionShortcut(ownsWaitingShortcut && !StepRunNextBehaviour.showsContinue(run.next))
                 .frame(minHeight: 44)
         }
-        if StepRunNextBehaviour.showsContinue(run.next) {
+        if StepRunNextBehaviour.showsContinue(run.next), !hasContinuation {
             Button(busy ? RunBlockCopy.continueBusy : RunBlockCopy.doneLabel(run.next)) { actions.resume(view) }
                 .buttonStyle(.bordered)
                 .disabled(busy)
-                .waitingActionShortcut()
+                .waitingActionShortcut(ownsWaitingShortcut)
                 .frame(minHeight: 44)
         }
     }
@@ -300,11 +304,13 @@ struct RunBlockView: View {
             summary
             artifactRows
             logDisclosure
-            Button(busy ? RunBlockCopy.continueBusy : RunBlockCopy.continueButton) { actions.resume(view) }
-                .buttonStyle(.borderedProminent)
-                .disabled(busy)
-                .waitingActionShortcut()
-                .frame(minHeight: 44)
+            if !hasContinuation {
+                Button(busy ? RunBlockCopy.continueBusy : RunBlockCopy.continueButton) { actions.resume(view) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(busy)
+                    .waitingActionShortcut(ownsWaitingShortcut)
+                    .frame(minHeight: 44)
+            }
             dismissRow
         }
         .pointerMenu { blockMenu(behaviour: .none, continues: true) }
@@ -339,11 +345,13 @@ struct RunBlockView: View {
         VStack(alignment: .leading, spacing: 10) {
             summary
             pageRow
-            Button(busy ? RunBlockCopy.continueBusy : RunBlockCopy.continueButton) { actions.resume(view) }
-                .buttonStyle(.bordered)
-                .disabled(busy)
-                .waitingActionShortcut()
-                .frame(minHeight: 44)
+            if !hasContinuation {
+                Button(busy ? RunBlockCopy.continueBusy : RunBlockCopy.continueButton) { actions.resume(view) }
+                    .buttonStyle(.bordered)
+                    .disabled(busy)
+                    .waitingActionShortcut(ownsWaitingShortcut)
+                    .frame(minHeight: 44)
+            }
         }
     }
 

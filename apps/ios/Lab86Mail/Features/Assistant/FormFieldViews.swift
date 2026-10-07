@@ -312,14 +312,11 @@ struct FormDateField: View {
     }
 
     var body: some View {
+        // The picker shows today when the field is empty, but the draft stays
+        // empty until the user picks a date: an untouched optional date is not sent.
         DatePicker("Date", selection: date, displayedComponents: .date)
             .datePickerStyle(.compact)
             .labelsHidden()
-            .onAppear {
-                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    text = FormValidation.isoString(Date.now)
-                }
-            }
     }
 }
 

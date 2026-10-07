@@ -1070,7 +1070,9 @@ final class AssistantChatModel {
         }
         // Messages that another device wrote and the merge kept: add them now,
         // or the next save counts them as removed (docs/albatross-thread.md).
-        if WorkThreadSession.isThreadID(sessionID), !isStreaming,
+        // A reply that streams meanwhile stays in place: the stream finds its
+        // message by id, so the merge never waits for the stream to end.
+        if WorkThreadSession.isThreadID(sessionID),
            let merged = result["mergedMessages"]?.arrayValue, !merged.isEmpty {
             messages = Self.addingMergedMessages(merged.compactMap(Self.message(from:)), to: messages)
         }

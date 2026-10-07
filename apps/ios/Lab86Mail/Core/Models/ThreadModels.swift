@@ -71,6 +71,17 @@ struct FormField: Identifiable, Hashable, Sendable {
         var isStructured: Bool {
             self == .name || self == .address || self == .contact
         }
+
+        /// The focus id suffix of the first sub-field of a structured kind
+        /// (FormFieldViews: name `.first`, address `.line1`, contact `.name`).
+        var firstFocusSuffix: String? {
+            switch self {
+            case .name: "first"
+            case .address: "line1"
+            case .contact: "name"
+            default: nil
+            }
+        }
     }
 
     let id: String
