@@ -17,6 +17,7 @@ import {
 import { matchingProofId } from '../lib/albatross/proof-match';
 import { questionDedupeKey, shouldAdvanceWorkAfterAnswer } from '../lib/albatross/question-dedupe';
 import { shapeAllows } from '../lib/albatross/shape-policy';
+import { normalizeStepEvidence, normalizeStepMode } from '../lib/albatross/step-contract';
 import {
   mergeStepProgress,
   planStepsForProgress,
@@ -1724,12 +1725,17 @@ function projectedPlanSteps(
   // so no watcher or gate spends another check on it.
   const confirmedFor = (identity: string) =>
     Boolean(stepEvidence && hasConfirmedEvidence(identity, stepEvidence));
-  const contractFields = (action: PlanStepAction) => ({
-    stepMode: action.stepMode || null,
-    doneWhen: bounded(action.doneWhen, 300) || null,
-    evidenceKind: action.evidence?.kind || null,
-    evidenceHint: bounded(action.evidence?.hint, 300) || null,
-  });
+  // Rows saved before the contract check may carry any value here. A value
+  // outside the taxonomy reads as unknown (null), never as a guess.
+  const contractFields = (action: PlanStepAction) => {
+    const evidence = normalizeStepEvidence(action.evidence);
+    return {
+      stepMode: normalizeStepMode(action.stepMode) ?? null,
+      doneWhen: bounded(action.doneWhen, 300) || null,
+      evidenceKind: evidence?.kind ?? null,
+      evidenceHint: bounded(evidence?.hint, 300) || null,
+    };
+  };
   const digital = planSteps
     .filter((step) => step.kind === 'digital')
     .map(({ action, key, identity }) => {

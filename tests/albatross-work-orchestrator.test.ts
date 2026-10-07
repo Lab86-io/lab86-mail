@@ -33,10 +33,10 @@ function harness(
       applyCalls += 1;
       return (
         options.applyResult || {
-        applicationId: 'application_1',
-        projectId: 'project_1',
-        operations: [{ tool: 'tasks_create_card' }],
-        approvals: [],
+          applicationId: 'application_1',
+          projectId: 'project_1',
+          operations: [{ tool: 'tasks_create_card' }],
+          approvals: [],
           taskIdsByStepKey: { step_1: 'card_1' },
         }
       );
