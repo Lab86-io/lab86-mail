@@ -159,6 +159,24 @@ final class NativeTourTests: XCTestCase {
         try await tour(screen)
     }
 
+    func testTour20WorkDetailRun() async throws {
+        // The step runner at work: the live log and "Stop" in "Do this next".
+        var screen = Screen(id: "work-detail-run", title: "One Albatross while a step runs", section: "Tasks and Work", tab: .work) { environment in
+            environment.navigation.openWork(id: "w-dispute-run", title: "Dispute the duplicate charge")
+        }
+        screen.fullPage = true
+        try await tour(screen)
+    }
+
+    func testTour21WorkDetailHandoff() async throws {
+        // A handoff: the summary, the artifacts, and "Read and send".
+        var screen = Screen(id: "work-detail-handoff", title: "One Albatross with a handoff", section: "Tasks and Work", tab: .work) { environment in
+            environment.navigation.openWork(id: "w-dispute-handoff", title: "Dispute the duplicate charge")
+        }
+        screen.fullPage = true
+        try await tour(screen)
+    }
+
     // MARK: - Screens and variants
 
     private struct Screen {
@@ -268,7 +286,7 @@ final class NativeTourTests: XCTestCase {
     private static let screenOrder = [
         "shell-sidebar", "today-brief", "today-empty", "today-error", "mail-list", "mail-thread", "mail-empty",
         "mail-error", "compose-new", "compose-reply", "calendar-day", "calendar-week", "calendar-month", "tasks",
-        "work", "work-detail", "files", "chat", "settings",
+        "work", "work-detail", "work-detail-run", "work-detail-handoff", "files", "chat", "settings",
     ]
 
     // MARK: - The tour

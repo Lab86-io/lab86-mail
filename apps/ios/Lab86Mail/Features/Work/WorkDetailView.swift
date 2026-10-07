@@ -42,6 +42,10 @@ struct WorkDetailView: View {
     // never discards text typed for another step.
     @State private var stepNotes: [String: String] = [:]
     @State private var browserStep: WorkDetail.ExecutionStep?
+    // The shared browser of a step run (sign in, finish on the page).
+    @State private var runBrowser: StepRunBrowserRequest?
+    // A run action that failed, shown under the card until the next action.
+    @State private var runNotice: String?
     @State private var showsHorizonSheet = false
     @State private var showsShapeSheet = false
     #if os(macOS)
@@ -101,6 +105,9 @@ struct WorkDetailView: View {
             }
         }
         .task(id: route.id) { await load(initial: true) }
+        // While a run is open on this page, read the Work every few seconds.
+        // The task ends when the run ends or the page goes away.
+        .task(id: detail?.execution.activeRun?.id) { await followOpenRun() }
         #if os(macOS)
         .onChange(of: MacRequests.shared.openHorizonToken) { _, _ in
             showsHorizonPopover = true
@@ -130,6 +137,14 @@ struct WorkDetailView: View {
                 detail = environment.store.cachedWorkDetail(route.workID) ?? detail
                 await load(initial: false)
             }
+        }
+        .sheet(item: $runBrowser) { request in
+            StepRunBrowserSheet(
+                workID: route.workID,
+                run: request.run,
+                onTakeOver: { await stopRun(request.run) },
+                onContinue: { await resumeRun(request.run) }
+            )
         }
         .sheet(isPresented: $showsShapeSheet) {
             ShapePickerSheet(current: detail?.work.resolvedShape ?? .default) { shape in
@@ -488,7 +503,10 @@ struct WorkDetailView: View {
         _ step: WorkDetail.ExecutionStep,
         execution: WorkDetail.Execution
     ) -> some View {
-        documentSection("Do this next") {
+        // The step runner decides what the section shows: the usual step
+        // buttons, "Handle it", the live log, or a handoff card.
+        let runState = StepRunCardPolicy.state(step: step, execution: execution)
+        return documentSection(StepRunCopy.sectionTitle(runState)) {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(step.title)
@@ -507,27 +525,31 @@ struct WorkDetailView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if let doneWhen = step.doneWhen {
-                    Text("Done when \(doneWhen)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if !step.done, step.evidenceKind == "mail_confirmation" {
-                    Text("The confirmation lands in Mail. Albatross checks this step off when it arrives.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                if !runState.hidesStepActions {
+                    if let doneWhen = step.doneWhen {
+                        Text("Done when \(doneWhen)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !step.done, step.evidenceKind == "mail_confirmation" {
+                        Text("The confirmation lands in Mail. Albatross checks this step off when it arrives.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
-                if let rawURL = step.url, let url = URL(string: rawURL) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 10) { stepSiteActions(step, url: url) }
-                        VStack(alignment: .leading, spacing: 10) { stepSiteActions(step, url: url) }
+                    if let rawURL = step.url, let url = URL(string: rawURL) {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 10) { stepSiteActions(step, url: url) }
+                            VStack(alignment: .leading, spacing: 10) { stepSiteActions(step, url: url) }
+                        }
                     }
                 }
 
-                if step.isOffline, !step.done {
+                // The note stays while a handoff waits: "Mark this step done"
+                // is the primary of a `do_offline` handoff.
+                if step.isOffline, !step.done, runState.run?.state.isOpen != true {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("What came of it? The answer feeds the rest of the plan.")
                             .font(.caption)
@@ -545,9 +567,36 @@ struct WorkDetailView: View {
                     }
                 }
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) { currentStepActions(step) }
-                    VStack(alignment: .leading, spacing: 10) { currentStepActions(step) }
+                if runState.run != nil {
+                    StepRunCardView(
+                        state: runState,
+                        questions: detail?.questions ?? [],
+                        busy: isMutating,
+                        onStop: { run in Task { await stopRun(run) } },
+                        onResume: { run in Task { await resumeRun(run) } },
+                        onDismiss: { run in Task { await dismissRun(run) } },
+                        onTryAgain: { run in Task { await startRun(stepKey: run.stepKey) } },
+                        onDiscuss: { discussWork() },
+                        onPrimary: { run, behaviour in
+                            Task { await performNext(behaviour, run: run, step: step) }
+                        },
+                        onArtifact: { artifact in Task { await openArtifact(artifact) } },
+                        onQuestionAnswered: { await load(initial: false) }
+                    )
+                }
+
+                if let runNotice {
+                    Text(runNotice)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if !runState.hidesStepActions {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) { currentStepActions(step, runState: runState) }
+                        VStack(alignment: .leading, spacing: 10) { currentStepActions(step, runState: runState) }
+                    }
                 }
             }
         }
@@ -564,21 +613,134 @@ struct WorkDetailView: View {
     }
 
     @ViewBuilder
-    private func currentStepActions(_ step: WorkDetail.ExecutionStep) -> some View {
-        Button(isMutating ? "Updating…" : "Mark this step done") {
-            Task { await completeCurrentStep(step) }
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(isMutating)
-        .frame(minHeight: 44)
+    private func currentStepActions(_ step: WorkDetail.ExecutionStep, runState: StepRunCardState) -> some View {
+        if runState == .eligible {
+            // Albatross can carry this step. "Handle it" leads; the check by
+            // hand stays one tap away.
+            Button(isMutating ? "Starting…" : "Handle it") {
+                Task { await startRun(stepKey: step.id) }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isMutating)
+            .frame(minHeight: 44)
 
-        Button("Discuss this") {
-            environment.startAssistantChat(
-                scope: AssistantChatScope(kind: .work, contextID: route.workID, label: route.title)
-            )
+            Button("Mark this step done") {
+                Task { await completeCurrentStep(step) }
+            }
+            .buttonStyle(.bordered)
+            .disabled(isMutating)
+            .frame(minHeight: 44)
+        } else if case .failed = runState {
+            // "Try again" is the primary of the failed card above.
+            Button("Mark this step done") {
+                Task { await completeCurrentStep(step) }
+            }
+            .buttonStyle(.bordered)
+            .disabled(isMutating)
+            .frame(minHeight: 44)
+        } else {
+            Button(isMutating ? "Updating…" : "Mark this step done") {
+                Task { await completeCurrentStep(step) }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isMutating)
+            .frame(minHeight: 44)
         }
-        .buttonStyle(.bordered)
-        .frame(minHeight: 44)
+
+        Button("Discuss this") { discussWork() }
+            .buttonStyle(.bordered)
+            .frame(minHeight: 44)
+    }
+
+    private func discussWork() {
+        environment.startAssistantChat(
+            scope: AssistantChatScope(kind: .work, contextID: route.workID, label: route.title)
+        )
+    }
+
+    // MARK: - Step runs
+
+    private func startRun(stepKey: String) async {
+        runNotice = nil
+        isMutating = true
+        defer { isMutating = false }
+        if await environment.store.startStepRun(route.workID, stepKey: stepKey) != nil {
+            detail = environment.store.cachedWorkDetail(route.workID) ?? detail
+        } else {
+            runNotice = environment.store.workError
+        }
+    }
+
+    private func stopRun(_ run: StepRunView) async {
+        runNotice = nil
+        isMutating = true
+        defer { isMutating = false }
+        if await environment.store.cancelStepRun(route.workID, run: run) {
+            detail = environment.store.cachedWorkDetail(route.workID) ?? detail
+        } else {
+            runNotice = environment.store.workError
+        }
+    }
+
+    private func resumeRun(_ run: StepRunView) async {
+        runNotice = nil
+        isMutating = true
+        defer { isMutating = false }
+        if await environment.store.resumeStepRun(route.workID, runID: run.id) != nil {
+            detail = environment.store.cachedWorkDetail(route.workID) ?? detail
+        } else {
+            runNotice = environment.store.workError
+        }
+    }
+
+    private func dismissRun(_ run: StepRunView) async {
+        runNotice = nil
+        isMutating = true
+        defer { isMutating = false }
+        if await environment.store.dismissStepRun(route.workID, run: run) {
+            detail = environment.store.cachedWorkDetail(route.workID) ?? detail
+        } else {
+            runNotice = environment.store.workError
+        }
+    }
+
+    /// The primary button of a handoff, as the contract's next-action table
+    /// says. The sheet and the step check live on this page; the rest is
+    /// shared with the Brief list.
+    private func performNext(
+        _ behaviour: StepRunNextBehaviour,
+        run: StepRunView,
+        step: WorkDetail.ExecutionStep
+    ) async {
+        runNotice = nil
+        switch behaviour {
+        case .openBrowser:
+            runBrowser = StepRunBrowserRequest(run: run)
+        case .markStepDone:
+            await completeCurrentStep(step)
+        case .resume:
+            await resumeRun(run)
+        case .showQuestion, .showArtifacts, .none:
+            break
+        case .openDraft, .openDocument, .openApproval, .openURL:
+            let opened = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)
+            if !opened { runNotice = "This could not open here. Open it on the web." }
+        }
+    }
+
+    private func openArtifact(_ artifact: StepRunView.Artifact) async {
+        runNotice = nil
+        let opened = await StepRunActions.open(artifact, environment: environment, openURL: openURL)
+        if !opened { runNotice = "\(artifact.title) could not open here." }
+    }
+
+    private func followOpenRun() async {
+        guard detail?.execution.activeRun != nil else { return }
+        while !Task.isCancelled {
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            await load(initial: false)
+            if detail?.execution.activeRun == nil { return }
+        }
     }
 
     private func documentSection<Content: View>(

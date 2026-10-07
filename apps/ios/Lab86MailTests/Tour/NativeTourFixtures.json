@@ -1003,9 +1003,330 @@
           ]
         }
       ]
+    },
+    "w-dispute-run": {
+      "work": {
+        "_id": "w-dispute-run",
+        "title": "Dispute the duplicate charge",
+        "rawText": "Dispute the duplicate Northwind charge on the card",
+        "status": "ready",
+        "workState": "active",
+        "agentState": "applying",
+        "updatedAt": "@ms:now-2m"
+      },
+      "execution": {
+        "currentStep": {
+          "key": "step-form",
+          "kind": "task",
+          "title": "Open the dispute form",
+          "detail": "The bank takes disputes on its site, under Card services.",
+          "stepMode": "agent_does",
+          "doneWhen": "The dispute form shows the charge",
+          "done": false,
+          "runnable": false,
+          "run": {
+            "id": "run-dispute-1",
+            "workId": "w-dispute-run",
+            "stepKey": "step-form",
+            "stepIdentity": "step-form@1",
+            "stepTitle": "Open the dispute form",
+            "state": "running",
+            "trigger": "user",
+            "outcome": null,
+            "summary": null,
+            "log": [
+              { "at": "@ms:now-4m", "text": "Reading the card statement for the two Northwind charges" },
+              { "at": "@ms:now-3m", "text": "Found the duplicate: $184.00 on the 2nd and again on the 3rd" },
+              { "at": "@ms:now-2m", "text": "Opening the bank site in the shared browser" },
+              { "at": "@ms:now-1m", "text": "Looking for Card services" },
+              { "at": "@ms:now", "text": "Opening the dispute form" }
+            ],
+            "next": null,
+            "artifacts": [],
+            "browserSessionId": "sess-dispute-1",
+            "stoppedBy": null,
+            "error": null,
+            "createdAt": "@ms:now-4m",
+            "updatedAt": "@ms:now",
+            "finishedAt": null
+          }
+        },
+        "guideSteps": [
+          {
+            "key": "step-find",
+            "kind": "task",
+            "title": "Find both charges on the statement",
+            "done": true,
+            "verification": {
+              "level": "artifact",
+              "evidenceTitle": "Charge timeline"
+            }
+          },
+          {
+            "key": "step-form",
+            "kind": "task",
+            "title": "Open the dispute form",
+            "detail": "The bank takes disputes on its site, under Card services.",
+            "stepMode": "agent_does",
+            "doneWhen": "The dispute form shows the charge",
+            "done": false,
+            "runnable": false
+          },
+          {
+            "key": "step-submit",
+            "kind": "task",
+            "title": "Check and submit the dispute",
+            "stepMode": "you_do",
+            "done": false,
+            "runnable": false
+          },
+          {
+            "key": "step-watch",
+            "kind": "task",
+            "title": "Watch for the provisional credit",
+            "detail": "The bank credits the card within ten days.",
+            "done": false,
+            "runnable": false
+          }
+        ],
+        "remainingSteps": 3,
+        "totalSteps": 4,
+        "activeRun": {
+          "id": "run-dispute-1",
+          "workId": "w-dispute-run",
+          "stepKey": "step-form",
+          "stepIdentity": "step-form@1",
+          "stepTitle": "Open the dispute form",
+          "state": "running",
+          "trigger": "user",
+          "outcome": null,
+          "summary": null,
+          "log": [
+            { "at": "@ms:now-4m", "text": "Reading the card statement for the two Northwind charges" },
+            { "at": "@ms:now-3m", "text": "Found the duplicate: $184.00 on the 2nd and again on the 3rd" },
+            { "at": "@ms:now-2m", "text": "Opening the bank site in the shared browser" },
+            { "at": "@ms:now-1m", "text": "Looking for Card services" },
+            { "at": "@ms:now", "text": "Opening the dispute form" }
+          ],
+          "next": null,
+          "artifacts": [],
+          "browserSessionId": "sess-dispute-1",
+          "stoppedBy": null,
+          "error": null,
+          "createdAt": "@ms:now-4m",
+          "updatedAt": "@ms:now",
+          "finishedAt": null
+        },
+        "runner": { "enabled": true }
+      },
+      "plan": {
+        "_id": "plan-dispute",
+        "status": "ready",
+        "outcome": "The duplicate $184.00 charge is reversed",
+        "summary": "Northwind billed the card twice on the 2nd and the 3rd. The bank takes disputes on its site and credits the card while it looks into it."
+      },
+      "questions": [],
+      "evidence": []
+    },
+    "w-dispute-handoff": {
+      "work": {
+        "_id": "w-dispute-handoff",
+        "title": "Dispute the duplicate charge",
+        "rawText": "Dispute the duplicate Northwind charge on the card",
+        "status": "ready",
+        "workState": "active",
+        "agentState": "idle",
+        "updatedAt": "@ms:now-20m"
+      },
+      "execution": {
+        "currentStep": {
+          "key": "step-letter",
+          "kind": "task",
+          "title": "Send the dispute letter to the bank",
+          "detail": "The bank wants one letter with both charge dates.",
+          "stepMode": "agent_drafts",
+          "doneWhen": "The letter is sent",
+          "done": false,
+          "runnable": false,
+          "run": {
+            "id": "run-dispute-2",
+            "workId": "w-dispute-handoff",
+            "stepKey": "step-letter",
+            "stepIdentity": "step-letter@1",
+            "stepTitle": "Send the dispute letter to the bank",
+            "state": "handed_off",
+            "trigger": "brief",
+            "outcome": "ready_for_you",
+            "summary": "I wrote the dispute letter with both charge dates and the statement lines, and saved it as a draft to the bank's disputes address. I attached the charge timeline.",
+            "log": [
+              { "at": "@ms:now-26m", "text": "Reading the charge timeline" },
+              { "at": "@ms:now-24m", "text": "Finding the bank's disputes address" },
+              { "at": "@ms:now-22m", "text": "Writing the letter" },
+              { "at": "@ms:now-20m", "text": "Saved the draft with the timeline attached" }
+            ],
+            "next": {
+              "kind": "review_draft",
+              "label": "Read and send",
+              "detail": "The draft is in your Drafts. Read it, then send it.",
+              "target": { "kind": "draft", "id": "draft-dispute", "accountId": "acct-home" }
+            },
+            "artifacts": [
+              { "kind": "draft", "id": "draft-dispute", "title": "Dispute letter to Northwind Bank", "accountId": "acct-home" },
+              { "kind": "document", "id": "doc-timeline", "title": "Charge timeline", "url": "/?view=files&office=doc-timeline" }
+            ],
+            "browserSessionId": null,
+            "stoppedBy": null,
+            "error": null,
+            "createdAt": "@ms:now-26m",
+            "updatedAt": "@ms:now-20m",
+            "finishedAt": "@ms:now-20m"
+          }
+        },
+        "guideSteps": [
+          {
+            "key": "step-find",
+            "kind": "task",
+            "title": "Find both charges on the statement",
+            "done": true,
+            "verification": {
+              "level": "artifact",
+              "evidenceTitle": "Charge timeline"
+            }
+          },
+          {
+            "key": "step-letter",
+            "kind": "task",
+            "title": "Send the dispute letter to the bank",
+            "detail": "The bank wants one letter with both charge dates.",
+            "stepMode": "agent_drafts",
+            "doneWhen": "The letter is sent",
+            "done": false,
+            "runnable": false,
+            "run": {
+              "id": "run-dispute-2",
+              "workId": "w-dispute-handoff",
+              "stepKey": "step-letter",
+              "stepIdentity": "step-letter@1",
+              "stepTitle": "Send the dispute letter to the bank",
+              "state": "handed_off",
+              "trigger": "brief",
+              "outcome": "ready_for_you",
+              "summary": "I wrote the dispute letter with both charge dates and the statement lines, and saved it as a draft to the bank's disputes address. I attached the charge timeline.",
+              "log": [
+                { "at": "@ms:now-26m", "text": "Reading the charge timeline" },
+                { "at": "@ms:now-24m", "text": "Finding the bank's disputes address" },
+                { "at": "@ms:now-22m", "text": "Writing the letter" },
+                { "at": "@ms:now-20m", "text": "Saved the draft with the timeline attached" }
+              ],
+              "next": {
+                "kind": "review_draft",
+                "label": "Read and send",
+                "detail": "The draft is in your Drafts. Read it, then send it.",
+                "target": { "kind": "draft", "id": "draft-dispute", "accountId": "acct-home" }
+              },
+              "artifacts": [
+                { "kind": "draft", "id": "draft-dispute", "title": "Dispute letter to Northwind Bank", "accountId": "acct-home" },
+                { "kind": "document", "id": "doc-timeline", "title": "Charge timeline", "url": "/?view=files&office=doc-timeline" }
+              ],
+              "browserSessionId": null,
+              "stoppedBy": null,
+              "error": null,
+              "createdAt": "@ms:now-26m",
+              "updatedAt": "@ms:now-20m",
+              "finishedAt": "@ms:now-20m"
+            }
+          },
+          {
+            "key": "step-watch",
+            "kind": "task",
+            "title": "Watch for the provisional credit",
+            "detail": "The bank credits the card within ten days.",
+            "done": false,
+            "runnable": false
+          }
+        ],
+        "remainingSteps": 2,
+        "totalSteps": 3,
+        "activeRun": null,
+        "runner": { "enabled": true }
+      },
+      "plan": {
+        "_id": "plan-dispute-2",
+        "status": "ready",
+        "outcome": "The duplicate $184.00 charge is reversed",
+        "summary": "Northwind billed the card twice on the 2nd and the 3rd. The bank wants one letter with both dates, then credits the card while it looks into it."
+      },
+      "questions": [],
+      "evidence": []
     }
   },
   "paths": {
+    "/api/albatross/handoffs": {
+      "ok": true,
+      "items": [
+        {
+          "workId": "w-dispute-handoff",
+          "workTitle": "Dispute the duplicate charge",
+          "run": {
+            "id": "run-dispute-2",
+            "workId": "w-dispute-handoff",
+            "stepKey": "step-letter",
+            "stepIdentity": "step-letter@1",
+            "stepTitle": "Send the dispute letter to the bank",
+            "state": "handed_off",
+            "trigger": "brief",
+            "outcome": "ready_for_you",
+            "summary": "I wrote the dispute letter with both charge dates and saved it as a draft to the bank's disputes address.",
+            "log": [
+              { "at": "@ms:now-22m", "text": "Writing the letter" },
+              { "at": "@ms:now-20m", "text": "Saved the draft with the timeline attached" }
+            ],
+            "next": {
+              "kind": "review_draft",
+              "label": "Read and send",
+              "detail": "The draft is in your Drafts. Read it, then send it.",
+              "target": { "kind": "draft", "id": "draft-dispute", "accountId": "acct-home" }
+            },
+            "artifacts": [
+              { "kind": "draft", "id": "draft-dispute", "title": "Dispute letter to Northwind Bank", "accountId": "acct-home" }
+            ],
+            "browserSessionId": null,
+            "stoppedBy": null,
+            "error": null,
+            "createdAt": "@ms:now-26m",
+            "updatedAt": "@ms:now-20m",
+            "finishedAt": "@ms:now-20m"
+          }
+        },
+        {
+          "workId": "w-passport",
+          "workTitle": "Renew my passport before the Denver trip",
+          "run": {
+            "id": "run-passport-1",
+            "workId": "w-passport",
+            "stepKey": "step-track",
+            "stepIdentity": "step-track@1",
+            "stepTitle": "Track the application status",
+            "state": "running",
+            "trigger": "conductor",
+            "outcome": null,
+            "summary": null,
+            "log": [
+              { "at": "@ms:now-2m", "text": "Opening the status page" },
+              { "at": "@ms:now-1m", "text": "Reading the application status" }
+            ],
+            "next": null,
+            "artifacts": [],
+            "browserSessionId": "sess-passport-1",
+            "stoppedBy": null,
+            "error": null,
+            "createdAt": "@ms:now-2m",
+            "updatedAt": "@ms:now-1m",
+            "finishedAt": null
+          }
+        }
+      ]
+    },
     "/api/mobile/activity": { "suggestions": [], "questions": [] },
     "/api/calendar/resync": { "ok": true, "started": false, "lastSyncedAt": "@ms:now-3m" },
     "/api/billing/plan": { "ok": true, "plan": "pro", "planName": "Pro", "trial": { "active": false } },

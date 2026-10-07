@@ -233,6 +233,9 @@ struct TodayView: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     DailyBriefMasthead(generatedAt: report.generatedAt, art: report.art, kind: report.kind)
                     sourceStrip
+                    if BriefOwnerMounts.mountsReadyForYou(hasReport: true, showsLatest: store.showsLatestDailyReport) {
+                        ReadyForYouSection()
+                    }
                     if BriefOwnerMounts.mountsNarrative(document) {
                         NarrativeBriefView(memory: narrative, backend: environment.backend)
                     }
@@ -473,6 +476,10 @@ struct TodayView: View {
 
     @ViewBuilder
     private func briefContent(_ report: DailyReportModel?) -> some View {
+        // The step runner's handoffs come first, before the editorial body.
+        if BriefOwnerMounts.mountsReadyForYou(hasReport: report != nil, showsLatest: store.showsLatestDailyReport) {
+            ReadyForYouSection()
+        }
         // An editorial edition places the narrative in its own body.
         if BriefOwnerMounts.mountsNarrative(
             report.flatMap { Self.rendersNativeDocument($0) ? $0.document : nil }
