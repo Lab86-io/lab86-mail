@@ -218,6 +218,37 @@ final class NativeTourTests: XCTestCase {
         try await tour(screen)
     }
 
+    func testTour26SettingsPasswordsAndIDs() async throws {
+        // Settings, Account, Passwords and IDs (V1 to V3): three groups, the
+        // masked hints, "Used Oct 5", and the add rows. No value anywhere.
+        var screen = Screen(id: "settings-passwords-ids", title: "Settings, Passwords and IDs", section: "Settings", tab: .today)
+        screen.rootView = {
+            AnyView(NavigationStack { SecureDetailsSettingsView() })
+        }
+        try await tour(screen)
+    }
+
+    func testTour27SettingsPasswordsAndIDsDetail() async throws {
+        // One ID (V4 and V8): the facts, each secret field with "Replace",
+        // the sites, the recent uses, and "Delete this ID".
+        var screen = Screen(id: "settings-passwords-ids-detail", title: "Settings, a driver's license", section: "Settings", tab: .today)
+        screen.rootView = {
+            AnyView(NavigationStack { SecureItemDetailView(itemID: "sec-license") })
+        }
+        screen.fullPage = true
+        try await tour(screen)
+    }
+
+    func testTour28WorkThreadAllow() async throws {
+        // The allow card (V6): a run on a new site asks to use the driver's
+        // license, with "Allow once", "Always on ny.gov", and "Do not allow".
+        var screen = Screen(id: "work-thread-allow", title: "The Albatross thread with an allow", section: "Tasks and Work", tab: .work) { environment in
+            environment.navigation.openWork(id: "w-license", title: "Renew the driver's license")
+        }
+        screen.fullPage = true
+        try await tour(screen)
+    }
+
     // MARK: - Screens and variants
 
     private struct Screen {
@@ -331,7 +362,8 @@ final class NativeTourTests: XCTestCase {
         "shell-sidebar", "today-brief", "today-empty", "today-error", "mail-list", "mail-thread", "mail-empty",
         "mail-error", "compose-new", "compose-reply", "calendar-day", "calendar-week", "calendar-month", "tasks",
         "work", "work-detail", "work-detail-run", "work-detail-handoff", "work-thread-run", "work-thread-form",
-        "work-thread-handoff", "files", "chat", "settings", "settings-personal-details",
+        "work-thread-handoff", "work-thread-allow", "files", "chat", "settings", "settings-personal-details",
+        "settings-passwords-ids", "settings-passwords-ids-detail",
     ]
 
     // MARK: - The tour

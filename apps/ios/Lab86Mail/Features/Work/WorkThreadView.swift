@@ -23,6 +23,7 @@ struct WorkThreadView: View {
     @State private var showsDetails = false
     @State private var showsHorizonSheet = false
     @State private var showsArchiveConfirmation = false
+    @State private var signInOffer: SignInSaveOffer?
     @State private var atBottom = true
     @State private var announced: String?
     @FocusState private var composerFocused: Bool
@@ -114,7 +115,10 @@ struct WorkThreadView: View {
                 announce(previous: previous, next: next, model: model)
             }
             .overlay(alignment: .bottomTrailing) {
-                if let pill = ThreadJumpPill.text(atBottom: atBottom, pendingFormOffscreen: model.pendingQuestion != nil && !atBottom) {
+                if let pill = ThreadJumpPill.text(
+                    atBottom: atBottom,
+                    pendingFormOffscreen: (model.pendingQuestion != nil || model.pendingAllow != nil) && !atBottom
+                ) {
                     Button(pill) {
                         guard let last = model.newestItemID else { return }
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
@@ -199,6 +203,15 @@ struct WorkThreadView: View {
             } message: {
                 Text("An archived Albatross leaves its Area. It stays in history.")
             }
+            // "Save a sign-in" on a sign-in handoff (V13): the add sheet with
+            // the site filled in. A save marks the run, so its block reads
+            // "Saved. Press Continue, and Albatross signs in."
+            .sheet(item: $signInOffer) { offer in
+                SecureItemEditorView(target: .newSignIn(site: offer.site, label: nil), siteSource: .run) { item in
+                    if item != nil { model.markSignInSaved(offer.run) }
+                }
+            }
+            .identityCheckSheet(model.identity)
         }
     }
 
@@ -237,6 +250,9 @@ struct WorkThreadView: View {
                 busy: model.store.busy,
                 pageShown: model.pageRun?.id == view.id,
                 questionState: model.questionState(for: view),
+                allowState: model.allowState(for: view),
+                signInSaved: model.signInSaved(for: view),
+                identityWindowOpen: model.identityWindowOpen,
                 actions: model.actions
             )
         }
@@ -400,6 +416,9 @@ struct WorkThreadView: View {
         actions.showPage = { view in model.pageRun = view }
         actions.hidePage = { view in if model.pageRun?.id == view.id { model.pageRun = nil } }
         actions.answer = { question, answer, _ in Task { await model.answer(question, form: answer) } }
+        actions.allow = { view, request, scope in Task { await model.allow(view, request: request, scope: scope) } }
+        actions.openWeb = { _ in if let url = model.webURL { openURL(url) } }
+        actions.saveSignIn = { view, offer in signInOffer = SignInSaveOffer(run: view, site: offer.site) }
         return actions
     }
 
@@ -414,7 +433,7 @@ struct WorkThreadView: View {
             if let step = model.step(for: view.run) { await model.completeStep(step) }
         case .resume:
             await model.resume(view)
-        case .showQuestion, .showArtifacts, .none:
+        case .showQuestion, .showArtifacts, .allowSecure, .none:
             break
         case .openDraft, .openDocument, .openApproval, .openURL:
             _ = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)
@@ -444,7 +463,9 @@ struct WorkThreadView: View {
         switch next {
         case .running: line = "Albatross started on \(model.currentStep?.title ?? "the step")."
         case .yourTurn: line = "Your turn: \(model.store.newestRun?.run.next?.detail ?? model.currentStep?.title ?? "the step")."
-        case .needsAnswer: line = "Albatross asks: \(model.pendingQuestion?.resolvedForm.title ?? "one question")."
+        case .needsAnswer:
+            let allowTitle = model.pendingAllow?.run.next?.allow.map(SecureAllowCopy.title)
+            line = "Albatross asks: \(model.pendingQuestion?.resolvedForm.title ?? allowTitle ?? "one question")."
         case .readyForYou: line = "Ready for you: \(model.store.newestRun?.run.summary ?? model.currentStep?.title ?? "the step")."
         case .done: line = "Done."
         case .planning, .ready, .putDown: line = nil

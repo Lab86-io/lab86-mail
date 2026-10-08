@@ -10,6 +10,7 @@ import { useMemo } from 'react';
 import { ShimmerText } from '@/components/odysseyui/text-shimmer';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
+import { readyForYouAllowLine } from '@/lib/albatross/secure-view';
 import {
   type ReadyForYouRow,
   readyForYouRows,
@@ -28,6 +29,25 @@ export function readyForYouCountLine(rows: readonly ReadyForYouRow[]): string {
   return working === 1 ? 'Albatross works on one step.' : `Albatross works on ${working} steps.`;
 }
 
+/**
+ * The rows, with one change for an allow_secure handoff: its line is the
+ * question ("Albatross needs your answer: use your driver's license number
+ * on ny.gov?"), and its one button opens the thread, where the three
+ * choices and the identity check live (docs/albatross-secure-store.md).
+ */
+export function readyForYouRowsWithSecure(items: readonly StepRunHandoffItem[]): ReadyForYouRow[] {
+  const runs = new Map(items.map((item) => [item.run.id, item.run]));
+  return readyForYouRows(items).map((row) => {
+    const next = runs.get(row.runId)?.next;
+    if (!next || next.kind !== 'allow_secure' || !next.allow) return row;
+    return {
+      ...row,
+      line: readyForYouAllowLine(next.allow),
+      action: { label: 'Answer', behaviour: { kind: 'open_work' } },
+    };
+  });
+}
+
 export function ReadyForYouList({
   items,
   onOpenWork,
@@ -39,7 +59,7 @@ export function ReadyForYouList({
   onAct: (row: ReadyForYouRow) => void;
   className?: string;
 }) {
-  const rows = readyForYouRows(items);
+  const rows = readyForYouRowsWithSecure(items);
   if (!rows.length) return null;
   return (
     <section

@@ -83,6 +83,19 @@ the file with `cache-control: private, no-store`
 (`lib/hosted/data-export.ts`). The raw table rows are not in the export, because
 they hold only ciphertext.
 
+### Passwords and IDs
+
+| Table | Content | Retention rule | Disconnect | 30 d | Delete |
+|---|---|---|---|---|---|
+| `secureItems` (`convex/schema.ts`, `convex/secureDetails.ts`) | Sign-ins, ID numbers, date of birth, API keys, envelope-encrypted under the secure key; label, sites, masked hints, plain facts | Until the user deletes the item (Settings, Passwords and IDs) or the account. A replaced value is overwritten at once; there is no Undo copy | No (not mailbox data) | No | Yes (`USER_INLINE_TABLES`) |
+| `secureGrants` | "Allow once": item, site, Work step, end time. No value | Two hours at most; the prune cron deletes ended grants every 6 hours. A new value or fewer sites delete the item's grants at once | No | No | Yes (`USER_INLINE_TABLES`) |
+| `secureUses` | Use history: item, field name, site, host, run, outcome, time. No value | 90 days (`convex/secureDetails.ts prune`, every 6 hours). Deleting the item deletes its history | No | No | Yes (`USER_BULK_TABLES`) |
+
+"Export my data" lists each item in `data/secure-items.json` with its label, kind,
+sites, and plain facts. It never exports a value or a masked hint, and the raw
+`secureItems` rows are left out (`EXPORT_SKIPPED_TABLES`). Grants and use history
+export as their own tables.
+
 ### Short-lived rows
 
 | Table | Retention rule | Code |

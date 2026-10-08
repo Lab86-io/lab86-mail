@@ -64,7 +64,10 @@ describe('tool names agree across the prompt, groups, shapes, and clients', () =
 
   test('the agent list, tool groups, approval gate, and shape mappers name registered tools', () => {
     for (const name of AGENT_TOOL_NAMES) expect(TOOLS[name]).toBeTruthy();
-    const lifted = new Set(Object.keys(liftToolsForAgent('b', 'UTC')));
+    // ask_form and ask_secure_detail exist only for clients that render them.
+    const lifted = new Set(
+      Object.keys(liftToolsForAgent('b', 'UTC', undefined, { askForm: true, askSecureDetail: true })),
+    );
     for (const group of TOOL_GROUP_NAMES)
       for (const name of TOOL_GROUPS[group].tools) expect(lifted.has(name)).toBe(true);
     for (const name of APPROVAL_GATED_TOOLS) expect(AGENT_TOOL_NAMES.has(name)).toBe(true);

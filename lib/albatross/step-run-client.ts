@@ -152,6 +152,8 @@ const LABEL_FALLBACK: Record<StepRunNextKind, string | null> = {
   do_offline: 'Mark this step done',
   review: 'Open',
   continue: 'Continue',
+  // The run block shows its own three answers (docs/albatross-secure-store.md).
+  allow_secure: null,
 };
 
 export const LABEL_MAX = 48;

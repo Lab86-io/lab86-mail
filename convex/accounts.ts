@@ -399,6 +399,8 @@ export const USER_BULK_TABLES = [
   // transaction, so it drains in batches like the other bulk tables.
   'briefItemEvents',
   'briefEditionTelemetry',
+  // Secure details use history: one row for each use, kept 90 days.
+  'secureUses',
   // Shared narrative memory and connected content grow with the mailbox.
   // Each contentItems row takes its contentChunks with it (see below).
   'narrativeEntries',
@@ -484,6 +486,8 @@ export const PURGE_ROW_BYTES: Record<string, number> = {
   narrativeEntries: 128 * KiB,
   // Rows of ids and numbers.
   briefItemEvents: 16 * KiB,
+  // Secure details use history: a few short strings and two numbers.
+  secureUses: 16 * KiB,
   briefEditionTelemetry: 16 * KiB,
   mobileSyncTombstones: 16 * KiB,
   nativePushDeliveries: 16 * KiB,
@@ -1262,6 +1266,10 @@ export const USER_INLINE_TABLES = [
   'albatrossStepRuns',
   'albatrossBrowserContexts',
   'personalDetails',
+  // Secure details (docs/albatross-secure-store.md): at most 100 items, and
+  // grants that end within two hours. Their use history drains in batches.
+  'secureItems',
+  'secureGrants',
   'areas',
   'mcpConnections',
   'mcpCredentials',
@@ -1362,6 +1370,8 @@ export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
     'The Browserbase id of the saved sign-ins. It is a service handle to browser cookies, not user content, so it never leaves the service.',
   personalDetails:
     'The rows hold only encrypted values. The export writes them decrypted in personal-details.json instead (lib/hosted/data-export.ts).',
+  secureItems:
+    'The rows hold sealed passwords, ID numbers, and keys. The export writes secure-items.json instead: each item with its label, kind, sites, and facts, never a value (lib/hosted/data-export.ts).',
 };
 
 /**

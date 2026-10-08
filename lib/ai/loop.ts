@@ -11,6 +11,8 @@ import { formQuestionSchema } from '../albatross/thread-contract';
 import { pausedAssistantRisks } from '../hosted/standing-orders';
 import { narrativePrompt } from '../narrative/service';
 import { aboutUserBlock, listPersonalDetails } from '../personal-details/store';
+import { SECURE_ITEM_KINDS } from '../secure/contract';
+import { secureStoreEnabledFor } from '../secure/flag';
 import { withDeadline } from '../shared/deadline';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
@@ -148,6 +150,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'recall',
   'personal_details_get',
   'personal_details_save',
+  'secure_details_list',
   'forget',
   'list_memories',
   'calendar_free_busy',
@@ -333,10 +336,15 @@ export interface AgentToolOptions {
    * client would wait forever on a form it cannot show, so it never gets the tool.
    */
   askForm?: boolean;
+  /**
+   * The client renders `ask_secure_detail` and Passwords and IDs is on for the
+   * user. The same reason as askForm: an older client would wait forever.
+   */
+  askSecureDetail?: boolean;
 }
 
 /** Client capabilities the agent route accepts (AgentRequestBody.clientCapabilities). */
-export const CLIENT_CAPABILITIES = ['ask_form'] as const;
+export const CLIENT_CAPABILITIES = ['ask_form', 'ask_secure_detail'] as const;
 export type ClientCapability = (typeof CLIENT_CAPABILITIES)[number];
 
 export function normalizeClientCapabilities(value: unknown): Set<ClientCapability> {
@@ -545,6 +553,25 @@ export function liftToolsForAgent(
       description:
         "Ask the user ONE form and WAIT for the answer. Use it (instead of ask_user) when you need typed fields or several facts at once: a choice that belongs to the user (a date, a time slot, a plan, one of several matches) and any missing personal details, together. For a choice of dates or times, read the calendar first and give each option a calendar note (fit free or conflict). Put the option that matches what the user already said first. For a personal detail, set detailKey (name, email, phone, home_address, emergency_contact, or custom:<slug>) so the form fills it from saved details and offers 'Save to my details'. Call personal_details_get first and ask only for what is missing or unconfirmed. If you found a value (for example in an email signature), put it in value with valueSource. Never ask for passwords, codes, card numbers, or ID numbers.",
       inputSchema: formQuestionSchema,
+    });
+  // Ask the user to add a sign-in, an ID, a date of birth, or a key to
+  // Passwords and IDs (docs/albatross-secure-store.md). The card opens a
+  // private sheet; the value goes from the sheet to the store and never
+  // through the chat. Output: { saved: true, itemId } | { skipped: true }.
+  if (options.askSecureDetail)
+    lifted.ask_secure_detail = aiTool({
+      description:
+        'Ask the user to add a sign-in, an ID number, their date of birth, or an API key to Passwords and IDs, and WAIT. The card opens a private sheet that you never see. Use it when a task needs an item that is not saved (check secure_details_list first). Give the site for a sign-in or a key, and one plain sentence of reason. The answer is { saved: true, itemId } or { skipped: true }; it never holds the value.',
+      inputSchema: z.object({
+        kind: z.enum(SECURE_ITEM_KINDS),
+        label: z
+          .string()
+          .max(80)
+          .optional()
+          .describe('A short name, for example "Chase" or "Driver\'s license".'),
+        site: z.string().max(300).optional().describe('The site or API host, for example chase.com.'),
+        reason: z.string().min(1).max(300).describe('Why the task needs it, in one plain sentence.'),
+      }),
     });
   // A yes/no gate for one consequential action. Renders an approval card and
   // waits. Output: { decision: 'approved' | 'denied' }.
@@ -1135,6 +1162,8 @@ export async function runAgent({
   signal,
 }: AgentRunOpts): Promise<AgentRun> {
   const askForm = clientCapabilities?.has('ask_form') ?? false;
+  const secureStore = userId ? secureStoreEnabledFor(userId) : false;
+  const askSecureDetail = secureStore && (clientCapabilities?.has('ask_secure_detail') ?? false);
   if (!hasPlatformAi() && !userId) {
     throw new Error(
       'Models are not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
@@ -1156,6 +1185,7 @@ export async function runAgent({
     clientPlatform,
     pausedRisks,
     askForm,
+    askSecureDetail,
   });
 
   let resolveSteps: (steps: any[]) => void = () => undefined;
@@ -1206,7 +1236,7 @@ export async function runAgent({
               signal?.throwIfAborted();
               const base = buildSystemPrompt(
                 { name: userName, email: userEmail },
-                { memories, clientPlatform, askForm },
+                { memories, clientPlatform, askForm, secureStore, askSecureDetail },
               );
               // Static instructions first, per-turn context last: providers cache the
               // shared prefix, so the parts that change every turn sit at the end.

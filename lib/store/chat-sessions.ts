@@ -4,6 +4,7 @@ import {
   isWorkThreadSessionId,
   workThreadSessionId,
 } from '../albatross/thread-contract';
+import { redactSecretShapes, redactUserMessages } from '../secure/redact';
 import { kvDelete, kvGet, kvList, kvUpsert } from './kv';
 
 // Persistent AI chat sessions. Each session stores the AI SDK UIMessage array
@@ -234,10 +235,13 @@ export async function saveChatSession(
       : messages;
   const incomingIds = new Set(messages.map((message) => String(message?.id || '')));
   const mergedMessages = merged.filter((message) => !incomingIds.has(String(message?.id || '')));
+  // The saved chat never keeps a secret the user wrote, in a message or in its
+  // title (docs/albatross-secure-store.md).
+  const clean = redactUserMessages(merged);
   const session: ChatSession = {
     _id: id,
-    title: title || existing?.title || chatTitleFromMessages(merged),
-    messages: merged.slice(-MAX_MESSAGES).map(compactMessage),
+    title: redactSecretShapes(title || existing?.title || chatTitleFromMessages(clean)).text,
+    messages: clean.slice(-MAX_MESSAGES).map(compactMessage),
     messageCount: merged.length,
     createdAt: existing?.createdAt || now,
     updatedAt: now,

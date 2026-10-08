@@ -33,6 +33,10 @@ import { pausedAssistantRisksStrict } from '../hosted/standing-orders';
 import { resolveBriefTimezone } from '../mail/brief-timezone';
 import { dispatchNativeNotification } from '../notifications/native-delivery';
 import { aboutUserBlock, listPersonalDetails } from '../personal-details/store';
+import type { SecureAllowRequest, SecureSaveSignInOffer } from '../secure/contract';
+import { secureStoreEnabledFor } from '../secure/flag';
+import { createSecureRunAccess, type SecureLeak, type SecureRunAccess } from '../secure/runner-access';
+import { type SecureInventoryEntry, secureInventory } from '../secure/store';
 import { truncateText } from '../shared/text';
 import { getChatSession } from '../store/chat-sessions';
 import { AgentBrowser, type AgentConnector, playwrightAgentConnector } from './browser-agent';
@@ -64,7 +68,7 @@ import {
   steerMessage,
   threadUserNotes,
 } from './step-run-prompt';
-import { buildRunnerTools, type HandoffInput, type RunArtifact } from './step-run-tools';
+import { addSecureFetchTool, buildRunnerTools, type HandoffInput, type RunArtifact } from './step-run-tools';
 import { workThreadSessionId } from './thread-contract';
 
 const HEARTBEAT_MS = 30_000;
@@ -96,6 +100,8 @@ export interface SettleInput {
     detail: string;
     doneLabel?: string;
     target?: { kind: string; id?: string; url?: string; accountId?: string };
+    allow?: SecureAllowRequest;
+    saveSignIn?: SecureSaveSignInOffer;
   };
   budget?: {
     timeMs: number;
@@ -138,6 +144,16 @@ export interface StepRunnerDependencies {
   listDetails: typeof listPersonalDetails;
   /** The newest user messages of the Work thread, oldest first. */
   readThreadNotes: (userId: string, workId: string) => Promise<string[]>;
+  /** The run's access to Passwords and IDs, or null when the store is off for the user. */
+  secureAccess: (input: {
+    userId: string;
+    runId: string;
+    workId: string;
+    stepKey: string;
+    log: (line: string) => Promise<void>;
+  }) => SecureRunAccess | null;
+  /** What the runner may know about the saved items: no values. */
+  secureInventory: (userId: string) => Promise<SecureInventoryEntry[]>;
 }
 
 /** The account name and email of a user, for the run's request context. Null fields when unknown. */
@@ -183,6 +199,8 @@ const defaults: StepRunnerDependencies = {
   readUser: (userId) => readUserProfile(userId),
   listDetails: listPersonalDetails,
   readThreadNotes: readThreadUserNotes,
+  secureAccess: (input) => (secureStoreEnabledFor(input.userId) ? createSecureRunAccess(input) : null),
+  secureInventory,
 };
 
 class RunCancelled extends Error {
@@ -276,9 +294,17 @@ export function fallbackHandoff(text: string, artifacts: RunArtifact[]): SettleI
 /** A handoff whose next action points at a real thing the run made. */
 export function normalizeHandoff(
   handoff: HandoffInput,
-  context: { artifacts: RunArtifact[]; sessionId?: string | null; questionId?: string | null },
+  context: {
+    artifacts: RunArtifact[];
+    sessionId?: string | null;
+    questionId?: string | null;
+    /** The run's newest new-site question (lib/secure/runner-access.ts). */
+    allow?: SecureAllowRequest | null;
+    /** A sign-in page with no saved sign-in: the block offers to save one. */
+    saveSignIn?: SecureSaveSignInOffer | null;
+  },
 ): SettleInput {
-  const next = handoff.next ? { ...handoff.next } : undefined;
+  const next: SettleInput['next'] = handoff.next ? { ...handoff.next } : undefined;
   // Models fill optional fields with empty strings; an empty target is no target.
   if (next?.target) {
     const target = Object.fromEntries(
@@ -304,8 +330,24 @@ export function normalizeHandoff(
     next.target = { kind: 'session', id: context.sessionId };
   if (next && next.kind === 'answer' && context.questionId)
     next.target = { kind: 'question', id: context.questionId };
+  let outcome = handoff.outcome;
+  if (next?.kind === 'allow_secure') {
+    if (context.allow) {
+      // The server's own words: the model never builds the question about a saved value.
+      outcome = 'needs_answer';
+      next.label = 'Answer';
+      next.detail = `Use your saved ${context.allow.itemLabel} on ${context.allow.site}?`;
+      next.doneLabel = undefined;
+      next.allow = context.allow;
+      next.target = { kind: 'secure', id: context.allow.itemId, url: `https://${context.allow.host}` };
+    } else {
+      next.kind = 'finish_on_page';
+      if (context.sessionId) next.target = { kind: 'session', id: context.sessionId };
+    }
+  }
+  if (next?.kind === 'sign_in' && context.saveSignIn) next.saveSignIn = context.saveSignIn;
   return {
-    outcome: handoff.outcome,
+    outcome,
     summary: handoff.summary,
     ...(next ? { next } : {}),
   };
@@ -335,6 +377,9 @@ export async function runStepRun(
   const priorMs = Math.max(0, Number(run.budget?.timeMs) || 0);
   const remainingMs = Math.max(1_000, limits.timeBudgetMs - priorMs);
   const cancel = new AbortController();
+  // A value this run typed showed on a page outside its sites (SecureLeak).
+  const leakStop = new AbortController();
+  let leak: SecureLeak | null = null;
   const deadline = new AbortController();
   const deadlineTimer = setTimeout(() => deadline.abort(new RunDeadline()), remainingMs);
   (deadlineTimer as { unref?: () => void }).unref?.();
@@ -450,6 +495,8 @@ export async function runStepRun(
     const paused = await deps.pausedRisks(userId);
     const lifted = deps.liftTools(runId, timezone, undefined, { clientPlatform: 'ios', pausedRisks: paused });
     const profile = await deps.readUser(userId).catch(() => ({ name: null, email: null }));
+    const secure = deps.secureAccess({ userId, runId, workId: run.workId, stepKey: run.stepKey, log });
+    const secureItems = secure ? await deps.secureInventory(userId).catch(() => []) : null;
     const [aboutUser, threadNotes] = await Promise.all([
       deps
         .listDetails({ userId, name: profile.name, email: profile.email })
@@ -494,7 +541,7 @@ export async function runStepRun(
       connection = await deps.connector(deps.connectUrl(sessionId));
       const page = await connection.page();
       if (!page) throw new Error('The shared browser has no page.');
-      browser = new AgentBrowser(page);
+      browser = new AgentBrowser(page, secure);
       usedPage = true;
       return browser;
     };
@@ -509,6 +556,7 @@ export async function runStepRun(
 
     const tools = buildRunnerTools(lifted, {
       browserAvailable,
+      secure,
       log,
       artifact: async (artifact) => {
         artifacts.push(artifact);
@@ -539,7 +587,13 @@ export async function runStepRun(
       finish: (input) => {
         handoff = input;
       },
+      stopForLeak: (found) => {
+        if (leak) return;
+        leak = found;
+        leakStop.abort(found);
+      },
     });
+    addSecureFetchTool(tools, secure);
 
     const system = [
       STEP_RUNNER_RULES,
@@ -554,12 +608,13 @@ export async function runStepRun(
         limits,
         aboutUser,
         threadNotes,
+        secureItems,
       }),
     ].join('\n\n');
     const messages: ModelMessage[] = [{ role: 'user', content: runnerTaskMessage(step, Boolean(previous)) }];
     const feature = stepRunFeature(run.trigger);
     const runtimes = await deps.resolveAgentRuntimes({ userId, speed: 'primary', feature });
-    const signal = AbortSignal.any([cancel.signal, deadline.signal, meter.signal]);
+    const signal = AbortSignal.any([cancel.signal, deadline.signal, meter.signal, leakStop.signal]);
     await log(previous ? 'Continued the step.' : 'Started on the step.');
 
     let result: Awaited<ReturnType<typeof generateText>> | null = null;
@@ -648,6 +703,10 @@ export async function runStepRun(
         .then((id) => (id ? String(id) : null))
         .catch(() => null);
     }
+    const saveSignIn =
+      finalHandoff?.next?.kind === 'sign_in' && secure && browser
+        ? await secure.signInOffer((browser as AgentBrowser).currentUrl()).catch(() => null)
+        : null;
     let settled: SettleInput = finalHandoff
       ? normalizeHandoff(
           finalHandoff.outcome === 'needs_answer'
@@ -660,7 +719,7 @@ export async function runStepRun(
                 },
               }
             : finalHandoff,
-          { artifacts, sessionId, questionId },
+          { artifacts, sessionId, questionId, allow: secure?.pendingAllow() ?? null, saveSignIn },
         )
       : fallbackHandoff(result.text || '', artifacts);
 
@@ -717,6 +776,27 @@ export async function runStepRun(
       // moved to another attempt. The page is the user's either way.
       await setSessionStatus('user', 'You have the page.');
       return { state: 'cancelled' };
+    }
+    if (leak || leakStop.signal.aborted) {
+      // The run stops at once. The model got at most one bit, and the user has the page.
+      if (sessionId && usedPage)
+        await setSessionStatus(
+          'user',
+          'Albatross stopped: this page showed a saved value. You have the page.',
+        );
+      const stopped: SettleInput = {
+        outcome: 'your_turn',
+        summary: 'I stopped because a page outside the saved sites showed one of your saved values.',
+        next: {
+          kind: 'finish_on_page',
+          label: 'Open the page',
+          detail: 'Check the page and what it shows. Albatross did not continue on it.',
+          ...(sessionId ? { target: { kind: 'session', id: sessionId } } : {}),
+        },
+      };
+      const outcome = await settle(stopped);
+      if (outcome?.state) await notifyHandoff(deps, userId, run, stopped, deps.now() - startedAt);
+      return outcome;
     }
     const exhausted: 'time' | 'cost' | null =
       deadline.signal.aborted || error instanceof RunDeadline
@@ -915,7 +995,13 @@ async function notifyHandoff(
         workId: run.workId,
         runId: run._id,
         title: truncateText(title, 180),
-        body: truncateText(settled.next?.detail || settled.summary || '', 400),
+        // A lock screen never names a saved item or the site that asks for it.
+        body: truncateText(
+          settled.next?.kind === 'allow_secure'
+            ? 'A site asks to use one of your saved details.'
+            : settled.next?.detail || settled.summary || '',
+          400,
+        ),
       },
     );
     if (queued?.created && queued.notificationId) await deps.notify(userId, String(queued.notificationId));

@@ -15,6 +15,7 @@ let settleFails = false;
 let innerTextFails = false;
 let evaluateFails = false;
 let element: Record<string, unknown> = {};
+let frameUrl: string | null = 'https://secure.chase.com/login';
 
 function makePage(name: string) {
   return {
@@ -41,6 +42,14 @@ function makePage(name: string) {
         if (evaluateFails) throw new Error('detached');
         return read(element);
       },
+      // The frame address comes from the browser, not from the element.
+      elementHandle: async () =>
+        frameUrl === null
+          ? null
+          : {
+              ownerFrame: async () => ({ url: () => frameUrl }),
+              dispose: async () => undefined,
+            },
     }),
     keyboard: {
       press: async (key: string) => {
@@ -157,17 +166,36 @@ describe('playwrightAgentConnector', () => {
     expect(await page?.title()).toBe('popup title');
   });
 
-  test('inputKind reads the type and autocomplete, and is null when the element is gone', async () => {
+  test('inputKind reads the type, the autocomplete, and the field document address; null when the element is gone', async () => {
     const page = await (await playwrightAgentConnector('wss://c')).page();
     element = {
       type: 'password',
       getAttribute: (name: string) => (name === 'autocomplete' ? 'current-password' : null),
+      // A hostile page can fake its own DOM; the frame address does not come from it.
+      ownerDocument: { location: { href: 'https://evil.example/' } },
     };
-    expect(await page?.inputKind('e2')).toEqual({ type: 'password', autocomplete: 'current-password' });
-    element = { type: 'text', autocomplete: 'email' };
-    expect(await page?.inputKind('e2')).toEqual({ type: 'text', autocomplete: 'email' });
+    expect(await page?.inputKind('e2')).toEqual({
+      type: 'password',
+      autocomplete: 'current-password',
+      formUrl: '',
+      documentUrl: 'https://secure.chase.com/login',
+    });
+    element = { type: 'text', autocomplete: 'email', form: { action: 'https://auth.chase.com/session' } };
+    frameUrl = null;
+    expect(await page?.inputKind('e2')).toEqual({
+      type: 'text',
+      autocomplete: 'email',
+      formUrl: 'https://auth.chase.com/session',
+      documentUrl: '',
+    });
+    frameUrl = 'https://secure.chase.com/login';
     element = {};
-    expect(await page?.inputKind('e2')).toEqual({ type: '', autocomplete: '' });
+    expect(await page?.inputKind('e2')).toEqual({
+      type: '',
+      autocomplete: '',
+      formUrl: '',
+      documentUrl: 'https://secure.chase.com/login',
+    });
     evaluateFails = true;
     expect(await page?.inputKind('e2')).toBeNull();
   });

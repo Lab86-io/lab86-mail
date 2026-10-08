@@ -101,6 +101,9 @@ describe('the next action', () => {
     detail: '',
     doneLabel: null,
     target: null,
+    allow: null,
+    saveSignIn: null,
+    allowAnswer: null,
     ...over,
   });
 

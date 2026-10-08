@@ -77,10 +77,27 @@ const nextValidator = v.object({
     v.literal('do_offline'),
     v.literal('review'),
     v.literal('continue'),
+    v.literal('allow_secure'),
   ),
   label: v.string(),
   detail: v.string(),
   doneLabel: v.optional(v.string()),
+  allow: v.optional(
+    v.object({
+      itemId: v.string(),
+      kind: v.union(
+        v.literal('sign_in'),
+        v.literal('id_number'),
+        v.literal('date_of_birth'),
+        v.literal('api_key'),
+      ),
+      itemLabel: v.string(),
+      fieldLabels: v.array(v.string()),
+      site: v.string(),
+      host: v.string(),
+    }),
+  ),
+  saveSignIn: v.optional(v.object({ site: v.string() })),
   target: v.optional(
     v.object({
       kind: v.union(
@@ -92,6 +109,7 @@ const nextValidator = v.object({
         v.literal('url'),
         v.literal('card'),
         v.literal('event'),
+        v.literal('secure'),
       ),
       id: v.optional(v.string()),
       url: v.optional(v.string()),
@@ -149,6 +167,9 @@ export function stepRunView(run: RunDoc) {
           detail: run.next.detail,
           doneLabel: run.next.doneLabel ?? null,
           target: run.next.target ?? null,
+          allow: run.next.allow ?? null,
+          saveSignIn: run.next.saveSignIn ?? null,
+          allowAnswer: run.next.allowAnswer ?? null,
         }
       : null,
     artifacts: run.artifacts,
@@ -403,6 +424,23 @@ export const settle = mutation({
               ...(args.next.doneLabel?.trim()
                 ? { doneLabel: truncateText(args.next.doneLabel.trim(), 32) }
                 : {}),
+              ...(args.next.allow
+                ? {
+                    allow: {
+                      itemId: truncateText(args.next.allow.itemId, 64),
+                      kind: args.next.allow.kind,
+                      itemLabel: truncateText(args.next.allow.itemLabel, 80),
+                      fieldLabels: args.next.allow.fieldLabels
+                        .slice(0, 4)
+                        .map((label) => truncateText(label, 40)),
+                      site: truncateText(args.next.allow.site, 253),
+                      host: truncateText(args.next.allow.host, 253),
+                    },
+                  }
+                : {}),
+              ...(args.next.saveSignIn
+                ? { saveSignIn: { site: truncateText(args.next.saveSignIn.site, 253) } }
+                : {}),
               ...(args.next.target
                 ? {
                     target: {
@@ -568,6 +606,30 @@ export const steer = mutation({
     if (!text) return false;
     const steer = [...(run.steer || []), { at: now(), text }].slice(-STEER_MAX);
     await ctx.db.patch(run._id, { steer, updatedAt: now() });
+    return true;
+  },
+});
+
+/**
+ * The user's answer to an allow_secure handoff (docs/albatross-secure-store.md).
+ * Only the first answer counts: a second tap or a second device gets false.
+ */
+export const answerAllow = mutation({
+  args: {
+    ...callerArgs,
+    id: v.id('albatrossStepRuns'),
+    scope: v.union(v.literal('once'), v.literal('always'), v.literal('deny')),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const run = await ctx.db.get(args.id);
+    if (!run || run.userId !== userId) throw new Error('Run not found.');
+    if (run.state !== 'handed_off' || run.next?.kind !== 'allow_secure' || run.next.allowAnswer) return false;
+    const ts = now();
+    await ctx.db.patch(run._id, {
+      next: { ...run.next, allowAnswer: { scope: args.scope, at: ts } },
+      updatedAt: ts,
+    });
     return true;
   },
 });

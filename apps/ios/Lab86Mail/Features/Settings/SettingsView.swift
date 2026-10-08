@@ -33,6 +33,11 @@ struct SettingsView: View {
                     NavigationLink("Mailboxes") { MailboxesSettingsView() }
                     NavigationLink("Connections") { ConnectionsSettingsView() }
                     NavigationLink(PersonalDetailsCopy.title) { PersonalDetailsSettingsView() }
+                    // Hidden until the server says the store is on for this
+                    // user; the last answer for the owner draws it at once.
+                    if environment.secureDetails.sectionVisible(ownerID: environment.sessionStore.ownerID) {
+                        NavigationLink(SecureDetailsCopy.title) { SecureDetailsSettingsView() }
+                    }
                     DataExportButton()
                     Button("Sign out", role: .destructive) {
                         Task { await signOut() }
@@ -67,11 +72,11 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink("Standing orders") { StandingOrdersView() }
-                    NavigationLink("Saved sign-ins") { SavedSignInsView() }
+                    NavigationLink(SavedSignInsCopy.title) { SavedSignInsView() }
                 } header: {
                     Text("Trust")
                 } footer: {
-                    Text("Everything Albatross does on its own, with a pause switch for each. Saved sign-ins keep the shared browser signed in; Albatross never sees a password. Personal details, under Account, are what Albatross types into forms.")
+                    Text(SavedSignInsCopy.trustFooter)
                 }
 
                 Section("Personalization") {
@@ -140,6 +145,7 @@ struct SettingsView: View {
                 await loadUndoSend()
                 await environment.trust.refreshPlan(force: true)
                 await environment.trust.refreshSurfaces()
+                await environment.secureDetails.load(environment.backend, ownerID: environment.sessionStore.ownerID)
             }
             .sheet(isPresented: $showsAccountDeletion) {
                 AccountDeletionView {
@@ -193,6 +199,7 @@ struct SettingsView: View {
                     environment.accountStore.clear()
                     environment.trust.clear()
                     environment.personalDetails.clear()
+                    environment.secureDetails.clear()
                     environment.sendAs.removeAll()
                     TodayWidgetBridge.clear()
                     try? await environment.notificationResponseOutbox.purge()
@@ -242,7 +249,7 @@ private struct AccountDeletionView: View {
                     DataExportButton(label: "Export first")
                 }
                 Section {
-                    Text("This permanently removes your Albatross account, connected-provider grants, indexed mail, calendars, tasks, Areas, Work, and settings.")
+                    Text("This permanently removes your Albatross account, connected-provider grants, indexed mail, calendars, tasks, Areas, Work, passwords and IDs, and settings.")
                         .foregroundStyle(.secondary)
                     TextField("Type DELETE", text: $confirmation)
                         .textInputAutocapitalization(.characters)
@@ -290,6 +297,7 @@ private struct AccountDeletionView: View {
             environment.accountStore.clear()
             environment.trust.clear()
             environment.personalDetails.clear()
+            environment.secureDetails.clear()
             environment.sendAs.removeAll()
             TodayWidgetBridge.clear()
             try? await environment.notificationResponseOutbox.purge()

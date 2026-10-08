@@ -14,8 +14,18 @@
 //   deletes, sends, or submits. It hands that page to the user.
 // - Enter submits only search-like fields; any other submit is a click on the
 //   (checked) submit control.
+// - A saved value from Passwords and IDs goes in only as one
+//   `{{secure:<id>.<field>}}` reference, which lib/secure/runner-access.ts
+//   checks and opens. Every snapshot, title, URL, and page text the model
+//   reads has the user's saved values removed (docs/albatross-secure-store.md).
 
+import { findReferences, mentionsReference } from '../secure/policy';
+import type { SecureBrowserAccess, SecureFieldKind } from '../secure/runner-access';
+import { scrubTypedFields } from '../secure/scrub';
+import { isPrivateHost } from '../shared/private-host';
 import { truncateText } from '../shared/text';
+
+export { isPrivateHost };
 
 export const SNAPSHOT_MAX_CHARS = 14_000;
 const ACTION_TIMEOUT_MS = 12_000;
@@ -61,6 +71,35 @@ export function isSecretField(
   return SECRET_NAME.test(element?.name || '');
 }
 
+const CODE_NAME =
+  /one[- ]?time|verification code|security code|auth(entication)? code|sign[- ]?in code|\b2fa\b|\bmfa\b|\botp\b|\bpin\b|recovery code|backup code/i;
+const CARD_NAME =
+  /\bcvv\b|\bcvc\b|\bcsc\b|card number|credit card|debit card|routing number|account number|\biban\b/i;
+const SSN_NAME = /social security|\bssn\b/i;
+const PASSWORD_NAME = /password|passcode|passphrase/i;
+
+/** What a field takes, for the secure store's field rules. */
+export function secureFieldKind(
+  element: SnapshotElement | null,
+  input?: { type?: string; autocomplete?: string } | null,
+): SecureFieldKind {
+  const type = (input?.type || '').toLowerCase();
+  const autocomplete = (input?.autocomplete || '').toLowerCase();
+  const name = element?.name || '';
+  if (/one-time-code/.test(autocomplete) || CODE_NAME.test(name)) return 'code';
+  if (/\bcc-/.test(autocomplete) || CARD_NAME.test(name)) return 'card';
+  if (
+    /new-password/.test(autocomplete) ||
+    (/\bnew\b|confirm|re-?enter|repeat/i.test(name) && PASSWORD_NAME.test(name))
+  )
+    return 'new_password';
+  // A password goes only into a real password input. A text field that a page
+  // names "Password" (a form question, a post) is not one.
+  if (type === 'password') return 'password';
+  if (SSN_NAME.test(name)) return 'ssn';
+  return 'plain';
+}
+
 const FINAL_ACTION =
   /\b(pay|payment|place (my |your |the )?order|buy|purchase|check ?out|transfer|send money|donate|subscribe|start (my |your |a )?(free )?trial|accept|agree|e-?sign|sign (and )?(submit|send|file)|submit|confirm|book( now)?|reserve|delete|remove (my |your )?account|close (my |your )?account|cancel (my |your )?(subscription|membership|account|order|plan|reservation)|unsubscribe|send|file (my |your |the )?(claim|dispute|return|report))\b/i;
 const HARMLESS = /cookie|cookies|search|filter|sort|send (me )?(a )?(code|link)|resend/i;
@@ -102,52 +141,6 @@ export function safeBrowserUrl(raw: string): string | null {
   } catch {
     return null;
   }
-}
-
-/**
- * Loopback, private, link-local, and unspecified hosts, in IPv4 and IPv6
- * (including IPv4-mapped IPv6), and *.localhost names. The browser runs at
- * Browserbase, but a step never points it at a private network.
- */
-export function isPrivateHost(rawHost: string): boolean {
-  const host = rawHost
-    .toLowerCase()
-    .replace(/^\[|\]$/g, '')
-    .replace(/\.$/, '');
-  if (
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host.endsWith('.local') ||
-    host.endsWith('.internal')
-  )
-    return true;
-  const mapped = host.match(/^::ffff:(.+)$/);
-  if (mapped) {
-    const tail = mapped[1];
-    if (tail.includes('.')) return isPrivateHost(tail);
-    // ::ffff:7f00:1 is 127.0.0.1 written as hex groups.
-    const groups = tail.split(':').map((part) => Number.parseInt(part, 16));
-    if (groups.length === 2 && groups.every((part) => Number.isFinite(part)))
-      return isPrivateHost(`${groups[0] >> 8}.${groups[0] & 255}.${groups[1] >> 8}.${groups[1] & 255}`);
-    return true;
-  }
-  if (host.includes(':')) {
-    if (host === '::' || host === '::1') return true;
-    // fc00::/7 (unique local) and fe80::/10 (link-local).
-    return /^f[cd][0-9a-f]{0,2}:/.test(host) || /^fe[89ab][0-9a-f]?:/.test(host);
-  }
-  const parts = host.split('.');
-  if (parts.length !== 4 || !parts.every((part) => /^\d{1,3}$/.test(part))) return false;
-  const [a, b] = parts.map(Number);
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168)
-  );
 }
 
 /**
@@ -205,7 +198,14 @@ export interface AgentPage {
   press(key: string): Promise<void>;
   back(): Promise<void>;
   wait(ms: number): Promise<void>;
-  inputKind(ref: string): Promise<{ type?: string; autocomplete?: string } | null>;
+  /**
+   * The field's type, its autocomplete, and the address of the frame it is in
+   * (a frame has its own). The address comes from the browser, never from page
+   * script, because the secure store's site check trusts it.
+   */
+  inputKind(
+    ref: string,
+  ): Promise<{ type?: string; autocomplete?: string; documentUrl?: string; formUrl?: string } | null>;
   text(): Promise<string>;
 }
 
@@ -263,14 +263,24 @@ export const playwrightAgentConnector: AgentConnector = async (connectUrl) => {
         wait: async (ms) => {
           await (current() ?? page).waitForTimeout(ms);
         },
-        inputKind: async (ref) =>
-          (current() ?? page)
-            .locator(`aria-ref=${ref}`)
+        inputKind: async (ref) => {
+          const locator = (current() ?? page).locator(`aria-ref=${ref}`);
+          const kind = await locator
             .evaluate((element: any) => ({
               type: String(element?.type || ''),
               autocomplete: String(element?.autocomplete || element?.getAttribute?.('autocomplete') || ''),
+              // Where the field's form sends it (resolved by the browser), or empty.
+              formUrl: String(element?.form?.action || ''),
             }))
-            .catch(() => null),
+            .catch(() => null);
+          if (!kind) return null;
+          // The field's frame address comes from the browser, not from page
+          // script: a page can redefine its own DOM getters, but not this.
+          const handle = await locator.elementHandle({ timeout: ACTION_TIMEOUT_MS }).catch(() => null);
+          const frame = handle ? await handle.ownerFrame().catch(() => null) : null;
+          await handle?.dispose().catch(() => undefined);
+          return { ...kind, documentUrl: frame?.url() ?? '' };
+        },
         text: async () => {
           try {
             return await (current() ?? page).innerText('body', { timeout: 5_000 });
@@ -304,24 +314,99 @@ export interface PageView {
   title: string;
   snapshot: string;
   truncated: boolean;
+  /** The saved value the last action typed, by label ("Driver's license number"). */
+  secure?: string;
+}
+
+function pageKey(url: string) {
+  return url.split('#')[0];
 }
 
 /** One run's browser. All page rules live here, not in the tool wrappers. */
 export class AgentBrowser {
   private lastSnapshot = '';
+  /** Refs that hold a saved value, with its label, on the page where it was typed. */
+  private typedFields = new Map<string, string>();
+  private typedPage = '';
 
-  constructor(private readonly page: AgentPage) {}
+  constructor(
+    private readonly page: AgentPage,
+    private readonly secure: SecureBrowserAccess | null = null,
+  ) {}
+
+  /** Page text a model may read: saved values removed (lib/secure/runner-access.ts cleanPage). */
+  private async clean(pageUrl: string, parts: string[]): Promise<string[]> {
+    if (!this.secure) return parts;
+    return this.secure.cleanPage(pageUrl, parts);
+  }
+
+  /** A message for the model (an error, a handoff reason) with saved values removed. */
+  async cleanMessage(text: string): Promise<string> {
+    if (!this.secure || !text) return text;
+    try {
+      return (await this.secure.cleanPage(this.page.url(), [text]))[0];
+    } catch {
+      return 'The page action failed.';
+    }
+  }
 
   private async view(find?: string): Promise<PageView> {
     const raw = await this.page.snapshot();
     this.lastSnapshot = raw;
-    const compact = compactSnapshot(raw, { find });
+    const url = this.page.url();
+    if (this.typedFields.size && pageKey(url) !== this.typedPage) this.typedFields.clear();
+    const title = await this.page.title().catch(() => '');
+    // Clean first, cut after: a cut must never leave part of a value behind.
+    const [snapshot, cleanTitle, cleanUrl] = await this.clean(url, [
+      scrubTypedFields(raw, this.typedFields),
+      title,
+      url,
+    ]);
+    const compact = compactSnapshot(snapshot, { find });
     return {
-      url: this.page.url(),
-      title: truncateText(await this.page.title().catch(() => ''), 300),
+      url: cleanUrl,
+      title: truncateText(cleanTitle, 300),
       snapshot: compact.text,
       truncated: compact.truncated,
     };
+  }
+
+  /** The one reference in a text, or null when it has none. Throws for a mix. */
+  private reference(text: string) {
+    if (!mentionsReference(text)) return null;
+    if (!this.secure) throw new Error('Saved values are not available in this run.');
+    const found = findReferences(text);
+    if (found.length !== 1 || found[0].raw !== text.trim())
+      throw new Error(
+        'A saved value goes in alone: the text must be exactly one {{secure:<id>.<field>}} reference, with an optional |FORMAT.',
+      );
+    return found[0];
+  }
+
+  private async typeSaved(
+    ref: string,
+    element: SnapshotElement,
+    reference: NonNullable<ReturnType<AgentBrowser['reference']>>,
+    act: (value: string) => Promise<void>,
+  ): Promise<PageView> {
+    const input = await this.page.inputKind(ref);
+    if (!input?.documentUrl) throw new Error('This field could not be checked. Hand it to the user.');
+    const resolved = await (this.secure as SecureBrowserAccess).resolveForField({
+      reference,
+      fieldUrl: input.documentUrl,
+      fieldKind: secureFieldKind(element, input),
+      formUrl: input.formUrl || null,
+    });
+    try {
+      await act(resolved.value);
+    } catch {
+      // Playwright's error quotes the call, with the value in it. It never reaches the model.
+      throw new Error('The field did not take the saved value. Hand this field to the user.');
+    }
+    if (pageKey(this.page.url()) !== this.typedPage) this.typedFields.clear();
+    this.typedPage = pageKey(this.page.url());
+    this.typedFields.set(ref, resolved.label);
+    return { ...(await this.view()), secure: `Typed the saved ${resolved.label}.` };
   }
 
   private element(ref: string): SnapshotElement {
@@ -359,11 +444,19 @@ export class AgentBrowser {
 
   async type(ref: string, text: string, submit = false): Promise<PageView> {
     const element = this.element(ref);
+    const reference = this.reference(text);
+    if (reference) {
+      if (submit)
+        throw new Error('A saved value never submits with Enter. Type it, then click the checked control.');
+      return this.typeSaved(ref, element, reference, (value) => this.page.fill(ref, value));
+    }
     const input = await this.page.inputKind(ref);
     if (isSecretField(element, input)) {
       throw new BrowserHandoffRequired(
         'secret',
-        'This field takes a password, a code, or card data. Only the user types it. Hand off with next.kind sign_in.',
+        this.secure
+          ? 'This field takes a password, a code, card data, or an ID number. Type a saved value as one {{secure:<id>.<field>}} reference (secure_details_list), or hand off with next.kind sign_in.'
+          : 'This field takes a password, a code, or card data. Only the user types it. Hand off with next.kind sign_in.',
       );
     }
     if (submit && !enterMaySubmit(element)) {
@@ -378,7 +471,14 @@ export class AgentBrowser {
   }
 
   async select(ref: string, values: string[]): Promise<PageView> {
-    this.element(ref);
+    const element = this.element(ref);
+    const references = values.filter((value) => mentionsReference(value));
+    if (references.length) {
+      if (values.length !== 1) throw new Error('A saved value is chosen alone: pass one value.');
+      const reference = this.reference(values[0]);
+      if (reference)
+        return this.typeSaved(ref, element, reference, (value) => this.page.select(ref, [value]));
+    }
     await this.page.select(ref, values.slice(0, 10));
     return this.view();
   }
@@ -400,12 +500,19 @@ export class AgentBrowser {
     return this.view();
   }
 
+  /** The page address now (for the server only; the model reads it scrubbed). */
+  currentUrl(): string {
+    return this.page.url();
+  }
+
   /** The visible text, for the proof check. */
   async readText(): Promise<{ url: string; title: string; text: string }> {
-    return {
-      url: this.page.url(),
-      title: truncateText(await this.page.title().catch(() => ''), 300),
-      text: truncateText((await this.page.text()).replace(/\s+/g, ' ').trim(), 6_000),
-    };
+    const url = this.page.url();
+    const [cleanUrl, title, text] = await this.clean(url, [
+      url,
+      await this.page.title().catch(() => ''),
+      (await this.page.text()).replace(/\s+/g, ' ').trim(),
+    ]);
+    return { url: cleanUrl, title: truncateText(title, 300), text: truncateText(text, 6_000) };
   }
 }

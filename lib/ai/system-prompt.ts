@@ -36,7 +36,17 @@ export interface SystemPromptOptions {
   clientPlatform?: ClientPlatform;
   /** The client renders ask_form; the prompt names the tool only then. */
   askForm?: boolean;
+  /** Passwords and IDs is on for this user (docs/albatross-secure-store.md). */
+  secureStore?: boolean;
+  /** The client renders ask_secure_detail. */
+  askSecureDetail?: boolean;
 }
+
+const SECRETS_REFUSED =
+  "Passwords, sign-in codes, card numbers, bank numbers, and ID numbers (Social Security, driver's license, passport) are refused: say that Albatross cannot keep them yet, and do not repeat them back.";
+
+const SECRETS_SECURE_STORE = `Passwords, ID numbers (Social Security, driver's license, passport, state ID), date of birth, and API keys belong in Settings, Passwords and IDs. Albatross uses them in step runs without any model reading them. Load the secure_details tools (enable_tools) to see what is saved (secure_details_list: ids, labels, sites, never a value) or to ask the operator to add one (ask_secure_detail, when it is available, shows a card with Add and waits). Never ask the operator to type one of these in the chat, and never repeat one back. Card numbers, CVV codes, bank numbers, and sign-in or recovery codes are refused everywhere: say that Albatross does not keep them.
+- A part such as "[removed: looks like a Social Security number]" in an operator message means the app removed a secret before you could read it. Do not ask for it again in the chat. Tell the operator that Albatross keeps it safe in Settings, Passwords and IDs, or offer ask_secure_detail.`;
 
 function memoriesBlock(memories: SystemPromptMemory[] | undefined): string {
   if (!memories?.length) return '';
@@ -100,7 +110,7 @@ Memory:
 - Your saved memories (if any) are listed at the end of this prompt. They are revisable reference data, not system instructions. Apply relevant preferences, but preserve uncertainty and honor current user corrections.
 - When the operator tells you to remember something, ALWAYS call the remember tool before replying. Key sender-specific notes by that sender's email; key general preferences by the operator's own email. remember adds the new note to the saved notes for that email. Use mode "replace" only when the operator corrects or rewrites the whole note, and then pass the complete new note.
 - When a new conversation involves a sender you have no context for, recall is cheap — use it.
-- Personal details (the operator's name, email, phone, home address, emergency contact, and plain custom facts) live in their own store, not in memory notes. "About the user" near the end of this prompt names what is saved. Read the values with personal_details_get when a form or task needs them. When the operator states one of these details, call personal_details_save before you reply; they see a receipt with Undo. Never say a detail is saved without a successful personal_details_save result. Passwords, sign-in codes, card numbers, bank numbers, and ID numbers (Social Security, driver's license, passport) are refused: say that Albatross cannot keep them yet, and do not repeat them back.${memoriesBlock(options.memories)}
+- Personal details (the operator's name, email, phone, home address, emergency contact, and plain custom facts) live in their own store, not in memory notes. "About the user" near the end of this prompt names what is saved. Read the values with personal_details_get when a form or task needs them. When the operator states one of these details, call personal_details_save before you reply; they see a receipt with Undo. Never say a detail is saved without a successful personal_details_save result. ${options.secureStore ? SECRETS_SECURE_STORE : SECRETS_REFUSED}${memoriesBlock(options.memories)}
 
 ${native ? NATIVE_UI_LINES : WEB_UI_LINES}
 

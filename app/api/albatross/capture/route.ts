@@ -3,6 +3,7 @@ import { captureFromChat } from '@/lib/albatross/capture-from-chat';
 import { captureWork } from '@/lib/albatross/capture-work';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { redactDeep, redactSecretShapes } from '@/lib/secure/redact';
 import { serverErrorMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
@@ -76,8 +77,11 @@ export function createAlbatrossCapturePost(deps: CaptureRouteDependencies = defa
     } catch {
       return json(400, { ok: false, error: 'invalid json' });
     }
-    const rawText = String(body.rawText ?? body.text ?? '').trim();
+    // A secret the user wrote is never kept in a capture or read by a model
+    // (docs/albatross-secure-store.md). The Hold path has no composer notice.
+    const rawText = redactSecretShapes(String(body.rawText ?? body.text ?? '').trim()).text;
     if (!rawText) return json(400, { ok: false, error: 'rawText required' });
+    body = redactDeep({ ...body, rawText });
     try {
       const user = await deps.requireCurrentUser();
       await deps.enforceUserRateLimit({

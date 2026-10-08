@@ -32,6 +32,22 @@ export interface DataExportDependencies {
   personalDetails(
     userId: string,
   ): Promise<Array<{ key: string; label: string; value: unknown; source: string; updatedAt: number | null }>>;
+  /**
+   * Passwords and IDs without any value: each item's label, kind, sites, and
+   * plain facts (docs/albatross-secure-store.md). No hint and no sealed value.
+   */
+  secureItems(userId: string): Promise<SecureExportItem[]>;
+}
+
+export interface SecureExportItem {
+  id: string;
+  kind: string;
+  label: string;
+  sites: string[];
+  facts: Record<string, string>;
+  createdAt: number;
+  updatedAt: number;
+  lastUsedAt: number | null;
 }
 
 export const dataExportDefaults: DataExportDependencies = {
@@ -39,7 +55,39 @@ export const dataExportDefaults: DataExportDependencies = {
   page: (input) => convexQuery<ExportPage>(api.accounts.exportUserTablePage, input),
   now: () => new Date(),
   personalDetails: (userId) => exportPersonalDetails(userId),
+  secureItems: (userId) => exportSecureItems(userId),
 };
+
+/** The user's Passwords and IDs for the export: no value and no masked hint. */
+export async function exportSecureItems(
+  userId: string,
+  query: typeof convexQuery = convexQuery,
+): Promise<SecureExportItem[]> {
+  const rows = await query<
+    Array<{
+      itemId: string;
+      kind: string;
+      label: string;
+      sites: string[];
+      facts: Array<{ name: string; value: string }>;
+      createdAt: number;
+      updatedAt: number;
+      lastUsedAt: number | null;
+    }>
+  >(api.secureDetails.listItems, { userId });
+  return rows.map((row) => ({
+    id: row.itemId,
+    kind: row.kind,
+    label: row.label,
+    sites: row.sites,
+    facts: Object.fromEntries(row.facts.map((fact) => [fact.name, fact.value])),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    lastUsedAt: row.lastUsedAt ?? null,
+  }));
+}
+
+export const SECURE_ITEMS_FILE = 'data/secure-items.json';
 
 /** The saved personal details of a user, decrypted, for the export file. Account defaults are left out. */
 export async function exportPersonalDetails(
@@ -103,6 +151,7 @@ export function exportReadme(exportedAt: Date): string {
     'summary.json lists every file with its row count.',
     'Mail: data/mailCorpusMessages.json has the headers, snippet, and labels of each message.',
     `Personal details (name, phone, address, and others you saved) are in ${PERSONAL_DETAILS_FILE}.`,
+    `Passwords and IDs are listed in ${SECURE_ITEMS_FILE}: each item's name, kind, and sites. Their values are never exported.`,
     'data/mailCorpusBodies.json has the text and HTML body of each message.',
     '',
     'What is not in this file:',
@@ -145,6 +194,16 @@ export async function buildDataExport(
     ),
   );
   zip.file(
+    SECURE_ITEMS_FILE,
+    Readable.from(
+      (async function* secureItems() {
+        const rows = await deps.secureItems(userId);
+        counts[SECURE_ITEMS_FILE] = rows.length;
+        yield `${JSON.stringify(rows, null, 2)}\n`;
+      })(),
+    ),
+  );
+  zip.file(
     'summary.json',
     Readable.from(
       (async function* summary() {
@@ -155,6 +214,7 @@ export async function buildDataExport(
             files: [
               ...tables.map((table) => ({ file: `data/${table}.json`, rows: counts[table] ?? 0 })),
               { file: PERSONAL_DETAILS_FILE, rows: counts[PERSONAL_DETAILS_FILE] ?? 0 },
+              { file: SECURE_ITEMS_FILE, rows: counts[SECURE_ITEMS_FILE] ?? 0 },
             ],
           },
           null,

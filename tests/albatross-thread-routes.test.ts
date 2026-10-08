@@ -209,6 +209,23 @@ describe('POST /run { action: steer }', () => {
     expect(await response.json()).toEqual({ ok: true, runId: 'run-1' });
   });
 
+  test('a secret in a note never reaches the run (docs/albatross-secure-store.md)', async () => {
+    let text = '';
+    const response = await createStepRunPost({
+      requireCurrentUser: async () => user,
+      enforceUserRateLimit: async () => ({ ok: true }),
+      convexMutation: (async (fn: any, args: any) => {
+        if (getFunctionName(fn) === 'albatrossStepRuns:steer') text = args.text;
+        return true;
+      }) as any,
+    } as any)(
+      post({ action: 'steer', runId: 'run-1', note: `My SSN is ${['123', '-45-', '6789'].join('')}` }),
+      context,
+    );
+    expect(response.status).toBe(200);
+    expect(text).toBe('My SSN is [removed: looks like a Social Security number]');
+  });
+
   test('a run that is not working is 409, an unknown run 404, a missing note 400', async () => {
     expect(
       (

@@ -138,6 +138,7 @@ content has no second, app-level encryption.
 | Daily Brief editions, chat history | `userDocs` | `lib/store/daily-reports.ts`, `lib/store/chat-sessions.ts` |
 | Tokens (encrypted) | `providerGrants`, `cloudFileCredentials` | `convex/schema.ts:175-190` |
 | Personal details that the user saved for forms: name, email, phone, home address, emergency contact, plain custom facts (encrypted) | `personalDetails` | `convex/personalDetails.ts`, `lib/personal-details/store.ts` |
+| Passwords and IDs: sign-ins, ID numbers, date of birth, API keys (envelope-encrypted under a separate key), their site lists, "Allow once" grants, and use history (no values) | `secureItems`, `secureGrants`, `secureUses` | `convex/secureDetails.ts`, `lib/secure/` |
 
 **Personal details** (2026-10-07, `docs/albatross-thread.md`).
 
@@ -150,6 +151,30 @@ content has no second, app-level encryption.
 - Refused on save: passwords, sign-in codes, card numbers, bank and routing numbers, Social
   Security and other ID numbers, and API keys (`lib/personal-details/policy.ts`).
 - The rows rotate with the other encrypted fields (`lib/security/encrypted-fields.ts`).
+
+**Passwords and IDs** (2026-10-08, `docs/albatross-secure-store.md`). Off unless
+`LAB86_SECURE_STORE` names the user.
+
+- The user types a value only in the Settings sheet (or the sheet that a chat card or a sign-in
+  handoff opens). The value goes from that sheet to `POST /api/secure-details` and nowhere else.
+  No model, chat, form, log, or notification ever receives it. No API returns it: the user
+  replaces or deletes a value, and never reads it back.
+- Envelope encryption (`lib/secure/crypto.ts`): a random 256-bit data key for each item seals the
+  values (AES-256-GCM); the secure key-encryption key wraps that data key (AES-256-GCM). Both
+  layers bind `secure:v1:<userId>:<itemId>:<kind>`, so a sealed value opens only for its own user,
+  item, and kind. The key-encryption key (`LAB86_SECURE_KEK`) is separate from the mail key and is
+  backed up by the owner; `scripts/rotate-secure-kek.ts` re-wraps the data keys. Convex holds
+  only sealed text, masked hints ("ends 4821"), and plain facts (ID type, region).
+- Only the Next server opens a value, at the moment of use, for the signed-in owner. Every Convex
+  function of these tables needs the server secret (`convex/secureDetails.ts`).
+- Refused on save: card numbers, CVV codes, bank and routing numbers, and sign-in or recovery
+  codes (`lib/secure/policy.ts`).
+- A value goes only to the item's own sites (registrable domain; an API key: its exact host).
+  An ID number or a date of birth asks the user before its first use on a new site. Every new
+  place for a value ("Allow once", "Always on this site", a new site in Settings) needs a Clerk
+  first-factor verification in the last 10 minutes (`lib/secure/identity.ts`).
+- Each use, refusal, question, and answer is a row in `secureUses` (when, which site, which run,
+  what happened), kept 90 days. The user reads it in Settings.
 
 **Attachments.**
 
@@ -181,6 +206,21 @@ content has no second, app-level encryption.
   other saved details. A model reads the values through the `personal_details_get` tool, on the
   turns where a form needs them (`lib/tools/personal-details.ts`). Saved chats drop that tool's
   output (`lib/store/chat-sessions.ts`), and no card shows the values.
+- **Passwords and IDs: no model reads a value.** A model sees only each item's id, label, sites,
+  field names, an age for a date of birth, and an expired flag (`secure_details_list`,
+  `lib/secure/store.ts secureInventory`). A step run writes a reference, `{{secure:<id>.<field>}}`,
+  in `browser_type`, `browser_select`, or `secure_fetch`; the server checks the field and the site
+  and opens the value only then (`lib/secure/runner-access.ts`). On every page snapshot, page text,
+  title, address, tool error, and API answer that a model reads, the values saved for that site
+  and the values the run typed there are removed first. A value the run typed that appears on
+  another site stops the run (`lib/secure/runner-access.ts cleanPage`,
+  `lib/albatross/browser-agent.ts`). Tool arguments, run logs, transcripts, and use history hold
+  references and labels, never a value.
+- **Secrets that the user writes in the chat.** A Social Security number, a card number, or an
+  API key in a user message, a form answer, or a note to a run is replaced with
+  "[removed: looks like …]" before a model or the saved chat gets it (`lib/secure/redact.ts`,
+  `app/api/agent/route.ts`, `lib/store/chat-sessions.ts`, chat titles, every question answer,
+  run notes, the route prediction of the draft, and captures). The composer warns before it sends.
 
 - **Gateway.** All model calls go through `lib/ai/gateway.ts` and
   `lib/ai/client.ts`. The OpenRouter base URL is `https://openrouter.ai/api/v1`
@@ -275,9 +315,14 @@ Browserbase directly. Three features use Browserbase:
    characters of page text back (`lib/albatross/browser-session.ts:185-202`).
    The step runner (`lib/albatross/step-runner.ts`) uses the same session. It
    types the user's saved personal details into a web form when a step needs
-   them (for example a course registration). It never types a password, a
-   sign-in code, or card data, and it stops before any payment or final submit
-   (`lib/albatross/browser-agent.ts`).
+   them (for example a course registration). It never types a sign-in code or
+   card data, and it stops before any payment or final submit
+   (`lib/albatross/browser-agent.ts`). With Passwords and IDs on, it types a
+   saved password, ID number, or date of birth into a page field on the item's
+   own site; the value passes through the Browserbase session at that moment
+   only, the session is not recorded, and what the model reads back is scrubbed.
+   `secure_fetch` sends a saved API key from the Next server straight to its
+   API host (https, GET or HEAD only, no redirects); Browserbase is not in that path.
 3. **Slide render.** Albatross renders a deck in a Browserbase browser when
    Browserbase is set up (`lib/documents/deck-render.ts:137-178`). A deck can
    hold text from mail if the user made the deck from mail.

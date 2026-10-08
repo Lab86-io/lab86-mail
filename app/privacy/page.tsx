@@ -6,7 +6,7 @@ export default function PrivacyPage() {
       <article className="mx-auto max-w-3xl space-y-5">
         <h1 className="text-2xl font-semibold">Privacy Policy</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
-          Effective June 2026. Updated October 7, 2026.
+          Effective June 2026. Updated October 8, 2026.
         </p>
         <p>
           {PRODUCT_NAME} is hosted email and personal operations software from {COMPANY_NAME}. This policy
@@ -42,6 +42,14 @@ export default function PrivacyPage() {
             sign-in codes, card numbers, bank numbers, or ID numbers with them.
           </li>
           <li>
+            <strong>Passwords and IDs you save:</strong> when this feature is on for your account, the
+            sign-ins, ID numbers (for example a driver&apos;s license), date of birth, and API keys that you
+            save in Settings, with the sites where each one may be used and a 90-day history of each use.{' '}
+            {PRODUCT_NAME} types or sends a value only on the sites you allow. It never shows a saved value
+            again, and no model ever receives one. It does not keep card numbers, bank numbers, or sign-in
+            codes.
+          </li>
+          <li>
             <strong>Billing data:</strong> your plan and billing entitlement records. Stripe processes card
             payments through Clerk Billing. {COMPANY_NAME} does not receive or store card numbers.
           </li>
@@ -70,6 +78,12 @@ export default function PrivacyPage() {
           When a task fills in a web form for you, the personal details it needs go to the model provider with
           that request, and {PRODUCT_NAME} types them into the page in the shared browser. Other requests
           carry only your name, your email address, and the names of the details you saved.
+        </p>
+        <p>
+          Passwords and IDs never go to a model provider. A model sees only the name and the sites of each
+          item. Our server types the value into the page itself, and removes saved values from every page that
+          a model reads. If you write a Social Security number, a card number, or a key in a conversation,{' '}
+          {PRODUCT_NAME} removes it before a model or your saved conversation gets it.
         </p>
         <p>
           If you add your own OpenRouter key, the same rule applies. If you add your own OpenAI or Anthropic
@@ -169,8 +183,10 @@ export default function PrivacyPage() {
         <p>
           Data moves between your device, {PRODUCT_NAME}, and our service providers over encrypted (TLS)
           connections. Convex stores the data, including the attachment copies, encrypted at rest. Model
-          provider keys and the personal details that you save are encrypted before we store them. Access to
-          production systems is limited to the people who operate the service.
+          provider keys and the personal details that you save are encrypted before we store them. Passwords
+          and IDs are encrypted with a separate key, one data key for each item, and a new site for a saved
+          value needs a recent sign-in check. Access to production systems is limited to the people who
+          operate the service.
         </p>
 
         <h2 className="pt-2 text-lg font-semibold">Retention and deletion</h2>
@@ -200,6 +216,10 @@ export default function PrivacyPage() {
         <ul className="list-disc space-y-2 pl-5">
           <li>Export your data from Settings at any time.</li>
           <li>See, change, or delete your personal details in Settings.</li>
+          <li>
+            Replace or delete your passwords and IDs, see where each one was used, and change its sites in
+            Settings.
+          </li>
           <li>Disconnect a mailbox and its calendar from Settings, or Google Drive from Files.</li>
           <li>Delete your account from Settings, or ask us to delete it.</li>
           <li>

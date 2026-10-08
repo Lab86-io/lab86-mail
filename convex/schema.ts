@@ -1036,11 +1036,39 @@ export default defineSchema({
           v.literal('do_offline'),
           v.literal('review'),
           v.literal('continue'),
+          // A saved ID or date asks before its first use on a new site
+          // (docs/albatross-secure-store.md).
+          v.literal('allow_secure'),
         ),
         label: v.string(),
         detail: v.string(),
         // The button the user presses after doing it on the page ("I paid").
         doneLabel: v.optional(v.string()),
+        // allow_secure: what the run asks to use, and where. No value.
+        allow: v.optional(
+          v.object({
+            itemId: v.string(),
+            kind: v.union(
+              v.literal('sign_in'),
+              v.literal('id_number'),
+              v.literal('date_of_birth'),
+              v.literal('api_key'),
+            ),
+            itemLabel: v.string(),
+            fieldLabels: v.array(v.string()),
+            site: v.string(),
+            host: v.string(),
+          }),
+        ),
+        // sign_in: no sign-in is saved for this site, so the block offers to save one.
+        saveSignIn: v.optional(v.object({ site: v.string() })),
+        // allow_secure: the user's answer, so every device shows it.
+        allowAnswer: v.optional(
+          v.object({
+            scope: v.union(v.literal('once'), v.literal('always'), v.literal('deny')),
+            at: v.number(),
+          }),
+        ),
         target: v.optional(
           v.object({
             kind: v.union(
@@ -1052,6 +1080,7 @@ export default defineSchema({
               v.literal('url'),
               v.literal('card'),
               v.literal('event'),
+              v.literal('secure'),
             ),
             id: v.optional(v.string()),
             url: v.optional(v.string()),
@@ -1139,6 +1168,81 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_key', ['userId', 'key']),
+
+  // Secure details: passwords, ID numbers, dates of birth, and API keys that
+  // Albatross uses without a model ever reading them
+  // (docs/albatross-secure-store.md). payloadSealed holds the values under a
+  // per-item data key; dataKeyWrapped holds that data key under the secure
+  // KEK (LAB86_SECURE_KEK, separate from the mail key). Both layers bind
+  // userId, itemId, and kind. The field names do not match the mail key
+  // rotation's encrypted-field pattern on purpose: scripts/rotate-secure-kek.ts
+  // re-wraps these. Only the Next server opens them; every function in
+  // convex/secureDetails.ts needs the server secret.
+  secureItems: defineTable({
+    userId: v.string(),
+    // A public random id ("si_…"), bound into the encryption before the row exists.
+    itemId: v.string(),
+    kind: v.union(
+      v.literal('sign_in'),
+      v.literal('id_number'),
+      v.literal('date_of_birth'),
+      v.literal('api_key'),
+    ),
+    label: v.string(),
+    // Registrable domains (sign-ins, IDs) or API hosts (keys).
+    sites: v.array(v.string()),
+    // Masked hints ("ends 4821") and plain facts (ID type, region). No value.
+    hints: v.array(v.object({ field: v.string(), hint: v.string() })),
+    facts: v.array(v.object({ name: v.string(), value: v.string() })),
+    payloadSealed: v.string(),
+    dataKeyWrapped: v.string(),
+    kekId: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_item', ['userId', 'itemId']),
+
+  // "Allow once" answers: one item on one site for one step, for two hours.
+  // "Always on this site" adds the site to the item instead.
+  secureGrants: defineTable({
+    userId: v.string(),
+    itemId: v.string(),
+    site: v.string(),
+    workId: v.string(),
+    stepKey: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_item', ['userId', 'itemId'])
+    .index('by_expires', ['expiresAt']),
+
+  // Use history: when an item was used or refused, where, and by which run.
+  // Never a value. Kept 90 days (convex/secureDetails.ts pruneUses).
+  secureUses: defineTable({
+    userId: v.string(),
+    itemId: v.string(),
+    field: v.optional(v.string()),
+    site: v.optional(v.string()),
+    host: v.optional(v.string()),
+    workId: v.optional(v.string()),
+    runId: v.optional(v.string()),
+    outcome: v.union(
+      v.literal('typed'),
+      v.literal('sent'),
+      v.literal('refused_site'),
+      v.literal('asked'),
+      v.literal('allowed_once'),
+      v.literal('allowed_always'),
+      v.literal('denied'),
+    ),
+    at: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_item_at', ['userId', 'itemId', 'at'])
+    .index('by_at', ['at']),
 
   // Saved sign-ins that must still be deleted at Browserbase. The row has no
   // userId on purpose: it outlives the account cascade, and an hourly cron

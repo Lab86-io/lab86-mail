@@ -174,6 +174,10 @@ export const TOOL_GROUPS = {
     label: 'Structured asks: sliders, preference panels, and multi-step question flows',
     tools: ['ask_parameters', 'ask_preferences', 'ask_question_flow'],
   },
+  secure_details: {
+    label: 'Passwords and IDs: what is saved (never a value), and a card that asks the user to add one',
+    tools: ['secure_details_list', 'ask_secure_detail'],
+  },
 } as const satisfies Record<string, { label: string; tools: readonly string[] }>;
 
 export type ToolGroupName = keyof typeof TOOL_GROUPS;

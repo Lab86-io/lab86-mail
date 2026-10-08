@@ -89,6 +89,8 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
     struct Target: Hashable, Codable, Sendable {
         enum Kind: String, Hashable, Codable, Sendable {
             case draft, document, approval, session, question, url, card, event
+            /// A Passwords and IDs item (`allow_secure`): `id` is the item id.
+            case secure
             case unknown
 
             init(from decoder: any Decoder) throws {
@@ -133,6 +135,9 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
             case doOffline = "do_offline"
             case review
             case continueRun = "continue"
+            /// A new site asks to use a Passwords and IDs item (V6). The
+            /// block draws the allow card from `allow`.
+            case allowSecure = "allow_secure"
             case unknown
 
             init(from decoder: any Decoder) throws {
@@ -151,7 +156,7 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
                 case .approve: "Approve"
                 case .signIn: "Sign in"
                 case .finishOnPage: "Check and submit"
-                case .answer: "Answer"
+                case .answer, .allowSecure: "Answer"
                 case .doOffline: "Mark this step done"
                 case .review, .unknown: "Open"
                 case .continueRun: "Continue"
@@ -168,13 +173,31 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         /// The button that ends the user's part of a page handoff ("I paid",
         /// "I signed in"). Nil when the server sends none: "Continue".
         let doneLabel: String?
+        /// `allow_secure`: what the run asks to use, and where.
+        let allow: SecureAllowRequest?
+        /// `allow_secure`: the first answer, so every device shows the same receipt.
+        let allowAnswer: SecureAllowAnswerView?
+        /// `sign_in` with no saved sign-in for the site: the save offer (V13).
+        let saveSignIn: SecureSaveSignInOffer?
 
-        init(kind: Kind, label: String? = nil, detail: String? = nil, target: Target? = nil, doneLabel: String? = nil) {
+        init(
+            kind: Kind,
+            label: String? = nil,
+            detail: String? = nil,
+            target: Target? = nil,
+            doneLabel: String? = nil,
+            allow: SecureAllowRequest? = nil,
+            allowAnswer: SecureAllowAnswerView? = nil,
+            saveSignIn: SecureSaveSignInOffer? = nil
+        ) {
             self.kind = kind
             self.label = String((label?.nilIfBlank ?? kind.defaultLabel).prefix(Self.labelLimit))
             self.detail = detail
             self.target = target
             self.doneLabel = doneLabel?.nilIfBlank.map { String($0.prefix(Self.labelLimit)) }
+            self.allow = allow
+            self.allowAnswer = allowAnswer
+            self.saveSignIn = saveSignIn
         }
 
         init?(json: JSONValue) {
@@ -185,6 +208,9 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
             detail = json["detail"]?.stringValue?.nilIfBlank
             target = json["target"].flatMap { Target(json: $0) }
             doneLabel = json["doneLabel"]?.stringValue?.nilIfBlank.map { String($0.prefix(Self.labelLimit)) }
+            allow = json["allow"].flatMap { SecureAllowRequest(json: $0) }
+            allowAnswer = json["allowAnswer"].flatMap { SecureAllowAnswerView(json: $0) }
+            saveSignIn = json["saveSignIn"].flatMap { SecureSaveSignInOffer(json: $0) }
         }
     }
 

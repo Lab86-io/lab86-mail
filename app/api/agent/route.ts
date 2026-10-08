@@ -21,6 +21,7 @@ import { type BriefResponseRef, briefResponseRefSchema } from '@/lib/brief/respo
 import { BriefResponseContextError, readBriefResponseContext } from '@/lib/brief/response-context';
 import { captureNarrativeTurn, narrativeEnabled } from '@/lib/narrative/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { redactUserMessages } from '@/lib/secure/redact';
 import { serverErrorMessage } from '@/lib/security/error-answer';
 import { withDeadline } from '@/lib/shared/deadline';
 import { compactMessage } from '@/lib/store/chat-sessions';
@@ -171,8 +172,11 @@ export async function POST(req: NextRequest) {
       limit: 60,
       windowMs: 60_000,
     });
+    // A secret the user wrote (an SSN, a card, a key) never reaches the model:
+    // the composer warns first, and this is the backstop (docs/albatross-secure-store.md).
+    const userMessages = redactUserMessages(body.messages);
     // A form answer with "Save to my details" saves before the model reads it.
-    const answered = await applyFormAnswers(user, body.messages).catch(() => body.messages);
+    const answered = await applyFormAnswers(user, userMessages).catch(() => userMessages);
     const prepared = prepareAgentMessages(
       body.continuation === true ? answered.map(compactMessage) : answered,
     );

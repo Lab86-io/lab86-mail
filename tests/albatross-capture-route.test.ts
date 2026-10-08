@@ -174,3 +174,31 @@ describe('POST /api/albatross/capture', () => {
     expect(await response.json()).toEqual({ ok: false, error: 'capture failed' });
   });
 });
+
+describe('secrets in a capture', () => {
+  test('a secret is removed before the capture is kept or read by a model', async () => {
+    const { deps, captureCalls, chatCalls } = dependencies();
+    const ssn = ['123', '-45-', '6789'].join('');
+    await createAlbatrossCapturePost(deps)(
+      request({
+        rawText: `Renew my passport. SSN ${ssn}`,
+        transcript: `I said ${ssn}`,
+        reviewedItems: [{ title: 'Passport', rawText: ssn }],
+      }),
+    );
+    expect(captureCalls[0].rawText).toBe(
+      'Renew my passport. SSN [removed: looks like a Social Security number]',
+    );
+    expect(captureCalls[0].transcript).toBe('I said [removed: looks like a Social Security number]');
+    expect(captureCalls[0].reviewedItems[0].rawText).toBe('[removed: looks like a Social Security number]');
+    await createAlbatrossCapturePost(deps)(
+      request({
+        rawText: 'Keep this',
+        source: 'chat',
+        conversationId: 'conv-1',
+        replyText: `Your number ${ssn}`,
+      }),
+    );
+    expect(chatCalls[0].replyText).toBe('Your number [removed: looks like a Social Security number]');
+  });
+});
