@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { PERSONAL_DETAIL_LABELS } from '../lib/albatross/thread-contract';
+import { PERSONAL_DETAIL_LABELS, type ThreadRunView } from '../lib/albatross/thread-contract';
 import {
   classQuestionForm,
   threadDetailDoneStep,
@@ -29,6 +29,7 @@ import {
   RUN_STATE_COPY,
   runBlockAction,
   runBlockDismisses,
+  runBlockMarksDone,
   runStateLine,
   runUsesPage,
   saveBoxLabel,
@@ -37,6 +38,7 @@ import {
   startedRunIds,
   stepNumberFor,
   stoppedReason,
+  type ThreadStateInput,
   threadState,
   threadStateInput,
 } from '../lib/albatross/thread-view';
@@ -361,5 +363,137 @@ describe('the pending form against the chat viewport', () => {
   });
   test('a short card only needs its own height', () => {
     expect(pendingFormVisibleIn(viewport, { top: 680, bottom: 700 })).toBe(true);
+  });
+});
+
+// Every result that waits for the user can be marked done
+// (docs/albatross-document-handoff.md, D2). Story: the Harbor Design studio
+// hours invoice.
+describe('a ready-for-you result and Mark step done', () => {
+  const base = runs.readyDraft;
+  function handoff(
+    outcome: 'ready_for_you' | 'your_turn',
+    next: Partial<NonNullable<ThreadRunView['next']>>,
+  ) {
+    return {
+      ...base,
+      outcome,
+      next: {
+        ...base.next!,
+        label: '',
+        detail: 'Fill in the hours.',
+        target: null,
+        ...next,
+      },
+    } as ThreadRunView;
+  }
+
+  test('a result the button can open keeps the agent label, and Mark step done is the second button', () => {
+    const openable = [
+      handoff('ready_for_you', {
+        kind: 'review_document',
+        label: 'Fill in hours',
+        target: { kind: 'document', id: 'doc_invoice' },
+      }),
+      handoff('ready_for_you', { kind: 'review_draft', target: { kind: 'draft', id: 'draft_invoice' } }),
+      handoff('ready_for_you', {
+        kind: 'review',
+        target: { kind: 'url', url: 'https://example.com/portal' },
+      }),
+      handoff('ready_for_you', { kind: 'approve', target: { kind: 'approval', id: 'approval_1' } }),
+    ];
+    expect(runBlockAction(openable[0])).toMatchObject({
+      kind: 'next',
+      label: 'Fill in hours',
+      behaviour: { kind: 'open_document', id: 'doc_invoice' },
+    });
+    expect(runBlockAction(openable[1])).toMatchObject({
+      kind: 'next',
+      label: 'Read and send',
+      behaviour: { kind: 'open_draft', id: 'draft_invoice' },
+    });
+    expect(runBlockAction(openable[2])).toMatchObject({
+      kind: 'next',
+      behaviour: { kind: 'open_url', url: 'https://example.com/portal' },
+    });
+    expect(runBlockAction(openable[3])).toMatchObject({ kind: 'next', behaviour: { kind: 'open_approval' } });
+    for (const run of openable) expect(runBlockMarksDone(run)).toBe(true);
+    expect(runBlockMarksDone(base)).toBe(true);
+  });
+
+  test('a result with nothing to open has Mark step done as its one primary button', () => {
+    const closed = [
+      handoff('ready_for_you', { kind: 'review' }),
+      handoff('ready_for_you', { kind: 'review_document' }),
+      handoff('ready_for_you', { kind: 'review_draft' }),
+    ];
+    for (const run of closed) {
+      expect(runBlockAction(run)).toEqual({ kind: 'mark_done', label: RUN_STATE_COPY.markDone });
+      expect(runBlockMarksDone(run)).toBe(false);
+    }
+    expect(RUN_STATE_COPY.markDone).toBe('Mark step done');
+  });
+
+  test('the user turn is not changed', () => {
+    const document = handoff('your_turn', {
+      kind: 'review_document',
+      label: 'Fill in hours',
+      target: { kind: 'document', id: 'doc_invoice' },
+    });
+    expect(runBlockAction(document)).toMatchObject({ kind: 'next', label: 'Fill in hours' });
+    expect(runBlockMarksDone(document)).toBe(false);
+    const review = handoff('your_turn', { kind: 'review' });
+    expect(runBlockAction(review)).toMatchObject({
+      kind: 'next',
+      label: 'Open',
+      behaviour: { kind: 'show_artifacts' },
+    });
+    expect(runBlockMarksDone(review)).toBe(false);
+    expect(runBlockAction(runs.finalPage)).toEqual({ kind: 'resume', label: 'I paid' });
+    expect(runBlockMarksDone(runs.finalPage)).toBe(false);
+  });
+
+  test('a run that is not handed off never marks done', () => {
+    for (const run of [
+      runs.running,
+      runs.done,
+      runs.failed,
+      runs.cancelled,
+      runs.needsAnswer,
+      runs.stoppedTime,
+    ])
+      expect(runBlockMarksDone(run)).toBe(false);
+  });
+});
+
+describe('the thread state ranks a run at work above another question', () => {
+  const input = (over: Partial<ThreadStateInput>): ThreadStateInput => ({
+    workState: 'active',
+    planReady: true,
+    totalSteps: 2,
+    currentIndex: 0,
+    activeRun: null,
+    handoff: null,
+    pendingQuestion: false,
+    ...over,
+  });
+
+  test('a run at work outranks a question from another part of the Work', () => {
+    expect(threadState(input({ activeRun: runs.running, pendingQuestion: true }))).toBe('running');
+    expect(
+      threadState(input({ activeRun: runs.running, pendingQuestion: true, handoff: runs.readyDraft })),
+    ).toBe('running');
+  });
+
+  test('the current step question still comes first', () => {
+    expect(
+      threadState(input({ activeRun: runs.running, pendingQuestion: true, handoff: runs.needsAnswer })),
+    ).toBe('needs_answer');
+  });
+
+  test('with no run at work, a pending question still asks', () => {
+    expect(threadState(input({ pendingQuestion: true }))).toBe('needs_answer');
+    expect(threadState(input({ pendingQuestion: true, handoff: runs.readyDraft }))).toBe('needs_answer');
+    expect(threadState(input({ handoff: runs.readyDraft }))).toBe('waiting');
   });
 });

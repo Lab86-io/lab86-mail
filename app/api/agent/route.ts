@@ -13,6 +13,11 @@ import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { normalizeClientPlatform } from '@/lib/ai/system-prompt';
 import { initialToolGroups } from '@/lib/ai/tool-groups';
 import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
+import {
+  type DocumentContextAttachment,
+  documentAttachmentContext,
+  normalizeDocumentAttachment,
+} from '@/lib/albatross/document-handoff';
 import { applyFormAnswers } from '@/lib/albatross/form-answers';
 import {
   beginThreadReply,
@@ -49,7 +54,8 @@ interface AgentRequestBody {
   briefResponse?: BriefResponseRef;
   timezone?: string;
   areaDiscovery?: { mode: 'teach' | 'area'; areaId?: string };
-  contextAttachments?: Array<{ kind: 'work'; id: string }>;
+  /** The Work of a thread, and the document open in its document mode (docs/albatross-document-handoff.md). */
+  contextAttachments?: Array<{ kind: 'work'; id: string } | DocumentContextAttachment>;
   /** The client that renders the chat. Native clients get no web-only UI tools. Default web. */
   clientPlatform?: 'web' | 'ios' | 'macos';
   /** What the client renders beyond the base set, for example 'ask_form'. Unknown names are ignored. */
@@ -67,14 +73,23 @@ export class InvalidContextAttachmentError extends Error {
   }
 }
 
-export function normalizeContextAttachments(value: unknown): Array<{ kind: 'work'; id: string }> {
+export type ContextAttachment = { kind: 'work'; id: string } | DocumentContextAttachment;
+
+export function normalizeContextAttachments(value: unknown): ContextAttachment[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new InvalidContextAttachmentError('contextAttachments must be an array.');
   if (value.length > 3) throw new InvalidContextAttachmentError('At most 3 context attachments are allowed.');
   const seen = new Set<string>();
-  return value.map((entry) => {
+  return value.map((entry): ContextAttachment => {
     if (!entry || typeof entry !== 'object')
       throw new InvalidContextAttachmentError('Invalid context attachment.');
+    if ((entry as any).kind === 'document') {
+      const document = normalizeDocumentAttachment(entry);
+      if (!document) throw new InvalidContextAttachmentError('Invalid document context attachment.');
+      if (seen.has('document')) throw new InvalidContextAttachmentError('Duplicate context attachment.');
+      seen.add('document');
+      return document;
+    }
     const kind = (entry as any).kind;
     const id = typeof (entry as any).id === 'string' ? (entry as any).id.trim() : '';
     if (kind !== 'work' || !id || id.length > 180) {
@@ -204,11 +219,18 @@ export async function POST(req: NextRequest) {
     const briefContext = reference?.success
       ? await readBriefResponseContext(user.userId, reference.data, req.signal)
       : null;
-    const contextAttachments = briefContext
+    const allAttachments: ContextAttachment[] = briefContext
       ? briefContext.workId
         ? [{ kind: 'work' as const, id: briefContext.workId }]
         : []
       : normalizeContextAttachments(body.contextAttachments);
+    const contextAttachments = allAttachments.filter(
+      (attachment): attachment is { kind: 'work'; id: string } => attachment.kind === 'work',
+    );
+    const documentAttachment =
+      allAttachments.find(
+        (attachment): attachment is DocumentContextAttachment => attachment.kind === 'document',
+      ) ?? null;
     const narrativeTopics = [
       ...contextAttachments.map((item) => `work:${item.id}`),
       ...(body.areaDiscovery?.mode === 'area' && body.areaDiscovery.areaId
@@ -275,6 +297,7 @@ export async function POST(req: NextRequest) {
           briefContext?.systemContext,
           areaDiscoveryContext,
           ...attachedContexts,
+          documentAttachment ? documentAttachmentContext(documentAttachment) : '',
           compactionNote,
           recovery,
         ]

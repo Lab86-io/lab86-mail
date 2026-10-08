@@ -331,6 +331,69 @@ struct StepRunTests {
         #expect(StepRunNextBehaviour.markStepDone.showsPrimaryButton)
     }
 
+    /// A handed-off run with one next action, for the button table.
+    private static func handoff(
+        _ outcome: StepRunView.Outcome?,
+        next: StepRunView.Next?
+    ) -> StepRunView {
+        StepRunView(
+            id: "run_h",
+            workID: "work_1",
+            stepKey: "step-hours",
+            stepTitle: "Fill in the hours",
+            state: .handedOff,
+            outcome: outcome,
+            next: next
+        )
+    }
+
+    // docs/albatross-document-handoff.md, D2: a result that waits for the
+    // user's check opens with the primary button and "Mark step done" beside
+    // it; with nothing to open, "Mark step done" is the primary button.
+    @Test func theHandoffButtonsFollowTheDocumentHandoffTable() {
+        let document = Self.next(.reviewDocument, target: .init(kind: .document, id: "doc_1"))
+        let opens = Self.handoff(.readyForYou, next: document)
+        #expect(RunBlockHandoffAction.primary(for: opens) == .next(.openDocument(id: "doc_1", url: nil), label: "Open the document"))
+        #expect(RunBlockHandoffAction.marksDone(opens))
+
+        let draft = Self.handoff(.readyForYou, next: Self.next(.reviewDraft, target: .init(kind: .draft, id: "d1", accountID: "a1")))
+        #expect(RunBlockHandoffAction.primary(for: draft) == .next(.openDraft(id: "d1", accountID: "a1"), label: "Read and send"))
+        #expect(RunBlockHandoffAction.marksDone(draft))
+
+        let page = Self.handoff(.readyForYou, next: Self.next(.review, target: .init(kind: .url, url: "https://example.com/r")))
+        #expect(RunBlockHandoffAction.primary(for: page) == .next(.openURL("https://example.com/r"), label: "Open"))
+        #expect(RunBlockHandoffAction.marksDone(page))
+
+        // Nothing opens: a review with no link, a document with no target.
+        let review = Self.handoff(.readyForYou, next: Self.next(.review))
+        #expect(RunBlockHandoffAction.primary(for: review) == .markDone)
+        #expect(!RunBlockHandoffAction.marksDone(review))
+        let noTarget = Self.handoff(.readyForYou, next: Self.next(.reviewDocument))
+        #expect(RunBlockHandoffAction.primary(for: noTarget) == .markDone)
+        #expect(!RunBlockHandoffAction.marksDone(noTarget))
+
+        // Only a result to check marks done; the user's turn keeps its old rule.
+        let yourTurn = Self.handoff(.yourTurn, next: Self.next(.review))
+        #expect(RunBlockHandoffAction.primary(for: yourTurn) == .none)
+        #expect(!RunBlockHandoffAction.marksDone(yourTurn))
+        let offline = Self.handoff(.yourTurn, next: Self.next(.doOffline))
+        #expect(RunBlockHandoffAction.primary(for: offline) == .next(.markStepDone, label: "Mark this step done"))
+        #expect(!RunBlockHandoffAction.marksDone(offline))
+        let signIn = Self.handoff(.yourTurn, next: Self.next(.signIn))
+        #expect(RunBlockHandoffAction.primary(for: signIn) == .next(.openBrowser, label: "Sign in"))
+        #expect(!RunBlockHandoffAction.marksDone(signIn))
+
+        // A question has no button; a run with no next action continues.
+        #expect(RunBlockHandoffAction.primary(for: Self.handoff(.needsAnswer, next: Self.next(.answer))) == .none)
+        #expect(RunBlockHandoffAction.primary(for: Self.handoff(.readyForYou, next: nil)) == .next(.resume, label: "Continue"))
+        #expect(!RunBlockHandoffAction.marksDone(Self.handoff(.readyForYou, next: nil)))
+        // A stopped run and a done run draw other blocks.
+        let stopped = StepRunView(id: "r", workID: "w", stepKey: "s", stepTitle: "S", state: .handedOff, outcome: .stopped, stoppedBy: .time)
+        #expect(RunBlockHandoffAction.primary(for: stopped) == .none)
+        #expect(RunBlockHandoffAction.primary(for: stopped.with(state: .done)) == .none)
+        #expect(RunBlockCopy.markStepDone == "Mark step done")
+    }
+
     @Test func theDocumentIDComesFromTheOpenPath() {
         #expect(StepRunCopy.documentID(fromURL: "/?view=files&office=doc_3") == "doc_3")
         #expect(StepRunCopy.documentID(fromURL: "https://mail.lab86.io/?view=files&document=doc_4") == "doc_4")

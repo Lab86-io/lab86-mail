@@ -17,6 +17,11 @@ struct NativeWorkspaceDestination: Identifiable, Hashable, Sendable {
         Self(title: "File editor", path: query(path: "/native/files", values: [("view", "files"), ("document", id)]))
     }
 
+    /// A Word document in the Office editor (`?office=<id>`).
+    static func officeDocument(_ id: String) -> Self {
+        Self(title: "File editor", path: query(path: "/native/files", values: [("view", "files"), ("office", id)]))
+    }
+
     static func google(_ route: GoogleDocumentRoute) -> Self {
         Self(title: "File editor", path: query(path: "/native/files", values: [
             ("view", "files"), ("provider", "google_drive"), ("connection", route.connectionID),

@@ -100,6 +100,7 @@ import {
 import { routeEmailPreviewThread } from '@/lib/ai/email-preview-routing';
 import type { ToolShape } from '@/lib/ai/tool-shapes';
 import { type HoldCard, holdText, kickAdvance } from '@/lib/albatross/capture-client';
+import type { DocumentContextAttachment } from '@/lib/albatross/document-handoff';
 import {
   draftWithMarker,
   savedMarker,
@@ -288,6 +289,8 @@ export interface ThreadChatProps {
   steer?: ThreadSteer;
   /** The reply of this thread still runs on the server (T5): a placeholder shows until the saved reply arrives. */
   replyInProgress?: boolean;
+  /** The document open in the thread's document mode: the chat edits it (docs/albatross-document-handoff.md, D5). */
+  document?: DocumentContextAttachment | null;
   /** The draft and the reader's place, kept across hops (T3). */
   memory?: {
     draft: { get: () => string; set: (text: string) => void };
@@ -408,6 +411,28 @@ export function AssistantChat({
   // The browser's IANA timezone rides along so the agent (and calendar
   // tools) interpret wall-clock times like "2:30" in the user's zone.
   const activeRunId = useRef<string | null>(null);
+  // Read at send time, so opening or closing a document does not rebuild the transport.
+  const threadDocumentRef = useRef<DocumentContextAttachment | null>(null);
+  threadDocumentRef.current = thread?.document ?? null;
+  // A Work thread has its own context: the shared chat's Brief reply context
+  // never reaches its requests, or it would replace the Work and the open document.
+  const inThreadRef = useRef(false);
+  inThreadRef.current = Boolean(thread);
+  const sharedBriefContext = useCallback(
+    () => (inThreadRef.current ? null : useClientStore.getState().assistantBriefContext),
+    [],
+  );
+  // The Work of this chat, and the document open in its document mode. Read at send time.
+  const workContextAttachments = useCallback(
+    () =>
+      !sharedBriefContext() && chatScopeKind === 'work' && chatScopeWorkId
+        ? [
+            { kind: 'work' as const, id: chatScopeWorkId },
+            ...(threadDocumentRef.current ? [threadDocumentRef.current] : []),
+          ]
+        : undefined,
+    [chatScopeKind, chatScopeWorkId, sharedBriefContext],
+  );
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -428,15 +453,12 @@ export function AssistantChat({
             ? baseUpdatedAtRef.current
             : undefined,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          briefResponse: useClientStore.getState().assistantBriefContext?.reference,
+          briefResponse: sharedBriefContext()?.reference,
           areaDiscovery:
-            !useClientStore.getState().assistantBriefContext && chatScopeKind === 'area' && chatScopeAreaId
+            !sharedBriefContext() && chatScopeKind === 'area' && chatScopeAreaId
               ? { mode: 'area', areaId: chatScopeAreaId }
               : undefined,
-          contextAttachments:
-            !useClientStore.getState().assistantBriefContext && chatScopeKind === 'work' && chatScopeWorkId
-              ? [{ kind: 'work', id: chatScopeWorkId }]
-              : undefined,
+          contextAttachments: workContextAttachments(),
           extraSystem: [
             assistantPageContext(
               useClientStore.getState().primaryView,
@@ -450,7 +472,7 @@ export function AssistantChat({
             .join('\n'),
         }),
       }),
-    [chatScopeAreaId, chatScopeKind, chatScopeWorkId],
+    [chatScopeAreaId, chatScopeKind, workContextAttachments, sharedBriefContext],
   );
   const shouldAutoContinueHitl = useMemo(() => createHitlAutoContinueGuard(), []);
   const shouldAutoContinueApproval = useMemo(
@@ -1056,10 +1078,9 @@ export function AssistantChat({
       {
         body: {
           extraSystem: [contextLines, uploadContext].filter(Boolean).join('\n\n') || undefined,
-          contextAttachments:
-            !useClientStore.getState().assistantBriefContext && chatScopeKind === 'work' && chatScopeWorkId
-              ? [{ kind: 'work', id: chatScopeWorkId }]
-              : undefined,
+          // A request body replaces the transport body field by field, so it
+          // carries the open document too (docs/albatross-document-handoff.md).
+          contextAttachments: workContextAttachments(),
         },
       } as any,
     )

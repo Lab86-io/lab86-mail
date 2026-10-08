@@ -63,3 +63,46 @@ describe('evidenceSatisfies', () => {
     expect(generateObject).not.toHaveBeenCalled();
   });
 });
+
+// A step run's own record (docs/albatross-document-handoff.md, D1): the
+// "Observed" lines are facts, so a research step can pass on them.
+describe('evidenceSatisfies for a step run', () => {
+  const input = {
+    userId: 'user-1',
+    workTitle: 'Send the Harbor Design hours invoice',
+    requirement: 'The client billing address is known',
+    evidenceText: 'Observed search_threads: billing@example.com',
+  };
+
+  function gate() {
+    return mock(async (_options: any) => ({ object: { satisfies: true, reason: 'The search shows it.' } }));
+  }
+
+  test('source run uses its own rules, which read the Observed lines', async () => {
+    const runGate = gate();
+    const mailGate = gate();
+    await evidenceSatisfies({ ...input, source: 'run' }, { generateObject: runGate as any });
+    await evidenceSatisfies(input, { generateObject: mailGate as any });
+    const runSystem = (runGate.mock.calls[0] as any[])[0].system as string;
+    const mailSystem = (mailGate.mock.calls[0] as any[])[0].system as string;
+    expect(runSystem).toContain('Observed');
+    expect(runSystem).toContain('User said');
+    expect(runSystem).not.toBe(mailSystem);
+    expect(mailSystem).not.toContain('Observed');
+  });
+
+  test('source run reads 8,000 evidence characters; the default stays at 4,000', async () => {
+    const long = 'e'.repeat(9_000);
+    const runGate = gate();
+    const mailGate = gate();
+    await evidenceSatisfies(
+      { ...input, source: 'run', evidenceText: long },
+      { generateObject: runGate as any },
+    );
+    await evidenceSatisfies({ ...input, evidenceText: long }, { generateObject: mailGate as any });
+    const runEvidence = JSON.parse((runGate.mock.calls[0] as any[])[0].prompt).evidence as string;
+    const mailEvidence = JSON.parse((mailGate.mock.calls[0] as any[])[0].prompt).evidence as string;
+    expect(runEvidence).toHaveLength(8_000);
+    expect(mailEvidence).toHaveLength(4_000);
+  });
+});

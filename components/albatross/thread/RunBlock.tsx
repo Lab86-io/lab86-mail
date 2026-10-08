@@ -40,6 +40,7 @@ import {
   RUN_STATE_COPY,
   runBlockAction,
   runBlockDismisses,
+  runBlockMarksDone,
   runStateLine,
   runUsesPage,
   savedLabelsFromAnswer,
@@ -59,6 +60,8 @@ export interface RunBlockProps {
   startable?: boolean;
   /** The page pane is open: the block does not offer "Open the page". */
   pageOpen?: boolean;
+  /** Document mode shows this handoff in its "Your part" card: the block keeps only its record. */
+  handoffShownElsewhere?: boolean;
   /** The saved details, for a question's bound fields. */
   details?: readonly PersonalDetailView[];
   /** The action in flight on this run, if any. */
@@ -107,12 +110,14 @@ export function RunBlock(props: RunBlockProps) {
     stepNumber = null,
     startable = false,
     pageOpen = false,
+    handoffShownElsewhere = false,
     busy,
     timeZone,
   } = props;
   const state = runStateLine(run);
-  const action = runBlockAction(run, { startable });
-  const dismisses = runBlockDismisses(run);
+  const action = handoffShownElsewhere ? ({ kind: 'none' } as const) : runBlockAction(run, { startable });
+  const dismisses = !handoffShownElsewhere && runBlockDismisses(run);
+  const marksDone = !handoffShownElsewhere && runBlockMarksDone(run, { startable });
   const lines = logLines(run);
   const working = run.state === 'queued' || run.state === 'running';
   const newest = lines.length ? lines[lines.length - 1] : null;
@@ -259,7 +264,10 @@ export function RunBlock(props: RunBlockProps) {
         </div>
       ) : null}
 
-      {run.state === 'handed_off' && run.outcome !== 'needs_answer' && run.outcome !== 'stopped' ? (
+      {run.state === 'handed_off' &&
+      run.outcome !== 'needs_answer' &&
+      run.outcome !== 'stopped' &&
+      !handoffShownElsewhere ? (
         <div className="flex flex-col gap-0.5">
           <span className={cn('text-[11.5px] font-medium', TONE_CLASS[state.tone])}>{state.text}</span>
           {detailLine ? <p className="text-[14px] font-medium leading-snug">{detailLine}</p> : null}
@@ -307,7 +315,7 @@ export function RunBlock(props: RunBlockProps) {
         </button>
       ) : null}
 
-      {action.kind !== 'none' || dismisses ? (
+      {action.kind !== 'none' || dismisses || marksDone ? (
         <div className="flex flex-wrap items-center gap-2 pt-0.5">
           {action.kind === 'stop' ? (
             <Button
@@ -338,6 +346,17 @@ export function RunBlock(props: RunBlockProps) {
           {action.kind === 'mark_done' ? (
             <Button type="button" size="sm" disabled={Boolean(busy)} onClick={() => props.onMarkDone(run)}>
               {busy === 'mark_done' ? 'Saving…' : action.label}
+            </Button>
+          ) : null}
+          {marksDone ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={Boolean(busy)}
+              onClick={() => props.onMarkDone(run)}
+            >
+              {busy === 'mark_done' ? 'Saving…' : RUN_STATE_COPY.markDone}
             </Button>
           ) : null}
           {action.kind === 'start' ? (

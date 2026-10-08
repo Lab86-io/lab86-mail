@@ -10,6 +10,13 @@ import AppKit
 /// and from the app's Clerk session, and is revoked when this view closes.
 struct NativeWorkspaceView: View {
     let destination: NativeWorkspaceDestination
+    /// A change loads the editor page again, when it has no unsaved edits:
+    /// the thread's chat edited the document (docs/albatross-document-handoff.md).
+    var reloadToken = 0
+    /// Set when the workspace is docked inside another surface (the Mac
+    /// thread's document mode): a title row with "Close" instead of the
+    /// navigation bar, and no sheet frame. The host owns the room.
+    var dock: NativeWorkspaceDock? = nil
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -19,82 +26,113 @@ struct NativeWorkspaceView: View {
     @State private var openedOwnerID: String?
 
     var body: some View {
+        chrome
+            .task { openedOwnerID = environment.sessionStore.ownerID; await open() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await browser.refreshAccessIfNeeded() } }
+            }
+            .onChange(of: environment.sessionStore.ownerID) { _, _ in close() }
+            .onChange(of: reloadToken) { _, _ in browser.reloadIfClean() }
+            .onDisappear {
+                browser.close()
+                Task {
+                    guard let openedOwnerID, openedOwnerID == environment.sessionStore.ownerID else { return }
+                    if destination.path.hasPrefix("/native/files") {
+                        await environment.documents.loadFiles()
+                    } else {
+                        _ = await environment.refreshAccounts(ownerID: openedOwnerID)
+                        guard openedOwnerID == environment.sessionStore.ownerID else { return }
+                        await environment.store.bootstrap(cacheOwner: openedOwnerID)
+                    }
+                }
+            }
+    }
+
+    /// The sheet with its navigation bar, or the docked title row.
+    @ViewBuilder private var chrome: some View {
+        if let dock {
+            VStack(spacing: 0) {
+                NativeWorkspaceDockHeader(title: dock.title, onClose: requestClose)
+                Divider()
+                surface
+            }
+        } else {
+            presented
+        }
+    }
+
+    private var presented: some View {
         NavigationStack {
-            ZStack {
-                if let webView = browser.webView {
-                    NativeBrowserSurface(webView: webView)
-                }
-                if let error = browser.error {
-                    ContentUnavailableView {
-                        Label("Couldn’t open the workspace", systemImage: "network.slash")
-                    } description: {
-                        Text(error)
-                    } actions: {
-                        Button("Try again") { Task { await open() } }
+            surface
+                .navigationTitle(destination.title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { requestClose() }
                     }
-                    .background(.background)
-                } else if browser.isLoading {
-                    ProgressView("Opening \(destination.title.lowercased())…")
-                        .padding(20)
-                        .background(.regularMaterial, in: .rect(cornerRadius: 14))
-                }
-            }
-            .navigationTitle(destination.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") {
-                        if browser.isReady && browser.hasUnsavedChanges != false { confirmsClose = true } else { dismiss() }
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        Button("Back", systemImage: "chevron.left") { browser.webView?.goBack() }
+                            .disabled(!browser.canGoBack)
+                        if let download = browser.download {
+                            ShareLink(item: download) { Label("Share download", systemImage: "square.and.arrow.up") }
+                        }
                     }
                 }
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button("Back", systemImage: "chevron.left") { browser.webView?.goBack() }
-                        .disabled(!browser.canGoBack)
-                    if let download = browser.download {
-                        ShareLink(item: download) { Label("Share download", systemImage: "square.and.arrow.up") }
-                    }
-                }
-            }
-            .confirmationDialog("Close the workspace?", isPresented: $confirmsClose, titleVisibility: .visible) {
-                Button("Close workspace") { dismiss() }
-                Button("Keep editing", role: .cancel) {}
-            } message: {
-                Text(browser.hasUnsavedChanges == true ? "There are changes that have not finished saving. Keep editing to let them save." : "Wait for the editor to finish saving before closing.")
-            }
-            .alert("Download", isPresented: Binding(get: { browser.downloadError != nil }, set: { if !$0 { browser.downloadError = nil } })) {
-                Button("OK") { browser.downloadError = nil }
-            } message: { Text(browser.downloadError ?? "The file could not be downloaded.") }
-            .alert(browser.dialog?.title ?? "Albatross", isPresented: Binding(
-                get: { browser.dialog != nil },
-                set: { if !$0 { browser.completeDialog(nil) } }
-            )) {
-                if browser.dialog?.kind == .prompt { TextField("Response", text: $browser.dialogText) }
-                if browser.dialog?.kind != .alert { Button("Cancel", role: .cancel) { browser.completeDialog(nil) } }
-                Button("OK") { browser.completeDialog(browser.dialogText) }
-            } message: { Text(browser.dialog?.message ?? "") }
         }
         .interactiveDismissDisabled(browser.isReady)
-        .task { openedOwnerID = environment.sessionStore.ownerID; await open() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await browser.refreshAccessIfNeeded() } }
-        }
-        .onChange(of: environment.sessionStore.ownerID) { _, _ in dismiss() }
-        .onDisappear {
-            browser.close()
-            Task {
-                guard let openedOwnerID, openedOwnerID == environment.sessionStore.ownerID else { return }
-                if destination.path.hasPrefix("/native/files") {
-                    await environment.documents.loadFiles()
-                } else {
-                    _ = await environment.refreshAccounts(ownerID: openedOwnerID)
-                    guard openedOwnerID == environment.sessionStore.ownerID else { return }
-                    await environment.store.bootstrap(cacheOwner: openedOwnerID)
-                }
-            }
-        }
         #if os(macOS)
         .frame(minWidth: 900, minHeight: 650)
         #endif
+    }
+
+    /// The web view with its dialogs.
+    private var surface: some View {
+        ZStack {
+            if let webView = browser.webView {
+                NativeBrowserSurface(webView: webView)
+            }
+            if let error = browser.error {
+                ContentUnavailableView {
+                    Label("Couldn’t open the workspace", systemImage: "network.slash")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("Try again") { Task { await open() } }
+                }
+                .background(.background)
+            } else if browser.isLoading {
+                ProgressView("Opening \(destination.title.lowercased())…")
+                    .padding(20)
+                    .background(.regularMaterial, in: .rect(cornerRadius: 14))
+            }
+        }
+        .confirmationDialog("Close the workspace?", isPresented: $confirmsClose, titleVisibility: .visible) {
+            Button("Close workspace") { close() }
+            Button("Keep editing", role: .cancel) {}
+        } message: {
+            Text(browser.hasUnsavedChanges == true ? "There are changes that have not finished saving. Keep editing to let them save." : "Wait for the editor to finish saving before closing.")
+        }
+        .alert("Download", isPresented: Binding(get: { browser.downloadError != nil }, set: { if !$0 { browser.downloadError = nil } })) {
+            Button("OK") { browser.downloadError = nil }
+        } message: { Text(browser.downloadError ?? "The file could not be downloaded.") }
+        .alert(browser.dialog?.title ?? "Albatross", isPresented: Binding(
+            get: { browser.dialog != nil },
+            set: { if !$0 { browser.completeDialog(nil) } }
+        )) {
+            if browser.dialog?.kind == .prompt { TextField("Response", text: $browser.dialogText) }
+            if browser.dialog?.kind != .alert { Button("Cancel", role: .cancel) { browser.completeDialog(nil) } }
+            Button("OK") { browser.completeDialog(browser.dialogText) }
+        } message: { Text(browser.dialog?.message ?? "") }
+    }
+
+    /// "Close": the editor with unsaved edits asks first.
+    private func requestClose() {
+        if browser.isReady && browser.hasUnsavedChanges != false { confirmsClose = true } else { close() }
+    }
+
+    /// The host closes a docked workspace; a sheet dismisses itself.
+    private func close() {
+        if let dock { dock.onClose() } else { dismiss() }
     }
 
     private func open() async {
@@ -106,6 +144,37 @@ struct NativeWorkspaceView: View {
             authorization: environment.webAuthentication,
             openExternal: { openURL($0) }
         )
+    }
+}
+
+/// The chrome of a docked workspace (docs/albatross-document-handoff.md,
+/// D5): the title of its row, and what "Close" does in the host.
+struct NativeWorkspaceDock {
+    let title: String
+    let onClose: () -> Void
+}
+
+/// The title row over a docked workspace: the title, then a text "Close"
+/// button at the trailing edge. Escape presses it.
+struct NativeWorkspaceDockHeader: View {
+    let title: String
+    let onClose: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.headline)
+                .lineLimit(1)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 8)
+            Button("Close", action: onClose)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .keyboardShortcut(.cancelAction)
+                .help("Close the document (Escape)")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
     }
 }
 
@@ -269,6 +338,13 @@ final class NativeWorkspaceBrowser: NSObject, WKNavigationDelegate, WKUIDelegate
             // Keep the live editor and its unsaved work. A temporary network
             // failure retries on the next minute or when the app foregrounds.
         }
+    }
+
+    /// Loads the editor page again after a chat turn changed the document.
+    /// Skipped while the editor has unsaved edits, so no edit is lost.
+    func reloadIfClean() {
+        guard isReady, hasUnsavedChanges != true, let view = webView else { return }
+        view.reload()
     }
 
     private func fail(_ message: String) {

@@ -411,6 +411,47 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
     }
 }
 
+/// The body of `POST /api/albatross/work/{id}/step`. `continues` is "Mark
+/// step done" from a run block (docs/albatross-document-handoff.md, D3): the
+/// server checks the step with the user's word and starts the next step
+/// Albatross can do. The plan check sends no `continue`.
+enum WorkStepRequest {
+    static func body(
+        stepKey: String?,
+        note: String? = nil,
+        continues: Bool = false,
+        timezone: String = TimeZone.current.identifier
+    ) -> JSONValue {
+        var body: [String: JSONValue] = ["timezone": .string(timezone)]
+        if let stepKey { body["stepKey"] = .string(stepKey) }
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            body["note"] = .string(String(note.prefix(2_000)))
+        }
+        if continues { body["continue"] = .bool(true) }
+        return .object(body)
+    }
+}
+
+/// What the step route answers to a `continue` check: the run it started on
+/// the next step, if any.
+struct WorkStepContinuation: Equatable, Sendable {
+    let nextRunID: String?
+    let nextStepKey: String?
+    let allStepsComplete: Bool
+
+    init(nextRunID: String? = nil, nextStepKey: String? = nil, allStepsComplete: Bool = false) {
+        self.nextRunID = nextRunID
+        self.nextStepKey = nextStepKey
+        self.allStepsComplete = allStepsComplete
+    }
+
+    init(json: JSONValue) {
+        nextRunID = json["nextRunId"]?.stringValue?.nilIfBlank
+        nextStepKey = json["nextStepKey"]?.stringValue?.nilIfBlank
+        allStepsComplete = json["allStepsComplete"]?.boolValue ?? false
+    }
+}
+
 /// One row of the Brief's "Ready for you" list (`GET /api/albatross/handoffs`).
 struct StepHandoffItem: Identifiable, Hashable, Sendable {
     static let path = "/api/albatross/handoffs"

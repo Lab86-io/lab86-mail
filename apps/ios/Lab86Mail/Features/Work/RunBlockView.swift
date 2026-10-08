@@ -13,6 +13,9 @@ struct RunBlockActions {
     var dismiss: (ThreadRunView) -> Void = { _ in }
     var tryAgain: (ThreadRunView) -> Void = { _ in }
     var primary: (ThreadRunView, StepRunNextBehaviour) -> Void = { _, _ in }
+    /// "Mark step done" on a result that waits for the user's check
+    /// (docs/albatross-document-handoff.md, D2). Albatross then continues.
+    var markDone: (ThreadRunView) -> Void = { _ in }
     var artifact: (StepRunView.Artifact) -> Void = { _ in }
     var showPage: (ThreadRunView) -> Void = { _ in }
     var hidePage: (ThreadRunView) -> Void = { _ in }
@@ -251,25 +254,46 @@ struct RunBlockView: View {
             }
             pageRow
             logDisclosure
-            if behaviour.showsPrimaryButton || StepRunNextBehaviour.showsContinue(run.next) {
+            if handoffAction != .none || marksDone || StepRunNextBehaviour.showsContinue(run.next) {
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) { handoffButtons(behaviour) }
-                    VStack(alignment: .leading, spacing: 10) { handoffButtons(behaviour) }
+                    HStack(spacing: 10) { handoffButtons }
+                    VStack(alignment: .leading, spacing: 10) { handoffButtons }
                 }
             }
             dismissRow
         }
-        .pointerMenu { blockMenu(behaviour: behaviour, continues: StepRunNextBehaviour.showsContinue(run.next)) }
+        .pointerMenu { blockMenu(continues: StepRunNextBehaviour.showsContinue(run.next)) }
     }
 
-    @ViewBuilder private func handoffButtons(_ behaviour: StepRunNextBehaviour) -> some View {
-        if behaviour.showsPrimaryButton, let next = run.next {
+    /// The primary button of the handoff (docs/albatross-document-handoff.md, D2).
+    private var handoffAction: RunBlockHandoffAction { RunBlockHandoffAction.primary(for: run) }
+
+    /// "Mark step done" beside a primary button that opens the result.
+    private var marksDone: Bool { RunBlockHandoffAction.marksDone(run) }
+
+    @ViewBuilder private var handoffButtons: some View {
+        switch handoffAction {
+        case .next(let behaviour, let label):
             // Command-Return does the one action that waits on the Mac: the
             // done label of a page handoff, else the primary button.
-            Button(next.label) { actions.primary(view, behaviour) }
+            Button(label) { actions.primary(view, behaviour) }
                 .buttonStyle(.borderedProminent)
                 .disabled(busy)
                 .waitingActionShortcut(ownsWaitingShortcut && !StepRunNextBehaviour.showsContinue(run.next))
+                .frame(minHeight: 44)
+        case .markDone:
+            Button(busy ? RunBlockCopy.markStepDoneBusy : RunBlockCopy.markStepDone) { actions.markDone(view) }
+                .buttonStyle(.borderedProminent)
+                .disabled(busy)
+                .waitingActionShortcut(ownsWaitingShortcut)
+                .frame(minHeight: 44)
+        case .none:
+            EmptyView()
+        }
+        if marksDone {
+            Button(busy ? RunBlockCopy.markStepDoneBusy : RunBlockCopy.markStepDone) { actions.markDone(view) }
+                .buttonStyle(.bordered)
+                .disabled(busy)
                 .frame(minHeight: 44)
         }
         if StepRunNextBehaviour.showsContinue(run.next), !hasContinuation {
@@ -344,9 +368,17 @@ struct RunBlockView: View {
     }
 
     /// The same verbs as the block, for a secondary click on the Mac.
-    @ViewBuilder private func blockMenu(behaviour: StepRunNextBehaviour, continues: Bool) -> some View {
-        if behaviour.showsPrimaryButton, let next = run.next {
-            Button(next.label) { actions.primary(view, behaviour) }
+    @ViewBuilder private func blockMenu(continues: Bool) -> some View {
+        switch handoffAction {
+        case .next(let behaviour, let label):
+            Button(label) { actions.primary(view, behaviour) }
+        case .markDone:
+            Button(RunBlockCopy.markStepDone) { actions.markDone(view) }
+        case .none:
+            EmptyView()
+        }
+        if marksDone {
+            Button(RunBlockCopy.markStepDone) { actions.markDone(view) }
         }
         if continues {
             Button(doneLabel) { actions.resume(view) }
@@ -382,7 +414,7 @@ struct RunBlockView: View {
             }
             dismissRow
         }
-        .pointerMenu { blockMenu(behaviour: .none, continues: true) }
+        .pointerMenu { blockMenu(continues: true) }
     }
 
     private var doneBody: some View {

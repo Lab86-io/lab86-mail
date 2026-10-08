@@ -8,6 +8,7 @@ import {
   isRetryableRunError,
   normalizeHandoff,
   runStepRun,
+  STEP_CHECK_COPY,
   type StepRunnerDependencies,
 } from '../lib/albatross/step-runner';
 import type { SecureItemView } from '../lib/secure/contract';
@@ -183,7 +184,7 @@ function harness(
     pausedRisks: (async () => new Set()) as any,
     resolveTimezone: (async () => 'America/New_York') as any,
     evidenceSatisfies: (async (input: any) =>
-      input.evidenceText.startsWith('Page:') && options.pageVerdict
+      input.source !== 'run' && options.pageVerdict
         ? options.pageVerdict
         : options.verdict || { satisfies: true, reason: 'The document exists.' }) as any,
     completeWorkStep: mock(async () => ({ ok: true })) as any,
@@ -1397,5 +1398,170 @@ describe('a stopped run stops at its next step', () => {
     );
     expect(await runStepRun('user-1', 'run-1', h.deps)).toEqual({ state: 'cancelled' });
     expect(h.settled()).toBeUndefined();
+  });
+});
+
+// The proof check reads what the run observed (docs/albatross-document-handoff.md, D1).
+// Story: a run for the Harbor Design studio finds the client billing address.
+describe('the proof check reads what the run observed', () => {
+  const observedSteps = [
+    {
+      toolResults: [
+        { toolName: 'search_threads', output: { threads: [{ from: 'billing@example.com' }] } },
+        { toolName: 'personal_details_get', output: { phone: '(555) 555-0100' } },
+      ],
+    },
+    { toolResults: [{ toolName: 'step_handoff', output: { ok: true } }] },
+  ];
+
+  function doneRun(h: Harness, verdict: any) {
+    const checks: any[] = [];
+    h.deps.evidenceSatisfies = (async (input: any) => {
+      checks.push(input);
+      return typeof verdict === 'function' ? verdict(input) : verdict;
+    }) as any;
+    return checks;
+  }
+
+  const behaviour: Behaviour = async (opts) => {
+    await opts.tools.document_create.execute({ title: 'Harbor Design invoice' });
+    await opts.tools.step_handoff.execute({
+      outcome: 'done',
+      summary: 'I found the billing address.',
+      evidence: 'The client wrote from billing@example.com.',
+    });
+    return { text: '', usage, steps: observedSteps };
+  };
+
+  test('the combined check uses source run with the Observed, Made, and User said lines', async () => {
+    const h = harness(behaviour, { run: { resumeNote: '  The address is in the September thread.  ' } });
+    const checks = doneRun(h, { satisfies: true, reason: 'The search shows the address.' });
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(checks).toHaveLength(1);
+    const [check] = checks;
+    expect(check.source).toBe('run');
+    const lines = check.evidenceText.split('\n');
+    expect(lines[0]).toBe('User said: The address is in the September thread.');
+    expect(lines[1]).toBe('Observed search_threads: {"threads":[{"from":"billing@example.com"}]}');
+    expect(check.evidenceText).toContain('Made: document "Harbor Design invoice"');
+    expect(check.evidenceText).toContain('Agent evidence: The client wrote from billing@example.com.');
+    expect(check.evidenceText).toContain('Agent summary: I found the billing address.');
+    // The handoff itself and the personal tools never reach the check.
+    expect(check.evidenceText).not.toContain('Observed step_handoff');
+    expect(check.evidenceText).not.toContain('555-0100');
+    expect(h.deps.completeWorkStep).toHaveBeenCalled();
+    expect(h.settled()).toMatchObject({ outcome: 'done' });
+  });
+
+  test('a run without a note has no User said line', async () => {
+    const h = harness(behaviour);
+    const checks = doneRun(h, { satisfies: true, reason: 'ok' });
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(checks[0].evidenceText).not.toContain('User said:');
+    expect(checks[0].evidenceText.split('\n')[0]).toStartWith('Observed search_threads:');
+  });
+
+  test('a refusal names what is missing in next.detail', async () => {
+    const h = harness(behaviour);
+    doneRun(h, { satisfies: false, reason: 'No reply from the client shows.' });
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.deps.completeWorkStep).not.toHaveBeenCalled();
+    expect(h.calls('albatrossWorkV2:attachProof')).toEqual([]);
+    const settled = h.settled();
+    expect(settled).toMatchObject({
+      outcome: 'ready_for_you',
+      next: { kind: 'review_document', label: 'Check the result' },
+    });
+    expect(settled.next.detail).toBe(
+      'I think the step is done, but I could not prove it: No reply from the client shows. Check it, then mark the step done.',
+    );
+    expect(settled.next.detail).toBe(STEP_CHECK_COPY.notProved('No reply from the client shows.'));
+  });
+
+  test('an unavailable or failed check says the check did not run', async () => {
+    const unavailable = harness(behaviour);
+    doneRun(unavailable, { satisfies: false, reason: '', unavailable: true });
+    await runStepRun('user-1', 'run-1', unavailable.deps);
+    expect(unavailable.settled().next.detail).toBe(STEP_CHECK_COPY.checkDidNotRun);
+
+    const thrown = harness(behaviour);
+    thrown.deps.evidenceSatisfies = (async () => {
+      throw new Error('gateway down');
+    }) as any;
+    await runStepRun('user-1', 'run-1', thrown.deps);
+    expect(thrown.settled()).toMatchObject({
+      outcome: 'ready_for_you',
+      next: { detail: STEP_CHECK_COPY.checkDidNotRun },
+    });
+    expect(thrown.deps.completeWorkStep).not.toHaveBeenCalled();
+  });
+
+  test('a step that needs the user word never calls the check and waits for that word', async () => {
+    const attested = { ...step, evidenceKind: 'attestation' };
+    const h = harness(behaviour, {
+      detail: { ...detail, execution: { guideSteps: [attested], currentStep: attested } },
+    });
+    const checks = doneRun(h, { satisfies: true, reason: 'ok' });
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(checks).toEqual([]);
+    expect(h.deps.completeWorkStep).not.toHaveBeenCalled();
+    expect(h.settled()).toMatchObject({
+      outcome: 'ready_for_you',
+      next: {
+        kind: 'review_document',
+        label: 'Check the result',
+        detail: STEP_CHECK_COPY.needsYourWord,
+        target: { kind: 'document', id: 'doc-1', url: '/documents/doc-1' },
+      },
+    });
+  });
+
+  test('the refusal copy without a reason, and with trailing dots and a long reason', () => {
+    expect(STEP_CHECK_COPY.notProved('  ')).toBe(
+      'I think the step is done, but I could not prove it. Check it, then mark the step done.',
+    );
+    expect(STEP_CHECK_COPY.notProved('No invoice number shows...  ')).toBe(
+      'I think the step is done, but I could not prove it: No invoice number shows. Check it, then mark the step done.',
+    );
+    const long = STEP_CHECK_COPY.notProved('r'.repeat(400));
+    expect(long).toContain(`${'r'.repeat(220)}. Check it`);
+    expect(long).not.toContain('r'.repeat(221));
+  });
+});
+
+describe('normalizeHandoff fills a link from the artifact with the same id', () => {
+  const artifacts = [
+    { kind: 'document' as const, id: 'doc-older', title: 'Older', url: '/?view=files&document=doc-older' },
+    {
+      kind: 'document' as const,
+      id: 'word-invoice',
+      title: 'Invoice',
+      url: '/?view=files&office=word-invoice',
+    },
+    { kind: 'document' as const, id: 'doc-no-link', title: 'No link' },
+  ];
+  const handoff = (target: Record<string, string>) => ({
+    outcome: 'ready_for_you' as const,
+    summary: 's',
+    next: { kind: 'review_document' as const, label: 'Fill in hours', detail: 'd', target: target as any },
+  });
+
+  test('an id alone gets the link of its artifact', () => {
+    expect(
+      normalizeHandoff(handoff({ kind: 'document', id: 'word-invoice' }), { artifacts }).next?.target,
+    ).toEqual({ kind: 'document', id: 'word-invoice', url: '/?view=files&office=word-invoice' });
+  });
+
+  test('a link the model gave stays; an unknown id or an artifact without a link adds nothing', () => {
+    expect(
+      normalizeHandoff(handoff({ kind: 'document', id: 'word-invoice', url: '/custom' }), { artifacts }).next
+        ?.target,
+    ).toEqual({ kind: 'document', id: 'word-invoice', url: '/custom' });
+    expect(
+      normalizeHandoff(handoff({ kind: 'document', id: 'doc-unknown' }), { artifacts }).next?.target,
+    ).toEqual({ kind: 'document', id: 'doc-unknown' });
+    expect(
+      normalizeHandoff(handoff({ kind: 'document', id: 'doc-no-link' }), { artifacts }).next?.target,
+    ).toEqual({ kind: 'document', id: 'doc-no-link' });
   });
 });

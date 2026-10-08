@@ -144,6 +144,10 @@ enum RunBlockCopy {
     }
     static let continueButton = "Continue"
     static let continueBusy = "Continuing…"
+    /// "Mark step done" on a result that waits for the user's check
+    /// (docs/albatross-document-handoff.md, D2).
+    static let markStepDone = "Mark step done"
+    static let markStepDoneBusy = "Saving…"
     static let tryAgain = "Try again"
     static let dismiss = "Dismiss"
     static let handleIt = "Handle it"
@@ -189,7 +193,13 @@ enum ThreadState: Equatable, Sendable {
         if steps.isEmpty { return .planning }
         if !steps.isEmpty, steps.allSatisfy(\.done) { return .done }
         let newest = runs.last?.run ?? detail.execution.activeRun
-        if detail.questions.contains(where: { $0.status == "pending" }) { return .needsAnswer }
+        let pendingQuestion = detail.questions.contains(where: { $0.status == "pending" })
+        // The current step's own question first; a run at work outranks a
+        // question that some other part of the Work left open
+        // (docs/albatross-document-handoff.md).
+        if pendingQuestion, let newest, RunBlockState.from(newest) == .handedOff(.needsAnswer) { return .needsAnswer }
+        if runs.contains(where: { $0.run.state.isOpen }) || detail.execution.activeRun?.state.isOpen == true { return .running }
+        if pendingQuestion { return .needsAnswer }
         if let newest {
             switch RunBlockState.from(newest) {
             case .queued, .running: return .running
@@ -237,6 +247,24 @@ enum ThreadState: Equatable, Sendable {
     private static func join(_ position: String?, _ word: String) -> String {
         guard let position else { return word }
         return "\(position) · \(word)"
+    }
+}
+
+/// The words of a plan row whose newest run waits for the user: "Ready for
+/// you" for a result to check, "Needs your answer" for a question, else
+/// "Your turn". The web rule is `planStepRows.waitingLabel`.
+enum PlanStepWaiting {
+    static func newestRun(for step: WorkDetail.ExecutionStep, runs: [ThreadRunView]) -> StepRunView? {
+        runs.last { $0.run.stepKey == step.id }?.run ?? step.run
+    }
+
+    static func label(step: WorkDetail.ExecutionStep, runs: [ThreadRunView]) -> String? {
+        guard !step.done, let newest = newestRun(for: step, runs: runs), newest.state == .handedOff else { return nil }
+        switch newest.outcome {
+        case .readyForYou: return "Ready for you"
+        case .needsAnswer: return "Needs your answer"
+        default: return "Your turn"
+        }
     }
 }
 

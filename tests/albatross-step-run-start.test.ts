@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import {
+  completeStepAndContinue,
+  handleStepFromThread,
   resumeRunForAnswer,
   resumeStepRun,
   StepRunStartError,
@@ -549,5 +551,250 @@ describe('startAutomaticRuns', () => {
       started: [],
       reasons: { w1: 'error' },
     });
+  });
+});
+
+// "Mark step done" continues the Albatross (docs/albatross-document-handoff.md, D3).
+// Story: the user filled in the Harbor Design hours invoice; the next step
+// sends it.
+describe('completeStepAndContinue', () => {
+  const filled: Step = {
+    key: 'step-1',
+    title: 'Fill in the hours invoice',
+    done: true,
+    stepMode: 'you_do_observed',
+  };
+  const sendStep = (stepMode?: string): Step => ({
+    key: 'step-2',
+    identity: 'step:send the invoice',
+    title: 'Send the invoice to billing@example.com',
+    done: false,
+    ...(stepMode ? { stepMode } : {}),
+  });
+
+  function continueDeps(
+    next: Step | null,
+    completed: Partial<{ stepKey: string; allStepsComplete: boolean; closed: boolean }> = {},
+    options: Parameters<typeof makeDeps>[0] = {},
+  ) {
+    const made = makeDeps({
+      details: { 'work-1': detailFor(next ? [filled, next] : [filled], next) },
+      ...options,
+    });
+    const completeWorkStep = mock(async (_input: any) => ({
+      stepKey: 'step-1',
+      allStepsComplete: false,
+      closed: false,
+      ...completed,
+    }));
+    return { ...made, deps: { ...made.deps, completeWorkStep: completeWorkStep as any }, completeWorkStep };
+  }
+
+  const input = {
+    userId: 'user-1',
+    userEmail: 'sam@example.com',
+    userName: 'Sam',
+    workId: 'work-1',
+    stepKey: 'step-1',
+    note: 'The hours are filled in.',
+    timezone: 'America/Chicago',
+  };
+
+  test('checks the step with the user word and starts the next step that Albatross does alone', async () => {
+    const { deps, enqueued, completeWorkStep } = continueDeps(sendStep('agent_does'));
+    expect(await completeStepAndContinue(input, deps)).toEqual({
+      stepKey: 'step-1',
+      allStepsComplete: false,
+      nextRunId: 'run-1',
+      nextStepKey: 'step-2',
+    });
+    expect(completeWorkStep).toHaveBeenCalledWith({
+      userId: 'user-1',
+      userEmail: 'sam@example.com',
+      userName: 'Sam',
+      workId: 'work-1',
+      stepKey: 'step-1',
+      timezone: 'America/Chicago',
+      source: 'user',
+      note: 'The hours are filled in.',
+    });
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]).toMatchObject({
+      stepKey: 'step-2',
+      trigger: 'user',
+      stepIdentity: 'step:send the invoice',
+    });
+  });
+
+  test('a drafting step starts too', async () => {
+    const { deps, enqueued } = continueDeps(sendStep('agent_drafts'));
+    expect((await completeStepAndContinue(input, deps)).nextRunId).toBe('run-1');
+    expect(enqueued).toHaveLength(1);
+  });
+
+  test('a next step that stays with the user starts nothing', async () => {
+    for (const mode of ['you_do_observed', 'you_do_offline', undefined]) {
+      const { deps, enqueued } = continueDeps(sendStep(mode));
+      expect(await completeStepAndContinue(input, deps)).toEqual({
+        stepKey: 'step-1',
+        allStepsComplete: false,
+        nextRunId: null,
+        nextStepKey: 'step-2',
+      });
+      expect(enqueued).toEqual([]);
+    }
+  });
+
+  test('the last step, a closed Work, or runs that are off end the chain without a read', async () => {
+    const last = continueDeps(sendStep('agent_does'), { allStepsComplete: true });
+    expect(await completeStepAndContinue(input, last.deps)).toEqual({
+      stepKey: 'step-1',
+      allStepsComplete: true,
+      nextRunId: null,
+      nextStepKey: null,
+    });
+    expect(last.queried).toEqual([]);
+
+    const closed = continueDeps(sendStep('agent_does'), { closed: true });
+    expect((await completeStepAndContinue(input, closed.deps)).nextRunId).toBeNull();
+    expect(closed.queried).toEqual([]);
+
+    process.env.LAB86_STEP_RUNS = 'off';
+    const off = continueDeps(sendStep('agent_does'));
+    expect(await completeStepAndContinue(input, off.deps)).toEqual({
+      stepKey: 'step-1',
+      allStepsComplete: false,
+      nextRunId: null,
+      nextStepKey: null,
+    });
+    expect(off.completeWorkStep).toHaveBeenCalled();
+    expect(off.queried).toEqual([]);
+    expect(off.enqueued).toEqual([]);
+  });
+
+  test('no next step, a done next step, or a failed read starts nothing', async () => {
+    const none = continueDeps(null);
+    expect((await completeStepAndContinue(input, none.deps)).nextStepKey).toBeNull();
+
+    const done = continueDeps({ ...sendStep('agent_does'), done: true });
+    expect(await completeStepAndContinue(input, done.deps)).toMatchObject({
+      nextRunId: null,
+      nextStepKey: null,
+    });
+    expect(done.enqueued).toEqual([]);
+
+    const failed = continueDeps(sendStep('agent_does'), {}, { queryError: new Error('Convex blinked') });
+    expect(await completeStepAndContinue(input, failed.deps)).toMatchObject({
+      nextRunId: null,
+      nextStepKey: null,
+    });
+  });
+
+  test('a start the queue refuses is swallowed', async () => {
+    const { deps, enqueued } = continueDeps(
+      sendStep('agent_does'),
+      {},
+      {
+        enqueue: { runId: null, created: false, reason: 'active' },
+      },
+    );
+    expect(await completeStepAndContinue(input, deps)).toEqual({
+      stepKey: 'step-1',
+      allStepsComplete: false,
+      nextRunId: null,
+      nextStepKey: 'step-2',
+    });
+    expect(enqueued).toHaveLength(1);
+  });
+
+  test('a completion error is not swallowed', async () => {
+    const { deps } = continueDeps(sendStep('agent_does'));
+    const failing = {
+      ...deps,
+      completeWorkStep: mock(async () => Promise.reject(new Error('no step'))) as any,
+    };
+    await expect(completeStepAndContinue(input, failing)).rejects.toThrow('no step');
+  });
+});
+
+describe('handleStepFromThread with done: true', () => {
+  function doneDeps() {
+    const made = makeDeps({
+      details: {
+        'work-1': detailFor([
+          { key: 'step-1', title: 'Fill in the hours invoice', done: true },
+          {
+            key: 'step-2',
+            identity: 'step:send',
+            title: 'Send the invoice',
+            done: false,
+            stepMode: 'agent_does',
+          },
+        ]),
+      },
+    });
+    const completeWorkStep = mock(async (_input: any) => ({
+      stepKey: 'step-1',
+      allStepsComplete: false,
+      closed: false,
+    }));
+    const convexMutation = mock(async (fn: any, args: any) => {
+      const name = nameOf(fn);
+      if (name !== 'albatrossStepRuns:enqueue') throw new Error(`a done step never calls ${name}`);
+      return (made.deps.convexMutation as any)(fn, args);
+    });
+    return {
+      ...made,
+      completeWorkStep,
+      deps: {
+        ...made.deps,
+        convexMutation: convexMutation as any,
+        completeWorkStep: completeWorkStep as any,
+      },
+    };
+  }
+
+  test('checks the step with the user word and never resumes or steers a run', async () => {
+    const { deps, queried, enqueued, completeWorkStep } = doneDeps();
+    expect(
+      await handleStepFromThread(
+        {
+          userId: 'user-1',
+          workId: 'work-1',
+          stepKey: 'step-1',
+          note: '  I filled in the hours.  ',
+          done: true,
+        },
+        deps,
+      ),
+    ).toEqual({
+      action: 'checked',
+      runId: 'run-1',
+      check: { stepKey: 'step-1', allStepsComplete: false, nextRunId: 'run-1', nextStepKey: 'step-2' },
+    });
+    expect(completeWorkStep.mock.calls[0][0]).toMatchObject({
+      stepKey: 'step-1',
+      source: 'user',
+      note: 'I filled in the hours.',
+    });
+    // Only the next step was read and started: no run history, no steer, no resume.
+    expect(new Set(queried.map(([name]) => name))).toEqual(new Set(['albatrossWorkV2:workDetail']));
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]).toMatchObject({ trigger: 'user', stepKey: 'step-2' });
+    expect(enqueued[0].parentRunId).toBeUndefined();
+  });
+
+  test('an empty note is left out, and the check works while runs are off', async () => {
+    process.env.LAB86_STEP_RUNS = 'off';
+    const { deps, completeWorkStep, enqueued } = doneDeps();
+    expect(
+      await handleStepFromThread({ userId: 'user-1', workId: 'work-1', note: '   ', done: true }, deps),
+    ).toEqual({
+      action: 'checked',
+      runId: null,
+      check: { stepKey: 'step-1', allStepsComplete: false, nextRunId: null, nextStepKey: null },
+    });
+    expect(completeWorkStep.mock.calls[0][0].note).toBeUndefined();
+    expect(enqueued).toEqual([]);
   });
 });

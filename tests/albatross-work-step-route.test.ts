@@ -92,6 +92,9 @@ describe('step completion notes', () => {
       requireCurrentUser: mock(async () => ({ userId: 'user-1', email: 'u@e.com', name: 'U' })) as any,
       enforceUserRateLimit: mock(async () => undefined) as any,
       completeWorkStep: completeWorkStep as any,
+      completeStepAndContinue: mock(async () => {
+        throw new Error('not used');
+      }) as any,
     };
   }
 
@@ -144,5 +147,78 @@ describe('step completion notes', () => {
     );
     expect(result.stepKey).toBe('step-1');
     expect(mutationArgs.note).toBeUndefined();
+  });
+});
+
+// "Mark step done" with continue: true checks the step and starts the next one
+// (docs/albatross-document-handoff.md, D3).
+describe('continue: true', () => {
+  function continueDeps() {
+    return {
+      requireCurrentUser: mock(async () => user) as any,
+      enforceUserRateLimit: mock(async () => ({ ok: true })) as any,
+      completeWorkStep: mock(async () => ({ stepKey: 'step-1', allStepsComplete: false })) as any,
+      completeStepAndContinue: mock(async (_input: any) => ({
+        stepKey: 'step-1',
+        allStepsComplete: false,
+        nextRunId: 'run-2',
+        nextStepKey: 'step-2',
+      })) as any,
+    };
+  }
+
+  function post(body: unknown) {
+    return new NextRequest('http://localhost/api/albatross/work/work-1/step', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+  const context = { params: Promise.resolve({ workId: 'work-1' }) };
+
+  test('calls completeStepAndContinue and returns its fields', async () => {
+    const deps = continueDeps();
+    const response = await createWorkStepPost(deps)(
+      post({ stepKey: 'step-1', continue: true, note: 'The hours are in.', timezone: 'America/Chicago' }),
+      context,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      stepKey: 'step-1',
+      allStepsComplete: false,
+      nextRunId: 'run-2',
+      nextStepKey: 'step-2',
+    });
+    expect(deps.completeWorkStep).not.toHaveBeenCalled();
+    expect(deps.completeStepAndContinue.mock.calls[0][0]).toEqual({
+      userId: 'step-user',
+      userEmail: 'person@example.test',
+      userName: 'Step User',
+      workId: 'work-1',
+      stepKey: 'step-1',
+      timezone: 'America/Chicago',
+      note: 'The hours are in.',
+    });
+  });
+
+  test('without continue, or with a value that is not true, the plain check runs', async () => {
+    for (const body of [{ stepKey: 'step-1' }, { stepKey: 'step-1', continue: 'true' }]) {
+      const deps = continueDeps();
+      const response = await createWorkStepPost(deps)(post(body), context);
+      expect(await response.json()).toEqual({ ok: true, stepKey: 'step-1', allStepsComplete: false });
+      expect(deps.completeWorkStep).toHaveBeenCalledTimes(1);
+      expect(deps.completeStepAndContinue).not.toHaveBeenCalled();
+    }
+  });
+
+  test('a typed error from the continue path keeps its status', async () => {
+    const deps = continueDeps();
+    deps.completeStepAndContinue.mockImplementation(async () => {
+      throw new StepExecutionError('There is no current step to complete.', 409);
+    });
+    const response = await createWorkStepPost(deps)(post({ continue: true }), context);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ ok: false, error: 'There is no current step to complete.' });
   });
 });

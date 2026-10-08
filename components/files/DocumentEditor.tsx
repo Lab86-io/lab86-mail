@@ -112,11 +112,27 @@ function useAssistantDocument(
   );
 }
 
+function isNativeWorkspace() {
+  return typeof window !== 'undefined' && window.location.pathname.startsWith('/native/');
+}
+
 function openDocumentChat() {
   useClientStore.getState().setAssistantPresentation('split');
 }
 
-export function DocumentEditor({ documentId, onClose }: { documentId: string; onClose: () => void }) {
+/** The thread and the native workspace edit next to a chat that the editor cannot hear, so they check for a newer save. */
+const SAVED_REVISION_CHECK_MS = 5_000;
+
+export function DocumentEditor({
+  documentId,
+  onClose,
+  host = 'files',
+}: {
+  documentId: string;
+  onClose: () => void;
+  /** 'thread': inside an Albatross thread, whose chat sits beside the editor (docs/albatross-document-handoff.md). */
+  host?: 'files' | 'thread';
+}) {
   const queryClient = useQueryClient();
   const { ref: workspaceRef, narrow, measured } = useNarrowDocumentWorkspace();
   const revisionRef = useRef(0);
@@ -150,6 +166,9 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
     queryKey: ['document', documentId],
     queryFn: () => fetchJson<{ ok: true; document: EditorDocument }>(`/api/documents/${documentId}`),
     staleTime: 10_000,
+    // A chat or a run may save a new revision. With no unsaved edits here, the
+    // editor takes it at once (the adopt effect below skips a dirty editor).
+    refetchInterval: (host === 'thread' || isNativeWorkspace()) && !dirty ? SAVED_REVISION_CHECK_MS : false,
   });
   const document = documentQuery.data?.document;
   useAssistantDocument(
@@ -538,7 +557,7 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Back to Files"
+          aria-label={host === 'thread' ? 'Close the document' : 'Back to Files'}
           disabled={applying}
           onClick={() => void saveNow().then((saved) => saved && onClose())}
         >
@@ -657,9 +676,11 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
             <span className="sr-only sm:hidden">Word processor</span>
           </Button>
         ) : null}
-        <Button variant="outline" size="sm" onClick={openDocumentChat} aria-label="Edit with Albatross">
-          <span>Albatross</span>
-        </Button>
+        {host === 'thread' ? null : (
+          <Button variant="outline" size="sm" onClick={openDocumentChat} aria-label="Edit with Albatross">
+            <span>Albatross</span>
+          </Button>
+        )}
       </header>
 
       {saveError ? (

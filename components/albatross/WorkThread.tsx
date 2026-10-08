@@ -44,9 +44,19 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { useMediaQuery } from '@/hooks/use-media-query';
+import {
+  DOCUMENT_HANDOFF_COPY,
+  documentHandoffDetail,
+  documentHandoffFor,
+} from '@/lib/albatross/document-handoff';
 import { ALLOW_COPY, type AllowScope } from '@/lib/albatross/secure-view';
 import { shapeDetail } from '@/lib/albatross/shape-policy';
-import { type NextBehaviour, runForStep } from '@/lib/albatross/step-run-client';
+import {
+  type DocumentTarget,
+  documentTargetOf,
+  type NextBehaviour,
+  runForStep,
+} from '@/lib/albatross/step-run-client';
 import { performNextBehaviour } from '@/lib/albatross/step-run-navigation';
 import {
   type FormAnswer,
@@ -82,6 +92,7 @@ import { ThreadAnswerInPlace } from './ThreadAnswerInPlace';
 import { ThreadRail } from './ThreadRail';
 import type { AllowSecureNote } from './thread/AllowSecureBlock';
 import { DetailsPanel } from './thread/DetailsPanel';
+import { DocumentSplit, ThreadDocumentEditor, YourPartBar, YourPartCard } from './thread/DocumentPane';
 import { PagePane, type PageSession } from './thread/PagePane';
 import { PlanIntro, PlanLine, PlanOutro } from './thread/PlanIntro';
 import { RunBlock } from './thread/RunBlock';
@@ -90,7 +101,7 @@ import { useWorkShape, type WorkShapeState } from './thread/use-work-shape';
 import { useThreadActions, useThreadDraftIds } from './use-thread-actions';
 import { useAllWork, useMarkSeen, useThreadRows } from './use-thread-rows';
 
-export type ThreadRegion = 'page' | 'details' | null;
+export type ThreadRegion = 'page' | 'details' | 'document' | null;
 export type RunBusy = 'stop' | 'resume' | 'dismiss' | 'start' | 'answer' | 'mark_done' | 'allow';
 
 export const THREAD_COPY = {
@@ -157,6 +168,10 @@ export interface ThreadModel {
   signInSaved?: ReadonlySet<string>;
   /** The chat reply of this thread still runs on the server (T5). */
   replyInProgress?: boolean;
+  /** The document open in document mode (docs/albatross-document-handoff.md, D5). */
+  document?: DocumentTarget | null;
+  /** "Done, continue" is in flight, or failed with this line. */
+  documentDone?: { busy: boolean; error: string | null };
 }
 
 export interface ThreadHandlers {
@@ -171,7 +186,12 @@ export interface ThreadHandlers {
   onStop: (run: ThreadRunView) => void;
   onResume: (run: ThreadRunView) => void;
   onDismiss: (run: ThreadRunView) => void;
-  onMarkDone: (stepKey: string) => void;
+  /** `continue`: the user marked a run's result done, and Albatross goes on to the next step. */
+  onMarkDone: (stepKey: string, options?: { continue?: boolean }) => void;
+  /** Document mode: open a document in the center, close it, and "Done, continue". */
+  onOpenDocument?: (target: DocumentTarget) => void;
+  onCloseDocument?: () => void;
+  onDocumentDone?: (run: ThreadRunView) => void;
   onNext: (behaviour: NextBehaviour, run: ThreadRunView) => void;
   onAnswer: (run: ThreadRunView, questionId: string, answer: FormAnswer) => void;
   onUndoSave: (keys: string[]) => Promise<void>;
@@ -231,6 +251,10 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
   }, [activeRun, runs]);
   const pageStep = steps.find((step) => step.key === (session?.stepKey ?? pageRun?.stepKey));
 
+  // Document mode: the document in the center, the thread on the right.
+  const documentTarget = region === 'document' ? (model.document ?? null) : null;
+  const documentRun = documentTarget ? documentHandoffFor(runs, documentTarget) : null;
+  const documentRunId = documentRun?.id ?? null;
   const latestByStep = useMemo(() => {
     const map = new Map<string, string>();
     for (const run of runs) map.set(run.stepKey, run.id);
@@ -251,6 +275,7 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
           stepNumber={stepNumberFor(steps, run.stepKey)}
           startable={startable}
           pageOpen={region === 'page'}
+          handoffShownElsewhere={documentRunId === run.id}
           details={model.personalDetails}
           busy={busy}
           error={model.busy.runId === run.id ? model.runError : null}
@@ -260,7 +285,7 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
           onResume={handlers.onResume}
           onDismiss={handlers.onDismiss}
           onStart={(target) => handlers.onHandle(target.stepKey)}
-          onMarkDone={(target) => handlers.onMarkDone(target.stepKey)}
+          onMarkDone={(target) => handlers.onMarkDone(target.stepKey, { continue: true })}
           onNext={handlers.onNext}
           onAnswer={handlers.onAnswer}
           onOpenPage={liveSession ? () => handlers.onRegionChange('page') : undefined}
@@ -276,7 +301,18 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
         />
       );
     },
-    [steps, latestByStep, runnerEnabled, activeRun, open, model, region, liveSession, handlers],
+    [
+      steps,
+      latestByStep,
+      runnerEnabled,
+      activeRun,
+      open,
+      model,
+      region,
+      liveSession,
+      handlers,
+      documentRunId,
+    ],
   );
 
   const pendingForm = stateInput.pendingQuestion;
@@ -315,6 +351,9 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
     }),
     [workId],
   );
+  const documentDetail = documentHandoffDetail(documentRun);
+  const documentStepNumber = documentRun ? stepNumberFor(steps, documentRun.stepKey) : null;
+  const [documentChatOpen, setDocumentChatOpen] = useState(false);
   const intro = (
     <>
       {model.detail.execution.scheduledEndAt ? (
@@ -371,9 +410,13 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
             scope: { kind: 'work', workId, label: title },
             runs,
             renderRun,
-            intro,
+            // The "Your part" card names the step; the plan stays in Details.
+            intro: documentTarget ? undefined : intro,
             outro: <PlanOutro state={line.state} />,
-            placeholder: composerPlaceholder(line.state),
+            placeholder: documentTarget ? DOCUMENT_HANDOFF_COPY.placeholder : composerPlaceholder(line.state),
+            document: documentTarget
+              ? { kind: 'document', id: documentTarget.id, provider: documentTarget.provider }
+              : null,
             scrollButton: <ThreadJumpPill hasPendingForm={pendingForm} />,
             initialMessages: handlers.chat?.initialMessages,
             steer,
@@ -385,6 +428,27 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
     </div>
   );
 
+  const documentDone = model.documentDone ?? { busy: false, error: null };
+  const yourPart =
+    documentTarget && documentRun && documentDetail && handlers.onDocumentDone ? (
+      <YourPartCard
+        stepLabel={
+          documentStepNumber ? `Step ${documentStepNumber} · ${documentRun.stepTitle}` : documentRun.stepTitle
+        }
+        detail={documentDetail}
+        busy={documentDone.busy}
+        error={documentDone.error}
+        onDone={() => handlers.onDocumentDone?.(documentRun)}
+        onBack={() => handlers.onCloseDocument?.()}
+      />
+    ) : null;
+  const documentNode = documentTarget ? (
+    <ThreadDocumentEditor
+      target={documentTarget}
+      onClose={() => handlers.onCloseDocument?.()}
+      onChat={wide ? undefined : () => setDocumentChatOpen(true)}
+    />
+  ) : null;
   const shapeBody = showsPlan ? null : <ShapeBody shape={shape} detail={detail} nowMs={model.nowMs} />;
   const regionNode =
     region === 'page' ? (
@@ -525,7 +589,39 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
       ) : null}
 
       <div className="relative min-h-0 flex-1">
-        {wide && regionNode ? (
+        {documentNode && wide ? (
+          <DocumentSplit
+            document={documentNode}
+            conversation={
+              <div className="flex h-full min-h-0 flex-col border-l border-[var(--color-border)]">
+                {yourPart}
+                <div className="min-h-0 flex-1">{conversation}</div>
+              </div>
+            }
+          />
+        ) : documentNode ? (
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="min-h-0 flex-1">{documentNode}</div>
+            <YourPartBar
+              detail={yourPart ? documentDetail : null}
+              busy={documentDone.busy}
+              error={documentDone.error}
+              onDone={yourPart && documentRun ? () => handlers.onDocumentDone?.(documentRun) : null}
+              onChat={() => setDocumentChatOpen(true)}
+            />
+            <Sheet open={documentChatOpen} onOpenChange={setDocumentChatOpen}>
+              <SheetContent
+                side="right"
+                showCloseButton={false}
+                className="w-[92vw] gap-0 p-0 sm:max-w-[92vw]"
+                aria-describedby={undefined}
+              >
+                <SheetTitle className="sr-only">{DOCUMENT_HANDOFF_COPY.chat}</SheetTitle>
+                {conversation}
+              </SheetContent>
+            </Sheet>
+          </div>
+        ) : wide && regionNode ? (
           <ThreadSplit region={region} conversation={conversation} regionNode={regionNode} />
         ) : (
           conversation
@@ -833,6 +929,11 @@ export function WorkThread({ workId }: { workId: string }) {
   const [optimisticDone, setOptimisticDone] = useState<ReadonlySet<string>>(() => new Set());
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [region, setRegionState] = useState<ThreadRegion>(null);
+  const [openDocument, setOpenDocument] = useState<DocumentTarget | null>(null);
+  const [documentDone, setDocumentDone] = useState<{ busy: boolean; error: string | null }>({
+    busy: false,
+    error: null,
+  });
   const regionBy = useRef<'user' | 'auto' | null>(null);
   const mountedAt = useRef(Date.now());
   const startedHere = useRef<Set<string>>(new Set());
@@ -959,15 +1060,22 @@ export function WorkThread({ workId }: { workId: string }) {
           { runId: run.id },
           { runId: run.id, action: 'dismiss', stepKey: run.stepKey },
         ),
-      onMarkDone: (stepKey) => {
+      onMarkDone: (stepKey, options) => {
         setOptimisticDone((current) => new Set([...current, stepKey]));
         setBusy({ runId: null, action: 'mark_done', stepKey });
         setError(null);
         void postJson(
           `/api/albatross/work/${encodeURIComponent(workId)}/step`,
-          { stepKey, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+          {
+            stepKey,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            ...(options?.continue ? { continue: true } : {}),
+          },
           THREAD_COPY.stepFailed,
         )
+          .then((result) => {
+            if (typeof result?.nextRunId === 'string') startedHere.current.add(result.nextRunId);
+          })
           .catch((cause) => {
             setOptimisticDone((current) => {
               const next = new Set(current);
@@ -979,6 +1087,14 @@ export function WorkThread({ workId }: { workId: string }) {
           .finally(() => setBusy({ runId: null, action: null, stepKey: null }));
       },
       onNext: (behaviour, run) => {
+        // A document opens here, in document mode, not in Files.
+        if (behaviour.kind === 'open_document') {
+          const target = documentTargetOf(behaviour.url, behaviour.id);
+          if (target) {
+            handlers.onOpenDocument?.(target);
+            return;
+          }
+        }
         void performNextBehaviour(behaviour, navDeps, {
           showBrowser: () => setRegion('page'),
           showArtifacts: () => setRegion('details'),
@@ -1053,6 +1169,45 @@ export function WorkThread({ workId }: { workId: string }) {
         setRegion('page');
       },
       onRegionChange: (next) => setRegion(next),
+      onOpenDocument: (target) => {
+        setOpenDocument(target);
+        setDocumentDone({ busy: false, error: null });
+        setRegion('document');
+      },
+      onCloseDocument: () => {
+        setRegion(null);
+        setOpenDocument(null);
+      },
+      onDocumentDone: (run) => {
+        setDocumentDone({ busy: true, error: null });
+        setOptimisticDone((current) => new Set([...current, run.stepKey]));
+        void postJson(
+          `/api/albatross/work/${encodeURIComponent(workId)}/step`,
+          {
+            stepKey: run.stepKey,
+            continue: true,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          },
+          DOCUMENT_HANDOFF_COPY.failed,
+        )
+          .then((result) => {
+            if (typeof result?.nextRunId === 'string') startedHere.current.add(result.nextRunId);
+            setDocumentDone({ busy: false, error: null });
+            setRegion(null);
+            setOpenDocument(null);
+          })
+          .catch((cause) => {
+            setOptimisticDone((current) => {
+              const next = new Set(current);
+              next.delete(run.stepKey);
+              return next;
+            });
+            setDocumentDone({
+              busy: false,
+              error: cause instanceof Error ? cause.message : DOCUMENT_HANDOFF_COPY.failed,
+            });
+          });
+      },
       onSetWorkState: (state) => {
         setCompleting(true);
         setError(null);
@@ -1209,10 +1364,12 @@ export function WorkThread({ workId }: { workId: string }) {
     allowAnswered,
     signInSaved,
     replyInProgress: row?.status === 'answering',
+    document: openDocument,
+    documentDone,
   };
   // The rail beside the thread (lead decision 3): 300 px on desktops, 272 px on
   // laptops, where it also yields to an open region; none below 1024 px.
-  const showRail = wide && (railWide || region === null);
+  const showRail = wide && region !== 'document' && (railWide || region === null);
   return (
     <>
       <div className="flex h-full min-h-0 min-w-0">

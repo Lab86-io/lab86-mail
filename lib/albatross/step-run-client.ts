@@ -142,6 +142,45 @@ export function nextBehaviour(next: StepRunNext | null | undefined): NextBehavio
   }
 }
 
+/** Which editor opens a run's document: the Albatross editor or the Word editor. */
+export interface DocumentTarget {
+  provider: 'albatross' | 'office';
+  id: string;
+}
+
+/**
+ * The document a target names. The link wins (`?document=`, `?office=`, or the
+ * old `/files/<id>` form); a bare id is an Albatross document.
+ */
+export function documentTargetOf(
+  url: string | null | undefined,
+  id: string | null | undefined,
+): DocumentTarget | null {
+  const raw = url?.trim();
+  if (raw) {
+    try {
+      const parsed = new URL(raw, 'https://app.invalid');
+      // Only a link inside the app names a document; another site's link falls back to the id.
+      if (parsed.origin !== 'https://app.invalid') throw new Error('not an app link');
+      const office = parsed.searchParams.get('office')?.trim();
+      if (office) return { provider: 'office', id: office };
+      const document = parsed.searchParams.get('document')?.trim();
+      if (document) return { provider: 'albatross', id: document };
+      const legacy = /^\/files\/([^/?#]+)$/.exec(parsed.pathname)?.[1];
+      if (legacy) return { provider: 'albatross', id: decodeURIComponent(legacy) };
+    } catch {
+      // Not a link: the id decides.
+    }
+  }
+  const bare = id?.trim();
+  return bare ? { provider: 'albatross', id: bare } : null;
+}
+
+/** The Files link for one document target. */
+export function documentTargetPath(target: DocumentTarget): string {
+  return `/?view=files&${target.provider === 'office' ? 'office' : 'document'}=${encodeURIComponent(target.id)}`;
+}
+
 const LABEL_FALLBACK: Record<StepRunNextKind, string | null> = {
   review_draft: 'Read and send',
   review_document: 'Open the document',

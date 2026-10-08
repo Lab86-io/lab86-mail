@@ -152,6 +152,43 @@ struct RunBlockPresentationTests {
         #expect(ThreadState.resolve(detail: try Self.detail(steps: [("a", false, true)], workState: "paused"), runs: [Self.run(state: .running)]) == .putDown)
     }
 
+    // docs/albatross-document-handoff.md: the current step's own question
+    // first; a run at work outranks a question another part of the Work left.
+    @Test func aRunAtWorkOutranksAQuestionFromAnotherStep() throws {
+        let asked = try Self.detail(steps: [("a", false, true)], pendingQuestion: true)
+        #expect(ThreadState.resolve(detail: asked, runs: [Self.run(state: .running)]) == .running)
+        #expect(ThreadState.resolve(detail: asked, runs: [Self.run(state: .handedOff, outcome: .needsAnswer)]) == .needsAnswer)
+        #expect(ThreadState.resolve(detail: asked, runs: [Self.run(state: .handedOff, outcome: .readyForYou)]) == .needsAnswer)
+        #expect(ThreadState.resolve(detail: asked, runs: [Self.run(state: .done)]) == .needsAnswer)
+        let askedAndWorking = try Self.detail(steps: [("a", false, true)], active: true, pendingQuestion: true)
+        #expect(ThreadState.resolve(detail: askedAndWorking, runs: []) == .running)
+    }
+
+    // The plan row says what waits: by the newest run of that step.
+    @Test func thePlanRowSaysWhatWaits() throws {
+        let detail = try Self.detail(steps: [("a", false, true), ("b", false, false)])
+        let stepA = detail.execution.guideSteps[0]
+        let stepB = detail.execution.guideSteps[1]
+        func run(_ id: String, step: String, state: StepRunView.State, outcome: StepRunView.Outcome? = nil) -> ThreadRunView {
+            ThreadRunView(run: StepRunView(id: id, workID: "work_1", stepKey: step, stepTitle: "Step", state: state, outcome: outcome))
+        }
+        let runs = [
+            run("r1", step: "a", state: .closed, outcome: .readyForYou),
+            run("r2", step: "a", state: .handedOff, outcome: .readyForYou),
+            run("r3", step: "b", state: .handedOff, outcome: .needsAnswer),
+        ]
+        #expect(PlanStepWaiting.label(step: stepA, runs: runs) == "Ready for you")
+        #expect(PlanStepWaiting.label(step: stepB, runs: runs) == "Needs your answer")
+        #expect(PlanStepWaiting.label(step: stepA, runs: [run("r4", step: "a", state: .handedOff, outcome: .yourTurn)]) == "Your turn")
+        // The newest run wins, and only a handoff waits.
+        #expect(PlanStepWaiting.label(step: stepA, runs: runs + [run("r5", step: "a", state: .running)]) == nil)
+        #expect(PlanStepWaiting.label(step: stepA, runs: []) == nil)
+        #expect(OutcomeBlockView.stateWord(step: stepA, isCurrent: true, threadState: .ready, runs: runs) == "Ready for you")
+        #expect(OutcomeBlockView.stateWord(step: stepB, isCurrent: false, threadState: .ready, runs: runs) == "Needs your answer")
+        #expect(PlanListView.proofLine(step: stepB, isCurrent: false, threadState: .ready, runs: runs) == "Needs your answer")
+        #expect(PlanListView.proofLine(step: stepB, isCurrent: false, threadState: .ready) == "Next")
+    }
+
     @Test func thePlanLineNamesTheStepAndTheState() {
         #expect(ThreadState.planning.planLine(stepNumber: nil, total: 0) == "Albatross makes the plan")
         #expect(ThreadState.ready.planLine(stepNumber: 1, total: 2) == "Step 1 of 2")

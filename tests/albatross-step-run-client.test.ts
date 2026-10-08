@@ -7,6 +7,8 @@ import {
   browserPaneState,
   COPY,
   canStartRun,
+  documentTargetOf,
+  documentTargetPath,
   formatLogTime,
   handoffHeadline,
   handoffLine,
@@ -299,5 +301,95 @@ describe('the shared browser bar', () => {
     expect(browserPaneState({ status: 'user' }, runs.readyDraft)).toBeNull();
     expect(browserPaneState({ status: 'verifying' }, runs.running)).toBeNull();
     expect(browserPaneState(null, runs.running)).toBeNull();
+  });
+});
+
+// Which editor opens a run's document (docs/albatross-document-handoff.md).
+describe('the document a target names', () => {
+  test('the link wins: ?office= is the Word editor, ?document= the Albatross editor', () => {
+    expect(documentTargetOf('/?view=files&office=word_invoice', 'doc_other')).toEqual({
+      provider: 'office',
+      id: 'word_invoice',
+    });
+    expect(documentTargetOf('/?view=files&document=doc_invoice', null)).toEqual({
+      provider: 'albatross',
+      id: 'doc_invoice',
+    });
+    expect(documentTargetOf('/?office=word_1&document=doc_1', null)).toEqual({
+      provider: 'office',
+      id: 'word_1',
+    });
+    expect(documentTargetOf('/?view=files&office=%20%20&document=doc_1', null)).toEqual({
+      provider: 'albatross',
+      id: 'doc_1',
+    });
+  });
+
+  test('the old /files/<id> form works only as a same-origin path', () => {
+    expect(documentTargetOf('/files/doc_4', null)).toEqual({ provider: 'albatross', id: 'doc_4' });
+    expect(documentTargetOf('/files/doc%202', null)).toEqual({ provider: 'albatross', id: 'doc 2' });
+    expect(documentTargetOf('https://files.example.com/files/doc_9', null)).toBeNull();
+    expect(documentTargetOf('https://files.example.com/files/doc_9', 'doc_own')).toEqual({
+      provider: 'albatross',
+      id: 'doc_own',
+    });
+    expect(documentTargetOf('/files/doc_4/edit', 'doc_4')).toEqual({ provider: 'albatross', id: 'doc_4' });
+  });
+
+  test('a link on another site never names a document', () => {
+    expect(documentTargetOf('https://evil.example/?view=files&document=doc_9', null)).toBeNull();
+    expect(documentTargetOf('//evil.example/?office=word_9', 'doc_own')).toEqual({
+      provider: 'albatross',
+      id: 'doc_own',
+    });
+  });
+
+  test('a bare id is an Albatross document', () => {
+    expect(documentTargetOf(null, 'doc_invoice')).toEqual({ provider: 'albatross', id: 'doc_invoice' });
+    expect(documentTargetOf('   ', '  doc_invoice  ')).toEqual({ provider: 'albatross', id: 'doc_invoice' });
+    expect(documentTargetOf('/documents/doc_x', 'doc_x')).toEqual({ provider: 'albatross', id: 'doc_x' });
+  });
+
+  test('encoded ids are decoded', () => {
+    expect(documentTargetOf('/?view=files&document=doc%20%26%201', null)).toEqual({
+      provider: 'albatross',
+      id: 'doc & 1',
+    });
+    expect(documentTargetOf('/?view=files&office=word%2Finvoice', null)).toEqual({
+      provider: 'office',
+      id: 'word/invoice',
+    });
+  });
+
+  test('a link that does not parse falls back to the id', () => {
+    expect(documentTargetOf('http://[bad', 'doc_fallback')).toEqual({
+      provider: 'albatross',
+      id: 'doc_fallback',
+    });
+    expect(documentTargetOf('/files/%E0%A4%A', 'doc_fallback')).toEqual({
+      provider: 'albatross',
+      id: 'doc_fallback',
+    });
+    expect(documentTargetOf('http://[bad', null)).toBeNull();
+  });
+
+  test('nothing names no document', () => {
+    expect(documentTargetOf(null, null)).toBeNull();
+    expect(documentTargetOf(undefined, undefined)).toBeNull();
+    expect(documentTargetOf('', '   ')).toBeNull();
+  });
+
+  test('the Files link encodes the id', () => {
+    expect(documentTargetPath({ provider: 'albatross', id: 'doc_invoice' })).toBe(
+      '/?view=files&document=doc_invoice',
+    );
+    expect(documentTargetPath({ provider: 'office', id: 'word invoice/2026' })).toBe(
+      '/?view=files&office=word%20invoice%2F2026',
+    );
+    expect(documentTargetPath({ provider: 'albatross', id: 'doc&x=1' })).toBe(
+      '/?view=files&document=doc%26x%3D1',
+    );
+    const target = { provider: 'office' as const, id: 'word & co' };
+    expect(documentTargetOf(documentTargetPath(target), null)).toEqual(target);
   });
 });

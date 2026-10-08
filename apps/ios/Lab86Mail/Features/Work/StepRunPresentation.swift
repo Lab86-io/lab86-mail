@@ -80,6 +80,53 @@ enum StepRunNextBehaviour: Equatable, Sendable {
     }
 }
 
+/// The buttons of a handoff block (docs/albatross-document-handoff.md, D2).
+/// On a result that waits for the user's check (`ready_for_you`), the primary
+/// button opens the result and "Mark step done" sits beside it; with nothing
+/// to open, "Mark step done" is the primary button. The web rule is
+/// `runBlockAction` and `runBlockMarksDone`.
+enum RunBlockHandoffAction: Equatable, Sendable {
+    /// The primary button does this behaviour and reads `label`.
+    case next(StepRunNextBehaviour, label: String)
+    /// "Mark step done": the result waits for the user and nothing opens.
+    case markDone
+    /// No primary button: the form, the allow card, or the artifacts have it.
+    case none
+
+    /// The behaviours that open the thing a run made.
+    private static func opensResult(_ behaviour: StepRunNextBehaviour) -> Bool {
+        switch behaviour {
+        case .openDraft, .openDocument, .openApproval, .openURL: true
+        default: false
+        }
+    }
+
+    static func primary(for run: StepRunView) -> RunBlockHandoffAction {
+        // A stopped run draws its own "Continue"; a question draws its form.
+        guard case .handedOff(let outcome) = RunBlockState.from(run), outcome != .needsAnswer else { return .none }
+        guard let next = run.next else { return .next(.resume, label: RunBlockCopy.continueButton) }
+        let behaviour = StepRunNextBehaviour.from(next)
+        switch behaviour {
+        case .allowSecure, .showQuestion:
+            return .none
+        case .markStepDone, .resume, .openBrowser:
+            return .next(behaviour, label: next.label)
+        default:
+            break
+        }
+        if run.outcome == .readyForYou, !opensResult(behaviour) { return .markDone }
+        return behaviour.showsPrimaryButton ? .next(behaviour, label: next.label) : .none
+    }
+
+    /// "Mark step done" as a second button: a result that waits for the
+    /// user's check, where the primary button opens the result.
+    static func marksDone(_ run: StepRunView) -> Bool {
+        guard run.state == .handedOff, run.outcome == .readyForYou else { return false }
+        if case .next(let behaviour, _) = primary(for: run) { return opensResult(behaviour) }
+        return false
+    }
+}
+
 /// The words the Brief and the thread share. The run block's own words are
 /// in `RunBlockCopy`; these delegate to them so the two never drift.
 enum StepRunCopy {
@@ -240,8 +287,13 @@ enum StepRunActions {
             environment.navigation.sheet = .compose
             return true
         case .openDocument(let id, let url):
-            if let documentID = id ?? StepRunCopy.documentID(fromURL: url) {
-                environment.navigation.openDocument(id: documentID)
+            // The link decides the editor: a Word document opens in the
+            // Office editor, an Albatross document in its own.
+            if let target = DocumentTarget.of(url: url, id: id) {
+                switch target.provider {
+                case .albatross: environment.navigation.openDocument(id: target.id)
+                case .office: environment.navigation.sheet = .workspace(target.workspaceDestination)
+                }
                 return true
             }
             return openWebURL(url, openURL: openURL)

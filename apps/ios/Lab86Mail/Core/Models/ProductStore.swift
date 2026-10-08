@@ -1596,18 +1596,24 @@ final class ProductStore {
     }
 
     func completeWorkStep(_ workID: String, stepKey: String?, note: String? = nil) async -> Bool {
-        var body: [String: JSONValue] = ["timezone": .string(TimeZone.current.identifier)]
-        if let stepKey { body["stepKey"] = .string(stepKey) }
-        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
-            body["note"] = .string(String(note.prefix(2_000)))
-        }
+        await postWorkStep(workID, stepKey: stepKey, note: note, continues: false) != nil
+    }
+
+    /// "Mark step done" on a run block (docs/albatross-document-handoff.md,
+    /// D3): the server checks the step with the user's word and starts the
+    /// next step Albatross can do. Nil when the server refused it.
+    func completeWorkStepAndContinue(_ workID: String, stepKey: String) async -> WorkStepContinuation? {
+        await postWorkStep(workID, stepKey: stepKey, note: nil, continues: true)
+    }
+
+    private func postWorkStep(_ workID: String, stepKey: String?, note: String?, continues: Bool) async -> WorkStepContinuation? {
         let previous = workDetails[workID]
         let optimistic = stepKey.flatMap { previous?.completing(stepID: $0) }
         if let optimistic { workDetails[workID] = optimistic }
         do {
-            _ = try await backend.post(
+            let response = try await backend.post(
                 path: "/api/albatross/work/\(workID)/step",
-                body: .object(body)
+                body: WorkStepRequest.body(stepKey: stepKey, note: note, continues: continues)
             )
             // The authoritative write has returned. Refresh projections in the
             // background without evicting the last-good detail or keeping the
@@ -1617,14 +1623,14 @@ final class ProductStore {
                 await self.refreshWork()
                 _ = try? await self.loadWorkDetail(workID)
             }
-            return true
+            return WorkStepContinuation(json: response)
         } catch {
             if workDetails[workID] == optimistic {
                 if let previous { workDetails[workID] = previous }
                 else { workDetails.removeValue(forKey: workID) }
             }
             workError = error.localizedDescription
-            return false
+            return nil
         }
     }
 

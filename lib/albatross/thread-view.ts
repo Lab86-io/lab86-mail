@@ -40,6 +40,7 @@ export const RUN_STATE_COPY = {
   handleIt: 'Handle it',
   openPage: 'Open the page',
   continueButton: 'Continue',
+  markDone: 'Mark step done',
   stoppedTime: 'Albatross stopped at its time limit.',
   stoppedCost: 'Albatross stopped at its cost limit.',
   failedLine: 'This run did not finish.',
@@ -122,6 +123,14 @@ export type RunBlockAction =
   | { kind: 'start'; label: string }
   | { kind: 'none' };
 
+/** The behaviours that open the thing a run made: a draft, a document, an approval, a page. */
+const OPENS_RESULT = new Set<NextBehaviour['kind']>([
+  'open_draft',
+  'open_document',
+  'open_approval',
+  'open_url',
+]);
+
 /**
  * The one primary button. On the user's turn on a page it is `next.doneLabel`
  * ("I paid"), default "Continue", and it resumes the run (decision 5). A
@@ -148,6 +157,11 @@ export function runBlockAction(
       if (next.kind === 'continue') return { kind: 'resume', label: RUN_STATE_COPY.continueButton };
       const behaviour = nextBehaviour(next);
       const label = primaryLabel(next);
+      // A result waits for the user's check: the button opens it, and "Mark
+      // step done" sits beside it. With nothing to open, marking it done is
+      // the one action left (docs/albatross-document-handoff.md).
+      if (run.outcome === 'ready_for_you' && !(behaviour && OPENS_RESULT.has(behaviour.kind)))
+        return { kind: 'mark_done', label: RUN_STATE_COPY.markDone };
       return behaviour && label ? { kind: 'next', label, behaviour } : { kind: 'none' };
     }
     case 'failed':
@@ -158,6 +172,18 @@ export function runBlockAction(
     default:
       return { kind: 'none' };
   }
+}
+
+/**
+ * "Mark step done" as a second button: a result that waits for the user's
+ * check, where the primary button opens the result.
+ */
+export function runBlockMarksDone(
+  run: Pick<ThreadRunView, 'state' | 'outcome' | 'next' | 'question'>,
+  options: { startable?: boolean } = {},
+): boolean {
+  if (run.state !== 'handed_off' || run.outcome !== 'ready_for_you') return false;
+  return runBlockAction(run, options).kind === 'next';
 }
 
 /**
@@ -204,8 +230,11 @@ export function threadState(input: ThreadStateInput): ThreadState {
   if (input.workState === 'done') return 'done';
   if (input.workState === 'released' || input.workState === 'archived') return 'released';
   if (!input.planReady) return 'planning';
-  if (input.pendingQuestion) return 'needs_answer';
+  // The current step's own question first; a run at work outranks a question
+  // that some other part of the Work left open.
+  if (input.pendingQuestion && input.handoff?.outcome === 'needs_answer') return 'needs_answer';
   if (input.activeRun) return 'running';
+  if (input.pendingQuestion) return 'needs_answer';
   if (input.handoff) return 'waiting';
   return 'ready';
 }
@@ -314,8 +343,10 @@ export interface PlanStepRow {
   proof: string | null;
   runnable: boolean;
   offline: boolean;
-  /** A run on this step handed off and waits for the user: no "Handle it", the row says "Your turn". */
+  /** A run on this step handed off and waits for the user: no "Handle it". */
   waiting: boolean;
+  /** The words for a waiting row: "Ready for you" for a result to check, else "Your turn". */
+  waitingLabel: string | null;
 }
 
 const VERIFICATION_LABEL = {
@@ -350,7 +381,8 @@ export function planStepRows(
           .filter(Boolean)
           .join(' · ') || null
       : null;
-    const waiting = !step.done && newestRun.get(step.key)?.state === 'handed_off';
+    const newest = newestRun.get(step.key);
+    const waiting = !step.done && newest?.state === 'handed_off';
     return {
       key: step.key,
       index,
@@ -360,6 +392,13 @@ export function planStepRows(
       runnable: options.runnerEnabled && !step.done && !waiting && Boolean(step.runnable),
       offline,
       waiting,
+      waitingLabel: waiting
+        ? newest?.outcome === 'ready_for_you'
+          ? RUN_STATE_COPY.readyForYou
+          : newest?.outcome === 'needs_answer'
+            ? RUN_STATE_COPY.needsAnswer
+            : RUN_STATE_COPY.yourTurn
+        : null,
     };
   });
 }
