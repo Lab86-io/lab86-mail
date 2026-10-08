@@ -10,6 +10,9 @@ import {
   runStepRun,
   type StepRunnerDependencies,
 } from '../lib/albatross/step-runner';
+import type { SecureItemView } from '../lib/secure/contract';
+import { createSecureRunAccess, type SecureRunAccess } from '../lib/secure/runner-access';
+import type { SecureInventoryEntry } from '../lib/secure/store';
 
 // The runner end to end, with a fake model that calls the run's tools the way
 // a real model would. Convex, the gateway, and the browser are fakes.
@@ -76,6 +79,8 @@ function harness(
     steerNotes?: Array<{ text: string }>[];
     details?: any[];
     notes?: string[];
+    secure?: SecureRunAccess | null;
+    inventory?: SecureInventoryEntry[];
   } = {},
 ): Harness {
   const steerQueue = [...(options.steerNotes || [])];
@@ -200,6 +205,8 @@ function harness(
     readUser: async () => ({ name: 'Sam Rivera', email: 'sam.rivera@example.com' }),
     listDetails: (async () => options.details ?? []) as any,
     readThreadNotes: async () => options.notes ?? [],
+    secureAccess: () => options.secure ?? null,
+    secureInventory: async () => options.inventory ?? [],
   };
   return {
     deps,
@@ -1171,5 +1178,205 @@ describe('steerPrepareStep', () => {
       'Task',
       expect.stringContaining('Use Monday'),
     ]);
+  });
+});
+
+describe('Passwords and IDs in a run', () => {
+  const LICENSE: SecureItemView = {
+    id: 'si_licen00000000000000000',
+    kind: 'id_number',
+    label: "Driver's license",
+    sites: [],
+    hints: {},
+    facts: { type: 'drivers_license' },
+    createdAt: 1,
+    updatedAt: 1,
+    lastUsedAt: null,
+  };
+  const license = 'D1234821';
+  const dmvPage: Partial<AgentPage> = {
+    url: () => 'https://dmv.ny.gov/renew',
+    snapshot: async () => '- textbox "Driver license ID" [ref=e1]\n- paragraph: Enter your license.',
+    inputKind: async () => ({ type: 'text', autocomplete: '', documentUrl: 'https://dmv.ny.gov/renew' }),
+  };
+  const access = () =>
+    createSecureRunAccess({
+      userId: 'user-1',
+      runId: 'run-1',
+      workId: 'work-1',
+      stepKey: 'step-1',
+      log: async () => undefined,
+      deps: {
+        openItems: async () => [{ item: LICENSE, values: { number: license } }],
+        recordUse: async () => undefined,
+        hasGrant: async () => false,
+      },
+    });
+
+  test('an ID on a new site ends in an allow handoff with the server copy and a private notice', async () => {
+    const h = harness(
+      async (opts) => {
+        expect(Object.keys(opts.tools)).toContain('secure_fetch');
+        const opened = await opts.tools.browser_open.execute({ url: 'https://dmv.ny.gov/renew' });
+        expect(opened.snapshot).not.toContain(license);
+        const typed = await opts.tools.browser_type.execute({
+          ref: 'e1',
+          text: `{{secure:${LICENSE.id}.number}}`,
+        });
+        expect(typed).toMatchObject({ ok: false, status: 'needs_allow' });
+        await opts.tools.step_handoff.execute({
+          outcome: 'your_turn',
+          summary: 'I filled the plate number.',
+          next: { kind: 'allow_secure', label: 'Allow', detail: 'Let me type it.' },
+        });
+        return { text: '', usage };
+      },
+      {
+        browser: true,
+        page: dmvPage,
+        secure: access(),
+        run: { trigger: 'conductor' },
+        inventory: [
+          {
+            id: LICENSE.id,
+            kind: 'id_number',
+            label: "Driver's license",
+            sites: [],
+            fields: ['number'],
+            idType: 'drivers_license',
+          },
+        ],
+      },
+    );
+    await runStepRun('user-1', 'run-1', h.deps);
+    const system = h.generateOptions().system as string;
+    expect(system).toContain('## Passwords and IDs');
+    expect(system).toContain(
+      `${LICENSE.id} · ID "Driver's license" (drivers_license) · sites none yet · fields number`,
+    );
+    expect(system).not.toContain(license);
+    expect(h.settled()).toMatchObject({
+      outcome: 'needs_answer',
+      next: {
+        kind: 'allow_secure',
+        label: 'Answer',
+        detail: "Use your saved Driver's license on ny.gov?",
+        allow: { itemId: LICENSE.id, fieldLabels: ['Number'], site: 'ny.gov', host: 'dmv.ny.gov' },
+        target: { kind: 'secure', id: LICENSE.id, url: 'https://dmv.ny.gov' },
+      },
+    });
+    expect(h.calls('albatrossNotifications:queueStepRunHandoff')[0].body).toBe(
+      'A site asks to use one of your saved details.',
+    );
+  });
+
+  test('allow_secure with nothing waiting is refused; a sign-in page with no saved sign-in offers to save one', async () => {
+    const h = harness(
+      async (opts) => {
+        await opts.tools.browser_open.execute({ url: 'https://pay.springfieldwater.gov/login' });
+        expect(
+          await opts.tools.step_handoff.execute({
+            outcome: 'your_turn',
+            summary: 'x',
+            next: { kind: 'allow_secure', label: 'Allow', detail: 'x' },
+          }),
+        ).toMatchObject({ ok: false });
+        await opts.tools.step_handoff.execute({
+          outcome: 'your_turn',
+          summary: 'I opened the sign-in page.',
+          next: { kind: 'sign_in', label: 'Sign in', detail: 'Sign in, then press Continue.' },
+        });
+        return { text: '', usage };
+      },
+      { browser: true, page: { url: () => 'https://pay.springfieldwater.gov/login' }, secure: access() },
+    );
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.settled().next).toMatchObject({ kind: 'sign_in', saveSignIn: { site: 'springfieldwater.gov' } });
+  });
+
+  test('without the store, the run has no secure block and no secure_fetch', async () => {
+    const h = harness(async (opts) => {
+      expect(Object.keys(opts.tools)).not.toContain('secure_fetch');
+      await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'Done.', evidence: 'x' });
+      return { text: '', usage };
+    });
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.generateOptions().system).not.toContain('## Passwords and IDs');
+  });
+});
+
+describe('normalizeHandoff for saved values', () => {
+  test('allow_secure without a waiting question falls back to the page', () => {
+    expect(
+      normalizeHandoff(
+        {
+          outcome: 'your_turn',
+          summary: 's',
+          next: { kind: 'allow_secure', label: 'Allow', detail: 'd' },
+        } as any,
+        { artifacts: [], sessionId: 'bb-1', allow: null },
+      ).next,
+    ).toMatchObject({ kind: 'finish_on_page', target: { kind: 'session', id: 'bb-1' } });
+  });
+});
+
+describe('a saved value on the wrong page stops the run', () => {
+  test('a value this run typed, then shown on another site, ends the run and gives the user the page', async () => {
+    const LICENSE: SecureItemView = {
+      id: 'si_licen00000000000000000',
+      kind: 'id_number',
+      label: "Driver's license",
+      sites: ['ny.gov'],
+      hints: {},
+      facts: { type: 'drivers_license' },
+      createdAt: 1,
+      updatedAt: 1,
+      lastUsedAt: null,
+    };
+    const license = 'D1234821';
+    let url = 'https://dmv.ny.gov/renew';
+    const secure = createSecureRunAccess({
+      userId: 'user-1',
+      runId: 'run-1',
+      workId: 'work-1',
+      stepKey: 'step-1',
+      log: async () => undefined,
+      deps: {
+        openItems: async () => [{ item: LICENSE, values: { number: license } }],
+        recordUse: async () => undefined,
+        hasGrant: async () => false,
+      },
+    });
+    const h = harness(
+      async (opts) => {
+        await opts.tools.browser_open.execute({ url });
+        await opts.tools.browser_type.execute({ ref: 'e1', text: `{{secure:${LICENSE.id}.number}}` });
+        url = 'https://pay.example.net/checkout';
+        const moved = await opts.tools.browser_snapshot.execute({});
+        expect(moved).toMatchObject({ ok: false, status: 'stopped' });
+        // The stop aborts the model call.
+        expect(opts.abortSignal.aborted).toBe(true);
+        throw opts.abortSignal.reason;
+      },
+      {
+        browser: true,
+        secure,
+        page: {
+          url: () => url,
+          snapshot: async () =>
+            url.includes('pay.example.net')
+              ? `- paragraph: License ${license} is linked.`
+              : '- textbox "Driver license ID" [ref=e1]',
+          inputKind: async () => ({ type: 'text', autocomplete: '', documentUrl: url }),
+        },
+      },
+    );
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.settled()).toMatchObject({
+      outcome: 'your_turn',
+      summary: 'I stopped because a page outside the saved sites showed one of your saved values.',
+      next: { kind: 'finish_on_page', label: 'Open the page', target: { kind: 'session', id: 'bb-1' } },
+    });
+    expect(h.calls('albatrossBrowserSessions:setSessionStatus').at(-1)).toMatchObject({ status: 'user' });
   });
 });

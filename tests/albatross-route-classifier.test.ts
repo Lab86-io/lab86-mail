@@ -166,6 +166,18 @@ describe('classifyRoute', () => {
     expect(JSON.parse(calls[0].prompt)).toEqual({ text: 'I need to know what Sarah said about the venue' });
   });
 
+  test('a secret in the draft never reaches the route model', async () => {
+    const { calls, deps } = modelDeps(async () => ({ object: { route: 'ask', confidence: 0.6 } }));
+    await classifyRoute(
+      { text: `my ssn is ${['123', '-45-', '6789'].join('')} for the passport thing` },
+      deps,
+    );
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0].prompt).text).toBe(
+      'my ssn is [removed: looks like a Social Security number] for the passport thing',
+    );
+  });
+
   test('falls back to ask with confidence zero when the model fails', async () => {
     const { deps } = modelDeps(async () => {
       throw new Error('provider down');

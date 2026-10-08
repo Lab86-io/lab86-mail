@@ -8,6 +8,7 @@ import {
   type RouteVerdict,
   routeHeuristic,
 } from '@/lib/albatross/route-rules';
+import { redactSecretShapes } from '@/lib/secure/redact';
 import { truncateText } from '@/lib/shared/text';
 
 // The model side of the Ask / Hold route. The deterministic rules live in
@@ -79,7 +80,8 @@ export async function classifyRoute(
   input: ClassifyRouteInput,
   dependencies: RouteClassifierDependencies = defaultDependencies,
 ): Promise<RouteVerdict> {
-  const text = truncateText(String(input.text || '').trim(), ROUTE_TEXT_MAX_CHARS);
+  // A secret in the draft never reaches the route model (docs/albatross-secure-store.md).
+  const text = truncateText(redactSecretShapes(String(input.text || '').trim()).text, ROUTE_TEXT_MAX_CHARS);
   const heuristic = routeHeuristic(text);
   if (heuristic) return heuristic;
   try {

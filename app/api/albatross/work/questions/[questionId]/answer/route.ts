@@ -5,6 +5,7 @@ import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { redactSecretShapes } from '@/lib/secure/redact';
 import { errorAnswerMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
@@ -41,6 +42,9 @@ export async function POST(req: NextRequest, context: { params: Promise<{ questi
       runNote = result.note;
       answeredOptionId = result.answeredOptionId;
     }
+    // A secret the user wrote never reaches a model or the saved answer (docs/albatross-secure-store.md).
+    answer = redactSecretShapes(answer).text;
+    if (runNote) runNote = redactSecretShapes(runNote).text;
     if (!answer) return Response.json({ ok: false, error: 'answer required' }, { status: 400 });
     const answered = await convexMutation<{
       workId?: string;

@@ -7,6 +7,8 @@ crons.interval('recover brief jobs', { minutes: 1 }, internal.briefJobs.recover,
 crons.interval('recover step runs', { minutes: 1 }, internal.albatrossStepRuns.recover, {});
 // Saved sign-ins that still wait for their Browserbase delete.
 crons.interval('saved sign-in deletions', { hours: 1 }, internal.albatrossStepRuns.contextDeletionTick, {});
+// Secure details: use history older than 90 days and ended "Allow once" grants go.
+crons.interval('secure details prune', { hours: 6 }, internal.secureDetails.prune, {});
 // Durable cursors/leases make interrupted narrative runs resumable. No opted-in users = no work.
 crons.interval('shared narrative memory', { hours: 1 }, internal.narrative.tick, {});
 

@@ -23,6 +23,7 @@ export type SettingsTabId =
   | 'shortcuts'
   | 'advanced'
   | 'personal'
+  | 'secure'
   | 'account';
 
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> = [
@@ -40,6 +41,7 @@ export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> 
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'advanced', label: 'Advanced' },
   { id: 'personal', label: 'Personal details' },
+  { id: 'secure', label: 'Passwords and IDs' },
   { id: 'account', label: 'Account' },
 ];
 
@@ -91,6 +93,8 @@ export function toolPartName(part: { type?: unknown; toolName?: unknown } | null
 export const HITL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'ask_user',
   'ask_form',
+  // Passwords and IDs: the add sheet opens; the answer holds no value (docs/albatross-secure-store.md).
+  'ask_secure_detail',
   'ask_approval',
   'ask_parameters',
   'ask_preferences',
@@ -658,6 +662,28 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
       running: 'Saving to your details',
       done: labels.length ? `Saved to your details: ${labels.join(', ')}` : 'Saved nothing to your details',
       failed: 'Saving to your details failed',
+    };
+  },
+
+  secure_details_list: fixed(
+    'Checking Passwords and IDs',
+    'Checked what is in Passwords and IDs',
+    'Checking Passwords and IDs failed',
+  ),
+  ask_secure_detail: (args) => {
+    const site = str(args?.site);
+    const what =
+      args?.kind === 'sign_in'
+        ? `a sign-in${site ? ` for ${site}` : ''}`
+        : args?.kind === 'api_key'
+          ? `an API key${site ? ` for ${site}` : ''}`
+          : args?.kind === 'date_of_birth'
+            ? 'your date of birth'
+            : 'an ID number';
+    return {
+      running: `Asking you to add ${what}`,
+      done: `Asked you to add ${what}`,
+      failed: `Asking you to add ${what} failed`,
     };
   },
 

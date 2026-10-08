@@ -132,6 +132,18 @@ if (process.env.STEP_RUN_ANSWER_ROUTE_TEST !== '1') {
       });
     });
 
+    test('a secret in an answer never reaches the run or the saved answer', async () => {
+      answered = { workId: 'work-1', shouldAdvance: true };
+      waitingRunId = 'run-4';
+      await answer({ answer: `It is ${['123', '-45-', '6789'].join('')}` });
+      expect(answerQuestion.mock.calls.at(-1)?.[0]).toMatchObject({
+        answer: 'It is [removed: looks like a Social Security number]',
+      });
+      expect(resumeRunForAnswer.mock.calls.at(-1)?.[0]).toMatchObject({
+        answer: 'It is [removed: looks like a Social Security number]',
+      });
+    });
+
     test('an empty answer is 400', async () => {
       const response = await answer({ answer: '   ' });
       expect(response.status).toBe(400);

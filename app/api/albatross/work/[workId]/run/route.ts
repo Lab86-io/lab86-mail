@@ -3,6 +3,7 @@ import { resumeStepRun, StepRunStartError, startStepRun } from '@/lib/albatross/
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { redactSecretShapes } from '@/lib/secure/redact';
 import { errorAnswerMessage } from '@/lib/security/error-answer';
 
 export const runtime = 'nodejs';
@@ -63,7 +64,12 @@ export function createStepRunPost(overrides: Partial<StepRunRouteDependencies> =
       if (action === 'resume') {
         const runId = text(body?.runId);
         if (!runId) return Response.json({ ok: false, error: 'runId is required.' }, { status: 400 });
-        const result = await deps.resumeStepRun({ userId, workId, runId, note: text(body?.note, 2_000) });
+        const result = await deps.resumeStepRun({
+          userId,
+          workId,
+          runId,
+          note: redactSecretShapes(text(body?.note, 2_000)).text,
+        });
         if (!result.runId)
           return Response.json(
             { ok: false, error: 'Albatross could not continue this step now. Try again.' },
@@ -74,7 +80,8 @@ export function createStepRunPost(overrides: Partial<StepRunRouteDependencies> =
       if (action === 'steer') {
         // A note to the run that works now (docs/albatross-thread.md).
         const runId = text(body?.runId);
-        const note = text(body?.note, 2_000);
+        // A secret the user wrote never reaches the run's model (docs/albatross-secure-store.md).
+        const note = redactSecretShapes(text(body?.note, 2_000)).text;
         if (!runId || !note)
           return Response.json({ ok: false, error: 'runId and note are required.' }, { status: 400 });
         const steered = await deps

@@ -247,6 +247,18 @@ function fakeExport(pages: Record<string, unknown[][]>): DataExportDependencies 
     personalDetails: async () => [
       { key: 'phone', label: 'Phone', value: '+15555550100', source: 'settings', updatedAt: 1 },
     ],
+    secureItems: async () => [
+      {
+        id: 'si_0000000000000000000000',
+        kind: 'sign_in',
+        label: 'Chase',
+        sites: ['chase.com'],
+        facts: {},
+        createdAt: 1,
+        updatedAt: 1,
+        lastUsedAt: null,
+      },
+    ],
   };
 }
 
@@ -265,6 +277,7 @@ describe('the ZIP', () => {
         'data/areas.json',
         'data/cards.json',
         'data/personal-details.json',
+        'data/secure-items.json',
         'summary.json',
       ].sort(),
     );
@@ -278,7 +291,20 @@ describe('the ZIP', () => {
       { file: 'data/areas.json', rows: 2 },
       { file: 'data/cards.json', rows: 0 },
       { file: 'data/personal-details.json', rows: 1 },
+      { file: 'data/secure-items.json', rows: 1 },
     ]);
+    // Passwords and IDs are listed without a value or a masked hint.
+    const secure = await zip.file('data/secure-items.json')!.async('string');
+    expect(JSON.parse(secure)[0]).toEqual({
+      id: 'si_0000000000000000000000',
+      kind: 'sign_in',
+      label: 'Chase',
+      sites: ['chase.com'],
+      facts: {},
+      createdAt: 1,
+      updatedAt: 1,
+      lastUsedAt: null,
+    });
     // Personal details are stored encrypted; the export holds them readable for their owner.
     expect(JSON.parse(await zip.file('data/personal-details.json')!.async('string'))).toEqual([
       { key: 'phone', label: 'Phone', value: '+15555550100', source: 'settings', updatedAt: 1 },
@@ -289,6 +315,8 @@ describe('the ZIP', () => {
     expect(readme).not.toMatch(/\bAI\b/);
     expect(readme).toContain('data/mailCorpusBodies.json');
     expect(readme).toContain('data/personal-details.json');
+    expect(readme).toContain('data/secure-items.json');
+    expect(readme).toContain('Their values are never exported.');
     expect(exportFileName(new Date('2031-01-02T00:00:00Z'))).toBe('albatross-export-2031-01-02.zip');
   });
 

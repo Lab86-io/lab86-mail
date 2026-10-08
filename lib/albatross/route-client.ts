@@ -1,4 +1,5 @@
 import { ASK_FALLBACK, type BarRoute, type RouteVerdict, routeHeuristic } from '@/lib/albatross/route-rules';
+import { redactSecretShapes } from '../secure/redact';
 
 // The client side of the Ask / Hold route. The heuristic answers at once for
 // the clear cases. The endpoint confirms after the typing stops. Every failure
@@ -31,7 +32,8 @@ export function flipRoute(route: BarRoute): BarRoute {
  * request rejects, so a stale answer never lands on newer text.
  */
 export async function predictRoute(text: string, options: PredictRouteOptions = {}): Promise<RouteVerdict> {
-  const clean = text.trim();
+  // The draft goes out as the user types: a secret in it never leaves the device.
+  const clean = redactSecretShapes(text.trim()).text;
   if (!clean) return { route: 'ask', confidence: 0, reason: 'empty' };
   const fetchImpl = options.fetchImpl ?? fetch;
   const controller = new AbortController();

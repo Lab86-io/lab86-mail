@@ -11,6 +11,8 @@
 import { tool as aiTool } from 'ai';
 import { z } from 'zod';
 import { approvalConditionMet } from '../ai/approval';
+import { runSecureFetch } from '../secure/fetch';
+import { SecureLeak, SecureNeedsAllow, SecureRefused, type SecureRunAccess } from '../secure/runner-access';
 import { truncateText } from '../shared/text';
 import { type AgentBrowser, BrowserHandoffRequired, type PageView } from './browser-agent';
 import { formQuestionSchema } from './thread-contract';
@@ -42,6 +44,8 @@ export const RUNNER_REGISTRY_TOOLS = [
   'remember',
   'personal_details_get',
   'personal_details_save',
+  // Passwords and IDs: what is saved, without values.
+  'secure_details_list',
   'contact_lookup',
   'expand_alias',
   // Calendar: read, private holds, and invites through approval.
@@ -123,6 +127,7 @@ const NEXT_KINDS = [
   'do_offline',
   'review',
   'continue',
+  'allow_secure',
 ] as const;
 
 export const handoffInputSchema = z.object({
@@ -138,7 +143,11 @@ export const handoffInputSchema = z.object({
     .describe('What you did, in one to three short past-tense sentences. Plain words. No "AI".'),
   next: z
     .object({
-      kind: z.enum(NEXT_KINDS),
+      kind: z
+        .enum(NEXT_KINDS)
+        .describe(
+          'allow_secure: only after a saved ID or date was not allowed on this site yet (browser_type answered needs_allow). The server fills in what is asked.',
+        ),
       label: z
         .string()
         .min(1)
@@ -158,7 +167,17 @@ export const handoffInputSchema = z.object({
         ),
       target: z
         .object({
-          kind: z.enum(['draft', 'document', 'approval', 'session', 'question', 'url', 'card', 'event']),
+          kind: z.enum([
+            'draft',
+            'document',
+            'approval',
+            'session',
+            'question',
+            'url',
+            'card',
+            'event',
+            'secure',
+          ]),
           id: z.string().max(300).optional(),
           url: z.string().max(2000).optional(),
           accountId: z.string().max(300).optional(),
@@ -215,6 +234,13 @@ export interface RunnerToolHost {
   /** Called once by step_handoff. */
   finish(handoff: HandoffInput): void;
   browserAvailable: boolean;
+  /** The run's access to Passwords and IDs, or null when the store is off for the user. */
+  secure?: SecureRunAccess | null;
+  /**
+   * Stop the run at once and give the user the page: a value this run typed
+   * showed on a page outside its sites (lib/secure/runner-access.ts SecureLeak).
+   */
+  stopForLeak?: (leak: SecureLeak) => void;
 }
 
 function str(value: unknown, max = 160): string {
@@ -333,6 +359,10 @@ function handoffResult(error: BrowserHandoffRequired) {
   return { ok: false, status: 'needs_user', reason: error.reason, message: error.message };
 }
 
+function pageResultWith(view: PageView) {
+  return { ...pageResult(view), ...(view.secure ? { secure: view.secure } : {}) };
+}
+
 /**
  * The tool set of one run. `lifted` is the output of liftToolsForAgent for
  * this run; only the chosen registry tools are kept.
@@ -406,6 +436,12 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
           message:
             'question.form (or question.prompt) is required for needs_answer. Call step_handoff again.',
         };
+      if (input.next?.kind === 'allow_secure' && !host.secure?.pendingAllow())
+        return {
+          ok: false,
+          message:
+            'allow_secure is only for a saved value that browser_type could not use on this site yet. Choose another next.kind.',
+        };
       finished = true;
       host.finish(input);
       return { ok: true };
@@ -414,19 +450,30 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
 
   if (!host.browserAvailable) return tools;
 
+  let openBrowser: AgentBrowser | null = null;
   const pageAction =
     (status: (args: any) => string, act: (browser: AgentBrowser, args: any) => Promise<PageView>) =>
     async (args: any) => {
       try {
         const browser = await host.browser();
+        openBrowser = browser;
         await host.browserStatus(status(args));
-        return pageResult(await act(browser, args));
+        return pageResultWith(await act(browser, args));
       } catch (error) {
-        if (error instanceof BrowserHandoffRequired) return handoffResult(error);
-        return {
-          ok: false,
-          message: error instanceof Error ? truncateText(error.message, 300) : 'The page action failed.',
-        };
+        if (error instanceof SecureLeak) {
+          host.stopForLeak?.(error);
+          return { ok: false, status: 'stopped', message: error.message };
+        }
+        if (error instanceof SecureNeedsAllow)
+          return { ok: false, status: 'needs_allow', message: error.message };
+        if (error instanceof SecureRefused) return { ok: false, message: error.message };
+        // A browser error or a handoff reason can quote the page; saved values never reach the model.
+        const clean = async (text: string) =>
+          openBrowser ? openBrowser.cleanMessage(text).catch(() => 'The page action failed.') : text;
+        if (error instanceof BrowserHandoffRequired)
+          return { ...handoffResult(error), message: truncateText(await clean(error.message), 500) };
+        const message = error instanceof Error ? error.message : 'The page action failed.';
+        return { ok: false, message: truncateText(await clean(message), 300) };
       }
     };
 
@@ -462,8 +509,9 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
     ),
   });
   tools.browser_type = aiTool({
-    description:
-      'Type text into the field with this ref. Never for passwords, codes, or card data (refused). submit presses Enter, only in search-like fields.',
+    description: host.secure
+      ? 'Type text into the field with this ref. submit presses Enter, only in search-like fields. For a saved password, ID number, or date of birth, the text is exactly one reference: {{secure:<id>.<field>}} or {{secure:<id>.<field>|FORMAT}} (ids from secure_details_list). You never see the value; it goes in only on the sites it is saved for. Codes and card data are refused.'
+      : 'Type text into the field with this ref. Never for passwords, codes, or card data (refused). submit presses Enter, only in search-like fields.',
     inputSchema: z.object({
       ref: z.string().min(1).max(20),
       text: z.string().max(4000),
@@ -475,7 +523,9 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
     ),
   });
   tools.browser_select = aiTool({
-    description: 'Choose options in the select element with this ref.',
+    description: host.secure
+      ? 'Choose options in the select element with this ref. A saved date part is one value: {{secure:<id>.date|MM}} (or M, MONTH, DD, D, YYYY).'
+      : 'Choose options in the select element with this ref.',
     inputSchema: z.object({
       ref: z.string().min(1).max(20),
       values: z.array(z.string().max(200)).min(1).max(10),
@@ -509,6 +559,37 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
       () => 'Waiting for the page',
       (browser, input) => browser.wait(input.seconds),
     ),
+  });
+  return tools;
+}
+
+/** secure_fetch: added to a run when the user has Passwords and IDs. It needs no browser. */
+export function addSecureFetchTool(tools: Record<string, any>, secure: SecureRunAccess | null | undefined) {
+  if (!secure) return tools;
+  tools.secure_fetch = aiTool({
+    description:
+      'Call an API with a saved key from Passwords and IDs. https only, GET or HEAD only, to a host the key is saved for, with no redirects. Put the key as one reference in a header value, for example { name: "Authorization", value: "Bearer {{secure:<id>.key}}" }. You never see the key. The answer is cut to 20 KB, with saved values removed.',
+    inputSchema: z.object({
+      url: z.string().min(1).max(2_000),
+      method: z.enum(['GET', 'HEAD']).optional(),
+      headers: z
+        .array(z.object({ name: z.string().min(1).max(60), value: z.string().max(4_100) }))
+        .max(10)
+        .optional(),
+    }),
+    execute: async (args: {
+      url: string;
+      method?: 'GET' | 'HEAD';
+      headers?: Array<{ name: string; value: string }>;
+    }) =>
+      runSecureFetch(
+        {
+          url: args.url,
+          method: args.method,
+          headers: Object.fromEntries((args.headers || []).map((header) => [header.name, header.value])),
+        },
+        secure,
+      ),
   });
   return tools;
 }

@@ -1410,7 +1410,7 @@ function genericShape(toolName: string, input: Rec, output: Rec): ToolShape | nu
  * failure detail.
  */
 // personal_details_get has no card: its values stay off the screen and out of saved chats.
-const NO_SHAPE_NAMES = new Set(['enable_tools', 'personal_details_get']);
+const NO_SHAPE_NAMES = new Set(['enable_tools', 'personal_details_get', 'secure_details_list']);
 
 export function resolveToolShape(toolName: string, input: unknown, output: unknown): ToolShape | null {
   if (NO_SHAPE_NAMES.has(toolName) || NO_SHAPE_PREFIXES.some((prefix) => toolName.startsWith(prefix)))

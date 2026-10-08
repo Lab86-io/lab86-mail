@@ -161,6 +161,7 @@ import { resolvePhotos } from './photos';
 import { presentationPlan } from './presentations';
 import type { AnyTool } from './registry';
 import { salvageContext } from './salvage';
+import { secureDetailsList } from './secure-details';
 import {
   applySmartCorrection,
   createSmartLabel,
@@ -328,6 +329,7 @@ const allTools: AnyTool[] = [
   recall,
   personalDetailsGet,
   personalDetailsSave,
+  secureDetailsList,
   albatrossHandleStep,
   forget,
   listMemories,
