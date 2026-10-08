@@ -317,8 +317,9 @@ only. Search comes later, as the brief says.
   (open question 3). The rail header shows "⌘↑ ⌘↓" as a quiet hint.
 - Focus stays where it was. A hop from the composer keeps focus in the new thread's composer. A
   hop from a rail row keeps focus on the new row. The new thread's title is announced (§7).
-- Drafts: the composer text is kept per thread in the client store and in localStorage under
-  `lab86-thread-draft:<workId>`. It is restored on return and cleared on send. A row with an
+- Drafts: the composer text is kept per thread in the client store, in memory only. A draft
+  can hold a password or an ID number, so it never goes to localStorage; a reload or sign-out
+  drops it (lead decision 4). It is restored on return and cleared on send. A row with an
   unsent draft shows the word "Draft" in the accent-2 voice in its time slot, except on the
   open row.
 - Scroll: the thread keeps `{ scrollTop, follow }` per thread for the session. If the thread

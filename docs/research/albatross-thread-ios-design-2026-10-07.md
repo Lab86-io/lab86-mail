@@ -489,7 +489,7 @@ Zoom, all $45. The orientation is November 14.
 ### S17. Ask
 
 - The user writes "when is the orientation?". Albatross answers "November 14 at 9:00 AM, at
-  the Monroe County Hall of Justice. It is on your calendar." with one event card. No run starts.
+  the Lakeside Aquatic Center. It is on your calendar." with one event card. No run starts.
 
 ### S18. Change the plan
 

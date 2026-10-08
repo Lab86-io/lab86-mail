@@ -634,7 +634,7 @@ Each keeps "What I did" collapsed. Command-Return is "Continue" on a stopped blo
 on a failed block.
 
 **S17. Ask.** The user writes "when is the orientation?". Albatross answers "November 14 at 9:00
-AM, at the Monroe County Hall of Justice. It is on your calendar." with one event card. No run
+AM, at the Lakeside Aquatic Center. It is on your calendar." with one event card. No run
 starts.
 
 **S18. Change the plan.** The user writes "I already registered, skip that". The reply shows the

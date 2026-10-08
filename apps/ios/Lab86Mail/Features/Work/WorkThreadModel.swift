@@ -430,7 +430,9 @@ final class WorkThreadModel {
     /// the composer waits for the note. The next send continues the run
     /// with it.
     func armRedirect(_ view: ThreadRunView) async {
-        _ = await store.stop(view, transport: transport)
+        // A stop that failed leaves the run working, so there is nothing to
+        // redirect; the store's notice says why.
+        guard await store.stop(view, transport: transport) else { return }
         redirectArmed = store.run(id: view.id) ?? view
         chat.presetRoute(.run)
         syncRunRoute()
@@ -444,16 +446,27 @@ final class WorkThreadModel {
         syncRunRoute()
     }
 
-    func sendRedirect(_ text: String) async {
+    /// True while the armed note goes to the server, so a second send waits.
+    private var redirectSending = false
+
+    /// Continues the stopped run with the note. False when the run did not
+    /// continue: the strip stays armed and the caller puts the text back.
+    /// The note keeps the stopped run's id (`metadata.steer.runId`), as on
+    /// web; the new run is the one whose parent it is.
+    @discardableResult
+    func sendRedirect(_ text: String) async -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let view = redirectArmed else { return }
+        guard !trimmed.isEmpty, !redirectSending, let view = redirectArmed else { return false }
+        redirectSending = true
+        defer { redirectSending = false }
+        guard await store.resume(view, note: trimmed, transport: transport) != nil else { return false }
         redirectArmed = nil
-        let runID = await store.resume(view, note: trimmed, transport: transport)
-        chat.appendSteerMessage(trimmed, id: ThreadNoteID.make(), runID: runID ?? view.id, redirect: true)
+        chat.appendSteerMessage(trimmed, id: ThreadNoteID.make(), runID: view.id, redirect: true)
         chat.clearRoute()
         syncPageRun()
         syncRunRoute()
         await loadDetail()
+        return true
     }
 
     /// Command-Return belongs to the newest run only, and only while no form

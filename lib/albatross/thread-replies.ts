@@ -25,10 +25,15 @@ function toolName(part: any): string {
   return type.startsWith('tool-') ? type.slice(5) : '';
 }
 
-/** True when the reply ends with a question that waits for the user (a form, a choice). */
+/**
+ * True when the reply ends with something that waits for the user: a question
+ * (a form, a choice) or a tool call that waits for approval (a send, an event).
+ */
 export function replyWaitsForUser(message: UIMessage | null | undefined): boolean {
   return (message?.parts || []).some(
-    (part: any) => toolName(part).startsWith('ask_') && part.state === 'input-available',
+    (part: any) =>
+      (toolName(part).startsWith('ask_') && part.state === 'input-available') ||
+      part?.state === 'approval-requested',
   );
 }
 

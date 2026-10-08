@@ -824,7 +824,11 @@ final class AssistantChatModel {
 
     func requestBody() throws -> JSONValue {
         var body: [String: JSONValue] = [
-            "messages": transcriptJSON(),
+            // A Work thread reply is saved on the server from these messages
+            // (docs/albatross-threads.md, T5), so they carry the display parts
+            // too: a stripped copy would replace the stored cards and sources.
+            // The model never reads data or source parts.
+            "messages": transcriptJSON(includeDisplayParts: WorkThreadSession.isThreadID(sessionID)),
             "timezone": .string(TimeZone.current.identifier),
             "clientPlatform": .string(Self.clientPlatform),
             // This app renders ask_form and ask_secure_detail; the server offers

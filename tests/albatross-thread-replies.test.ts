@@ -68,6 +68,13 @@ describe('thread replies', () => {
     expect(
       replyWaitsForUser({ ...message, parts: [{ type: 'tool-ask_form', state: 'output-available' }] }),
     ).toBe(false);
+    // A send or an event that waits for approval also waits for the user.
+    expect(
+      replyWaitsForUser({ ...message, parts: [{ type: 'tool-schedule_send', state: 'approval-requested' }] }),
+    ).toBe(true);
+    expect(
+      replyWaitsForUser({ ...message, parts: [{ type: 'tool-schedule_send', state: 'output-available' }] }),
+    ).toBe(false);
     expect(replyWaitsForUser(null)).toBe(false);
     expect(replyPreviewText({ id: 'x', role: 'assistant', parts: [] } as any)).toBe('');
   });

@@ -419,8 +419,10 @@ What this PR adds:
    and a stream in flight on this device keeps its task. The fourth thread evicts the oldest;
    the server save (T5) still guarantees the reply.
 2. **Drafts stay with their thread.** A `ComposerDraftStore` keeps the draft text and the
-   pending files for each `workId` in memory, and the text in `UserDefaults` for a relaunch.
-   `WorkThreadView` reads it on appear and writes it on every change. A sent message clears it.
+   pending files for each `workId` in memory only. A draft can hold a password or an ID number,
+   so it never goes to `UserDefaults` or disk; a relaunch or sign-out drops it (lead decision
+   4). `WorkThreadView` reads it on appear and writes it on every change. A sent message clears
+   it.
    The quick-steer sheet does not keep a draft; it is one line.
 3. **The banner.** When another thread needs you while you read this one, a one-line banner
    offers "Open" (section 6.1). That is the one hop that must not cost two taps.
@@ -757,7 +759,7 @@ Reduce Motion: every "breathes" becomes "steady". The threads read failed twice:
 |---|---|
 | `Core/Models/ThreadListModels.swift` | `ThreadRowStatus` (the ten cases, JSON init with the same tolerance as `StepRunModels`), `ThreadsRow` (the contract's row), `ThreadListRow` (`WorkListItem` plus `ThreadsRow?`), `ThreadNote` (`at`, `text`, `readAt`). |
 | `Core/Models/ThreadsStore.swift` | `GET /api/albatross/threads` with the 5 s / 30 s cadence, the revision counter, `seen(workId:)`, `stop(row:)`, `steer(row:note:redirect:)`, `tryAgain(row:)`, `continueRun(row:)`, `needsYouCount`, `transitions(since:)` for the banner. |
-| `Core/Models/ComposerDraftStore.swift` | The draft text and pending files for each `workId`; `UserDefaults` for the text. |
+| `Core/Models/ComposerDraftStore.swift` | The draft text and pending files for each `workId`, in memory only; sign-out clears them. |
 | `Core/Models/WorkThreadModelCache.swift` | The three newest `WorkThreadModel`s by `workId`, on `AppEnvironment`. |
 | `Features/Work/ThreadRowPresentation.swift` | Pure rules: the word, the preview, the dot, the time label, the section, the sort, the VoiceOver label, the swipe and menu verbs for each status. Unit tests cover every row of the matrices. |
 | `Features/Work/ThreadListRow.swift` | The row view (section 2.1), with `swipeActions`, `contextMenu`, and `accessibilityCustomActions`. |

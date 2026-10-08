@@ -174,13 +174,8 @@ struct MacShellView: View {
     /// ⌥⌘↓, ⌥⌘↑, ⌥⌘↩: the rows the source list shows now, under its filter,
     /// from the open thread. The keys work with the source list hidden.
     private func moveThread(_ move: MacThreadListLayout.Move) {
-        let rows = MacThreadListLayout.rows(
-            items: environment.store.allWork,
-            live: environment.threads.rows,
-            filter: MacRequests.shared.threadFilter,
-            now: .now
-        )
-        let current = environment.navigation.selectedTab == .work ? environment.navigation.workRoute?.workID : nil
+        let rows = MacGoCommandState.rows(environment)
+        let current = MacGoCommandState.current(environment)
         guard let target = MacThreadListLayout.target(move, from: current, in: rows) else { return }
         environment.navigation.openWork(id: target.id, title: target.title)
     }

@@ -240,6 +240,7 @@ function base(now: number, over: Partial<ThreadRunView>): ThreadRunView {
     stoppedBy: null,
     error: null,
     createdAt: now - 6 * MINUTE,
+    startedAt: now - 6 * MINUTE,
     updatedAt: now - MINUTE,
     finishedAt: null,
     question: null,
@@ -295,6 +296,7 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
     queued: base(now, {
       id: 'run_queued',
       state: 'queued',
+      startedAt: null,
       createdAt: now - 20_000,
       updatedAt: now - 20_000,
     }),

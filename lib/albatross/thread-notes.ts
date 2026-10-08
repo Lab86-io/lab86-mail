@@ -87,10 +87,12 @@ export const NOTE_RECEIPT_COPY = {
 
 const OPEN_STATES = new Set(['running', 'queued']);
 
-type NoteRun = Pick<ThreadRunView, 'id' | 'stepKey' | 'state' | 'createdAt' | 'notes'>;
+type NoteRun = Pick<ThreadRunView, 'id' | 'stepKey' | 'state' | 'createdAt' | 'notes'> &
+  Partial<Pick<ThreadRunView, 'parentRunId' | 'startedAt'>>;
 
 /**
- * The receipt under a note. Read wins everywhere. Otherwise the note is on its
+ * The receipt under a note. Read wins everywhere; a redirect note is read when
+ * the run that continues the stopped one begins work. Otherwise the note is on its
  * way while the run that holds it, or a newer run of the same step, is still
  * open (unread notes carry over). When every run that could read it has
  * ended, the note was not read, and "Send again" offers to resend it.
@@ -103,8 +105,19 @@ export function noteReceipt(
   const steer = steerMetadataOf(message);
   if (!steer) return null;
   if (steer.failed) return { kind: 'failed', line: NOTE_RECEIPT_COPY.failed, sendAgain: true, readAt: null };
-  if (steer.redirect)
+  if (steer.redirect) {
+    // A redirect note is the new run's first instruction (`resumeNote`): the
+    // run that continues the stopped one read it when it began work.
+    const restarted = runs.find((run) => run.parentRunId === steer.runId && run.startedAt);
+    if (restarted?.startedAt)
+      return {
+        kind: 'read',
+        line: `${NOTE_RECEIPT_COPY.read} · ${format.time(restarted.startedAt)}`,
+        sendAgain: false,
+        readAt: restarted.startedAt,
+      };
     return { kind: 'redirect', line: NOTE_RECEIPT_COPY.redirect, sendAgain: false, readAt: null };
+  }
   const holders = runs.filter((run) => run.notes.some((note) => note.id === message.id));
   const read = holders
     .flatMap((run) => run.notes.filter((note) => note.id === message.id && note.readAt))

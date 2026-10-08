@@ -13,6 +13,8 @@ struct NoteReceiptPresentationTests {
         state: StepRunView.State,
         stepKey: String = "step-pay",
         createdAt: Date = t0,
+        startedAt: Date? = nil,
+        parentRunID: String? = nil,
         log: [String] = [],
         notes: [ThreadNote] = []
     ) -> ThreadRunView {
@@ -24,7 +26,9 @@ struct NoteReceiptPresentationTests {
                 stepTitle: "Pay the bill",
                 state: state,
                 log: log.map { StepRunView.LogLine(at: t0, text: $0) },
-                createdAt: createdAt
+                createdAt: createdAt,
+                startedAt: startedAt,
+                parentRunID: parentRunID
             ),
             notes: notes
         )
@@ -104,6 +108,19 @@ struct NoteReceiptPresentationTests {
         #expect(Self.receipt(failed: true, runs: runs) == .notSent)
         #expect(Self.receipt(redirect: true, runs: runs) == .redirectSent)
         #expect(Self.receipt(runs: []) == .sent)
+    }
+
+    @Test("A redirect note is read when the run that continues the stopped one begins work")
+    func redirectRead() {
+        let began = Self.t0.addingTimeInterval(30)
+        let stopped = Self.run("run-1", state: .cancelled)
+        let waiting = Self.run("run-2", state: .queued, parentRunID: "run-1")
+        #expect(Self.receipt(redirect: true, runs: [stopped, waiting]) == .redirectSent)
+        let working = Self.run("run-2", state: .running, startedAt: began, parentRunID: "run-1")
+        #expect(Self.receipt(redirect: true, runs: [stopped, working]) == .read(began))
+        // A run that continues another stopped run does not count.
+        let other = Self.run("run-3", state: .running, startedAt: began, parentRunID: "run-9")
+        #expect(Self.receipt(redirect: true, runs: [stopped, other]) == .redirectSent)
     }
 
     @Test("The words, and which receipts offer Send again")

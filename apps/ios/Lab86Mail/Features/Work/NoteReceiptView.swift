@@ -36,7 +36,14 @@ enum NoteReceiptPresentation {
         runs: [ThreadRunView]
     ) -> NoteReceipt {
         if failed { return .notSent }
-        if redirect { return .redirectSent }
+        if redirect {
+            // A redirect note is the first instruction of the run that
+            // continues the stopped one (`runID`); it read the note when it
+            // began work.
+            let restarted = runs.first { $0.run.parentRunID == runID && $0.run.startedAt != nil }
+            if let startedAt = restarted?.run.startedAt { return .read(startedAt) }
+            return .redirectSent
+        }
         for view in runs.reversed() {
             guard let note = view.note(id: noteID) else { continue }
             if let readAt = note.readAt { return .read(readAt) }

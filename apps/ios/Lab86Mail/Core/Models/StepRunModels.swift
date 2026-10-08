@@ -283,6 +283,9 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
     let stoppedBy: StoppedBy?
     let error: String?
     let createdAt: Date?
+    /// When the run began work. A redirect note was read then (T8).
+    /// Optional so cached runs from older servers keep decoding.
+    let startedAt: Date?
     let updatedAt: Date?
     let finishedAt: Date?
     /// The run this one continues ("Continue" after a handoff). Optional so
@@ -306,6 +309,7 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         stoppedBy: StoppedBy? = nil,
         error: String? = nil,
         createdAt: Date? = nil,
+        startedAt: Date? = nil,
         updatedAt: Date? = nil,
         finishedAt: Date? = nil,
         parentRunID: String? = nil
@@ -326,6 +330,7 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         self.stoppedBy = stoppedBy
         self.error = error
         self.createdAt = createdAt
+        self.startedAt = startedAt
         self.updatedAt = updatedAt
         self.finishedAt = finishedAt
         self.parentRunID = parentRunID
@@ -352,6 +357,7 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         stoppedBy = json["stoppedBy"]?.stringValue.map { StoppedBy.from($0) }
         error = json["error"]?.stringValue?.nilIfBlank
         createdAt = CalendarDateParser.date(json["createdAt"])
+        startedAt = CalendarDateParser.date(json["startedAt"])
         updatedAt = CalendarDateParser.date(json["updatedAt"])
         finishedAt = CalendarDateParser.date(json["finishedAt"])
         parentRunID = json["parentRunId"]?.stringValue?.nilIfBlank
@@ -383,6 +389,7 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
             stoppedBy: stoppedBy,
             error: error,
             createdAt: createdAt,
+            startedAt: startedAt,
             updatedAt: updatedAt,
             finishedAt: finishedAt,
             parentRunID: parentRunID

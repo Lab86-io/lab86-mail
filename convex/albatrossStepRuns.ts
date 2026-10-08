@@ -193,6 +193,8 @@ export function stepRunView(run: RunDoc) {
     stoppedBy: run.budget?.exhausted ?? null,
     error: run.error ?? null,
     createdAt: run.createdAt,
+    // When the run began work: a redirect note was read then (T8).
+    startedAt: run.startedAt ?? null,
     updatedAt: run.updatedAt,
     finishedAt: run.finishedAt ?? null,
   };

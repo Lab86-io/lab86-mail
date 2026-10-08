@@ -54,6 +54,10 @@ export function ChatContainer({
   const scrollMemoryRef = useRef(scrollMemory);
   scrollMemoryRef.current = scrollMemory;
   const restoredRef = useRef(false);
+  // A remembered place the content is still too short to reach. The thread
+  // loads its messages after the first layout, so the place is set again as
+  // the content grows, until it fits or the reader scrolls.
+  const pendingTopRef = useRef<number | null>(null);
   const lastScrollTopRef = useRef(0);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -73,6 +77,12 @@ export function ChatContainer({
     const viewport = viewportRef.current;
     if (!viewport) return;
     const onScroll = () => {
+      if (pendingTopRef.current !== null) {
+        // Our own placement moved the view: do not save a place the short
+        // content clamped. Any other move is the reader's, and wins.
+        if (Math.abs(viewport.scrollTop - lastScrollTopRef.current) <= 1) return;
+        pendingTopRef.current = null;
+      }
       const distFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
       const nearBottom = distFromBottom <= bottomThreshold;
       // ResizeObserver and native scroll events can arrive in either order.
@@ -91,18 +101,27 @@ export function ChatContainer({
   useEffect(() => {
     const content = contentRef.current;
     if (!content) return;
+    const placePending = () => {
+      const viewport = viewportRef.current;
+      const top = pendingTopRef.current;
+      if (top === null || !viewport) return;
+      viewport.scrollTop = top;
+      lastScrollTopRef.current = viewport.scrollTop;
+      if (viewport.scrollHeight - viewport.clientHeight >= top) pendingTopRef.current = null;
+    };
     const observer = new ResizeObserver(() => {
-      if (autoScroll && atBottomRef.current) scrollToBottom('instant');
+      if (pendingTopRef.current !== null) placePending();
+      else if (autoScroll && atBottomRef.current) scrollToBottom('instant');
     });
     observer.observe(content);
     // The first layout: the remembered place, else the bottom.
     const remembered = restoredRef.current ? null : scrollMemoryRef.current?.restore();
     restoredRef.current = true;
-    if (remembered && !remembered.atBottom && viewportRef.current) {
+    if (remembered && !remembered.atBottom) {
       atBottomRef.current = false;
-      viewportRef.current.scrollTop = remembered.top;
-      lastScrollTopRef.current = remembered.top;
+      pendingTopRef.current = remembered.top;
       setIsAtBottom(false);
+      placePending();
     } else if (autoScroll) scrollToBottom('instant');
     return () => observer.disconnect();
   }, [autoScroll, scrollToBottom]);

@@ -24,6 +24,8 @@ function run(over: {
   stepKey?: string;
   createdAt?: number;
   notes?: Note[];
+  parentRunId?: string | null;
+  startedAt?: number | null;
 }) {
   return {
     id: over.id,
@@ -31,6 +33,8 @@ function run(over: {
     state: over.state,
     createdAt: over.createdAt ?? NOW - 60_000,
     notes: over.notes ?? [],
+    parentRunId: over.parentRunId ?? null,
+    startedAt: over.startedAt ?? null,
   };
 }
 
@@ -149,6 +153,20 @@ describe('the receipt', () => {
       sendAgain: false,
       readAt: null,
     });
+    // The run that continues the stopped one read the note when it began work.
+    const stopped = run({ id: 'run_1', state: 'cancelled' });
+    const waiting = run({ id: 'run_2', state: 'queued', parentRunId: 'run_1' });
+    expect(noteReceipt(redirect, [stopped, waiting], { time })?.kind).toBe('redirect');
+    const began = run({ id: 'run_2', state: 'running', parentRunId: 'run_1', startedAt: NOW - 5_000 });
+    expect(noteReceipt(redirect, [stopped, began], { time })).toEqual({
+      kind: 'read',
+      line: `${NOTE_RECEIPT_COPY.read} · ${time(NOW - 5_000)}`,
+      sendAgain: false,
+      readAt: NOW - 5_000,
+    });
+    // A run of another stopped run does not count.
+    const other = run({ id: 'run_3', state: 'running', parentRunId: 'run_9', startedAt: NOW });
+    expect(noteReceipt(redirect, [stopped, other], { time })?.kind).toBe('redirect');
     const failed = withSteerFailed(message, true);
     expect(noteReceipt(failed, [run({ id: 'run_1', state: 'running' })], { time })).toEqual({
       kind: 'failed',

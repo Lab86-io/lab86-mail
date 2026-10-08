@@ -916,10 +916,13 @@ export function WorkThread({ workId }: { workId: string }) {
         );
         if (action === 'start' && typeof result?.runId === 'string') startedHere.current.add(result.runId);
         if (action === 'resume' && typeof result?.runId === 'string') startedHere.current.add(result.runId);
+        setBusy({ runId: null, action: null, stepKey: null });
+        return true;
       } catch (cause) {
         setRunError(cause instanceof Error ? cause.message : fallback);
-      } finally {
-        setBusy({ runId: null, action: null, stepKey: null });
+        // The run keeps the mark without an action, so its block shows the error.
+        setBusy({ runId: mark.runId, action: null, stepKey: mark.stepKey });
+        return false;
       }
     },
     [workId],
@@ -1115,33 +1118,19 @@ export function WorkThread({ workId }: { workId: string }) {
           return false;
         }
       },
-      onRedirectStop: async (runId) => {
-        try {
-          await postJson(
-            `/api/albatross/work/${encodeURIComponent(workId)}/run`,
-            { action: 'cancel', runId },
-            THREAD_COPY.takeOverFailed,
-          );
-          return true;
-        } catch (cause) {
-          setRunError(cause instanceof Error ? cause.message : THREAD_COPY.takeOverFailed);
-          return false;
-        }
-      },
-      onRedirectResume: async (runId, note) => {
-        try {
-          const result = await postJson(
-            `/api/albatross/work/${encodeURIComponent(workId)}/run`,
-            { action: 'resume', runId, note },
-            THREAD_COPY.resumeFailed,
-          );
-          if (typeof result?.runId === 'string') startedHere.current.add(result.runId);
-          return true;
-        } catch (cause) {
-          setRunError(cause instanceof Error ? cause.message : THREAD_COPY.resumeFailed);
-          return false;
-        }
-      },
+      // The error of a failed stop or resume shows on the run's block.
+      onRedirectStop: (runId) =>
+        runAction(
+          'cancel',
+          { runId },
+          { runId, action: 'stop', stepKey: runs.find((run) => run.id === runId)?.stepKey ?? null },
+        ),
+      onRedirectResume: (runId, note) =>
+        runAction(
+          'resume',
+          { runId, note },
+          { runId, action: 'resume', stepKey: runs.find((run) => run.id === runId)?.stepKey ?? null },
+        ),
     }),
     [
       activeRun,
@@ -1150,6 +1139,7 @@ export function WorkThread({ workId }: { workId: string }) {
       navDeps,
       queryClient,
       runAction,
+      runs,
       session,
       sessionAction,
       setRegion,

@@ -90,6 +90,23 @@ struct AssistantAuditTests {
     }
 
     @Test
+    func aWorkThreadRequestKeepsTheDisplayPartsTheServerSaves() throws {
+        let shape: JSONValue = .object(["kind": .string("count"), "title": .string("Matches"), "value": .number(3)])
+        let event: (String, [String: JSONValue]) -> JSONValue = { type, fields in
+            .object(fields.merging(["type": .string(type)]) { current, _ in current })
+        }
+        for (sessionID, keepsShape) in [("work-w-course", true), ("ios-chat", false)] {
+            let chat = AssistantChatModel(backend: BackendClient(baseURL: nil), baseURL: nil, sessionID: sessionID)
+            let reply = chat.appendAssistantReply()
+            chat.apply(event: event("tool-input-start", ["toolCallId": .string("c1"), "toolName": .string("corpus_count")]), to: reply)
+            chat.apply(event: event("tool-output-available", ["toolCallId": .string("c1"), "output": .object([:])]), to: reply)
+            chat.apply(event: event("data-tool-shape", ["id": .string("c1"), "data": shape]), to: reply)
+            let parts = try chat.requestBody()["messages"]?.arrayValue?.first?["parts"]?.arrayValue ?? []
+            #expect(parts.contains { $0["type"]?.stringValue == "data-tool-shape" } == keepsShape)
+        }
+    }
+
+    @Test
     func aToolInputErrorShowsTheRealError() {
         let chat = AssistantChatModel(backend: BackendClient(baseURL: nil), baseURL: nil)
         let reply = chat.appendAssistantReply()

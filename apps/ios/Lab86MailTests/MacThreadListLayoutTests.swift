@@ -223,8 +223,13 @@ struct MacThreadListLayoutTests {
         #expect(MacThreadCommandState.filterItemTitle(.all) == "All Albatrosses")
         #expect(MacThreadCommandState.filterItemTitle(.needsYou) == "Needs You")
         #expect(MacThreadCommandState.filterItemTitle(.inProgress) == "In Progress")
-        #expect(MacGoCommandState.nextNeedsYouEnabled(needsYouCount: 1))
-        #expect(!MacGoCommandState.nextNeedsYouEnabled(needsYouCount: 0))
+        // Enabled exactly when the move finds a row in the same rows.
+        let rows = [Self.row(Self.live("needs1", status: .needsAnswer)), Self.row(Self.live("open", status: .idle))]
+        #expect(MacGoCommandState.nextNeedsYouEnabled(from: "open", in: rows))
+        #expect(MacGoCommandState.nextNeedsYouEnabled(from: nil, in: rows))
+        // The only needs-you row is the open one, or the filter hid them all.
+        #expect(!MacGoCommandState.nextNeedsYouEnabled(from: "needs1", in: rows))
+        #expect(!MacGoCommandState.nextNeedsYouEnabled(from: nil, in: [Self.row(Self.live("open", status: .idle))]))
         #expect(MacThreadListLayout.filters == [.all, .needsYou, .inProgress])
     }
 

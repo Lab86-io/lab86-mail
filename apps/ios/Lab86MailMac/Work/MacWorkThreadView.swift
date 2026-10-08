@@ -753,7 +753,11 @@ struct MacWorkThreadView: View {
         if model.redirectArmed != nil {
             let text = draft
             clearDraft()
-            Task { await model.sendRedirect(text) }
+            Task {
+                // The run did not continue: the text comes back to the field.
+                let continued = await model.sendRedirect(text)
+                if !continued, draft.isEmpty { draft = text }
+            }
             return
         }
         // A note to the run that works, straight to the run (T7).

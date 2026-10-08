@@ -1802,16 +1802,12 @@ function ChatComposer({
   /** The thread's draft: read on mount, written on every change (T3). */
   draftMemory?: { get: () => string; set: (text: string) => void };
 }) {
-  const [value, setValueState] = useState(() => draftMemory?.get() ?? '');
-  const setValue = useCallback(
-    (next: string | ((current: string) => string)) =>
-      setValueState((current) => {
-        const resolved = typeof next === 'function' ? next(current) : next;
-        draftMemory?.set(resolved);
-        return resolved;
-      }),
-    [draftMemory],
-  );
+  const [value, setValue] = useState(() => draftMemory?.get() ?? '');
+  // The thread keeps its draft across hops. An effect, not the state updater:
+  // the write tells the rail, and a render must not update other components.
+  useEffect(() => {
+    draftMemory?.set(value);
+  }, [draftMemory, value]);
   const [noticeShown, setNoticeShown] = useState(false);
   const matches = useMemo(() => detectSecretShapes(value), [value]);
   const match = matches[0] ?? null;
