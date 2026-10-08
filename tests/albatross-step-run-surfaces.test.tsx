@@ -75,11 +75,11 @@ describe('Saved sign-ins', () => {
     );
   });
 
-  test('the row says Albatross never sees a password and offers Forget only when saved', () => {
+  test('the row says no password is kept here and offers Sign out only when saved', () => {
     const saved = renderToStaticMarkup(
       <SavedSignInsRow state={{ saved: true, lastUsedAt: NOW }} onForget={noop} />,
     );
-    expect(saved).toContain('Albatross never sees a password.');
+    expect(saved).toContain('No password is kept here.');
     expect(buttons(saved)).toEqual([SAVED_SIGN_INS_COPY.forget]);
     const none = renderToStaticMarkup(<SavedSignInsRow state={{ saved: false }} onForget={noop} />);
     expect(none).toContain(SAVED_SIGN_INS_COPY.none);

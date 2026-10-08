@@ -1,9 +1,11 @@
 'use client';
 
-// Settings, Saved sign-ins: the shared browser keeps the sites the user signed
-// in to, so the step runner finds them signed in next time. The row says
-// whether a saved context exists and offers to forget it. The server contract
-// is GET and DELETE /api/albatross/browser-context.
+// Settings, Signed-in sites: the shared browser keeps the sites the user
+// signed in to, so the step runner finds them signed in next time. No
+// password is kept here; the passwords Albatross types live in Passwords and
+// IDs, and this row is the last group of that tab (docs/albatross-secure-store.md,
+// lead decision 2). The server contract is GET and DELETE
+// /api/albatross/browser-context.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -19,14 +21,14 @@ export interface BrowserContextState {
 }
 
 export const SAVED_SIGN_INS_COPY = {
-  title: 'Saved sign-ins',
+  title: 'Signed-in sites',
   description:
-    'When you sign in to a site in the shared browser, the browser keeps that sign-in for the next run. Albatross never sees a password.',
-  none: 'No saved sign-ins.',
-  forget: 'Forget saved sign-ins',
-  forgetting: 'Forgetting…',
+    'When you sign in to a site in the shared browser, the browser stays signed in for the next run. No password is kept here.',
+  none: 'No signed-in sites.',
+  forget: 'Sign out everywhere',
+  forgetting: 'Signing out…',
   loading: 'Checking…',
-  error: 'Could not check the saved sign-ins.',
+  error: 'Could not check the signed-in sites.',
 } as const;
 
 export function savedSignInsHint(state: BrowserContextState | null, now = Date.now()): string {
@@ -100,9 +102,9 @@ export function SavedSignIns() {
     mutationFn: async () => readJson(await fetch('/api/albatross/browser-context', { method: 'DELETE' })),
     onSuccess: () => {
       qc.setQueryData<BrowserContextState>(QUERY_KEY, { saved: false });
-      toast.success('Saved sign-ins forgotten');
+      toast.success('Signed out of every site');
     },
-    onError: (err: any) => toast.error(err?.message || 'Could not forget the saved sign-ins'),
+    onError: (err: any) => toast.error(err?.message || 'Could not sign out'),
   });
   return (
     <SavedSignInsRow

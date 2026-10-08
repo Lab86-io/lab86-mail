@@ -5,11 +5,17 @@
 // Albatross did"; the summary, the question form or the handoff, and the one
 // primary button follow. A continued run attaches under its parent.
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { FormQuestionCard, type FormReceipt } from '@/components/ai-elements/form-question-card';
 import { Task, TaskContent, TaskItem, TaskTrigger } from '@/components/ai-elements/task';
 import { ShimmerText } from '@/components/odysseyui/text-shimmer';
 import { Button } from '@/components/ui/button';
+import {
+  type AllowScope,
+  allowAnswerOf,
+  SAVE_SIGN_IN_COPY,
+  saveSignInOffer,
+} from '@/lib/albatross/secure-view';
 import {
   artifactBehaviour,
   artifactKindLabel,
@@ -39,7 +45,9 @@ import {
   savedLabelsFromAnswer,
   stoppedReason,
 } from '@/lib/albatross/thread-view';
+import type { SecureItemView } from '@/lib/secure/contract';
 import { cn } from '@/lib/utils';
+import { AllowSecureBlock, type AllowSecureNote } from './AllowSecureBlock';
 
 export interface RunBlockProps {
   run: ThreadRunView;
@@ -54,8 +62,21 @@ export interface RunBlockProps {
   /** The saved details, for a question's bound fields. */
   details?: readonly PersonalDetailView[];
   /** The action in flight on this run, if any. */
-  busy?: 'stop' | 'resume' | 'dismiss' | 'start' | 'answer' | 'mark_done' | null;
+  busy?: 'stop' | 'resume' | 'dismiss' | 'start' | 'answer' | 'mark_done' | 'allow' | null;
   error?: string | null;
+  /** The saved Passwords and IDs: a sign-in handoff offers to save one only when none covers its site. */
+  secureItems?: readonly SecureItemView[];
+  /** The allow scope in flight while the identity check runs (`busy` is 'allow'). */
+  allowBusy?: AllowScope | null;
+  /** The line after a cancelled or failed check on this run's allow block. */
+  allowNote?: AllowSecureNote | null;
+  /** The answer this client sent, before the live run carries it. */
+  allowAnswered?: AllowScope | null;
+  /** The sign-in for this handoff's site was saved from its offer (V13). */
+  signInSaved?: boolean;
+  onAllow?: (run: ThreadRunView, scope: AllowScope) => void;
+  onSaveSignIn?: (run: ThreadRunView, site: string) => void;
+  onOpenSecureSettings?: () => void;
   /** Field errors the answer route returned, by field id. */
   answerErrors?: Record<string, string> | null;
   timeZone?: string;
@@ -100,6 +121,15 @@ export function RunBlock(props: RunBlockProps) {
   const question = run.state === 'handed_off' && run.outcome === 'needs_answer' ? run.question : null;
   const showPageRow = !pageOpen && runUsesPage(run) && Boolean(props.onOpenPage);
   const stamp = formatLogTime(run.finishedAt ?? run.updatedAt, undefined, timeZone);
+  // Passwords and IDs: the allow block, and the offer to save a sign-in on a sign-in handoff.
+  const allow =
+    run.state === 'handed_off' && run.next?.kind === 'allow_secure' ? (run.next.allow ?? null) : null;
+  const allowAnswer = props.allowAnswered ? { scope: props.allowAnswered } : allowAnswerOf(run);
+  const offer = saveSignInOffer(run, props.secureItems);
+  const [offerDismissed, setOfferDismissed] = useState(false);
+  const savedSite =
+    props.signInSaved && run.next?.kind === 'sign_in' ? (run.next.saveSignIn?.site ?? null) : null;
+  const detailLine = savedSite ? SAVE_SIGN_IN_COPY.detailAfterSave : run.next?.detail;
 
   return (
     <section
@@ -215,11 +245,54 @@ export function RunBlock(props: RunBlockProps) {
         />
       ) : null}
 
+      {allow ? (
+        <div {...(allowAnswer ? {} : { [PENDING_FORM_ATTRIBUTE]: '' })}>
+          <AllowSecureBlock
+            allow={allow}
+            headline={state.text}
+            answer={allowAnswer}
+            busyScope={busy === 'allow' ? (props.allowBusy ?? 'once') : null}
+            note={props.allowNote}
+            onAnswer={(scope) => props.onAllow?.(run, scope)}
+            onOpenSettings={props.onOpenSecureSettings}
+          />
+        </div>
+      ) : null}
+
       {run.state === 'handed_off' && run.outcome !== 'needs_answer' && run.outcome !== 'stopped' ? (
         <div className="flex flex-col gap-0.5">
           <span className={cn('text-[11.5px] font-medium', TONE_CLASS[state.tone])}>{state.text}</span>
-          {run.next?.detail ? (
-            <p className="text-[14px] font-medium leading-snug">{run.next.detail}</p>
+          {detailLine ? <p className="text-[14px] font-medium leading-snug">{detailLine}</p> : null}
+          {savedSite ? (
+            <p
+              data-slot="save-sign-in-saved"
+              className="pt-1 text-[12.5px] font-medium text-[var(--color-accent-3)]"
+            >
+              {SAVE_SIGN_IN_COPY.saved(savedSite)}
+            </p>
+          ) : offer && !offerDismissed ? (
+            <div
+              data-slot="save-sign-in-offer"
+              className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-ui border border-[var(--color-border)] px-3 py-2 text-[12.5px]"
+            >
+              <span className="min-w-0 flex-1 text-[var(--color-text-muted)]">
+                {SAVE_SIGN_IN_COPY.offer(offer.site)}
+              </span>
+              <button
+                type="button"
+                className="text-[11.5px] font-medium text-[var(--color-accent)] hover:underline"
+                onClick={() => props.onSaveSignIn?.(run, offer.site)}
+              >
+                {SAVE_SIGN_IN_COPY.save}
+              </button>
+              <button
+                type="button"
+                className="text-[11.5px] font-medium text-[var(--color-text-muted)] hover:underline"
+                onClick={() => setOfferDismissed(true)}
+              >
+                {SAVE_SIGN_IN_COPY.notNow}
+              </button>
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -249,7 +322,7 @@ export function RunBlock(props: RunBlockProps) {
           ) : null}
           {action.kind === 'resume' ? (
             <Button type="button" size="sm" disabled={Boolean(busy)} onClick={() => props.onResume(run)}>
-              {busy === 'resume' ? 'Continuing…' : action.label}
+              {busy === 'resume' ? 'Continuing…' : savedSite ? RUN_STATE_COPY.continueButton : action.label}
             </Button>
           ) : null}
           {action.kind === 'next' ? (

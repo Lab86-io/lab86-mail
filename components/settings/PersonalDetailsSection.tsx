@@ -15,6 +15,7 @@ import {
   PERSONAL_DETAILS_QUERY_KEY,
   usePersonalDetails,
 } from '@/components/ai-elements/use-personal-details';
+import { useSecureDetails } from '@/components/ai-elements/use-secure-details';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -66,6 +67,8 @@ export interface PersonalDetailsListProps {
   onSave: (key: string, value: unknown, label?: string) => Promise<boolean>;
   onDelete: (key: string, label: string) => void;
   timeZone?: string;
+  /** Passwords and IDs is on for this user: the blurb points there. */
+  secureEnabled?: boolean;
 }
 
 export function PersonalDetailsList({
@@ -78,6 +81,7 @@ export function PersonalDetailsList({
   onSave,
   onDelete,
   timeZone,
+  secureEnabled,
 }: PersonalDetailsListProps) {
   const [editing, setEditing] = useState<string | 'new' | null>(null);
   const rows = personalDetailRows(response, PERSONAL_DETAIL_LABELS);
@@ -85,7 +89,7 @@ export function PersonalDetailsList({
     <section data-slot="personal-details">
       <SectionHeading
         title={PERSONAL_DETAILS_COPY.title}
-        blurb={PERSONAL_DETAILS_COPY.blurb}
+        blurb={secureEnabled ? PERSONAL_DETAILS_COPY.blurbWithSecure : PERSONAL_DETAILS_COPY.blurb}
         aside={response ? savedCountLine(response.details) : undefined}
       />
       <SettingsCard>
@@ -289,6 +293,7 @@ async function readJson(res: Response) {
 export function PersonalDetailsSection({ accountName }: { accountName?: string | null }) {
   const qc = useQueryClient();
   const query = usePersonalDetails();
+  const secure = useSecureDetails();
   const [error, setError] = useState<DetailSaveError | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
@@ -317,6 +322,7 @@ export function PersonalDetailsSection({ accountName }: { accountName?: string |
     <PersonalDetailsList
       response={query.data ?? null}
       accountName={accountName}
+      secureEnabled={Boolean(secure.data?.enabled)}
       loading={query.isLoading}
       loadError={query.isError ? PERSONAL_DETAILS_COPY.loadError : null}
       busyKey={busyKey}

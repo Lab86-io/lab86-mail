@@ -47,8 +47,27 @@ export const RUN_STATE_COPY = {
 
 export type RunBlockTone = 'working' | 'waiting' | 'done' | 'failed' | 'quiet';
 
+/**
+ * True when a needs_answer handoff has its answer: the form was answered or
+ * skipped, or the allow_secure block holds a stored answer (secure store,
+ * lead decision 10).
+ */
+export function runQuestionAnswered(
+  run: Pick<ThreadRunView, 'outcome' | 'question'> & {
+    next?: { kind?: string; allowAnswer?: unknown } | null;
+  },
+): boolean {
+  if (run.outcome !== 'needs_answer') return false;
+  if (run.question) return run.question.status !== 'pending';
+  return run.next?.kind === 'allow_secure' && Boolean(run.next.allowAnswer);
+}
+
 /** The state word on the right of a run block header, and its tone. */
-export function runStateLine(run: Pick<ThreadRunView, 'state' | 'outcome' | 'stoppedBy' | 'question'>): {
+export function runStateLine(
+  run: Pick<ThreadRunView, 'state' | 'outcome' | 'stoppedBy' | 'question'> & {
+    next?: { kind?: string; allowAnswer?: unknown } | null;
+  },
+): {
   text: string;
   tone: RunBlockTone;
 } {
@@ -59,7 +78,7 @@ export function runStateLine(run: Pick<ThreadRunView, 'state' | 'outcome' | 'sto
       return { text: RUN_STATE_COPY.running, tone: 'working' };
     case 'handed_off':
       if (run.outcome === 'needs_answer') {
-        return run.question && run.question.status !== 'pending'
+        return runQuestionAnswered(run)
           ? { text: RUN_STATE_COPY.answered, tone: 'quiet' }
           : { text: RUN_STATE_COPY.needsAnswer, tone: 'waiting' };
       }
@@ -141,9 +160,15 @@ export function runBlockAction(
   }
 }
 
-/** The quiet second button: "Dismiss" on every open handoff. */
-export function runBlockDismisses(run: Pick<ThreadRunView, 'state' | 'outcome' | 'question'>): boolean {
+/**
+ * The quiet second button: "Dismiss" on every open handoff. An allow_secure
+ * block has its own quiet refusal ("Do not allow"), so it offers no Dismiss.
+ */
+export function runBlockDismisses(
+  run: Pick<ThreadRunView, 'state' | 'outcome' | 'question'> & { next?: { kind?: string } | null },
+): boolean {
   if (run.state !== 'handed_off') return false;
+  if (run.next?.kind === 'allow_secure') return false;
   if (run.outcome === 'needs_answer') return !run.question || run.question.status === 'pending';
   return true;
 }
@@ -369,10 +394,10 @@ export function threadStateInput(
         (run) =>
           run.state === 'handed_off' &&
           (!current || run.stepKey === current.key) &&
-          !(run.outcome === 'needs_answer' && run.question && run.question.status !== 'pending'),
+          !runQuestionAnswered(run),
       ) ?? null;
   const pendingQuestion =
-    (handoff?.outcome === 'needs_answer' && (!handoff.question || handoff.question.status === 'pending')) ||
+    (handoff?.outcome === 'needs_answer' && !runQuestionAnswered(handoff)) ||
     Boolean(detail?.questions.some((question) => question.status === 'pending'));
   return {
     workState: detail?.work.workState ?? null,
@@ -619,6 +644,9 @@ export const PERSONAL_DETAILS_COPY = {
   title: 'Personal details',
   blurb:
     'Albatross types these into forms for you. It never keeps passwords, card numbers, or ID numbers here.',
+  /** When Passwords and IDs is on for this user, the blurb points there instead. */
+  blurbWithSecure:
+    'Albatross types these into forms for you. Passwords, ID numbers, and keys go in Passwords and IDs.',
   notSaved: 'Not saved',
   add: 'Add',
   change: 'Change',

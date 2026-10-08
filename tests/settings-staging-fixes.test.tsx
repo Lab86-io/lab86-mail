@@ -55,8 +55,7 @@ describe('Standing orders', () => {
       'On a schedule',
       'In your mail',
       'What the assistant may do in chat',
-      // Saved sign-ins (the step runner's shared browser) sit under the orders.
-      'In the shared browser',
+      // "Signed-in sites" (the shared browser) moved to Passwords and IDs (docs/albatross-secure-store.md).
     ]);
     for (const title of titles) {
       // first:mt-0 must never apply: no title is the first child of its parent.

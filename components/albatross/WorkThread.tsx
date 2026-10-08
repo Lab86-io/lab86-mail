@@ -7,12 +7,21 @@
 // is the page pane or the details panel, never both. `WorkThreadView` renders
 // from a model so the dev harness and the tests mount it without a backend.
 
+import { useReverification } from '@clerk/nextjs';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ChatTransport, UIMessage } from 'ai';
 import { useConvexAuth, useQuery } from 'convex/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 import { usePersonalDetails } from '@/components/ai-elements/use-personal-details';
+import {
+  answerSecureAllow,
+  createSecureItem,
+  isIdentityCheckCancelled,
+  SECURE_DETAILS_QUERY_KEY,
+  SecureApiError,
+  useSecureDetails,
+} from '@/components/ai-elements/use-secure-details';
 import { LapsePrompt, ReleaseSheet } from '@/components/albatross/Forgiveness';
 import { HorizonControl } from '@/components/albatross/HorizonControl';
 import { SplitSheet } from '@/components/albatross/SplitSheet';
@@ -21,6 +30,7 @@ import { PracticeBody } from '@/components/albatross/shapes/PracticeBody';
 import { ProjectBody } from '@/components/albatross/shapes/ProjectBody';
 import { shapeFinishes, shapeShowsPlan } from '@/components/albatross/shapes/ShapeFrame';
 import { ShapePicker } from '@/components/albatross/shapes/ShapePicker';
+import { SecureItemSheet, type SecureSheetRequest } from '@/components/settings/SecureItemSheet';
 import { AssistantChat } from '@/components/shell/AIBar';
 import { Button } from '@/components/ui/button';
 import {
@@ -34,6 +44,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { useMediaQuery } from '@/hooks/use-media-query';
+import { ALLOW_COPY, type AllowScope } from '@/lib/albatross/secure-view';
 import { shapeDetail } from '@/lib/albatross/shape-policy';
 import { type NextBehaviour, runForStep } from '@/lib/albatross/step-run-client';
 import { performNextBehaviour } from '@/lib/albatross/step-run-navigation';
@@ -60,8 +71,10 @@ import {
 } from '@/lib/albatross/work-view';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import type { SecureItemView } from '@/lib/secure/contract';
 import { cn } from '@/lib/utils';
 import { undoPersonalDetails } from '../ai-elements/form-question-card';
+import type { AllowSecureNote } from './thread/AllowSecureBlock';
 import { DetailsPanel } from './thread/DetailsPanel';
 import { PagePane, type PageSession } from './thread/PagePane';
 import { PlanIntro, PlanLine, PlanOutro } from './thread/PlanIntro';
@@ -70,7 +83,7 @@ import { ThreadJumpPill } from './thread/ThreadJumpPill';
 import { useWorkShape, type WorkShapeState } from './thread/use-work-shape';
 
 export type ThreadRegion = 'page' | 'details' | null;
-export type RunBusy = 'stop' | 'resume' | 'dismiss' | 'start' | 'answer' | 'mark_done';
+export type RunBusy = 'stop' | 'resume' | 'dismiss' | 'start' | 'answer' | 'mark_done' | 'allow';
 
 export const THREAD_COPY = {
   back: 'Back',
@@ -123,6 +136,16 @@ export interface ThreadModel {
   /** True when the region is wide enough to dock beside the conversation. */
   wide: boolean;
   shape: WorkShapeState;
+  /** Passwords and IDs (docs/albatross-secure-store.md): the saved items, and the allow and save states. */
+  secureItems?: readonly SecureItemView[];
+  /** The allow scope in flight while the identity check runs; `busy.action` is 'allow'. */
+  allowBusy?: AllowScope | null;
+  /** The line after a cancelled or failed check, on one run. */
+  allowNote?: ({ runId: string } & AllowSecureNote) | null;
+  /** The answers this client sent, by run id, before the live run carries them. */
+  allowAnswered?: Readonly<Record<string, AllowScope>>;
+  /** The runs whose sign-in offer was saved in this visit (V13). */
+  signInSaved?: ReadonlySet<string>;
 }
 
 export interface ThreadHandlers {
@@ -143,6 +166,11 @@ export interface ThreadHandlers {
   onRegionChange: (region: ThreadRegion) => void;
   onSetWorkState: (state: 'done' | 'active') => void;
   onError: (message: string) => void;
+  /** Answer an allow_secure block. "Allow once" and "Always on {site}" run the identity check. */
+  onAllow?: (run: ThreadRunView, scope: AllowScope) => void;
+  /** Open the add sheet for a sign-in on this handoff's site (V13). */
+  onSaveSignIn?: (run: ThreadRunView, site: string) => void;
+  onOpenSecureSettings?: () => void;
   /** The dev harness: a fixture transport, preview mode, and the messages to show. */
   chat?: { transport?: ChatTransport<UIMessage>; preview?: boolean; initialMessages?: UIMessage[] };
 }
@@ -220,6 +248,14 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
           onAnswer={handlers.onAnswer}
           onOpenPage={liveSession ? () => handlers.onRegionChange('page') : undefined}
           onUndoSave={handlers.onUndoSave}
+          secureItems={model.secureItems}
+          allowBusy={model.busy.runId === run.id ? model.allowBusy : null}
+          allowNote={model.allowNote?.runId === run.id ? model.allowNote : null}
+          allowAnswered={model.allowAnswered?.[run.id] ?? null}
+          signInSaved={model.signInSaved?.has(run.id)}
+          onAllow={handlers.onAllow}
+          onSaveSignIn={handlers.onSaveSignIn}
+          onOpenSecureSettings={handlers.onOpenSecureSettings}
         />
       );
     },
@@ -626,6 +662,14 @@ export function WorkThread({ workId }: { workId: string }) {
     isAuthenticated ? { workId, limit: 30 } : 'skip',
   ) as ThreadRunView[] | undefined;
   const personalDetails = usePersonalDetails(isAuthenticated);
+  const secure = useSecureDetails(isAuthenticated);
+  const [allowBusy, setAllowBusy] = useState<AllowScope | null>(null);
+  const [allowNote, setAllowNote] = useState<({ runId: string } & AllowSecureNote) | null>(null);
+  const [allowAnswered, setAllowAnswered] = useState<Record<string, AllowScope>>({});
+  const [signInSaved, setSignInSaved] = useState<ReadonlySet<string>>(() => new Set());
+  const [secureSheet, setSecureSheet] = useState<(SecureSheetRequest & { runId: string }) | null>(null);
+  // The two allows need the identity check: Clerk's modal opens on the 403 and the call retries.
+  const allowWithCheck = useReverification(answerSecureAllow);
   const shape = useWorkShape(workId, detail);
   const wide = useMediaQuery(THREAD_SPLIT_QUERY);
 
@@ -869,9 +913,49 @@ export function WorkThread({ workId }: { workId: string }) {
           .finally(() => setCompleting(false));
       },
       onError: (message) => setError(message),
+      onAllow: (run, scope) => {
+        const allow = run.next?.kind === 'allow_secure' ? run.next.allow : null;
+        if (!allow) return;
+        setBusy({ runId: run.id, action: 'allow', stepKey: run.stepKey });
+        setAllowBusy(scope);
+        setAllowNote(null);
+        // "Do not allow" needs no check (lead decision 5).
+        const send = scope === 'deny' ? answerSecureAllow : allowWithCheck;
+        void send({ runId: run.id, itemId: allow.itemId, site: allow.site, scope })
+          .then((result) => {
+            if (!result || !('runId' in result)) return;
+            if (result.runId) startedHere.current.add(result.runId);
+            setAllowAnswered((current) => ({ ...current, [run.id]: scope }));
+            void queryClient.invalidateQueries({ queryKey: SECURE_DETAILS_QUERY_KEY });
+          })
+          .catch((cause) => {
+            if (isIdentityCheckCancelled(cause)) {
+              setAllowNote({ runId: run.id, text: ALLOW_COPY.cancelled, tone: 'quiet' });
+              return;
+            }
+            // 409: another device answered first. The live run carries that answer.
+            if (cause instanceof SecureApiError && cause.status === 409) return;
+            setAllowNote({
+              runId: run.id,
+              text: cause instanceof SecureApiError && cause.message ? cause.message : ALLOW_COPY.failed,
+              tone: 'danger',
+            });
+          })
+          .finally(() => {
+            setAllowBusy(null);
+            setBusy((current) =>
+              current.action === 'allow' ? { runId: null, action: null, stepKey: null } : current,
+            );
+          });
+      },
+      onSaveSignIn: (run, site) => setSecureSheet({ kind: 'sign_in', site, runId: run.id }),
+      onOpenSecureSettings: () => {
+        window.location.assign('/settings?tab=secure');
+      },
     }),
     [
       activeRun,
+      allowWithCheck,
       detail,
       navDeps,
       queryClient,
@@ -939,6 +1023,25 @@ export function WorkThread({ workId }: { workId: string }) {
     region,
     wide,
     shape,
+    secureItems: secure.data?.items,
+    allowBusy,
+    allowNote,
+    allowAnswered,
+    signInSaved,
   };
-  return <WorkThreadView model={model} handlers={handlers} />;
+  return (
+    <>
+      <WorkThreadView model={model} handlers={handlers} />
+      <SecureItemSheet
+        request={secureSheet}
+        onClose={() => setSecureSheet(null)}
+        onSave={createSecureItem}
+        onSaved={() => {
+          if (secureSheet) setSignInSaved((current) => new Set([...current, secureSheet.runId]));
+          void queryClient.invalidateQueries({ queryKey: SECURE_DETAILS_QUERY_KEY });
+        }}
+        hasDateOfBirth={Boolean(secure.data?.items.some((item) => item.kind === 'date_of_birth'))}
+      />
+    </>
+  );
 }

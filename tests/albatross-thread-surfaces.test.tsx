@@ -377,6 +377,17 @@ describe('the personal details settings', () => {
     );
     expect(html).toContain('Personal details');
     expect(html).toContain('It never keeps passwords, card numbers, or ID numbers here.');
+    const withSecure = renderToStaticMarkup(
+      <PersonalDetailsList
+        response={threadDetailsWithPhone(NOW)}
+        secureEnabled
+        onSave={async () => true}
+        onDelete={noop}
+        timeZone="UTC"
+      />,
+    );
+    expect(withSecure).toContain('Passwords, ID numbers, and keys go in Passwords and IDs.');
+    expect(withSecure).not.toContain('It never keeps passwords');
     expect(html).toContain('3 saved');
     expect(html).toContain('Sam Rivera');
     expect(html).toContain('You changed this on Oct 4');

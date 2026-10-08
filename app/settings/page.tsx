@@ -23,6 +23,7 @@ import {
   useState,
 } from 'react';
 import { toast } from 'sonner';
+import { useSecureDetails } from '@/components/ai-elements/use-secure-details';
 import { TeachAreas } from '@/components/albatross/TeachAreas';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { NarrativeSettings } from '@/components/narrative/Narrative';
@@ -37,6 +38,7 @@ import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
 import { McpReconnectNote, McpSyncProblemNote } from '@/components/settings/McpConnectionNotes';
 import { PersonalDetailsSection } from '@/components/settings/PersonalDetailsSection';
 import { SavedRepliesSettings } from '@/components/settings/SavedRepliesSettings';
+import { SecureDetailsSection } from '@/components/settings/SecureDetailsSection';
 import { SignatureSettings } from '@/components/settings/SignatureSettings';
 import { StandingOrdersSection } from '@/components/settings/StandingOrdersSection';
 import { useFilesSurface, useSetFilesSurface } from '@/components/settings/surfaces';
@@ -69,6 +71,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/convex/_generated/api';
+import { SECURE_COPY } from '@/lib/albatross/secure-view';
 import { settingsNavGroups, settingsTabScrollLeft } from '@/lib/albatross/settings-nav';
 import { type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
 import { signOutAndClearStorage } from '@/lib/auth/sign-out-storage';
@@ -132,6 +135,7 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   shortcuts: () => <ShortcutsSection />,
   advanced: () => <AdvancedSection />,
   personal: () => <PersonalDetailsTab />,
+  secure: () => <SecureDetailsSection />,
   account: () => <AccountSection />,
 };
 
@@ -206,6 +210,18 @@ function SettingsPageBody() {
     setTab(next);
     window.history.replaceState(null, '', `/settings?tab=${next}`);
   };
+  // Passwords and IDs is behind a server flag: off for this user, the tab
+  // leaves the rail and a deep link to it lands on Personal details.
+  const secure = useSecureDetails();
+  const hiddenTabs = useMemo<SettingsTabId[]>(
+    () => (secure.data && !secure.data.enabled ? ['secure'] : []),
+    [secure.data],
+  );
+  useEffect(() => {
+    if (tab !== 'secure' || !hiddenTabs.includes('secure')) return;
+    setTab('personal');
+    window.history.replaceState(null, '', '/settings?tab=personal');
+  }, [tab, hiddenTabs]);
   // On a phone the tabs are one horizontal bar. Bring the active tab into view
   // on load (a deep link can name the last tab) and each time it changes.
   const navRef = useRef<HTMLElement>(null);
@@ -264,7 +280,7 @@ function SettingsPageBody() {
             aria-label="Settings sections"
             className="-mx-5 flex gap-1 overflow-x-auto px-5 md:sticky md:top-8 md:mx-0 md:flex-col md:gap-5 md:self-start md:overflow-visible md:px-0"
           >
-            {settingsNavGroups().map((group) => (
+            {settingsNavGroups(hiddenTabs).map((group) => (
               <div key={group.id} className="flex shrink-0 gap-1 md:flex-col md:gap-0.5">
                 <span className="hidden px-3 pb-1 text-[11px] font-medium text-[var(--color-text-faint)] md:block">
                   {group.label}
@@ -1496,6 +1512,7 @@ function ConnectionsSection() {
 // ---------------------------------------------------------------------------
 
 function AccountSection() {
+  const secure = useSecureDetails();
   const qc = useQueryClient();
   const openTab = useContext(OpenSettingsTab);
   const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
@@ -1598,7 +1615,8 @@ function AccountSection() {
                   <AlertDialogTitle>Delete your Albatross account?</AlertDialogTitle>
                   <AlertDialogDescription>
                     This removes every mailbox grant, the search index, your settings, and usage records from
-                    Albatross. It cannot be undone. Type{' '}
+                    Albatross. It cannot be undone.
+                    {secure.data?.enabled ? ` ${SECURE_COPY.deleteAccountLine}` : ''} Type{' '}
                     <span className="font-mono font-medium text-[var(--color-text)]">delete</span> to confirm.
                   </AlertDialogDescription>
                 </AlertDialogHeader>

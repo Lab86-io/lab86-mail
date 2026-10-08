@@ -31,10 +31,16 @@ import {
 } from '@/components/ai-elements/form-question-card';
 import { HitlPart, isToolApprovalPart, ToolApprovalPart } from '@/components/ai-elements/hitl-parts';
 import { RevealDot } from '@/components/ai-elements/reveal-dot';
+import { SecureRequestCard, type SecureRequestState } from '@/components/ai-elements/secure-request-card';
 import { ShapeCard } from '@/components/ai-elements/shapes/shape-card';
 import { ToolActivityRow } from '@/components/ai-elements/tool-activity';
 import { TOOL_UI_RENDERED_TOOLS, ToolUiDisplayPart } from '@/components/ai-elements/tool-ui-part';
 import { usePersonalDetails } from '@/components/ai-elements/use-personal-details';
+import {
+  createSecureItem,
+  SECURE_DETAILS_QUERY_KEY,
+  useSecureDetails,
+} from '@/components/ai-elements/use-secure-details';
 import { WorkLog } from '@/components/ai-elements/work-log';
 import {
   ChatContainer,
@@ -48,6 +54,7 @@ import {
   ThoughtChainStep,
   ThoughtChainTrigger,
 } from '@/components/odysseyui/thought-chain';
+import { SecureItemSheet, type SecureSheetRequest } from '@/components/settings/SecureItemSheet';
 import {
   AskHoldComposer,
   type AskHoldComposerProps,
@@ -56,6 +63,7 @@ import {
 import { AssistantGreeting } from '@/components/shell/AssistantGreeting';
 import { HoldThisControl } from '@/components/shell/HoldThisControl';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
+import { SecretNotice } from '@/components/shell/SecretNotice';
 import SiriOrb from '@/components/smoothui/siri-orb';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -82,6 +90,13 @@ import {
 import { routeEmailPreviewThread } from '@/lib/ai/email-preview-routing';
 import type { ToolShape } from '@/lib/ai/tool-shapes';
 import { type HoldCard, holdText, kickAdvance } from '@/lib/albatross/capture-client';
+import {
+  draftWithMarker,
+  savedMarker,
+  secretNoticeCanSave,
+  secretToItem,
+  secureRequestExisting,
+} from '@/lib/albatross/secure-view';
 import {
   createHitlAutoContinueGuard,
   isHitlToolName,
@@ -112,6 +127,8 @@ import {
   useClientStore,
 } from '@/lib/client-state';
 import { mailSearchShortcutLabel } from '@/lib/mail/search/focus-contract';
+import type { SecureItemView, SecureRequestAnswer, SecureRequestInput } from '@/lib/secure/contract';
+import { detectSecretShapes, redactSecretShapes } from '@/lib/secure/redact';
 import { formatDate } from '@/lib/shared/format';
 import { assistantPageContext, assistantPhrases } from '@/lib/shell/assistant-context';
 import { cn } from '@/lib/utils';
@@ -300,6 +317,18 @@ export function AssistantChat({
   const chatScopeLabel = thread ? thread.scope.label : storeScopeLabel;
   const scopeKey = `${chatScopeKind}:${chatScopeAreaId || ''}:${chatScopeWorkId || ''}`;
   const personalDetails = usePersonalDetails(!preview);
+  // Passwords and IDs: the chat card and the composer notice open one add sheet, hosted here.
+  const secureDetails = useSecureDetails(!preview);
+  const [secureSheet, setSecureSheet] = useState<{
+    request: SecureSheetRequest;
+    onSaved: (item: SecureItemView) => void;
+    onClosed?: () => void;
+  } | null>(null);
+  const openSecureSheet = useCallback(
+    (request: SecureSheetRequest, onSaved: (item: SecureItemView) => void, onClosed?: () => void) =>
+      setSecureSheet({ request, onSaved, onClosed }),
+    [],
+  );
 
   const setQuery = useClientStore((s) => s.setQuery);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
@@ -353,8 +382,8 @@ export function AssistantChat({
           return response;
         }) as typeof fetch,
         body: () => ({
-          // This client renders ask_form; the server offers it only to clients that say so.
-          clientCapabilities: ['ask_form'],
+          // This client renders ask_form and ask_secure_detail; the server offers them only to clients that say so.
+          clientCapabilities: ['ask_form', 'ask_secure_detail'],
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           briefResponse: useClientStore.getState().assistantBriefContext?.reference,
           areaDiscovery:
@@ -680,6 +709,11 @@ export function AssistantChat({
       openDraft: (draft) => openComposeNew(draft),
       openThread: (target) => routeEmailPreviewThread(target, { setThreadAccount, setSelectedThread }),
       personalDetails: personalDetails.data?.details,
+      secure: {
+        items: secureDetails.data?.items ?? NO_SECURE_ITEMS,
+        enabled: Boolean(secureDetails.data?.enabled),
+        openSheet: openSecureSheet,
+      },
       stepRun: threadRuns && threadRenderRun ? { runs: threadRuns, render: threadRenderRun } : undefined,
     }),
     [
@@ -689,6 +723,8 @@ export function AssistantChat({
       setThreadAccount,
       setSelectedThread,
       personalDetails.data?.details,
+      secureDetails.data,
+      openSecureSheet,
       threadRuns,
       threadRenderRun,
     ],
@@ -1324,6 +1360,7 @@ export function AssistantChat({
           onHeld={afterHeld}
           door={door}
           reduceMotion={reduceMotion}
+          secure={{ enabled: Boolean(secureDetails.data?.enabled), openSheet: openSecureSheet }}
           before={
             <>
               {chatScopeKind !== 'global' && !thread ? (
@@ -1401,6 +1438,19 @@ export function AssistantChat({
           }
         />
       </div>
+      <SecureItemSheet
+        request={secureSheet?.request ?? null}
+        onClose={() => {
+          secureSheet?.onClosed?.();
+          setSecureSheet(null);
+        }}
+        onSave={createSecureItem}
+        onSaved={(item) => {
+          secureSheet?.onSaved(item);
+          void qc.invalidateQueries({ queryKey: SECURE_DETAILS_QUERY_KEY });
+        }}
+        hasDateOfBirth={Boolean(secureDetails.data?.items.some((item) => item.kind === 'date_of_birth'))}
+      />
     </section>
   );
 }
@@ -1558,31 +1608,86 @@ function Thought({ parts, streaming }: { parts: any[]; streaming: boolean }) {
   );
 }
 
+// The composer, with the secret notice (docs/albatross-secure-store.md, V9;
+// lead decision 14). A value that looks like a secret shows the notice on
+// paste and on the first send. Return while it shows sends without the value:
+// the marker stays in the sent text. "Save in Passwords and IDs" opens the
+// add sheet with the value and takes it out of the draft.
 function ChatComposer({
   onSendText,
   hasFiles,
+  secure,
+  before,
   ...props
 }: Omit<AskHoldComposerProps, 'value' | 'onValueChange' | 'canSend' | 'onSend'> & {
   onSendText: (text: string) => Promise<boolean>;
   hasFiles: boolean;
+  secure?: { enabled: boolean; openSheet: SecureSheetOpener };
 }) {
   const [value, setValue] = useState('');
+  const [noticeShown, setNoticeShown] = useState(false);
+  const matches = useMemo(() => detectSecretShapes(value), [value]);
+  const match = matches[0] ?? null;
+  const noticeOpen = Boolean(match) && noticeShown;
+  const send = () => {
+    const draft = value;
+    if (match) {
+      if (!noticeShown) {
+        setNoticeShown(true);
+        return;
+      }
+      const sent = redactSecretShapes(draft).text;
+      void onSendText(sent).then((accepted) => {
+        if (!accepted) return;
+        setValue((current) => (current === draft ? '' : current));
+        setNoticeShown(false);
+      });
+      return;
+    }
+    void onSendText(draft).then((accepted) => {
+      if (accepted) setValue((current) => (current === draft ? '' : current));
+    });
+  };
+  const saveSecret = () => {
+    if (!match || !secure) return;
+    const item = secretToItem(match.kind, value.slice(match.start, match.end));
+    if (!item) return;
+    setValue(draftWithMarker(value, match, savedMarker(match.kind)));
+    setNoticeShown(false);
+    secure.openSheet({ kind: item.kind, values: item.values }, () => undefined);
+  };
   return (
-    <AskHoldComposer
-      {...props}
-      value={value}
-      onValueChange={setValue}
-      canSend={Boolean(value.trim()) || hasFiles}
-      onSend={() => {
-        const sent = value;
-        void onSendText(sent).then((accepted) => {
-          if (accepted) setValue((current) => (current === sent ? '' : current));
-        });
+    <div
+      onPasteCapture={(event) => {
+        const text = event.clipboardData?.getData('text') ?? '';
+        if (text && detectSecretShapes(text).length) setNoticeShown(true);
       }}
-      // "Ask now" on the Hold line: the text goes to chat. When chat cannot
-      // take it yet, the composer puts it back without a loss of a newer draft.
-      onAsk={onSendText}
-    />
+    >
+      <AskHoldComposer
+        {...props}
+        value={value}
+        onValueChange={setValue}
+        canSend={Boolean(value.trim()) || hasFiles}
+        onSend={send}
+        // "Ask now" on the Hold line: the text goes to chat. When chat cannot
+        // take it yet, the composer puts it back without a loss of a newer draft.
+        onAsk={onSendText}
+        before={
+          <>
+            {before}
+            {noticeOpen && match ? (
+              <SecretNotice
+                kind={match.kind}
+                canSave={secretNoticeCanSave(match.kind, secure?.enabled ?? false)}
+                onSave={saveSecret}
+                onSendWithout={send}
+                disabled={props.busy}
+              />
+            ) : null}
+          </>
+        }
+      />
+    </div>
   );
 }
 
@@ -1625,9 +1730,22 @@ export interface ChatPartHandlers {
   openThread?: (target: { account: string; threadId: string }) => void;
   /** The saved personal details, so an `ask_form` fills its bound fields. */
   personalDetails?: readonly PersonalDetailView[];
+  /** Passwords and IDs: the list (no values), the flag, and the one add sheet an `ask_secure_detail` card opens. */
+  secure?: {
+    items: readonly SecureItemView[];
+    enabled: boolean;
+    openSheet: (
+      request: SecureSheetRequest,
+      onSaved: (item: SecureItemView) => void,
+      onClosed?: () => void,
+    ) => void;
+  };
   /** The thread's live runs: a `step_run` shape renders its run block in place. */
   stepRun?: { runs: readonly ThreadRunView[]; render: (run: ThreadRunView, continues: boolean) => ReactNode };
 }
+const NO_SECURE_ITEMS: readonly SecureItemView[] = [];
+type SecureSheetOpener = NonNullable<ChatPartHandlers['secure']>['openSheet'];
+
 export const ChatPartContext = createContext<ChatPartHandlers>({ answer: () => {} });
 
 function TimelineDivider({ label }: { label: string }) {
@@ -1681,6 +1799,62 @@ function AskFormPart({ part }: { part: any }) {
         onSkip={() => answer('ask_form', part.toolCallId, { values: {}, save: false, skipped: true })}
       />
     </div>
+  );
+}
+
+// The chat's `ask_secure_detail` (docs/albatross-secure-store.md, V12): a card
+// that opens the add sheet and waits. The answer names the item, never a
+// value. "Already saved" comes from this client's own list.
+function AskSecureDetailPart({ part }: { part: any }) {
+  const { answer, secure } = useContext(ChatPartContext);
+  const [opening, setOpening] = useState(false);
+  const input = (part.input || {}) as Partial<SecureRequestInput>;
+  if (part.state === 'input-streaming' || !input.kind || !input.reason) return null;
+  const request: SecureRequestInput = {
+    kind: input.kind,
+    label: input.label ? String(input.label) : undefined,
+    site: input.site ? String(input.site) : undefined,
+    reason: String(input.reason),
+  };
+  const answered = part.state === 'output-available';
+  const output = (part.output || null) as SecureRequestAnswer | null;
+  const state: SecureRequestState = answered
+    ? output && 'saved' in output && output.saved
+      ? 'saved'
+      : 'skipped'
+    : opening
+      ? 'opening'
+      : 'pending';
+  const existing = answered ? null : secureRequestExisting(secure?.items ?? [], request);
+  const reply = (result: SecureRequestAnswer) =>
+    answer('ask_secure_detail', part.toolCallId, result as unknown as Record<string, unknown>);
+  return (
+    <SecureRequestCard
+      input={request}
+      state={state}
+      existing={existing}
+      onAdd={() => {
+        if (!secure) return;
+        setOpening(true);
+        secure.openSheet(
+          {
+            kind: request.kind,
+            site: request.site ?? null,
+            // The model chose this site: the sheet asks the user to check it.
+            siteSuggested: Boolean(request.site),
+            label: request.label ?? null,
+          },
+          (item) => {
+            setOpening(false);
+            reply({ saved: true, itemId: item.id });
+          },
+          () => setOpening(false),
+        );
+      }}
+      onSkip={() => reply({ skipped: true })}
+      onUseExisting={(item) => reply({ saved: true, itemId: item.id })}
+      onOpenSettings={() => window.location.assign('/settings?tab=secure')}
+    />
   );
 }
 
@@ -1754,6 +1928,7 @@ const Part = memo(function Part({
     const toolName = toolPartName(part);
     if (toolName === 'ask_user') return <AskUserPart part={part} />;
     if (toolName === 'ask_form') return <AskFormPart part={part} />;
+    if (toolName === 'ask_secure_detail') return <AskSecureDetailPart part={part} />;
     if (toolName === 'albatross_handle_step') return <StepRunPart part={part} shape={shape} />;
     if (isHitlToolName(toolName)) return <HitlToolPart toolName={toolName} part={part} />;
     if (isToolApprovalPart(part)) return <ToolApprovalCardPart toolName={toolName} part={part} />;
