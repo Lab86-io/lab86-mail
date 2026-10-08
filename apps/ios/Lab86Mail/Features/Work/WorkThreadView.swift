@@ -424,10 +424,11 @@ struct WorkThreadView: View {
             hidesContextChip: true,
             routeLine: model.runRouteLine,
             armed: model.redirectArmed == nil ? nil : ComposerArmedNotice(
-                text: RunBlockCopy.redirectArmedLine,
+                text: RunBlockCopy.redirectStripLine(hasFiles: !pendingFiles.isEmpty),
                 onCancel: { model.disarmRedirect() }
             ),
-            sendDisabled: model.sendsAreHeld,
+            // A redirect note is text only: an attached file holds the send.
+            sendDisabled: model.sendsAreHeld || (model.redirectArmed != nil && !pendingFiles.isEmpty),
             onSubmit: { submitDraft(model) },
             onAttach: { showsFileImporter = true }
         )
@@ -461,6 +462,8 @@ struct WorkThreadView: View {
         // "Stop and redirect" waits for this message: the stopped run goes
         // on with it (T8).
         if model.redirectArmed != nil {
+            // A run takes text only; the file and the text stay in the field.
+            guard pendingFiles.isEmpty else { return }
             let text = draft
             clearDraft()
             Task {

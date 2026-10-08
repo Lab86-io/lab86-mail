@@ -126,6 +126,13 @@ enum RunBlockCopy {
     static let stopAndRedirectHelp = "Albatross stops this run. Your next message starts it again."
     static let redirectPlaceholder = "What should Albatross do instead?"
     static let redirectArmedLine = "Stop and redirect: the run stopped. Your next message starts it again."
+    /// A redirect note is text only: a run cannot take a file.
+    static let redirectFilesLine = "A note to the run is text only. Remove the file to send it."
+
+    /// The strip over the composer while a redirect waits for its note.
+    static func redirectStripLine(hasFiles: Bool) -> String {
+        hasFiles ? redirectFilesLine : redirectArmedLine
+    }
     static let replyInProgress = "Reply in progress"
     static let replyInProgressPlaceholder = "Albatross writes a reply"
     static let askWhileRunPlaceholder = "Ask Albatross a question"

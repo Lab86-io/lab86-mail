@@ -397,27 +397,40 @@ final class WorkThreadModel {
     }
 
     /// "Send again" under a note the run never read, or never got (T9): the
-    /// open run, else the step starts again with the note first.
+    /// open run, else the step starts again with the note first. The button
+    /// hides while the send runs, and comes back when a restart fails.
     func sendAgain(_ message: AssistantChatMessage) async {
-        guard let steer = message.steer else { return }
+        guard let steer = message.steer, !resentNoteIDs.contains(message.id) else { return }
         let text = message.text
         resentNoteIDs.insert(message.id)
-        failedNoteIDs.remove(message.id)
         if let open = openRun {
+            failedNoteIDs.remove(message.id)
             let noteID = ThreadNoteID.make()
             chat.appendSteerMessage(text, id: noteID, runID: open.id, redirect: false)
             let sent = await store.steer(open, note: text, noteID: noteID, transport: transport)
             if !sent { failedNoteIDs.insert(noteID) }
         } else if let view = store.run(id: steer.runID) {
-            let runID: String?
+            var restarted = false
             if view.run.isHandoff {
-                runID = await store.resume(view, note: text, transport: transport)
-            } else {
-                runID = await store.start(stepKey: view.run.stepKey, stepTitle: view.run.stepTitle, note: text, transport: transport)
-            }
-            if let runID {
+                // The new run continues `view`, so the note keeps `view`'s id:
+                // its receipt reads from the run whose parent that is.
+                if await store.resume(view, note: text, transport: transport) != nil {
+                    chat.appendSteerMessage(text, id: ThreadNoteID.make(), runID: view.id, redirect: true)
+                    restarted = true
+                }
+            } else if let runID = await store.start(
+                stepKey: view.run.stepKey, stepTitle: view.run.stepTitle, note: text, transport: transport
+            ) {
                 chat.appendSteerMessage(text, id: ThreadNoteID.make(), runID: runID, redirect: true)
+                restarted = true
             }
+            if restarted {
+                failedNoteIDs.remove(message.id)
+            } else {
+                resentNoteIDs.remove(message.id)
+            }
+        } else {
+            resentNoteIDs.remove(message.id)
         }
         await store.load(transport)
         syncRunRoute()

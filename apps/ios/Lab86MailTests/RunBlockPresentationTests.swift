@@ -114,6 +114,9 @@ struct RunBlockPresentationTests {
         #expect(RunBlockCopy.doneLine(verification: nil) == "Done")
         #expect(RunBlockCopy.pageLine(host: "firstaidclass.example.com") == "Albatross is on the page · firstaidclass.example.com")
         #expect(RunBlockCopy.pageLine(host: nil) == "Albatross is on the page")
+        // A redirect note is text only: with a file attached, the strip says why Send waits.
+        #expect(RunBlockCopy.redirectStripLine(hasFiles: false) == RunBlockCopy.redirectArmedLine)
+        #expect(RunBlockCopy.redirectStripLine(hasFiles: true) == "A note to the run is text only. Remove the file to send it.")
         #expect(RunBlockCopy.logTitle == "What Albatross did")
     }
 
