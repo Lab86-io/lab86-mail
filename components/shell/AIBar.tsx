@@ -414,16 +414,24 @@ export function AssistantChat({
   // Read at send time, so opening or closing a document does not rebuild the transport.
   const threadDocumentRef = useRef<DocumentContextAttachment | null>(null);
   threadDocumentRef.current = thread?.document ?? null;
+  // A Work thread has its own context: the shared chat's Brief reply context
+  // never reaches its requests, or it would replace the Work and the open document.
+  const inThreadRef = useRef(false);
+  inThreadRef.current = Boolean(thread);
+  const sharedBriefContext = useCallback(
+    () => (inThreadRef.current ? null : useClientStore.getState().assistantBriefContext),
+    [],
+  );
   // The Work of this chat, and the document open in its document mode. Read at send time.
   const workContextAttachments = useCallback(
     () =>
-      !useClientStore.getState().assistantBriefContext && chatScopeKind === 'work' && chatScopeWorkId
+      !sharedBriefContext() && chatScopeKind === 'work' && chatScopeWorkId
         ? [
             { kind: 'work' as const, id: chatScopeWorkId },
             ...(threadDocumentRef.current ? [threadDocumentRef.current] : []),
           ]
         : undefined,
-    [chatScopeKind, chatScopeWorkId],
+    [chatScopeKind, chatScopeWorkId, sharedBriefContext],
   );
   const transport = useMemo(
     () =>
@@ -445,9 +453,9 @@ export function AssistantChat({
             ? baseUpdatedAtRef.current
             : undefined,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          briefResponse: useClientStore.getState().assistantBriefContext?.reference,
+          briefResponse: sharedBriefContext()?.reference,
           areaDiscovery:
-            !useClientStore.getState().assistantBriefContext && chatScopeKind === 'area' && chatScopeAreaId
+            !sharedBriefContext() && chatScopeKind === 'area' && chatScopeAreaId
               ? { mode: 'area', areaId: chatScopeAreaId }
               : undefined,
           contextAttachments: workContextAttachments(),
@@ -464,7 +472,7 @@ export function AssistantChat({
             .join('\n'),
         }),
       }),
-    [chatScopeAreaId, chatScopeKind, workContextAttachments],
+    [chatScopeAreaId, chatScopeKind, workContextAttachments, sharedBriefContext],
   );
   const shouldAutoContinueHitl = useMemo(() => createHitlAutoContinueGuard(), []);
   const shouldAutoContinueApproval = useMemo(

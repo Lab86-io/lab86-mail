@@ -87,4 +87,12 @@ describe('the chat sends the open document with every Work request', () => {
     for (const field of fields) expect(['workContextAttachments()', '[]']).toContain(field);
     expect(source).toContain('...(threadDocumentRef.current ? [threadDocumentRef.current] : [])');
   });
+
+  test('a Work thread never sends the shared chat Brief context', async () => {
+    const source = await Bun.file(new URL('../components/shell/AIBar.tsx', import.meta.url)).text();
+    // One read of the store value, inside sharedBriefContext, which is null in a thread.
+    expect(source.match(/getState\(\)\.assistantBriefContext/g)).toHaveLength(1);
+    expect(source).toContain('inThreadRef.current ? null : useClientStore.getState().assistantBriefContext');
+    expect(source).toContain('briefResponse: sharedBriefContext()?.reference');
+  });
 });
