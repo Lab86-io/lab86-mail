@@ -27,11 +27,12 @@ struct MacThreadRows<Header: View>: View {
     @State private var lastAnnouncedAt: Date = .distantPast
     @FocusState private var steerFocus: String?
 
+    // Computed: a generic type cannot hold static stored properties.
     /// The time labels count from a clock that ticks this often.
-    static let clockInterval: Duration = .seconds(30)
+    static var clockInterval: Duration { .seconds(30) }
     /// The section announces at most one attention line in this window
     /// (lead decision 10).
-    static let announcementWindow: TimeInterval = 10
+    static var announcementWindow: TimeInterval { 10 }
 
     /// "Stopped {title}" with "Continue", under the rows, for ten seconds.
     struct StopNotice: Equatable {

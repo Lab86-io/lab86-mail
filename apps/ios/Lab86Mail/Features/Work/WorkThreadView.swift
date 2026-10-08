@@ -38,7 +38,39 @@ struct WorkThreadView: View {
     /// The banner leaves by itself after this long.
     static let bannerDuration: Duration = .seconds(10)
 
+    // The body is three layers, so the type checker reads each chain on its
+    // own: the loaded thread and its tasks, the refresh triggers, then the
+    // thread-list hooks (docs/albatross-threads.md) and the file importer.
     var body: some View {
+        refreshed
+            .onChange(of: draft) { _, next in
+                environment.composerDrafts.set(next, files: pendingFiles, for: route.workID)
+            }
+            .onChange(of: pendingFiles.count) { _, _ in
+                environment.composerDrafts.set(draft, files: pendingFiles, for: route.workID)
+            }
+            // The thread is on screen: new activity is seen at once (T2).
+            .onChange(of: environment.threads.row(for: route.workID)?.unread) { _, unread in
+                guard unread == true else { return }
+                Task { await environment.threads.markSeen(workID: route.workID, transport: environment.backend) }
+            }
+            // Another Albatross needs the user while this one is open (T4).
+            .onChange(of: environment.threads.attention?.id) { _, _ in
+                guard showsAttentionBanner, let attention = environment.threads.attention else { return }
+                let rows = attention.rows.filter { $0.workID != route.workID }
+                guard !rows.isEmpty else { return }
+                showBanner(rows)
+            }
+            .onAppear { environment.threads.beginFollowing(environment.backend) }
+            .onDisappear { environment.threads.endFollowing() }
+            .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+                guard case .success(let urls) = result else { return }
+                AssistantComposerFiles.importing(urls, into: &pendingFiles)
+            }
+    }
+
+    /// The thread, its title, and the tasks that load and follow it.
+    private var loaded: some View {
         Group {
             if let model {
                 content(model)
@@ -72,46 +104,27 @@ struct WorkThreadView: View {
             guard let model else { return }
             await model.followServerReply()
         }
-        // A turn that ends may have started a run the poll did not see yet.
-        .onChange(of: model?.chat.isStreaming ?? false) { wasStreaming, isStreaming in
-            guard wasStreaming, !isStreaming, let model else { return }
-            Task { await model.turnDidEnd() }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            guard phase == .active, let model else { return }
-            Task { await model.refresh() }
-        }
-        .onChange(of: environment.navigation.workRefreshToken) { _, _ in
-            guard let model else { return }
-            Task { await model.refresh() }
-        }
-        .onChange(of: environment.navigation.workRoute?.intent) { _, intent in
-            applyIntent(intent)
-        }
-        .onChange(of: draft) { _, next in
-            environment.composerDrafts.set(next, files: pendingFiles, for: route.workID)
-        }
-        .onChange(of: pendingFiles.count) { _, _ in
-            environment.composerDrafts.set(draft, files: pendingFiles, for: route.workID)
-        }
-        // The thread is on screen: new activity is seen at once (T2).
-        .onChange(of: environment.threads.row(for: route.workID)?.unread) { _, unread in
-            guard unread == true else { return }
-            Task { await environment.threads.markSeen(workID: route.workID, transport: environment.backend) }
-        }
-        // Another Albatross needs the user while this one is open (T4).
-        .onChange(of: environment.threads.attention?.id) { _, _ in
-            guard showsAttentionBanner, let attention = environment.threads.attention else { return }
-            let rows = attention.rows.filter { $0.workID != route.workID }
-            guard !rows.isEmpty else { return }
-            showBanner(rows)
-        }
-        .onAppear { environment.threads.beginFollowing(environment.backend) }
-        .onDisappear { environment.threads.endFollowing() }
-        .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-            guard case .success(let urls) = result else { return }
-            AssistantComposerFiles.importing(urls, into: &pendingFiles)
-        }
+    }
+
+    /// The loaded thread with the events that refresh it.
+    private var refreshed: some View {
+        loaded
+            // A turn that ends may have started a run the poll did not see yet.
+            .onChange(of: model?.chat.isStreaming ?? false) { wasStreaming, isStreaming in
+                guard wasStreaming, !isStreaming, let model else { return }
+                Task { await model.turnDidEnd() }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active, let model else { return }
+                Task { await model.refresh() }
+            }
+            .onChange(of: environment.navigation.workRefreshToken) { _, _ in
+                guard let model else { return }
+                Task { await model.refresh() }
+            }
+            .onChange(of: environment.navigation.workRoute?.intent) { _, intent in
+                applyIntent(intent)
+            }
     }
 
     /// The poll task restarts when a run opens or closes, or a turn streams.
