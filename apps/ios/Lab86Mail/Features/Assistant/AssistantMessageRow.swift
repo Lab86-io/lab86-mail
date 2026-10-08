@@ -6,18 +6,26 @@ import SwiftUI
 // share it.
 struct AssistantMessageRow: View {
     @Environment(AppEnvironment.self) private var environment
+    // The thread this row renders inside, when it renders inside one: a note
+    // to a run gets its receipt from it (docs/albatross-threads.md, T7).
+    @Environment(\.workThread) private var workThread
     @Bindable var model: AssistantChatModel
     let message: AssistantChatMessage
 
     var body: some View {
         switch message.role {
         case .user:
-            HStack {
-                Spacer(minLength: 56)
-                Text(message.text)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .surfaceCard(cornerRadius: 20)
+            VStack(alignment: .trailing, spacing: 4) {
+                HStack {
+                    Spacer(minLength: 56)
+                    Text(message.text)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .surfaceCard(cornerRadius: 20)
+                }
+                if let thread = workThread, let receipt = thread.receipt(for: message) {
+                    noteReceipt(receipt, thread: thread)
+                }
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
@@ -76,6 +84,15 @@ struct AssistantMessageRow: View {
                 }
             }
         }
+    }
+
+    /// The receipt under a note to a run, with "Send again" once.
+    private func noteReceipt(_ receipt: NoteReceipt, thread: WorkThreadModel) -> some View {
+        let message = message
+        let sendAgain: (() -> Void)? = thread.canSendAgain(message)
+            ? { Task { await thread.sendAgain(message) } }
+            : nil
+        return NoteReceiptView(receipt: receipt, onSendAgain: sendAgain)
     }
 
     /// The action shows under a finished reply that carries text.

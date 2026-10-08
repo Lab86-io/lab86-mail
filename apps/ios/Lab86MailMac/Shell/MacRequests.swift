@@ -14,6 +14,9 @@ import Observation
 final class MacRequests {
     static let shared = MacRequests()
 
+    static let threadFilterKey = "macSidebarThreadFilter"
+    static let threadsExpandedKey = "macSidebarAlbatrossesExpanded"
+
     // ⌘R "Sync Calendar". The calendar surface runs a manual sync per change.
     private(set) var syncCalendarToken = 0
 
@@ -33,6 +36,23 @@ final class MacRequests {
     // thread writes it and clears it when it leaves the screen.
     var threadPaneMode: MacThreadPaneMode = .none
 
+    // ⌥⌘↑, ⌥⌘↓, and ⌥⌘↩ from the Go menu (docs/albatross-threads.md, T3).
+    // The shell opens the row named by `threadMoveTarget`.
+    private(set) var threadMoveToken = 0
+    private(set) var threadMoveTarget: MacThreadListLayout.Move = .next
+
+    // ⇧⌘. "Stop and Redirect…". The open thread stops its run and arms the
+    // composer (T8).
+    private(set) var redirectToken = 0
+
+    // ⇧⌘U "Mark as Unread" / "Mark as Read". The open thread flips its mark.
+    private(set) var toggleUnreadToken = 0
+
+    // The Albatrosses section of the source list: its filter (T12) and its
+    // disclosure, shared with the View menu and kept across launches.
+    private(set) var threadFilter: WorkFilter
+    private(set) var threadsExpanded: Bool
+
     // The source list. The thread collapses it when the pane needs the room
     // and restores it when the pane closes. The shell mirrors the live state
     // into `sidebarShown`.
@@ -44,7 +64,13 @@ final class MacRequests {
     // sets it; the calendar surface clears it once applied.
     var calendarDay: Date?
 
-    init() {}
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        threadFilter = defaults.string(forKey: Self.threadFilterKey).flatMap(WorkFilter.init(rawValue:)) ?? .all
+        threadsExpanded = defaults.object(forKey: Self.threadsExpandedKey) as? Bool ?? true
+    }
 
     func requestCalendarSync() {
         syncCalendarToken += 1
@@ -61,6 +87,33 @@ final class MacRequests {
     func requestThreadPane(_ target: MacThreadPaneMode) {
         threadPaneTarget = target
         threadPaneToken += 1
+    }
+
+    func requestThreadMove(_ move: MacThreadListLayout.Move) {
+        threadMoveTarget = move
+        threadMoveToken += 1
+    }
+
+    func requestRedirect() {
+        redirectToken += 1
+    }
+
+    func requestToggleUnread() {
+        toggleUnreadToken += 1
+    }
+
+    /// The header pull-down and the View menu write the same filter.
+    func setThreadFilter(_ filter: WorkFilter) {
+        guard threadFilter != filter else { return }
+        threadFilter = filter
+        defaults.set(filter.rawValue, forKey: Self.threadFilterKey)
+    }
+
+    /// The disclosure of the section, from its chevron or the View menu.
+    func setThreadsExpanded(_ expanded: Bool) {
+        guard threadsExpanded != expanded else { return }
+        threadsExpanded = expanded
+        defaults.set(expanded, forKey: Self.threadsExpandedKey)
     }
 
     func requestSidebar(visible: Bool) {

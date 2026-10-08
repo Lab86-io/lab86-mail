@@ -1,158 +1,310 @@
 import SwiftUI
 
-/// The Albatrosses page: every unresolved outcome the user is carrying.
+/// The Albatrosses page: every unresolved outcome the user is carrying, live
+/// (docs/albatross-threads.md, T1, T2, T10).
 ///
-/// It used to list Areas, which is how Albatrosses are filed, not what they
-/// are. A page named after the thing the product is about has to show that
-/// thing. Areas keep their own place at the foot of the list.
+/// The rows read `work_list` for the Work and `GET /api/albatross/threads`
+/// for the live state. "Needs you" first, then "In progress", then "Open";
+/// the Later shelf and the finished rows after. A row offers Answer, Steer,
+/// Stop, and Mark as unread in place. On iPad the list is a column beside
+/// the open thread. Areas keep their own place at the foot of the list.
 struct WorkView: View {
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.scenePhase) private var scenePhase
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
     @State private var filter: WorkFilter = .all
     @State private var showsClosed = false
     @State private var horizonTarget: WorkListItem?
+    @State private var steerTarget: SteerTarget?
+    @State private var answerTarget: ThreadListRow?
+    @State private var archiveTarget: ThreadListRow?
+    @State private var width: CGFloat = 0
+    @State private var clock: Date = .now
+    @State private var lastAnnouncedAt: Date = .distantPast
+
+    /// The split needs room for the list column and a readable thread.
+    static let splitMinimumWidth: CGFloat = 700
+    static let listColumnWidth: CGFloat = 320
+    /// The time labels count from a clock that ticks this often.
+    static let clockInterval: Duration = .seconds(30)
+    /// The list announces at most one attention line in this window.
+    static let announcementWindow: TimeInterval = 10
+
+    /// A row the quick-steer sheet is open for.
+    struct SteerTarget: Identifiable {
+        let row: ThreadListRow
+        let redirect: Bool
+        var id: String { row.id }
+    }
 
     private var store: ProductStore { environment.store }
+    private var threads: ThreadsStore { environment.threads }
 
-    /// Dormant Work leaves the state groups for the "Later" shelf.
-    private var split: (awake: [WorkListItem], later: [WorkListItem]) {
-        WorkGrouping.split(WorkGrouping.filter(store.allWork, by: filter, areaID: nil), now: .now)
+    // MARK: - Rows
+
+    private var allRows: [ThreadListRow] {
+        ThreadListGrouping.rows(items: store.allWork, live: threads.rows)
     }
 
-    private var groups: [(state: WorkState, items: [WorkListItem])] {
-        WorkGrouping.group(split.awake)
+    private var filteredRows: [ThreadListRow] {
+        ThreadListGrouping.filter(allRows, by: filter, areaID: nil)
     }
 
-    private var laterItems: [WorkListItem] { split.later }
-
-    private var openGroups: [(state: WorkState, items: [WorkListItem])] {
-        groups.filter { !WorkState.closed.contains($0.state) }
+    /// Dormant Work leaves the sections for the "Later" shelf.
+    private var laterItems: [WorkListItem] {
+        WorkGrouping.split(filteredRows.map(\.item), now: .now).later
     }
 
-    private var closedGroups: [(state: WorkState, items: [WorkListItem])] {
-        groups.filter { WorkState.closed.contains($0.state) }
+    private var awakeRows: [ThreadListRow] {
+        let laterIDs = Set(laterItems.map(\.id))
+        return filteredRows.filter { !laterIDs.contains($0.id) }
+    }
+
+    private var openRows: [ThreadListRow] {
+        awakeRows.filter { !$0.item.isClosed || $0.item.isUnresolved }
+    }
+
+    private var closedRows: [ThreadListRow] {
+        ThreadRowPresentation.sorted(awakeRows.filter { $0.item.isClosed && !$0.item.isUnresolved })
+    }
+
+    private var openSections: [(section: ThreadListSection, rows: [ThreadListRow])] {
+        ThreadListGrouping.sections(openRows)
     }
 
     private var unhomedCount: Int {
         store.allWork.filter { $0.primaryAreaID == nil }.count
     }
 
+    // MARK: - Body
+
     var body: some View {
-        @Bindable var navigation = environment.navigation
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                filters
-
-                if store.workError != nil {
-                    WorkRefreshWarning(retry: retryWork)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 12)
-                }
-
-                if openGroups.isEmpty && closedGroups.isEmpty && laterItems.isEmpty {
-                    emptyState
-                } else if openGroups.isEmpty && laterItems.isEmpty && !showsClosed {
-                    // Everything left is finished and finished is hidden. Saying
-                    // so beats a page that looks broken.
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Nothing open. Everything here is finished.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Button("Show finished") { showsClosed = true }
-                            .buttonStyle(.bordered)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 28)
+        #if os(iOS)
+        if horizontalSizeClass == .regular {
+            Group {
+                if width >= Self.splitMinimumWidth {
+                    split
                 } else {
-                    ForEach(openGroups, id: \.state) { group in
-                        workGroup(group.state, items: group.items)
-                    }
-                    if !laterItems.isEmpty {
-                        #if os(macOS)
-                        // The Mac reads the shelf as an ordinal ruler: equal
-                        // steps in wake order, with the elapsed time written
-                        // on the hairline between the cards.
-                        MacLaterRuler(
-                            items: laterItems,
-                            now: .now,
-                            onOpen: { item in
-                                environment.navigation.openWork(id: item.id, title: item.displayTitle)
-                            },
-                            onWake: { item in
-                                Task { _ = await WorkHorizonWriter.set(nil, for: item.id, environment: environment) }
-                            },
-                            onSetHorizon: { item, horizon in
-                                await WorkHorizonWriter.set(horizon, for: item.id, environment: environment)
-                            }
-                        )
-                        #else
-                        LaterShelf(
-                            items: laterItems,
-                            now: .now,
-                            onOpen: { item in
-                                environment.navigation.openWork(id: item.id, title: item.displayTitle)
-                            },
-                            onWake: { item in
-                                Task { _ = await WorkHorizonWriter.set(nil, for: item.id, environment: environment) }
-                            },
-                            onChangeHorizon: { item in horizonTarget = item }
-                        )
-                        #endif
-                    }
-                    if showsClosed {
-                        ForEach(closedGroups, id: \.state) { group in
-                            workGroup(group.state, items: group.items)
-                        }
-                    }
-                }
-
-                if !store.areas.isEmpty {
-                    areasFooter
+                    stack
                 }
             }
-            .padding(.bottom, 40)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.width
+            } action: { next in
+                width = next
+            }
+        } else {
+            stack
         }
-        // The list is now a place you open an Albatross from, so the detail has
-        // to be reachable here and not only from inside an Area.
-        .navigationDestination(item: $navigation.workRoute) { route in
-            #if os(macOS)
-            MacWorkThreadView(route: route)
-            #else
-            WorkThreadView(route: route)
-            #endif
+        #else
+        stack
+        #endif
+    }
+
+    /// The iPhone form: the list, with the thread pushed behind Back.
+    private var stack: some View {
+        @Bindable var navigation = environment.navigation
+        return list(showsSelection: false, showsHeader: false)
+            // The list is the place you open an Albatross from, so the thread
+            // has to be reachable here and not only from inside an Area.
+            .navigationDestination(item: $navigation.workRoute) { route in
+                #if os(macOS)
+                MacWorkThreadView(route: route)
+                #else
+                WorkThreadView(route: route)
+                #endif
+            }
+            .navigationTitle("Albatrosses")
+            .toolbar {
+                if !closedRows.isEmpty {
+                    ToolbarItem(placement: .primaryAction) {
+                        finishedToggle
+                    }
+                }
+            }
+            .shellToolbar()
+    }
+
+    #if os(iOS)
+    /// The iPad form: the list column beside the open thread.
+    private var split: some View {
+        ThreadsSplitView(route: environment.navigation.workRoute) {
+            list(showsSelection: true, showsHeader: true)
+        }
+    }
+    #endif
+
+    private var finishedToggle: some View {
+        Button(showsClosed ? "Hide finished" : "Show finished") {
+            showsClosed.toggle()
+        }
+        .font(.footnote)
+    }
+
+    // MARK: - The list
+
+    private func list(showsSelection: Bool, showsHeader: Bool) -> some View {
+        List {
+            if showsHeader {
+                headerRow
+            }
+            filterRow
+            if store.workError != nil {
+                plainRow {
+                    WorkRefreshWarning(retry: retryWork)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                }
+            }
+            if let notice = threads.notice {
+                plainRow { noticeLine(notice) }
+            }
+            if openSections.isEmpty, closedRows.isEmpty, laterItems.isEmpty {
+                plainRow { emptyState }
+            } else if openSections.isEmpty, laterItems.isEmpty, !showsClosed {
+                // Everything left is finished and finished is hidden. Saying
+                // so beats a page that looks broken.
+                plainRow { allFinished }
+            } else {
+                ForEach(openSections, id: \.section) { group in
+                    threadSection(
+                        group.section.label,
+                        hint: group.section.hint,
+                        accent: group.section.asksForYou,
+                        rows: group.rows,
+                        showsSelection: showsSelection
+                    )
+                }
+                if !laterItems.isEmpty {
+                    laterRow
+                }
+                if showsClosed, !closedRows.isEmpty {
+                    threadSection(
+                        WorkViewCopy.finished,
+                        hint: WorkViewCopy.finishedHint,
+                        accent: false,
+                        rows: closedRows,
+                        showsSelection: showsSelection
+                    )
+                }
+            }
+            if !store.areas.isEmpty {
+                areasSection
+            }
+        }
+        .threadListStyle()
+        .scrollContentBackground(.hidden)
+        .background(environment.theme.paperColor)
+        .refreshable { await refreshAll() }
+        .task {
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: Self.clockInterval) } catch { return }
+                clock = .now
+            }
+        }
+        .onAppear {
+            threads.listVisible = true
+            threads.beginFollowing(environment.backend)
+        }
+        .onDisappear {
+            threads.listVisible = false
+            threads.endFollowing()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                threads.resumeFollowing(environment.backend)
+            } else {
+                threads.pauseFollowing()
+            }
+        }
+        .onChange(of: threads.attention?.id) { _, _ in
+            announceAttention()
+        }
+        .onChange(of: environment.navigation.pendingWorkFilter) { _, next in
+            guard let next else { return }
+            filter = next
+            environment.navigation.pendingWorkFilter = nil
         }
         .sheet(item: $horizonTarget) { item in
             HorizonSheet(title: item.displayTitle, initial: item.horizon) { horizon in
                 await WorkHorizonWriter.set(horizon, for: item.id, environment: environment)
             }
         }
-        .navigationTitle("Albatrosses")
-        .toolbar {
-            if !closedGroups.isEmpty {
-                ToolbarItem(placement: .primaryAction) {
-                    Button(showsClosed ? "Hide finished" : "Show finished") {
-                        showsClosed.toggle()
-                    }
-                    .font(.footnote)
+        .sheet(item: $steerTarget) { target in
+            QuickSteerSheet(
+                row: target.row,
+                startsInRedirect: target.redirect,
+                onSend: { note, redirect in await steer(target.row, note: note, redirect: redirect) },
+                onOpen: { open(target.row) }
+            )
+        }
+        .sheet(item: $answerTarget) { row in
+            AnswerSheet(
+                row: row,
+                onAnswered: { Task { await threads.load(environment.backend) } },
+                onOpen: { open(row) }
+            )
+        }
+        .confirmationDialog(
+            WorkViewCopy.archiveTitle,
+            isPresented: Binding(
+                get: { archiveTarget != nil },
+                set: { if !$0 { archiveTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Archive", role: .destructive) {
+                guard let target = archiveTarget else { return }
+                archiveTarget = nil
+                Task { await setWorkState(target, "archived") }
+            }
+        } message: {
+            Text(WorkViewCopy.archiveMessage)
+        }
+    }
+
+    /// A row with no card: the filters, the warnings, the shelf, the empty
+    /// states.
+    private func plainRow<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+    }
+
+    /// The iPad column draws its own title: the outer bar is hidden there.
+    private var headerRow: some View {
+        plainRow {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text("Albatrosses")
+                    .font(.largeTitle.weight(.bold))
+                Spacer(minLength: 8)
+                if !closedRows.isEmpty {
+                    finishedToggle
                 }
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
         }
-        .refreshable { await store.refreshWork() }
-        .shellToolbar()
     }
 
     /// Filters as a glass capsule row: the material Apple uses for controls that
     /// float over content, so the list reads as the page and these read as the
     /// handles on it.
-    private var filters: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                filterPill(.all)
-                filterPill(.needsYou)
-                if unhomedCount > 0 { filterPill(.unhomed) }
+    private var filterRow: some View {
+        plainRow {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    filterPill(.all)
+                    filterPill(.needsYou)
+                    filterPill(.inProgress)
+                    if unhomedCount > 0 { filterPill(.unhomed) }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
         }
     }
 
@@ -172,62 +324,186 @@ struct WorkView: View {
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
-    /// A section rule, weighted by whether the group is asking for anything.
-    /// Needs-you carries the accent; everything else is a hairline.
-    @ViewBuilder
-    private func workGroup(_ state: WorkState, items: [WorkListItem]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Rectangle()
-                    .fill(state.asksForYou ? Color.accentColor : Color.secondary.opacity(0.45))
-                    .frame(width: 18, height: 1)
-                Text(state.label).font(.system(.subheadline, design: .serif).weight(.semibold))
-                Text(state.hint).font(.caption2).foregroundStyle(.tertiary)
-                Spacer(minLength: 0)
-            }
-
-            VStack(spacing: 0) {
-                ForEach(items) { item in
-                    Button {
-                        environment.navigation.openWork(id: item.id, title: item.displayTitle)
-                    } label: {
-                        WorkListRow(item: item)
-                    }
-                    .buttonStyle(.plain)
-                    if item.id != items.last?.id {
-                        Divider().padding(.leading, 14)
-                    }
-                }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(.secondarySystemGroupedBackground))
-            )
+    private func noticeLine(_ notice: String) -> some View {
+        HStack(spacing: 8) {
+            Text(notice)
+                .font(.footnote)
+                .foregroundStyle(.red)
+            Spacer(minLength: 8)
+            Button("Dismiss") { threads.clearNotice() }
+                .font(.footnote.weight(.medium))
         }
         .padding(.horizontal, 20)
-        .padding(.bottom, 24)
+        .padding(.bottom, 8)
     }
 
-    private var areasFooter: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Rectangle().fill(Color.secondary.opacity(0.45)).frame(width: 18, height: 1)
-                Text("Areas").font(.system(.subheadline, design: .serif).weight(.semibold))
-                Text("The parts of life these belong to.").font(.caption2).foregroundStyle(.tertiary)
-                Spacer(minLength: 0)
+    /// A section rule, weighted by whether the group is asking for anything.
+    /// Needs-you carries the accent; everything else is a hairline.
+    private func threadSection(
+        _ label: String,
+        hint: String,
+        accent: Bool,
+        rows: [ThreadListRow],
+        showsSelection: Bool
+    ) -> some View {
+        Section {
+            ForEach(rows) { row in
+                threadRow(row, showsSelection: showsSelection)
             }
-            VStack(spacing: 0) {
-                ForEach(store.areas) { area in
-                    Button {
-                        environment.navigation.openArea(id: area.id, name: area.name)
-                    } label: {
-                        AreaListRow(area: area)
-                    }
-                    .buttonStyle(.plain)
+        } header: {
+            sectionHeader(label, hint: hint, accent: accent)
+        }
+    }
+
+    private func sectionHeader(_ label: String, hint: String, accent: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Rectangle()
+                .fill(accent ? Color.accentColor : Color.secondary.opacity(0.45))
+                .frame(width: 18, height: 1)
+            Text(label)
+                .font(.system(.subheadline, design: .serif).weight(.semibold))
+                .foregroundStyle(.primary)
+            Text(hint)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
+        }
+        // Grouped lists set section headers in capitals. Ours stay sentence case.
+        .textCase(nil)
+        .padding(.bottom, 2)
+    }
+
+    private func threadRow(_ row: ThreadListRow, showsSelection: Bool) -> some View {
+        let selected = showsSelection && environment.navigation.workRoute?.workID == row.id
+        return Button {
+            open(row)
+        } label: {
+            ThreadListRowView(row: row, now: clock, stale: threads.isStale)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(selected ? environment.theme.accentSoftColor : environment.theme.elevatedColor)
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            if row.live != nil {
+                Button(row.unread ? WorkViewCopy.markRead : WorkViewCopy.markUnread) {
+                    Task { await toggleUnread(row) }
                 }
+                .tint(environment.theme.accentColor)
             }
         }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            ForEach(ThreadRowPresentation.swipeVerbs(row.status)) { verb in
+                Button(verb.label) { perform(verb, on: row) }
+                    .tint(tint(for: verb))
+            }
+        }
+        .contextMenu { rowMenu(row) }
+        .accessibilityActions { rowAccessibilityActions(row) }
+    }
+
+    /// The same verbs as the swipe, for a long press (HIG: hide what does not
+    /// apply, destructive last).
+    @ViewBuilder private func rowMenu(_ row: ThreadListRow) -> some View {
+        ForEach(ThreadRowPresentation.menuVerbs(row.status)) { verb in
+            Button(verb.menuLabel) { perform(verb, on: row) }
+        }
+        if row.live != nil {
+            Button(row.unread ? WorkViewCopy.markRead : WorkViewCopy.markUnread) {
+                Task { await toggleUnread(row) }
+            }
+        }
+        Divider()
+        if row.item.workState == "paused" {
+            Button("Pick it up") { Task { await setWorkState(row, "active") } }
+        } else {
+            Button("Put it down") { Task { await setWorkState(row, "paused") } }
+        }
+        Button("Set horizon…") { horizonTarget = row.item }
+        Divider()
+        Button("Archive…", role: .destructive) { archiveTarget = row }
+    }
+
+    /// VoiceOver reaches every verb without a swipe gesture.
+    @ViewBuilder private func rowAccessibilityActions(_ row: ThreadListRow) -> some View {
+        ForEach(ThreadRowPresentation.menuVerbs(row.status)) { verb in
+            Button(verb.menuLabel) { perform(verb, on: row) }
+        }
+        if row.live != nil {
+            Button(row.unread ? WorkViewCopy.markRead : WorkViewCopy.markUnread) {
+                Task { await toggleUnread(row) }
+            }
+        }
+    }
+
+    private func tint(for verb: ThreadRowVerb) -> Color {
+        switch verb {
+        case .answer, .openPage: environment.theme.accentColor
+        case .steer, .stopAndRedirect, .continueRun: environment.theme.accent2Color
+        case .stop, .stopReply: Color.gray
+        }
+    }
+
+    private var laterRow: some View {
+        plainRow {
+            #if os(macOS)
+            // The Mac reads the shelf as an ordinal ruler: equal steps in
+            // wake order, with the elapsed time written on the hairline
+            // between the cards.
+            MacLaterRuler(
+                items: laterItems,
+                now: .now,
+                onOpen: { item in
+                    environment.navigation.openWork(id: item.id, title: item.displayTitle)
+                },
+                onWake: { item in
+                    Task { _ = await WorkHorizonWriter.set(nil, for: item.id, environment: environment) }
+                },
+                onSetHorizon: { item, horizon in
+                    await WorkHorizonWriter.set(horizon, for: item.id, environment: environment)
+                }
+            )
+            #else
+            LaterShelf(
+                items: laterItems,
+                now: .now,
+                onOpen: { item in
+                    environment.navigation.openWork(id: item.id, title: item.displayTitle)
+                },
+                onWake: { item in
+                    Task { _ = await WorkHorizonWriter.set(nil, for: item.id, environment: environment) }
+                },
+                onChangeHorizon: { item in horizonTarget = item }
+            )
+            #endif
+        }
+    }
+
+    private var areasSection: some View {
+        Section {
+            ForEach(store.areas) { area in
+                Button {
+                    environment.navigation.openArea(id: area.id, name: area.name)
+                } label: {
+                    AreaListRow(area: area)
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(environment.theme.elevatedColor)
+            }
+        } header: {
+            sectionHeader("Areas", hint: "The parts of life these belong to.", accent: false)
+        }
+    }
+
+    private var allFinished: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Nothing open. Everything here is finished.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button("Show finished") { showsClosed = true }
+                .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
+        .padding(.vertical, 28)
     }
 
     // With no last-good work to keep readable, distinguish the three honest
@@ -253,83 +529,132 @@ struct WorkView: View {
             .padding(.vertical, 24)
         } else {
             ContentUnavailableView {
-                Label(
-                    filter == .all ? "Nothing on your mind yet" : "Nothing under this filter",
-                    systemImage: "checkmark.circle"
-                )
+                Label(WorkViewCopy.emptyTitle(filter), systemImage: "checkmark.circle")
             } description: {
-                Text(
-                    filter == .all
-                        ? "Tell Albatross what you are carrying and it starts here."
-                        : "Try Everything to see the rest."
-                )
+                Text(WorkViewCopy.emptyDescription(filter))
             } actions: {
                 if filter == .all {
                     Button("Get something out of your head") {
                         environment.navigation.sheet = .assistant
                     }
                     .buttonStyle(.borderedProminent)
+                } else {
+                    Button(WorkFilter.all.label) { filter = .all }
+                        .buttonStyle(.bordered)
                 }
             }
             .padding(.vertical, 20)
         }
     }
 
-    private func retryWork() {
-        Task { await store.refreshWork() }
+    // MARK: - Actions
+
+    private func open(_ row: ThreadListRow) {
+        environment.navigation.openWork(id: row.id, title: row.title)
     }
-}
 
-/// One Albatross: what it is, where it stands, and the area it belongs to.
-private struct WorkListRow: View {
-    let item: WorkListItem
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.displayTitle)
-                    .font(item.state.asksForYou ? .system(.subheadline, design: .serif).weight(.semibold) : .subheadline)
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.leading)
-                HStack(spacing: 6) {
-                    Text(item.standingLine)
-                    if let areaName = item.areaName {
-                        Text("·")
-                        Text(areaName)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            StateChip(state: item.state)
+    private func perform(_ verb: ThreadRowVerb, on row: ThreadListRow) {
+        guard let live = row.live else { return }
+        switch verb {
+        case .answer:
+            answerTarget = row
+        case .openPage:
+            environment.navigation.openWork(id: row.id, title: row.title, intent: .openPage)
+        case .steer:
+            steerTarget = SteerTarget(row: row, redirect: false)
+        case .stopAndRedirect:
+            steerTarget = SteerTarget(row: row, redirect: true)
+        case .stop, .stopReply:
+            Task { await threads.stop(live, transport: environment.backend) }
+        case .continueRun:
+            Task { await threads.continueRun(live, transport: environment.backend) }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .contentShape(Rectangle())
+    }
+
+    private func toggleUnread(_ row: ThreadListRow) async {
+        if row.unread {
+            await threads.markSeen(workID: row.id, transport: environment.backend)
+        } else {
+            await threads.markUnread(workID: row.id, transport: environment.backend)
+        }
+    }
+
+    private func steer(_ row: ThreadListRow, note: String, redirect: Bool) async -> ThreadsStore.SteerOutcome {
+        guard let live = row.live else { return .runEnded }
+        let outcome = await threads.steer(live, note: note, redirect: redirect, transport: environment.backend)
+        if outcome == .sent {
+            await threads.load(environment.backend)
+        }
+        return outcome
+    }
+
+    private func setWorkState(_ row: ThreadListRow, _ state: String) async {
+        if await store.updateWorkState(row.id, state: state) {
+            await refreshAll()
+        }
+    }
+
+    private func refreshAll() async {
+        async let work: Void = store.refreshWork()
+        async let rows: Void = threads.load(environment.backend)
+        _ = await (work, rows)
+    }
+
+    private func retryWork() {
+        Task { await refreshAll() }
+    }
+
+    /// One merged line at most every ten seconds, only while the list is on
+    /// screen: "Renew the car registration needs your answer."
+    private func announceAttention() {
+        guard threads.listVisible, let attention = threads.attention else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastAnnouncedAt) >= Self.announcementWindow else { return }
+        lastAnnouncedAt = now
+        PlatformAccessibility.announce(NeedsYouBannerCopy.announcement(attention.rows))
     }
 }
 
-/// The state, said in words. A chip that asks for you is outlined in a dashed
-/// rule, so an unanswered thing never reads as settled.
-private struct StateChip: View {
-    let state: WorkState
+/// The words of the list that are not a row's.
+enum WorkViewCopy {
+    static let finished = "Finished"
+    static let finishedHint = "These reached the outcome you wanted, or you put them down."
+    static let markRead = "Mark as read"
+    static let markUnread = "Mark as unread"
+    static let archiveTitle = "Archive this Albatross?"
+    static let archiveMessage = "An archived Albatross leaves its Area. It stays in history."
 
-    var body: some View {
-        Text(state.label)
-            .font(.caption2)
-            .foregroundStyle(state.asksForYou ? Color.accentColor : Color.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .overlay(
-                Capsule().strokeBorder(
-                    state.asksForYou ? Color.accentColor.opacity(0.6) : Color.secondary.opacity(0.3),
-                    style: StrokeStyle(lineWidth: 1, dash: state == .unresolved ? [3, 2] : [])
-                )
-            )
-            .fixedSize()
+    static func emptyTitle(_ filter: WorkFilter) -> String {
+        switch filter {
+        case .all: "Nothing on your mind yet"
+        case .needsYou: "Nothing needs you now"
+        case .inProgress: "Nothing runs now"
+        case .unhomed: "Nothing under this filter"
+        }
+    }
+
+    static func emptyDescription(_ filter: WorkFilter) -> String {
+        switch filter {
+        case .all: "Tell Albatross what you are carrying and it starts here."
+        case .needsYou: "Albatross has the rest."
+        case .inProgress: "Press Handle it in an Albatross to start a run."
+        case .unhomed: "Try All to see the rest."
+        }
     }
 }
+
+private extension View {
+    /// The inset grouped look on iOS (the card groups the page had before);
+    /// the inset style on the Mac, which has no grouped list.
+    @ViewBuilder func threadListStyle() -> some View {
+        #if os(macOS)
+        listStyle(.inset)
+        #else
+        listStyle(.insetGrouped)
+        #endif
+    }
+}
+
 private struct WorkRefreshWarning: View {
     let retry: () -> Void
 

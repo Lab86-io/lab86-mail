@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { resumeStepRun, StepRunStartError, startStepRun } from '@/lib/albatross/step-run-start';
+import { appendThreadNote } from '@/lib/albatross/thread-replies';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
@@ -15,6 +16,7 @@ interface StepRunRouteDependencies {
   convexMutation: typeof convexMutation;
   startStepRun: typeof startStepRun;
   resumeStepRun: typeof resumeStepRun;
+  appendThreadNote: typeof appendThreadNote;
 }
 
 const defaults: StepRunRouteDependencies = {
@@ -23,6 +25,7 @@ const defaults: StepRunRouteDependencies = {
   convexMutation,
   startStepRun,
   resumeStepRun,
+  appendThreadNote,
 };
 
 function text(value: unknown, max = 300) {
@@ -42,7 +45,8 @@ export function createStepRunPost(overrides: Partial<StepRunRouteDependencies> =
       await deps.enforceUserRateLimit({
         userId: user.userId,
         key: 'albatross-step-run',
-        limit: 20,
+        // Many threads at once, each steered (docs/albatross-threads.md).
+        limit: 60,
         windowMs: 60_000,
       });
       const { workId } = await context.params;
@@ -84,8 +88,14 @@ export function createStepRunPost(overrides: Partial<StepRunRouteDependencies> =
         const note = redactSecretShapes(text(body?.note, 2_000)).text;
         if (!runId || !note)
           return Response.json({ ok: false, error: 'runId and note are required.' }, { status: 400 });
+        const noteId = text(body?.noteId, 120);
         const steered = await deps
-          .convexMutation<boolean>(api.albatrossStepRuns.steer, { userId, id: runId, text: note })
+          .convexMutation<boolean>(api.albatrossStepRuns.steer, {
+            userId,
+            id: runId,
+            text: note,
+            ...(noteId ? { noteId } : {}),
+          })
           .catch((error) => {
             if (/Run not found|ArgumentValidationError|Invalid argument/i.test(String(error?.message)))
               return null;
@@ -94,7 +104,62 @@ export function createStepRunPost(overrides: Partial<StepRunRouteDependencies> =
         if (steered === null) return Response.json({ ok: false, error: 'Run not found.' }, { status: 404 });
         if (!steered)
           return Response.json({ ok: false, error: 'This run is not working now.' }, { status: 409 });
-        return Response.json({ ok: true, runId });
+        // The note shows in its thread on every device, also when it was sent from a list row.
+        const messageId = await deps
+          .appendThreadNote({
+            userId,
+            userEmail: user.email,
+            userName: user.name,
+            workId,
+            runId,
+            note,
+            noteId,
+          })
+          .catch(() => null);
+        return Response.json({ ok: true, runId, ...(messageId ? { messageId } : {}) });
+      }
+      if (action === 'redirect') {
+        // "Stop and redirect" (docs/albatross-threads.md, T8): the run stops at
+        // once and a new run starts from there with the note. Notes the old run
+        // did not read carry to the new one.
+        const runId = text(body?.runId);
+        const note = redactSecretShapes(text(body?.note, 2_000)).text;
+        if (!runId || !note)
+          return Response.json({ ok: false, error: 'runId and note are required.' }, { status: 400 });
+        let cancelled: { cancelled: boolean };
+        try {
+          cancelled = await deps.convexMutation<{ cancelled: boolean }>(api.albatrossStepRuns.cancel, {
+            userId,
+            id: runId,
+          });
+        } catch (error) {
+          if (
+            /Run not found|ArgumentValidationError|Invalid argument/i.test(String((error as Error)?.message))
+          )
+            return Response.json({ ok: false, error: 'Run not found.' }, { status: 404 });
+          throw error;
+        }
+        if (!cancelled.cancelled)
+          return Response.json({ ok: false, error: 'This run is not working now.' }, { status: 409 });
+        const result = await deps.resumeStepRun({ userId, workId, runId, note });
+        if (!result.runId)
+          return Response.json(
+            { ok: false, error: 'Albatross stopped, but it could not start again now. Try again.' },
+            { status: 409 },
+          );
+        const messageId = await deps
+          .appendThreadNote({
+            userId,
+            userEmail: user.email,
+            userName: user.name,
+            workId,
+            runId: result.runId,
+            note,
+            noteId: text(body?.noteId, 120) || null,
+            redirect: true,
+          })
+          .catch(() => null);
+        return Response.json({ ok: true, runId: result.runId, ...(messageId ? { messageId } : {}) });
       }
       if (action === 'cancel' || action === 'dismiss') {
         const runId = text(body?.runId);

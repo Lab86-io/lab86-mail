@@ -54,6 +54,8 @@ import {
   type ThreadRunView,
   workThreadSessionId,
 } from '@/lib/albatross/thread-contract';
+import { hopDirection, isTextFieldTarget } from '@/lib/albatross/thread-list-view';
+import { setThreadDraft, setThreadScroll, threadDraft, threadScroll } from '@/lib/albatross/thread-memory';
 import {
   composerPlaceholder,
   planLine,
@@ -61,6 +63,7 @@ import {
   stepNumberFor,
   threadStateInput,
 } from '@/lib/albatross/thread-view';
+import { adjacentThread, filterThreadRows, nextNeedingYou } from '@/lib/albatross/threads';
 import {
   guideStepsWithOptimisticCompletion,
   postJson,
@@ -74,6 +77,9 @@ import { useClientStore } from '@/lib/client-state';
 import type { SecureItemView } from '@/lib/secure/contract';
 import { cn } from '@/lib/utils';
 import { undoPersonalDetails } from '../ai-elements/form-question-card';
+import { awakeWork } from './AlbatrossesSurface';
+import { ThreadAnswerInPlace } from './ThreadAnswerInPlace';
+import { ThreadRail } from './ThreadRail';
 import type { AllowSecureNote } from './thread/AllowSecureBlock';
 import { DetailsPanel } from './thread/DetailsPanel';
 import { PagePane, type PageSession } from './thread/PagePane';
@@ -81,6 +87,8 @@ import { PlanIntro, PlanLine, PlanOutro } from './thread/PlanIntro';
 import { RunBlock } from './thread/RunBlock';
 import { ThreadJumpPill } from './thread/ThreadJumpPill';
 import { useWorkShape, type WorkShapeState } from './thread/use-work-shape';
+import { useThreadActions, useThreadDraftIds } from './use-thread-actions';
+import { useAllWork, useMarkSeen, useThreadRows } from './use-thread-rows';
 
 export type ThreadRegion = 'page' | 'details' | null;
 export type RunBusy = 'stop' | 'resume' | 'dismiss' | 'start' | 'answer' | 'mark_done' | 'allow';
@@ -110,6 +118,7 @@ export const THREAD_COPY = {
   pageCloseFailed: 'The shared browser did not close.',
   stateFailed: 'Could not update this Albatross.',
   undoFailed: 'This change can no longer be undone.',
+  steerFailed: 'The note did not reach the run.',
 } as const;
 
 /** Desktop and laptop: the region docks beside the conversation. Below: a sheet. */
@@ -146,9 +155,17 @@ export interface ThreadModel {
   allowAnswered?: Readonly<Record<string, AllowScope>>;
   /** The runs whose sign-in offer was saved in this visit (V13). */
   signInSaved?: ReadonlySet<string>;
+  /** The chat reply of this thread still runs on the server (T5). */
+  replyInProgress?: boolean;
 }
 
 export interface ThreadHandlers {
+  /** A note to the run that works now (T7). False when it did not reach the run. */
+  onSteerNote?: (runId: string, text: string, noteId: string) => Promise<boolean>;
+  /** "Stop and redirect", first half: stop the run at once (T8). */
+  onRedirectStop?: (runId: string) => Promise<boolean>;
+  /** "Stop and redirect", second half: continue the stopped run with the note. */
+  onRedirectResume?: (runId: string, text: string) => Promise<boolean>;
   onBack: () => void;
   onHandle: (stepKey: string) => void;
   onStop: (run: ThreadRunView) => void;
@@ -263,6 +280,41 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
   );
 
   const pendingForm = stateInput.pendingQuestion;
+  // The composer steers the open run (lead decision 5). The draft and the
+  // reader's place belong to this thread across hops (lead decision 4).
+  const steerRun = useMemo(
+    () =>
+      activeRun && (activeRun.state === 'running' || activeRun.state === 'queued')
+        ? {
+            id: activeRun.id,
+            stepTitle: activeRun.stepTitle,
+            stepNumber: stepNumberFor(steps, activeRun.stepKey),
+          }
+        : null,
+    [activeRun, steps],
+  );
+  const steer = useMemo(
+    () =>
+      handlers.onSteerNote && handlers.onRedirectStop && handlers.onRedirectResume
+        ? {
+            run: steerRun,
+            send: handlers.onSteerNote,
+            stop: handlers.onRedirectStop,
+            resume: handlers.onRedirectResume,
+          }
+        : undefined,
+    [handlers.onSteerNote, handlers.onRedirectStop, handlers.onRedirectResume, steerRun],
+  );
+  const memory = useMemo(
+    () => ({
+      draft: { get: () => threadDraft(workId), set: (text: string) => setThreadDraft(workId, text) },
+      scroll: {
+        restore: () => threadScroll(workId),
+        save: (state: { top: number; atBottom: boolean }) => setThreadScroll(workId, state),
+      },
+    }),
+    [workId],
+  );
   const intro = (
     <>
       {model.detail.execution.scheduledEndAt ? (
@@ -324,6 +376,9 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
             placeholder: composerPlaceholder(line.state),
             scrollButton: <ThreadJumpPill hasPendingForm={pendingForm} />,
             initialMessages: handlers.chat?.initialMessages,
+            steer,
+            replyInProgress: model.replyInProgress,
+            memory,
           }}
         />
       </div>
@@ -644,11 +699,106 @@ function ShapeBody({
 // The data layer.
 // ---------------------------------------------------------------------------
 
+/** Desktop: the rail is 300 px. Below, on a laptop, 272 px, and it hides while a region is open. */
+export const THREAD_RAIL_WIDE_QUERY = '(min-width: 1280px)';
+
+/** Where focus was when a hop started, so the new thread puts it back (T3). */
+let hopFocus: 'composer' | null = null;
+
 export function WorkThread({ workId }: { workId: string }) {
   const queryClient = useQueryClient();
   const { isAuthenticated } = useConvexAuth();
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
   const setSelectedAreaId = useClientStore((state) => state.setSelectedAreaId);
+  const primaryView = useClientStore((state) => state.primaryView);
+  const selectedAreaId = useClientStore((state) => state.selectedAreaId);
+  const listFilter = useClientStore((state) => state.threadListFilter);
+  const setListFilter = useClientStore((state) => state.setThreadListFilter);
+  // The rail: every awake thread, live (lead decision 9). Inside an Area, that Area's threads.
+  const works = useAllWork();
+  const railAreaId = primaryView === 'areas' ? selectedAreaId : null;
+  const [railNowMs, setRailNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => setRailNowMs(Date.now()), 30_000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
+  const scopedWorks = useMemo(
+    () => (works ? works.filter((work) => !railAreaId || work.primaryAreaId === railAreaId) : undefined),
+    [works, railAreaId],
+  );
+  const awakeWorks = useMemo(
+    () => (scopedWorks ? awakeWork(scopedWorks, railNowMs) : undefined),
+    [scopedWorks, railNowMs],
+  );
+  const laterCount = scopedWorks && awakeWorks ? scopedWorks.length - awakeWorks.length : 0;
+  const rows = useThreadRows(awakeWorks);
+  const row = useMemo(() => rows?.find((item) => item.workId === workId) ?? null, [rows, workId]);
+  const railAreaName = useMemo(
+    () => (railAreaId ? (scopedWorks?.find((work) => work.areaName)?.areaName ?? null) : null),
+    [railAreaId, scopedWorks],
+  );
+  const railActions = useThreadActions(setSelectedWorkId);
+  const draftIds = useThreadDraftIds();
+  const [answeringWorkId, setAnsweringWorkId] = useState<string | null>(null);
+  const railWide = useMediaQuery(THREAD_RAIL_WIDE_QUERY);
+
+  // Seen (T2): on open and after each new activity, while the thread is on screen and the window has focus.
+  const markSeen = useMarkSeen();
+  const lastActivityAt = row?.lastActivityAt ?? 0;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: new activity marks the thread seen again
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let timer: number | null = null;
+    const visible = () => document.visibilityState === 'visible' && document.hasFocus();
+    const touch = () => {
+      if (!visible()) return;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void markSeen(workId), 1_000);
+    };
+    touch();
+    window.addEventListener('focus', touch);
+    document.addEventListener('visibilitychange', touch);
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      window.removeEventListener('focus', touch);
+      document.removeEventListener('visibilitychange', touch);
+    };
+  }, [isAuthenticated, markSeen, workId, lastActivityAt]);
+
+  // Hop keys (T3, lead decision 4): ⌘↑ / ⌘↓, ⌥⌘↑ / ⌥⌘↓ in a text field, ⌥⌘↩ for the next thread that needs you.
+  const hopRows = useMemo(
+    () => (rows ? filterThreadRows(rows, listFilter).filter((item) => !item.closed) : []),
+    [rows, listFilter],
+  );
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      const direction = hopDirection(event, isTextFieldTarget(event.target));
+      if (!direction) return;
+      const target =
+        direction === 'needs_you'
+          ? nextNeedingYou(hopRows, workId)
+          : adjacentThread(hopRows, workId, direction === 'next' ? 1 : -1);
+      if (!target) return;
+      event.preventDefault();
+      hopFocus = (event.target as HTMLElement | null)?.closest?.('[data-thread-composer]')
+        ? 'composer'
+        : null;
+      setSelectedWorkId(target);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [hopRows, workId, setSelectedWorkId]);
+  // Focus follows the hop: a hop from the composer lands in the new composer.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the hop (a new workId) is the trigger
+  useEffect(() => {
+    if (hopFocus !== 'composer') return;
+    hopFocus = null;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector<HTMLTextAreaElement>('[data-thread-composer] textarea')?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [workId]);
   const detail = useQuery(
     api.albatrossWorkV2.workDetail,
     isAuthenticated ? { workId: workId as Id<'albatrossIntents'> } : 'skip',
@@ -766,10 +916,13 @@ export function WorkThread({ workId }: { workId: string }) {
         );
         if (action === 'start' && typeof result?.runId === 'string') startedHere.current.add(result.runId);
         if (action === 'resume' && typeof result?.runId === 'string') startedHere.current.add(result.runId);
+        setBusy({ runId: null, action: null, stepKey: null });
+        return true;
       } catch (cause) {
         setRunError(cause instanceof Error ? cause.message : fallback);
-      } finally {
-        setBusy({ runId: null, action: null, stepKey: null });
+        // The run keeps the mark without an action, so its block shows the error.
+        setBusy({ runId: mark.runId, action: null, stepKey: mark.stepKey });
+        return false;
       }
     },
     [workId],
@@ -952,6 +1105,32 @@ export function WorkThread({ workId }: { workId: string }) {
       onOpenSecureSettings: () => {
         window.location.assign('/settings?tab=secure');
       },
+      // Steering (T7–T9, lead decisions 5 and 6). The thread keeps the note; the run reads it.
+      onSteerNote: async (runId, note, noteId) => {
+        try {
+          await postJson(
+            `/api/albatross/work/${encodeURIComponent(workId)}/run`,
+            { action: 'steer', runId, note, noteId },
+            THREAD_COPY.steerFailed,
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      // The error of a failed stop or resume shows on the run's block.
+      onRedirectStop: (runId) =>
+        runAction(
+          'cancel',
+          { runId },
+          { runId, action: 'stop', stepKey: runs.find((run) => run.id === runId)?.stepKey ?? null },
+        ),
+      onRedirectResume: (runId, note) =>
+        runAction(
+          'resume',
+          { runId, note },
+          { runId, action: 'resume', stepKey: runs.find((run) => run.id === runId)?.stepKey ?? null },
+        ),
     }),
     [
       activeRun,
@@ -960,6 +1139,7 @@ export function WorkThread({ workId }: { workId: string }) {
       navDeps,
       queryClient,
       runAction,
+      runs,
       session,
       sessionAction,
       setRegion,
@@ -1028,10 +1208,52 @@ export function WorkThread({ workId }: { workId: string }) {
     allowNote,
     allowAnswered,
     signInSaved,
+    replyInProgress: row?.status === 'answering',
   };
+  // The rail beside the thread (lead decision 3): 300 px on desktops, 272 px on
+  // laptops, where it also yields to an open region; none below 1024 px.
+  const showRail = wide && (railWide || region === null);
   return (
     <>
-      <WorkThreadView model={model} handlers={handlers} />
+      <div className="flex h-full min-h-0 min-w-0">
+        {showRail ? (
+          <ThreadRail
+            rows={rows}
+            laterCount={laterCount}
+            openWorkId={workId}
+            filter={listFilter}
+            onFilterChange={setListFilter}
+            nowMs={railNowMs}
+            areaName={railAreaName}
+            draftWorkIds={draftIds}
+            width={railWide ? 300 : 272}
+            onOpen={setSelectedWorkId}
+            onAction={(kind, target) => {
+              if (kind === 'answer') setAnsweringWorkId(target.workId);
+              else railActions.act(kind, target);
+            }}
+            onSteer={railActions.steer}
+            onMarkUnread={(target) => void railActions.markUnread(target)}
+            answeringWorkId={answeringWorkId}
+            renderAnswer={(target) => (
+              <ThreadAnswerInPlace
+                row={target}
+                onDone={() => setAnsweringWorkId(null)}
+                onCancel={() => setAnsweringWorkId(null)}
+                onOpenThread={() => {
+                  setAnsweringWorkId(null);
+                  setSelectedWorkId(target.workId);
+                }}
+              />
+            )}
+            onShowFinished={() => setSelectedWorkId(null)}
+            onShowLater={() => setSelectedWorkId(null)}
+          />
+        ) : null}
+        <div className="min-h-0 min-w-0 flex-1">
+          <WorkThreadView model={model} handlers={handlers} />
+        </div>
+      </div>
       <SecureItemSheet
         request={secureSheet}
         onClose={() => setSecureSheet(null)}

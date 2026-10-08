@@ -26,8 +26,16 @@ export const STEP_RUN_LEASE_MS = 120_000;
 export const STEP_RUN_MAX_ATTEMPTS = 2;
 const LOG_MAX = 30;
 const ARTIFACT_MAX = 20;
-/** Runs a user may have open at once. Automatic triggers stop earlier. */
-const USER_ACTIVE_MAX = 3;
+/**
+ * Runs that work at once for one user (docs/albatross-threads.md, owner
+ * decision 1). A run past this waits as "Starts soon" and starts when a slot
+ * frees. USER_OPEN_MAX bounds the runs that wait, as a guard.
+ */
+export const USER_RUNNING_MAX = 10;
+export const USER_OPEN_MAX = 30;
+/** A run that waits for a slot tries again after this. */
+const WAIT_RETRY_MS = 20_000;
+/** Automatic runs (the Brief, the conductor) open at most this many at once. */
 const AUTO_ACTIVE_MAX = 1;
 /** A handoff older than this leaves the Brief list; the Work page keeps it. */
 export const HANDOFF_VISIBLE_MS = 14 * 24 * 60 * 60_000;
@@ -175,9 +183,18 @@ export function stepRunView(run: RunDoc) {
     artifacts: run.artifacts,
     browserSessionId: run.browserSessionId ?? null,
     parentRunId: run.parentRunId ? String(run.parentRunId) : null,
+    // The user's own notes to the run, with read times, for their receipts (T7, T9).
+    notes: (run.steer || []).map((note) => ({
+      id: note.id ?? null,
+      at: note.at,
+      text: note.text,
+      readAt: note.readAt ?? null,
+    })),
     stoppedBy: run.budget?.exhausted ?? null,
     error: run.error ?? null,
     createdAt: run.createdAt,
+    // When the run began work: a redirect note was read then (T8).
+    startedAt: run.startedAt ?? null,
     updatedAt: run.updatedAt,
     finishedAt: run.finishedAt ?? null,
   };
@@ -206,7 +223,28 @@ async function activeRuns(ctx: QueryCtx | MutationCtx, userId: string) {
   return ctx.db
     .query('albatrossStepRuns')
     .withIndex('by_user_active', (q) => q.eq('userId', userId).eq('active', true))
-    .take(20);
+    .take(USER_OPEN_MAX + 10);
+}
+
+/** The oldest run that waits for a slot, so a run that ends lets it start at once. */
+async function startNextWaiting(ctx: MutationCtx, userId: string) {
+  const open = await activeRuns(ctx, userId);
+  if (open.filter((row) => row.state === 'running').length >= USER_RUNNING_MAX) return;
+  const waiting = open
+    .filter((row) => row.state === 'queued' && row.attempts === 0)
+    .sort((a, b) => a.createdAt - b.createdAt)[0];
+  if (!waiting) return;
+  await ctx.db.patch(waiting._id, { availableAt: now() });
+  await ctx.scheduler.runAfter(0, internal.albatrossStepRuns.deliver, { ids: [waiting._id] });
+}
+
+/** Steer notes that a run did not read, for the next run of the same step. */
+function unreadNotes(
+  run: { steer?: Array<{ at: number; text: string; readAt?: number; id?: string }> } | null,
+) {
+  return (run?.steer || [])
+    .filter((note) => !note.readAt)
+    .map(({ at, text, id }) => ({ at, text, ...(id ? { id } : {}) }));
 }
 
 /**
@@ -238,7 +276,12 @@ export const enqueue = mutation({
     const sameWork = open.find((row) => row.workId === args.workId);
     if (sameWork) return { runId: String(sameWork._id), created: false, reason: 'active' as const };
     const automatic = args.trigger === 'brief' || args.trigger === 'conductor';
-    if (open.length >= (automatic ? AUTO_ACTIVE_MAX : USER_ACTIVE_MAX))
+    // Past the running cap a user run waits ("Starts soon"); only the guard refuses.
+    if (open.length >= USER_OPEN_MAX) return { runId: null, created: false, reason: 'busy' as const };
+    if (
+      automatic &&
+      open.filter((row) => row.trigger === 'brief' || row.trigger === 'conductor').length >= AUTO_ACTIVE_MAX
+    )
       return { runId: null, created: false, reason: 'busy' as const };
     if (automatic) {
       const earlier = await ctx.db
@@ -249,10 +292,13 @@ export const enqueue = mutation({
         .first();
       if (earlier) return { runId: String(earlier._id), created: false, reason: 'already_ran' as const };
     }
+    let carried: ReturnType<typeof unreadNotes> = [];
     if (args.parentRunId) {
       const parent = await ctx.db.get(args.parentRunId);
       if (!parent || parent.userId !== userId || parent.workId !== args.workId)
         throw new Error('Run not found.');
+      // A note the earlier run did not read is never lost (T9).
+      carried = unreadNotes(parent);
     }
     const ts = now();
     const runId = await ctx.db.insert('albatrossStepRuns', {
@@ -269,6 +315,7 @@ export const enqueue = mutation({
       ...(args.parentRunId ? { parentRunId: args.parentRunId } : {}),
       ...(args.resumeNote?.trim() ? { resumeNote: truncateText(args.resumeNote.trim(), 2_000) } : {}),
       ...(args.browserSessionId ? { browserSessionId: args.browserSessionId } : {}),
+      ...(carried.length ? { steer: carried.slice(-STEER_MAX) } : {}),
       log: [],
       artifacts: [],
       createdAt: ts,
@@ -314,6 +361,16 @@ export const claim = mutation({
         updatedAt: ts,
       });
       return null;
+    }
+    // Every slot works: the run waits ("Starts soon") and tries again soon.
+    if (run.state === 'queued') {
+      const running = (await activeRuns(ctx, run.userId)).filter(
+        (row) => row.state === 'running' && row._id !== run._id,
+      ).length;
+      if (running >= USER_RUNNING_MAX) {
+        await ctx.db.patch(run._id, { availableAt: ts + WAIT_RETRY_MS, updatedAt: ts });
+        return null;
+      }
     }
     const patch = {
       state: 'running' as const,
@@ -461,6 +518,8 @@ export const settle = mutation({
       finishedAt: ts,
       updatedAt: ts,
     });
+    // A slot is free: a run that waits for one starts now.
+    await startNextWaiting(ctx, run.userId);
     return { state };
   },
 });
@@ -481,6 +540,7 @@ export const cancel = mutation({
       finishedAt: ts,
       updatedAt: ts,
     });
+    await startNextWaiting(ctx, userId);
     return { cancelled: true, browserSessionId: run.browserSessionId ?? null };
   },
 });
@@ -596,7 +656,13 @@ export const runsForWorkHistory = query({
  * not open; the caller then resumes or starts a run with the note instead.
  */
 export const steer = mutation({
-  args: { ...callerArgs, id: v.id('albatrossStepRuns'), text: v.string() },
+  args: {
+    ...callerArgs,
+    id: v.id('albatrossStepRuns'),
+    text: v.string(),
+    /** The thread message id of the note, for its receipt (T7). */
+    noteId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const run = await ctx.db.get(args.id);
@@ -604,7 +670,12 @@ export const steer = mutation({
     if (run.state !== 'queued' && run.state !== 'running') return false;
     const text = truncateText(args.text.trim(), STEER_TEXT_MAX);
     if (!text) return false;
-    const steer = [...(run.steer || []), { at: now(), text }].slice(-STEER_MAX);
+    const noteId = args.noteId?.trim() ? truncateText(args.noteId.trim(), 120) : undefined;
+    // A retry of the same note does not add it twice.
+    if (noteId && (run.steer || []).some((note) => note.id === noteId)) return true;
+    const steer = [...(run.steer || []), { at: now(), text, ...(noteId ? { id: noteId } : {}) }].slice(
+      -STEER_MAX,
+    );
     await ctx.db.patch(run._id, { steer, updatedAt: now() });
     return true;
   },
@@ -634,12 +705,17 @@ export const answerAllow = mutation({
   },
 });
 
-/** The runner takes the notes it has not read yet, and marks them read (fenced). */
+/**
+ * The runner takes the notes it has not read yet, and marks them read (fenced).
+ * Null means the run was stopped or lost: the runner stops at its next model
+ * step, not only at its next heartbeat.
+ */
 export const takeSteerNotes = mutation({
   args: fenceArgs,
   handler: async (ctx, args) => {
     const run = await ownedRun(ctx, args);
-    if (!run?.steer?.length) return [];
+    if (!run) return null;
+    if (!run.steer?.length) return [];
     const unread = run.steer.filter((note) => !note.readAt);
     if (!unread.length) return [];
     const ts = now();

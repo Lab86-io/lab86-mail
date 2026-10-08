@@ -110,7 +110,10 @@ export async function startStepRun(
   if (!automatic && !result.created) {
     if (result.reason === 'active') throw new StepRunStartError('Albatross is already working on this.', 409);
     if (result.reason === 'busy')
-      throw new StepRunStartError('Albatross is working on three steps now. Try again when one ends.', 409);
+      throw new StepRunStartError(
+        'Albatross has 30 steps open or waiting now. Try again when one ends.',
+        409,
+      );
     if (result.reason === 'closed') throw new StepRunStartError('This Albatross is closed.', 409);
   }
   return result;
@@ -147,6 +150,11 @@ export async function resumeStepRun(
   });
   if (!result.created) {
     if (result.reason === 'active') throw new StepRunStartError('Albatross is already working on this.', 409);
+    if (result.reason === 'busy')
+      throw new StepRunStartError(
+        'Albatross has 30 steps open or waiting now. Try again when one ends.',
+        409,
+      );
     throw new StepRunStartError('The run could not continue now. Try again.', 409);
   }
   return result;

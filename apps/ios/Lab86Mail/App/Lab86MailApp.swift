@@ -39,6 +39,7 @@ struct Lab86MailApp: App {
             AlbatrossCommands(environment: environment)
             #if os(macOS)
             MacThreadCommands(environment: environment)
+            MacGoCommands(environment: environment)
             #endif
         }
         #if os(macOS)

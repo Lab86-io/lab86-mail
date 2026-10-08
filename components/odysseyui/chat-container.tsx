@@ -24,11 +24,19 @@ const useChatContainer = () => {
   return ctx;
 };
 
+/** Where the reader was in this conversation, kept across a hop (docs/albatross-threads.md, T3). */
+export type ChatContainerScrollMemory = {
+  restore: () => { top: number; atBottom: boolean } | null;
+  save: (state: { top: number; atBottom: boolean }) => void;
+};
+
 export type ChatContainerProps = React.ComponentProps<'div'> & {
   bottomThreshold?: number;
   autoScroll?: boolean;
   /** The control that returns to the bottom. Default: the round chevron. `null` hides it. */
   scrollButton?: React.ReactNode;
+  /** A reader who scrolled up comes back to the same place; one who followed the bottom follows it again. */
+  scrollMemory?: ChatContainerScrollMemory;
 };
 
 export function ChatContainer({
@@ -37,11 +45,19 @@ export function ChatContainer({
   bottomThreshold = 64,
   autoScroll = true,
   scrollButton,
+  scrollMemory,
   ...props
 }: ChatContainerProps) {
   const reduceMotion = useReducedMotion();
   const contentRef = useRef<HTMLDivElement>(null);
-  const atBottomRef = useRef(true);
+  const atBottomRef = useRef(scrollMemory?.restore()?.atBottom ?? true);
+  const scrollMemoryRef = useRef(scrollMemory);
+  scrollMemoryRef.current = scrollMemory;
+  const restoredRef = useRef(false);
+  // A remembered place the content is still too short to reach. The thread
+  // loads its messages after the first layout, so the place is set again as
+  // the content grows, until it fits or the reader scrolls.
+  const pendingTopRef = useRef<number | null>(null);
   const lastScrollTopRef = useRef(0);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -61,6 +77,12 @@ export function ChatContainer({
     const viewport = viewportRef.current;
     if (!viewport) return;
     const onScroll = () => {
+      if (pendingTopRef.current !== null) {
+        // Our own placement moved the view: do not save a place the short
+        // content clamped. Any other move is the reader's, and wins.
+        if (Math.abs(viewport.scrollTop - lastScrollTopRef.current) <= 1) return;
+        pendingTopRef.current = null;
+      }
       const distFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
       const nearBottom = distFromBottom <= bottomThreshold;
       // ResizeObserver and native scroll events can arrive in either order.
@@ -70,6 +92,7 @@ export function ChatContainer({
       else if (viewport.scrollTop < lastScrollTopRef.current - 1) atBottomRef.current = false;
       lastScrollTopRef.current = viewport.scrollTop;
       setIsAtBottom(nearBottom);
+      scrollMemoryRef.current?.save({ top: viewport.scrollTop, atBottom: atBottomRef.current });
     };
     viewport.addEventListener('scroll', onScroll, { passive: true });
     return () => viewport.removeEventListener('scroll', onScroll);
@@ -78,11 +101,28 @@ export function ChatContainer({
   useEffect(() => {
     const content = contentRef.current;
     if (!content) return;
+    const placePending = () => {
+      const viewport = viewportRef.current;
+      const top = pendingTopRef.current;
+      if (top === null || !viewport) return;
+      viewport.scrollTop = top;
+      lastScrollTopRef.current = viewport.scrollTop;
+      if (viewport.scrollHeight - viewport.clientHeight >= top) pendingTopRef.current = null;
+    };
     const observer = new ResizeObserver(() => {
-      if (autoScroll && atBottomRef.current) scrollToBottom('instant');
+      if (pendingTopRef.current !== null) placePending();
+      else if (autoScroll && atBottomRef.current) scrollToBottom('instant');
     });
     observer.observe(content);
-    if (autoScroll) scrollToBottom('instant');
+    // The first layout: the remembered place, else the bottom.
+    const remembered = restoredRef.current ? null : scrollMemoryRef.current?.restore();
+    restoredRef.current = true;
+    if (remembered && !remembered.atBottom) {
+      atBottomRef.current = false;
+      pendingTopRef.current = remembered.top;
+      setIsAtBottom(false);
+      placePending();
+    } else if (autoScroll) scrollToBottom('instant');
     return () => observer.disconnect();
   }, [autoScroll, scrollToBottom]);
 

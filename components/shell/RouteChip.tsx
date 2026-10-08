@@ -4,14 +4,26 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BarRoute } from '@/lib/albatross/route-rules';
 import { cn } from '@/lib/utils';
 
-// One word at the right edge of the bar: Ask or Hold. Tab flips it. The color
-// follows the route: accent-1 for Ask, accent-2 for Hold. No icon, no menu.
+// One word at the right edge of the bar: Ask or Hold, and Run while a run
+// works in a thread (docs/albatross-threads.md). Tab cycles it. The color
+// follows the route: accent-1 for Ask, accent-2 for Hold and Run. No icon, no menu.
 
-export const ROUTE_WORD: Record<BarRoute, string> = { ask: 'Ask', hold: 'Hold' };
+/** The bar's two routes, plus Run inside a thread with a run in progress. */
+export type ChipRoute = BarRoute | 'run';
+
+export const ROUTE_WORD: Record<ChipRoute, string> = { ask: 'Ask', hold: 'Hold', run: 'Run' };
+
+/** Tab's order: Run → Ask → Hold → Run while a run works; Ask ↔ Hold otherwise. */
+export function nextChipRoute(current: ChipRoute, hasRun: boolean): ChipRoute {
+  if (!hasRun) return current === 'hold' ? 'ask' : 'hold';
+  if (current === 'run') return 'ask';
+  if (current === 'ask') return 'hold';
+  return 'run';
+}
 export const ROUTE_FLIP_MS = 150;
 
 export interface RouteChipProps {
-  route: BarRoute;
+  route: ChipRoute;
   /** True after Tab. A locked chip shows a solid border. */
   locked?: boolean;
   /** True while the endpoint has not confirmed. The chip dims to 70%. */
@@ -24,7 +36,7 @@ export interface RouteChipProps {
 }
 
 /** The chip description for assistive tech. */
-export function routeChipLabel(route: BarRoute, disabled: boolean): string {
+export function routeChipLabel(route: ChipRoute, disabled: boolean): string {
   const word = ROUTE_WORD[route];
   if (disabled) return `Route: ${word}`;
   return `Route: ${word}. Press Tab to change it.`;
@@ -42,7 +54,7 @@ export function RouteChip({
   className,
 }: RouteChipProps) {
   const wordRef = useRef<HTMLSpanElement>(null);
-  const [leaving, setLeaving] = useState<BarRoute | null>(null);
+  const [leaving, setLeaving] = useState<ChipRoute | null>(null);
   const previousRef = useRef(route);
 
   // The old word moves up 6 px and fades. The new one comes from 6 px below.
@@ -79,7 +91,7 @@ export function RouteChip({
     );
   }, [leaving]);
 
-  const hold = route === 'hold';
+  const hold = route === 'hold' || route === 'run';
   return (
     <button
       type="button"

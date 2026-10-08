@@ -54,6 +54,21 @@ final class AppEnvironment {
     // Passwords and IDs: the items without their values. Settings lists them,
     // the sheets add and replace, the allow card and the ask card read them.
     let secureDetails = SecureDetailsStore()
+    // The live thread list (docs/albatross-threads.md): the rows behind Back,
+    // the poll, the seen mark, and the verbs a row offers in place.
+    let threads = ThreadsStore()
+    // The composer draft of each Albatross thread, kept across Back.
+    let composerDrafts = ComposerDraftStore()
+    // The three newest thread models stay warm, so a return is instant and a
+    // reply that streams here keeps its task.
+    let threadModels = WorkThreadModelCache()
+    /// Sign-out: the thread rows, the drafts, and the warm thread models go.
+    func clearThreadState() {
+        threads.clear()
+        composerDrafts.removeAll()
+        threadModels.removeAll()
+    }
+
     // The current Albatross conversation. Held here so switching destinations
     // does not discard an in-flight exchange; the sidebar plus starts a fresh
     // one. Distinct from intent capture, which stays a form.

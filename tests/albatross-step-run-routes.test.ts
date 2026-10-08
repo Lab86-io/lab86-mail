@@ -90,7 +90,7 @@ describe('POST /api/albatross/work/[workId]/run', () => {
     expect(deps.enforceUserRateLimit).toHaveBeenCalledWith({
       userId: 'user-1',
       key: 'albatross-step-run',
-      limit: 20,
+      limit: 60,
       windowMs: 60_000,
     });
   });

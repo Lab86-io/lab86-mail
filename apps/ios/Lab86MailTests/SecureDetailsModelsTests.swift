@@ -155,10 +155,10 @@ struct SecureDetailsModelsTests {
         #expect(request.fieldLabels == ["Number", "Expiry date"])
         #expect(request.host == "dmv.ny.gov")
         let bare = try #require(SecureAllowRequest(json: .object([
-            "itemId": .string("sec-dob"), "kind": .string("date_of_birth"), "site": .string("aliveat25.example"),
+            "itemId": .string("sec-dob"), "kind": .string("date_of_birth"), "site": .string("firstaidclass.example"),
         ])))
         #expect(bare.itemLabel == "Date of birth")
-        #expect(bare.host == "aliveat25.example")
+        #expect(bare.host == "firstaidclass.example")
         #expect(SecureAllowRequest(json: .object(["kind": .string("id_number"), "site": .string("ny.gov")])) == nil)
         let answer = try #require(SecureAllowAnswerView(json: .object(["scope": .string("always"), "at": .number(1_759_800_000_000)])))
         #expect(answer.scope == .always)

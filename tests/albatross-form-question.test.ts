@@ -31,7 +31,7 @@ const classForm: FormQuestion = {
         {
           id: 'mon',
           label: 'Monday, October 19',
-          detail: '4:00–8:00 PM · Zoom · $70',
+          detail: '4:00–8:00 PM · Zoom · $45',
           recommended: 'Matches what you said',
         },
         {
@@ -223,7 +223,7 @@ describe('checking answers', () => {
     });
     expect(formAnswerText(classForm, checked.values, ['Phone'])).toBe(
       [
-        'Class: Monday, October 19 (4:00–8:00 PM · Zoom · $70)',
+        'Class: Monday, October 19 (4:00–8:00 PM · Zoom · $45)',
         'Phone: (555) 555-0100',
         'Home address: 12 Elm Street, Springfield, IL 62704, US',
         "Saved to the user's personal details: Phone.",

@@ -14,8 +14,13 @@ struct WorkThreadView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let route: WorkRoute
+    /// False on iPad, where the list column beside the thread shows the change.
+    var showsAttentionBanner = true
 
     @State private var model: WorkThreadModel?
+    /// The rows of the "needs you" banner at the top. Empty when hidden.
+    @State private var banner: [ThreadRow] = []
+    @State private var bannerTask: Task<Void, Never>?
     @State private var draft = ""
     @State private var pendingFiles: [ComposeAttachment] = []
     @State private var showsFileImporter = false
@@ -30,8 +35,42 @@ struct WorkThreadView: View {
 
     static let earlierDivider = "From an earlier chat"
     static let splitPrompt = "Split this into: "
+    /// The banner leaves by itself after this long.
+    static let bannerDuration: Duration = .seconds(10)
 
+    // The body is three layers, so the type checker reads each chain on its
+    // own: the loaded thread and its tasks, the refresh triggers, then the
+    // thread-list hooks (docs/albatross-threads.md) and the file importer.
     var body: some View {
+        refreshed
+            .onChange(of: draft) { _, next in
+                environment.composerDrafts.set(next, files: pendingFiles, for: route.workID)
+            }
+            .onChange(of: pendingFiles.count) { _, _ in
+                environment.composerDrafts.set(draft, files: pendingFiles, for: route.workID)
+            }
+            // The thread is on screen: new activity is seen at once (T2).
+            .onChange(of: environment.threads.row(for: route.workID)?.unread) { _, unread in
+                guard unread == true else { return }
+                Task { await environment.threads.markSeen(workID: route.workID, transport: environment.backend) }
+            }
+            // Another Albatross needs the user while this one is open (T4).
+            .onChange(of: environment.threads.attention?.id) { _, _ in
+                guard showsAttentionBanner, let attention = environment.threads.attention else { return }
+                let rows = attention.rows.filter { $0.workID != route.workID }
+                guard !rows.isEmpty else { return }
+                showBanner(rows)
+            }
+            .onAppear { environment.threads.beginFollowing(environment.backend) }
+            .onDisappear { environment.threads.endFollowing() }
+            .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+                guard case .success(let urls) = result else { return }
+                AssistantComposerFiles.importing(urls, into: &pendingFiles)
+            }
+    }
+
+    /// The thread, its title, and the tasks that load and follow it.
+    private var loaded: some View {
         Group {
             if let model {
                 content(model)
@@ -46,35 +85,46 @@ struct WorkThreadView: View {
         .navigationTitle(model?.title ?? route.title ?? "Albatross")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: route.id) {
-            let model = WorkThreadModel(workID: route.workID, title: route.title, environment: environment)
+            // The three newest threads stay warm (T4): a return is instant,
+            // and the draft comes back with the thread.
+            let model = environment.threadModels.model(for: route.workID, title: route.title, environment: environment)
             self.model = model
             model.actions = actions(for: model)
+            draft = environment.composerDrafts.draft(for: route.workID)
+            pendingFiles = environment.composerDrafts.files(for: route.workID)
             await model.open(intent: route.intent)
+            await environment.threads.markSeen(workID: route.workID, transport: environment.backend)
         }
         .task(id: followKey) {
             guard let model else { return }
             await model.followOpenRun()
         }
-        // A turn that ends may have started a run the poll did not see yet.
-        .onChange(of: model?.chat.isStreaming ?? false) { wasStreaming, isStreaming in
-            guard wasStreaming, !isStreaming, let model else { return }
-            Task { await model.turnDidEnd() }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            guard phase == .active, let model else { return }
-            Task { await model.refresh() }
-        }
-        .onChange(of: environment.navigation.workRefreshToken) { _, _ in
+        // A reply that runs on the server (T5): wait for it, then read it.
+        .task(id: model?.workID) {
             guard let model else { return }
-            Task { await model.refresh() }
+            await model.followServerReply()
         }
-        .onChange(of: environment.navigation.workRoute?.intent) { _, intent in
-            applyIntent(intent)
-        }
-        .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-            guard case .success(let urls) = result else { return }
-            AssistantComposerFiles.importing(urls, into: &pendingFiles)
-        }
+    }
+
+    /// The loaded thread with the events that refresh it.
+    private var refreshed: some View {
+        loaded
+            // A turn that ends may have started a run the poll did not see yet.
+            .onChange(of: model?.chat.isStreaming ?? false) { wasStreaming, isStreaming in
+                guard wasStreaming, !isStreaming, let model else { return }
+                Task { await model.turnDidEnd() }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active, let model else { return }
+                Task { await model.refresh() }
+            }
+            .onChange(of: environment.navigation.workRefreshToken) { _, _ in
+                guard let model else { return }
+                Task { await model.refresh() }
+            }
+            .onChange(of: environment.navigation.workRoute?.intent) { _, intent in
+                applyIntent(intent)
+            }
     }
 
     /// The poll task restarts when a run opens or closes, or a turn streams.
@@ -136,6 +186,16 @@ struct WorkThreadView: View {
                     composer(model)
                 } else {
                     holdLanding(model)
+                }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !banner.isEmpty {
+                    NeedsYouBanner(
+                        rows: banner,
+                        onOpen: { row in openFromBanner(row) },
+                        onDismiss: { hideBanner() }
+                    )
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
                 }
             }
             .environment(\.workThread, model)
@@ -260,6 +320,16 @@ struct WorkThreadView: View {
 
     /// The hold receipts and the chat errors, under the newest item.
     @ViewBuilder private func chatFooter(_ model: WorkThreadModel) -> some View {
+        // A reply runs on the server (T5): one quiet row until it lands.
+        if model.replyInProgress {
+            HStack(spacing: 8) {
+                RevealDot()
+                Text(RunBlockCopy.replyInProgress)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+        }
         ForEach(model.chat.receipts) { receipt in
             HoldReceiptRow(
                 model: receipt,
@@ -350,8 +420,15 @@ struct WorkThreadView: View {
             draft: $draft,
             pendingFiles: $pendingFiles,
             focus: $composerFocused,
-            placeholder: model.threadState.composerPlaceholder,
+            placeholder: model.composerPlaceholder,
             hidesContextChip: true,
+            routeLine: model.runRouteLine,
+            armed: model.redirectArmed == nil ? nil : ComposerArmedNotice(
+                text: RunBlockCopy.redirectStripLine(hasFiles: !pendingFiles.isEmpty),
+                onCancel: { model.disarmRedirect() }
+            ),
+            // A redirect note is text only: an attached file holds the send.
+            sendDisabled: model.sendsAreHeld || (model.redirectArmed != nil && !pendingFiles.isEmpty),
             onSubmit: { submitDraft(model) },
             onAttach: { showsFileImporter = true }
         )
@@ -378,20 +455,75 @@ struct WorkThreadView: View {
             && model?.chat.isUploading == false
     }
 
-    /// Return follows the chip. Ask sends to Albatross. Hold makes new Work
-    /// and produces no reply.
+    /// Return follows the chip. Run sends to the run that works. Ask sends
+    /// to Albatross. Hold makes new Work and produces no reply.
     private func submitDraft(_ model: WorkThreadModel) {
-        guard canSend, !model.chat.isStreaming, !model.chat.isHolding else { return }
+        guard canSend, !model.chat.isStreaming, !model.chat.isHolding, !model.sendsAreHeld else { return }
+        // "Stop and redirect" waits for this message: the stopped run goes
+        // on with it (T8).
+        if model.redirectArmed != nil {
+            // A run takes text only; the file and the text stay in the field.
+            guard pendingFiles.isEmpty else { return }
+            let text = draft
+            clearDraft()
+            Task {
+                // The run did not continue: the text comes back to the field.
+                let continued = await model.sendRedirect(text)
+                if !continued, draft.isEmpty { draft = text }
+            }
+            return
+        }
+        // A note to the run that works, straight to the run (T7).
+        if model.chat.route == .run, pendingFiles.isEmpty {
+            let text = draft
+            clearDraft()
+            Task { await model.steer(text) }
+            return
+        }
         if model.chat.route == .hold, pendingFiles.isEmpty {
             let text = draft
-            draft = ""
+            clearDraft()
             Task { await model.chat.hold(text) }
             return
         }
         model.send(draft, attachments: pendingFiles)
+        clearDraft()
+        model.chat.clearRoute()
+    }
+
+    private func clearDraft() {
         draft = ""
         pendingFiles = []
-        model.chat.clearRoute()
+        environment.composerDrafts.clear(for: route.workID)
+    }
+
+    // MARK: - The banner
+
+    private func showBanner(_ rows: [ThreadRow]) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { banner = rows }
+        PlatformAccessibility.announce(NeedsYouBannerCopy.announcement(rows))
+        bannerTask?.cancel()
+        bannerTask = Task {
+            do { try await Task.sleep(for: Self.bannerDuration) } catch { return }
+            hideBanner()
+        }
+    }
+
+    private func hideBanner() {
+        bannerTask?.cancel()
+        bannerTask = nil
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { banner = [] }
+    }
+
+    /// "Open" goes to that thread. "Show" goes back to the list on "Needs you".
+    private func openFromBanner(_ row: ThreadRow?) {
+        hideBanner()
+        if let row {
+            environment.navigation.openWork(id: row.workID, title: row.title)
+        } else {
+            environment.navigation.pendingWorkFilter = .needsYou
+            environment.navigation.workRoute = nil
+        }
     }
 
     private func undoHold(_ receipt: HoldCardModel, model: WorkThreadModel) {
@@ -419,6 +551,13 @@ struct WorkThreadView: View {
         actions.allow = { view, request, scope in Task { await model.allow(view, request: request, scope: scope) } }
         actions.openWeb = { _ in if let url = model.webURL { openURL(url) } }
         actions.saveSignIn = { view, offer in signInOffer = SignInSaveOffer(run: view, site: offer.site) }
+        // The run stops at once; the composer waits for the note (T8).
+        actions.redirect = { view in
+            Task {
+                await model.armRedirect(view)
+                composerFocused = true
+            }
+        }
         return actions
     }
 

@@ -6,10 +6,14 @@ import { formatWorkChatContext } from '../lib/albatross/work-chat-context';
 // (docs/albatross-thread.md).
 
 const detail = {
-  work: { _id: 'work-1', title: 'Register for the course', rawText: 'Register for Alive at 25 before Nov 2' },
+  work: {
+    _id: 'work-1',
+    title: 'Register for the course',
+    rawText: 'Register for CPR and first aid before Nov 14',
+  },
   questions: [
     { _id: 'q-run', status: 'pending', prompt: 'Which class?' },
-    { _id: 'q-plan', status: 'pending', prompt: 'Which court?' },
+    { _id: 'q-plan', status: 'pending', prompt: 'Which pool?' },
   ],
   execution: {
     guideSteps: [
@@ -31,7 +35,7 @@ const detail = {
       },
       {
         key: 'step-2',
-        title: 'Attend the court date',
+        title: 'Attend the orientation',
         runnable: false,
         run: null,
       },
@@ -52,7 +56,7 @@ describe('the Work chat context', () => {
     expect(context).toContain('Steps and their runs (stepKey in brackets):');
     expect(context).toContain('1. [step-1] Register for the course — waits on the user (answer: Answer)');
     expect(context).toContain('   It asked: Pick a class.');
-    expect(context).toContain('2. [step-2] Attend the court date — the user does it');
+    expect(context).toContain('2. [step-2] Attend the orientation — the user does it');
     expect(context).toContain('3. [step-3] Save the certificate — a run works on it now');
     expect(context).toContain('   Now: Opened the portal.');
   });
@@ -61,7 +65,7 @@ describe('the Work chat context', () => {
     expect(context).toContain(
       '[questionId: q-run] [asked by a step run: answer with albatross_handle_step] Which class?',
     );
-    expect(context).toContain('[questionId: q-plan] Which court?');
+    expect(context).toContain('[questionId: q-plan] Which pool?');
   });
 
   test('the chat rules name the run tool and the details tool', () => {

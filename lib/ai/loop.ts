@@ -5,6 +5,7 @@ import {
   jsonSchema,
   type ModelMessage,
   streamText,
+  type UIMessage,
 } from 'ai';
 import { z } from 'zod';
 import { formQuestionSchema } from '../albatross/thread-contract';
@@ -1129,10 +1130,40 @@ export interface AgentRunOpts {
   signal?: AbortSignal;
 }
 
+/**
+ * A reply that the server keeps and saves itself (docs/albatross-threads.md,
+ * T5): `originalMessages` turns on persistence mode (the reply gets a stable
+ * message id, and `onFinish` receives the whole message list), and `keepAlive`
+ * reads a copy of the stream on the server, so the reply runs to its end when
+ * the browser leaves.
+ */
+export interface AgentReplyOptions {
+  originalMessages?: UIMessage[];
+  onFinish?: (event: {
+    messages: UIMessage[];
+    responseMessage: UIMessage;
+    isAborted: boolean;
+  }) => Promise<void> | void;
+  keepAlive?: boolean;
+}
+
 export interface AgentRun {
   /** Completed generation steps, resolved when the stream finishes (empty on failure). */
   steps: Promise<any[]>;
-  toUIMessageStreamResponse(): Response;
+  toUIMessageStreamResponse(options?: AgentReplyOptions): Response;
+}
+
+/** Read a stream to its end and drop the data. Errors are ignored: this copy only keeps the reply alive. */
+async function drain(stream: ReadableStream<unknown>) {
+  const reader = stream.getReader();
+  try {
+    // Read and drop each chunk: this copy only keeps the reply alive.
+    while (!(await reader.read()).done);
+  } catch {
+    // The reply's own error handling reports failures.
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 /** Wall-clock grounding, rounded to the minute so the prompt prefix stays cacheable across steps. */
@@ -1195,14 +1226,33 @@ export async function runAgent({
 
   return {
     steps,
-    toUIMessageStreamResponse() {
+    toUIMessageStreamResponse(options: AgentReplyOptions = {}) {
       return createUIMessageStreamResponse({
         headers: {
           'x-agent-run-id': runId,
           'x-accel-buffering': 'no',
           'cache-control': 'no-cache, no-transform',
         },
+        ...(options.keepAlive
+          ? {
+              consumeSseStream: ({ stream }: { stream: ReadableStream<string> }) => {
+                void drain(stream);
+              },
+            }
+          : {}),
         stream: createUIMessageStream({
+          ...(options.originalMessages ? { originalMessages: options.originalMessages } : {}),
+          ...(options.onFinish
+            ? {
+                onFinish: async ({ messages: finished, responseMessage, isAborted }) => {
+                  try {
+                    await options.onFinish?.({ messages: finished, responseMessage, isAborted });
+                  } catch (error) {
+                    console.error('[agent] reply save failed', { runId, error: describeModelError(error) });
+                  }
+                },
+              }
+            : {}),
           execute: async ({ writer }) => {
             // A new reply gets its time (the Work thread sorts by it). A reply that
             // continues after a form answer keeps the time it started with.

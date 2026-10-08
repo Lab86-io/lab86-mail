@@ -181,7 +181,7 @@ Sources: developer.apple.com/documentation/usernotifications/unnotificationcateg
   and `.hiddenPreviewsShowSubtitle` show the title or subtitle even then.
 - Decision: the `allow_secure` push uses a category `secureAllow` with placeholder
   "Albatross needs an answer." and no `.hiddenPreviewsShowTitle`, because the title carries the
-  step title ("Pay the court fine"). No banner actions: a grant from a lock screen has no
+  step title ("Pay the pool membership fee"). No banner actions: a grant from a lock screen has no
   context and no identity (section 6).
 
 ### 1.5 Apple: LocalAuthentication, and the Passwords app
@@ -759,7 +759,7 @@ Copy by kind (`SecureAllowCopy`):
 | Kind | Title | Line |
 |---|---|---|
 | id_number | "Use your driver's license on dmv.ny.gov?" | "Albatross types the number and the expiry date into the page. It does not read them." (one field: "Albatross types the number into the page. It does not read it.") |
-| date_of_birth | "Use your date of birth on aliveat25.com?" | "Albatross types the date into the page. It does not read it." |
+| date_of_birth | "Use your date of birth on firstaidclass.example.com?" | "Albatross types the date into the page. It does not read it." |
 | sign_in | "Use your Chase sign-in on secure.chase.com?" | "Albatross signs in with your saved username and password." (rare: a sign-in asks only when a new host of the same registrable domain appears, which the server allows without a question; the copy exists for safety) |
 | api_key | "Call api.openai.com with your OpenAI key?" | "Albatross sends the key in the request and reads only the reply." |
 
@@ -968,7 +968,7 @@ every line. Proposed, for one voice on all platforms:
 |---|---|
 | Signed in | "Signed in to chase.com with your saved sign-in." (V5) |
 | Typed an ID field | "Typed your driver's license number on dmv.ny.gov." |
-| Typed a date of birth | "Typed your date of birth on aliveat25.com." |
+| Typed a date of birth | "Typed your date of birth on firstaidclass.example.com." |
 | Called a host | "Called api.openai.com with your OpenAI key." |
 | Refused for a site | "Did not type your Chase password. The page is on chase-login.example, not chase.com." (V7) |
 | Asked | "Asked you: use your driver's license on dmv.ny.gov?" |

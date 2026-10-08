@@ -28,8 +28,9 @@ import { TasksSurface } from '@/components/tasks/TasksSurface';
 import { ThreadView } from '@/components/thread/ThreadView';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { useMediaQuery } from '@/hooks/use-media-query';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { useClientStore } from '@/lib/client-state';
+import { isWorkThreadOpen, mainSidebarOpen, useClientStore } from '@/lib/client-state';
 import {
   areaIdFromSearch,
   hasPersistedPrimaryViewValue,
@@ -52,6 +53,9 @@ import { WakeNudgeHost } from './WakeNudge';
 // doesn't snap to weird sizes when the reader or AI sidebar mounts/unmounts.
 // The navigation rail is no longer part of this group — it's a shadcn Sidebar
 // that collapses to an icon strip rather than unmounting.
+/** The window fits the main sidebar, the thread rail, the conversation, and a region side by side. */
+const WIDE_FOR_SIDEBAR_QUERY = '(min-width: 1680px)';
+
 export function AppShell({
   clerkEnabled,
   userName,
@@ -85,6 +89,32 @@ export function AppShell({
   const selectedWorkId = useClientStore((s) => s.selectedWorkId);
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
+  // While a thread is open its rail takes the sidebar's place below 1680 px
+  // (docs/albatross-threads.md, lead decision 3). The user may still open the
+  // sidebar by hand for this visit; Back restores their usual choice.
+  const threadOpen = isWorkThreadOpen({ primaryView: visiblePrimaryView, selectedWorkId });
+  const wideForSidebar = useMediaQuery(WIDE_FOR_SIDEBAR_QUERY);
+  const [sidebarOverride, setSidebarOverride] = useState(false);
+  useEffect(() => {
+    if (!threadOpen) setSidebarOverride(false);
+  }, [threadOpen]);
+  const sidebarOpen = mainSidebarOpen({
+    railOpen,
+    threadOpen: threadOpen && !isMobile,
+    wide: wideForSidebar,
+    override: sidebarOverride,
+  });
+  const onSidebarOpenChange = useCallback(
+    (next: boolean) => {
+      if (threadOpen && !wideForSidebar && !isMobile) {
+        setSidebarOverride(next);
+        if (next) setRailOpen(true);
+        return;
+      }
+      setRailOpen(next);
+    },
+    [threadOpen, wideForSidebar, isMobile, setRailOpen],
+  );
   const [deepLinkedView] = useState<PrimaryView | null>(() => {
     if (typeof window === 'undefined') return null;
     return primaryViewFromSearch(window.location.search);
@@ -244,14 +274,14 @@ export function AppShell({
   return (
     <TooltipProvider delayDuration={isMobile ? 0 : 350}>
       <SidebarProvider
-        open={railOpen}
-        onOpenChange={setRailOpen}
+        open={sidebarOpen}
+        onOpenChange={onSidebarOpenChange}
         style={{ '--sidebar-width': `${railWidth}px` } as CSSProperties}
         className="app-paper relative h-dvh overflow-hidden"
       >
         <Rail clerkEnabled={clerkEnabled} activeViewOverride={bootView ?? undefined} />
         {/* Drag handle to resize the expanded rail; hidden when collapsed to icons. */}
-        {railOpen && !isMobile ? <RailResizeHandle /> : null}
+        {sidebarOpen && !isMobile ? <RailResizeHandle /> : null}
         <main className="relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
           <div data-workspace-panel className="workspace-panel">
             <ChatWorkspace mobile={isMobile} clerkEnabled={clerkEnabled} userName={userName}>

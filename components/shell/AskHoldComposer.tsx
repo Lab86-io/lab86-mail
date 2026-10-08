@@ -5,7 +5,7 @@ import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, use
 import { useVoiceCapture, VoiceCaptureButton } from '@/components/albatross/IntentCapture';
 import { PromptInput, PromptInputActions } from '@/components/odysseyui/prompt-input';
 import { HoldLanding } from '@/components/shell/HoldLanding';
-import { RouteChip, RouteTabHint } from '@/components/shell/RouteChip';
+import { type ChipRoute, nextChipRoute, RouteChip, RouteTabHint } from '@/components/shell/RouteChip';
 import { type RoutePredictionOptions, useRoutePrediction } from '@/components/shell/useRoutePrediction';
 import { Button } from '@/components/ui/button';
 import {
@@ -77,6 +77,11 @@ export interface AskHoldComposerProps {
    */
   onAsk?: (text: string) => Promise<boolean> | boolean;
   door?: DoorRequest | null;
+  /**
+   * A run works in this thread: the chip gains "Run" ahead of Ask and Hold,
+   * and Enter on Run sends the text to the run (the parent routes it).
+   */
+  runRoute?: RunRouteControl;
   predict?: RoutePredictionOptions['predict'];
   railTarget?: () => Element | null;
   reduceMotion?: boolean;
@@ -87,6 +92,14 @@ export interface AskHoldComposerProps {
   leading?: ReactNode;
   placeholder?: string;
   className?: string;
+}
+
+/** The Run position of the chip, owned by the thread. */
+export interface RunRouteControl {
+  selected: boolean;
+  /** An armed redirect: the chip stays on Run. */
+  locked?: boolean;
+  onSelect: (selected: boolean) => void;
 }
 
 interface Landing {
@@ -112,6 +125,7 @@ export function AskHoldComposer({
   onUndoHold = releaseHold,
   onAsk,
   door = null,
+  runRoute,
   predict,
   railTarget,
   reduceMotion = false,
@@ -125,6 +139,23 @@ export function AskHoldComposer({
   const valueRef = useRef(value);
   valueRef.current = value;
   const prediction = useRoutePrediction({ text: value, predict });
+  // The chip's route: Run while the thread holds it, else the bar's own Ask or Hold.
+  const runSelected = Boolean(runRoute?.selected);
+  const chipRoute: ChipRoute = runSelected ? 'run' : prediction.route;
+  const barRoute: BarRoute = chipRoute === 'run' ? 'ask' : chipRoute;
+  const cycleRoute = useCallback(() => {
+    if (!runRoute) {
+      prediction.flip();
+      return;
+    }
+    if (runRoute.locked) return;
+    const next = nextChipRoute(chipRoute, true);
+    if (next === 'run') runRoute.onSelect(true);
+    else {
+      runRoute.onSelect(false);
+      prediction.preset(next);
+    }
+  }, [runRoute, chipRoute, prediction.flip, prediction.preset]);
   const voice = useVoiceCapture(() => valueRef.current, onValueChange);
   const [landing, setLanding] = useState<Landing | null>(null);
   const [holdError, setHoldError] = useState<string | null>(null);
@@ -216,20 +247,20 @@ export function AskHoldComposer({
       return;
     }
     if (busy) return;
-    if (prediction.route === 'hold' && valueRef.current.trim()) {
+    if (barRoute === 'hold' && valueRef.current.trim()) {
       runHold();
       return;
     }
     onSend();
-  }, [streaming, busy, onStop, prediction.route, runHold, onSend]);
+  }, [streaming, busy, onStop, barRoute, runHold, onSend]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing) return;
-    const action = barKeyAction(event, { route: prediction.route, empty: prediction.empty });
+    const action = barKeyAction(event, { route: barRoute, empty: prediction.empty });
     if (!action) return;
     if (action === 'flip') {
       event.preventDefault();
-      prediction.flip();
+      cycleRoute();
       return;
     }
     if (action === 'clear') {
@@ -246,7 +277,7 @@ export function AskHoldComposer({
     if (!streaming && !busy) runHold();
   };
 
-  const holdRoute = prediction.route === 'hold';
+  const holdRoute = barRoute === 'hold';
   const sendLabel = streaming ? 'Stop' : holdRoute ? 'Hold' : 'Send';
 
   return (
@@ -292,13 +323,14 @@ export function AskHoldComposer({
               <VoiceCaptureButton voice={voice} disabled={busy} />
             </div>
             <div className="flex items-center gap-2">
-              <RouteTabHint visible={!prediction.locked} />
+              <RouteTabHint visible={runRoute ? !runRoute.locked : !prediction.locked} />
               <RouteChip
-                route={prediction.route}
-                locked={prediction.locked}
-                pending={prediction.pending}
+                route={chipRoute}
+                locked={runSelected ? true : prediction.locked}
+                pending={runSelected ? false : prediction.pending}
+                disabled={runRoute?.locked}
                 reduceMotion={reduceMotion}
-                onFlip={prediction.flip}
+                onFlip={cycleRoute}
               />
               <Button
                 type="button"

@@ -34,7 +34,7 @@ describe('stepNeedsYou', () => {
     expect(stepNeedsYou(step({ kind: 'physical' }))).toEqual([
       'Complete the real-world part and return here to record it.',
     ]);
-    expect(stepNeedsYou(step({ url: 'https://aliveat25.example.com' }))).toEqual([
+    expect(stepNeedsYou(step({ url: 'https://firstaidclass.example.com' }))).toEqual([
       'Payment, a signature, or a sign-in on the page is yours.',
     ]);
     expect(stepNeedsYou(step({}))).toEqual([]);

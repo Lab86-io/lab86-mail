@@ -85,8 +85,13 @@ final class WorkThreadStore {
     }
 
     /// "Handle it". The queued run appears at once; the next read settles it.
-    func start(stepKey: String, stepTitle: String, transport: any BackendExchanging) async -> String? {
-        guard let result = await action(["action": .string("start"), "stepKey": .string(stepKey)], transport: transport) else {
+    /// A `note` goes to the new run first ("Send again" with no run open).
+    func start(stepKey: String, stepTitle: String, note: String? = nil, transport: any BackendExchanging) async -> String? {
+        var body: [String: JSONValue] = ["action": .string("start"), "stepKey": .string(stepKey)]
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank {
+            body["note"] = .string(String(note.prefix(2_000)))
+        }
+        guard let result = await action(body, transport: transport) else {
             return nil
         }
         guard let runID = result["runId"]?.stringValue?.nilIfBlank else {
@@ -134,14 +139,17 @@ final class WorkThreadStore {
     }
 
     /// A note to a run that works now. The run reads it between its steps.
-    func steer(_ view: ThreadRunView, note: String, transport: any BackendExchanging) async -> Bool {
+    /// `noteID` is the id of the thread message that carries the note, so
+    /// the run view's `notes` give the message its receipt.
+    func steer(_ view: ThreadRunView, note: String, noteID: String? = nil, transport: any BackendExchanging) async -> Bool {
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        let body: [String: JSONValue] = [
+        var body: [String: JSONValue] = [
             "action": .string("steer"),
             "runId": .string(view.id),
             "note": .string(String(trimmed.prefix(2_000))),
         ]
+        if let noteID { body["noteId"] = .string(noteID) }
         return await action(body, transport: transport) != nil
     }
 
@@ -194,6 +202,6 @@ final class WorkThreadStore {
 
     private func replace(_ id: String, with run: StepRunView) {
         guard let index = runs.firstIndex(where: { $0.id == id }) else { return }
-        runs[index] = ThreadRunView(run: run, question: runs[index].question)
+        runs[index] = ThreadRunView(run: run, question: runs[index].question, notes: runs[index].notes)
     }
 }

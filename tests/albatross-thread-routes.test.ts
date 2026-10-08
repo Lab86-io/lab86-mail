@@ -206,7 +206,8 @@ describe('POST /run { action: steer }', () => {
       post({ action: 'steer', runId: 'run-1', note: 'Use the Monday class.' }),
       context,
     );
-    expect(await response.json()).toEqual({ ok: true, runId: 'run-1' });
+    // The server also keeps the note in its thread (docs/albatross-threads.md, T7).
+    expect(await response.json()).toMatchObject({ ok: true, runId: 'run-1', messageId: expect.any(String) });
   });
 
   test('a secret in a note never reaches the run (docs/albatross-secure-store.md)', async () => {

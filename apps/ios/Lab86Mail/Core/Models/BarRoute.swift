@@ -7,12 +7,31 @@ import Foundation
 enum BarRoute: String, Codable, Hashable, Sendable {
     case ask
     case hold
+    /// A note to the run that works now (docs/albatross-threads.md, T7). The
+    /// thread offers it while a run is open; the Chat tab never does.
+    case run
 
-    /// The other route.
+    /// The other route of the ask and hold pair. A run note flips to ask.
     var flipped: BarRoute { self == .ask ? .hold : .ask }
 
+    /// The route after a flip: Run → Ask → Hold → Run while a run works,
+    /// else Ask ↔ Hold.
+    func next(runAvailable: Bool) -> BarRoute {
+        switch self {
+        case .run: return .ask
+        case .ask: return .hold
+        case .hold: return runAvailable ? .run : .ask
+        }
+    }
+
     /// The word on the chip.
-    var word: String { self == .ask ? "Ask" : "Hold" }
+    var word: String {
+        switch self {
+        case .ask: "Ask"
+        case .hold: "Hold"
+        case .run: "Run"
+        }
+    }
 }
 
 struct RouteVerdict: Equatable, Sendable {

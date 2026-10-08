@@ -7,6 +7,14 @@ extension Notification.Name {
 struct AlbatrossCommands: Commands {
     let environment: AppEnvironment
 
+    #if os(macOS)
+    /// The open thread's unread mark, for the ⇧⌘U title.
+    private var openThreadUnread: Bool {
+        guard let workID = environment.navigation.workRoute?.workID else { return false }
+        return environment.threads.row(for: workID)?.unread ?? false
+    }
+    #endif
+
     var body: some Commands {
         CommandMenu("Albatross") {
             Button("New Message") {
@@ -29,6 +37,20 @@ struct AlbatrossCommands: Commands {
             .keyboardShortcut("k", modifiers: .command)
 
             #if os(macOS)
+            // The open thread (docs/albatross-threads.md, T8 and T2): the run
+            // stops and the composer waits for the note; the unread mark flips.
+            Button(MacThreadCommandState.stopAndRedirect) {
+                MacRequests.shared.requestRedirect()
+            }
+            .keyboardShortcut(".", modifiers: [.shift, .command])
+            .disabled(!environment.navigation.showsWorkThread)
+
+            Button(MacThreadCommandState.unreadTitle(unread: openThreadUnread)) {
+                MacRequests.shared.requestToggleUnread()
+            }
+            .keyboardShortcut("u", modifiers: [.shift, .command])
+            .disabled(!environment.navigation.showsWorkThread)
+
             Button("Sync Calendar") {
                 MacRequests.shared.requestCalendarSync()
             }

@@ -38,9 +38,11 @@ function base(now: number, over: Partial<StepRunView>): StepRunView {
     artifacts: [],
     browserSessionId: null,
     parentRunId: null,
+    notes: [],
     stoppedBy: null,
     error: null,
     createdAt: now - 4 * MINUTE,
+    startedAt: now - 4 * MINUTE,
     updatedAt: now - MINUTE,
     finishedAt: null,
     ...over,
@@ -53,7 +55,7 @@ function log(now: number, texts: string[]) {
 
 export function stepRunFixtures(now = Date.now()): Record<StepRunFixtureName, StepRunView> {
   return {
-    queued: base(now, { id: 'run_queued', state: 'queued', log: [] }),
+    queued: base(now, { id: 'run_queued', state: 'queued', startedAt: null, log: [] }),
     running: base(now, {
       id: 'run_running',
       state: 'running',

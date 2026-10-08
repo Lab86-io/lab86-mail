@@ -1266,6 +1266,8 @@ export const USER_INLINE_TABLES = [
   'albatrossStepRuns',
   'albatrossBrowserContexts',
   'personalDetails',
+  // One small row for each Albatross thread (docs/albatross-threads.md).
+  'albatrossThreadStates',
   // Secure details (docs/albatross-secure-store.md): at most 100 items, and
   // grants that end within two hours. Their use history drains in batches.
   'secureItems',

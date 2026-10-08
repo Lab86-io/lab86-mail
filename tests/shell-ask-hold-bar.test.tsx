@@ -18,7 +18,7 @@ import {
   holdTitleFromText,
 } from '../components/shell/HoldLanding';
 import { HOLD_THIS_KEPT, HOLD_THIS_LABEL, HoldThisControl } from '../components/shell/HoldThisControl';
-import { RouteChip, routeChipLabel } from '../components/shell/RouteChip';
+import { nextChipRoute, RouteChip, routeChipLabel } from '../components/shell/RouteChip';
 import { type RoutePrediction, useRoutePrediction } from '../components/shell/useRoutePrediction';
 import {
   HOLD_ERROR,
@@ -1259,5 +1259,24 @@ describe('the Hold notice', () => {
     await expect(releaseHold(cards(1), { fetchImpl: thrown })).rejects.toThrow(HOLD_UNDO_ERROR);
     const badBody = (async () => new Response('not json', { status: 200 })) as unknown as typeof fetch;
     await expect(releaseHold(cards(1), { fetchImpl: badBody })).rejects.toThrow(HOLD_UNDO_ERROR);
+  });
+});
+
+describe('the Run route in a thread (docs/albatross-threads.md, one control in the bar)', () => {
+  test('Tab cycles Run → Ask → Hold → Run while a run works, and Ask ↔ Hold otherwise', () => {
+    expect(nextChipRoute('run', true)).toBe('ask');
+    expect(nextChipRoute('ask', true)).toBe('hold');
+    expect(nextChipRoute('hold', true)).toBe('run');
+    expect(nextChipRoute('ask', false)).toBe('hold');
+    expect(nextChipRoute('hold', false)).toBe('ask');
+    expect(nextChipRoute('run', false)).toBe('hold');
+  });
+
+  test('the chip reads Run in the run voice, with the same lock and label rules', () => {
+    const run = renderToStaticMarkup(<RouteChip route="run" locked />);
+    expect(run).toContain('>Run<');
+    expect(run).toContain('data-route="run"');
+    expect(run).toContain('var(--color-accent-2)');
+    expect(routeChipLabel('run', false)).toBe('Route: Run. Press Tab to change it.');
   });
 });

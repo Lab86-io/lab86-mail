@@ -23,6 +23,9 @@ struct RunBlockActions {
     var openWeb: (ThreadRunView) -> Void = { _ in }
     /// "Save a sign-in" on a `sign_in` handoff (V13).
     var saveSignIn: (ThreadRunView, SecureSaveSignInOffer) -> Void = { _, _ in }
+    /// "Stop and redirect" on an open run (docs/albatross-threads.md, T8).
+    /// The button shows only when the owner handles it.
+    var redirect: ((ThreadRunView) -> Void)? = nil
 }
 
 /// A V13 save offer the user opened: the run, for the receipt, and its site.
@@ -154,8 +157,15 @@ struct RunBlockView: View {
                 logWell
             }
             pageRow
-            HStack {
+            HStack(spacing: 10) {
                 Spacer(minLength: 0)
+                if let redirect = actions.redirect {
+                    Button(busy ? RunBlockCopy.stopBusy : RunBlockCopy.stopAndRedirect) { redirect(view) }
+                        .buttonStyle(.bordered)
+                        .disabled(busy)
+                        .help(RunBlockCopy.stopAndRedirectHelp)
+                        .frame(minHeight: 44)
+                }
                 Button(busy ? RunBlockCopy.stopBusy : RunBlockCopy.stopButton) { actions.stop(view) }
                     .buttonStyle(.bordered)
                     .disabled(busy)
@@ -185,7 +195,7 @@ struct RunBlockView: View {
         )
     }
 
-    /// "Albatross is on the page · aliveat25.com" with "Open" or "Hide the page".
+    /// "Albatross is on the page · firstaidclass.example.com" with "Open" or "Hide the page".
     @ViewBuilder private var pageRow: some View {
         if run.browserSessionID != nil {
             HStack(alignment: .firstTextBaseline, spacing: 10) {

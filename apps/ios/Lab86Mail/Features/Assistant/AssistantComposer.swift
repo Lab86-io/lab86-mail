@@ -13,6 +13,13 @@ struct AssistantComposer: View {
     var placeholder = "Ask or hold"
     /// The thread is its own context: it hides the "Work: …" chip.
     var hidesContextChip = false
+    /// "To the run · Step 2, Renew online" while the route is Run
+    /// (docs/albatross-threads.md, lead decision 5).
+    var routeLine: String? = nil
+    /// "Stop and redirect" armed the composer: the strip says so, with Cancel.
+    var armed: ComposerArmedNotice? = nil
+    /// A reply runs on the server: an Ask waits until it ends.
+    var sendDisabled = false
     let onSubmit: () -> Void
     let onAttach: () -> Void
 
@@ -28,6 +35,18 @@ struct AssistantComposer: View {
 
     var body: some View {
         VStack(spacing: 4) {
+            if let armed {
+                ComposerArmedStrip(notice: armed)
+            } else if let routeLine, model.route == .run {
+                Text(routeLine)
+                    .font(.caption)
+                    .foregroundStyle(environment.theme.accent2Color)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .accessibilityLabel(routeLine)
+            }
             if let savedLine {
                 Text(savedLine)
                     .font(.footnote)
@@ -144,7 +163,7 @@ struct AssistantComposer: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(!canSend)
+                    .disabled(!canSend || sendDisabled)
                     .accessibilityLabel(model.isUploading ? "Uploading" : "Send")
                 }
             }
@@ -174,6 +193,7 @@ struct AssistantComposer: View {
     /// Return and the send control: the draft as it is, or without its
     /// secret-shaped values while the notice shows (decision 14).
     private func submit() {
+        guard !sendDisabled else { return }
         if secretHits.isEmpty {
             onSubmit()
         } else {
@@ -235,6 +255,35 @@ struct AssistantComposer: View {
 
     private var routeTint: Color {
         model.route == .ask ? environment.theme.accentColor : environment.theme.accent2Color
+    }
+}
+
+/// What the composer says while "Stop and redirect" waits for its note
+/// (docs/albatross-threads.md, T8).
+struct ComposerArmedNotice {
+    let text: String
+    let onCancel: () -> Void
+}
+
+/// One line above the field with "Cancel" at the trailing edge.
+struct ComposerArmedStrip: View {
+    @Environment(AppEnvironment.self) private var environment
+    let notice: ComposerArmedNotice
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(notice.text)
+                .font(.footnote)
+                .foregroundStyle(environment.theme.accent2Color)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button("Cancel", action: notice.onCancel)
+                .buttonStyle(.borderless)
+                .font(.footnote.weight(.medium))
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .accessibilityElement(children: .contain)
     }
 }
 
