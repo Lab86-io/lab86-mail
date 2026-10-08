@@ -305,7 +305,7 @@ describe('the answered receipt', () => {
     expect(questionReceiptLine({ status: 'dismissed', answeredIn: null })).toBe('Skipped');
     expect(questionReceiptLine({ status: 'superseded', answeredIn: null })).toBe('No longer open');
     expect(answerTextRows(runs.answeredChat.question!.answer)).toEqual([
-      { id: 'line-0', label: 'Class', value: 'Monday, October 19 (4:00–8:00 PM · Zoom · $70)' },
+      { id: 'line-0', label: 'Class', value: 'Monday, October 19 (4:00–8:00 PM · Zoom · $45)' },
       { id: 'line-1', label: 'Phone', value: '(555) 555-0100' },
     ]);
     expect(savedLabelsFromAnswer(runs.answeredForm.question!.answer)).toEqual(['Phone']);

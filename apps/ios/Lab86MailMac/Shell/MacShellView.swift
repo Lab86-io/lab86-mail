@@ -54,6 +54,26 @@ struct MacShellView: View {
         // Edit > Undo and Command-Z take back the change the undo notice
         // names (round 2).
         .macUndoBridge()
+        // The Dock badge is the count of Albatrosses that need the user
+        // (docs/albatross-threads.md, lead decision 10).
+        .macDockBadge()
+        // The shell is on screen for as long as the window is: it keeps the
+        // thread list live (every 5 s while a row works, else 30 s), so the
+        // source list, the Dock badge, and the Go menu agree. A hidden app
+        // pauses the poll; a hidden sidebar does not.
+        .onAppear { environment.threads.beginFollowing(environment.backend) }
+        .onDisappear { environment.threads.endFollowing() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
+            environment.threads.pauseFollowing()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in
+            environment.threads.resumeFollowing(environment.backend)
+        }
+        // The Go menu (T3): the next or previous Albatross in the source
+        // list's order, or the next one that needs the user.
+        .onChange(of: MacRequests.shared.threadMoveToken) { _, _ in
+            moveThread(MacRequests.shared.threadMoveTarget)
+        }
         // Files leaves the source list when Settings turns it off. The list
         // behind a hidden row gives way to Today; an open document stays.
         .onChange(of: environment.trust.showsFiles) { _, showsFiles in
@@ -80,6 +100,7 @@ struct MacShellView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             environment.navigation.consumeAppIntentRequests()
+            environment.threads.resumeFollowing(environment.backend)
             Task {
                 // Mail actions saved while offline go out on return (NAT-10).
                 _ = await environment.flushCommandOutbox(ownerID: environment.sessionStore.ownerID)
@@ -149,23 +170,39 @@ struct MacShellView: View {
             Text(environment.pendingSends.errorMessage ?? "Albatross will check again.")
         }
     }
+
+    /// ⌥⌘↓, ⌥⌘↑, ⌥⌘↩: the rows the source list shows now, under its filter,
+    /// from the open thread. The keys work with the source list hidden.
+    private func moveThread(_ move: MacThreadListLayout.Move) {
+        let rows = MacThreadListLayout.rows(
+            items: environment.store.allWork,
+            live: environment.threads.rows,
+            filter: MacRequests.shared.threadFilter,
+            now: .now
+        )
+        let current = environment.navigation.selectedTab == .work ? environment.navigation.workRoute?.workID : nil
+        guard let target = MacThreadListLayout.target(move, from: current, in: rows) else { return }
+        environment.navigation.openWork(id: target.id, title: target.title)
+    }
 }
 
 // Which source-list row reads as selected, and what a row asks the mail
 // list for. Pure, so the rules are testable.
 enum MacSourceSelection {
     // A primary row is selected while its tab is up. An open Area belongs to
-    // its own row, and a label view or the Snoozed mailbox belongs to its row.
+    // its own row, an open Albatross belongs to its row in the Albatrosses
+    // section, and a label view or the Snoozed mailbox belongs to its row.
     static func isPrimarySelected(
         _ destination: PrimaryTab,
         selectedTab: PrimaryTab,
         areaID: String?,
         mailLabelID: String?,
-        mailbox: MailboxScope = .inbox
+        mailbox: MailboxScope = .inbox,
+        workOpen: Bool = false
     ) -> Bool {
         guard selectedTab == destination else { return false }
         switch destination {
-        case .work: return areaID == nil
+        case .work: return areaID == nil && !workOpen
         case .mail: return mailLabelID == nil && mailbox != .snoozed
         default: return true
         }
@@ -224,7 +261,13 @@ struct MacSourceList: View {
             }
             Section {
                 ForEach(primaries) { destination in
-                    sourceRow(destination)
+                    if destination == .work {
+                        // The Albatrosses row is a disclosure: the live
+                        // thread rows sit one level under it (T1, T3).
+                        MacThreadRows { sourceRow(.work) }
+                    } else {
+                        sourceRow(destination)
+                    }
                 }
             }
             // Snoozed mail is archived until its time, so no other view
@@ -313,7 +356,8 @@ struct MacSourceList: View {
             selectedTab: navigation.selectedTab,
             areaID: navigation.areaRoute?.areaID,
             mailLabelID: navigation.mailLabelID,
-            mailbox: navigation.mailbox
+            mailbox: navigation.mailbox,
+            workOpen: navigation.workRoute != nil
         )
         return Button {
             let category = MacSourceSelection.mailCategory(

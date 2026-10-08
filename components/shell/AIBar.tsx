@@ -43,9 +43,19 @@ import {
 } from '@/components/ai-elements/use-secure-details';
 import { WorkLog } from '@/components/ai-elements/work-log';
 import {
+  NoteReceiptLine,
+  ReplyInProgressBubble,
+  type ThreadComposerMode,
+  ThreadRouteLine,
+  type ThreadSteerRun,
+  threadComposerMode,
+  threadComposerPlaceholder,
+} from '@/components/albatross/thread/ThreadSteering';
+import {
   ChatContainer,
   ChatContainerContent,
   ChatContainerMessage,
+  type ChatContainerScrollMemory,
 } from '@/components/odysseyui/chat-container';
 import { MessageBubble, MessageBubbleContent } from '@/components/odysseyui/message-bubble';
 import {
@@ -97,6 +107,7 @@ import {
   secretToItem,
   secureRequestExisting,
 } from '@/lib/albatross/secure-view';
+import { formatLogTime } from '@/lib/albatross/step-run-client';
 import {
   createHitlAutoContinueGuard,
   isHitlToolName,
@@ -112,6 +123,7 @@ import {
   type PersonalDetailView,
   type ThreadRunView,
 } from '@/lib/albatross/thread-contract';
+import { noteReceipt, steerNoteMessage, withSteerFailed } from '@/lib/albatross/thread-notes';
 import {
   EARLIER_CHAT_DIVIDER,
   FORM_COPY,
@@ -272,6 +284,31 @@ export interface ThreadChatProps {
   scrollButton?: ReactNode;
   /** The dev harness: messages to show in preview mode, where nothing loads. */
   initialMessages?: UIMessage[];
+  /** A run the composer can steer (docs/albatross-threads.md, T7–T9): the route line, Ask instead, Stop and redirect. */
+  steer?: ThreadSteer;
+  /** The reply of this thread still runs on the server (T5): a placeholder shows until the saved reply arrives. */
+  replyInProgress?: boolean;
+  /** The draft and the reader's place, kept across hops (T3). */
+  memory?: {
+    draft: { get: () => string; set: (text: string) => void };
+    scroll: ChatContainerScrollMemory;
+  };
+}
+
+export interface ThreadSteer {
+  /** The run that works now, or null. */
+  run: ThreadSteerRun | null;
+  /** Sends a note to the run (`steer`, with the thread message id as `noteId`). False when it did not reach the run. */
+  send: (runId: string, text: string, noteId: string) => Promise<boolean>;
+  /** "Stop and redirect": stops the run at once; the composer arms itself (lead decision 6). */
+  stop: (runId: string) => Promise<boolean>;
+  /** The armed send: resumes the stopped run with the note. */
+  resume: (runId: string, text: string) => Promise<boolean>;
+}
+
+/** The thread composer takes focus after a hop that started from it (T3). */
+export function focusThreadComposer() {
+  document.querySelector<HTMLTextAreaElement>('[data-thread-composer] textarea')?.focus();
 }
 
 // One conversation owner across corner, split, and chat-only presentations.
@@ -384,6 +421,12 @@ export function AssistantChat({
         body: () => ({
           // This client renders ask_form and ask_secure_detail; the server offers them only to clients that say so.
           clientCapabilities: ['ask_form', 'ask_secure_detail'],
+          // A Work thread reply runs to its end on the server and is saved there
+          // (docs/albatross-threads.md, T5); the base lets that save merge correctly.
+          sessionId: sessionIdRef.current ?? undefined,
+          threadBaseUpdatedAt: sessionIdRef.current?.startsWith('work-')
+            ? baseUpdatedAtRef.current
+            : undefined,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           briefResponse: useClientStore.getState().assistantBriefContext?.reference,
           areaDiscovery:
@@ -639,6 +682,88 @@ export function AssistantChat({
     qc,
     setMessages,
   ]);
+
+  // --- Steering (docs/albatross-threads.md, T7–T9; lead decisions 5, 6, 8) ---
+  const steer = thread?.steer;
+  const steerRun = steer?.run ?? null;
+  // The route chip is the one control (Run → Ask → Hold with Tab). A new run puts it back on Run.
+  const [runRouteOn, setRunRouteOn] = useState(true);
+  const [redirectRunId, setRedirectRunId] = useState<string | null>(null);
+  const steerRunId = steerRun?.id ?? null;
+  useEffect(() => {
+    if (steerRunId) setRunRouteOn(true);
+  }, [steerRunId]);
+  const composerMode: ThreadComposerMode = threadComposerMode({
+    run: steerRun,
+    askInstead: !runRouteOn,
+    redirectRunId,
+  });
+  const markNote = useCallback(
+    (noteId: string, failed: boolean) =>
+      setMessages(
+        (current) =>
+          current.map((item) => (item.id === noteId ? withSteerFailed(item, failed) : item)) as never,
+      ),
+    [setMessages],
+  );
+  // A note is a user bubble with the steer mark and no chat turn; the autosave keeps it.
+  const steerNote = useCallback(
+    async (runId: string, text: string) => {
+      if (!steer) return false;
+      const message = steerNoteMessage(text, runId);
+      setMessages((current) => [...current, message] as never);
+      const sent = await steer.send(runId, text, message.id).catch(() => false);
+      if (!sent) markNote(message.id, true);
+      return true;
+    },
+    [steer, setMessages, markNote],
+  );
+  const redirectSend = useCallback(
+    async (runId: string, text: string) => {
+      if (!steer) return false;
+      const message = steerNoteMessage(text, runId, { redirect: true });
+      setMessages((current) => [...current, message] as never);
+      const ok = await steer.resume(runId, text).catch(() => false);
+      if (!ok) markNote(message.id, true);
+      setRedirectRunId(null);
+      return true;
+    },
+    [steer, setMessages, markNote],
+  );
+  const stopAndRedirect = useCallback(async () => {
+    if (!steer || !steerRun) return;
+    const stopped = await steer.stop(steerRun.id).catch(() => false);
+    if (!stopped) return;
+    setRedirectRunId(steerRun.id);
+    focusThreadComposer();
+  }, [steer, steerRun]);
+  // The chat Stop also stops the reply on the server (T11).
+  const stopReply = useCallback(() => {
+    stop();
+    if (threadSessionId && !preview)
+      void fetch('/api/agent/stop', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: threadSessionId }),
+      }).catch(() => undefined);
+  }, [stop, threadSessionId, preview]);
+  // A reply that kept going (T5): when the row leaves "Reply in progress", the saved reply is on the server.
+  const replyInProgress = Boolean(thread?.replyInProgress);
+  const replyWasRunningRef = useRef(replyInProgress);
+  useEffect(() => {
+    const was = replyWasRunningRef.current;
+    replyWasRunningRef.current = replyInProgress;
+    if (!was || replyInProgress || !threadWorkId || preview) return;
+    fetch(`/api/chats?workThread=${encodeURIComponent(threadWorkId)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.ok && data.session && Array.isArray(data.session.messages)) {
+          baseUpdatedAtRef.current = Number(data.session.updatedAt) || 0;
+          setMessages((current) => addMergedThreadMessages(current, data.session.messages as typeof current));
+        }
+      })
+      .catch(() => undefined);
+  }, [replyInProgress, threadWorkId, preview, setMessages]);
 
   const startNewChat = useCallback(() => {
     if (busy) return;
@@ -949,6 +1074,24 @@ export function AssistantChat({
   // once, when the conversation is free.
   const sendRef = useRef(send);
   sendRef.current = send;
+  // The composer's route: the run, the armed redirect, or the chat.
+  const sendFromComposer = async (text: string) => {
+    if (composerMode === 'run' && steerRun) return steerNote(steerRun.id, text);
+    if (composerMode === 'redirect' && redirectRunId) return redirectSend(redirectRunId, text);
+    return send(text);
+  };
+  // "Send again" on a receipt: to the run that works now, else through the chat.
+  const sendAgain = async (message: UIMessage) => {
+    const text = userTextFromMessage(message);
+    if (!text) return;
+    if (steer && steerRun) {
+      markNote(message.id, false);
+      const sent = await steer.send(steerRun.id, text, message.id).catch(() => false);
+      if (!sent) markNote(message.id, true);
+      return;
+    }
+    void send(text);
+  };
   useEffect(() => {
     if (preview || !assistantPrompt || busy) return;
     if (!thread && isWorkThreadOpen(useClientStore.getState())) return;
@@ -1043,6 +1186,7 @@ export function AssistantChat({
   const messageIndex = new Map(messages.map((message, index) => [message.id, index]));
   const tail = (
     <>
+      {thread?.replyInProgress && !busy ? <ReplyInProgressBubble onStop={stopReply} /> : null}
       {waitingForContent ? (
         <div className="flex items-center gap-2 px-1 py-0.5 text-[12px] text-[var(--color-text-muted)]">
           <span role="status" aria-label="Working">
@@ -1222,7 +1366,11 @@ export function AssistantChat({
       )}
 
       {thread && timeline ? (
-        <ChatContainer className="relative flex-1" scrollButton={thread.scrollButton ?? null}>
+        <ChatContainer
+          className="relative flex-1"
+          scrollButton={thread.scrollButton ?? null}
+          scrollMemory={thread.memory?.scroll}
+        >
           <ChatContainerContent data-thread-column className="gap-4 px-4 py-4">
             <ChatPartContext.Provider value={partHandlers}>
               {thread.intro}
@@ -1237,6 +1385,10 @@ export function AssistantChat({
                 }
                 const message = item.message as any;
                 const ownIndex = messageIndex.get(message.id) ?? index;
+                const receipt =
+                  message.role === 'user'
+                    ? noteReceipt(message, thread.runs, { time: (at) => formatLogTime(at) })
+                    : null;
                 return (
                   <ChatContainerMessage key={message.id}>
                     <MessageView
@@ -1249,6 +1401,9 @@ export function AssistantChat({
                           : holdFor(message, ownIndex)
                       }
                     />
+                    {receipt ? (
+                      <NoteReceiptLine receipt={receipt} onSendAgain={() => void sendAgain(message)} />
+                    ) : null}
                   </ChatContainerMessage>
                 );
               })}
@@ -1346,6 +1501,7 @@ export function AssistantChat({
         ) : null}
         <ChatComposer
           placeholder={
+            (thread?.steer ? threadComposerPlaceholder(composerMode) : null) ??
             thread?.placeholder ??
             (primaryView === 'files' && assistantDocument
               ? 'Describe the changes you have in mind…'
@@ -1354,8 +1510,18 @@ export function AssistantChat({
           busy={busy}
           streaming={streaming}
           hasFiles={pendingFiles.length > 0}
-          onSendText={send}
-          onStop={stop}
+          onSendText={sendFromComposer}
+          onStop={stopReply}
+          draftMemory={thread?.memory?.draft}
+          runRoute={
+            thread?.steer && (steerRun || redirectRunId)
+              ? {
+                  selected: composerMode !== 'ask',
+                  locked: composerMode === 'redirect',
+                  onSelect: setRunRouteOn,
+                }
+              : undefined
+          }
           onHold={holdFromBar}
           onHeld={afterHeld}
           door={door}
@@ -1363,6 +1529,15 @@ export function AssistantChat({
           secure={{ enabled: Boolean(secureDetails.data?.enabled), openSheet: openSecureSheet }}
           before={
             <>
+              {thread?.steer && (steerRun || redirectRunId) ? (
+                <ThreadRouteLine
+                  mode={composerMode}
+                  run={steerRun}
+                  busy={busy}
+                  onStopAndRedirect={() => void stopAndRedirect()}
+                  onCancelRedirect={() => setRedirectRunId(null)}
+                />
+              ) : null}
               {chatScopeKind !== 'global' && !thread ? (
                 <div className="flex px-1 pt-1">
                   <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-ui border border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] px-2.5 py-1 text-[10.5px] text-[var(--color-accent)]">
@@ -1618,13 +1793,25 @@ function ChatComposer({
   hasFiles,
   secure,
   before,
+  draftMemory,
   ...props
 }: Omit<AskHoldComposerProps, 'value' | 'onValueChange' | 'canSend' | 'onSend'> & {
   onSendText: (text: string) => Promise<boolean>;
   hasFiles: boolean;
   secure?: { enabled: boolean; openSheet: SecureSheetOpener };
+  /** The thread's draft: read on mount, written on every change (T3). */
+  draftMemory?: { get: () => string; set: (text: string) => void };
 }) {
-  const [value, setValue] = useState('');
+  const [value, setValueState] = useState(() => draftMemory?.get() ?? '');
+  const setValue = useCallback(
+    (next: string | ((current: string) => string)) =>
+      setValueState((current) => {
+        const resolved = typeof next === 'function' ? next(current) : next;
+        draftMemory?.set(resolved);
+        return resolved;
+      }),
+    [draftMemory],
+  );
   const [noticeShown, setNoticeShown] = useState(false);
   const matches = useMemo(() => detectSecretShapes(value), [value]);
   const match = matches[0] ?? null;

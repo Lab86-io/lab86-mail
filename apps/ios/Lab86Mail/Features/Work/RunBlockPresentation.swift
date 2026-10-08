@@ -107,7 +107,7 @@ enum RunBlockCopy {
         return "Continued · " + date.formatted(.dateTime.hour().minute().locale(locale))
     }
 
-    /// The page row: "Albatross is on the page · aliveat25.com".
+    /// The page row: "Albatross is on the page · firstaidclass.example.com".
     static func pageLine(host: String?) -> String {
         guard let host = host?.nilIfBlank else { return "Albatross is on the page" }
         return "Albatross is on the page · \(host)"
@@ -121,6 +121,20 @@ enum RunBlockCopy {
     static let failedFallback = "Albatross could not finish this run."
     static let stopButton = "Stop"
     static let stopBusy = "Stopping…"
+    // Many threads at once (docs/albatross-threads.md, T5, T7, T8).
+    static let stopAndRedirect = "Stop and redirect"
+    static let stopAndRedirectHelp = "Albatross stops this run. Your next message starts it again."
+    static let redirectPlaceholder = "What should Albatross do instead?"
+    static let redirectArmedLine = "Stop and redirect: the run stopped. Your next message starts it again."
+    static let replyInProgress = "Reply in progress"
+    static let replyInProgressPlaceholder = "Albatross writes a reply"
+    static let askWhileRunPlaceholder = "Ask Albatross a question"
+
+    /// "To the run · Step 2, Renew online" (lead decision 5).
+    static func runRouteLine(stepNumber: Int?, title: String) -> String {
+        guard let stepNumber else { return "To the run · \(title)" }
+        return "To the run · Step \(stepNumber), \(title)"
+    }
     static let continueButton = "Continue"
     static let continueBusy = "Continuing…"
     static let tryAgain = "Try again"

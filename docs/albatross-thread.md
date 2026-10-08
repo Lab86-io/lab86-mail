@@ -5,13 +5,13 @@ The secure store for passwords, ID numbers, and API keys is PR 2 (`docs/albatros
 
 ## Why
 
-On 2026-10-07 Jakob used the step runner to register for an Alive at 25 course. These problems
-occurred, in order:
+On 2026-10-07 a dogfood run of the step runner showed these problems, in order (the example
+below is invented):
 
 1. The run chose the date. It opened the form for the first open class (Saturday, October 17).
    It did not ask, and it did not read the calendar. Jakob wanted a Monday or a Wednesday.
 2. The run stopped at the wrong boundary. It said that only the user can enter personal details.
-   Only the $70 payment belongs to the user. Albatross must type the name, address, phone, and email.
+   Only the $45 payment belongs to the user. Albatross must type the name, address, phone, and email.
 3. Albatross did not know the user. The name and email are on the account. The user had to type
    all four details.
 4. Two agents did not connect. The run can act but cannot talk. The chat can talk but cannot act.
@@ -43,7 +43,7 @@ Each story names the platform surfaces that must support it: W (web), I (iOS), M
 - **S1. Open from anywhere (W I M).** I open an Albatross from the list, the Brief, Today, an
   Area, a notification, or a chat card. The conversation opens at its newest item. When a run
   waits for me, its question or action is the last item, next to the composer.
-- **S2. A new Albatross (W I M).** I captured "register for Alive at 25 before Nov 2". The
+- **S2. A new Albatross (W I M).** I captured "register for CPR and first aid before Nov 14". The
   conversation opens with what Albatross understood: the outcome and the plan, in one compact
   block. The current step offers "Handle it". While the plan is not ready, the block says that
   Albatross makes the plan, and the composer works.
@@ -66,7 +66,7 @@ Each story names the platform surfaces that must support it: W (web), I (iOS), M
 - **S8. Talk while it works (W I M).** While the run works, I write "use the Monday class". My
   message reaches the run. The run log shows that it read my note. Albatross answers in one
   short line. No second agent appears.
-- **S9. A choice that is mine (W I M).** The run found three classes before November 2. It does
+- **S9. A choice that is mine (W I M).** The run found three classes before November 14. It does
   not choose. It reads my calendar and asks one form: which class? Each option shows the day,
   time, and price, and "Free on your calendar" or "Conflicts with Team sync". The first option
   is the one that matches what I said before ("Monday or Wednesday").
@@ -77,13 +77,13 @@ Each story names the platform surfaces that must support it: W (web), I (iOS), M
   607 555 0100". Albatross saves the phone, shows "Saved to your details: Phone" with "Undo", and
   continues the run. The form shows that the chat answered it.
 - **S12. Sign in (W I M).** The site asks me to sign in. The run stops and says "Sign in to
-  aliveat25.com in the page, then press Continue". The page pane opens. I sign in and press
+  firstaidclass.example.com in the page, then press Continue". The page pane opens. I sign in and press
   "Continue", or I write "done". The run continues. Next time the site still knows me.
 - **S13. The final page (W I M).** The run filled the form for Monday, October 19. It stops
-  before the payment: "Everything is filled in. Check it and pay the $70." One button opens the
+  before the payment: "Everything is filled in. Check it and pay the $45." One button opens the
   page. After I pay, I press "I paid". The run checks the page and marks the step done with its
   proof (the confirmation text).
-- **S14. Drafts and documents (W I M).** The run wrote a draft to the court clerk. The draft is a
+- **S14. Drafts and documents (W I M).** The run wrote a draft to the pool manager. The draft is a
   card in the conversation with "Read and send". A document is a card with "Open".
 - **S15. Done (W I M).** The step is done. The conversation shows the proof line. The plan line
   moves to the next step. Albatross says what comes next in one sentence.
@@ -92,7 +92,7 @@ Each story names the platform surfaces that must support it: W (web), I (iOS), M
 
 ### Talk about the Albatross
 
-- **S17. Ask (W I M).** I ask "when is the court date?". Albatross answers from the Work, my mail,
+- **S17. Ask (W I M).** I ask "when is the orientation?". Albatross answers from the Work, my mail,
   and my calendar, like the chat does today.
 - **S18. Change the plan (W I M).** I write "I already registered, skip that". Albatross records
   the progress and moves the plan. The plan line updates.
@@ -172,7 +172,7 @@ One question shape serves the chat and the runner: `FormQuestion` in
 
 - Field kinds: `choice`, `text`, `number`, `phone`, `email`, `date`, `name`, `address`,
   `contact`.
-- A `choice` option has a label, an optional detail ("4:00–8:00 PM · Zoom · $70"), and an
+- A `choice` option has a label, an optional detail ("4:00–8:00 PM · Zoom · $45"), and an
   optional calendar note with `fit: 'free' | 'conflict'`.
 - A field can bind to a personal detail (`detailKey`). The client fills an empty bound field
   from the saved details. When a bound value is new or different, the form shows "Save to my

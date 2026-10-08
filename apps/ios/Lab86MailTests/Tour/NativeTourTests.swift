@@ -182,7 +182,7 @@ final class NativeTourTests: XCTestCase {
         // message, and the run block inside the reply that started it, with
         // the page row and "Stop".
         var screen = Screen(id: "work-thread-run", title: "The Albatross thread while a run works", section: "Tasks and Work", tab: .work) { environment in
-            environment.navigation.openWork(id: "w-course-run", title: "Register for the Alive at 25 course")
+            environment.navigation.openWork(id: "w-course-run", title: "Register for the CPR and first aid course")
         }
         screen.fullPage = true
         try await tour(screen)
@@ -192,7 +192,7 @@ final class NativeTourTests: XCTestCase {
         // The form (S9 and S10): the class choice with calendar notes, the
         // prefilled details, the empty phone, and "Save to my details".
         var screen = Screen(id: "work-thread-form", title: "The Albatross thread with a form", section: "Tasks and Work", tab: .work) { environment in
-            environment.navigation.openWork(id: "w-course-form", title: "Register for the Alive at 25 course")
+            environment.navigation.openWork(id: "w-course-form", title: "Register for the CPR and first aid course")
         }
         screen.fullPage = true
         try await tour(screen)
@@ -202,7 +202,7 @@ final class NativeTourTests: XCTestCase {
         // The final page (S13): the answered form, the continued run, "Check
         // and pay" and "I paid".
         var screen = Screen(id: "work-thread-handoff", title: "The Albatross thread at the final page", section: "Tasks and Work", tab: .work) { environment in
-            environment.navigation.openWork(id: "w-course-handoff", title: "Register for the Alive at 25 course")
+            environment.navigation.openWork(id: "w-course-handoff", title: "Register for the CPR and first aid course")
         }
         screen.fullPage = true
         try await tour(screen)
@@ -244,6 +244,17 @@ final class NativeTourTests: XCTestCase {
         // license, with "Allow once", "Always on ny.gov", and "Do not allow".
         var screen = Screen(id: "work-thread-allow", title: "The Albatross thread with an allow", section: "Tasks and Work", tab: .work) { environment in
             environment.navigation.openWork(id: "w-license", title: "Renew the driver's license")
+        }
+        screen.fullPage = true
+        try await tour(screen)
+    }
+
+    func testTour29WorkThreadReceipt() async throws {
+        // A note to the run (docs/albatross-threads.md, T7): the user's
+        // bubble with "Read by Albatross", "Read your note" in the log, the
+        // Run route line over the composer, and "Stop and redirect".
+        var screen = Screen(id: "work-thread-receipt", title: "The Albatross thread with a note to the run", section: "Tasks and Work", tab: .work) { environment in
+            environment.navigation.openWork(id: "w-course-receipt", title: "Register for the CPR and first aid course")
         }
         screen.fullPage = true
         try await tour(screen)
@@ -362,7 +373,7 @@ final class NativeTourTests: XCTestCase {
         "shell-sidebar", "today-brief", "today-empty", "today-error", "mail-list", "mail-thread", "mail-empty",
         "mail-error", "compose-new", "compose-reply", "calendar-day", "calendar-week", "calendar-month", "tasks",
         "work", "work-detail", "work-detail-run", "work-detail-handoff", "work-thread-run", "work-thread-form",
-        "work-thread-handoff", "work-thread-allow", "files", "chat", "settings", "settings-personal-details",
+        "work-thread-handoff", "work-thread-allow", "work-thread-receipt", "files", "chat", "settings", "settings-personal-details",
         "settings-passwords-ids", "settings-passwords-ids-detail",
     ]
 

@@ -91,6 +91,8 @@ export interface ClientState {
   // them with the draft as soon as it opens.
   composeRecoveredFiles: File[];
   shortcutsOpen: boolean;
+  /** The thread list filter, shared by the rail and the full list (docs/albatross-threads.md, T12). */
+  threadListFilter: 'all' | 'needs_you' | 'working';
   railOpen: boolean;
   railWidth: number;
   aiBarOpen: boolean;
@@ -201,6 +203,7 @@ export interface ClientState {
   setComposeRecoveredFiles: (files: File[]) => void;
   setShortcutsOpen: (open: boolean) => void;
   setRailOpen: (open: boolean) => void;
+  setThreadListFilter: (filter: 'all' | 'needs_you' | 'working') => void;
   setRailWidth: (width: number) => void;
   setAiBarOpen: (open: boolean) => void;
   setAssistantPresentation: (presentation: 'corner' | 'split' | 'full') => void;
@@ -284,6 +287,24 @@ export function isWorkThreadOpen(state: {
   return (
     Boolean(state.selectedWorkId) && (state.primaryView === 'albatrosses' || state.primaryView === 'areas')
   );
+}
+
+/**
+ * Whether the main sidebar shows open while a thread is open (lead decision
+ * 3): the thread rail takes its place below 1680 px, so there are never three
+ * wide navigation columns. The user may still open it by hand for this visit
+ * (`override`); Back restores their usual choice because nothing was written.
+ */
+export function mainSidebarOpen(input: {
+  railOpen: boolean;
+  threadOpen: boolean;
+  /** The window fits the sidebar, the rail, the conversation, and a region. */
+  wide: boolean;
+  override: boolean;
+}): boolean {
+  if (!input.railOpen) return false;
+  if (!input.threadOpen || input.wide) return true;
+  return input.override;
 }
 
 /**
@@ -389,6 +410,7 @@ export const useClientStore = create<ClientState>()(
       compose: initialCompose,
       composeRecoveredFiles: [],
       shortcutsOpen: false,
+      threadListFilter: 'all',
       railOpen: true,
       railWidth: 240,
       aiBarOpen: false,
@@ -552,6 +574,7 @@ export const useClientStore = create<ClientState>()(
       setComposeRecoveredFiles: (composeRecoveredFiles) => set({ composeRecoveredFiles }),
       setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
       setRailOpen: (railOpen) => set({ railOpen }),
+      setThreadListFilter: (threadListFilter) => set({ threadListFilter }),
       setRailWidth: (railWidth) => set({ railWidth }),
       setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
       setAssistantPresentation: (assistantPresentation) => set({ assistantPresentation, aiBarOpen: true }),

@@ -153,7 +153,7 @@ const fieldId = z
 export const formOptionSchema = z.object({
   id: z.string().trim().min(1).max(60),
   label: z.string().trim().min(1).max(120),
-  /** One line under the label: "Mon, Oct 19 · 4:00–8:00 PM · Zoom · $70". */
+  /** One line under the label: "Mon, Oct 19 · 4:00–8:00 PM · Zoom · $45". */
   detail: z.string().trim().max(160).optional(),
   /**
    * The tag of the one best option, for example "Matches what you said" or "Earliest free

@@ -121,7 +121,7 @@ describe('the run block', () => {
     expect(html).toContain('data-slot="run-continued"');
     expect(html).toContain('Continued');
     expect(html).toContain('Your turn');
-    expect(html).toContain('Everything is filled in. Check it and pay the $70.');
+    expect(html).toContain('Everything is filled in. Check it and pay the $45.');
     expect(buttons(html)).toEqual(
       ['Open the page', 'I paid', 'Dismiss'].filter((label) => label !== 'Open the page'),
     );
@@ -137,7 +137,7 @@ describe('the run block', () => {
   test('a draft handoff lists the file and offers Read and send', () => {
     const html = block({ run: runs.readyDraft });
     expect(html).toContain('Ready for you');
-    expect(html).toContain('Alive at 25 completion certificate');
+    expect(html).toContain('CPR and first aid certificate');
     expect(buttons(html)).toEqual(['Read and send', 'Dismiss']);
   });
 
@@ -246,7 +246,7 @@ describe('the page pane', () => {
     expect(pagePaneView(threadSessionFixture('user'), runs.finalPage)).toMatchObject({
       dot: 'user',
       lead: 'Your turn.',
-      detail: 'Everything is filled in. Check it and pay the $70.',
+      detail: 'Everything is filled in. Check it and pay the $45.',
       action: { kind: 'done', label: 'I paid' },
       closes: true,
     });
@@ -267,15 +267,15 @@ describe('the page pane', () => {
       <PagePane
         session={threadSessionFixture('user')}
         run={runs.finalPage}
-        url="https://aliveat25.example.com/classes"
+        url="https://firstaidclass.example.com/classes"
         onTakeOver={noop}
         onDone={noop}
         onClose={noop}
       />,
     );
     expect(html).toContain('<iframe');
-    expect(html).toContain('aliveat25.example.com/classes');
-    expect(html).toContain('aria-label="Page: aliveat25.example.com"');
+    expect(html).toContain('firstaidclass.example.com/classes');
+    expect(html).toContain('aria-label="Page: firstaidclass.example.com"');
     expect(buttons(html)).toEqual(['I paid', 'Close the page']);
     expect(html).not.toContain('Check the page');
     const agent = renderToStaticMarkup(
@@ -305,9 +305,9 @@ describe('the plan block and the plan line', () => {
       />,
     );
     expect(html).toContain('What Albatross understood');
-    expect(html).toContain('Register for and complete the Alive at 25 course');
+    expect(html).toContain('Register for and complete the CPR and first aid course');
     expect(html).toContain('Register for the course');
-    expect(html).toContain('Attend the court appearance on November 2');
+    expect(html).toContain('Attend the lifeguard orientation on November 14');
     expect(html).toContain('Yours, offline');
     expect(buttons(html)).toEqual(['Handle it']);
     noIconBeforeText(html);
@@ -357,7 +357,7 @@ describe('the details panel', () => {
     );
     expect(html).toContain('Plan');
     expect(html).toContain('Files');
-    expect(html).toContain('Court appearance, November 2');
+    expect(html).toContain('Lifeguard orientation, November 14');
     expect(html).toContain('Sources and assumptions');
     expect(buttons(html)).toEqual(expect.arrayContaining(['Close', 'Handle it', 'Undo']));
     expect(html).not.toContain('Read the plan');

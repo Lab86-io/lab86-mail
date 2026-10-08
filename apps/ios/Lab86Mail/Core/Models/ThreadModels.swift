@@ -23,7 +23,7 @@ struct FormOption: Identifiable, Hashable, Sendable {
 
     let id: String
     let label: String
-    /// One line under the label: "Mon, Oct 19 · 4:00–8:00 PM · Zoom · $70".
+    /// One line under the label: "Mon, Oct 19 · 4:00–8:00 PM · Zoom · $45".
     let detail: String?
     /// The tag of the one best option ("Matches what you said"). The card
     /// shows it and selects this option first.
@@ -406,18 +406,29 @@ struct ThreadQuestion: Identifiable, Hashable, Sendable {
 struct ThreadRunView: Identifiable, Hashable, Sendable {
     let run: StepRunView
     let question: ThreadQuestion?
+    /// The notes the user sent to this run, with when the run read each one
+    /// (docs/albatross-threads.md, T7). An unread note carries to the next
+    /// run of the step, under the same id.
+    let notes: [ThreadNote]
 
     var id: String { run.id }
 
-    init(run: StepRunView, question: ThreadQuestion? = nil) {
+    init(run: StepRunView, question: ThreadQuestion? = nil, notes: [ThreadNote] = []) {
         self.run = run
         self.question = question
+        self.notes = notes
     }
 
     init?(json: JSONValue) {
         guard let run = StepRunView(json: json) else { return nil }
         self.run = run
         question = json["question"].flatMap(ThreadQuestion.init(json:))
+        notes = (json["notes"]?.arrayValue ?? []).compactMap(ThreadNote.init(json:))
+    }
+
+    /// The note with this id, when this run carries it.
+    func note(id: String) -> ThreadNote? {
+        notes.first { $0.id == id }
     }
 
     /// The route answers `{ ok, runs }`, oldest first; a bare array reads the

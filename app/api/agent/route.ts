@@ -14,6 +14,13 @@ import { normalizeClientPlatform } from '@/lib/ai/system-prompt';
 import { initialToolGroups } from '@/lib/ai/tool-groups';
 import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import { applyFormAnswers } from '@/lib/albatross/form-answers';
+import {
+  beginThreadReply,
+  finishThreadReply,
+  stopThreadReply,
+  type ThreadReplyContext,
+  threadReplyWorkId,
+} from '@/lib/albatross/thread-replies';
 import { readWorkChatContext, WorkContextNotFoundError } from '@/lib/albatross/work-chat-context';
 import { reconcileWorkTurn } from '@/lib/albatross/work-turn-reconcile';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
@@ -47,6 +54,10 @@ interface AgentRequestBody {
   clientPlatform?: 'web' | 'ios' | 'macos';
   /** What the client renders beyond the base set, for example 'ask_form'. Unknown names are ignored. */
   clientCapabilities?: string[];
+  /** The chat session id. A Work thread ("work-<id>") reply runs to its end on the server. */
+  sessionId?: string;
+  /** The `updatedAt` of the thread copy the client loaded, so the server save merges correctly. */
+  threadBaseUpdatedAt?: number;
 }
 
 export class InvalidContextAttachmentError extends Error {
@@ -164,6 +175,8 @@ export async function POST(req: NextRequest) {
       headers: { 'content-type': 'application/json' },
     });
   }
+  // A Work thread reply runs to its end on the server (docs/albatross-threads.md, T5).
+  let threadReply: ThreadReplyContext | null = null;
   try {
     const user = await requireCurrentUser();
     await enforceUserRateLimit({
@@ -232,6 +245,26 @@ export async function POST(req: NextRequest) {
         .then(sanitizeToolPairs),
     ]);
     const recovery = body.continuation === true ? await readRecoveryContext(user.userId, runId) : '';
+    const threadWorkId = threadReplyWorkId(
+      body.sessionId,
+      contextAttachments
+        .filter((attachment) => attachment.kind === 'work')
+        .map((attachment) => attachment.id),
+    );
+    if (threadWorkId)
+      threadReply = {
+        userId: user.userId,
+        userEmail: user.email,
+        userName: user.name,
+        sessionId: String(body.sessionId),
+        workId: threadWorkId,
+        turn: runId,
+        baseUpdatedAt: Number.isFinite(Number(body.threadBaseUpdatedAt))
+          ? Number(body.threadBaseUpdatedAt)
+          : 0,
+      };
+    // The browser leaving no longer stops a thread reply; the chat Stop button does (T11).
+    const replyAbort = threadReply ? await beginThreadReply(threadReply) : null;
     const stream = await runAgent({
       runId,
       messages: modelMessages,
@@ -259,7 +292,7 @@ export async function POST(req: NextRequest) {
         hasAreaContext: Boolean(body.areaDiscovery),
         narrativeEnabled: narrativeEnabled(user.userId),
       }),
-      signal: req.signal,
+      signal: replyAbort ? replyAbort.signal : req.signal,
     });
     after(async () => {
       if (!latestUser) return;
@@ -292,8 +325,24 @@ export async function POST(req: NextRequest) {
         });
       });
     }
-    return stream.toUIMessageStreamResponse();
+    const reply = threadReply;
+    return stream.toUIMessageStreamResponse(
+      reply
+        ? {
+            originalMessages: answered as UIMessage[],
+            keepAlive: true,
+            onFinish: (event) => finishThreadReply(reply, event),
+          }
+        : undefined,
+    );
   } catch (err: any) {
+    // A reply that never started streaming must not stay "Answering".
+    if (threadReply)
+      await stopThreadReply({
+        userId: threadReply.userId,
+        sessionId: threadReply.sessionId,
+        workId: threadReply.workId,
+      }).catch(() => undefined);
     if (err instanceof RateLimitError) return rateLimitResponse(err);
     const status =
       err instanceof BriefResponseContextError

@@ -258,7 +258,7 @@ describe('startStepRun', () => {
   test('queue refusals become 409 for the user', async () => {
     for (const [reason, message] of [
       ['active', 'Albatross is already working on this.'],
-      ['busy', 'Albatross is working on three steps now. Try again when one ends.'],
+      ['busy', 'Albatross has 30 steps open or waiting now. Try again when one ends.'],
       ['closed', 'This Albatross is closed.'],
     ]) {
       const { deps } = makeDeps({ enqueue: { runId: null, created: false, reason } });
@@ -387,6 +387,13 @@ describe('resumeStepRun', () => {
     const busy = makeDeps({ run: parent, enqueue: { runId: null, created: false, reason: 'busy' } });
     expect(
       await startError(resumeStepRun({ userId: 'user-1', workId: 'work-1', runId: 'run-1' }, busy.deps)),
+    ).toEqual({
+      status: 409,
+      message: 'Albatross has 30 steps open or waiting now. Try again when one ends.',
+    });
+    const closed = makeDeps({ run: parent, enqueue: { runId: null, created: false, reason: 'closed' } });
+    expect(
+      await startError(resumeStepRun({ userId: 'user-1', workId: 'work-1', runId: 'run-1' }, closed.deps)),
     ).toEqual({ status: 409, message: 'The run could not continue now. Try again.' });
   });
 });

@@ -38,6 +38,7 @@ function base(now: number, over: Partial<StepRunView>): StepRunView {
     artifacts: [],
     browserSessionId: null,
     parentRunId: null,
+    notes: [],
     stoppedBy: null,
     error: null,
     createdAt: now - 4 * MINUTE,

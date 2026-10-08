@@ -649,7 +649,16 @@ export async function runStepRun(
                   initialCount: messages.length,
                   take: () =>
                     deps
-                      .convexMutation<Array<{ text: string }>>(api.albatrossStepRuns.takeSteerNotes, fence)
+                      .convexMutation<Array<{ text: string }> | null>(
+                        api.albatrossStepRuns.takeSteerNotes,
+                        fence,
+                      )
+                      .then((notes) => {
+                        // Null: the run was stopped ("Stop", "Stop and redirect") or lost.
+                        // Stop at this step, not at the next heartbeat (docs/albatross-threads.md, T8).
+                        if (notes === null) cancel.abort(new RunCancelled());
+                        return notes ?? [];
+                      })
                       .catch(() => []),
                   log,
                 }),

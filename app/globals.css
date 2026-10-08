@@ -1195,3 +1195,34 @@
   font-weight: 300 700;
   font-display: swap;
 }
+
+/* The thread list's status dot (docs/albatross-threads.md, lead decision 2):
+   one slow halo on a row in progress. A list full of shimmers is noise, so
+   the motion is one ring that fades over 2.4 s. Reduced motion: a still ring. */
+@keyframes thread-halo {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+  50% {
+    opacity: 0;
+    transform: scale(1.15);
+  }
+}
+.thread-dot-halo::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+  opacity: 0.35;
+  animation: thread-halo 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .thread-dot-halo::after {
+    animation: none;
+    opacity: 0.3;
+    transform: none;
+  }
+}

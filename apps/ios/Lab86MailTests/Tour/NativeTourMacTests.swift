@@ -130,7 +130,7 @@ final class NativeTourMacTests: XCTestCase {
         var screen = Screen(id: "mac-work-thread-run", title: "The Albatross thread while a run works", section: "Tasks and Work", tab: .work)
         screen.scenarioID = "work-thread-run"
         screen.afterAppear = { environment in
-            environment.navigation.openWork(id: "w-course-run", title: "Register for the Alive at 25 course", intent: .openPage)
+            environment.navigation.openWork(id: "w-course-run", title: "Register for the CPR and first aid course", intent: .openPage)
         }
         try await tour(screen)
     }
@@ -141,7 +141,7 @@ final class NativeTourMacTests: XCTestCase {
         var screen = Screen(id: "mac-work-thread-form", title: "The Albatross thread with a form", section: "Tasks and Work", tab: .work)
         screen.scenarioID = "work-thread-form"
         screen.afterAppear = { environment in
-            environment.navigation.openWork(id: "w-course-form", title: "Register for the Alive at 25 course")
+            environment.navigation.openWork(id: "w-course-form", title: "Register for the CPR and first aid course")
         }
         try await tour(screen)
     }
@@ -152,7 +152,7 @@ final class NativeTourMacTests: XCTestCase {
         var screen = Screen(id: "mac-work-thread-handoff", title: "The Albatross thread at the final page", section: "Tasks and Work", tab: .work)
         screen.scenarioID = "work-thread-handoff"
         screen.afterAppear = { environment in
-            environment.navigation.openWork(id: "w-course-handoff", title: "Register for the Alive at 25 course", intent: .openPage)
+            environment.navigation.openWork(id: "w-course-handoff", title: "Register for the CPR and first aid course", intent: .openPage)
         }
         try await tour(screen)
     }
@@ -164,7 +164,7 @@ final class NativeTourMacTests: XCTestCase {
         screen.scenarioID = "work-thread-handoff"
         screen.windowSize = NSSize(width: 760, height: 700)
         screen.afterAppear = { environment in
-            environment.navigation.openWork(id: "w-course-handoff", title: "Register for the Alive at 25 course")
+            environment.navigation.openWork(id: "w-course-handoff", title: "Register for the CPR and first aid course")
         }
         try await tour(screen)
     }
@@ -226,6 +226,42 @@ final class NativeTourMacTests: XCTestCase {
         try await tour(screen)
     }
 
+    func testMacTour22WorkThreadReceipt() async throws {
+        // Many threads at once (docs/albatross-threads.md): the Albatrosses
+        // section in the source list with its live rows, the open thread's
+        // row with the selection fill, the note bubble with "Read by
+        // Albatross", the Run route line over the composer, and "Stop and
+        // redirect" beside "Stop".
+        var screen = Screen(id: "mac-work-thread-receipt", title: "The Albatross thread with a note to the run, beside the live list", section: "Tasks and Work", tab: .work)
+        screen.scenarioID = "work-thread-receipt"
+        screen.afterAppear = { environment in
+            environment.navigation.openWork(id: "w-course-receipt", title: "Register for the CPR and first aid course")
+        }
+        try await tour(screen)
+    }
+
+    func testMacTour23SidebarSteer() async throws {
+        // The Albatrosses section alone, with one row's inline steer field
+        // open (T10). The pointer cannot hover in the tour, so the field is
+        // opened by the section's preview seam.
+        var screen = Screen(id: "mac-sidebar-threads-steer", title: "The Albatrosses section with an inline note to a run", section: "Tasks and Work", tab: .work)
+        screen.windowSize = NSSize(width: 320, height: 640)
+        screen.rootView = {
+            AnyView(
+                List {
+                    Section {
+                        MacThreadRows(initialSteerWorkID: "w-agenda") {
+                            Label("Albatrosses", systemImage: PrimaryTab.work.symbol)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .listStyle(.sidebar)
+            )
+        }
+        try await tour(screen)
+    }
+
     // MARK: - Screens
 
     private struct Screen {
@@ -259,7 +295,8 @@ final class NativeTourMacTests: XCTestCase {
     private static let screenOrder = [
         "mac-today", "mac-mail", "mac-compose", "mac-calendar-week", "mac-calendar-month", "mac-tasks", "mac-work",
         "mac-work-detail", "mac-work-detail-run", "mac-work-detail-handoff", "mac-work-thread-run",
-        "mac-work-thread-form", "mac-work-thread-handoff", "mac-work-thread-narrow", "mac-work-thread-allow", "mac-files",
+        "mac-work-thread-form", "mac-work-thread-handoff", "mac-work-thread-narrow", "mac-work-thread-allow",
+        "mac-work-thread-receipt", "mac-sidebar-threads-steer", "mac-files",
         "mac-chat", "mac-settings", "mac-settings-personal-details", "mac-settings-passwords-ids",
         "mac-settings-passwords-ids-detail",
     ]

@@ -95,7 +95,7 @@ function buildModel(
   const details = threadDetailsFixture(NOW).details;
   const common = {
     workId: 'work_alive25',
-    title: 'Register for and complete the Alive at 25 course',
+    title: 'Register for and complete the CPR and first aid course',
     nowMs: NOW,
     timeZone: TIME_ZONE,
     busy: { runId: null, action: null, stepKey: null },
@@ -254,7 +254,7 @@ function buildModel(
           parts: [
             {
               type: 'text',
-              text: 'Next: attend the court appearance on November 2. This one is yours. Albatross reminds you the day before.',
+              text: 'Next: attend the lifeguard orientation on November 14. This one is yours. Albatross reminds you the day before.',
               state: 'done',
             },
           ],

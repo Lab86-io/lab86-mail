@@ -64,9 +64,9 @@ struct FormValidationTests {
     // MARK: - The draft
 
     private static let options = [
-        FormOption(id: "mon", label: "Monday, October 19", detail: "4:00–8:00 PM · Zoom · $70", recommended: "Matches what you said",
+        FormOption(id: "mon", label: "Monday, October 19", detail: "4:00–8:00 PM · Zoom · $45", recommended: "Matches what you said",
                    calendar: .init(fit: .free, note: "Free on your calendar")),
-        FormOption(id: "wed", label: "Wednesday, October 21", detail: "4:00–8:00 PM · Zoom · $70",
+        FormOption(id: "wed", label: "Wednesday, October 21", detail: "4:00–8:00 PM · Zoom · $45",
                    calendar: .init(fit: .conflict, note: "Conflicts with Team sync")),
     ]
 

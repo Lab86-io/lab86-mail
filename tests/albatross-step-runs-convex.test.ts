@@ -124,20 +124,24 @@ describe('enqueue', () => {
     expect(user.created).toBe(true);
   });
 
-  test('caps open runs for each user, lower for automatic triggers', async () => {
+  test('user runs queue past three; automatic runs open one at a time (docs/albatross-threads.md)', async () => {
     const t = harness();
-    const works = await Promise.all([1, 2, 3, 4].map(() => seedWork(t)));
-    const one = await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(String(works[0])));
-    expect(one.created).toBe(true);
+    const works = await Promise.all([1, 2, 3, 4, 5].map(() => seedWork(t)));
+    for (const work of works.slice(0, 4)) {
+      const run = await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(String(work)));
+      expect(run.created).toBe(true);
+    }
+    // A user run does not block the Brief; one open automatic run does.
     const auto = await t.mutation(
       api.albatrossStepRuns.enqueue,
-      enqueueArgs(String(works[1]), { trigger: 'brief', stepIdentity: 'other' }),
+      enqueueArgs(String(works[4]), { trigger: 'brief', stepIdentity: 'other' }),
     );
-    expect(auto).toEqual({ runId: null, created: false, reason: 'busy' });
-    await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(String(works[1])));
-    await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(String(works[2])));
-    const fourth = await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(String(works[3])));
-    expect(fourth).toEqual({ runId: null, created: false, reason: 'busy' });
+    expect(auto.created).toBe(true);
+    const secondAuto = await t.mutation(
+      api.albatrossStepRuns.enqueue,
+      enqueueArgs(String(await seedWork(t)), { trigger: 'conductor', stepIdentity: 'third' }),
+    );
+    expect(secondAuto).toEqual({ runId: null, created: false, reason: 'busy' });
   });
 
   test('refuses closed Work, other users, and a parent run from another Work', async () => {

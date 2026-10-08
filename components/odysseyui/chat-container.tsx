@@ -24,11 +24,19 @@ const useChatContainer = () => {
   return ctx;
 };
 
+/** Where the reader was in this conversation, kept across a hop (docs/albatross-threads.md, T3). */
+export type ChatContainerScrollMemory = {
+  restore: () => { top: number; atBottom: boolean } | null;
+  save: (state: { top: number; atBottom: boolean }) => void;
+};
+
 export type ChatContainerProps = React.ComponentProps<'div'> & {
   bottomThreshold?: number;
   autoScroll?: boolean;
   /** The control that returns to the bottom. Default: the round chevron. `null` hides it. */
   scrollButton?: React.ReactNode;
+  /** A reader who scrolled up comes back to the same place; one who followed the bottom follows it again. */
+  scrollMemory?: ChatContainerScrollMemory;
 };
 
 export function ChatContainer({
@@ -37,11 +45,15 @@ export function ChatContainer({
   bottomThreshold = 64,
   autoScroll = true,
   scrollButton,
+  scrollMemory,
   ...props
 }: ChatContainerProps) {
   const reduceMotion = useReducedMotion();
   const contentRef = useRef<HTMLDivElement>(null);
-  const atBottomRef = useRef(true);
+  const atBottomRef = useRef(scrollMemory?.restore()?.atBottom ?? true);
+  const scrollMemoryRef = useRef(scrollMemory);
+  scrollMemoryRef.current = scrollMemory;
+  const restoredRef = useRef(false);
   const lastScrollTopRef = useRef(0);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -70,6 +82,7 @@ export function ChatContainer({
       else if (viewport.scrollTop < lastScrollTopRef.current - 1) atBottomRef.current = false;
       lastScrollTopRef.current = viewport.scrollTop;
       setIsAtBottom(nearBottom);
+      scrollMemoryRef.current?.save({ top: viewport.scrollTop, atBottom: atBottomRef.current });
     };
     viewport.addEventListener('scroll', onScroll, { passive: true });
     return () => viewport.removeEventListener('scroll', onScroll);
@@ -82,7 +95,15 @@ export function ChatContainer({
       if (autoScroll && atBottomRef.current) scrollToBottom('instant');
     });
     observer.observe(content);
-    if (autoScroll) scrollToBottom('instant');
+    // The first layout: the remembered place, else the bottom.
+    const remembered = restoredRef.current ? null : scrollMemoryRef.current?.restore();
+    restoredRef.current = true;
+    if (remembered && !remembered.atBottom && viewportRef.current) {
+      atBottomRef.current = false;
+      viewportRef.current.scrollTop = remembered.top;
+      lastScrollTopRef.current = remembered.top;
+      setIsAtBottom(false);
+    } else if (autoScroll) scrollToBottom('instant');
     return () => observer.disconnect();
   }, [autoScroll, scrollToBottom]);
 

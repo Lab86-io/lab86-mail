@@ -266,9 +266,9 @@ or a handoff, it sits directly above the composer. Loading: "Loading this Albatr
 
 ```
 What Albatross understood
-Outcome   Register for and complete the Alive at 25 course before November 2.
+Outcome   Register for and complete the CPR and first aid course before November 14.
 Plan      1  Register for the course                            Handle it
-          2  Attend the court appearance on November 2          Yours, offline
+          2  Attend the lifeguard orientation on November 14          Yours, offline
 ```
 
 While the plan is not ready: the block says "Albatross makes the plan." with a shimmer line, the
@@ -280,7 +280,7 @@ on Details, Plan section:
 
 ```
 1  Register for the course                     Now        Handle it
-2  Attend the court appearance on November 2   Next
+2  Attend the lifeguard orientation on November 14   Next
 ```
 
 A done step: "✓ Register for the course · Verified on the page · Registration confirmed, order
@@ -301,18 +301,18 @@ No fake user message appears. The run block appears as a timeline item:
 ```
 Step 1  Register for the course                      Working · 0:42    Stop
 ▾ What Albatross did so far · 3 lines
-   10:39  Opened aliveat25.com
-   10:39  Read the class schedule: 3 virtual classes before November 2
+   10:39  Opened firstaidclass.example.com
+   10:39  Read the class schedule: 3 virtual classes before November 14
    10:40  Checked your calendar for each class          ← shimmer
 ```
 
 When the user writes "go ahead and register me", the chat calls `albatross_handle_step`, and the
 same block renders inside that assistant message after its one line: "I will handle the
-registration. I will stop before the $70 payment, which is yours to make."
+registration. I will stop before the $45 payment, which is yours to make."
 
 **S7. Watch the page.** When the run gets a session, the right region opens on Page. Pane header:
 "Albatross is on the page. Opening the registration form." with "Take over". If the user closed
-the pane, the run block shows a page row: "aliveat25.com · Albatross has the page" with "Open the
+the pane, the run block shows a page row: "firstaidclass.example.com · Albatross has the page" with "Open the
 page". On a tablet or phone the same row opens the sheet.
 
 **S8. Talk while it works.** The user writes "use the Monday class". The chat calls the tool with a
@@ -322,12 +322,12 @@ use the Monday class". No second block appears.
 
 **S9. A choice that is mine.** See `s9.png`. The run block: "Step 1 · Register for the course ·
 Paused · 10:41", the collapsed log "What Albatross did · 6 lines", the summary "Found three virtual
-classes before November 2 and opened the registration form to read its fields. Your name, email,
+classes before November 14 and opened the registration form to read its fields. Your name, email,
 and address are ready. The class and your phone number are missing." Then the form card:
 
 - Title "Which class?". Lead "All three are 4-hour Zoom sessions. Registration closes one week
   before each class."
-- Field "Class", three option rows. Each row: the day, the detail line "4:00–8:00 PM · Zoom · $70",
+- Field "Class", three option rows. Each row: the day, the detail line "4:00–8:00 PM · Zoom · $45",
   and the calendar line in the success voice ("Free on your calendar") or the warning voice
   ("Conflicts with Team sync, 5:00 PM"). The first row carries the tag "Matches what you said" and
   is preselected. Nothing else is preselected.
@@ -344,39 +344,39 @@ assistant answers in one line: "Monday, October 19 it is. Albatross continues." 
 receipt "Saved to your details: Phone" with "Undo". The pending form card changes to its receipt
 with the state "Answered in the conversation" and the two values. The run block continues.
 
-**S12. Sign in.** Handoff block: headline "Your turn", detail "Sign in to aliveat25.com in the
+**S12. Sign in.** Handoff block: headline "Your turn", detail "Sign in to firstaidclass.example.com in the
 page, then press Continue." Buttons: "Continue" (primary), "Dismiss". Pane header: "Your turn.
-Sign in to aliveat25.com." The user may also write "done". After the resume, the log reads
+Sign in to firstaidclass.example.com." The user may also write "done". After the resume, the log reads
 "Checked the sign-in: signed in as sam.rivera@example.com" and Albatross adds one line: "Signed
 in. The browser keeps this sign-in for next time."
 
 **S13. The final page.** See `s13.png`. The continued block: summary "Filled in the registration
-form for Monday, October 19 with your name, email, address, and phone. The $70 payment is yours to
-make." Headline "Your turn". Detail "Everything is filled in. Check it and pay the $70." Buttons
-"I paid" (primary) and "Dismiss". Pane header: "Your turn. Check the form and pay the $70." with
+form for Monday, October 19 with your name, email, address, and phone. The $45 payment is yours to
+make." Headline "Your turn". Detail "Everything is filled in. Check it and pay the $45." Buttons
+"I paid" (primary) and "Dismiss". Pane header: "Your turn. Check the form and pay the $45." with
 "Close the page". After "I paid", the block shows "Checking the page…" and then the done state with
 its proof.
 
-**S14. Drafts and documents.** Headline "Ready for you". A draft card: "Draft to the court clerk ·
-Subject: Alive at 25 completion certificate", button "Read and send". A document card: "Completion
+**S14. Drafts and documents.** Headline "Ready for you". A draft card: "Draft to the pool manager ·
+Subject: CPR and first aid certificate", button "Read and send". A document card: "Completion
 certificate.pdf", button "Open". The primary button of the block is the first artifact's action.
 
 **S15. Done.** The block collapses to its done state: "Step 1 · Register for the course · Done ·
 10:52", the proof line "Verified on the page · Registration confirmed, order A1234", and the log
-trigger. One assistant line follows: "Next: attend the court appearance on November 2. This one is
-yours. Albatross reminds you the day before." Plan line: "Step 2 of 2 · Next: Attend the court
-appearance".
+trigger. One assistant line follows: "Next: attend the lifeguard orientation on November 14. This one is
+yours. Albatross reminds you the day before." Plan line: "Step 2 of 2 · Next: Attend the lifeguard
+orientation".
 
 **S16. Failed or stopped.** Failed: "Step 1 · Register for the course · Did not finish · 10:52",
 the line "This run did not finish. The site did not load after three tries.", button "Try again".
 Stopped: "Albatross stopped at its time limit." with the summary and "Continue". Cost: "Albatross
 stopped at its cost limit."
 
-**S17. Ask.** "when is the court date?" gets a normal answer with the work log ("Did 2 things ·
+**S17. Ask.** "when is the orientation?" gets a normal answer with the work log ("Did 2 things ·
 4s") and an `EventCard`. Nothing about the page changes.
 
 **S18. Change the plan.** "I already registered, skip that." Albatross marks step 1 done with
-reported evidence and answers: "Marked step 1 done. Next: attend the court appearance on November
+reported evidence and answers: "Marked step 1 done. Next: attend the lifeguard orientation on November
 2." A small receipt row reads "Step 1 marked done · Reported by you". The plan line updates.
 
 **S19. Details.** The Details panel sections, top to bottom: Plan (the step list), Files (every
@@ -530,7 +530,7 @@ The URL row shows the host and path in mono, read-only. There are no browser nav
 - **Screen reader.** The run block is a `section` named by its step title. Its state line is
   `aria-live="polite"`. The log is a list with a time and a text per item. A new form card
   announces "Albatross needs one answer: Which class?". A handoff announces its headline and
-  detail. The page pane is a `complementary` landmark named "Page: aliveat25.com". The plan line
+  detail. The page pane is a `complementary` landmark named "Page: firstaidclass.example.com". The plan line
   is a button named "Plan, step 1 of 2, your turn".
 - **Reduced motion.** No shimmer; the newest log line uses the text "Working". No slide on new
   messages. The pane opens without a transition.
@@ -562,7 +562,7 @@ The URL row shows the host and path in mono, read-only. There are no browser nav
   sits above the composer. The page pane shows the empty registration form and the line "Paused.
   Albatross continues after your answer." with "Take over".
 - `s13.png`: the S13 moment. The answered form is a receipt inside the first block. The continued
-  block carries "Your turn", "Everything is filled in. Check it and pay the $70.", and "I paid".
+  block carries "Your turn", "Everything is filled in. Check it and pay the $45.", and "I paid".
   The page pane shows the filled form, the empty card fields, and "Close the page".
 - Two iterations were made: the column now anchors to the bottom, the pane line fits on one line,
   the run header reads "Step 1 · title · state · time", and S13 keeps the S9 history above it.

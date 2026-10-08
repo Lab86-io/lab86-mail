@@ -19,8 +19,8 @@ export function threadDetailFixture(
   return {
     work: {
       _id: THREAD_FIXTURE_WORK_ID,
-      title: 'Register for and complete the Alive at 25 course',
-      rawText: 'Register for Alive at 25 before Nov 2',
+      title: 'Register for and complete the CPR and first aid course',
+      rawText: 'Register for CPR and first aid before Nov 14',
       status: 'ready',
       workState: 'active',
       updatedAt: now - 10 * MINUTE,
@@ -29,13 +29,13 @@ export function threadDetailFixture(
     },
     plan: {
       _id: 'plan_alive25',
-      outcome: 'Register for and complete the Alive at 25 course',
+      outcome: 'Register for and complete the CPR and first aid course',
       summary:
-        'The course at aliveat25.com must be complete before the November 2 court date. Albatross registers you and tracks the certificate.',
+        'The course at firstaidclass.example.com must be complete before the November 14 orientation. Albatross registers you and tracks the certificate.',
       status: 'ready',
       artifactSource: 'none',
-      assumptions: ['The court accepts the National Safety Council certificate.'],
-      sourceRefs: [{ kind: 'mail', id: 'm1', label: 'Court notice, Sep 29' }],
+      assumptions: ['The pool accepts an online CPR certificate.'],
+      sourceRefs: [{ kind: 'mail', id: 'm1', label: 'Pool job offer, Sep 29' }],
     },
     project: null,
     questions: [],
@@ -49,8 +49,8 @@ export function threadDetailFixture(
           kind: 'task',
           title: 'Register for the course',
           detail:
-            'Pick a class before November 2 and register with your details. Albatross stops before the $70 payment.',
-          url: 'https://aliveat25.example.com/classes',
+            'Pick a class before November 14 and register with your details. Albatross stops before the $45 payment.',
+          url: 'https://firstaidclass.example.com/classes',
           done: false,
           cardId: null,
           stepMode: 'agent_does',
@@ -61,7 +61,7 @@ export function threadDetailFixture(
           key: 'step-2',
           identity: 'step-2',
           kind: 'physical',
-          title: 'Attend the court appearance on November 2',
+          title: 'Attend the lifeguard orientation on November 14',
           detail: 'Bring the completion certificate.',
           url: null,
           done: false,
@@ -86,8 +86,8 @@ export function threadDetailFixture(
       artifacts: [
         {
           kind: 'calendar_event',
-          id: 'evt_court',
-          title: 'Court appearance, November 2',
+          id: 'evt_orientation',
+          title: 'Lifeguard orientation, November 14',
           operationId: 'op_event',
         },
       ],
@@ -124,20 +124,20 @@ export const classQuestionForm: FormQuestion = {
         {
           id: 'mon-19',
           label: 'Monday, October 19',
-          detail: '4:00–8:00 PM · Zoom · $70',
+          detail: '4:00–8:00 PM · Zoom · $45',
           recommended: 'Matches what you said',
           calendar: { fit: 'free', note: 'Free on your calendar' },
         },
         {
           id: 'wed-21',
           label: 'Wednesday, October 21',
-          detail: '4:00–8:00 PM · Zoom · $70',
+          detail: '4:00–8:00 PM · Zoom · $45',
           calendar: { fit: 'conflict', note: 'Conflicts with Team sync, 5:00 PM' },
         },
         {
           id: 'sat-24',
           label: 'Saturday, October 24',
-          detail: '9:00 AM–1:00 PM · Zoom · $70',
+          detail: '9:00 AM–1:00 PM · Zoom · $45',
           calendar: { fit: 'free', note: 'Free on your calendar' },
         },
       ],
@@ -236,6 +236,7 @@ function base(now: number, over: Partial<ThreadRunView>): ThreadRunView {
     artifacts: [],
     browserSessionId: null,
     parentRunId: null,
+    notes: [],
     stoppedBy: null,
     error: null,
     createdAt: now - 6 * MINUTE,
@@ -267,15 +268,15 @@ export type ThreadRunFixtureName =
 
 export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName, ThreadRunView> {
   const classLog = [
-    'Opened aliveat25.example.com',
-    'Read the class schedule: 3 virtual classes before November 2',
+    'Opened firstaidclass.example.com',
+    'Read the class schedule: 3 virtual classes before November 14',
     'Checked your calendar for each class',
     'Opened the registration form to read its fields',
     'Read your details: name, email, and home address are saved',
     'Stopped to ask which class, and for your phone number',
   ];
   const answerText =
-    "Class: Monday, October 19 (4:00–8:00 PM · Zoom · $70)\nPhone: (555) 555-0100\nSaved to the user's personal details: Phone.";
+    "Class: Monday, October 19 (4:00–8:00 PM · Zoom · $45)\nPhone: (555) 555-0100\nSaved to the user's personal details: Phone.";
   const question = (
     status: 'pending' | 'answered',
     answeredIn: 'form' | 'chat' | null,
@@ -323,7 +324,7 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
       outcome: 'needs_answer',
       browserSessionId: 'session_alive25',
       summary:
-        'Found three virtual classes before November 2 and opened the registration form to read its fields. Your name, email, and address are ready. The class and your phone number are missing.',
+        'Found three virtual classes before November 14 and opened the registration form to read its fields. Your name, email, and address are ready. The class and your phone number are missing.',
       log: log(now, classLog, now - 2 * MINUTE),
       next: {
         kind: 'answer',
@@ -343,7 +344,7 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
       state: 'handed_off',
       outcome: 'needs_answer',
       summary:
-        'Found three virtual classes before November 2 and opened the registration form to read its fields.',
+        'Found three virtual classes before November 14 and opened the registration form to read its fields.',
       log: log(now, classLog, now - 4 * MINUTE),
       next: {
         kind: 'answer',
@@ -364,7 +365,7 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
       state: 'handed_off',
       outcome: 'needs_answer',
       summary:
-        'Found three virtual classes before November 2 and opened the registration form to read its fields.',
+        'Found three virtual classes before November 14 and opened the registration form to read its fields.',
       log: log(now, classLog, now - 4 * MINUTE),
       next: {
         kind: 'answer',
@@ -388,13 +389,13 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
       summary: 'Opened the class list. The site asks for your sign-in before it shows the registration form.',
       log: log(
         now,
-        ['Opened aliveat25.example.com', 'Went to the class list', 'Stopped at the sign-in form'],
+        ['Opened firstaidclass.example.com', 'Went to the class list', 'Stopped at the sign-in form'],
         now - MINUTE,
       ),
       next: {
         kind: 'sign_in',
         label: 'Sign in',
-        detail: 'Sign in to aliveat25.example.com in the page, then press I signed in.',
+        detail: 'Sign in to firstaidclass.example.com in the page, then press I signed in.',
         doneLabel: 'I signed in',
         allow: null,
         saveSignIn: null,
@@ -409,8 +410,9 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
       outcome: 'your_turn',
       browserSessionId: 'session_alive25',
       parentRunId: 'run_answered_form',
+      notes: [],
       summary:
-        'Filled in the registration form for Monday, October 19 with your name, email, address, and phone. The $70 payment is yours to make.',
+        'Filled in the registration form for Monday, October 19 with your name, email, address, and phone. The $45 payment is yours to make.',
       log: log(
         now,
         [
@@ -425,7 +427,7 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
       next: {
         kind: 'finish_on_page',
         label: 'Check and pay',
-        detail: 'Everything is filled in. Check it and pay the $70.',
+        detail: 'Everything is filled in. Check it and pay the $45.',
         doneLabel: 'I paid',
         allow: null,
         saveSignIn: null,
@@ -440,6 +442,7 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
       state: 'done',
       outcome: 'done',
       parentRunId: 'run_final_page',
+      notes: [],
       summary: 'The site shows the registration confirmation for Monday, October 19. Order A1234.',
       log: log(
         now,
@@ -454,7 +457,7 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
       state: 'failed',
       log: log(
         now,
-        ['Opened aliveat25.example.com', 'The page did not load', 'Tried again twice'],
+        ['Opened firstaidclass.example.com', 'The page did not load', 'Tried again twice'],
         now - MINUTE,
       ),
       error: 'The site did not load after three tries.',
@@ -468,7 +471,7 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
       log: log(
         now,
         [
-          'Opened aliveat25.example.com',
+          'Opened firstaidclass.example.com',
           'Read the class schedule',
           'Read the Monday class page',
           'Read the Wednesday class page',
@@ -492,21 +495,21 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
       id: 'run_cancelled',
       state: 'cancelled',
       summary: null,
-      log: log(now, ['Opened aliveat25.example.com', 'Read the class schedule'], now - MINUTE),
+      log: log(now, ['Opened firstaidclass.example.com', 'Read the class schedule'], now - MINUTE),
       finishedAt: now - MINUTE,
     }),
     readyDraft: base(now, {
       id: 'run_ready_draft',
       stepKey: 'step-2',
       stepIdentity: 'step-2',
-      stepTitle: 'Send the certificate to the court clerk',
+      stepTitle: 'Send the certificate to the pool manager',
       state: 'handed_off',
       outcome: 'ready_for_you',
-      summary: 'Wrote the note to the court clerk and attached the certificate to a draft.',
+      summary: 'Wrote the note to the pool manager and attached the certificate to a draft.',
       log: log(
         now,
         [
-          'Found the clerk address in the court notice',
+          'Found the pool manager address in the job offer',
           'Wrote the note',
           'Saved a draft with the certificate',
         ],
@@ -520,13 +523,13 @@ export function threadRunFixtures(now = Date.now()): Record<ThreadRunFixtureName
         allow: null,
         saveSignIn: null,
         allowAnswer: null,
-        target: { kind: 'draft', id: 'draft_clerk', accountId: 'sam.rivera@example.com' },
+        target: { kind: 'draft', id: 'draft_manager', accountId: 'sam.rivera@example.com' },
       },
       artifacts: [
         {
           kind: 'draft',
-          id: 'draft_clerk',
-          title: 'Alive at 25 completion certificate',
+          id: 'draft_manager',
+          title: 'CPR and first aid certificate',
           accountId: 'sam.rivera@example.com',
         },
       ],
@@ -564,7 +567,7 @@ export function threadMessagesFixture(now = Date.now(), inlineRunId = 'run_runni
       parts: [
         {
           type: 'text',
-          text: 'I will handle the registration. I will stop before the $70 payment, which is yours to make.',
+          text: 'I will handle the registration. I will stop before the $45 payment, which is yours to make.',
           state: 'done',
         },
         {
@@ -610,7 +613,7 @@ export function earlierChatMessageFixture(): UIMessage {
     parts: [
       {
         type: 'text',
-        text: 'The court notice names November 2 at 9:00 AM. The Alive at 25 course takes four hours.',
+        text: 'The job offer names November 14 at 9:00 AM. The CPR and first aid course takes four hours.',
         state: 'done',
       },
     ],

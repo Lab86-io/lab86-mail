@@ -242,6 +242,9 @@ final class NavigationModel {
     var chatPanelPresented = false
     // A push for the open Albatross bumps this; the thread re-reads its runs.
     private(set) var workRefreshToken = 0
+    // The banner's "Show" asks the Albatrosses list for one filter ("Needs
+    // you"). The list reads and clears it.
+    var pendingWorkFilter: WorkFilter?
 
     func refreshOpenWork() {
         workRefreshToken += 1

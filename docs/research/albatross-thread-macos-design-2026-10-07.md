@@ -18,7 +18,7 @@ iOS note wins; section 3 lists the hooks the Mac asks for.
 Sample data in this note is invented: "Sam Rivera", `sam.rivera@example.com`, "(555) 010-0100",
 and "12 Harbor Lane, Apt 4, Portland, ME 04101". The classes are the iOS note's set: Monday
 October 19 and Wednesday October 21 at 4:00–8:00 PM, and Saturday October 24 at 9:00 AM–1:00 PM,
-all on Zoom, all $70.
+all on Zoom, all $45.
 
 ## What went wrong on the Mac today
 
@@ -276,7 +276,7 @@ The detail column's toolbar, leading to trailing:
 
 | Item | Placement | What it is |
 |---|---|---|
-| Title | `navigationTitle` | The outcome: "Register for the Alive at 25 course". The title truncates in the middle and the full text sits in `help`. |
+| Title | `navigationTitle` | The outcome: "Register for the CPR and first aid course". The title truncates in the middle and the full text sits in `help`. |
 | Plan line | `.navigation` placement, after the title | A plain text button: "Step 1 of 2 · Your turn ⌄". A click opens the plan popover (S3). The words come from the iOS note's plan-line table. |
 | Page toggle | `.primaryAction` group, first | `Label("Page", systemImage: "globe")` with `.labelStyle(.iconOnly)`. Help: "Show the page (Control-Command-P)". A 6-point dot at the glyph's corner while a session is live and the pane is closed or in details mode: accent-2 when Albatross has the page, accent when it is the user's turn. Dimmed when no session exists. |
 | Details toggle | `.primaryAction` group, second | `Label("Details", systemImage: "sidebar.trailing")`, icon only. Help: "Show the details (Control-Command-I)". |
@@ -429,7 +429,7 @@ for it (`readingMeasure: CGFloat?`).
 
 - The page row takes `pageShown: Bool`, `onShowPage`, and `onHidePage`. iOS passes its sheet
   action and `pageShown: false`. The row text on the Mac: "Albatross is on the page ·
-  aliveat25.com" with "Show the page" or "Hide the page" (iOS: "Open").
+  firstaidclass.example.com" with "Show the page" or "Hide the page" (iOS: "Open").
 - `.pointerMenu { … }` with the items in 2.7 (the helper exists in
   `PointerAndKeyAffordances.swift`).
 - `.stopShortcut()` on "Stop" (exists). The primary button and the second button get a new
@@ -477,14 +477,14 @@ with the page when a session is still live, else with no pane. A `WorkRoute.inte
 or the sheet on a narrow one. A click on a chat card "Work: Register for the course" in the
 torn-out chat window opens the thread in the main window and brings that window forward.
 
-**S2. A new Albatross.** The user captured "register for Alive at 25 before Nov 2". The thread
+**S2. A new Albatross.** The user captured "register for CPR and first aid before Nov 14". The thread
 opens with the outcome block:
 
 ```
-Register for Alive at 25 before Nov 2
-Course at aliveat25.com must be finished before the November 2 court appearance.
+Register for CPR and first aid before Nov 14
+Course at firstaidclass.example.com must be finished before the November 14 orientation.
 1  Register for the course · Albatross can handle it          Handle it
-2  Attend the court appearance on November 2 · You
+2  Attend the lifeguard orientation on November 14 · You
 ```
 
 While the plan is not ready, the block reads "Albatross makes the plan." with a `RevealDot`, and
@@ -497,7 +497,7 @@ detachable popover, 360 wide, with `PlanListView`:
 Plan
 ✓  Find the course site              Verified on the page · Oct 7
 1  Register for the course           Your turn                     Handle it
-2  Attend the court appearance on November 2    Next
+2  Attend the lifeguard orientation on November 14    Next
 Albatross keeps the plan here. Say what changed in the conversation, and the plan follows.
 ```
 
@@ -523,9 +523,9 @@ run block renders inside that reply:
 
 ```
 Working on: Register for the course        Started by you · 9:41
-9:41  Opened aliveat25.com
+9:41  Opened firstaidclass.example.com
 9:41  Read your details: name, email, address
-9:41  Found 3 classes before November 2
+9:41  Found 3 classes before November 14
 Show all 7 lines
 [Stop]
 ```
@@ -536,7 +536,7 @@ stops. The plan line reads "Step 1 of 2 · Albatross works".
 **S7. Watch the page.** The run opens a site. On a wide window the page pane opens at the right
 with a crossfade. The bar reads "Albatross is on the page" with the session detail under it,
 "Opening the class list". "Take over" sits at the trailing edge of the bar. The run block shows
-the page row "Albatross is on the page · aliveat25.com" with "Hide the page" while the pane is
+the page row "Albatross is on the page · firstaidclass.example.com" with "Hide the page" while the pane is
 open. If the details pane was open, the page takes its place; the Details toggle turns off.
 
 **S8. Talk while it works.** The user writes "use the Monday class" and presses Return. The
@@ -549,12 +549,12 @@ block ends with one form:
 
 ```
 Albatross needs one answer
-I found three classes before November 2. I did not pick one. Your calendar is free on two of them.
+I found three classes before November 14. I did not pick one. Your calendar is free on two of them.
 
 Which class?
-( ) Monday, October 19        4:00–8:00 PM · Zoom · $70        Free on your calendar
-( ) Wednesday, October 21     4:00–8:00 PM · Zoom · $70        Conflicts with Team sync
-( ) Saturday, October 24      9:00 AM–1:00 PM · Zoom · $70     Free on your calendar
+( ) Monday, October 19        4:00–8:00 PM · Zoom · $45        Free on your calendar
+( ) Wednesday, October 21     4:00–8:00 PM · Zoom · $45        Conflicts with Team sync
+( ) Saturday, October 24      9:00 AM–1:00 PM · Zoom · $45     Free on your calendar
 ( ) Other                     [                           ]
 ```
 
@@ -590,7 +590,7 @@ continues as a continuation block.
 
 ```
 Your turn
-Sign in to aliveat25.com in the page, then press Continue.
+Sign in to firstaidclass.example.com in the page, then press Continue.
 [Sign in]   [I signed in]      Dismiss
 ```
 
@@ -605,41 +605,41 @@ still knows the user.
 ```
 Your turn · Started by you · 9:52
 I filled in the form for Monday, October 19 with your name, email, phone, and address.
-Everything is filled in. Check it and pay the $70.
+Everything is filled in. Check it and pay the $45.
 Registration form · Page
 ▸ What I did
 [Check and pay]   [I paid]      Dismiss
 ```
 
 The pane shows the filled form. The bar reads "Everything is filled in. Check it and pay the
-$70." with "I paid" at the trailing edge. "Check and pay" brings focus to the pane (or opens
+$45." with "I paid" at the trailing edge. "Check and pay" brings focus to the pane (or opens
 the sheet). After payment the user presses "I paid" (Command-Return). The bar reads "Albatross
 checks the page…". Then the block becomes the done block: "Done · Verified on the page", the proof
 "Registration confirmed for Monday, October 19. Confirmation number ends in 0100.", and the
 artifact row "Confirmation page · Page".
 
-**S14. Drafts and documents.** A draft is an artifact row in the run block: "Note to the court
-clerk · Draft" with "Read and send", which opens the composer sheet with that draft id. A
+**S14. Drafts and documents.** A draft is an artifact row in the run block: "Note to the pool
+manager · Draft" with "Read and send", which opens the composer sheet with that draft id. A
 document is a row: "Registration confirmation · Document" with "Open the document", which opens
 the document in Files. Both also appear in the details pane under Files.
 
 **S15. Done.** The proof line appears in the block. The plan line changes to "Step 2 of 2".
-Albatross writes one line: "Next: attend the court appearance on November 2. I will watch for
+Albatross writes one line: "Next: attend the lifeguard orientation on November 14. I will watch for
 the Zoom invite." No button appears for a step only the user can do.
 
-**S16. Failed or stopped.** Failed: "This run did not finish." with the red line "aliveat25.com
+**S16. Failed or stopped.** Failed: "This run did not finish." with the red line "firstaidclass.example.com
 did not load after three tries." and "Try again". Stopped by a limit: "Albatross stopped at its
 time limit." with "Continue". Stopped by the user: one line "Stopped by you." with "Continue".
 Each keeps "What I did" collapsed. Command-Return is "Continue" on a stopped block and nothing
 on a failed block.
 
-**S17. Ask.** The user writes "when is the court date?". Albatross answers "November 2 at 9:00
+**S17. Ask.** The user writes "when is the orientation?". Albatross answers "November 14 at 9:00
 AM, at the Monroe County Hall of Justice. It is on your calendar." with one event card. No run
 starts.
 
 **S18. Change the plan.** The user writes "I already registered, skip that". The reply shows the
 rows "Recorded progress" and "Replanned the Work", then "Done. Step 1 is marked done as reported.
-Next: the court appearance on November 2." The plan line reads "Step 2 of 2". The outcome block's
+Next: the lifeguard orientation on November 14." The plan line reads "Step 2 of 2". The outcome block's
 step row 1 shows a check with "Marked done".
 
 **S19. Details.** Control-Command-I or the toggle opens the details pane:
@@ -647,15 +647,15 @@ step row 1 shows a check with "Marked done".
 ```
 Details                                                      ×
 Outcome
-  Register for Alive at 25 before Nov 2 · guided · by Nov 2
+  Register for CPR and first aid before Nov 14 · guided · by Nov 14
 Commitments
   (the outcome contract)
 Proof
   Oct 19  Verified on the page · Confirmation number ends in 0100
 Files
-  Note to the court clerk          Draft       Read and send
+  Note to the pool manager          Draft       Read and send
   Registration confirmation        Document    Open the document
-  Reminder: court appearance       Event       Undo
+  Reminder: lifeguard orientation       Event       Undo
 Plan document
   (the plan document)
 Context
@@ -854,7 +854,7 @@ VoiceOver:
 - The pane is one container labelled "Shared browser". The live view is the remote page's own
   accessibility tree.
 - `PlatformAccessibility.announce` fires on a state change only, with the iOS note's lines:
-  "Albatross started on Register for the course.", "Your turn: Sign in to aliveat25.com.",
+  "Albatross started on Register for the course.", "Your turn: Sign in to firstaidclass.example.com.",
   "Albatross asks: Which class?", "Step done: Register for the course.", "This run did not
   finish." Log lines do not announce.
 - A form option row is a button with the selected trait; the calendar note is part of its
@@ -894,28 +894,28 @@ Window at 1440 by 900, sidebar 260, conversation 540, pane 616.
 
 ```
 ┌──────────────────────┬──────────────────────────────────────────────┬─────────────────────────────────┐
-│ Albatross        [+] │ Register for the Alive at 25 course          │                   [◎] [▣] [⋯]   │
+│ Albatross        [+] │ Register for the CPR and first aid course          │                   [◎] [▣] [⋯]   │
 │                      │ Step 1 of 2 · Albatross works ⌄              │                                 │
 ├──────────────────────┼──────────────────────────────────────────────┼─────────────────────────────────┤
-│ Search mail      ⌘F  │ Register for Alive at 25 before Nov 2        │ ● Albatross is on the page      │
+│ Search mail      ⌘F  │ Register for CPR and first aid before Nov 14        │ ● Albatross is on the page      │
 │                      │ 1 Register for the course · Albatross works  │   Reading the class list        │
-│ Today                │ 2 Attend the court appearance · You          │          [Take over]  Larger ⌄  │
+│ Today                │ 2 Attend the lifeguard orientation · You          │          [Take over]  Larger ⌄  │
 │ Albatrosses  4 need  │                                              ├─────────────────────────────────┤
 │ Chat                 │                               ┌────────────┐ │ ┌─────────────────────────────┐ │
-│ Mail                 │                               │ go ahead   │ │ │ aliveat25.com               │ │
+│ Mail                 │                               │ go ahead   │ │ │ firstaidclass.example.com               │ │
 │ Calendar             │                               │ and        │ │ │                             │ │
-│                      │                               │ register me│ │ │  ALIVE AT 25 · Classes      │ │
+│                      │                               │ register me│ │ │  FIRST AID · Classes        │ │
 │ Your areas           │                               └────────────┘ │ │  Mon Oct 19  4:00–8:00 PM   │ │
 │ ● Personal           │ Started on the step                          │ │  Wed Oct 21  4:00–8:00 PM   │ │
 │ ● Harbor Clinic      │ ┃ ◉ Working on: Register for the course      │ │  Sat Oct 24  9:00–1:00 PM   │ │
 │                      │ ┃   Started by you · 9:41                    │ │                             │ │
-│                      │ ┃   9:41  Opened aliveat25.com               │ │  [Reserve a spot]           │ │
+│                      │ ┃   9:41  Opened firstaidclass.example.com               │ │  [Reserve a spot]           │ │
 │                      │ ┃   9:41  Read your note: use the Monday     │ │                             │ │
 │                      │ ┃         class                              │ │                             │ │
 │                      │ ┃   9:42  Typed your name, email, and        │ │                             │ │
 │                      │ ┃         address                            │ │                             │ │
 │                      │ ┃   Show all 7 lines                         │ │                             │ │
-│                      │ ┃   ● Albatross is on the page · aliveat25…  │ │                             │ │
+│                      │ ┃   ● Albatross is on the page · firstaidclass…  │ │                             │ │
 │                      │ ┃                            Hide the page   │ │                             │ │
 │                      │ ┃                                     Stop   │ │                             │ │
 │                      │                                              │ │                             │ │
@@ -939,15 +939,15 @@ Window at 1440 by 900, sidebar 260, conversation 540, pane 616.
 
 ```
 │ ┃ Albatross needs one answer                                        │
-│ ┃ I found three classes before November 2. I did not pick one.      │
+│ ┃ I found three classes before November 14. I did not pick one.      │
 │ ┃ Your calendar is free on two of them.                             │
 │ ┃ ┌─────────────────────────────────────────────────────────────┐   │
 │ ┃ │ Which class?                                                │   │
-│ ┃ │ ( ) Monday, October 19     4:00–8:00 PM · Zoom · $70        │   │
+│ ┃ │ ( ) Monday, October 19     4:00–8:00 PM · Zoom · $45        │   │
 │ ┃ │                            Free on your calendar            │   │
-│ ┃ │ ( ) Wednesday, October 21  4:00–8:00 PM · Zoom · $70        │   │
+│ ┃ │ ( ) Wednesday, October 21  4:00–8:00 PM · Zoom · $45        │   │
 │ ┃ │                            Conflicts with Team sync         │   │
-│ ┃ │ ( ) Saturday, October 24   9:00 AM–1:00 PM · Zoom · $70     │   │
+│ ┃ │ ( ) Saturday, October 24   9:00 AM–1:00 PM · Zoom · $45     │   │
 │ ┃ │                            Free on your calendar            │   │
 │ ┃ │ ( ) Other                  [                             ]  │   │
 │ ┃ │                                                             │   │
@@ -971,15 +971,15 @@ calendar note moves to the trailing edge of the option row.
 
 ```
 ┌──────────────────────┬──────────────────────────────────────────────┬─────────────────────────────────┐
-│ Albatross        [+] │ Register for the Alive at 25 course          │                   [◎] [▣] [⋯]   │
+│ Albatross        [+] │ Register for the CPR and first aid course          │                   [◎] [▣] [⋯]   │
 │                      │ Step 1 of 2 · Your turn ⌄                    │                                 │
 ├──────────────────────┼──────────────────────────────────────────────┼─────────────────────────────────┤
 │ …                    │ ┃ Your turn · Started by you · 9:52          │ ● Everything is filled in.      │
-│                      │ ┃ I filled in the form for Monday, October   │   Check it and pay the $70.     │
+│                      │ ┃ I filled in the form for Monday, October   │   Check it and pay the $45.     │
 │                      │ ┃ 19 with your name, email, phone, and       │                    [I paid]  ⌄  │
 │                      │ ┃ address.                                   ├─────────────────────────────────┤
 │                      │ ┃ Everything is filled in. Check it and pay  │ ┌─────────────────────────────┐ │
-│                      │ ┃ the $70.                                   │ │ Reserve a Spot              │ │
+│                      │ ┃ the $45.                                   │ │ Reserve a Spot              │ │
 │                      │ ┃ Registration form · Page      Hide the page│ │ First name   Sam            │ │
 │                      │ ┃ ▸ What I did                               │ │ Last name    Rivera         │ │
 │                      │ ┃ [Check and pay]  [I paid]                  │ │ Street       12 Harbor Lane │ │
@@ -990,7 +990,7 @@ calendar note moves to the trailing edge of the option row.
 │                      │                                              │ │ Email  sam.rivera@example…  │ │
 │                      │                                              │ │                             │ │
 │                      │                                              │ │ Card number  [            ] │ │
-│                      │                                              │ │ [Pay $70]                   │ │
+│                      │                                              │ │ [Pay $45]                   │ │
 │                      │ ┌──────────────────────────────────────────┐ │ └─────────────────────────────┘ │
 │ Settings             │ │ (clip)  Write to Albatross     Ask  (up) │ │                                 │
 └──────────────────────┴─┴──────────────────────────────────────────┴─┴─────────────────────────────────┘
@@ -1003,12 +1003,12 @@ Verified on the page" and the plan line reads "Step 2 of 2".
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│ ≡  Register for the Alive at 25 course          [◎] [▣] [⋯]    │
+│ ≡  Register for the CPR and first aid course          [◎] [▣] [⋯]    │
 │    Step 1 of 2 · Your turn ⌄                                   │
 ├────────────────────────────────────────────────────────────────┤
 │ ┃ Your turn · Started by you · 9:41                            │
-│ ┃ Sign in to aliveat25.com in the page, then press Continue.   │
-│ ┃ ● Albatross is on the page · aliveat25.com            Open   │
+│ ┃ Sign in to firstaidclass.example.com in the page, then press Continue.   │
+│ ┃ ● Albatross is on the page · firstaidclass.example.com            Open   │
 │ ┃ [Sign in]  [I signed in]                                     │
 │ ┃ Dismiss                                                      │
 │                                                                │

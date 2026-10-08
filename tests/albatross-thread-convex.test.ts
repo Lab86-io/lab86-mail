@@ -226,7 +226,8 @@ describe('steer notes', () => {
     expect(await t.mutation(api.albatrossStepRuns.takeSteerNotes, fence)).toEqual([]);
     // A wrong token reads nothing.
     await t.mutation(api.albatrossStepRuns.steer, { ...caller, id: runId, text: 'Second note' });
-    expect(await t.mutation(api.albatrossStepRuns.takeSteerNotes, { ...fence, token: 'wrong' })).toEqual([]);
+    // A runner that lost the run gets null: it stops at its next step (docs/albatross-threads.md).
+    expect(await t.mutation(api.albatrossStepRuns.takeSteerNotes, { ...fence, token: 'wrong' })).toBeNull();
 
     await t.mutation(api.albatrossStepRuns.cancel, { ...caller, id: runId });
     expect(await t.mutation(api.albatrossStepRuns.steer, { ...caller, id: runId, text: 'Too late' })).toBe(

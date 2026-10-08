@@ -144,6 +144,16 @@ struct AssistantChatMessage: Identifiable, Equatable, Sendable {
     /// sorts on it; a message without one comes from an earlier chat.
     var createdAt: Date? = nil
 
+    /// A note to a run (docs/albatross-threads.md, T7): the run it went to,
+    /// and whether it restarted a stopped run. `metadata.steer` on the wire.
+    /// The message id is the note id the run's `notes` carry.
+    struct SteerNote: Equatable, Sendable {
+        let runID: String
+        let redirect: Bool
+    }
+
+    var steer: SteerNote? = nil
+
     init(id: String, role: Role, text: String = "", parts: [AssistantChatPart]? = nil) {
         self.id = id
         self.role = role
@@ -221,6 +231,9 @@ final class AssistantChatModel {
     // state; a Hold never writes a chat message.
     private(set) var route: BarRoute = .ask
     private(set) var routePinned = false
+    /// True while the Albatross thread has a run that takes notes. The Chat
+    /// tab never sets it.
+    private(set) var runRouteAvailable = false
     private(set) var holdCards: [HoldCardModel] = []
     private(set) var holdPhase: HoldPhase = .collapse
     private(set) var isHolding = false
@@ -404,6 +417,25 @@ final class AssistantChatModel {
         canContinue = true
         finishStreaming()
         activeReplyID = nil
+        // A Work thread reply also runs on the server after the app leaves
+        // (docs/albatross-threads.md, T11): stop it there too.
+        if WorkThreadSession.isThreadID(sessionID) {
+            let body: JSONValue = .object(["sessionId": .string(sessionID)])
+            Task { _ = try? await backend.post(path: Self.agentStopPath, body: body) }
+        }
+        Task { await persistTranscript() }
+    }
+
+    static let agentStopPath = "/api/agent/stop"
+
+    /// A note to the run that works (docs/albatross-threads.md, T7): a user
+    /// message with `metadata.steer`, saved with the thread, and no chat
+    /// turn. The message id is the note id.
+    func appendSteerMessage(_ text: String, id: String, runID: String, redirect: Bool) {
+        var message = AssistantChatMessage(id: id, role: .user, text: text)
+        message.createdAt = clock()
+        message.steer = AssistantChatMessage.SteerNote(runID: runID, redirect: redirect)
+        messages.append(message)
         Task { await persistTranscript() }
     }
 
@@ -801,6 +833,13 @@ final class AssistantChatModel {
             "clientCapabilities": .array([.string("ask_form"), .string("ask_secure_detail")]),
         ]
         if resumesLastTurn { body["continuation"] = .bool(true) }
+        // A Work thread reply finishes on the server when the app leaves
+        // (docs/albatross-threads.md, T5): the server needs the session and
+        // the copy this transcript started from.
+        if WorkThreadSession.isThreadID(sessionID) {
+            body["sessionId"] = .string(sessionID)
+            body["threadBaseUpdatedAt"] = .number(baseUpdatedAt)
+        }
         let scopeLine: String?
         switch scope.kind {
         case .global:
@@ -889,8 +928,17 @@ final class AssistantChatModel {
                 "role": .string(message.role.rawValue),
                 "parts": .array(parts),
             ]
+            var metadata: [String: JSONValue] = [:]
             if let created = message.createdAtMilliseconds {
-                saved["metadata"] = .object(["createdAt": .number(created)])
+                metadata["createdAt"] = .number(created)
+            }
+            if let steer = message.steer {
+                var note: [String: JSONValue] = ["runId": .string(steer.runID)]
+                if steer.redirect { note["redirect"] = .bool(true) }
+                metadata["steer"] = .object(note)
+            }
+            if !metadata.isEmpty {
+                saved["metadata"] = .object(metadata)
             }
             return .object(saved)
         })
@@ -1160,10 +1208,12 @@ final class AssistantChatModel {
         if clean.isEmpty {
             // A route the person chose by hand stays through an empty field,
             // so flipping before typing (or after clearing) means something.
-            if !routePinned { route = .ask }
+            if !routePinned { route = defaultRoute }
             return
         }
-        if !routePinned {
+        // The Run route is the person's choice while a run works: the
+        // heuristic never moves it.
+        if !routePinned, route != .run {
             route = RouteHeuristic.instant(clean, current: route).route
         }
         routeTask = Task { [weak self] in
@@ -1174,8 +1224,9 @@ final class AssistantChatModel {
     }
 
     /// Flip the chip by hand. The route stays pinned until the field clears.
+    /// Run → Ask → Hold → Run while a run works (docs/albatross-threads.md).
     func flipRoute() {
-        route = route.flipped
+        route = route.next(runAvailable: runRouteAvailable)
         routePinned = true
         routeTask?.cancel()
     }
@@ -1188,12 +1239,30 @@ final class AssistantChatModel {
 
     func clearRoute() {
         routeTask?.cancel()
-        route = .ask
+        route = defaultRoute
         routePinned = false
     }
 
+    /// The route an empty field shows: Run while a run works, else Ask.
+    private var defaultRoute: BarRoute {
+        runRouteAvailable ? .run : .ask
+    }
+
+    /// The thread says whether a run can take a note now. Without a run the
+    /// Run route leaves the chip; with one, an idle chip moves to it.
+    func setRunRouteAvailable(_ available: Bool) {
+        guard runRouteAvailable != available else { return }
+        runRouteAvailable = available
+        if !available, route == .run {
+            route = .ask
+            routePinned = false
+        } else if available, !routePinned, route == .ask {
+            route = .run
+        }
+    }
+
     private func confirmRoute(for text: String) async {
-        guard !routePinned else { return }
+        guard !routePinned, route != .run else { return }
         let verdict = await routeVerdict(for: text)
         guard !Task.isCancelled, !routePinned else { return }
         guard RoutePredictor.shouldAdopt(verdict, pinned: routePinned) else { return }
@@ -1476,6 +1545,9 @@ final class AssistantChatModel {
         var message = AssistantChatMessage(id: id, role: role, parts: parts)
         message.sources = sources
         message.createdAt = transcriptTimestamp(json["metadata"]?["createdAt"])
+        if let steer = json["metadata"]?["steer"], let runID = steer["runId"]?.stringValue?.nilIfBlank {
+            message.steer = AssistantChatMessage.SteerNote(runID: runID, redirect: steer["redirect"]?.boolValue ?? false)
+        }
         return message
     }
 

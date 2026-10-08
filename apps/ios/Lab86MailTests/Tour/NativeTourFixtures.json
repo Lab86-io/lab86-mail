@@ -881,11 +881,11 @@
     }
   },
   "workHome": {
-    "w-course-run": {
+    "w-course-receipt": {
       "work": {
-        "_id": "w-course-run",
-        "title": "Register for the Alive at 25 course",
-        "rawText": "Register for Alive at 25 before Nov 2",
+        "_id": "w-course-receipt",
+        "title": "Register for the CPR and first aid course",
+        "rawText": "Register for CPR and first aid before Nov 14",
         "status": "ready",
         "workState": "active",
         "agentState": "idle",
@@ -896,7 +896,7 @@
           "key": "step-register",
           "kind": "task",
           "title": "Register for the course",
-          "detail": "Pick a class before November 2, fill in the form, and pay the $70 fee.",
+          "detail": "Pick a class before November 14, fill in the form, and pay the $45 fee.",
           "stepMode": "agent_does",
           "doneWhen": "The confirmation page shows the class date",
           "done": false,
@@ -907,16 +907,116 @@
             "key": "step-register",
             "kind": "task",
             "title": "Register for the course",
-            "detail": "Pick a class before November 2, fill in the form, and pay the $70 fee.",
+            "detail": "Pick a class before November 14, fill in the form, and pay the $45 fee.",
             "stepMode": "agent_does",
             "doneWhen": "The confirmation page shows the class date",
             "done": false,
             "runnable": false
           },
           {
-            "key": "step-court",
+            "key": "step-orientation",
             "kind": "task",
-            "title": "Attend the court appearance on November 2",
+            "title": "Attend the lifeguard orientation on November 14",
+            "detail": "Monroe County Hall of Justice, 9:00 AM.",
+            "stepMode": "you_do_offline",
+            "done": false,
+            "runnable": false
+          }
+        ],
+        "remainingSteps": 2,
+        "totalSteps": 2,
+        "activeRun": {
+          "id": "run-course-1",
+          "workId": "w-course-receipt",
+          "stepKey": "step-register",
+          "stepIdentity": "step-register@1",
+          "stepTitle": "Register for the course",
+          "state": "running",
+          "trigger": "user",
+          "outcome": null,
+          "summary": null,
+          "log": [
+            {
+              "at": "@ms:now-9m",
+              "text": "Opened firstaidclass.example"
+            },
+            {
+              "at": "@ms:now-8m",
+              "text": "Read your details: name, email, address"
+            },
+            {
+              "at": "@ms:now-6m",
+              "text": "Found 3 classes before November 14"
+            },
+            {
+              "at": "@ms:now-3m",
+              "text": "Read your note: use the Monday class"
+            },
+            {
+              "at": "@ms:now-1m",
+              "text": "Opened the registration form for Monday, October 19"
+            }
+          ],
+          "next": null,
+          "artifacts": [],
+          "browserSessionId": "sess-course",
+          "stoppedBy": null,
+          "error": null,
+          "createdAt": "@ms:now-9m",
+          "updatedAt": "@ms:now-1m",
+          "finishedAt": null,
+          "parentRunId": null,
+          "question": null
+        },
+        "runner": {
+          "enabled": true
+        }
+      },
+      "plan": {
+        "_id": "plan-w-course-receipt",
+        "status": "ready",
+        "outcome": "Register for CPR and first aid before Nov 14",
+        "summary": "The course at firstaidclass.example must be finished before the November 14 orientation. Register with the job offer details, complete the modules, and save the certificate."
+      },
+      "questions": [],
+      "evidence": []
+    },
+    "w-course-run": {
+      "work": {
+        "_id": "w-course-run",
+        "title": "Register for the CPR and first aid course",
+        "rawText": "Register for CPR and first aid before Nov 14",
+        "status": "ready",
+        "workState": "active",
+        "agentState": "idle",
+        "updatedAt": "@ms:now-5m"
+      },
+      "execution": {
+        "currentStep": {
+          "key": "step-register",
+          "kind": "task",
+          "title": "Register for the course",
+          "detail": "Pick a class before November 14, fill in the form, and pay the $45 fee.",
+          "stepMode": "agent_does",
+          "doneWhen": "The confirmation page shows the class date",
+          "done": false,
+          "runnable": false
+        },
+        "guideSteps": [
+          {
+            "key": "step-register",
+            "kind": "task",
+            "title": "Register for the course",
+            "detail": "Pick a class before November 14, fill in the form, and pay the $45 fee.",
+            "stepMode": "agent_does",
+            "doneWhen": "The confirmation page shows the class date",
+            "done": false,
+            "runnable": false
+          },
+          {
+            "key": "step-orientation",
+            "kind": "task",
+            "title": "Attend the lifeguard orientation on November 14",
             "detail": "Monroe County Hall of Justice, 9:00 AM.",
             "stepMode": "you_do_offline",
             "done": false,
@@ -938,7 +1038,7 @@
           "log": [
             {
               "at": "@ms:now-9m",
-              "text": "Opened aliveat25.example"
+              "text": "Opened firstaidclass.example"
             },
             {
               "at": "@ms:now-8m",
@@ -946,7 +1046,7 @@
             },
             {
               "at": "@ms:now-6m",
-              "text": "Found 3 classes before November 2"
+              "text": "Found 3 classes before November 14"
             },
             {
               "at": "@ms:now-3m",
@@ -975,8 +1075,8 @@
       "plan": {
         "_id": "plan-w-course-run",
         "status": "ready",
-        "outcome": "Register for Alive at 25 before Nov 2",
-        "summary": "The course at aliveat25.example must be finished before the November 2 court date. Register with the ticket details, complete the modules, and save the certificate."
+        "outcome": "Register for CPR and first aid before Nov 14",
+        "summary": "The course at firstaidclass.example must be finished before the November 14 orientation. Register with the job offer details, complete the modules, and save the certificate."
       },
       "questions": [],
       "evidence": []
@@ -984,8 +1084,8 @@
     "w-course-form": {
       "work": {
         "_id": "w-course-form",
-        "title": "Register for the Alive at 25 course",
-        "rawText": "Register for Alive at 25 before Nov 2",
+        "title": "Register for the CPR and first aid course",
+        "rawText": "Register for CPR and first aid before Nov 14",
         "status": "ready",
         "workState": "active",
         "agentState": "idle",
@@ -996,7 +1096,7 @@
           "key": "step-register",
           "kind": "task",
           "title": "Register for the course",
-          "detail": "Pick a class before November 2, fill in the form, and pay the $70 fee.",
+          "detail": "Pick a class before November 14, fill in the form, and pay the $45 fee.",
           "stepMode": "agent_does",
           "doneWhen": "The confirmation page shows the class date",
           "done": false,
@@ -1007,16 +1107,16 @@
             "key": "step-register",
             "kind": "task",
             "title": "Register for the course",
-            "detail": "Pick a class before November 2, fill in the form, and pay the $70 fee.",
+            "detail": "Pick a class before November 14, fill in the form, and pay the $45 fee.",
             "stepMode": "agent_does",
             "doneWhen": "The confirmation page shows the class date",
             "done": false,
             "runnable": false
           },
           {
-            "key": "step-court",
+            "key": "step-orientation",
             "kind": "task",
-            "title": "Attend the court appearance on November 2",
+            "title": "Attend the lifeguard orientation on November 14",
             "detail": "Monroe County Hall of Justice, 9:00 AM.",
             "stepMode": "you_do_offline",
             "done": false,
@@ -1033,8 +1133,8 @@
       "plan": {
         "_id": "plan-w-course-form",
         "status": "ready",
-        "outcome": "Register for Alive at 25 before Nov 2",
-        "summary": "The course at aliveat25.example must be finished before the November 2 court date. Register with the ticket details, complete the modules, and save the certificate."
+        "outcome": "Register for CPR and first aid before Nov 14",
+        "summary": "The course at firstaidclass.example must be finished before the November 14 orientation. Register with the job offer details, complete the modules, and save the certificate."
       },
       "questions": [],
       "evidence": []
@@ -1042,8 +1142,8 @@
     "w-course-handoff": {
       "work": {
         "_id": "w-course-handoff",
-        "title": "Register for the Alive at 25 course",
-        "rawText": "Register for Alive at 25 before Nov 2",
+        "title": "Register for the CPR and first aid course",
+        "rawText": "Register for CPR and first aid before Nov 14",
         "status": "ready",
         "workState": "active",
         "agentState": "idle",
@@ -1054,7 +1154,7 @@
           "key": "step-register",
           "kind": "task",
           "title": "Register for the course",
-          "detail": "Pick a class before November 2, fill in the form, and pay the $70 fee.",
+          "detail": "Pick a class before November 14, fill in the form, and pay the $45 fee.",
           "stepMode": "agent_does",
           "doneWhen": "The confirmation page shows the class date",
           "done": false,
@@ -1065,16 +1165,16 @@
             "key": "step-register",
             "kind": "task",
             "title": "Register for the course",
-            "detail": "Pick a class before November 2, fill in the form, and pay the $70 fee.",
+            "detail": "Pick a class before November 14, fill in the form, and pay the $45 fee.",
             "stepMode": "agent_does",
             "doneWhen": "The confirmation page shows the class date",
             "done": false,
             "runnable": false
           },
           {
-            "key": "step-court",
+            "key": "step-orientation",
             "kind": "task",
-            "title": "Attend the court appearance on November 2",
+            "title": "Attend the lifeguard orientation on November 14",
             "detail": "Monroe County Hall of Justice, 9:00 AM.",
             "stepMode": "you_do_offline",
             "done": false,
@@ -1091,8 +1191,8 @@
       "plan": {
         "_id": "plan-w-course-handoff",
         "status": "ready",
-        "outcome": "Register for Alive at 25 before Nov 2",
-        "summary": "The course at aliveat25.example must be finished before the November 2 court date. Register with the ticket details, complete the modules, and save the certificate."
+        "outcome": "Register for CPR and first aid before Nov 14",
+        "summary": "The course at firstaidclass.example must be finished before the November 14 orientation. Register with the job offer details, complete the modules, and save the certificate."
       },
       "questions": [],
       "evidence": []
@@ -1535,6 +1635,120 @@
     }
   },
   "paths": {
+    "/api/albatross/threads": {
+      "ok": true,
+      "now": "@ms:now",
+      "threads": [
+        {
+          "workId": "w-headcount",
+          "title": "Confirm the offsite head count",
+          "areaName": "Team offsite",
+          "status": "needs_answer",
+          "statusLabel": "Needs your answer",
+          "preview": "Which number goes to Sarah: 42 or 45?",
+          "stepTitle": "Pick the final number",
+          "needsYou": true,
+          "working": false,
+          "latestRunId": "run-headcount-1",
+          "workingRunId": null,
+          "runStartedAt": null,
+          "lastActivityAt": "@ms:now-40m",
+          "seenAt": "@ms:now-2h",
+          "unread": true,
+          "closed": false
+        },
+        {
+          "workId": "w-agenda",
+          "title": "Write the offsite agenda",
+          "areaName": "Team offsite",
+          "status": "in_progress",
+          "statusLabel": "In progress",
+          "preview": "Found three session topics in last year's notes",
+          "stepTitle": "Choose three session topics",
+          "needsYou": false,
+          "working": true,
+          "latestRunId": "run-agenda-1",
+          "workingRunId": "run-agenda-1",
+          "runStartedAt": "@ms:now-6m",
+          "lastActivityAt": "@ms:now-1m",
+          "seenAt": "@ms:now-10m",
+          "unread": false,
+          "closed": false
+        },
+        {
+          "workId": "w-passport",
+          "title": "Renew my passport before the Denver trip",
+          "areaName": "Passport renewal",
+          "status": "idle",
+          "statusLabel": null,
+          "preview": null,
+          "stepTitle": "Mail the DS-82 form",
+          "needsYou": false,
+          "working": false,
+          "latestRunId": null,
+          "workingRunId": null,
+          "runStartedAt": null,
+          "lastActivityAt": "@ms:now-3h",
+          "seenAt": "@ms:now-3h",
+          "unread": false,
+          "closed": false
+        },
+        {
+          "workId": "w-invoice",
+          "title": "Get invoice 2211 paid",
+          "areaName": "Team offsite",
+          "status": "waiting",
+          "statusLabel": null,
+          "preview": "Waiting on accounts payable",
+          "stepTitle": null,
+          "needsYou": false,
+          "working": false,
+          "latestRunId": null,
+          "workingRunId": null,
+          "runStartedAt": null,
+          "lastActivityAt": "@ms:now-1d",
+          "seenAt": "@ms:now-1d",
+          "unread": false,
+          "closed": false
+        },
+        {
+          "workId": "w-garden",
+          "title": "Plan the spring garden",
+          "areaName": "Home",
+          "status": "idle",
+          "statusLabel": null,
+          "preview": null,
+          "stepTitle": null,
+          "needsYou": false,
+          "working": false,
+          "latestRunId": null,
+          "workingRunId": null,
+          "runStartedAt": null,
+          "lastActivityAt": "@ms:now-9d",
+          "seenAt": "@ms:now-9d",
+          "unread": false,
+          "closed": false
+        },
+        {
+          "workId": "w-taxes",
+          "title": "File the 2026 taxes",
+          "areaName": null,
+          "status": "done",
+          "statusLabel": "Done",
+          "preview": "Verified on the page · Return accepted",
+          "stepTitle": null,
+          "needsYou": false,
+          "working": false,
+          "latestRunId": "run-taxes-3",
+          "workingRunId": null,
+          "runStartedAt": null,
+          "lastActivityAt": "@ms:now-12d",
+          "seenAt": "@ms:now-12d",
+          "unread": false,
+          "closed": true
+        }
+      ]
+    },
     "/api/secure-details": {
       "ok": true,
       "enabled": true,
@@ -1565,7 +1779,7 @@
           "id": "sec-dob",
           "kind": "date_of_birth",
           "label": "Date of birth",
-          "sites": ["aliveat25.example"],
+          "sites": ["firstaidclass.example"],
           "hints": { "date": "saved" },
           "facts": {},
           "createdAt": "@ms:now-6d",
@@ -1988,6 +2202,140 @@
       }
   },
   "scenarios": {
+    "work-thread-receipt": {
+      "paths": {
+        "/api/albatross/work/w-course-receipt/runs": {
+          "ok": true,
+          "runs": [
+            {
+              "id": "run-course-1",
+              "workId": "w-course-receipt",
+              "stepKey": "step-register",
+              "stepIdentity": "step-register@1",
+              "stepTitle": "Register for the course",
+              "state": "running",
+              "trigger": "user",
+              "outcome": null,
+              "summary": null,
+              "log": [
+                {
+                  "at": "@ms:now-9m",
+                  "text": "Opened firstaidclass.example"
+                },
+                {
+                  "at": "@ms:now-8m",
+                  "text": "Read your details: name, email, address"
+                },
+                {
+                  "at": "@ms:now-6m",
+                  "text": "Found 3 classes before November 14"
+                },
+                {
+                  "at": "@ms:now-3m",
+                  "text": "Read your note: use the Monday class"
+                },
+                {
+                  "at": "@ms:now-1m",
+                  "text": "Opened the registration form for Monday, October 19"
+                }
+              ],
+              "next": null,
+              "artifacts": [],
+              "browserSessionId": "sess-course",
+              "stoppedBy": null,
+              "error": null,
+              "createdAt": "@ms:now-9m",
+              "updatedAt": "@ms:now-1m",
+              "finishedAt": null,
+              "parentRunId": null,
+              "question": null,
+              "notes": [
+                {
+                  "id": "m-course-note",
+                  "at": "@ms:now-4m",
+                  "text": "use the Monday class",
+                  "readAt": "@ms:now-3m"
+                }
+              ]
+            }
+          ]
+        },
+        "/api/chats": {
+          "ok": true,
+          "session": {
+            "id": "work-w-course-receipt",
+            "updatedAt": "@ms:now-9m",
+            "messages": [
+              {
+                "id": "m-course-1",
+                "role": "user",
+                "metadata": {
+                  "createdAt": "@ms:now-10m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "Go ahead and register me. A Monday or a Wednesday would be best."
+                  }
+                ]
+              },
+              {
+                "id": "m-course-2",
+                "role": "assistant",
+                "metadata": {
+                  "createdAt": "@ms:now-9m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "On it. I open the class list first and keep your Monday or Wednesday preference."
+                  },
+                  {
+                    "type": "tool-albatross_handle_step",
+                    "toolCallId": "call-course-1",
+                    "state": "output-available",
+                    "input": {
+                      "workId": "w-course-receipt"
+                    },
+                    "output": {
+                      "ok": true,
+                      "action": "started",
+                      "runId": "run-course-1"
+                    }
+                  },
+                  {
+                    "type": "data-tool-shape",
+                    "id": "call-course-1",
+                    "data": {
+                      "kind": "step_run",
+                      "runId": "run-course-1",
+                      "workId": "w-course-receipt",
+                      "action": "started"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "m-course-note",
+                "role": "user",
+                "metadata": {
+                  "createdAt": "@ms:now-4m",
+                  "steer": {
+                    "runId": "run-course-1"
+                  }
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "use the Monday class"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
     "work-thread-run": {
       "paths": {
         "/api/albatross/work/w-course-run/runs": {
@@ -2006,7 +2354,7 @@
               "log": [
                 {
                   "at": "@ms:now-9m",
-                  "text": "Opened aliveat25.example"
+                  "text": "Opened firstaidclass.example"
                 },
                 {
                   "at": "@ms:now-8m",
@@ -2014,7 +2362,7 @@
                 },
                 {
                   "at": "@ms:now-6m",
-                  "text": "Found 3 classes before November 2"
+                  "text": "Found 3 classes before November 14"
                 },
                 {
                   "at": "@ms:now-3m",
@@ -2112,11 +2460,11 @@
               "state": "handed_off",
               "trigger": "user",
               "outcome": "needs_answer",
-              "summary": "I found three classes before November 2. I did not pick one. Your calendar is free on two of them.",
+              "summary": "I found three classes before November 14. I did not pick one. Your calendar is free on two of them.",
               "log": [
                 {
                   "at": "@ms:now-9m",
-                  "text": "Opened aliveat25.example"
+                  "text": "Opened firstaidclass.example"
                 },
                 {
                   "at": "@ms:now-8m",
@@ -2124,7 +2472,7 @@
                 },
                 {
                   "at": "@ms:now-6m",
-                  "text": "Found 3 classes before November 2"
+                  "text": "Found 3 classes before November 14"
                 }
               ],
               "next": {
@@ -2148,7 +2496,7 @@
                 "id": "q-course-1",
                 "form": {
                   "title": "Which class?",
-                  "detail": "All three are before November 2. Your calendar is free on two of them.",
+                  "detail": "All three are before November 14. Your calendar is free on two of them.",
                   "submitLabel": "Continue",
                   "fields": [
                     {
@@ -2159,7 +2507,7 @@
                         {
                           "id": "mon",
                           "label": "Monday, October 19",
-                          "detail": "4:00–8:00 PM · Zoom · $70",
+                          "detail": "4:00–8:00 PM · Zoom · $45",
                           "recommended": "Matches what you said",
                           "calendar": {
                             "fit": "free",
@@ -2169,7 +2517,7 @@
                         {
                           "id": "wed",
                           "label": "Wednesday, October 21",
-                          "detail": "4:00–8:00 PM · Zoom · $70",
+                          "detail": "4:00–8:00 PM · Zoom · $45",
                           "calendar": {
                             "fit": "conflict",
                             "note": "Conflicts with Team sync"
@@ -2178,7 +2526,7 @@
                         {
                           "id": "sat",
                           "label": "Saturday, October 24",
-                          "detail": "9:00 AM–1:00 PM · Zoom · $70",
+                          "detail": "9:00 AM–1:00 PM · Zoom · $45",
                           "calendar": {
                             "fit": "free",
                             "note": "Free on your calendar"
@@ -2297,11 +2645,11 @@
               "state": "handed_off",
               "trigger": "user",
               "outcome": "needs_answer",
-              "summary": "I found three classes before November 2. I did not pick one.",
+              "summary": "I found three classes before November 14. I did not pick one.",
               "log": [
                 {
                   "at": "@ms:now-9m",
-                  "text": "Opened aliveat25.example"
+                  "text": "Opened firstaidclass.example"
                 },
                 {
                   "at": "@ms:now-8m",
@@ -2309,7 +2657,7 @@
                 },
                 {
                   "at": "@ms:now-6m",
-                  "text": "Found 3 classes before November 2"
+                  "text": "Found 3 classes before November 14"
                 }
               ],
               "next": {
@@ -2333,7 +2681,7 @@
                 "id": "q-course-1",
                 "form": {
                   "title": "Which class?",
-                  "detail": "All three are before November 2. Your calendar is free on two of them.",
+                  "detail": "All three are before November 14. Your calendar is free on two of them.",
                   "submitLabel": "Continue",
                   "fields": [
                     {
@@ -2344,7 +2692,7 @@
                         {
                           "id": "mon",
                           "label": "Monday, October 19",
-                          "detail": "4:00–8:00 PM · Zoom · $70",
+                          "detail": "4:00–8:00 PM · Zoom · $45",
                           "recommended": "Matches what you said",
                           "calendar": {
                             "fit": "free",
@@ -2354,7 +2702,7 @@
                         {
                           "id": "wed",
                           "label": "Wednesday, October 21",
-                          "detail": "4:00–8:00 PM · Zoom · $70",
+                          "detail": "4:00–8:00 PM · Zoom · $45",
                           "calendar": {
                             "fit": "conflict",
                             "note": "Conflicts with Team sync"
@@ -2363,7 +2711,7 @@
                         {
                           "id": "sat",
                           "label": "Saturday, October 24",
-                          "detail": "9:00 AM–1:00 PM · Zoom · $70",
+                          "detail": "9:00 AM–1:00 PM · Zoom · $45",
                           "calendar": {
                             "fit": "free",
                             "note": "Free on your calendar"
@@ -2434,7 +2782,7 @@
                 "kind": "finish_on_page",
                 "label": "Check and pay",
                 "doneLabel": "I paid",
-                "detail": "Everything is filled in. Check it and pay the $70.",
+                "detail": "Everything is filled in. Check it and pay the $45.",
                 "target": {
                   "kind": "session",
                   "id": "sess-course"
@@ -2444,7 +2792,7 @@
                 {
                   "kind": "page",
                   "title": "Registration form",
-                  "url": "https://aliveat25.example/register"
+                  "url": "https://firstaidclass.example/register"
                 }
               ],
               "browserSessionId": "sess-course",

@@ -19,7 +19,7 @@ on iOS.
 
 ## 0. What the screenshots show
 
-The three web screenshots of 2026-10-07 show the Guided work page during the Alive at 25 run.
+The three web screenshots of 2026-10-07 show the Guided work page during the CPR and first aid run.
 The same sentence appears three times: in the handoff card, in the browser bar, and in the chat.
 Three "Continue" controls and two "Discuss this" controls sit on one screen. The chat panel
 covers the form that the user must fill. The chat found the correct class, but the page still
@@ -72,7 +72,7 @@ Each row names the screen, what the screen does, what the design takes, and what
   task pauses when it needs input, a sign-in, or a confirmation; the sign-in form goes to the
   remote browser and the model never sees it; the user can inspect the live site before they
   continue; money and legal steps ask in chat. Decision: the run block says "Sign in to
-  aliveat25.com in the page, then press Continue". The page sheet shows the real page. Albatross
+  firstaidclass.example.com in the page, then press Continue". The page sheet shows the real page. Albatross
   never sees a password.
 - **Manus.** [Take over](https://help.manus.im/en/articles/11711218-how-can-i-take-over-manus-browser-or-vs-code)
   and [Cloud browser](https://www.manus.im/docs/features/cloud-browser): Manus prompts the user
@@ -139,7 +139,7 @@ Each row names the screen, what the screen does, what the design takes, and what
 - Display mode inline. Back goes to the list, the Area, or the Brief.
 - Principal item: one button with two lines. Line 1, the Work title in `.headline`, one line,
   truncated at the tail. Line 2, the plan line in `.caption` secondary: "Step 1 of 2 · Your turn".
-  The tap opens the plan sheet. VoiceOver label: "Register for the Alive at 25 course. Step 1 of
+  The tap opens the plan sheet. VoiceOver label: "Register for the CPR and first aid course. Step 1 of
   2, your turn. Opens the plan." At accessibility text sizes the button shows the plan line only.
 - The plan line words, by thread state (section 5.4): "Albatross makes the plan", "Step 1 of 2",
   "Step 1 of 2 · Albatross works", "Step 1 of 2 · Your turn", "Step 1 of 2 · Needs an answer",
@@ -216,7 +216,7 @@ Each row names the screen, what the screen does, what the design takes, and what
   `presentationBackgroundInteraction(.enabled(upThrough: .medium))` so the thread stays readable
   and the composer stays usable at medium. The sheet opens at medium while Albatross has the
   page and at large when it is the user's turn.
-- Title: the site host ("aliveat25.com"). Subtitle: the step title.
+- Title: the site host ("firstaidclass.example.com"). Subtitle: the step title.
 - Status bar under the title: one dot (accent-2 while Albatross has the page, accent for the
   user) and one line. The copy table is in the earlier note and section 5.3 here.
 - Trailing toolbar button: "Take over" while Albatross has the page; the handoff label
@@ -325,13 +325,13 @@ iOS only:
 ## 4. User stories as iPhone screen states
 
 Sample data in this section is invented: Sam Rivera, sam.rivera@example.com, (555) 010-0100,
-12 Elm Street, Apt 3, Springfield, IL 62704. The course site is the brief's aliveat25.com. The
+12 Elm Street, Apt 3, Springfield, IL 62704. The course site is the brief's firstaidclass.example.com. The
 classes are Mon Oct 19 4:00–8:00 PM, Wed Oct 21 4:00–8:00 PM, Sat Oct 24 9:00 AM–1:00 PM, all
-Zoom, all $70. The court date is November 2.
+Zoom, all $45. The orientation is November 14.
 
 ### S1. Open from anywhere
 
-- From the Albatrosses list: push. The navigation bar shows "Register for the Alive at 25
+- From the Albatrosses list: push. The navigation bar shows "Register for the CPR and first aid
   course" over "Step 1 of 2 · Your turn". The list opens at the bottom. The last item is the
   run block with its handoff; its primary button is "Check and pay" and the composer is under it.
 - From a push notification: the same screen. If the handoff is `sign_in` or `finish_on_page`,
@@ -342,21 +342,21 @@ Zoom, all $70. The court date is November 2.
 
 ### S2. A new Albatross
 
-- Open right after capture. The outcome block: "Register for Alive at 25 before Nov 2" in
+- Open right after capture. The outcome block: "Register for CPR and first aid before Nov 14" in
   `.title3`; under it "Albatross makes the plan." with a `RevealDot`. The plan line reads
   "Albatross makes the plan". The composer is active.
 - When the plan lands (the `WorkDetail` read returns steps), the block crossfades to: the
-  outcome, the summary "Course at aliveat25.com must be finished before the November 2 court
-  appearance.", and the steps "1 Register for the course · Albatross can handle it",
-  "2 Attend the court appearance on November 2 · You". The first step row shows "Handle it".
+  outcome, the summary "Course at firstaidclass.example.com must be finished before the November 14
+  orientation.", and the steps "1 Register for the course · Albatross can handle it",
+  "2 Attend the lifeguard orientation on November 14 · You". The first step row shows "Handle it".
   The plan line reads "Step 1 of 2".
 
 ### S3. The plan at a glance
 
-- The principal button reads "Register for the Alive at 25 course" over "Step 1 of 2 · Your
+- The principal button reads "Register for the CPR and first aid course" over "Step 1 of 2 · Your
   turn". A tap opens the plan sheet at medium.
 - Plan sheet rows: "1 Register for the course" with the accent mark and "Your turn"; "2 Attend
-  the court appearance on November 2" with "Next". After step 1 is done: a check, "Register for
+  the lifeguard orientation on November 14" with "Next". After step 1 is done: a check, "Register for
   the course", "Verified on the page · Oct 19".
 - A runnable step row shows "Handle it" at its trailing edge.
 
@@ -371,7 +371,7 @@ Zoom, all $70. The court date is November 2.
 
 - The Brief started a run at 7:02. The user opens the thread at 8:30. Items, in order: the
   outcome block; a run block "Started by the Brief · 7:02" with "Did 6 things", collapsed; its
-  summary "I found three classes before November 2 and opened the registration form."; one
+  summary "I found three classes before November 14 and opened the registration form."; one
   artifact row "Class options · Page"; the handoff "Albatross needs one answer" with the form
   (S9). The list is at the bottom. The form is next to the composer.
 - The same push deep link opens the same screen.
@@ -389,7 +389,7 @@ Zoom, all $70. The court date is November 2.
 ### S7. Watch the page
 
 - When the run has a browser session, a row appears in the block under the log: "Albatross is on
-  the page · aliveat25.com" with "Open" at the trailing edge.
+  the page · firstaidclass.example.com" with "Open" at the trailing edge.
 - "Open" presents the page sheet at medium. The status bar reads "Opening the class list" (the
   session detail) with the accent-2 dot. The trailing button is "Take over".
 - The user drags the sheet to large to see the page. At medium the thread stays readable and the
@@ -405,10 +405,10 @@ Zoom, all $70. The court date is November 2.
 ### S9. A choice that is mine
 
 - The run hands off with `needs_answer`. The block headline reads "Albatross needs one answer".
-  Summary: "I found three classes before November 2. I did not pick one. Your calendar is
+  Summary: "I found three classes before November 14. I did not pick one. Your calendar is
   free on two of them."
 - The form card (section 8.2): title "Which class?"; options, first the Monday one. Each option:
-  label "Monday, October 19", detail "4:00–8:00 PM · Zoom · $70", calendar note "Free on your
+  label "Monday, October 19", detail "4:00–8:00 PM · Zoom · $45", calendar note "Free on your
   calendar". The Wednesday option says "Conflicts with Team sync" in red. The Saturday option
   says "Free on your calendar".
 - The plan line reads "Step 1 of 2 · Needs an answer".
@@ -437,35 +437,35 @@ Zoom, all $70. The court date is November 2.
 ### S12. Sign in
 
 - The run hands off with `your_turn`, `sign_in`. The headline "Your turn". Detail: "Sign in to
-  aliveat25.com in the page, then press Continue." Buttons: "Sign in" (primary, opens the page
+  firstaidclass.example.com in the page, then press Continue." Buttons: "Sign in" (primary, opens the page
   sheet at large), "Continue", and a quiet "Dismiss".
-- The page sheet: title "aliveat25.com", status "Sign in on the page. Albatross does not see
+- The page sheet: title "firstaidclass.example.com", status "Sign in on the page. Albatross does not see
   your password.", trailing "I signed in".
 - A tap on "I signed in" sends `resume`. The status bar changes to "Albatross checks the
   page…", the button disables. When the new run takes the page the dot turns accent-2, the
   status reads the run's detail, the sheet drops to medium, and the trailing button is "Take
   over". Or the user writes "done" in the composer; the chat agent resumes the run and the
   sheet follows.
-- Next time: no sign-in handoff. The block log reads "Opened aliveat25.com, still signed in".
+- Next time: no sign-in handoff. The block log reads "Opened firstaidclass.example.com, still signed in".
 
 ### S13. The final page
 
 - The run hands off with `your_turn`, `finish_on_page`. Headline "Your turn". Summary: "I
   filled in the form for Monday, October 19 with your name, email, phone, and address."
-  Detail: "Everything is filled in. Check it and pay the $70." Primary "Check and pay" opens the
+  Detail: "Everything is filled in. Check it and pay the $45." Primary "Check and pay" opens the
   page sheet at large. A second button "I paid". A quiet "Dismiss".
 - After payment the user presses "I paid" (in the sheet or in the block). The sheet status reads
   "Albatross checks the page…". The run resumes, checks the confirmation, and ends `done`.
 - The block becomes the done block: "Done · Verified on the page", proof "Registration
   confirmed for Monday, October 19. Confirmation number ends in 0100.", one artifact row
   "Confirmation page · Page". The plan line reads "Step 2 of 2". Albatross writes one line:
-  "Next: attend the court appearance on November 2. I will watch for the Zoom invite."
+  "Next: attend the lifeguard orientation on November 14. I will watch for the Zoom invite."
 
 ### S14. Drafts and documents
 
 - A `ready_for_you` handoff with `review_draft`: headline "Ready for you", summary "I wrote a
-  note to the court clerk with the registration confirmation.", artifact row "Note to the court
-  clerk · Draft", primary "Read and send". The tap opens the composer sheet with the draft and
+  note to the pool manager with the registration confirmation.", artifact row "Note to the pool
+  manager · Draft", primary "Read and send". The tap opens the composer sheet with the draft and
   its id.
 - A document: artifact row "Registration confirmation · Document" and primary "Open the
   document". The tap opens the document by id.
@@ -479,7 +479,7 @@ Zoom, all $70. The court date is November 2.
 ### S16. Failed or stopped
 
 - Failed: headline "This run did not finish." in primary, the error line in red, for example
-  "aliveat25.com did not load after three tries.", the collapsed log "What I did", and "Try
+  "firstaidclass.example.com did not load after three tries.", the collapsed log "What I did", and "Try
   again". The plan line returns to "Step 1 of 2".
 - Stopped by a limit: "Albatross stopped at its time limit.", the summary, the artifacts, and
   "Continue".
@@ -488,20 +488,20 @@ Zoom, all $70. The court date is November 2.
 
 ### S17. Ask
 
-- The user writes "when is the court date?". Albatross answers "November 2 at 9:00 AM, at
+- The user writes "when is the orientation?". Albatross answers "November 14 at 9:00 AM, at
   the Monroe County Hall of Justice. It is on your calendar." with one event card. No run starts.
 
 ### S18. Change the plan
 
 - The user writes "I already registered, skip that". The Albatross reply shows rows "Recorded
   progress" and "Replanned the Work", then "Done. Step 1 is marked done as reported. Next: the
-  court appearance on November 2." The plan line reads "Step 2 of 2". The outcome block's step
+  lifeguard orientation on November 14." The plan line reads "Step 2 of 2". The outcome block's step
   row 1 shows a check with "Marked done".
 
 ### S19. Details
 
 - The menu, "Details": the details sheet (section 2.6). The files section lists "Note to the
-  court clerk · Draft · Undo", "Confirmation page · Page". "Split…", "Put it down", "Set
+  pool manager · Draft · Undo", "Confirmation page · Page". "Split…", "Put it down", "Set
   horizon…", "Mark done" are in the menu, not in the sheet.
 
 ### S20. It knows me
@@ -697,7 +697,7 @@ answer in the composer instead. A field error shows under its field in red `.cap
   it. The Stop button is last.
 - Announcements through `PlatformAccessibility.announce`, once for each state change, never for
   each log line: "Albatross started on Register for the course.", "Your turn: Sign in to
-  aliveat25.com.", "Albatross asks: Which class?", "Step done: Register for the course.", "This
+  firstaidclass.example.com.", "Albatross asks: Which class?", "Step done: Register for the course.", "This
   run did not finish."
 - A form field has a label, a value, and a hint. An option reads "Monday, October 19, 4 to 8 PM,
   Zoom, 70 dollars. Free on your calendar." The calendar note is part of the option label, not a
@@ -733,14 +733,14 @@ answer in the composer instead. A field error shows under its field in red `.cap
 
 ```
 ┌──────────────────────────────────────────────┐
-│ ‹        Register for the Alive at 25 …   ⋯  │
+│ ‹        Register for the CPR and first aid …   ⋯  │
 │          Step 1 of 2 · Albatross works       │
 ├──────────────────────────────────────────────┤
-│ Register for Alive at 25 before Nov 2        │
-│ Course at aliveat25.com must be finished     │
-│ before the November 2 court appearance.      │
+│ Register for CPR and first aid before Nov 14        │
+│ Course at firstaidclass.example.com must be finished     │
+│ before the November 14 orientation.      │
 │ ● 1 Register for the course · Albatross works│
-│   2 Attend the court appearance · You        │
+│   2 Attend the lifeguard orientation · You        │
 │                                              │
 │                         ┌──────────────────┐ │
 │                         │ go ahead and     │ │
@@ -749,12 +749,12 @@ answer in the composer instead. A field error shows under its field in red `.cap
 │ Started on the step                          │
 │ ┃ ◉ Working on: Register for the course      │
 │ ┃   Started by you · 9:40                    │
-│ ┃   9:40  Opened aliveat25.com               │
+│ ┃   9:40  Opened firstaidclass.example.com               │
 │ ┃   9:41  Read your details: name, email,    │
 │ ┃         address                            │
-│ ┃   9:41  Found 3 classes before November 2  │
+│ ┃   9:41  Found 3 classes before November 14  │
 │ ┃   Show all 6 lines                         │
-│ ┃   Albatross is on the page · aliveat25.com │
+│ ┃   Albatross is on the page · firstaidclass.example.com │
 │ ┃                                      Open  │
 │ ┃                                      Stop  │
 │                                              │
@@ -772,19 +772,19 @@ chip. The "Newest" pill shows only when the user reads above the bottom.
 
 ```
 │ ┃ Albatross needs one answer                 │
-│ ┃ I found three classes before November 2.  │
+│ ┃ I found three classes before November 14.  │
 │ ┃ I did not pick one. Your calendar is free │
 │ ┃ on two of them.                           │
 │ ┃ ┌────────────────────────────────────────┐│
 │ ┃ │ Which class?                           ││
 │ ┃ │ ◉ Monday, October 19                   ││
-│ ┃ │   4:00–8:00 PM · Zoom · $70            ││
+│ ┃ │   4:00–8:00 PM · Zoom · $45            ││
 │ ┃ │   Free on your calendar                ││
 │ ┃ │ ○ Wednesday, October 21                ││
-│ ┃ │   4:00–8:00 PM · Zoom · $70            ││
+│ ┃ │   4:00–8:00 PM · Zoom · $45            ││
 │ ┃ │   Conflicts with Team sync             ││
 │ ┃ │ ○ Saturday, October 24                 ││
-│ ┃ │   9:00 AM–1:00 PM · Zoom · $70         ││
+│ ┃ │   9:00 AM–1:00 PM · Zoom · $45         ││
 │ ┃ │   Free on your calendar                ││
 │ ┃ │                                        ││
 │ ┃ │ Your details for the form              ││
@@ -817,7 +817,7 @@ chip. The "Newest" pill shows only when the user reads above the bottom.
 │ ┃ 19 with your name, email, phone, and      │
 │ ┃ address.                                  │
 │ ┃ Everything is filled in. Check it and pay │
-│ ┃ the $70.                                  │
+│ ┃ the $45.                                  │
 │ ┃ Registration form · Page                  │
 │ ┃ What I did                              › │
 │ ┃ [Check and pay]  [I paid]                 │
@@ -828,11 +828,11 @@ chip. The "Newest" pill shows only when the user reads above the bottom.
 
 ```
 ┌──────────────────────────────────────────────┐
-│ Close         aliveat25.com          I paid  │
+│ Close         firstaidclass.example.com          I paid  │
 │               Register for the course        │
 ├──────────────────────────────────────────────┤
 │ ● Everything is filled in. Check it and pay  │
-│   the $70.                                   │
+│   the $45.                                   │
 ├──────────────────────────────────────────────┤
 │                                              │
 │   [ the live remote page ]                   │
@@ -841,7 +841,7 @@ chip. The "Newest" pill shows only when the user reads above the bottom.
 │   Last name    Rivera                        │
 │   Street       12 Elm Street Apt 3           │
 │   …                                          │
-│   [ Pay $70 ]                                │
+│   [ Pay $45 ]                                │
 │                                              │
 └──────────────────────────────────────────────┘
 ```

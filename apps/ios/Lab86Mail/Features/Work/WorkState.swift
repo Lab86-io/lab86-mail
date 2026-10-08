@@ -310,23 +310,28 @@ extension WorkListItem {
 
 /// How the Albatrosses page is filtered.
 enum WorkFilter: String, CaseIterable, Sendable {
-    case all, needsYou, unhomed
+    case all, needsYou, inProgress, unhomed
 
     var label: String {
         switch self {
-        case .all: "Everything"
+        case .all: "All"
         case .needsYou: "Needs you"
+        case .inProgress: "In progress"
         case .unhomed: "No area yet"
         }
     }
 }
 
 enum WorkGrouping {
+    /// The filter on the list rows alone. "In progress" needs the live
+    /// status, which `ThreadListGrouping.filter` reads; here it keeps every
+    /// open row, so a caller without live rows shows a superset.
     static func filter(_ rows: [WorkListItem], by filter: WorkFilter, areaID: String?) -> [WorkListItem] {
         rows.filter { row in
             if let areaID, row.primaryAreaID != areaID { return false }
             switch filter {
             case .needsYou: return row.needsYou
+            case .inProgress: return !row.isClosed
             case .unhomed: return row.primaryAreaID == nil
             case .all: return true
             }

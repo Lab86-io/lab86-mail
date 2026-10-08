@@ -76,7 +76,7 @@ function harness(
     liveSession?: any;
     runtimes?: any[];
     page?: Partial<AgentPage>;
-    steerNotes?: Array<{ text: string }>[];
+    steerNotes?: Array<Array<{ text: string }> | null>[] | Array<Array<{ text: string }> | null>;
     details?: any[];
     notes?: string[];
     secure?: SecureRunAccess | null;
@@ -122,8 +122,10 @@ function harness(
           return 'question-1';
         case 'albatrossNotifications:queueStepRunHandoff':
           return { created: true, notificationId: 'note-1' };
-        case 'albatrossStepRuns:takeSteerNotes':
-          return steerQueue.shift() || [];
+        case 'albatrossStepRuns:takeSteerNotes': {
+          const next = steerQueue.shift();
+          return next === null ? null : next || [];
+        }
         default:
           return true;
       }
@@ -1379,5 +1381,21 @@ describe('a saved value on the wrong page stops the run', () => {
       next: { kind: 'finish_on_page', label: 'Open the page', target: { kind: 'session', id: 'bb-1' } },
     });
     expect(h.calls('albatrossBrowserSessions:setSessionStatus').at(-1)).toMatchObject({ status: 'user' });
+  });
+});
+
+describe('a stopped run stops at its next step', () => {
+  test('a null from takeSteerNotes cancels the run before the next model call', async () => {
+    const h = harness(
+      async (opts) => {
+        await opts.prepareStep({ messages: [{ role: 'user', content: 'Work on the step.' }] });
+        // The stop reaches the model call through the abort signal.
+        expect(opts.abortSignal.aborted).toBe(true);
+        throw opts.abortSignal.reason;
+      },
+      { steerNotes: [null] as any },
+    );
+    expect(await runStepRun('user-1', 'run-1', h.deps)).toEqual({ state: 'cancelled' });
+    expect(h.settled()).toBeUndefined();
   });
 });

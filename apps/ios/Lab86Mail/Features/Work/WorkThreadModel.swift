@@ -63,12 +63,28 @@ final class WorkThreadModel {
     private(set) var allowStates: [String: SecureAllowState] = [:]
     /// The runs whose sign-in handoff the user answered with a saved sign-in (V13).
     private(set) var savedSignInRuns: Set<String> = []
+    /// The live thread list: the reply that runs on the server, and the rows
+    /// the banner reads.
+    private let threads: ThreadsStore
+    /// The steer notes this device could not post, by message id (T7).
+    private(set) var failedNoteIDs: Set<String> = []
+    /// The notes sent again (T9). The first bubble loses its "Send again".
+    private(set) var resentNoteIDs: Set<String> = []
+    /// The run "Stop and redirect" stopped (T8). The next send continues it
+    /// with the note.
+    private(set) var redirectArmed: ThreadRunView?
+    /// True once this model saw a reply run on the server; the thread reads
+    /// the saved reply when it ends.
+    private var awaitedServerReply = false
+    /// A run reads at most this many notes (docs/albatross-thread.md).
+    static let noteCap = 10
 
     init(workID: String, title: String?, environment: AppEnvironment) {
         self.workID = workID
         transport = environment.backend
         productStore = environment.store
         secureDetails = environment.secureDetails
+        threads = environment.threads
         webBaseURL = environment.configuration.apiBaseURL
         store = WorkThreadStore(workID: workID)
         let sessionStore = environment.sessionStore
@@ -134,6 +150,50 @@ final class WorkThreadModel {
     /// True when the session's first factor is under 10 minutes old.
     var identityWindowOpen: Bool { ClerkIdentity.windowIsOpen() }
 
+    /// A reply runs on the server, not on this device (T5).
+    var replyInProgress: Bool {
+        !chat.isStreaming && threads.row(for: workID)?.status == .answering
+    }
+
+    var noteCapReached: Bool {
+        (openRun?.notes.count ?? 0) >= Self.noteCap
+    }
+
+    /// The composer placeholder by route and state (decision 11, T7, T8).
+    var composerPlaceholder: String {
+        if redirectArmed != nil { return RunBlockCopy.redirectPlaceholder }
+        switch chat.route {
+        case .run:
+            return ThreadState.running.composerPlaceholder
+        case .ask where replyInProgress:
+            return RunBlockCopy.replyInProgressPlaceholder
+        case .ask where openRun != nil:
+            return RunBlockCopy.askWhileRunPlaceholder
+        case .ask, .hold:
+            return threadState.composerPlaceholder
+        }
+    }
+
+    /// "To the run · Step 2, Renew online" above the field while the route
+    /// is Run (lead decision 5).
+    var runRouteLine: String? {
+        guard chat.route == .run, let view = redirectArmed ?? openRun else { return nil }
+        let number = detail?.execution.guideSteps.firstIndex { $0.id == view.run.stepKey }.map { $0 + 1 }
+        return RunBlockCopy.runRouteLine(stepNumber: number, title: view.run.stepTitle)
+    }
+
+    /// The composer holds an Ask while a reply runs on the server. A run
+    /// note still goes.
+    var sendsAreHeld: Bool {
+        replyInProgress && chat.route != .run && redirectArmed == nil
+    }
+
+    /// The Run route exists while a run is open and under its note cap, or
+    /// while a redirect waits for its note.
+    func syncRunRoute() {
+        chat.setRunRouteAvailable(redirectArmed != nil || (openRun != nil && !noteCapReached))
+    }
+
     /// The Work page on the web (`?work=<id>`), for "Open on the web".
     var webURL: URL? {
         guard let webBaseURL, var components = URLComponents(url: webBaseURL, resolvingAgainstBaseURL: false) else { return nil }
@@ -182,6 +242,7 @@ final class WorkThreadModel {
         async let work: Void = loadDetail()
         _ = await (session, runs, work)
         applyAutoOpen()
+        syncRunRoute()
         if intent == .openPage, pageRun == nil, let candidate = store.runs.last(where: { Self.hasPage($0.run) }) {
             pageRun = candidate
         }
@@ -193,6 +254,23 @@ final class WorkThreadModel {
         _ = await (runs, work)
         syncPageRun()
         applyAutoOpen()
+        syncRunRoute()
+    }
+
+    /// While a reply runs on the server (T5), the thread waits for the
+    /// threads poll to say it ended, then reads the saved reply once.
+    func followServerReply() async {
+        while !Task.isCancelled {
+            if replyInProgress {
+                awaitedServerReply = true
+            } else if awaitedServerReply {
+                awaitedServerReply = false
+                await chat.restoreWorkThread(workID: workID)
+                await store.load(transport)
+                syncRunRoute()
+            }
+            do { try await Task.sleep(for: Self.pollInterval) } catch { return }
+        }
     }
 
     func loadDetail() async {
@@ -214,6 +292,7 @@ final class WorkThreadModel {
             await store.load(transport)
             syncPageRun()
             applyAutoOpen()
+            syncRunRoute()
             if store.openRun == nil, !chat.isStreaming {
                 await loadDetail()
                 return
@@ -257,6 +336,7 @@ final class WorkThreadModel {
 
     func stop(_ view: ThreadRunView) async {
         _ = await store.stop(view, transport: transport)
+        syncRunRoute()
         await loadDetail()
     }
 
@@ -276,6 +356,104 @@ final class WorkThreadModel {
         await store.load(transport)
         syncPageRun()
         applyAutoOpen()
+        syncRunRoute()
+    }
+
+    // MARK: - Notes to the run
+
+    /// A note to the run that works (T7): straight to the run, no chat
+    /// turn. The bubble appears at once; the receipt follows the run's notes.
+    func steer(_ text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let run = openRun else {
+            chat.send(trimmed, attachments: [])
+            return
+        }
+        let noteID = ThreadNoteID.make()
+        chat.appendSteerMessage(trimmed, id: noteID, runID: run.id, redirect: false)
+        let sent = await store.steer(run, note: trimmed, noteID: noteID, transport: transport)
+        if !sent { failedNoteIDs.insert(noteID) }
+        await store.load(transport)
+        syncRunRoute()
+    }
+
+    /// The receipt under a note bubble, or nil for a message that is not a note.
+    func receipt(for message: AssistantChatMessage) -> NoteReceipt? {
+        guard let steer = message.steer else { return nil }
+        return NoteReceiptPresentation.receipt(
+            noteID: message.id,
+            runID: steer.runID,
+            redirect: steer.redirect,
+            text: message.text,
+            failed: failedNoteIDs.contains(message.id),
+            runs: store.runs
+        )
+    }
+
+    /// "Send again" shows once for each note.
+    func canSendAgain(_ message: AssistantChatMessage) -> Bool {
+        message.steer != nil && !resentNoteIDs.contains(message.id)
+    }
+
+    /// "Send again" under a note the run never read, or never got (T9): the
+    /// open run, else the step starts again with the note first.
+    func sendAgain(_ message: AssistantChatMessage) async {
+        guard let steer = message.steer else { return }
+        let text = message.text
+        resentNoteIDs.insert(message.id)
+        failedNoteIDs.remove(message.id)
+        if let open = openRun {
+            let noteID = ThreadNoteID.make()
+            chat.appendSteerMessage(text, id: noteID, runID: open.id, redirect: false)
+            let sent = await store.steer(open, note: text, noteID: noteID, transport: transport)
+            if !sent { failedNoteIDs.insert(noteID) }
+        } else if let view = store.run(id: steer.runID) {
+            let runID: String?
+            if view.run.isHandoff {
+                runID = await store.resume(view, note: text, transport: transport)
+            } else {
+                runID = await store.start(stepKey: view.run.stepKey, stepTitle: view.run.stepTitle, note: text, transport: transport)
+            }
+            if let runID {
+                chat.appendSteerMessage(text, id: ThreadNoteID.make(), runID: runID, redirect: true)
+            }
+        }
+        await store.load(transport)
+        syncRunRoute()
+        await loadDetail()
+    }
+
+    // MARK: - Stop and redirect
+
+    /// "Stop and redirect" (T8, lead decision 6): the run stops at once and
+    /// the composer waits for the note. The next send continues the run
+    /// with it.
+    func armRedirect(_ view: ThreadRunView) async {
+        _ = await store.stop(view, transport: transport)
+        redirectArmed = store.run(id: view.id) ?? view
+        chat.presetRoute(.run)
+        syncRunRoute()
+        await loadDetail()
+    }
+
+    /// "Cancel" on the strip. The run stays stopped; its block offers "Continue".
+    func disarmRedirect() {
+        redirectArmed = nil
+        chat.clearRoute()
+        syncRunRoute()
+    }
+
+    func sendRedirect(_ text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let view = redirectArmed else { return }
+        redirectArmed = nil
+        let runID = await store.resume(view, note: trimmed, transport: transport)
+        chat.appendSteerMessage(trimmed, id: ThreadNoteID.make(), runID: runID ?? view.id, redirect: true)
+        chat.clearRoute()
+        syncPageRun()
+        syncRunRoute()
+        await loadDetail()
     }
 
     /// Command-Return belongs to the newest run only, and only while no form

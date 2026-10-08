@@ -9,7 +9,7 @@ import Testing
 struct ThreadModelsTests {
     private static let formJSON: JSONValue = .object([
         "title": .string("Which class?"),
-        "detail": .string("All three are before November 2."),
+        "detail": .string("All three are before November 14."),
         "submitLabel": .string("Pick this class"),
         "fields": .array([
             .object([
@@ -20,7 +20,7 @@ struct ThreadModelsTests {
                     .object([
                         "id": .string("mon"),
                         "label": .string("Monday, October 19"),
-                        "detail": .string("4:00–8:00 PM · Zoom · $70"),
+                        "detail": .string("4:00–8:00 PM · Zoom · $45"),
                         "recommended": .string("Matches what you said"),
                         "calendar": .object(["fit": .string("free"), "note": .string("Free on your calendar")]),
                     ]),
@@ -140,7 +140,7 @@ struct ThreadModelsTests {
                         "kind": .string("finish_on_page"),
                         "label": .string("Check and pay"),
                         "doneLabel": .string("I paid"),
-                        "detail": .string("Everything is filled in. Check it and pay the $70."),
+                        "detail": .string("Everything is filled in. Check it and pay the $45."),
                     ]),
                     "question": .null,
                     "createdAt": .number(1_791_392_640_000),

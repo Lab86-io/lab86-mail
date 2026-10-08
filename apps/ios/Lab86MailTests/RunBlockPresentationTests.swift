@@ -70,7 +70,7 @@ struct RunBlockPresentationTests {
             questions.append(.object(["id": .string("q1"), "status": .string("pending"), "prompt": .string("Which class?"), "options": .array([])]))
         }
         return try #require(WorkDetail(json: .object([
-            "work": .object(["_id": .string("work_1"), "title": .string("Register for Alive at 25"), "workState": .string(workState)]),
+            "work": .object(["_id": .string("work_1"), "title": .string("Register for CPR and first aid"), "workState": .string(workState)]),
             "execution": .object(execution),
             "questions": .array(questions),
         ])))
@@ -112,7 +112,7 @@ struct RunBlockPresentationTests {
         #expect(RunBlockCopy.limitLine(nil) == nil)
         #expect(RunBlockCopy.doneLine(verification: "Verified on the page") == "Done · Verified on the page")
         #expect(RunBlockCopy.doneLine(verification: nil) == "Done")
-        #expect(RunBlockCopy.pageLine(host: "aliveat25.com") == "Albatross is on the page · aliveat25.com")
+        #expect(RunBlockCopy.pageLine(host: "firstaidclass.example.com") == "Albatross is on the page · firstaidclass.example.com")
         #expect(RunBlockCopy.pageLine(host: nil) == "Albatross is on the page")
         #expect(RunBlockCopy.logTitle == "What Albatross did")
     }

@@ -1108,8 +1108,18 @@ export default defineSchema({
     browserSessionId: v.optional(v.string()),
     // Notes from the user while the run works (docs/albatross-thread.md). The
     // runner reads each note once between model steps and sets readAt.
+    // Notes the user sends to the run (docs/albatross-threads.md, T7). `id` is
+    // the thread message id, so a client shows one receipt for a note that
+    // carries to the next run (T9).
     steer: v.optional(
-      v.array(v.object({ at: v.number(), text: v.string(), readAt: v.optional(v.number()) })),
+      v.array(
+        v.object({
+          at: v.number(),
+          text: v.string(),
+          readAt: v.optional(v.number()),
+          id: v.optional(v.string()),
+        }),
+      ),
     ),
     budget: v.optional(
       v.object({
@@ -1153,6 +1163,26 @@ export default defineSchema({
   // encryptSecret output of { u: userId, k: key, v: value }, so a value only
   // opens for its own row. Only the Next server decrypts; every function in
   // convex/personalDetails.ts needs the server secret.
+  // One small row for each Albatross thread (docs/albatross-threads.md): the
+  // chat reply that runs on the server (T5), when it last finished, whether it
+  // ended with a question, and when the user last looked (T2). The thread list
+  // reads these rows and the runs, never the large chat session documents.
+  albatrossThreadStates: defineTable({
+    userId: v.string(),
+    workId: v.string(),
+    // Set while a chat reply runs on the server; cleared when it ends.
+    answeringSince: v.optional(v.number()),
+    answeringTurn: v.optional(v.string()),
+    // The newest finished chat reply, and whether it waits for the user (a form, a choice).
+    replyAt: v.optional(v.number()),
+    replyWaits: v.optional(v.boolean()),
+    replyPreview: v.optional(v.string()),
+    seenAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_work', ['userId', 'workId']),
+
   personalDetails: defineTable({
     userId: v.string(),
     key: v.string(),
