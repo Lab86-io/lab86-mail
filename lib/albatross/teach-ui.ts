@@ -640,13 +640,15 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
     done:
       out.action === 'stopped'
         ? 'Stopped the step'
-        : out.action === 'steered'
-          ? 'Passed your note to the step in progress'
-          : out.action === 'resumed'
-            ? 'Continued the step'
-            : out.action === 'working'
-              ? 'The step is in progress'
-              : 'Started on the step',
+        : out.action === 'checked'
+          ? 'Checked the step off'
+          : out.action === 'steered'
+            ? 'Passed your note to the step in progress'
+            : out.action === 'resumed'
+              ? 'Continued the step'
+              : out.action === 'working'
+                ? 'The step is in progress'
+                : 'Started on the step',
     failed: 'Starting the step failed',
   }),
   personal_details_get: fixed(

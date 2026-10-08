@@ -215,6 +215,9 @@ final class AssistantChatModel {
     let scope: AssistantChatScope
     private(set) var messages: [AssistantChatMessage] = []
     private(set) var isStreaming = false
+    /// The document open in a Work thread's document mode, sent with every
+    /// turn while it is open (docs/albatross-document-handoff.md, D5).
+    var documentAttachment: DocumentContextAttachment?
     private(set) var isUploading = false
     private(set) var errorMessage: String?
     private(set) var lastFailedUserText: String?
@@ -858,9 +861,12 @@ final class AssistantChatModel {
         case .work:
             scopeLine = nil
             if let workID = scope.contextID {
-                body["contextAttachments"] = .array([
-                    .object(["kind": .string("work"), "id": .string(workID)])
-                ])
+                var attachments: [JSONValue] = [.object(["kind": .string("work"), "id": .string(workID)])]
+                // The document open in the thread's document mode
+                // (docs/albatross-document-handoff.md, D5): the model reads
+                // and edits it directly.
+                if let documentAttachment { attachments.append(documentAttachment.json) }
+                body["contextAttachments"] = .array(attachments)
             }
         }
         let context = [scopeLine, uploadContext.nilIfBlank].compactMap { $0 }.joined(separator: "\n\n")

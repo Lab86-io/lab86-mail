@@ -16,6 +16,9 @@ struct WorkThreadView: View {
     let route: WorkRoute
     /// False on iPad, where the list column beside the thread shows the change.
     var showsAttentionBanner = true
+    /// False inside document mode, where this thread is the chat beside the
+    /// document and must not open a second document.
+    var presentsDocument = true
 
     @State private var model: WorkThreadModel?
     /// The rows of the "needs you" banner at the top. Empty when hidden.
@@ -125,6 +128,7 @@ struct WorkThreadView: View {
             .onChange(of: environment.navigation.workRoute?.intent) { _, intent in
                 applyIntent(intent)
             }
+            .documentMode(model, route: route, enabled: presentsDocument)
     }
 
     /// The poll task restarts when a run opens or closes, or a turn streams.
@@ -282,7 +286,8 @@ struct WorkThreadView: View {
                 detail: model.detail,
                 routeTitle: route.title,
                 threadState: model.threadState,
-                busy: model.store.busy,
+                runs: model.store.runs,
+                busy: model.store.busy || model.isMarkingDone,
                 onHandle: { step in Task { await model.handle(step: step) } },
                 onOpenPlan: { showsPlan = true },
                 onOpenDetails: { showsDetails = true }
@@ -307,7 +312,7 @@ struct WorkThreadView: View {
                 continues: continues,
                 ownsWaitingShortcut: model.ownsWaitingShortcut(view),
                 hasContinuation: model.hasContinuation(view),
-                busy: model.store.busy,
+                busy: model.store.busy || model.isMarkingDone,
                 pageShown: model.pageRun?.id == view.id,
                 questionState: model.questionState(for: view),
                 allowState: model.allowState(for: view),
@@ -342,6 +347,9 @@ struct WorkThreadView: View {
             Text(holdError).font(.footnote).foregroundStyle(.red)
         }
         if let notice = model.store.notice {
+            Text(notice).font(.footnote).foregroundStyle(.red)
+        }
+        if let notice = model.stepNotice {
             Text(notice).font(.footnote).foregroundStyle(.red)
         }
         if let error = model.detailError, model.detail == nil {
@@ -544,6 +552,7 @@ struct WorkThreadView: View {
         actions.dismiss = { view in Task { await model.dismiss(view) } }
         actions.tryAgain = { view in Task { await model.tryAgain(view) } }
         actions.primary = { view, behaviour in Task { await performNext(behaviour, view: view, model: model) } }
+        actions.markDone = { view in Task { await model.markStepDone(view) } }
         actions.artifact = { artifact in Task { await openArtifact(artifact, model: model) } }
         actions.showPage = { view in model.pageRun = view }
         actions.hidePage = { view in if model.pageRun?.id == view.id { model.pageRun = nil } }
@@ -569,18 +578,41 @@ struct WorkThreadView: View {
         case .openBrowser:
             model.pageRun = view
         case .markStepDone:
-            if let step = model.step(for: view.run) { await model.completeStep(step) }
+            // The user's word checks the step, and Albatross continues (D3).
+            await model.markStepDone(view)
         case .resume:
             await model.resume(view)
         case .showQuestion, .showArtifacts, .allowSecure, .none:
             break
-        case .openDraft, .openDocument, .openApproval, .openURL:
+        case .openDocument(let id, let url):
+            // The document opens inside the thread, not in Files (D5).
+            if let target = DocumentTarget.of(url: url, id: id) {
+                await openDocument(target, model: model)
+            } else {
+                _ = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)
+            }
+        case .openDraft, .openApproval, .openURL:
             _ = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)
         }
     }
 
     private func openArtifact(_ artifact: StepRunView.Artifact, model: WorkThreadModel) async {
+        if artifact.kind == .document, let target = DocumentTarget.of(url: artifact.url, id: artifact.referenceID) {
+            await openDocument(target, model: model)
+            return
+        }
         _ = await StepRunActions.open(artifact, environment: environment, openURL: openURL)
+    }
+
+    /// Document mode (docs/albatross-document-handoff.md, D5). A sheet that
+    /// is up (Details, the plan) closes first, so the cover can present.
+    private func openDocument(_ target: DocumentTarget, model: WorkThreadModel) async {
+        if showsDetails || showsPlan {
+            showsDetails = false
+            showsPlan = false
+            try? await Task.sleep(for: .milliseconds(400))
+        }
+        model.openDocument(target)
     }
 
     private func applyIntent(_ intent: WorkRoute.Intent?) {
@@ -612,5 +644,26 @@ struct WorkThreadView: View {
         guard let line, line != announced else { return }
         announced = line
         PlatformAccessibility.announce(line)
+    }
+}
+
+// MARK: - Document mode
+
+private extension View {
+    /// The document open in the thread, as a full-screen cover on iOS
+    /// (docs/albatross-document-handoff.md, D5). The Mac has its own layout.
+    func documentMode(_ model: WorkThreadModel?, route: WorkRoute, enabled: Bool) -> some View {
+        #if os(iOS)
+        fullScreenCover(item: Binding(
+            get: { enabled ? model?.document : nil },
+            set: { if $0 == nil { model?.closeDocument() } }
+        )) { target in
+            if let model {
+                DocumentModeView(route: route, model: model, target: target)
+            }
+        }
+        #else
+        self
+        #endif
     }
 }

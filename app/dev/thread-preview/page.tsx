@@ -14,6 +14,12 @@ import { PersonalDetailsList } from '@/components/settings/PersonalDetailsSectio
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import { useMediaQuery } from '@/hooks/use-media-query';
+import {
+  documentHandoffDetailFixture,
+  documentHandoffRunsFixture,
+  HOURS_DOCUMENT_ID,
+  hoursDocumentFixture,
+} from '@/lib/albatross/document-handoff-fixtures';
 import type { PersonalDetailsResponse } from '@/lib/albatross/thread-contract';
 import {
   earlierChatMessageFixture,
@@ -31,7 +37,8 @@ import { createFixtureTransport } from '@/lib/chat/preview-fixture';
  * one can be seen and screenshotted without a backend. Query switches:
  *   ?state=planning | running | steered | needsAnswer | answeredChat | signIn
  *          | finalPage | done | failed | stopped | details | earlier | settings
- *   &region=page | details | none   (overrides the state's own region)
+ *          | checkResult | document   (docs/albatross-document-handoff.md)
+ *   &region=page | details | document | none   (overrides the state's own region)
  * Not linked from anywhere; 404s outside development. */
 export default function ThreadPreviewPage() {
   if (process.env.NODE_ENV === 'production') notFound();
@@ -84,7 +91,9 @@ type StateName =
   | 'stopped'
   | 'details'
   | 'earlier'
-  | 'settings';
+  | 'settings'
+  | 'checkResult'
+  | 'document';
 
 function buildModel(
   state: StateName,
@@ -275,6 +284,20 @@ function buildModel(
       session = threadSessionFixture('user');
       region = 'details';
       break;
+    case 'checkResult':
+    case 'document': {
+      detail = documentHandoffDetailFixture(NOW);
+      const handoffs = documentHandoffRunsFixture(NOW);
+      if (state === 'checkResult') {
+        detail.execution.guideSteps[0].done = false;
+        threadRuns = [handoffs.checkResult];
+      } else {
+        threadRuns = [handoffs.document];
+        region = 'document';
+      }
+      messages = [];
+      break;
+    }
     case 'earlier':
       threadRuns = [runs.running];
       messages = [earlierChatMessageFixture(), ...threadMessagesFixture(NOW)];
@@ -284,21 +307,46 @@ function buildModel(
       break;
   }
   if (regionOverride !== undefined) region = regionOverride;
+  const title = state === 'checkResult' || state === 'document' ? (detail.work.title ?? '') : common.title;
   return {
-    model: { ...common, detail, runs: threadRuns, session, region },
+    model: {
+      ...common,
+      title,
+      detail,
+      runs: threadRuns,
+      session,
+      region,
+      document: region === 'document' ? { provider: 'albatross', id: HOURS_DOCUMENT_ID } : null,
+    },
     messages,
     region,
   };
 }
 
 function regionFromSearch(value: string | null): ThreadRegion | undefined {
-  if (value === 'page' || value === 'details') return value;
+  if (value === 'page' || value === 'details' || value === 'document') return value;
   if (value === 'none') return null;
   return undefined;
 }
 
+/** The harness has no backend: the document editor reads its fixture from this stub. */
+function useDocumentFetchStub() {
+  useState(() => {
+    if (typeof window === 'undefined') return null;
+    const original = window.fetch.bind(window);
+    window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes(`/api/documents/${HOURS_DOCUMENT_ID}`) && (!init?.method || init.method === 'GET'))
+        return Response.json({ ok: true, document: hoursDocumentFixture(NOW) });
+      return original(input, init);
+    }) as typeof fetch;
+    return null;
+  });
+}
+
 function ThreadPreview() {
   useApplyThemeExtras();
+  useDocumentFetchStub();
   const params = useSearchParams();
   const state = (params.get('state') || 'needsAnswer') as StateName;
   const regionParam = regionFromSearch(params.get('region'));
@@ -319,7 +367,9 @@ function ThreadPreview() {
       onResume: noop,
       onDismiss: noop,
       onMarkDone: noop,
-      onNext: noop,
+      onNext: (behaviour) => {
+        if (behaviour.kind === 'open_document') setRegion('document');
+      },
       onAnswer: noop,
       onUndoSave: async () => undefined,
       onUndoArtifact: noop,
@@ -328,6 +378,9 @@ function ThreadPreview() {
       onClosePage: () => setRegion(null),
       onReopenPage: noop,
       onRegionChange: (next) => setRegion(next),
+      onOpenDocument: () => setRegion('document'),
+      onCloseDocument: () => setRegion(null),
+      onDocumentDone: () => setRegion(null),
       onSetWorkState: noop,
       onError: noop,
       chat: { transport, preview: true },

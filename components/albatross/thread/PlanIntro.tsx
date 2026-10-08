@@ -85,7 +85,9 @@ export function PlanSteps({
               {active ? (
                 <span className="text-[11.5px] text-[var(--color-accent)]">{PLAN_COPY.working}</span>
               ) : step.waiting ? (
-                <span className="text-[11.5px] text-[var(--color-accent)]">{PLAN_COPY.waiting}</span>
+                <span className="text-[11.5px] text-[var(--color-accent)]">
+                  {step.waitingLabel ?? PLAN_COPY.waiting}
+                </span>
               ) : step.runnable && onHandle ? (
                 <Button
                   type="button"

@@ -48,6 +48,7 @@ import {
   sessionConnectUrl,
 } from './browser-session';
 import { evidenceSatisfies } from './evidence-gate';
+import { type ObservedStep, observedEvidence } from './run-evidence';
 import { completeWorkStep } from './step-execution';
 import {
   isAutomaticTrigger,
@@ -311,6 +312,12 @@ export function normalizeHandoff(
       Object.entries(next.target).filter(([, value]) => typeof value !== 'string' || value.trim()),
     ) as NonNullable<typeof next.target>;
     next.target = target.id || target.url ? target : undefined;
+  }
+  // A target the model named by id gets the link of the artifact with that id:
+  // a document opens by its own link (a Word file opens in the Word editor).
+  if (next?.target?.id && !next.target.url) {
+    const made = context.artifacts.find((artifact) => artifact.id === next.target?.id && artifact.url);
+    if (made) next.target = { ...next.target, url: made.url };
   }
   if (next && !next.target) {
     const find = (kind: RunArtifact['kind']) =>
@@ -765,6 +772,7 @@ export async function runStepRun(
         browser,
         sessionId,
         settled,
+        observed: observedEvidence((result as { steps?: ObservedStep[] }).steps),
       });
     }
     if (sessionId && usedPage) {
@@ -894,16 +902,23 @@ async function proveDone(input: {
   browser: AgentBrowser | null;
   sessionId: string | null;
   settled: SettleInput;
+  /** The tool results this run recorded (lib/albatross/run-evidence.ts). */
+  observed?: string;
 }): Promise<SettleInput> {
   const { deps, userId, run, step } = input;
+  // A step that only the user's word can carry never passes a check. It waits
+  // for that word, and the copy does not call it a failed check.
+  if (step.evidenceKind === 'attestation') return checkResult(input, STEP_CHECK_COPY.needsYourWord);
   const page = input.browser ? await input.browser.readText().catch(() => null) : null;
   const evidenceText = [
-    input.handoff?.evidence ? `Agent evidence: ${input.handoff.evidence}` : null,
-    `Agent summary: ${input.settled.summary || ''}`,
+    run.resumeNote?.trim() ? `User said: ${truncateText(run.resumeNote.trim(), 600)}` : null,
+    input.observed?.trim() || null,
     input.artifacts.length
       ? `Made: ${input.artifacts.map((artifact) => `${artifact.kind} "${artifact.title}"`).join('; ')}`
       : null,
     page ? `Page: ${page.url}\nTitle: ${page.title}\n${page.text}` : null,
+    input.handoff?.evidence ? `Agent evidence: ${input.handoff.evidence}` : null,
+    `Agent summary: ${input.settled.summary || ''}`,
   ]
     .filter(Boolean)
     .join('\n');
@@ -914,32 +929,14 @@ async function proveDone(input: {
       outcome: input.detail?.plan?.outcome ?? null,
       requirement: step.doneWhen || `"${step.title}" is complete.`,
       evidenceText,
+      source: 'run',
     })
     .catch(() => ({ satisfies: false, reason: '', unavailable: true }));
-  if (!verdict.satisfies || verdict.unavailable) {
-    const made = [...input.artifacts].reverse()[0];
-    return {
-      outcome: 'ready_for_you',
-      summary: input.settled.summary,
-      next: {
-        kind:
-          made?.kind === 'draft' ? 'review_draft' : made?.kind === 'document' ? 'review_document' : 'review',
-        label: 'Check the result',
-        detail:
-          'I think the step is done, but the proof check did not pass. Check it, then mark the step done.',
-        ...(made
-          ? {
-              target:
-                made.kind === 'draft'
-                  ? { kind: 'draft', id: made.id, accountId: made.accountId }
-                  : made.kind === 'document'
-                    ? { kind: 'document', id: made.id, url: made.url }
-                    : { kind: made.kind === 'approval' ? 'approval' : 'url', id: made.id, url: made.url },
-            }
-          : {}),
-      },
-    };
-  }
+  if (!verdict.satisfies || verdict.unavailable)
+    return checkResult(
+      input,
+      verdict.unavailable ? STEP_CHECK_COPY.checkDidNotRun : STEP_CHECK_COPY.notProved(verdict.reason),
+    );
   // "Verified on the page" needs the page alone to show it. The combined
   // check above includes the agent's own words, so it proves less.
   const pageVerdict =
@@ -980,6 +977,43 @@ async function proveDone(input: {
       deps.reportError('[step-runner] step check failed', run._id, describeModelError(error)),
     );
   return input.settled;
+}
+
+/** The words of a done claim that waits for the user. */
+export const STEP_CHECK_COPY = {
+  needsYourWord: 'This step needs your word. Check it, then mark the step done.',
+  checkDidNotRun: 'I think the step is done, but the check did not run. Check it, then mark the step done.',
+  notProved: (reason: string) => {
+    const why = reason.trim().replace(/[.\s]+$/, '');
+    return why
+      ? `I think the step is done, but I could not prove it: ${truncateText(why, 220)}. Check it, then mark the step done.`
+      : 'I think the step is done, but I could not prove it. Check it, then mark the step done.';
+  },
+} as const;
+
+/** A done claim that waits for the user: open what the run made, then mark the step done. */
+function checkResult(input: { artifacts: RunArtifact[]; settled: SettleInput }, detail: string): SettleInput {
+  const made = [...input.artifacts].reverse()[0];
+  return {
+    outcome: 'ready_for_you',
+    summary: input.settled.summary,
+    next: {
+      kind:
+        made?.kind === 'draft' ? 'review_draft' : made?.kind === 'document' ? 'review_document' : 'review',
+      label: 'Check the result',
+      detail,
+      ...(made
+        ? {
+            target:
+              made.kind === 'draft'
+                ? { kind: 'draft', id: made.id, accountId: made.accountId }
+                : made.kind === 'document'
+                  ? { kind: 'document', id: made.id, url: made.url }
+                  : { kind: made.kind === 'approval' ? 'approval' : 'url', id: made.id, url: made.url },
+          }
+        : {}),
+    },
+  };
 }
 
 async function notifyHandoff(

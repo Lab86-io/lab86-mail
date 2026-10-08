@@ -100,6 +100,7 @@ import {
 import { routeEmailPreviewThread } from '@/lib/ai/email-preview-routing';
 import type { ToolShape } from '@/lib/ai/tool-shapes';
 import { type HoldCard, holdText, kickAdvance } from '@/lib/albatross/capture-client';
+import type { DocumentContextAttachment } from '@/lib/albatross/document-handoff';
 import {
   draftWithMarker,
   savedMarker,
@@ -288,6 +289,8 @@ export interface ThreadChatProps {
   steer?: ThreadSteer;
   /** The reply of this thread still runs on the server (T5): a placeholder shows until the saved reply arrives. */
   replyInProgress?: boolean;
+  /** The document open in the thread's document mode: the chat edits it (docs/albatross-document-handoff.md, D5). */
+  document?: DocumentContextAttachment | null;
   /** The draft and the reader's place, kept across hops (T3). */
   memory?: {
     draft: { get: () => string; set: (text: string) => void };
@@ -408,6 +411,9 @@ export function AssistantChat({
   // The browser's IANA timezone rides along so the agent (and calendar
   // tools) interpret wall-clock times like "2:30" in the user's zone.
   const activeRunId = useRef<string | null>(null);
+  // Read at send time, so opening or closing a document does not rebuild the transport.
+  const threadDocumentRef = useRef<DocumentContextAttachment | null>(null);
+  threadDocumentRef.current = thread?.document ?? null;
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -435,7 +441,10 @@ export function AssistantChat({
               : undefined,
           contextAttachments:
             !useClientStore.getState().assistantBriefContext && chatScopeKind === 'work' && chatScopeWorkId
-              ? [{ kind: 'work', id: chatScopeWorkId }]
+              ? [
+                  { kind: 'work', id: chatScopeWorkId },
+                  ...(threadDocumentRef.current ? [threadDocumentRef.current] : []),
+                ]
               : undefined,
           extraSystem: [
             assistantPageContext(

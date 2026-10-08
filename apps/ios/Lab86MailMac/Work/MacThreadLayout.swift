@@ -82,4 +82,30 @@ enum MacThreadLayout {
     static func paneAfterWidthChange(current: MacThreadPaneMode, allowsPane: Bool) -> MacThreadPaneMode {
         allowsPane ? current : .none
     }
+
+    // MARK: - Document mode (docs/albatross-document-handoff.md, D5)
+
+    /// The document in the center must keep an editor's width.
+    static let documentMinWidth: CGFloat = 480
+    /// The thread column on the right: 380 to 440 pt by the window, and the
+    /// user may drag it up to `documentColumnMaxWidth`.
+    static let documentColumnMinWidth: CGFloat = 380
+    static let documentColumnIdealMax: CGFloat = 440
+    static let documentColumnMaxWidth: CGFloat = 560
+
+    /// The detail column must hold the document and the thread column.
+    static var documentMinimumWidth: CGFloat { documentMinWidth + documentColumnMinWidth }
+
+    /// About a third of the column, within the band.
+    static func documentColumnWidth(for width: CGFloat) -> CGFloat {
+        min(documentColumnIdealMax, max(documentColumnMinWidth, (width * 0.36).rounded()))
+    }
+
+    /// What the window can do for the document: the split, the source list
+    /// gives way first, or the split squeezed as it is.
+    static func documentRoom(windowWidth: CGFloat, sidebarShown: Bool) -> Room {
+        if detailWidth(windowWidth: windowWidth, sidebarShown: sidebarShown) >= documentMinimumWidth { return .pane }
+        if sidebarShown, windowWidth >= documentMinimumWidth { return .collapseSidebarFirst }
+        return .none
+    }
 }

@@ -76,6 +76,16 @@ final class WorkThreadModel {
     /// True once this model saw a reply run on the server; the thread reads
     /// the saved reply when it ends.
     private var awaitedServerReply = false
+    /// The document open in the thread (docs/albatross-document-handoff.md,
+    /// D5), or nil. The chat sends it with every turn while it is open.
+    private(set) var document: DocumentTarget?
+    /// Grows when a chat turn edited the open document: the editor loads
+    /// the saved document again.
+    private(set) var documentReloadToken = 0
+    /// True while "Mark step done" is on its way to the server.
+    private(set) var isMarkingDone = false
+    /// The last "Mark step done" that failed, under the block until the next one.
+    private(set) var stepNotice: String?
     /// A run reads at most this many notes (docs/albatross-thread.md).
     static let noteCap = 10
 
@@ -162,6 +172,7 @@ final class WorkThreadModel {
     /// The composer placeholder by route and state (decision 11, T7, T8).
     var composerPlaceholder: String {
         if redirectArmed != nil { return RunBlockCopy.redirectPlaceholder }
+        if document != nil { return DocumentHandoffCopy.placeholder }
         switch chat.route {
         case .run:
             return ThreadState.running.composerPlaceholder
@@ -353,10 +364,72 @@ final class WorkThreadModel {
     /// see (the poll task restarts when the turn ends and stops at once when no
     /// run is open), so read the runs once now.
     func turnDidEnd() async {
+        // The reply wrote to the open document: the editor loads it again.
+        if document != nil, let reply = chat.messages.last(where: { $0.role == .assistant }),
+           DocumentHandoff.turnEditedDocument(reply) {
+            documentReloadToken += 1
+        }
         await store.load(transport)
         syncPageRun()
         applyAutoOpen()
         syncRunRoute()
+    }
+
+    // MARK: - Mark step done and document mode
+
+    /// "Mark step done" on a run block (docs/albatross-document-handoff.md,
+    /// D2, D3): the step is checked with the user's word, and Albatross
+    /// starts on the next step it can do. The thread then shows that run.
+    @discardableResult
+    func markStepDone(_ view: ThreadRunView) async -> Bool {
+        guard !isMarkingDone else { return false }
+        isMarkingDone = true
+        stepNotice = nil
+        defer { isMarkingDone = false }
+        let previous = detail
+        if let previous { detail = previous.completing(stepID: view.run.stepKey) }
+        guard let result = await productStore.completeWorkStepAndContinue(workID, stepKey: view.run.stepKey) else {
+            detail = previous
+            stepNotice = DocumentHandoffCopy.failed
+            return false
+        }
+        if let runID = result.nextRunID { autoOpenRunID = runID }
+        await refresh()
+        return true
+    }
+
+    /// Opens a document inside the thread (D5). The chat carries it from now on.
+    func openDocument(_ target: DocumentTarget) {
+        document = target
+        chat.documentAttachment = target.attachment
+    }
+
+    /// "Close" or "Back to thread": the document leaves, the thread stays.
+    func closeDocument() {
+        document = nil
+        chat.documentAttachment = nil
+    }
+
+    /// The open handoff the document belongs to, or nil for an older artifact.
+    var documentHandoff: ThreadRunView? {
+        guard let document else { return nil }
+        return DocumentHandoff.run(for: store.runs, target: document)
+    }
+
+    /// The "Your part" text, or nil for no card.
+    var documentYourPart: String? {
+        DocumentHandoff.detail(of: documentHandoff)
+    }
+
+    /// "Done, continue": marks the handoff's step done, then closes document
+    /// mode. With no handoff the document only closes.
+    @discardableResult
+    func finishDocument() async -> Bool {
+        if let handoff = documentHandoff {
+            guard await markStepDone(handoff) else { return false }
+        }
+        closeDocument()
+        return true
     }
 
     // MARK: - Notes to the run

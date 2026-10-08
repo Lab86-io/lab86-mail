@@ -63,7 +63,7 @@ struct PlanListView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text(Self.proofLine(step: step, isCurrent: isCurrent, threadState: threadState))
+                    Text(Self.proofLine(step: step, isCurrent: isCurrent, threadState: threadState, runs: runs))
                         .font(.caption)
                         .foregroundStyle(step.done ? Color.green : Color.secondary)
                 }
@@ -89,13 +89,18 @@ struct PlanListView: View {
 
     /// The proof line of a done step ("Verified on the page · Oct 19"), else
     /// the state word.
-    static func proofLine(step: WorkDetail.ExecutionStep, isCurrent: Bool, threadState: ThreadState) -> String {
+    static func proofLine(
+        step: WorkDetail.ExecutionStep,
+        isCurrent: Bool,
+        threadState: ThreadState,
+        runs: [ThreadRunView] = []
+    ) -> String {
         if step.done {
             let label = step.verificationLabel ?? "Done"
             if let title = step.verificationEvidenceTitle?.nilIfBlank { return "\(label) · \(title)" }
             return label
         }
-        return OutcomeBlockView.stateWord(step: step, isCurrent: isCurrent, threadState: threadState)
+        return OutcomeBlockView.stateWord(step: step, isCurrent: isCurrent, threadState: threadState, runs: runs)
     }
 }
 

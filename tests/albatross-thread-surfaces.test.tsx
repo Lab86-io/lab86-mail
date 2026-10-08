@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { JSDOM } from 'jsdom';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { FormQuestionCard } from '../components/ai-elements/form-question-card';
 import { DetailsPanel } from '../components/albatross/thread/DetailsPanel';
 import { PAGE_PANE_COPY, PagePane, pagePaneView } from '../components/albatross/thread/PagePane';
 import { PlanIntro, PlanLine } from '../components/albatross/thread/PlanIntro';
 import { RunBlock, type RunBlockProps } from '../components/albatross/thread/RunBlock';
 import { PersonalDetailsList } from '../components/settings/PersonalDetailsSection';
+import type { ThreadRunView } from '../lib/albatross/thread-contract';
 import {
   classQuestionForm,
   threadDetailDoneStep,
@@ -16,7 +18,7 @@ import {
   threadRunFixtures,
   threadSessionFixture,
 } from '../lib/albatross/thread-fixtures';
-import { planStepRows } from '../lib/albatross/thread-view';
+import { planStepRows, RUN_STATE_COPY } from '../lib/albatross/thread-view';
 
 const NOW = Date.UTC(2026, 9, 7, 14, 46, 0);
 const runs = threadRunFixtures(NOW);
@@ -138,7 +140,8 @@ describe('the run block', () => {
     const html = block({ run: runs.readyDraft });
     expect(html).toContain('Ready for you');
     expect(html).toContain('CPR and first aid certificate');
-    expect(buttons(html)).toEqual(['Read and send', 'Dismiss']);
+    // A result the button can open also offers Mark step done (docs/albatross-document-handoff.md, D2).
+    expect(buttons(html)).toEqual(['Read and send', 'Mark step done', 'Dismiss']);
   });
 
   test('a done run shows the state and the summary, and no buttons', () => {
@@ -172,6 +175,85 @@ describe('the run block', () => {
 
   test('every fixture renders', () => {
     for (const run of Object.values(runs)) expect(() => block({ run })).not.toThrow();
+  });
+});
+
+// Every result that waits for the user can be marked done
+// (docs/albatross-document-handoff.md, D2). Story: the Harbor Design studio
+// hours invoice.
+describe('Mark step done on a ready-for-you result', () => {
+  function invoiceRun(next: Partial<NonNullable<ThreadRunView['next']>>): ThreadRunView {
+    return {
+      ...runs.readyDraft,
+      id: 'run_invoice',
+      summary: 'I made the Harbor Design hours invoice.',
+      artifacts: [{ kind: 'document', id: 'doc_invoice', title: 'Harbor Design invoice' }],
+      next: {
+        ...runs.readyDraft.next!,
+        kind: 'review_document',
+        label: 'Fill in hours',
+        detail: 'Fill in the months and hours you worked.',
+        target: { kind: 'document', id: 'doc_invoice' },
+        ...next,
+      },
+    };
+  }
+
+  test('a document handoff offers the agent label and Mark step done; the click marks it done', async () => {
+    const run = invoiceRun({});
+    expect(buttons(block({ run }))).toEqual(['Fill in hours', RUN_STATE_COPY.markDone, 'Dismiss']);
+
+    const marked: string[] = [];
+    const opened: string[] = [];
+    // The log disclosure (Radix Collapsible) asks for animation frames; the
+    // test renderer has no window, so this test lends it frames and restores them.
+    const globals = globalThis as Record<string, unknown>;
+    const saved = ['requestAnimationFrame', 'cancelAnimationFrame', 'IS_REACT_ACT_ENVIRONMENT'].map(
+      (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+    );
+    globals.requestAnimationFrame = (callback: () => void) => setTimeout(callback, 0);
+    globals.cancelAnimationFrame = (id: ReturnType<typeof setTimeout>) => clearTimeout(id);
+    globals.IS_REACT_ACT_ENVIRONMENT = true;
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <RunBlock
+            run={run}
+            timeZone="UTC"
+            details={details}
+            onStop={noop}
+            onResume={noop}
+            onDismiss={noop}
+            onStart={noop}
+            onMarkDone={(target) => marked.push(target.id)}
+            onNext={(behaviour) => opened.push(behaviour.kind)}
+            onAnswer={noop}
+            onOpenPage={noop}
+          />,
+        );
+      });
+      const button = (label: string) =>
+        renderer!.root.find((node) => node.type === 'button' && node.props.children === label);
+      await act(async () => button(RUN_STATE_COPY.markDone).props.onClick());
+      expect(marked).toEqual(['run_invoice']);
+      expect(opened).toEqual([]);
+      await act(async () => button('Fill in hours').props.onClick());
+      expect(opened).toEqual(['open_document']);
+      expect(marked).toEqual(['run_invoice']);
+    } finally {
+      act(() => renderer?.unmount());
+      for (const [key, descriptor] of saved) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete globals[key];
+      }
+    }
+  });
+
+  test('a review with no link has Mark step done as the only primary button', () => {
+    const html = block({ run: invoiceRun({ kind: 'review', label: 'Check the result', target: null }) });
+    expect(buttons(html)).toEqual([RUN_STATE_COPY.markDone, 'Dismiss']);
+    expect(html).not.toContain('Check the result</button>');
   });
 });
 

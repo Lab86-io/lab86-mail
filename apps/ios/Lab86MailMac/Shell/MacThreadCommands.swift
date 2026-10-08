@@ -20,6 +20,7 @@ enum MacThreadCommandState {
     static let markUnread = "Mark as Unread"
     static let markRead = "Mark as Read"
     static let stopAndRedirect = "Stop and Redirect…"
+    static let closeDocument = "Close Document"
 
     static func pageTitle(mode: MacThreadPaneMode) -> String {
         mode == .page ? hidePage : showPage
@@ -32,6 +33,12 @@ enum MacThreadCommandState {
     /// The items work only while a thread is on screen.
     static func isEnabled(threadOpen: Bool) -> Bool {
         threadOpen
+    }
+
+    /// "Close Document" works only while the open thread shows a document
+    /// (docs/albatross-document-handoff.md, D5).
+    static func closeDocumentEnabled(threadOpen: Bool, documentOpen: Bool) -> Bool {
+        threadOpen && documentOpen
     }
 
     /// The disclosure item of the Albatrosses section.
@@ -85,6 +92,14 @@ struct MacThreadCommands: Commands {
             }
             .keyboardShortcut("i", modifiers: [.control, .command])
             .disabled(!enabled)
+
+            Button(MacThreadCommandState.closeDocument) {
+                requests.requestCloseDocument()
+            }
+            .disabled(!MacThreadCommandState.closeDocumentEnabled(
+                threadOpen: environment.navigation.showsWorkThread,
+                documentOpen: requests.threadDocumentOpen
+            ))
 
             Divider()
 

@@ -60,7 +60,19 @@ function loadOffice(server: string) {
   return scripts.get(source)!;
 }
 
-export function OfficeEditor({ documentId, onClose }: { documentId: string; onClose: () => void }) {
+export function OfficeEditor({
+  documentId,
+  onClose,
+  host = 'files',
+  onChat,
+}: {
+  documentId: string;
+  onClose: () => void;
+  /** 'thread': inside an Albatross thread, whose chat sits beside the editor (docs/albatross-document-handoff.md). */
+  host?: 'files' | 'thread';
+  /** The thread's chat; replaces the global assistant in the thread. */
+  onChat?: () => void;
+}) {
   const id = `office-${useId().replace(/[^a-z0-9]/giu, '')}`;
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -189,7 +201,10 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
       return;
     onClose();
   };
-  const openAlbatross = useCallback(() => useClientStore.getState().setAssistantPresentation('split'), []);
+  const openAlbatross = useCallback(
+    () => (onChat ? onChat() : useClientStore.getState().setAssistantPresentation('split')),
+    [onChat],
+  );
   const toggleUiMode = () =>
     collaboraRef.current?.setUiMode(uiMode === 'notebookbar' ? 'classic' : 'notebookbar');
   const themedChrome = Boolean(collabora?.chrome?.enabled);
@@ -287,11 +302,18 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
         <header className="flex min-h-14 shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-3">
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label="Back to Files" onClick={close}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={host === 'thread' ? 'Close the document' : 'Back to Files'}
+                onClick={close}
+              >
                 <ArrowLeft className="size-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Back to Files</TooltipContent>
+            <TooltipContent side="bottom">
+              {host === 'thread' ? 'Close the document' : 'Back to Files'}
+            </TooltipContent>
           </Tooltip>
           <div className="flex min-w-0 flex-1 items-center gap-1.5">
             <input
@@ -371,7 +393,7 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
               {uiModeToggleLabel(uiMode)}
             </Button>
           ) : null}
-          {file.data?.extension === 'docx' ? (
+          {file.data?.extension === 'docx' && host !== 'thread' ? (
             <Button variant="outline" size="sm" onClick={openAlbatross} aria-label="Edit with Albatross">
               Albatross
             </Button>

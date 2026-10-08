@@ -87,6 +87,7 @@ struct MacWorkThreadView: View {
                 environment.threads.endFollowing()
                 hideBanner()
                 MacRequests.shared.threadPaneMode = .none
+                MacRequests.shared.threadDocumentOpen = false
                 restoreSidebar()
             }
     }
@@ -220,69 +221,16 @@ struct MacWorkThreadView: View {
 
     private func content(_ model: WorkThreadModel) -> some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
-                    ForEach(model.items) { item in
-                        itemView(item, model: model)
-                            .id(item.id)
-                    }
-                    chatFooter(model)
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-                // The transcript keeps a reading measure; the column may be wider.
-                .frame(maxWidth: MacThreadLayout.readingMeasure + 40)
-                .frame(maxWidth: .infinity)
-            }
-            .defaultScrollAnchor(.bottom)
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 80
-            } action: { _, isAtBottom in
-                atBottom = isAtBottom
-            }
-            .onChange(of: model.items.count) { _, _ in
-                guard atBottom, let last = model.newestItemID else { return }
-                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
-                    proxy.scrollTo(last, anchor: .bottom)
-                }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if let pill = ThreadJumpPill.text(
-                    atBottom: atBottom,
-                    pendingFormOffscreen: (model.pendingQuestion != nil || model.pendingAllow != nil) && !atBottom
-                ) {
-                    Button(pill) {
-                        guard let last = model.newestItemID else { return }
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
-                            proxy.scrollTo(last, anchor: .bottom)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 12)
-                }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if model.chat.holdCards.isEmpty {
-                    composer(model)
-                } else {
-                    holdLanding(model)
-                }
-            }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if !banner.isEmpty {
-                    NeedsYouBanner(
-                        rows: banner,
-                        onOpen: { row in openFromBanner(row) },
-                        onDismiss: { hideBanner() }
-                    )
-                    .frame(maxWidth: MacThreadLayout.readingMeasure + 40)
-                    .frame(maxWidth: .infinity)
-                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
-                }
-            }
+            stage(model, proxy: proxy)
             .environment(\.workThread, model)
+            // Document mode (D5): the pane gives way, and the View menu
+            // learns that a document is open.
+            .onChange(of: model.document) { _, document in
+                documentDidChange(open: document != nil, model: model)
+            }
+            .onChange(of: MacRequests.shared.closeDocumentToken) { _, _ in
+                model.closeDocument()
+            }
             .toolbar { toolbar(model, proxy: proxy) }
             .inspector(isPresented: paneShown(model)) {
                 MacThreadPane(
@@ -355,19 +303,132 @@ struct MacWorkThreadView: View {
         }
     }
 
+    /// The transcript alone, or document mode: the document in the center
+    /// and the transcript in a column on the right under the "Your part"
+    /// card (docs/albatross-document-handoff.md, D5).
+    @ViewBuilder private func stage(_ model: WorkThreadModel, proxy: ScrollViewProxy) -> some View {
+        if let target = model.document {
+            MacDocumentSplit(
+                target: target,
+                title: MacDocumentMode.title(runs: model.store.runs, target: target),
+                reloadToken: model.documentReloadToken,
+                columnWidth: documentColumnWidth,
+                onClose: { model.closeDocument() }
+            ) {
+                documentColumn(model, proxy: proxy)
+            }
+        } else {
+            transcript(model, proxy: proxy)
+        }
+    }
+
+    /// The thread column of document mode. No card when no handoff waits
+    /// on the document (the user opened an older artifact).
+    private func documentColumn(_ model: WorkThreadModel, proxy: ScrollViewProxy) -> some View {
+        VStack(spacing: 0) {
+            if let yourPart = model.documentYourPart {
+                MacDocumentYourPartCard(
+                    stepLabel: MacDocumentMode.stepLabel(detail: model.detail, run: model.documentHandoff),
+                    detail: yourPart,
+                    busy: model.isMarkingDone,
+                    notice: model.stepNotice,
+                    onDone: { Task { await model.finishDocument() } },
+                    onBack: { model.closeDocument() }
+                )
+                Divider()
+            }
+            transcript(model, proxy: proxy)
+        }
+    }
+
+    /// The transcript with the jump pill, the composer, and the banner.
+    private func transcript(_ model: WorkThreadModel, proxy: ScrollViewProxy) -> some View {
+        transcriptScroll(model, proxy: proxy)
+            .overlay(alignment: .bottomTrailing) {
+                if let pill = ThreadJumpPill.text(
+                    atBottom: atBottom,
+                    pendingFormOffscreen: (model.pendingQuestion != nil || model.pendingAllow != nil) && !atBottom
+                ) {
+                    Button(pill) {
+                        guard let last = model.newestItemID else { return }
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
+                            proxy.scrollTo(last, anchor: .bottom)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 12)
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if model.chat.holdCards.isEmpty {
+                    composer(model)
+                } else {
+                    holdLanding(model)
+                }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !banner.isEmpty {
+                    NeedsYouBanner(
+                        rows: banner,
+                        onOpen: { row in openFromBanner(row) },
+                        onDismiss: { hideBanner() }
+                    )
+                    .frame(maxWidth: MacThreadLayout.readingMeasure + 40)
+                    .frame(maxWidth: .infinity)
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                }
+            }
+    }
+
+    private func transcriptScroll(_ model: WorkThreadModel, proxy: ScrollViewProxy) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                ForEach(model.items) { item in
+                    itemView(item, model: model)
+                        .id(item.id)
+                }
+                chatFooter(model)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            // The transcript keeps a reading measure; the column may be wider.
+            .frame(maxWidth: MacThreadLayout.readingMeasure + 40)
+            .frame(maxWidth: .infinity)
+        }
+        .defaultScrollAnchor(.bottom)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 80
+        } action: { _, isAtBottom in
+            atBottom = isAtBottom
+        }
+        .onChange(of: model.items.count) { _, _ in
+            guard atBottom, let last = model.newestItemID else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                proxy.scrollTo(last, anchor: .bottom)
+            }
+        }
+    }
+
     @ViewBuilder private func itemView(_ item: ThreadItem, model: WorkThreadModel) -> some View {
         switch item {
         case .outcome:
-            OutcomeBlockView(
-                detail: model.detail,
-                routeTitle: route.title,
-                threadState: model.threadState,
-                busy: model.store.busy,
-                onHandle: { step in Task { await model.handle(step: step) } },
-                onOpenPlan: { showsPlan = true },
-                onOpenDetails: { request(.details, model: model) }
-            )
-            .padding(.bottom, 4)
+            // In document mode the "Your part" card names the step; the
+            // plan stays in Details, as on the web.
+            if model.document == nil {
+                OutcomeBlockView(
+                    detail: model.detail,
+                    routeTitle: route.title,
+                    threadState: model.threadState,
+                    runs: model.store.runs,
+                    busy: model.store.busy || model.isMarkingDone,
+                    onHandle: { step in Task { await model.handle(step: step) } },
+                    onOpenPlan: { showsPlan = true },
+                    onOpenDetails: { request(.details, model: model) }
+                )
+                .padding(.bottom, 4)
+            }
         case .earlierDivider:
             HStack(spacing: 10) {
                 Rectangle().fill(environment.theme.hairlineColor).frame(height: 1)
@@ -387,7 +448,7 @@ struct MacWorkThreadView: View {
                 continues: continues,
                 ownsWaitingShortcut: model.ownsWaitingShortcut(view),
                 hasContinuation: model.hasContinuation(view),
-                busy: model.store.busy,
+                busy: model.store.busy || model.isMarkingDone,
                 pageShown: pageShown(view, model: model),
                 questionState: model.questionState(for: view),
                 allowState: model.allowState(for: view),
@@ -422,6 +483,10 @@ struct MacWorkThreadView: View {
             Text(holdError).font(.footnote).foregroundStyle(.red)
         }
         if let notice = model.store.notice {
+            Text(notice).font(.footnote).foregroundStyle(.red)
+        }
+        // A refused "Mark step done". In document mode the card shows it.
+        if let notice = model.stepNotice, model.document == nil {
             Text(notice).font(.footnote).foregroundStyle(.red)
         }
         if let error = model.detailError, model.detail == nil {
@@ -537,14 +602,46 @@ struct MacWorkThreadView: View {
 
     // MARK: - The pane
 
+    /// The room for the pane. The document takes the column while it is
+    /// open: a page is a sheet, and the details a popover.
     private var room: MacThreadLayout.Room {
-        MacThreadLayout.room(windowWidth: windowSize.width, sidebarShown: MacRequests.shared.sidebarShown)
+        guard model?.document == nil else { return .none }
+        return MacThreadLayout.room(windowWidth: windowSize.width, sidebarShown: MacRequests.shared.sidebarShown)
     }
 
     private var paneWidth: CGFloat {
-        MacThreadLayout.paneWidth(
-            for: MacThreadLayout.detailWidth(windowWidth: windowSize.width, sidebarShown: MacRequests.shared.sidebarShown)
-        )
+        MacThreadLayout.paneWidth(for: detailWidth)
+    }
+
+    private var detailWidth: CGFloat {
+        MacThreadLayout.detailWidth(windowWidth: windowSize.width, sidebarShown: MacRequests.shared.sidebarShown)
+    }
+
+    // MARK: - Document mode
+
+    private var documentColumnWidth: CGFloat {
+        MacThreadLayout.documentColumnWidth(for: detailWidth)
+    }
+
+    /// A document opened or closed (docs/albatross-document-handoff.md, D5).
+    /// The pane gives way, and the source list when the window needs it.
+    private func documentDidChange(open: Bool, model: WorkThreadModel) {
+        MacRequests.shared.threadDocumentOpen = open
+        if open {
+            if paneMode != .none { apply(.none, model: model) }
+            let room = MacThreadLayout.documentRoom(windowWidth: windowSize.width, sidebarShown: MacRequests.shared.sidebarShown)
+            if room == .collapseSidebarFirst { collapseSidebar() }
+        } else {
+            restoreSidebar()
+        }
+    }
+
+    /// A document handoff's primary button, or a click on a document
+    /// artifact: the document opens inside the thread, not in Files.
+    private func openDocument(_ target: DocumentTarget, model: WorkThreadModel) {
+        showsPlan = false
+        showsDetailsPopover = false
+        model.openDocument(target)
     }
 
     private func paneShown(_ model: WorkThreadModel) -> Binding<Bool> {
@@ -660,7 +757,8 @@ struct MacWorkThreadView: View {
         }
         if next == .none {
             if paneMode == .page { model.pageRun = nil }
-            restoreSidebar()
+            // The source list stays away while a document has the column.
+            if model.document == nil { restoreSidebar() }
         }
         guard next != paneMode else { return }
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
@@ -855,6 +953,9 @@ struct MacWorkThreadView: View {
         actions.dismiss = { view in Task { await model.dismiss(view) } }
         actions.tryAgain = { view in Task { await model.tryAgain(view) } }
         actions.primary = { view, behaviour in Task { await performNext(behaviour, view: view, model: model) } }
+        // "Mark step done" (D2, D3): the user's word checks the step, and
+        // Albatross continues.
+        actions.markDone = { view in Task { await model.markStepDone(view) } }
         actions.artifact = { artifact in Task { await openArtifact(artifact, model: model) } }
         actions.showPage = { view in showPage(view, model: model) }
         actions.hidePage = { view in if model.pageRun?.id == view.id { model.pageRun = nil } }
@@ -882,17 +983,29 @@ struct MacWorkThreadView: View {
         case .openBrowser:
             showPage(view, model: model)
         case .markStepDone:
-            if let step = model.step(for: view.run) { await model.completeStep(step) }
+            // The user's word checks the step, and Albatross continues (D3).
+            await model.markStepDone(view)
         case .resume:
             await model.resume(view)
         case .showQuestion, .showArtifacts, .allowSecure, .none:
             break
-        case .openDraft, .openDocument, .openApproval, .openURL:
+        case .openDocument(let id, let url):
+            // The document opens inside the thread, not in Files (D5).
+            if let target = DocumentTarget.of(url: url, id: id) {
+                openDocument(target, model: model)
+            } else {
+                _ = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)
+            }
+        case .openDraft, .openApproval, .openURL:
             _ = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)
         }
     }
 
     private func openArtifact(_ artifact: StepRunView.Artifact, model: WorkThreadModel) async {
+        if artifact.kind == .document, let target = DocumentTarget.of(url: artifact.url, id: artifact.referenceID) {
+            openDocument(target, model: model)
+            return
+        }
         _ = await StepRunActions.open(artifact, environment: environment, openURL: openURL)
     }
 

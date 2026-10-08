@@ -7,6 +7,8 @@
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { isStandingOrderPaused } from '../hosted/standing-orders';
 import { truncateText } from '../shared/text';
+import { normalizeStepMode, stepModeRunsAlone } from './step-contract';
+import { completeWorkStep } from './step-execution';
 import {
   automaticStepRunsEnabledFor,
   isAutomaticTrigger,
@@ -30,12 +32,14 @@ export interface StepRunStartDependencies {
   convexQuery: typeof convexQuery;
   convexMutation: typeof convexMutation;
   runsPaused: (userId: string) => Promise<boolean>;
+  completeWorkStep: typeof completeWorkStep;
 }
 
 const defaults: StepRunStartDependencies = {
   convexQuery,
   convexMutation,
   runsPaused: (userId) => isStandingOrderPaused(userId, 'runs'),
+  completeWorkStep: (input) => completeWorkStep(input),
 };
 
 type EnqueueResult = { runId: string | null; created: boolean; reason: string | null };
@@ -222,7 +226,7 @@ export async function startAutomaticRuns(
   return { started, reasons };
 }
 
-export type HandleStepAction = 'started' | 'resumed' | 'steered' | 'working';
+export type HandleStepAction = 'started' | 'resumed' | 'steered' | 'working' | 'checked';
 
 /**
  * The thread's one control for runs (docs/albatross-thread.md, "One voice,
@@ -232,12 +236,21 @@ export type HandleStepAction = 'started' | 'resumed' | 'steered' | 'working';
  * chat. Otherwise a new run starts with the note.
  */
 export async function handleStepFromThread(
-  input: { userId: string; workId: string; stepKey?: string; note?: string },
+  input: { userId: string; workId: string; stepKey?: string; note?: string; done?: boolean },
   overrides: Partial<StepRunStartDependencies> = {},
-): Promise<{ action: HandleStepAction; runId: string }> {
+): Promise<{ action: HandleStepAction; runId: string | null; check?: StepCheckResult }> {
   const deps = { ...defaults, ...overrides };
-  if (!stepRunsEnabled()) throw new StepRunStartError('Step runs are off.', 403);
   const note = input.note?.trim() || '';
+  // The user says the step is done: their word checks it. A run never does the
+  // step again to prove what the user already said.
+  if (input.done) {
+    const check = await completeStepAndContinue(
+      { userId: input.userId, workId: input.workId, stepKey: input.stepKey, note: note || undefined },
+      deps,
+    );
+    return { action: 'checked', runId: check.nextRunId, check };
+  }
+  if (!stepRunsEnabled()) throw new StepRunStartError('Step runs are off.', 403);
   const runs = await deps.convexQuery<any[]>(api.albatrossStepRuns.runsForWorkHistory, {
     userId: input.userId,
     workId: input.workId,
@@ -290,6 +303,63 @@ export async function handleStepFromThread(
   );
   if (!started.runId) throw new StepRunStartError('The run did not start. Try again.', 409);
   return { action: 'started', runId: started.runId };
+}
+
+export interface StepCheckResult {
+  stepKey: string;
+  allStepsComplete: boolean;
+  /** The run that started on the next step, or null when the next step stays with the user. */
+  nextRunId: string | null;
+  nextStepKey: string | null;
+}
+
+/**
+ * The user marks a step done (docs/albatross-document-handoff.md): the step is
+ * checked with the user's word, its handoffs close, and Albatross starts the
+ * next step when that step is one it does alone. A step that stays with the
+ * user, a closed Work, or runs that are off end the chain without an error.
+ */
+export async function completeStepAndContinue(
+  input: {
+    userId: string;
+    userEmail?: string | null;
+    userName?: string | null;
+    workId: string;
+    stepKey?: string;
+    note?: string;
+    timezone?: string;
+  },
+  overrides: Partial<StepRunStartDependencies> = {},
+): Promise<StepCheckResult> {
+  const deps = { ...defaults, ...overrides };
+  const completed = await deps.completeWorkStep({
+    userId: input.userId,
+    userEmail: input.userEmail,
+    userName: input.userName,
+    workId: input.workId,
+    stepKey: input.stepKey,
+    timezone: input.timezone,
+    source: 'user',
+    note: input.note,
+  });
+  const result: StepCheckResult = {
+    stepKey: completed.stepKey,
+    allStepsComplete: completed.allStepsComplete,
+    nextRunId: null,
+    nextStepKey: null,
+  };
+  if (completed.allStepsComplete || completed.closed || !stepRunsEnabled()) return result;
+  const { step } = await loadStep(deps, input.userId, input.workId).catch(() => ({ step: null }));
+  if (!step || step.done) return result;
+  result.nextStepKey = step.key;
+  if (!stepModeRunsAlone(normalizeStepMode(step.stepMode)) || !stepAcceptsTrigger(step, 'user'))
+    return result;
+  const started = await startStepRun(
+    { userId: input.userId, workId: input.workId, stepKey: step.key, trigger: 'user' },
+    deps,
+  ).catch(() => null);
+  result.nextRunId = started?.runId ?? null;
+  return result;
 }
 
 /** Stop the open run of a Work from the thread. Returns the stopped run id, or null. */

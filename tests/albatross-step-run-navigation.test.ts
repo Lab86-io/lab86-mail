@@ -92,19 +92,25 @@ describe('a saved draft opens in the composer', () => {
 describe('a document opens in Files', () => {
   test('by its openPath, or by id, and never from a foreign url', () => {
     const { deps, calls, views } = fakeDeps();
-    expect(openDocumentPath(deps, '/files/doc_1', null)).toBe(true);
+    expect(openDocumentPath(deps, '/?view=files&document=doc_1', null)).toBe(true);
     expect(calls).toEqual([
-      ['push', '/files/doc_1'],
+      ['push', '/?view=files&document=doc_1'],
       ['event', 'lab86-mail:files-navigate'],
     ]);
     expect(views).toEqual(['files']);
+    // The id alone, and the old /files/<id> form, become the link Files reads.
     expect(openDocumentPath(deps, null, 'doc 2')).toBe(true);
-    expect(calls[2]).toEqual(['push', '/files/doc%202']);
-    expect(openDocumentPath(deps, 'https://evil.example/x', null)).toBe(false);
+    expect(calls[2]).toEqual(['push', '/?view=files&document=doc%202']);
+    expect(openDocumentPath(deps, '/files/doc_4', null)).toBe(true);
+    expect(calls.at(-2)).toEqual(['push', '/?view=files&document=doc_4']);
+    // A Word file opens in the Word editor.
+    expect(openDocumentPath(deps, '/?view=files&office=word_1', 'word_1')).toBe(true);
+    expect(calls.at(-2)).toEqual(['push', '/?view=files&office=word_1']);
+    expect(openDocumentPath(deps, 'https://evil.example/x?document=doc_9', null)).toBe(false);
     // A protocol-relative path is another origin: it falls back to the id.
     expect(openDocumentPath(deps, '//evil.example/x', null)).toBe(false);
     expect(openDocumentPath(deps, '/\\evil.example/x', 'doc_3')).toBe(true);
-    expect(calls.at(-2)).toEqual(['push', '/files/doc_3']);
+    expect(calls.at(-2)).toEqual(['push', '/?view=files&document=doc_3']);
   });
 });
 
@@ -137,6 +143,9 @@ describe('performNextBehaviour', () => {
       resume: () => done.push('resume'),
     };
     expect(await performNextBehaviour({ kind: 'open_approval', id: 'ap' }, deps, surface)).toBe(true);
+    expect(
+      await performNextBehaviour({ kind: 'open_document', url: null, id: 'doc_hours' }, deps, surface),
+    ).toBe(true);
     expect(await performNextBehaviour({ kind: 'open_url', url: 'https://x.y' }, deps, surface)).toBe(true);
     expect(await performNextBehaviour({ kind: 'open_card', id: 'c1' }, deps, surface)).toBe(true);
     expect(await performNextBehaviour({ kind: 'show_browser' }, deps, surface)).toBe(true);
@@ -144,8 +153,10 @@ describe('performNextBehaviour', () => {
     expect(await performNextBehaviour({ kind: 'mark_done' }, deps, surface)).toBe(true);
     expect(await performNextBehaviour({ kind: 'show_artifacts' }, deps, surface)).toBe(true);
     expect(await performNextBehaviour({ kind: 'resume' }, deps, surface)).toBe(true);
-    expect(views).toEqual(['notifications', 'tasks']);
+    expect(views).toEqual(['notifications', 'files', 'tasks']);
     expect(calls).toEqual([
+      ['push', '/?view=files&document=doc_hours'],
+      ['event', 'lab86-mail:files-navigate'],
       ['open', 'https://x.y'],
       ['card', 'c1'],
     ]);

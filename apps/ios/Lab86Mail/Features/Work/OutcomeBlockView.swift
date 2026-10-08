@@ -9,6 +9,8 @@ struct OutcomeBlockView: View {
     let detail: WorkDetail?
     let routeTitle: String?
     let threadState: ThreadState
+    /// The runs of the thread: a step whose newest run waits says so.
+    var runs: [ThreadRunView] = []
     var busy = false
     let onHandle: (WorkDetail.ExecutionStep) -> Void
     let onOpenPlan: () -> Void
@@ -121,7 +123,7 @@ struct OutcomeBlockView: View {
                     .font(.subheadline)
                     .strikethrough(step.done)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(Self.stateWord(step: step, isCurrent: isCurrent, threadState: threadState))
+                Text(Self.stateWord(step: step, isCurrent: isCurrent, threadState: threadState, runs: runs))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -139,8 +141,16 @@ struct OutcomeBlockView: View {
     }
 
     /// The one state word of a step row.
-    static func stateWord(step: WorkDetail.ExecutionStep, isCurrent: Bool, threadState: ThreadState) -> String {
+    static func stateWord(
+        step: WorkDetail.ExecutionStep,
+        isCurrent: Bool,
+        threadState: ThreadState,
+        runs: [ThreadRunView] = []
+    ) -> String {
         if step.done { return step.verificationLabel ?? "Done" }
+        // A step whose newest run waits for the user says what waits
+        // (docs/albatross-document-handoff.md).
+        if let waiting = PlanStepWaiting.label(step: step, runs: runs) { return waiting }
         guard isCurrent else { return "Next" }
         switch threadState {
         case .running: return "Albatross works"

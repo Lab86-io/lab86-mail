@@ -3,7 +3,7 @@
 // dependencies come in as arguments so a test runs it without a browser.
 
 import type { Draft } from '../shared/types';
-import type { NextBehaviour } from './step-run-client';
+import { documentTargetOf, documentTargetPath, type NextBehaviour } from './step-run-client';
 
 /** The slice of the client store this module touches. */
 export interface StepRunStoreLike {
@@ -79,15 +79,11 @@ export function openDocumentPath(
   url: string | null,
   id: string | null,
 ) {
-  // Only a same-origin path: "//host/x" is another origin, and pushState throws on it.
-  const path =
-    url?.startsWith('/') && !url.startsWith('//') && !url.startsWith('/\\')
-      ? url
-      : id
-        ? `/files/${encodeURIComponent(id)}`
-        : null;
-  if (!path) return false;
-  deps.pushPath(path);
+  // FilesSurface opens an editor from `?document=` or `?office=` only, so every
+  // target becomes that form. Another origin never reaches pushState.
+  const target = documentTargetOf(url && !/^[a-z]+:|^\/\/|^\/\\/i.test(url.trim()) ? url : null, id);
+  if (!target) return false;
+  deps.pushPath(documentTargetPath(target));
   deps.getState().setPrimaryView('files');
   deps.dispatch('lab86-mail:files-navigate');
   return true;

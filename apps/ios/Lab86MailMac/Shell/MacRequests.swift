@@ -36,6 +36,14 @@ final class MacRequests {
     // thread writes it and clears it when it leaves the screen.
     var threadPaneMode: MacThreadPaneMode = .none
 
+    // "Close Document" from the View menu (docs/albatross-document-handoff.md,
+    // D5). The open thread closes its document mode.
+    private(set) var closeDocumentToken = 0
+
+    // True while the open thread shows a document, for the View menu item.
+    // The thread writes it and clears it when it leaves the screen.
+    var threadDocumentOpen = false
+
     // ⌥⌘↑, ⌥⌘↓, and ⌥⌘↩ from the Go menu (docs/albatross-threads.md, T3).
     // The shell opens the row named by `threadMoveTarget`.
     private(set) var threadMoveToken = 0
@@ -87,6 +95,10 @@ final class MacRequests {
     func requestThreadPane(_ target: MacThreadPaneMode) {
         threadPaneTarget = target
         threadPaneToken += 1
+    }
+
+    func requestCloseDocument() {
+        closeDocumentToken += 1
     }
 
     func requestThreadMove(_ move: MacThreadListLayout.Move) {
