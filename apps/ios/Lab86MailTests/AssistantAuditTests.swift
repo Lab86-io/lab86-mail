@@ -85,8 +85,8 @@ struct AssistantAuditTests {
         #else
         #expect(body["clientPlatform"] == .string("ios"))
         #endif
-        // The server offers ask_form only to a client that renders it.
-        #expect(body["clientCapabilities"] == .array([.string("ask_form")]))
+        // The server offers ask_form and ask_secure_detail only to a client that renders them.
+        #expect(body["clientCapabilities"] == .array([.string("ask_form"), .string("ask_secure_detail")]))
     }
 
     @Test
