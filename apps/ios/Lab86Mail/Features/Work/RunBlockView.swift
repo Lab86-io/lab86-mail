@@ -17,6 +17,20 @@ struct RunBlockActions {
     var showPage: (ThreadRunView) -> Void = { _ in }
     var hidePage: (ThreadRunView) -> Void = { _ in }
     var answer: (ThreadQuestion, FormAnswer, [String]) -> Void = { _, _, _ in }
+    /// An answer to an `allow_secure` handoff (V6).
+    var allow: (ThreadRunView, SecureAllowRequest, SecureAllowScope) -> Void = { _, _, _ in }
+    /// "Open on the web", when this device cannot do the identity check.
+    var openWeb: (ThreadRunView) -> Void = { _ in }
+    /// "Save a sign-in" on a `sign_in` handoff (V13).
+    var saveSignIn: (ThreadRunView, SecureSaveSignInOffer) -> Void = { _, _ in }
+}
+
+/// A V13 save offer the user opened: the run, for the receipt, and its site.
+struct SignInSaveOffer: Identifiable, Hashable {
+    let run: ThreadRunView
+    let site: String
+
+    var id: String { run.id }
 }
 
 struct RunBlockView: View {
@@ -33,6 +47,14 @@ struct RunBlockView: View {
     var busy = false
     var pageShown = false
     var questionState = WorkThreadModel.QuestionState()
+    /// How this run's allow goes on this device (an `allow_secure` handoff).
+    var allowState = SecureAllowState.idle
+    /// The user saved a sign-in from this handoff (V13): the done label
+    /// reads "Continue", because the user did not sign in.
+    var signInSaved = false
+    /// The session's first factor is under 10 minutes old: the allow card
+    /// shows no warning line.
+    var identityWindowOpen = false
     var actions = RunBlockActions()
 
     @State private var showsWholeLog = false
@@ -199,8 +221,22 @@ struct RunBlockView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if run.next?.kind == .signIn, let offer = run.next?.saveSignIn {
+                saveSignInRow(offer)
+            }
             artifactRows
-            if outcome == .needsAnswer || behaviour == .showQuestion(id: run.next?.target?.id) {
+            if case .allowSecure(let allow) = behaviour {
+                SecureAllowCard(
+                    request: allow,
+                    answer: run.next?.allowAnswer,
+                    state: allowState,
+                    busy: busy,
+                    windowOpen: identityWindowOpen,
+                    ownsWaitingShortcut: ownsWaitingShortcut,
+                    onAllow: { scope in actions.allow(view, allow, scope) },
+                    onOpenWeb: { actions.openWeb(view) }
+                )
+            } else if outcome == .needsAnswer || behaviour == .showQuestion(id: run.next?.target?.id) {
                 questionBody
             }
             pageRow
@@ -227,11 +263,34 @@ struct RunBlockView: View {
                 .frame(minHeight: 44)
         }
         if StepRunNextBehaviour.showsContinue(run.next), !hasContinuation {
-            Button(busy ? RunBlockCopy.continueBusy : RunBlockCopy.doneLabel(run.next)) { actions.resume(view) }
+            Button(busy ? RunBlockCopy.continueBusy : doneLabel) { actions.resume(view) }
                 .buttonStyle(.bordered)
                 .disabled(busy)
                 .waitingActionShortcut(ownsWaitingShortcut)
                 .frame(minHeight: 44)
+        }
+    }
+
+    /// "I signed in", or "Continue" once the user saved a sign-in instead (V13).
+    private var doneLabel: String {
+        signInSaved ? RunBlockCopy.continueButton : RunBlockCopy.doneLabel(run.next)
+    }
+
+    /// V13: "Save a sign-in for chase.com, and the next run signs in by
+    /// itself." Then "Saved. Press Continue, and Albatross signs in."
+    private func saveSignInRow(_ offer: SecureSaveSignInOffer) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(signInSaved ? SecureAllowCopy.signInSaved : SecureAllowCopy.saveSignInOffer(site: offer.site))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !signInSaved {
+                Spacer(minLength: 8)
+                Button(SecureAllowCopy.saveSignIn) { actions.saveSignIn(view, offer) }
+                    .buttonStyle(.borderless)
+                    .font(.footnote.weight(.medium))
+                    .disabled(busy)
+            }
         }
     }
 
@@ -280,7 +339,7 @@ struct RunBlockView: View {
             Button(next.label) { actions.primary(view, behaviour) }
         }
         if continues {
-            Button(RunBlockCopy.doneLabel(run.next)) { actions.resume(view) }
+            Button(doneLabel) { actions.resume(view) }
         }
         if let summary = run.summary {
             Button("Copy the summary") { PlatformPasteboard.copy(summary) }

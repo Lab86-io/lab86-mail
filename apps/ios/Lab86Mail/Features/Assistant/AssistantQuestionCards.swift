@@ -266,6 +266,8 @@ struct AssistantQuestionCard: View {
                 } else {
                     unavailable
                 }
+            case .secureDetail:
+                SecureRequestCard(question: question, onAnswer: onAnswer)
             }
         }
     }

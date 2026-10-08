@@ -183,6 +183,49 @@ final class NativeTourMacTests: XCTestCase {
         try await tour(screen)
     }
 
+    func testMacTour19SettingsPasswordsAndIDs() async throws {
+        // Settings, Account, Passwords and IDs (V1 to V3) as a grouped Mac
+        // form: three groups, the masked hints, "Used Oct 5", the add rows,
+        // and the date of birth slot. No value anywhere.
+        var screen = Screen(id: "mac-settings-passwords-ids", title: "Settings, Passwords and IDs", section: "Settings", tab: .today)
+        screen.windowSize = NSSize(width: 640, height: 760)
+        screen.rootView = {
+            AnyView(
+                NavigationStack { SecureDetailsSettingsView() }
+                    .formStyle(.grouped)
+            )
+        }
+        try await tour(screen)
+    }
+
+    func testMacTour20SettingsPasswordsAndIDsDetail() async throws {
+        // One ID (V4 and V8): the facts, each secret field with "Replace",
+        // the sites with "Remove" at the trailing edge, the recent uses, and
+        // the "Delete…" row with its bordered button.
+        var screen = Screen(id: "mac-settings-passwords-ids-detail", title: "Settings, a driver's license", section: "Settings", tab: .today)
+        screen.windowSize = NSSize(width: 640, height: 900)
+        screen.rootView = {
+            AnyView(
+                NavigationStack { SecureItemDetailView(itemID: "sec-license") }
+                    .formStyle(.grouped)
+            )
+        }
+        try await tour(screen)
+    }
+
+    func testMacTour21WorkThreadAllow() async throws {
+        // The allow card (V6) in a wide window: a run on a new site asks to
+        // use the driver's license, with "Allow once" (Command-Return),
+        // "Always on ny.gov", and "Do not allow". Without Convex the page
+        // pane shows its closed state.
+        var screen = Screen(id: "mac-work-thread-allow", title: "The Albatross thread with an allow", section: "Tasks and Work", tab: .work)
+        screen.scenarioID = "work-thread-allow"
+        screen.afterAppear = { environment in
+            environment.navigation.openWork(id: "w-license", title: "Renew the driver's license", intent: .openPage)
+        }
+        try await tour(screen)
+    }
+
     // MARK: - Screens
 
     private struct Screen {
@@ -216,8 +259,9 @@ final class NativeTourMacTests: XCTestCase {
     private static let screenOrder = [
         "mac-today", "mac-mail", "mac-compose", "mac-calendar-week", "mac-calendar-month", "mac-tasks", "mac-work",
         "mac-work-detail", "mac-work-detail-run", "mac-work-detail-handoff", "mac-work-thread-run",
-        "mac-work-thread-form", "mac-work-thread-handoff", "mac-work-thread-narrow", "mac-files", "mac-chat",
-        "mac-settings", "mac-settings-personal-details",
+        "mac-work-thread-form", "mac-work-thread-handoff", "mac-work-thread-narrow", "mac-work-thread-allow", "mac-files",
+        "mac-chat", "mac-settings", "mac-settings-personal-details", "mac-settings-passwords-ids",
+        "mac-settings-passwords-ids-detail",
     ]
 
     // MARK: - The tour

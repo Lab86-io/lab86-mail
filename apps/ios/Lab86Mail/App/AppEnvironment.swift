@@ -51,6 +51,9 @@ final class AppEnvironment {
     // The user's personal details: the form cards prefill from them, and
     // Settings edits them. Read-through, never written to disk.
     let personalDetails = PersonalDetailsStore()
+    // Passwords and IDs: the items without their values. Settings lists them,
+    // the sheets add and replace, the allow card and the ask card read them.
+    let secureDetails = SecureDetailsStore()
     // The current Albatross conversation. Held here so switching destinations
     // does not discard an in-flight exchange; the sidebar plus starts a fresh
     // one. Distinct from intent capture, which stays a form.

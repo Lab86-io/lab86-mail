@@ -23,6 +23,7 @@ struct MacWorkThreadView: View {
     @State private var showsDetailsPopover = false
     @State private var showsHorizonSheet = false
     @State private var showsArchiveConfirmation = false
+    @State private var signInOffer: SignInSaveOffer?
     @State private var atBottom = true
     @State private var announced: String?
     @FocusState private var composerFocused: Bool
@@ -162,7 +163,10 @@ struct MacWorkThreadView: View {
                 }
             }
             .overlay(alignment: .bottomTrailing) {
-                if let pill = ThreadJumpPill.text(atBottom: atBottom, pendingFormOffscreen: model.pendingQuestion != nil && !atBottom) {
+                if let pill = ThreadJumpPill.text(
+                    atBottom: atBottom,
+                    pendingFormOffscreen: (model.pendingQuestion != nil || model.pendingAllow != nil) && !atBottom
+                ) {
                     Button(pill) {
                         guard let last = model.newestItemID else { return }
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
@@ -242,6 +246,18 @@ struct MacWorkThreadView: View {
             } message: {
                 Text("An archived Albatross leaves its Area. It stays in history.")
             }
+            // "Save a sign-in" on a sign-in handoff (V13): the add sheet with
+            // the site filled in. A save marks the run, so its block reads
+            // "Saved. Press Continue, and Albatross signs in."
+            .sheet(item: $signInOffer) { offer in
+                SecureItemEditorView(target: .newSignIn(site: offer.site, label: nil), siteSource: .run) { item in
+                    if item != nil { model.markSignInSaved(offer.run) }
+                }
+                .macFormSheet()
+            }
+            // The identity check of an allow (V6) presents from the thread,
+            // the view on top when "Allow once" or "Always on {site}" is pressed.
+            .identityCheckSheet(model.identity)
         }
     }
 
@@ -280,6 +296,9 @@ struct MacWorkThreadView: View {
                 busy: model.store.busy,
                 pageShown: pageShown(view, model: model),
                 questionState: model.questionState(for: view),
+                allowState: model.allowState(for: view),
+                signInSaved: model.signInSaved(for: view),
+                identityWindowOpen: model.identityWindowOpen,
                 actions: model.actions
             )
         }
@@ -651,6 +670,11 @@ struct MacWorkThreadView: View {
         actions.showPage = { view in showPage(view, model: model) }
         actions.hidePage = { view in if model.pageRun?.id == view.id { model.pageRun = nil } }
         actions.answer = { question, answer, _ in Task { await model.answer(question, form: answer) } }
+        // An allow (V6): the model runs the identity check and the request;
+        // the sheet is mounted on this screen.
+        actions.allow = { view, request, scope in Task { await model.allow(view, request: request, scope: scope) } }
+        actions.openWeb = { _ in if let url = model.webURL { openURL(url) } }
+        actions.saveSignIn = { view, offer in signInOffer = SignInSaveOffer(run: view, site: offer.site) }
         return actions
     }
 
@@ -665,7 +689,7 @@ struct MacWorkThreadView: View {
             if let step = model.step(for: view.run) { await model.completeStep(step) }
         case .resume:
             await model.resume(view)
-        case .showQuestion, .showArtifacts, .none:
+        case .showQuestion, .showArtifacts, .allowSecure, .none:
             break
         case .openDraft, .openDocument, .openApproval, .openURL:
             _ = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)
@@ -695,7 +719,9 @@ struct MacWorkThreadView: View {
         switch next {
         case .running: line = "Albatross started on \(model.currentStep?.title ?? "the step")."
         case .yourTurn: line = "Your turn: \(model.store.newestRun?.run.next?.detail ?? model.currentStep?.title ?? "the step")."
-        case .needsAnswer: line = "Albatross asks: \(model.pendingQuestion?.resolvedForm.title ?? "one question")."
+        case .needsAnswer:
+            let allowTitle = model.pendingAllow?.run.next?.allow.map(SecureAllowCopy.title)
+            line = "Albatross asks: \(model.pendingQuestion?.resolvedForm.title ?? allowTitle ?? "one question")."
         case .readyForYou: line = "Ready for you: \(model.store.newestRun?.run.summary ?? model.currentStep?.title ?? "the step")."
         case .done: line = "Done."
         case .planning, .ready, .putDown: line = nil

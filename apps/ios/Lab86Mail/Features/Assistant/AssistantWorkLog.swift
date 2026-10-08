@@ -143,6 +143,9 @@ struct AssistantQuestionPart: Identifiable, Equatable, Sendable {
         /// A form with typed fields (docs/albatross-thread.md). The answer is
         /// a `FormAnswer`.
         case form = "ask_form"
+        /// A request for a Passwords and IDs item (docs/albatross-secure-store.md,
+        /// V12). The answer is `{ saved, itemId }` or `{ skipped }`; never a value.
+        case secureDetail = "ask_secure_detail"
     }
 
     let id: String

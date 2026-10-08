@@ -16,8 +16,33 @@ struct AssistantComposer: View {
     let onSubmit: () -> Void
     let onAttach: () -> Void
 
+    // The secret notice (docs/albatross-secure-store.md, V9): the values in
+    // the draft that look like a Social Security number, a card number, or
+    // an API key. Return and the send control send without them; "Save in
+    // Passwords and IDs" opens the add sheet with the first one.
+    @State private var secretHits: [SecretShapeMatch] = []
+    @State private var secretEditing: SecureItemEditorView.Target?
+    @State private var draftBeforeSave: String?
+    @State private var savedLine: String?
+    @State private var savedLineTask: Task<Void, Never>?
+
     var body: some View {
         VStack(spacing: 4) {
+            if let savedLine {
+                Text(savedLine)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .accessibilityAddTraits(.updatesFrequently)
+            } else if let hit = secretHits.first {
+                ComposerSecretNotice(
+                    kind: hit.kind,
+                    onSave: hit.kind.saveKind == nil ? nil : { saveSecret(hit) },
+                    onSendWithout: sendWithoutSecrets
+                )
+            }
             if model.scope.kind != .global, !hidesContextChip {
                 HStack {
                     Text("\(model.scope.kind == .work ? "Work" : "Area"): \(model.scope.label ?? "Current context")")
@@ -73,8 +98,11 @@ struct AssistantComposer: View {
                 .padding(.leading, 16)
                 .padding(.trailing, 4)
                 .padding(.vertical, 10)
-                .onSubmit(onSubmit)
-                .onChange(of: draft) { _, next in model.updateDraft(next) }
+                .onSubmit(submit)
+                .onChange(of: draft) { _, next in
+                    model.updateDraft(next)
+                    rescan(next)
+                }
                 .onKeyPress(.tab) {
                     // Tab flips the route even before any text, so a person
                     // can choose Hold first and then write.
@@ -101,7 +129,7 @@ struct AssistantComposer: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Stop responding")
                 } else {
-                    Button(action: onSubmit) {
+                    Button(action: submit) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(.white)
@@ -124,11 +152,76 @@ struct AssistantComposer: View {
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 8)
+        // The notice runs only when Passwords and IDs is on for the user.
+        .task { await environment.secureDetails.load(environment.backend, ownerID: environment.sessionStore.ownerID) }
+        .sheet(item: $secretEditing) { target in
+            SecureItemEditorView(target: target) { item in finishSecretSave(item) }
+            #if os(macOS)
+            .macFormSheet()
+            #endif
+        }
     }
 
     var canSend: Bool {
         (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingFiles.isEmpty)
             && !model.isUploading
+    }
+
+    // MARK: - The secret notice
+
+    /// Return and the send control: the draft as it is, or without its
+    /// secret-shaped values while the notice shows (decision 14).
+    private func submit() {
+        if secretHits.isEmpty {
+            onSubmit()
+        } else {
+            sendWithoutSecrets()
+        }
+    }
+
+    private func rescan(_ text: String) {
+        secretHits = environment.secureDetails.isEnabled ? SecureDraftScan.detect(text) : []
+    }
+
+    /// "Send without it": each value becomes its marker, and the draft goes.
+    private func sendWithoutSecrets() {
+        let redacted = SecureDraftScan.redact(draft)
+        draft = redacted.text
+        secretHits = []
+        onSubmit()
+    }
+
+    /// "Save in Passwords and IDs": the value leaves the draft and goes to
+    /// the add sheet. A cancel puts the draft back as it was.
+    private func saveSecret(_ hit: SecretShapeMatch) {
+        guard let kind = hit.kind.saveKind, hit.range.upperBound <= draft.endIndex else { return }
+        let value = String(draft[hit.range])
+        draftBeforeSave = draft
+        draft = SecureDraftScan.removing([hit], from: draft)
+        secretHits = []
+        switch kind {
+        case .idNumber:
+            secretEditing = .newID(type: .ssn, number: value)
+        case .apiKey:
+            secretEditing = .newKey(site: nil, label: nil, key: value)
+        case .signIn, .dateOfBirth:
+            secretEditing = nil
+        }
+    }
+
+    private func finishSecretSave(_ item: SecureItemView?) {
+        if item == nil {
+            if let before = draftBeforeSave { draft = before }
+        } else {
+            savedLine = ComposerNoticeCopy.savedLine
+            savedLineTask?.cancel()
+            savedLineTask = Task {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                savedLine = nil
+            }
+        }
+        draftBeforeSave = nil
     }
 
     private var routeTint: Color {

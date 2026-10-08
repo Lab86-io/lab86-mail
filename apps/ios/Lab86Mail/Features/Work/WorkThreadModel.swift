@@ -55,11 +55,21 @@ final class WorkThreadModel {
     private var autoOpened: Set<String> = []
     /// The owner's handlers for the run blocks, set by the screen.
     var actions = RunBlockActions()
+    /// The identity check of this thread (an allow). The screen mounts its sheet.
+    let identity = IdentityCheckPresenter()
+    private let secureDetails: SecureDetailsStore
+    private let webBaseURL: URL?
+    /// How each run's allow goes on this device, by run id.
+    private(set) var allowStates: [String: SecureAllowState] = [:]
+    /// The runs whose sign-in handoff the user answered with a saved sign-in (V13).
+    private(set) var savedSignInRuns: Set<String> = []
 
     init(workID: String, title: String?, environment: AppEnvironment) {
         self.workID = workID
         transport = environment.backend
         productStore = environment.store
+        secureDetails = environment.secureDetails
+        webBaseURL = environment.configuration.apiBaseURL
         store = WorkThreadStore(workID: workID)
         let sessionStore = environment.sessionStore
         chat = AssistantChatModel(
@@ -100,6 +110,36 @@ final class WorkThreadModel {
     func questionState(for view: ThreadRunView) -> QuestionState {
         guard let id = view.question?.id else { return QuestionState() }
         return questionStates[id] ?? QuestionState()
+    }
+
+    func allowState(for view: ThreadRunView) -> SecureAllowState {
+        allowStates[view.id] ?? .idle
+    }
+
+    func signInSaved(for view: ThreadRunView) -> Bool {
+        savedSignInRuns.contains(view.id)
+    }
+
+    /// The newest allow that still waits for an answer, on this device and
+    /// on the server.
+    var pendingAllow: ThreadRunView? {
+        store.runs.last { view in
+            guard view.run.isHandoff, let next = view.run.next, next.kind == .allowSecure,
+                  next.allow != nil, next.allowAnswer == nil else { return false }
+            if case .answered = allowStates[view.id] ?? .idle { return false }
+            return true
+        }
+    }
+
+    /// True when the session's first factor is under 10 minutes old.
+    var identityWindowOpen: Bool { ClerkIdentity.windowIsOpen() }
+
+    /// The Work page on the web (`?work=<id>`), for "Open on the web".
+    var webURL: URL? {
+        guard let webBaseURL, var components = URLComponents(url: webBaseURL, resolvingAgainstBaseURL: false) else { return nil }
+        components.path = "/"
+        components.queryItems = [URLQueryItem(name: "work", value: workID)]
+        return components.url
     }
 
     /// The merged timeline: the outcome block, then the messages and the
@@ -273,6 +313,59 @@ final class WorkThreadModel {
         case .failed(let message):
             questionStates[question.id] = QuestionState(isSending: false, fieldErrors: [:], error: message)
         }
+    }
+
+    /// The answer to an allow (V6). "Allow once" and "Always on {site}" go
+    /// through the identity check: the window first, then the request, then
+    /// one retry after a 403. "Do not allow" goes at once.
+    func allow(_ view: ThreadRunView, request: SecureAllowRequest, scope: SecureAllowScope) async {
+        let runID = view.id
+        allowStates[runID] = .sending(scope)
+        let outcome: IdentityGuard.Outcome
+        if scope == .deny {
+            do {
+                try await secureDetails.allow(runID: runID, itemID: request.itemID, site: request.site, scope: .deny, transport: transport)
+                outcome = .done
+            } catch let error as SecureSaveError {
+                outcome = .error(error)
+            } catch {
+                outcome = .error(.other(error.localizedDescription))
+            }
+        } else {
+            let reason = scope == .once
+                ? IdentityCheckCopy.allowOnceReason(itemLabel: request.itemLabel, host: request.host)
+                : IdentityCheckCopy.allowAlwaysReason(itemLabel: request.itemLabel, site: request.site, host: request.host)
+            outcome = await IdentityGuard.run(
+                reason: reason,
+                presenter: identity,
+                windowOpen: { ClerkIdentity.windowIsOpen() }
+            ) {
+                try await secureDetails.allow(runID: runID, itemID: request.itemID, site: request.site, scope: scope, transport: transport)
+            }
+        }
+        switch outcome {
+        case .done:
+            allowStates[runID] = .answered(scope)
+            await refresh()
+        case .cancelled:
+            allowStates[runID] = .cancelled
+        case .checkFailed(let message):
+            allowStates[runID] = .checkFailed(message)
+        case .error(let error):
+            if case .closed = error {
+                // Another device answered first: the next read shows its answer.
+                allowStates[runID] = .idle
+                await refresh()
+            } else {
+                allowStates[runID] = .error(error.line)
+            }
+        }
+    }
+
+    /// The user saved a sign-in from this handoff (V13): the block reads
+    /// "Saved. Press Continue, and Albatross signs in."
+    func markSignInSaved(_ view: ThreadRunView) {
+        savedSignInRuns.insert(view.id)
     }
 
     /// The usual step check ("Mark this step done" on an offline handoff).

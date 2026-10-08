@@ -22,12 +22,19 @@ enum StepRunNextBehaviour: Equatable, Sendable {
     case showArtifacts
     /// `continue`: send resume.
     case resume
+    /// `allow_secure`: the allow card with its three answers (V6).
+    case allowSecure(SecureAllowRequest)
     case none
 
     static func from(_ next: StepRunView.Next?) -> StepRunNextBehaviour {
         guard let next else { return .none }
         let target = next.target
         switch next.kind {
+        case .allowSecure:
+            // Without `allow` there is nothing to ask: no "Open" from the
+            // target url, which points at the site.
+            guard let allow = next.allow else { return .none }
+            return .allowSecure(allow)
         case .reviewDraft:
             guard let id = target?.id else { return .none }
             return .openDraft(id: id, accountID: target?.accountID)
@@ -54,10 +61,11 @@ enum StepRunNextBehaviour: Equatable, Sendable {
     }
 
     /// The block draws a primary button for these. A question shows its
-    /// form instead, and the artifacts already list themselves.
+    /// form instead, an allow draws its own card, and the artifacts already
+    /// list themselves.
     var showsPrimaryButton: Bool {
         switch self {
-        case .showQuestion, .showArtifacts, .none: false
+        case .showQuestion, .showArtifacts, .allowSecure, .none: false
         default: true
         }
     }
@@ -242,7 +250,7 @@ enum StepRunActions {
             return true
         case .openURL(let raw):
             return openWebURL(raw, openURL: openURL)
-        case .openBrowser, .showQuestion, .markStepDone, .showArtifacts, .resume, .none:
+        case .openBrowser, .showQuestion, .markStepDone, .showArtifacts, .resume, .allowSecure, .none:
             return false
         }
     }

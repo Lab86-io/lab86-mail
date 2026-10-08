@@ -1097,6 +1097,64 @@
       "questions": [],
       "evidence": []
     },
+    "w-license": {
+      "work": {
+        "_id": "w-license",
+        "title": "Renew the driver's license",
+        "rawText": "Renew my driver's license before it expires in March",
+        "status": "ready",
+        "workState": "active",
+        "agentState": "idle",
+        "updatedAt": "@ms:now-5m"
+      },
+      "execution": {
+        "currentStep": {
+          "key": "step-renew",
+          "kind": "task",
+          "title": "Renew the license online",
+          "detail": "Fill in the renewal form on dmv.ny.gov and pay the $64.50 fee.",
+          "stepMode": "agent_does",
+          "doneWhen": "The confirmation page shows the new expiry date",
+          "done": false,
+          "runnable": false
+        },
+        "guideSteps": [
+          {
+            "key": "step-renew",
+            "kind": "task",
+            "title": "Renew the license online",
+            "detail": "Fill in the renewal form on dmv.ny.gov and pay the $64.50 fee.",
+            "stepMode": "agent_does",
+            "doneWhen": "The confirmation page shows the new expiry date",
+            "done": false,
+            "runnable": false
+          },
+          {
+            "key": "step-card",
+            "kind": "task",
+            "title": "Put the new card in your wallet when it arrives",
+            "detail": "It comes by mail within two weeks.",
+            "stepMode": "you_do_offline",
+            "done": false,
+            "runnable": false
+          }
+        ],
+        "remainingSteps": 2,
+        "totalSteps": 2,
+        "activeRun": null,
+        "runner": {
+          "enabled": true
+        }
+      },
+      "plan": {
+        "_id": "plan-w-license",
+        "status": "ready",
+        "outcome": "Renew the driver's license before March",
+        "summary": "The license expires in March. The online renewal at dmv.ny.gov takes the license number, the expiry date, and the fee, then mails the new card."
+      },
+      "questions": [],
+      "evidence": []
+    },
     "w-passport": {
       "work": {
         "_id": "w-passport",
@@ -1477,6 +1535,123 @@
     }
   },
   "paths": {
+    "/api/secure-details": {
+      "ok": true,
+      "enabled": true,
+      "items": [
+        {
+          "id": "sec-chase",
+          "kind": "sign_in",
+          "label": "Chase",
+          "sites": ["chase.com"],
+          "hints": { "username": "s•••@example.com", "password": "••••" },
+          "facts": {},
+          "createdAt": "@ms:now-9d",
+          "updatedAt": "@ms:now-9d",
+          "lastUsedAt": "@ms:now-2d"
+        },
+        {
+          "id": "sec-water",
+          "kind": "sign_in",
+          "label": "Springfield Water",
+          "sites": ["springfieldwater.gov"],
+          "hints": { "username": "s•••@example.com", "password": "••••" },
+          "facts": {},
+          "createdAt": "@ms:now-1d",
+          "updatedAt": "@ms:now-1d",
+          "lastUsedAt": null
+        },
+        {
+          "id": "sec-dob",
+          "kind": "date_of_birth",
+          "label": "Date of birth",
+          "sites": ["aliveat25.example"],
+          "hints": { "date": "saved" },
+          "facts": {},
+          "createdAt": "@ms:now-6d",
+          "updatedAt": "@ms:now-6d",
+          "lastUsedAt": "@ms:now-6d"
+        },
+        {
+          "id": "sec-license",
+          "kind": "id_number",
+          "label": "Driver's license",
+          "sites": ["ny.gov", "geico.example"],
+          "hints": { "number": "ends 4821", "expires": "Mar 2028", "name_on_id": "S… Rivera" },
+          "facts": { "type": "drivers_license", "region": "NY", "expires": "Mar 2028" },
+          "createdAt": "@ms:now-5d",
+          "updatedAt": "@ms:now-5d",
+          "lastUsedAt": "@ms:now-2d"
+        },
+        {
+          "id": "sec-passport",
+          "kind": "id_number",
+          "label": "Passport",
+          "sites": [],
+          "hints": { "number": "ends 7HK2", "expires": "Aug 2031" },
+          "facts": { "type": "passport", "country": "US", "expires": "Aug 2031" },
+          "createdAt": "@ms:now-5d",
+          "updatedAt": "@ms:now-5d",
+          "lastUsedAt": null
+        },
+        {
+          "id": "sec-openai",
+          "kind": "api_key",
+          "label": "OpenAI",
+          "sites": ["api.openai.com"],
+          "hints": { "key": "sk-…f3a2" },
+          "facts": {},
+          "createdAt": "@ms:now-3d",
+          "updatedAt": "@ms:now-3d",
+          "lastUsedAt": "@ms:now-1d"
+        }
+      ]
+    },
+    "/api/secure-details/sec-license/uses": {
+      "ok": true,
+      "uses": [
+        {
+          "id": "use-1",
+          "itemId": "sec-license",
+          "field": "number",
+          "site": "dmv.ny.gov",
+          "workId": "w-license",
+          "workTitle": "Renew the driver's license",
+          "outcome": "typed",
+          "at": "@ms:now-2d"
+        },
+        {
+          "id": "use-2",
+          "itemId": "sec-license",
+          "field": "expires",
+          "site": "dmv.ny.gov",
+          "workId": "w-license",
+          "workTitle": "Renew the driver's license",
+          "outcome": "typed",
+          "at": "@ms:now-2d"
+        },
+        {
+          "id": "use-3",
+          "itemId": "sec-license",
+          "field": null,
+          "site": "dmv.ny.gov",
+          "workId": "w-license",
+          "workTitle": "Renew the driver's license",
+          "outcome": "allowed_once",
+          "at": "@ms:now-2d"
+        },
+        {
+          "id": "use-4",
+          "itemId": "sec-license",
+          "field": "number",
+          "site": "dmv-renewal.example",
+          "workId": "w-license",
+          "workTitle": "Renew the driver's license",
+          "outcome": "refused_site",
+          "at": "@ms:now-4d"
+        }
+      ]
+    },
     "/api/personal-details": {
       "ok": true,
       "details": [
@@ -2458,6 +2633,135 @@
               "finishedAt": "@ms:now-20m"
             }
           ]
+        }
+      }
+    },
+    "work-thread-allow": {
+      "paths": {
+        "/api/albatross/work/w-license/runs": {
+          "ok": true,
+          "runs": [
+            {
+              "id": "run-license-1",
+              "workId": "w-license",
+              "stepKey": "step-renew",
+              "stepIdentity": "step-renew@1",
+              "stepTitle": "Renew the license online",
+              "state": "handed_off",
+              "trigger": "user",
+              "outcome": "needs_answer",
+              "summary": "The renewal form asks for the license number and the expiry date. dmv.ny.gov is new for your driver's license.",
+              "log": [
+                {
+                  "at": "@ms:now-7m",
+                  "text": "Opened dmv.ny.gov"
+                },
+                {
+                  "at": "@ms:now-6m",
+                  "text": "Read your details: name, address"
+                },
+                {
+                  "at": "@ms:now-5m",
+                  "text": "Typed your name and address"
+                },
+                {
+                  "at": "@ms:now-4m",
+                  "text": "Asked you: use your driver's license on ny.gov?"
+                }
+              ],
+              "next": {
+                "kind": "allow_secure",
+                "label": "Answer",
+                "detail": "Use your saved driver's license on ny.gov?",
+                "target": {
+                  "kind": "secure",
+                  "id": "sec-license",
+                  "url": "https://ny.gov"
+                },
+                "allow": {
+                  "itemId": "sec-license",
+                  "kind": "id_number",
+                  "itemLabel": "Driver's license",
+                  "fieldLabels": ["Number", "Expiry date"],
+                  "site": "ny.gov",
+                  "host": "dmv.ny.gov"
+                }
+              },
+              "artifacts": [
+                {
+                  "kind": "page",
+                  "title": "Renewal form",
+                  "url": "https://dmv.ny.gov/renew"
+                }
+              ],
+              "browserSessionId": "sess-license",
+              "stoppedBy": null,
+              "error": null,
+              "createdAt": "@ms:now-8m",
+              "updatedAt": "@ms:now-4m",
+              "finishedAt": "@ms:now-4m",
+              "parentRunId": null,
+              "question": null
+            }
+          ]
+        },
+        "/api/chats": {
+          "ok": true,
+          "session": {
+            "id": "work-w-license",
+            "updatedAt": "@ms:now-8m",
+            "messages": [
+              {
+                "id": "m-license-1",
+                "role": "user",
+                "metadata": {
+                  "createdAt": "@ms:now-9m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "Go ahead and renew it online."
+                  }
+                ]
+              },
+              {
+                "id": "m-license-2",
+                "role": "assistant",
+                "metadata": {
+                  "createdAt": "@ms:now-8m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "On it. I open the renewal form at dmv.ny.gov."
+                  },
+                  {
+                    "type": "tool-albatross_handle_step",
+                    "toolCallId": "call-license-1",
+                    "state": "output-available",
+                    "input": {
+                      "workId": "w-license"
+                    },
+                    "output": {
+                      "ok": true,
+                      "action": "started",
+                      "runId": "run-license-1"
+                    }
+                  },
+                  {
+                    "type": "data-tool-shape",
+                    "id": "call-license-1",
+                    "data": {
+                      "kind": "step_run",
+                      "runId": "run-license-1",
+                      "workId": "w-license",
+                      "action": "started"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
         }
       }
     },
