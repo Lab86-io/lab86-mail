@@ -411,7 +411,9 @@ final class WorkThreadModel {
             if !sent { failedNoteIDs.insert(noteID) }
         } else if let view = store.run(id: steer.runID) {
             var restarted = false
-            if view.run.isHandoff {
+            // A handoff that a run already continued starts the step again
+            // instead: a second continuation would split its receipt.
+            if view.run.isHandoff, !hasContinuation(view) {
                 // The new run continues `view`, so the note keeps `view`'s id:
                 // its receipt reads from the run whose parent that is.
                 if await store.resume(view, note: text, transport: transport) != nil {
