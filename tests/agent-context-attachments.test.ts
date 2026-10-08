@@ -84,6 +84,8 @@ describe('the chat sends the open document with every Work request', () => {
     const source = await Bun.file(new URL('../components/shell/AIBar.tsx', import.meta.url)).text();
     const fields = [...source.matchAll(/contextAttachments:\s*([^,\n]+)/g)].map((match) => match[1].trim());
     expect(fields.length).toBeGreaterThanOrEqual(2);
+    // The transport and send() both: removing either one fails here.
+    expect(fields.filter((field) => field === 'workContextAttachments()')).toHaveLength(2);
     for (const field of fields) expect(['workContextAttachments()', '[]']).toContain(field);
     expect(source).toContain('...(threadDocumentRef.current ? [threadDocumentRef.current] : [])');
   });
