@@ -193,7 +193,7 @@ describe('the masked input and the add form', () => {
         onCancel={noop}
       />,
     );
-    expect(fromCard).toContain(SHEET_COPY.siteSuggested.sign_in);
+    expect(fromCard).toContain(SHEET_COPY.siteSuggested.sign_in as string);
     expect(doc(fromCard).querySelector('[data-slot="site-suggested"]')?.className).toContain(
       '--color-warning',
     );
@@ -205,7 +205,7 @@ describe('the masked input and the add form', () => {
         onCancel={noop}
       />,
     );
-    expect(keyFromCard).toContain(SHEET_COPY.siteSuggested.api_key);
+    expect(keyFromCard).toContain(SHEET_COPY.siteSuggested.api_key as string);
     const fromUser = render(
       <SecureItemForm
         request={{ kind: 'sign_in', site: 'chase.com' }}
@@ -256,8 +256,9 @@ describe('the masked input and the add form', () => {
 });
 
 describe('the allow block', () => {
-  const allow = allowRunFixture(NOW).next?.allow;
-  if (!allow) throw new Error('fixture');
+  const fixture = allowRunFixture(NOW).next?.allow;
+  if (!fixture) throw new Error('fixture');
+  const allow: NonNullable<typeof fixture> = fixture;
 
   function allowBlock(over: Partial<React.ComponentProps<typeof AllowSecureBlock>> = {}) {
     return render(
