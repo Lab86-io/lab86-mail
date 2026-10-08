@@ -1224,6 +1224,7 @@ describe('Passwords and IDs in a run', () => {
           text: `{{secure:${LICENSE.id}.number}}`,
         });
         expect(typed).toMatchObject({ ok: false, status: 'needs_allow' });
+        expect(JSON.stringify(typed)).not.toContain(license);
         await opts.tools.step_handoff.execute({
           outcome: 'your_turn',
           summary: 'I filled the plate number.',

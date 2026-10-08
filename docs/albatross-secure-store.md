@@ -60,15 +60,19 @@ Platforms: W (web), I (iOS), M (macOS).
 ## How a model uses a value it never sees
 
 1. **Inventory.** `secure_details_list` (chat and runs) returns, for each item: `id`, `kind`,
-   `label`, `sites`, the field names, and a masked hint. For a date of birth it also returns
-   `ageYears`, computed on the server, so an age rule can be checked.
+   `label`, `sites`, and the field names. No value and no masked hint. A date of birth gives
+   `ageYears` (computed on the server, so an age rule can be checked); an ID with an expiry gives
+   `expired`; an ID gives its type, region, and country; a key gives its header name.
 2. **References.** To use a value, the runner writes `{{secure:<itemId>.<field>}}` in a tool
-   argument. A date field takes a format: `{{secure:<id>.date|MM/DD/YYYY}}`
-   (`YYYY-MM-DD`, `MM/DD/YYYY`, `DD/MM/YYYY`, `MM`, `DD`, `YYYY`).
-3. **Resolution, in two runner tools only.**
-   - `browser_type`: the server checks the page origin against the item's sites (or a grant),
-     types the value, and returns "Typed Driver's license number". A password field accepts only
-     a reference to a `sign_in` item bound to that site.
+   argument. A date field (`date`, `expires`) takes a format: `{{secure:<id>.date|MM/DD/YYYY}}`
+   (`YYYY-MM-DD`, `MM/DD/YYYY`, `DD/MM/YYYY`, `MM/YYYY`, `MM`, `DD`, `YYYY`, `M`, `D`, `MONTH`).
+   An ID number takes `DIGITS` or `LAST4`; a Social Security number also takes `DASHED`, `AREA`,
+   `GROUP`, and `SERIAL` for split boxes (`lib/secure/contract.ts`).
+3. **Resolution, in three runner tools only.**
+   - `browser_type` and `browser_select`: the server checks the field kind, the field's frame
+     address, and its form action against the item's sites (or a grant), types the value, and
+     returns "Typed the saved Driver's license number." A password goes only into an HTML
+     password input, and only from a `sign_in` item bound to that site.
    - `secure_fetch` (new, runs only): an HTTPS request to a host that an `api_key` item is bound
      to, with the key in the header. No redirect to another host. The response is scrubbed and
      cut to 20 KB before the model reads it.
@@ -83,10 +87,11 @@ Platforms: W (web), I (iOS), M (macOS).
    A Playwright error from a fill is replaced with a fixed message, because it quotes the value.
 5. **Nothing else holds a value.** Tool arguments hold references. Run logs, chat transcripts,
    audit lines, errors, and use-history rows never hold a value.
-6. **Asking for a missing item.** `secure_details_request({ kind, label?, site?, reason })` (chat
-   and runs) shows the `secure_request` card (V12). It holds no value and saves nothing: the user
-   adds the item in the sheet, through the normal route. The runner can also hand off with
-   `next.kind === 'sign_in'` and `next.saveSignIn = { site }` (V13).
+6. **Asking for a missing item.** In the chat, `ask_secure_detail({ kind, label?, site?, reason })`
+   shows a card that waits (V12, decision 12). It holds no value and saves nothing: the user adds
+   the item in the sheet, through the normal route, and the answer is
+   `{ saved: true, itemId } | { skipped: true }`. A run hands off with `next.kind === 'sign_in'`
+   and `next.saveSignIn = { site }` (V13), or `finish_on_page` for a missing ID.
 
 ## Site rules
 
@@ -118,10 +123,11 @@ Platforms: W (web), I (iOS), M (macOS).
 - The key-encryption key is separate from the mail key: `LAB86_SECURE_KEK` (32 bytes, base64)
   and `LAB86_SECURE_KEK_ID`, with retired keys in `LAB86_SECURE_KEKS`. A Cloud KMS provider is a
   later step (owner task). **The key must be backed up**: without it, no item can be opened.
-- Table `secureGrants`: `userId`, `itemId`, `site`, `scope` (`once` with `runChainId` and
-  `expiresAt`, or `always`), `createdAt`.
-- Table `secureUses`: `userId`, `itemId`, `field`, `site`, `runId`, `workId`, `outcome`, `at`.
-  Kept 90 days.
+- Table `secureGrants`: "Allow once" only: `userId`, `itemId`, `site`, `workId`, `stepKey`,
+  `expiresAt` (2 hours at most), `createdAt`. "Always on this site" adds the site to the item's
+  `sites` instead of making a grant. A new value or fewer sites delete the item's grants.
+- Table `secureUses`: `userId`, `itemId`, `field`, `site`, `host`, `runId`, `workId`, `outcome`,
+  `at`. Kept 90 days; the prune cron runs every 6 hours, and a full batch runs again at once.
 - Only the Next server decrypts, at the moment of use. Every Convex function of these tables
   needs the server secret. No API returns a value.
 - Rotation: `scripts/rotate-secure-kek.ts` re-wraps the data keys. These fields are not part of

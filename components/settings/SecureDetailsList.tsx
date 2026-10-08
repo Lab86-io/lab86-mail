@@ -564,7 +564,6 @@ function SecureItemDetail({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        {note && own === null && !history ? null : null}
       </div>
     </div>
   );

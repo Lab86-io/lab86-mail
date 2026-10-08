@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { truncateText } from '../lib/shared/text';
+import { internal } from './_generated/api';
 import { internalMutation, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
@@ -16,6 +17,8 @@ export const SECURE_ITEMS_MAX = 100;
 export const SECURE_SITES_MAX = 20;
 /** Use history is kept this long. */
 export const SECURE_USE_RETENTION_MS = 90 * 24 * 60 * 60_000;
+/** Rows that one prune pass deletes from each table. */
+export const PRUNE_BATCH = 500;
 /** "Allow once" lasts this long at most. */
 export const SECURE_GRANT_MAX_MS = 2 * 60 * 60_000;
 
@@ -390,7 +393,7 @@ export const listUses = query({
   },
 });
 
-/** Daily: use history older than 90 days and ended grants go. */
+/** Every 6 hours: use history older than 90 days and ended grants go. A full batch runs again at once. */
 export const prune = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -398,13 +401,16 @@ export const prune = internalMutation({
     const uses = await ctx.db
       .query('secureUses')
       .withIndex('by_at', (q) => q.lt('at', ts - SECURE_USE_RETENTION_MS))
-      .take(500);
+      .take(PRUNE_BATCH);
     for (const use of uses) await ctx.db.delete(use._id);
     const grants = await ctx.db
       .query('secureGrants')
       .withIndex('by_expires', (q) => q.lt('expiresAt', ts))
-      .take(500);
+      .take(PRUNE_BATCH);
     for (const grant of grants) await ctx.db.delete(grant._id);
+    // The 90-day promise holds however many rows expire: a full batch schedules the next one now.
+    if (uses.length === PRUNE_BATCH || grants.length === PRUNE_BATCH)
+      await ctx.scheduler.runAfter(0, internal.secureDetails.prune, {});
     return { uses: uses.length, grants: grants.length };
   },
 });

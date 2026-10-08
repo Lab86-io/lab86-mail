@@ -326,3 +326,15 @@ describe('allow_secure on a run', () => {
     ).rejects.toThrow(/not found/);
   });
 });
+
+test('a full prune batch schedules the next pass at once', async () => {
+  const t = harness();
+  await create(t);
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 501; index += 1)
+      await ctx.db.insert('secureUses', { userId, itemId: ITEM, outcome: 'typed', at: index + 1 });
+  });
+  expect(await t.mutation(internal.secureDetails.prune, {})).toEqual({ uses: 500, grants: 0 });
+  const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+  expect(scheduled.map((job) => job.name)).toContain('secureDetails:prune');
+});

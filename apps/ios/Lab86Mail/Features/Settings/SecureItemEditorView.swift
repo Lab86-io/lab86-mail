@@ -671,7 +671,10 @@ struct SecureItemEditorView: View {
     /// Adding a site needs the identity check: the window first, then the
     /// request, then one retry after a 403.
     private func addSite(to existing: SecureItemView) async {
-        let sites = existing.sites + [cleanedSite]
+        // The store's list, not the one captured when the sheet opened: a
+        // site removed meanwhile must not come back.
+        let current = store.item(id: existing.id)?.sites ?? existing.sites
+        let sites = current.contains(cleanedSite) ? current : current + [cleanedSite]
         let reason = IdentityCheckCopy.addSiteReason(itemLabel: existing.label, noun: existing.kind.noun)
         var saved: SecureItemView?
         let outcome = await IdentityGuard.run(

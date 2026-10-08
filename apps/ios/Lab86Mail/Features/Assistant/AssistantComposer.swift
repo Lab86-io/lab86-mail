@@ -100,8 +100,10 @@ struct AssistantComposer: View {
                 .padding(.vertical, 10)
                 .onSubmit(submit)
                 .onChange(of: draft) { _, next in
-                    model.updateDraft(next)
+                    // The notice first; the route classifier never reads a
+                    // secret-shaped value. The draft stays as typed.
                     rescan(next)
+                    model.updateDraft(routeText(next))
                 }
                 .onKeyPress(.tab) {
                     // Tab flips the route even before any text, so a person
@@ -181,6 +183,13 @@ struct AssistantComposer: View {
 
     private func rescan(_ text: String) {
         secretHits = environment.secureDetails.isEnabled ? SecureDraftScan.detect(text) : []
+    }
+
+    /// The draft as the route classifier may see it: each secret-shaped
+    /// value as its marker, the same as the server's redaction.
+    private func routeText(_ text: String) -> String {
+        guard environment.secureDetails.isEnabled, !secretHits.isEmpty else { return text }
+        return SecureDraftScan.redact(text).text
     }
 
     /// "Send without it": each value becomes its marker, and the draft goes.

@@ -234,10 +234,14 @@ struct SecureItemView: Identifiable, Hashable, Sendable {
     /// "NY" or "US": the region first, else the country.
     var place: String? { facts["region"]?.nilIfBlank ?? facts["country"]?.nilIfBlank }
 
-    /// The hosts an item covers: a site covers itself and every host under it.
+    /// The hosts an item covers. A site covers itself and every host under
+    /// it; a key is bound to its exact host.
     func covers(host: String) -> Bool {
         let host = SecureSite.clean(host)
         guard !host.isEmpty else { return false }
+        if kind == .apiKey {
+            return sites.contains { SecureSite.clean($0) == host }
+        }
         return sites.contains { SecureSite.covers(site: $0, host: host) }
     }
 }

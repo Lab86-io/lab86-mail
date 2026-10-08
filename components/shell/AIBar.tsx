@@ -1652,9 +1652,24 @@ function ChatComposer({
     if (!match || !secure) return;
     const item = secretToItem(match.kind, value.slice(match.start, match.end));
     if (!item) return;
-    setValue(draftWithMarker(value, match, savedMarker(match.kind)));
+    const original = value;
+    const marked = draftWithMarker(value, match, savedMarker(match.kind));
+    let saved = false;
+    setValue(marked);
     setNoticeShown(false);
-    secure.openSheet({ kind: item.kind, values: item.values }, () => undefined);
+    secure.openSheet(
+      { kind: item.kind, values: item.values },
+      () => {
+        saved = true;
+      },
+      () => {
+        if (saved) return;
+        // Nothing was saved: no marker may name an item that does not exist.
+        // The draft goes back as it was, and the notice shows again.
+        setValue((current) => (current === marked ? original : current));
+        setNoticeShown(true);
+      },
+    );
   };
   return (
     <div

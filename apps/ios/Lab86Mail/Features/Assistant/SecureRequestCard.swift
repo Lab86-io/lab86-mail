@@ -89,7 +89,9 @@ struct SecureRequestCard: View {
     }
 
     private func card(_ input: SecureRequestInput) -> some View {
-        let existing = existingItem(for: input)
+        // An answered card keeps its "Add" title: the item it finds now is
+        // the one the user just saved.
+        let existing = question.answer == nil ? existingItem(for: input) : nil
         return QuestionShell(title: SecureRequestCopy.title(input, existing: existing)) {
             if !input.reason.isEmpty {
                 Text(input.reason)

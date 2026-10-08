@@ -64,6 +64,10 @@ export async function runSecureFetch(
       throw new SecureRefused('Use a full https address.');
     }
     if (url.protocol !== 'https:') throw new SecureRefused('secure_fetch calls https addresses only.');
+    // Before any key is opened: the use history must never record a send that did not happen.
+    await call.assertPublic(url.toString()).catch(() => {
+      throw new SecureRefused('This address is not a public API host.');
+    });
     const headers: Record<string, string> = {};
     const used = new SecureScrubber();
     let referenced = 0;
@@ -88,9 +92,6 @@ export async function runSecureFetch(
       throw new SecureRefused(
         'secure_fetch needs a saved key in a header. For a public page, use browserbase_fetch.',
       );
-    await call.assertPublic(url.toString()).catch(() => {
-      throw new SecureRefused('This address is not a public API host.');
-    });
     const response = await call.fetch(url.toString(), {
       method: input.method || 'GET',
       headers,

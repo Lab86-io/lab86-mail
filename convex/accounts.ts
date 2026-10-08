@@ -486,6 +486,8 @@ export const PURGE_ROW_BYTES: Record<string, number> = {
   narrativeEntries: 128 * KiB,
   // Rows of ids and numbers.
   briefItemEvents: 16 * KiB,
+  // Secure details use history: a few short strings and two numbers.
+  secureUses: 16 * KiB,
   briefEditionTelemetry: 16 * KiB,
   mobileSyncTombstones: 16 * KiB,
   nativePushDeliveries: 16 * KiB,

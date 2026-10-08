@@ -90,13 +90,26 @@ describe('runSecureFetch', () => {
       url: 'https://api.openai.com/v1/x',
       headers: { Authorization: `Bearer {{secure:${ITEM}.key}}` },
     };
+    // A private host is refused before any key is opened, so no use is recorded.
+    let opened = 0;
     expect(
-      await runSecureFetch(input, access(), {
-        assertPublic: async () => {
-          throw new Error('private');
+      await runSecureFetch(
+        input,
+        {
+          ...access(),
+          resolveForFetch: async () => {
+            opened += 1;
+            return { value: key, label: 'OpenAI key' };
+          },
         },
-      }),
+        {
+          assertPublic: async () => {
+            throw new Error('private');
+          },
+        },
+      ),
     ).toEqual({ ok: false, message: 'This address is not a public API host.' });
+    expect(opened).toBe(0);
     expect(
       await runSecureFetch(input, access(), {
         assertPublic: ok as any,

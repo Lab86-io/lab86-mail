@@ -234,6 +234,9 @@ final class IdentityCheckModel {
         case .needsSecondFactor:
             let seconds = verification.supportedSecondFactors ?? []
             code = ""
+            errorLine = nil
+            // The second code can be sent again on its own.
+            resent = false
             if seconds.contains(where: { $0.strategy == .totp }) {
                 step = .totp
                 return nil

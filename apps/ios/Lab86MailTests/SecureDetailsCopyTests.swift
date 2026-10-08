@@ -99,7 +99,7 @@ struct SecureDetailsCopyTests {
         #expect(!spoken.contains("•"))
         #expect(SecureDetailsCopy.ends("A 123-4821") == "Ends 4821")
         #expect(SecureDetailsCopy.ends("12") == nil)
-        #expect(SecureDetailsCopy.keyCaption("sk-abcdef3a2") == "Ends f3a2 · 11 characters")
+        #expect(SecureDetailsCopy.keyCaption("sk-abcdef3a2") == "Ends f3a2 · 12 characters")
         #expect(SecureDetailsCopy.keyCaption("") == nil)
         #expect(SecureDetailsCopy.characters(1) == "1 character")
         #expect(SecureDetailsCopy.savedAs("secure.chase.com") == "Saved as secure.chase.com")
