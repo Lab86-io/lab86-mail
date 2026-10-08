@@ -22,8 +22,8 @@ Status: building, 2026-10-08. Owner report: an Albatross that bills a client for
 
 ### D1. The proof check reads what the run observed
 
-- `lib/albatross/run-evidence.ts` turns the run's tool results into "Observed" lines (newest
-  first when over 5,000 characters). Personal and secure tools are left out.
+- `lib/albatross/run-evidence.ts` turns the run's tool results into "Observed" lines (it keeps
+  the newest results when over 5,000 characters). Personal and secure tools are left out.
 - `evidenceSatisfies({ source: 'run' })` uses its own rules: observed results, made files, and
   page text are facts. The agent's summary is a claim. A research step passes when the facts
   show the information. A step that needs another person to act still needs a fact of that act.

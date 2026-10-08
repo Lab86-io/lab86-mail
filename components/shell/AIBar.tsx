@@ -414,6 +414,17 @@ export function AssistantChat({
   // Read at send time, so opening or closing a document does not rebuild the transport.
   const threadDocumentRef = useRef<DocumentContextAttachment | null>(null);
   threadDocumentRef.current = thread?.document ?? null;
+  // The Work of this chat, and the document open in its document mode. Read at send time.
+  const workContextAttachments = useCallback(
+    () =>
+      !useClientStore.getState().assistantBriefContext && chatScopeKind === 'work' && chatScopeWorkId
+        ? [
+            { kind: 'work' as const, id: chatScopeWorkId },
+            ...(threadDocumentRef.current ? [threadDocumentRef.current] : []),
+          ]
+        : undefined,
+    [chatScopeKind, chatScopeWorkId],
+  );
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -439,13 +450,7 @@ export function AssistantChat({
             !useClientStore.getState().assistantBriefContext && chatScopeKind === 'area' && chatScopeAreaId
               ? { mode: 'area', areaId: chatScopeAreaId }
               : undefined,
-          contextAttachments:
-            !useClientStore.getState().assistantBriefContext && chatScopeKind === 'work' && chatScopeWorkId
-              ? [
-                  { kind: 'work', id: chatScopeWorkId },
-                  ...(threadDocumentRef.current ? [threadDocumentRef.current] : []),
-                ]
-              : undefined,
+          contextAttachments: workContextAttachments(),
           extraSystem: [
             assistantPageContext(
               useClientStore.getState().primaryView,
@@ -459,7 +464,7 @@ export function AssistantChat({
             .join('\n'),
         }),
       }),
-    [chatScopeAreaId, chatScopeKind, chatScopeWorkId],
+    [chatScopeAreaId, chatScopeKind, workContextAttachments],
   );
   const shouldAutoContinueHitl = useMemo(() => createHitlAutoContinueGuard(), []);
   const shouldAutoContinueApproval = useMemo(
@@ -1065,10 +1070,9 @@ export function AssistantChat({
       {
         body: {
           extraSystem: [contextLines, uploadContext].filter(Boolean).join('\n\n') || undefined,
-          contextAttachments:
-            !useClientStore.getState().assistantBriefContext && chatScopeKind === 'work' && chatScopeWorkId
-              ? [{ kind: 'work', id: chatScopeWorkId }]
-              : undefined,
+          // A request body replaces the transport body field by field, so it
+          // carries the open document too (docs/albatross-document-handoff.md).
+          contextAttachments: workContextAttachments(),
         },
       } as any,
     )

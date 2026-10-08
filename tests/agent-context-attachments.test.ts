@@ -75,3 +75,16 @@ describe('normalizeContextAttachments', () => {
     ).toBe('At most 3 context attachments are allowed.');
   });
 });
+
+// A request body replaces the transport body field by field (AI SDK), so every
+// Work request in the chat builds its attachments in one place: the open
+// document must reach the agent from the transport and from send() alike.
+describe('the chat sends the open document with every Work request', () => {
+  test('every contextAttachments in AIBar comes from workContextAttachments', async () => {
+    const source = await Bun.file(new URL('../components/shell/AIBar.tsx', import.meta.url)).text();
+    const fields = [...source.matchAll(/contextAttachments:\s*([^,\n]+)/g)].map((match) => match[1].trim());
+    expect(fields.length).toBeGreaterThanOrEqual(2);
+    for (const field of fields) expect(['workContextAttachments()', '[]']).toContain(field);
+    expect(source).toContain('...(threadDocumentRef.current ? [threadDocumentRef.current] : [])');
+  });
+});
