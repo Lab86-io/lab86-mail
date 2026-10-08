@@ -4,6 +4,7 @@ import Testing
 
 // The receipt under a note to a run (docs/albatross-threads.md, T7 and T9):
 // sent, read, carried to the next run, not read, not sent, and a redirect.
+@MainActor
 struct NoteReceiptPresentationTests {
     private static let t0 = Date(timeIntervalSince1970: 1_760_000_000)
 

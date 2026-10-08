@@ -53,7 +53,66 @@ struct MacWorkThreadView: View {
     /// The banner leaves by itself after this long.
     static let bannerDuration: Duration = .seconds(10)
 
+    // The body is four layers, so the type checker reads each chain on its
+    // own: the loaded thread and its tasks, the page and the menu requests,
+    // the refresh events and the file importer, then the thread-list hooks
+    // (docs/albatross-threads.md).
     var body: some View {
+        refreshed
+            .onChange(of: draft) { _, next in
+                environment.composerDrafts.set(next, files: pendingFiles, for: route.workID)
+            }
+            .onChange(of: pendingFiles.count) { _, _ in
+                environment.composerDrafts.set(draft, files: pendingFiles, for: route.workID)
+            }
+            // The thread is on screen: new activity is seen at once (T2).
+            .onChange(of: environment.threads.row(for: route.workID)?.unread) { _, unread in
+                guard unread == true, !keepUnread else { return }
+                Task { await environment.threads.markSeen(workID: route.workID, transport: environment.backend) }
+            }
+            // Another Albatross needs the user while this one is open and the
+            // source list is hidden (T3); with the list shown, its row says so.
+            .onChange(of: environment.threads.attention?.id) { _, _ in
+                guard MacThreadListLayout.showsBanner(sidebarShown: MacRequests.shared.sidebarShown),
+                      let attention = environment.threads.attention else { return }
+                let rows = attention.rows.filter { $0.workID != route.workID }
+                guard !rows.isEmpty else { return }
+                showBanner(rows)
+            }
+            .onAppear { environment.threads.beginFollowing(environment.backend) }
+            .onChange(of: paneMode, initial: true) { _, mode in
+                MacRequests.shared.threadPaneMode = mode
+            }
+            .onDisappear {
+                environment.threads.endFollowing()
+                hideBanner()
+                MacRequests.shared.threadPaneMode = .none
+                restoreSidebar()
+            }
+    }
+
+    /// The page and the requests, with the events that refresh the thread and the file importer.
+    private var refreshed: some View {
+        withPageAndRequests
+            .onChange(of: environment.navigation.workRefreshToken) { _, _ in
+                guard let model else { return }
+                Task { await model.refresh() }
+            }
+            .onChange(of: environment.navigation.workRoute?.intent) { _, intent in
+                applyIntent(intent)
+            }
+            .onChange(of: model?.threadState) { previous, next in
+                guard let model, let previous, let next else { return }
+                announce(previous: previous, next: next, model: model)
+            }
+            .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+                guard case .success(let urls) = result else { return }
+                AssistantComposerFiles.importing(urls, into: &pendingFiles)
+            }
+    }
+
+    /// The thread, its title, its window, and the tasks that load and follow it.
+    private var loaded: some View {
         Group {
             if let model {
                 content(model)
@@ -100,95 +159,55 @@ struct MacWorkThreadView: View {
             guard wasStreaming, !isStreaming, let model else { return }
             Task { await model.turnDidEnd() }
         }
-        .task(id: model?.pageRun?.id) {
-            checking = false
-            tookOver = false
-            follower = PageSessionFollower()
-            guard let model, model.pageRun != nil else { return }
-            await follower.follow(workID: route.workID, environment: environment)
-        }
-        .onChange(of: model?.pageRun?.id) { _, next in
-            guard let model else { return }
-            pageDidChange(hasPage: next != nil, model: model)
-        }
-        .onChange(of: windowSize.width) { _, _ in roomDidChange() }
-        .onChange(of: MacRequests.shared.sidebarShown) { _, _ in roomDidChange() }
-        .onChange(of: MacRequests.shared.threadPaneToken) { _, _ in
-            guard let model else { return }
-            request(MacRequests.shared.threadPaneTarget, model: model)
-        }
-        .onChange(of: MacRequests.shared.focusComposerToken) { _, _ in
-            composerFocused = true
-        }
-        .onChange(of: MacRequests.shared.openHorizonToken) { _, _ in
-            showsHorizonSheet = true
-        }
-        // ⇧⌘. "Stop and Redirect…": the run stops at once; the composer
-        // waits for the note (T8).
-        .onChange(of: MacRequests.shared.redirectToken) { _, _ in
-            guard let model, let run = model.openRun else { return }
-            Task {
-                await model.armRedirect(run)
+    }
+
+    /// The loaded thread with the page session and the menu and window requests.
+    private var withPageAndRequests: some View {
+        loaded
+            .task(id: model?.pageRun?.id) {
+                checking = false
+                tookOver = false
+                follower = PageSessionFollower()
+                guard let model, model.pageRun != nil else { return }
+                await follower.follow(workID: route.workID, environment: environment)
+            }
+            .onChange(of: model?.pageRun?.id) { _, next in
+                guard let model else { return }
+                pageDidChange(hasPage: next != nil, model: model)
+            }
+            .onChange(of: windowSize.width) { _, _ in roomDidChange() }
+            .onChange(of: MacRequests.shared.sidebarShown) { _, _ in roomDidChange() }
+            .onChange(of: MacRequests.shared.threadPaneToken) { _, _ in
+                guard let model else { return }
+                request(MacRequests.shared.threadPaneTarget, model: model)
+            }
+            .onChange(of: MacRequests.shared.focusComposerToken) { _, _ in
                 composerFocused = true
             }
-        }
-        // ⇧⌘U: the open thread's unread mark flips (T2). A manual unread
-        // holds until the next thread opens.
-        .onChange(of: MacRequests.shared.toggleUnreadToken) { _, _ in
-            guard let row = environment.threads.row(for: route.workID) else { return }
-            if row.unread {
-                keepUnread = false
-                Task { await environment.threads.markSeen(workID: route.workID, transport: environment.backend) }
-            } else {
-                keepUnread = true
-                Task { await environment.threads.markUnread(workID: route.workID, transport: environment.backend) }
+            .onChange(of: MacRequests.shared.openHorizonToken) { _, _ in
+                showsHorizonSheet = true
             }
-        }
-        .onChange(of: draft) { _, next in
-            environment.composerDrafts.set(next, files: pendingFiles, for: route.workID)
-        }
-        .onChange(of: pendingFiles.count) { _, _ in
-            environment.composerDrafts.set(draft, files: pendingFiles, for: route.workID)
-        }
-        // The thread is on screen: new activity is seen at once (T2).
-        .onChange(of: environment.threads.row(for: route.workID)?.unread) { _, unread in
-            guard unread == true, !keepUnread else { return }
-            Task { await environment.threads.markSeen(workID: route.workID, transport: environment.backend) }
-        }
-        // Another Albatross needs the user while this one is open and the
-        // source list is hidden (T3); with the list shown, its row says so.
-        .onChange(of: environment.threads.attention?.id) { _, _ in
-            guard MacThreadListLayout.showsBanner(sidebarShown: MacRequests.shared.sidebarShown),
-                  let attention = environment.threads.attention else { return }
-            let rows = attention.rows.filter { $0.workID != route.workID }
-            guard !rows.isEmpty else { return }
-            showBanner(rows)
-        }
-        .onAppear { environment.threads.beginFollowing(environment.backend) }
-        .onChange(of: paneMode, initial: true) { _, mode in
-            MacRequests.shared.threadPaneMode = mode
-        }
-        .onDisappear {
-            environment.threads.endFollowing()
-            hideBanner()
-            MacRequests.shared.threadPaneMode = .none
-            restoreSidebar()
-        }
-        .onChange(of: environment.navigation.workRefreshToken) { _, _ in
-            guard let model else { return }
-            Task { await model.refresh() }
-        }
-        .onChange(of: environment.navigation.workRoute?.intent) { _, intent in
-            applyIntent(intent)
-        }
-        .onChange(of: model?.threadState) { previous, next in
-            guard let model, let previous, let next else { return }
-            announce(previous: previous, next: next, model: model)
-        }
-        .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-            guard case .success(let urls) = result else { return }
-            AssistantComposerFiles.importing(urls, into: &pendingFiles)
-        }
+            // ⇧⌘. "Stop and Redirect…": the run stops at once; the composer
+            // waits for the note (T8).
+            .onChange(of: MacRequests.shared.redirectToken) { _, _ in
+                guard let model, let run = model.openRun else { return }
+                Task {
+                    await model.armRedirect(run)
+                    composerFocused = true
+                }
+            }
+            // ⇧⌘U: the open thread's unread mark flips (T2). A manual unread
+            // holds until the next thread opens.
+            .onChange(of: MacRequests.shared.toggleUnreadToken) { _, _ in
+                guard let row = environment.threads.row(for: route.workID) else { return }
+                if row.unread {
+                    keepUnread = false
+                    Task { await environment.threads.markSeen(workID: route.workID, transport: environment.backend) }
+                } else {
+                    keepUnread = true
+                    Task { await environment.threads.markUnread(workID: route.workID, transport: environment.backend) }
+                }
+            }
     }
 
     /// The poll task restarts when a run opens or closes, or a turn streams.
