@@ -66,7 +66,11 @@ async function readRestHistory(input: {
       ? await deps.loadSlackChangedMessages(serverUrl, token, since, now)
       : await deps.loadAtlassianChangedIssues(serverUrl, token, since, now);
     // A read that the page limit ended early saves where it stopped, so the
-    // next recheck reads the pages that remain.
+    // next recheck reads the pages that remain. A stop at or before the saved
+    // check would move the cursor back, so it fails and keeps the cursor.
+    if (changed.resumeAt !== undefined && changed.resumeAt <= (saved.checkedAt || 0)) {
+      throw new Error('The change recheck reached its page limit before the last check.');
+    }
     return {
       items: changed.items,
       cursor: { complete: true, checkedAt: changed.resumeAt ?? now },

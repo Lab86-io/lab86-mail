@@ -389,6 +389,9 @@ describe('provider connection sync', () => {
 });
 
 describe('provider history walk', () => {
+  // After the saved checks below (two hours ago), before now.
+  const RESUME_AT = Date.now() - 60_000;
+
   function harness(server: 'slack' | 'jira' | 'bitbucket', cursor: Record<string, unknown> | null) {
     const writes: Array<Record<string, any>> = [];
     const calls: Array<{ name: string; args: unknown[] }> = [];
@@ -427,7 +430,7 @@ describe('provider history walk', () => {
         items: [{ externalId: 'j1' }],
         next: { site: 1, token: 't2' },
       }),
-      loadAtlassianChangedIssues: record('atlassianChanged', { items: [], resumeAt: 1_234 }),
+      loadAtlassianChangedIssues: record('atlassianChanged', { items: [], resumeAt: RESUME_AT }),
     };
     return { deps, writes, calls };
   }
@@ -478,7 +481,15 @@ describe('provider history walk', () => {
     await syncMcpContent('user_1', atlassian.deps);
     expect(atlassian.calls.map((c) => c.name)).toEqual(['atlassianChanged']);
     // A recheck that the page limit ended early saves where it stopped.
-    expect(atlassian.writes.at(-1)).toMatchObject({ cursor: { complete: true, checkedAt: 1_234 } });
+    expect(atlassian.writes.at(-1)).toMatchObject({ cursor: { complete: true, checkedAt: RESUME_AT } });
+
+    // A stop at or before the saved check fails, so the cursor never moves back.
+    const checkedAt = Date.now() - 2 * 3_600_000;
+    const behind = harness('jira', { complete: true, checkedAt });
+    behind.deps.loadAtlassianChangedIssues = async () => ({ items: [], resumeAt: checkedAt - 60_000 });
+    await syncMcpContent('user_1', behind.deps);
+    expect(behind.writes.at(-1)).toMatchObject({ status: 'error', indexed: 0 });
+    expect(behind.writes.at(-1)?.cursor).toBeUndefined();
   });
 
   test('a Bitbucket sign-in has no history walk', async () => {
