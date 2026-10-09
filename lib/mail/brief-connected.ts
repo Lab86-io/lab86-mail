@@ -1,3 +1,4 @@
+import { mcpItemSourceLabel } from '../mcp/connection-display';
 import type { DailyReportMcpItem } from '../shared/types';
 
 // Relevance ranking for connected-tool items in the Daily Brief (brief round
@@ -61,14 +62,6 @@ export function rankConnectedItems(
     .map((entry) => entry.item);
 }
 
-const SERVER_LABELS: Record<DailyReportMcpItem['server'], string> = {
-  github: 'GitHub',
-  bitbucket: 'Bitbucket',
-  jira: 'Jira',
-  slack: 'Slack',
-  granola: 'Granola',
-};
-
 const KIND_LABELS: Record<string, string> = {
   pull_request: 'pull request',
   issue: 'issue',
@@ -81,15 +74,10 @@ const KIND_LABELS: Record<string, string> = {
   page: 'page',
 };
 
-// An Atlassian sign-in brings Confluence pages under the `jira` server.
-function sourceLabel(item: DailyReportMcpItem) {
-  if (item.server === 'jira' && item.kind === 'page') return 'Confluence';
-  return SERVER_LABELS[item.server] || item.server;
-}
-
 // One short line under a connected item: "GitHub pull request, review requested".
 export function connectedItemReason(item: DailyReportMcpItem): string {
-  const parts = [`${sourceLabel(item)} ${KIND_LABELS[item.kind] || item.kind}`];
+  // A Confluence page reads "Confluence page", not "Jira page".
+  const parts = [`${mcpItemSourceLabel(item)} ${KIND_LABELS[item.kind] || item.kind}`];
   const state = String(item.state || '')
     .replace(/[_-]+/g, ' ')
     .trim()

@@ -133,6 +133,29 @@ describe('buildNativeDailyReportArtifact', () => {
     expect(html).toContain('aria-label="GitHub"');
   });
 
+  test('names Confluence in the footer for a page from the Atlassian sign-in', () => {
+    const pageOnly = buildNativeDailyReportArtifact(
+      sampleReport({
+        ...sampleReport().sections,
+        mcp: [{ server: 'jira', kind: 'page', title: 'Launch plan' }],
+      }),
+    );
+    expect(pageOnly).toContain('aria-label="Confluence"');
+    expect(pageOnly).not.toContain('aria-label="Jira"');
+
+    const both = buildNativeDailyReportArtifact(
+      sampleReport({
+        ...sampleReport().sections,
+        mcp: [
+          { server: 'jira', kind: 'ticket', title: 'ENG-1' },
+          { server: 'jira', kind: 'page', title: 'Launch plan' },
+        ],
+      }),
+    );
+    expect(both).toContain('aria-label="Jira"');
+    expect(both).toContain('aria-label="Confluence"');
+  });
+
   test('falls back to mail in the footer when no services can be inferred', () => {
     const html = buildNativeDailyReportArtifact(
       sampleReport({

@@ -1,5 +1,6 @@
 'use client';
 
+import type { McpConnectionDisplay } from '@/lib/mcp/connection-display';
 import {
   type McpConnectionHealthFields,
   mcpNeedsReconnect,
@@ -50,6 +51,30 @@ export function McpSyncProblemNote({ connection }: { connection: McpConnectionNo
     >
       {problem.partial ? 'Part of the last sync had a problem' : 'Last sync had a problem'}:{' '}
       {problem.message.replace(/[.\s]+$/, '')}. It will try again.
+    </div>
+  );
+}
+
+// The row title: the tool name, then the user's own name for the connection
+// when it differs ("GitHub · Work").
+export function McpConnectionTitle({ display }: { display: McpConnectionDisplay }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="truncate text-[13.5px] font-medium">{display.label}</span>
+      {display.nickname ? (
+        <span className="truncate text-[12px] text-[var(--color-text-muted)]">· {display.nickname}</span>
+      ) : null}
+    </div>
+  );
+}
+
+// The account behind a connection, from the last sync: the workspace or site
+// names and the sign-in email.
+export function McpConnectionIdentity({ display }: { display: McpConnectionDisplay }) {
+  if (!display.identity) return null;
+  return (
+    <div data-mcp-identity className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]">
+      {display.identity}
     </div>
   );
 }

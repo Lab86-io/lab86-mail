@@ -1,3 +1,5 @@
+import { isConfluencePage } from '../mcp/connection-display';
+
 export type BriefServiceId =
   | 'gmail'
   | 'outlook'
@@ -6,6 +8,7 @@ export type BriefServiceId =
   | 'github'
   | 'bitbucket'
   | 'jira'
+  | 'confluence'
   | 'slack'
   | 'granola'
   | 'calendar'
@@ -59,6 +62,11 @@ const SERVICES: Record<BriefServiceId, BriefService> = {
     label: 'Jira',
     logoSvg: `<svg class="${ICON_CLASS}" viewBox="0 0 24 24" role="img" aria-label="Jira"><path fill="#2684FF" d="M11.88 2.43 2.34 11.97a1.64 1.64 0 0 0 0 2.32l6.55 6.55 3.02-3.02-5.38-5.38 5.35-5.35 5.38 5.38 3.02-3.02-6.08-6.08a1.64 1.64 0 0 0-2.32 0Z"/><path fill="#0052CC" d="m11.91 7.09 5.35 5.38-5.35 5.35 3.02 3.02 6.55-6.55a1.64 1.64 0 0 0 0-2.32l-6.55-6.55-3.02 3.02Z"/></svg>`,
   },
+  confluence: {
+    id: 'confluence',
+    label: 'Confluence',
+    logoSvg: `<svg class="${ICON_CLASS}" viewBox="0 0 24 24" role="img" aria-label="Confluence"><path fill="#2684FF" d="M.87 18.26c-.25.38-.53.87-.76 1.24a.76.76 0 0 0 .25 1.04l4.97 3.06a.76.76 0 0 0 1.05-.26c.2-.33.46-.76.74-1.22 1.96-3.25 3.94-2.85 7.5-1.15l4.96 2.34a.76.76 0 0 0 1.03-.38l2.36-5.35a.76.76 0 0 0-.38-1c-1.04-.49-3.11-1.47-4.97-2.36C10.91 10.97 5.22 11.18.87 18.26Z"/><path fill="#0052CC" d="M23.13 5.74c.25-.4.53-.87.77-1.25a.76.76 0 0 0-.26-1.03L18.68.4a.76.76 0 0 0-1.06.26c-.2.34-.45.77-.73 1.23-1.97 3.24-3.95 2.85-7.51 1.14L4.44.7a.76.76 0 0 0-1.03.38L1.05 6.42a.76.76 0 0 0 .38 1c1.04.49 3.1 1.47 4.97 2.36 6.7 3.25 12.39 3.03 16.73-4.04Z"/></svg>`,
+  },
   slack: {
     id: 'slack',
     label: 'Slack',
@@ -95,6 +103,7 @@ const ALIASES: Record<string, BriefServiceId> = {
   jira: 'jira',
   atlassian: 'jira',
   atlassianjira: 'jira',
+  confluence: 'confluence',
   slack: 'slack',
   granola: 'granola',
   calendar: 'calendar',
@@ -110,6 +119,12 @@ export function normalizeBriefServiceId(value: string | null | undefined): Brief
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
   return ALIASES[key] || null;
+}
+
+// A connected item names its service by server, except a Confluence page,
+// which the Atlassian sign-in stores under `jira`.
+export function briefServiceIdForMcpItem(item: { server: string; kind?: string | null }): string {
+  return isConfluencePage(item) ? 'confluence' : item.server;
 }
 
 export function briefServicesFromIds(values: Array<string | null | undefined>): BriefService[] {

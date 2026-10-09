@@ -35,7 +35,12 @@ import { BriefSection } from '@/components/settings/BriefSection';
 import { ContactsStatusLine } from '@/components/settings/ContactsStatusLine';
 import { JevSection } from '@/components/settings/JevSection';
 import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
-import { McpReconnectNote, McpSyncProblemNote } from '@/components/settings/McpConnectionNotes';
+import {
+  McpConnectionIdentity,
+  McpConnectionTitle,
+  McpReconnectNote,
+  McpSyncProblemNote,
+} from '@/components/settings/McpConnectionNotes';
 import { PersonalDetailsSection } from '@/components/settings/PersonalDetailsSection';
 import { SavedRepliesSettings } from '@/components/settings/SavedRepliesSettings';
 import { SecureDetailsSection } from '@/components/settings/SecureDetailsSection';
@@ -77,6 +82,7 @@ import { type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach
 import { signOutAndClearStorage } from '@/lib/auth/sign-out-storage';
 import { useClientStore } from '@/lib/client-state';
 import type { ContactAccountStatus } from '@/lib/contacts/lookup';
+import { mcpConnectionDisplay } from '@/lib/mcp/connection-display';
 import {
   initialNotificationForm,
   type NotificationPreferences,
@@ -1293,7 +1299,7 @@ function ConnectionsSection() {
       <SectionHeading
         title="Connections"
         badge={<BetaBadge />}
-        blurb="Bring GitHub, Granola, Bitbucket, Atlassian/Jira, and Slack into your brief, Areas, and search."
+        blurb="Bring GitHub, Granola, Bitbucket, Jira and Confluence, and Slack into your brief, Areas, and search."
         aside={
           connections.length
             ? `${connections.length} connected · ${availableServers.length} available`
@@ -1301,108 +1307,102 @@ function ConnectionsSection() {
         }
       />
       <div className="space-y-2.5">
-        {connections.map((connection) => (
-          <div
-            key={connection.connectionId}
-            className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]"
-          >
-            <div className="flex items-center gap-3">
-              <div className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
-                <ConnectionLogo server={connection.server} className="size-4.5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate text-[13.5px] font-medium capitalize">{connection.server}</span>
-                  {connection.displayName ? (
-                    <span className="truncate text-[12px] text-[var(--color-text-muted)]">
-                      · {connection.displayName}
-                    </span>
-                  ) : null}
+        {connections.map((connection) => {
+          const display = mcpConnectionDisplay(connection, servers);
+          return (
+            <div
+              key={connection.connectionId}
+              className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]"
+            >
+              <div className="flex items-center gap-3">
+                <div className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
+                  <ConnectionLogo server={connection.server} className="size-4.5" />
                 </div>
-                {connection.status === 'error' ? (
-                  <McpReconnectNote connection={connection} />
-                ) : connection.status === 'connected' ? (
-                  <>
-                    <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
-                      <ShieldCheck className="size-3" />
-                      Connected
-                      {connection.lastSyncedAt ? ` · synced ${relativeTime(connection.lastSyncedAt)}` : ''}
-                      {connection.itemCount !== undefined
-                        ? ` · ${connection.itemCount.toLocaleString()} item${connection.itemCount === 1 ? '' : 's'}`
-                        : ''}
+                <div className="min-w-0 flex-1">
+                  <McpConnectionTitle display={display} />
+                  {connection.status === 'error' ? (
+                    <McpReconnectNote connection={connection} />
+                  ) : connection.status === 'connected' ? (
+                    <>
+                      <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                        <ShieldCheck className="size-3" />
+                        Connected
+                        {connection.lastSyncedAt ? ` · synced ${relativeTime(connection.lastSyncedAt)}` : ''}
+                        {connection.itemCount !== undefined
+                          ? ` · ${connection.itemCount.toLocaleString()} item${connection.itemCount === 1 ? '' : 's'}`
+                          : ''}
+                      </div>
+                      <McpSyncProblemNote connection={connection} />
+                    </>
+                  ) : (
+                    <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">
+                      Disconnected
                     </div>
-                    <McpSyncProblemNote connection={connection} />
-                  </>
-                ) : (
-                  <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">Disconnected</div>
-                )}
-                {connection.server === 'granola' && (connection.workspaceName || connection.accountEmail) ? (
-                  <div className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]">
-                    {[connection.workspaceName, connection.accountEmail].filter(Boolean).join(' · ')}
-                  </div>
-                ) : null}
+                  )}
+                  <McpConnectionIdentity display={display} />
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => resync.mutate(connection.connectionId)}
+                    disabled={resync.isPending}
+                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                  >
+                    Resync
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (window.confirm(`Disconnect ${display.nickname || display.label}?`)) {
+                        disconnect.mutate(connection.connectionId);
+                      }
+                    }}
+                    disabled={disconnect.isPending}
+                    className="border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)]/60 text-[var(--color-danger)] hover:border-[var(--color-danger)]/45 hover:bg-[var(--color-danger-soft)] hover:text-[var(--color-danger)]"
+                  >
+                    Disconnect
+                  </Button>
+                </div>
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => resync.mutate(connection.connectionId)}
-                  disabled={resync.isPending}
-                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                >
-                  Resync
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    if (window.confirm(`Disconnect ${connection.displayName || connection.server}?`)) {
-                      disconnect.mutate(connection.connectionId);
+              <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-[var(--color-border)] pt-3">
+                <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
+                  <Switch
+                    id={`brief-${connection.connectionId}`}
+                    checked={connection.includeInBrief}
+                    onCheckedChange={(checked) =>
+                      toggle.mutate({ connectionId: connection.connectionId, includeInBrief: checked })
                     }
-                  }}
-                  disabled={disconnect.isPending}
-                  className="border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)]/60 text-[var(--color-danger)] hover:border-[var(--color-danger)]/45 hover:bg-[var(--color-danger-soft)] hover:text-[var(--color-danger)]"
-                >
-                  Disconnect
-                </Button>
+                  />
+                  <Label
+                    htmlFor={`brief-${connection.connectionId}`}
+                    className="text-[12.5px] font-normal text-[var(--color-text-muted)]"
+                  >
+                    In daily brief
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
+                  <Switch
+                    id={`search-${connection.connectionId}`}
+                    checked={connection.includeInSearch}
+                    onCheckedChange={(checked) =>
+                      toggle.mutate({ connectionId: connection.connectionId, includeInSearch: checked })
+                    }
+                  />
+                  <Label
+                    htmlFor={`search-${connection.connectionId}`}
+                    className="text-[12.5px] font-normal text-[var(--color-text-muted)]"
+                  >
+                    In search
+                  </Label>
+                </div>
               </div>
             </div>
-            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-[var(--color-border)] pt-3">
-              <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
-                <Switch
-                  id={`brief-${connection.connectionId}`}
-                  checked={connection.includeInBrief}
-                  onCheckedChange={(checked) =>
-                    toggle.mutate({ connectionId: connection.connectionId, includeInBrief: checked })
-                  }
-                />
-                <Label
-                  htmlFor={`brief-${connection.connectionId}`}
-                  className="text-[12.5px] font-normal text-[var(--color-text-muted)]"
-                >
-                  In daily brief
-                </Label>
-              </div>
-              <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
-                <Switch
-                  id={`search-${connection.connectionId}`}
-                  checked={connection.includeInSearch}
-                  onCheckedChange={(checked) =>
-                    toggle.mutate({ connectionId: connection.connectionId, includeInSearch: checked })
-                  }
-                />
-                <Label
-                  htmlFor={`search-${connection.connectionId}`}
-                  className="text-[12.5px] font-normal text-[var(--color-text-muted)]"
-                >
-                  In search
-                </Label>
-              </div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {availableServers.length ? (

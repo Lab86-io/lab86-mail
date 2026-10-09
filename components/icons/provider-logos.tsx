@@ -147,6 +147,23 @@ export function JiraLogo({ className }: { className?: string }) {
   );
 }
 
+// Confluence pages come in through the Atlassian sign-in on the `jira` server.
+export function ConfluenceLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" role="img" aria-label="Confluence" className={cn('size-4', className)}>
+      <title>Confluence</title>
+      <path
+        fill="#2684FF"
+        d="M.87 18.26c-.25.38-.53.87-.76 1.24a.76.76 0 0 0 .25 1.04l4.97 3.06a.76.76 0 0 0 1.05-.26c.2-.33.46-.76.74-1.22 1.96-3.25 3.94-2.85 7.5-1.15l4.96 2.34a.76.76 0 0 0 1.03-.38l2.36-5.35a.76.76 0 0 0-.38-1c-1.04-.49-3.11-1.47-4.97-2.36C10.91 10.97 5.22 11.18.87 18.26Z"
+      />
+      <path
+        fill="#0052CC"
+        d="M23.13 5.74c.25-.4.53-.87.77-1.25a.76.76 0 0 0-.26-1.03L18.68.4a.76.76 0 0 0-1.06.26c-.2.34-.45.77-.73 1.23-1.97 3.24-3.95 2.85-7.51 1.14L4.44.7a.76.76 0 0 0-1.03.38L1.05 6.42a.76.76 0 0 0 .38 1c1.04.49 3.1 1.47 4.97 2.36 6.7 3.25 12.39 3.03 16.73-4.04Z"
+      />
+    </svg>
+  );
+}
+
 export function SlackLogo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" role="img" aria-label="Slack" className={cn('size-4', className)}>
@@ -186,6 +203,7 @@ export function ConnectionLogo({ server, className }: { server: string; classNam
   if (server === 'github') return <GitHubLogo className={className} />;
   if (server === 'bitbucket') return <BitbucketLogo className={className} />;
   if (server === 'jira') return <JiraLogo className={className} />;
+  if (server === 'confluence') return <ConfluenceLogo className={className} />;
   if (server === 'slack') return <SlackLogo className={className} />;
   if (server === 'granola') return <GranolaLogo className={className} />;
   return <Plug aria-hidden className={cn('size-4', className)} />;
@@ -199,6 +217,7 @@ export function ProviderLogo({ provider, className }: { provider: string; classN
     provider === 'github' ||
     provider === 'bitbucket' ||
     provider === 'jira' ||
+    provider === 'confluence' ||
     provider === 'slack' ||
     provider === 'granola'
   ) {
@@ -215,6 +234,7 @@ export function providerDisplayName(provider: string) {
   if (provider === 'github') return 'GitHub';
   if (provider === 'bitbucket') return 'Bitbucket';
   if (provider === 'jira') return 'Jira';
+  if (provider === 'confluence') return 'Confluence';
   if (provider === 'slack') return 'Slack';
   if (provider === 'granola') return 'Granola';
   return provider;
