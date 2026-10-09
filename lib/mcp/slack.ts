@@ -345,3 +345,131 @@ export async function loadSlackChangedMessages(
   }
   return { items: dedupe(items), ...(resumeAt !== undefined ? { resumeAt } : {}) };
 }
+
+export type SlackSearchSort = 'relevance' | 'newest';
+
+/**
+ * A live search of everything the member can see in one workspace: public
+ * and private channels, and direct and group messages. Nothing is stored.
+ */
+export async function searchSlackLive(input: {
+  baseUrl: string;
+  token: string;
+  query: string;
+  count: number;
+  sort?: SlackSearchSort;
+  fetchFn?: typeof fetch;
+}): Promise<{ workspaceName?: string; total?: number; items: NormalizedMcpItem[] }> {
+  const fetchFn = input.fetchFn || fetch;
+  const auth = await authTest(input.baseUrl, input.token, fetchFn);
+  const result = await slackGet<SlackSearchResult & { messages?: { total?: number } }>({
+    baseUrl: input.baseUrl,
+    token: input.token,
+    method: 'search.messages',
+    params: {
+      query: input.query,
+      count: String(Math.max(1, Math.min(100, Math.floor(input.count)))),
+      sort: input.sort === 'newest' ? 'timestamp' : 'score',
+      sort_dir: 'desc',
+    },
+    operation: 'search',
+    fetchFn,
+  });
+  const items = (result.messages?.matches || [])
+    .map((match) => normalizeSlackMatch(match, { workspaceName: auth.team, teamId: auth.team_id }))
+    .filter((item): item is NormalizedMcpItem => Boolean(item));
+  const total = Number(result.messages?.total);
+  return {
+    workspaceName: auth.team?.trim() || undefined,
+    ...(Number.isFinite(total) ? { total } : {}),
+    items,
+  };
+}
+
+/** The channel and message time of a Slack message link, and its thread when the link names one. */
+export function parseSlackPermalink(
+  value: string,
+): { host: string; channel: string; ts: string; threadTs?: string } | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  const match = /\/archives\/([A-Z0-9]+)\/p(\d{10})(\d{6})/u.exec(url.pathname);
+  if (!match) return null;
+  const threadTs = url.searchParams.get('thread_ts')?.trim();
+  return {
+    host: url.hostname,
+    channel: match[1]!,
+    ts: `${match[2]}.${match[3]}`,
+    ...(threadTs ? { threadTs } : {}),
+  };
+}
+
+interface SlackReplies {
+  ok?: boolean;
+  has_more?: boolean;
+  messages?: Array<{ user?: string; username?: string; bot_id?: string; text?: string; ts?: string }>;
+}
+
+interface SlackUserInfo {
+  ok?: boolean;
+  user?: { name?: string; real_name?: string; profile?: { display_name?: string; real_name?: string } };
+}
+
+// An app outside the Slack Marketplace gets at most 15 messages for each
+// conversations.replies call (Slack rate limits, 2025-05-29).
+const THREAD_MESSAGE_LIMIT = 15;
+
+/** One thread, oldest message first, with the names of its authors. */
+export async function readSlackThread(input: {
+  baseUrl: string;
+  token: string;
+  channel: string;
+  ts: string;
+  fetchFn?: typeof fetch;
+}): Promise<{
+  messages: Array<{ author?: string; text: string; ts: string; at?: string }>;
+  hasMore: boolean;
+}> {
+  const fetchFn = input.fetchFn || fetch;
+  const replies = await slackGet<SlackReplies>({
+    baseUrl: input.baseUrl,
+    token: input.token,
+    method: 'conversations.replies',
+    params: { channel: input.channel, ts: input.ts, limit: String(THREAD_MESSAGE_LIMIT) },
+    operation: 'thread read',
+    fetchFn,
+  });
+  const rows = (replies.messages || []).filter((row) => row.ts);
+  const names = new Map<string, string>();
+  for (const user of new Set(rows.map((row) => row.user).filter((id): id is string => Boolean(id)))) {
+    const info = await slackGet<SlackUserInfo>({
+      baseUrl: input.baseUrl,
+      token: input.token,
+      method: 'users.info',
+      params: { user },
+      operation: 'user read',
+      fetchFn,
+    }).catch(() => null);
+    const name =
+      info?.user?.profile?.display_name?.trim() ||
+      info?.user?.profile?.real_name?.trim() ||
+      info?.user?.real_name?.trim() ||
+      info?.user?.name?.trim();
+    if (name) names.set(user, name);
+  }
+  return {
+    messages: rows.map((row) => {
+      const seconds = Number(row.ts);
+      return {
+        author: (row.user && names.get(row.user)) || row.username || row.user || row.bot_id,
+        text: truncateText(slackPlainText(row.text), 4_000),
+        ts: row.ts!,
+        ...(Number.isFinite(seconds) ? { at: new Date(seconds * 1_000).toISOString() } : {}),
+      };
+    }),
+    hasMore: replies.has_more === true,
+  };
+}

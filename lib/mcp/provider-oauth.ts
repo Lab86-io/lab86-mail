@@ -59,11 +59,23 @@ export const PROVIDER_OAUTH: Record<ProviderOAuthId, ProviderOAuthEndpoint> = {
     label: 'Slack',
     authorizationUrl: 'https://slack.com/oauth/v2/authorize',
     tokenUrl: 'https://slack.com/api/oauth.v2.access',
-    // A user token only: the app reads what the signed-in member can see,
-    // and installs no bot.
+    // A user token only, read only: the app reads what the signed-in member
+    // can see (public and private channels, direct and group messages), and
+    // installs no bot.
     scopeParam: 'user_scope',
     scopeSeparator: ',',
-    scopes: ['search:read', 'users:read'],
+    scopes: [
+      'search:read',
+      'users:read',
+      'channels:read',
+      'groups:read',
+      'im:read',
+      'mpim:read',
+      'channels:history',
+      'groups:history',
+      'im:history',
+      'mpim:history',
+    ],
     tokenRequest: 'form-basic',
     env: { clientId: 'SLACK_OAUTH_CLIENT_ID', clientSecret: 'SLACK_OAUTH_CLIENT_SECRET' },
   },
@@ -177,11 +189,24 @@ export function normalizeProviderTokens(provider: ProviderOAuthId, body: any): O
   };
 }
 
+/** The account that a token answer names: a Slack sign-in reaches one workspace member. */
+export function providerAccount(
+  provider: ProviderOAuthId,
+  body: any,
+): { id: string; name?: string } | undefined {
+  if (provider !== 'slack') return undefined;
+  const teamId = typeof body?.team?.id === 'string' ? body.team.id.trim() : '';
+  const userId = typeof body?.authed_user?.id === 'string' ? body.authed_user.id.trim() : '';
+  if (!teamId || !userId) return undefined;
+  const name = typeof body.team.name === 'string' ? body.team.name.trim() : '';
+  return { id: `${teamId}:${userId}`, ...(name ? { name } : {}) };
+}
+
 async function requestProviderTokens(input: {
   provider: ProviderOAuthId;
   grant: Record<string, string>;
   fetchFn?: typeof fetch;
-}): Promise<OAuthTokens> {
+}): Promise<{ tokens: OAuthTokens; body: any }> {
   const endpoint = PROVIDER_OAUTH[input.provider];
   const credentials = requireCredentials(input.provider);
   const headers: Record<string, string> = { accept: 'application/json' };
@@ -222,7 +247,7 @@ async function requestProviderTokens(input: {
       { statusCode: response.status, oauthError: String(parsed?.error || '') },
     );
   }
-  return normalizeProviderTokens(input.provider, parsed);
+  return { tokens: normalizeProviderTokens(input.provider, parsed), body: parsed };
 }
 
 export async function finishProviderOAuth(input: {
@@ -232,7 +257,7 @@ export async function finishProviderOAuth(input: {
   fetchFn?: typeof fetch;
 }): Promise<PersistedMcpOAuthState> {
   const credentials = requireCredentials(input.provider);
-  const tokens = await requestProviderTokens({
+  const { tokens, body } = await requestProviderTokens({
     provider: input.provider,
     grant: {
       grant_type: 'authorization_code',
@@ -245,7 +270,14 @@ export async function finishProviderOAuth(input: {
     client_id: credentials.clientId,
     provider: input.provider,
   };
-  return { ...input.persisted, provider: input.provider, tokens, clientInformation };
+  const account = providerAccount(input.provider, body);
+  return {
+    ...input.persisted,
+    provider: input.provider,
+    tokens,
+    clientInformation,
+    ...(account ? { account } : {}),
+  };
 }
 
 /**
@@ -258,7 +290,7 @@ export async function refreshProviderOAuth(input: {
   refreshToken: string;
   fetchFn?: typeof fetch;
 }): Promise<OAuthTokens> {
-  const tokens = await requestProviderTokens({
+  const { tokens } = await requestProviderTokens({
     provider: input.provider,
     grant: { grant_type: 'refresh_token', refresh_token: input.refreshToken },
     fetchFn: input.fetchFn,

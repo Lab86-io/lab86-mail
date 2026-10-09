@@ -94,7 +94,20 @@ describe('provider authorization URLs', () => {
 
   test('Slack asks for user scopes only, and Bitbucket sends no scope', () => {
     const slack = new URL(buildProviderAuthorizationUrl({ provider: 'slack', clientId: 'c', state: 's' }));
-    expect(slack.searchParams.get('user_scope')).toBe('search:read,users:read');
+    expect(slack.searchParams.get('user_scope')?.split(',')).toEqual([
+      'search:read',
+      'users:read',
+      'channels:read',
+      'groups:read',
+      'im:read',
+      'mpim:read',
+      'channels:history',
+      'groups:history',
+      'im:history',
+      'mpim:history',
+    ]);
+    // Read only: no write scope.
+    expect(slack.searchParams.get('user_scope')).not.toMatch(/write/);
     expect(slack.searchParams.has('scope')).toBe(false);
     const bitbucket = new URL(
       buildProviderAuthorizationUrl({

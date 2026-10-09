@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import { listUserConnections } from '@/lib/mcp/connections';
-import { listServerDefs } from '@/lib/mcp/servers';
+import { allowsMultipleAccounts, listServerDefs } from '@/lib/mcp/servers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,6 +19,9 @@ export async function GET() {
       tokenLabel: s.tokenLabel,
       tokenHelp: s.tokenHelp,
       connectMode: s.connectMode,
+      // A server that allows several accounts stays in "Add a source" after
+      // its first connection (one Slack connection for each workspace).
+      multipleAccounts: allowsMultipleAccounts(s),
     })),
   });
 }

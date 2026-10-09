@@ -54,6 +54,9 @@ struct ConnectedSourceServer: Identifiable, Equatable {
     let tokenLabel: String
     let tokenHelp: String
     let connectMode: String
+    // True when the user can connect several accounts, one sign-in for each
+    // (a Slack workspace). An older server sends no `multipleAccounts`.
+    let multipleAccounts: Bool
 
     init?(json row: JSONValue) {
         guard let id = row["id"]?.stringValue?.nilIfBlank else { return nil }
@@ -62,6 +65,7 @@ struct ConnectedSourceServer: Identifiable, Equatable {
         tokenLabel = row["tokenLabel"]?.stringValue ?? "Access token"
         tokenHelp = row["tokenHelp"]?.stringValue ?? ""
         connectMode = row["connectMode"]?.stringValue ?? "token"
+        multipleAccounts = row["multipleAccounts"]?.boolValue ?? false
     }
 
     var signsInWithBrowser: Bool { connectMode == "oauth" }
@@ -69,6 +73,38 @@ struct ConnectedSourceServer: Identifiable, Equatable {
     /// The quiet line under the server in "Add a source". Only a browser
     /// sign-in has one: a token server shows its help in the token form.
     var addNote: String? { signsInWithBrowser ? tokenHelp.nilIfBlank : nil }
+}
+
+/// One row in "Add a source". A server with a connection leaves the list,
+/// but a server that allows several accounts stays. Its row then adds one
+/// more account: "Add another Slack workspace".
+struct ConnectedSourceAddRow: Identifiable, Equatable {
+    let server: ConnectedSourceServer
+    // True when the server has a connection and the row adds one more account.
+    let addsAnother: Bool
+
+    var id: String { server.id }
+
+    var title: String {
+        addsAnother ? "Add another \(server.label) workspace" : server.label
+    }
+
+    var note: String? {
+        addsAnother ? "Sign in to one more workspace. Each workspace is its own connection." : server.addNote
+    }
+
+    /// The rows of "Add a source", in the order of the servers.
+    static func rows(
+        servers: [ConnectedSourceServer],
+        connections: [ConnectedSourceConnection]
+    ) -> [ConnectedSourceAddRow] {
+        let connected = Set(connections.map(\.server))
+        return servers.compactMap { server in
+            let hasConnection = connected.contains(server.id)
+            if hasConnection, !server.multipleAccounts { return nil }
+            return ConnectedSourceAddRow(server: server, addsAnother: hasConnection)
+        }
+    }
 }
 
 /// One connected tool row from `/api/mcp/status` (AI-7). `status` says only
@@ -134,13 +170,21 @@ struct ConnectedSourceConnection: Identifiable, Equatable {
     }
 
     /// "Acme · ann@example.com" under the title, or nil before the first
-    /// sync and from an older server.
+    /// sync and from an older server. The workspace comes first, so two
+    /// Slack rows show different names on this line.
     var identityText: String? {
         var parts: [String] = []
         for part in [workspaceName, accountEmail].compactMap({ $0 }) where !parts.contains(part) {
             parts.append(part)
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// "Disconnect Slack (Acme)?": the workspace tells two Slack rows apart.
+    func disconnectTitle(serverLabel: String?) -> String {
+        let name = sourceName(serverLabel: serverLabel)
+        guard let workspaceName else { return "Disconnect \(name)?" }
+        return "Disconnect \(name) (\(workspaceName))?"
     }
 
     var statusText: String {
@@ -196,18 +240,18 @@ struct ConnectionsSettingsView: View {
             }
 
             Section("Add a source") {
-                ForEach(availableServers) { server in
+                ForEach(addRows) { row in
                     Button {
-                        startConnect(server)
+                        startConnect(row.server)
                     } label: {
-                        addSourceRow(server)
+                        addSourceRow(row)
                     }
                     #if os(macOS)
                     // A Mac button in a list row draws a bordered push button.
                     .buttonStyle(.plain)
                     #endif
                     .disabled(busyID != nil)
-                    .accessibilityHint(connectHint(server))
+                    .accessibilityHint(connectHint(row.server))
                 }
             }
 
@@ -272,9 +316,10 @@ struct ConnectionsSettingsView: View {
         }
     }
 
-    private var availableServers: [Server] {
-        let connected = Set(connections.map(\.server))
-        return servers.filter { !connected.contains($0.id) }
+    // A connected server leaves "Add a source", except a server that allows
+    // several accounts: its row adds one more workspace.
+    private var addRows: [ConnectedSourceAddRow] {
+        ConnectedSourceAddRow.rows(servers: servers, connections: connections)
     }
 
     private func serverLabel(for connection: Connection) -> String? {
@@ -283,21 +328,22 @@ struct ConnectionsSettingsView: View {
 
     private var disconnectTitle: String {
         guard let target = disconnectTarget else { return "Disconnect source?" }
-        return "Disconnect \(target.sourceName(serverLabel: serverLabel(for: target)))?"
+        return target.disconnectTitle(serverLabel: serverLabel(for: target))
     }
 
     private func connectHint(_ server: Server) -> String {
         server.signsInWithBrowser ? "Opens the \(server.label) sign-in page." : "Asks for an access token."
     }
 
-    // The source name, the sign-in help for a browser sign-in, and a quiet
-    // Connect at the trailing edge.
-    private func addSourceRow(_ server: Server) -> some View {
-        HStack(spacing: 12) {
+    // The source name (or "Add another Slack workspace"), the sign-in help
+    // for a browser sign-in, and a quiet Connect at the trailing edge.
+    private func addSourceRow(_ row: ConnectedSourceAddRow) -> some View {
+        let server = row.server
+        return HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(server.label)
+                Text(row.title)
                     .foregroundStyle(Color.primary)
-                if let note = server.addNote {
+                if let note = row.note {
                     Text(note)
                         .font(.caption)
                         .foregroundStyle(Color.secondary)

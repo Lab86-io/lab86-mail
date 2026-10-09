@@ -148,4 +148,139 @@ struct ConnectedSourceIdentityTests {
 
         #expect(ConnectedSourceServer(json: .object(["label": .string("Slack")])) == nil)
     }
+
+    // Several Slack workspaces (2026-10-09): one sign-in for each workspace,
+    // and each workspace is its own connection.
+
+    private static let slackHelp =
+        "Sign in with Slack to search your channels and direct messages. Add each workspace that you use."
+
+    private func server(_ id: String, multipleAccounts: JSONValue? = nil) throws -> ConnectedSourceServer {
+        var row: [String: JSONValue] = [
+            "id": .string(id), "label": .string(ConnectedSourceNames.serverName(id)),
+            "tokenHelp": .string(id == "slack" ? Self.slackHelp : ""),
+            "connectMode": .string(id == "github" ? "token" : "oauth"),
+        ]
+        if let multipleAccounts { row["multipleAccounts"] = multipleAccounts }
+        return try #require(ConnectedSourceServer(json: .object(row)))
+    }
+
+    private func connection(
+        _ id: String, server: String, status: String = "connected", workspace: String? = nil
+    ) throws -> ConnectedSourceConnection {
+        var row: [String: JSONValue] = [
+            "connectionId": .string(id), "server": .string(server), "authKind": .string("oauth"),
+            "status": .string(status), "displayName": .string(ConnectedSourceNames.serverName(server)),
+        ]
+        if let workspace { row["workspaceName"] = .string(workspace) }
+        return try #require(ConnectedSourceConnection(json: .object(row)))
+    }
+
+    @Test
+    func aServerSaysWhetherItAllowsSeveralAccounts() throws {
+        let several = try server("slack", multipleAccounts: .bool(true))
+        let one = try server("slack", multipleAccounts: .bool(false))
+        #expect(several.multipleAccounts)
+        #expect(!one.multipleAccounts)
+        // An older server sends no field, and a wrong type reads as false.
+        let absent = try server("slack")
+        let nullValue = try server("slack", multipleAccounts: .null)
+        let text = try server("slack", multipleAccounts: .string("true"))
+        #expect(!absent.multipleAccounts)
+        #expect(!nullValue.multipleAccounts)
+        #expect(!text.multipleAccounts)
+        let older = try #require(ConnectedSourceServer(json: .object(["id": .string("jira")])))
+        #expect(!older.multipleAccounts)
+    }
+
+    @Test
+    func withNoConnectionEveryServerIsAPlainAddRow() throws {
+        let servers = try [
+            server("github"), server("jira"), server("slack", multipleAccounts: .bool(true)),
+        ]
+        let rows = ConnectedSourceAddRow.rows(servers: servers, connections: [])
+        #expect(rows.map(\.id) == ["github", "jira", "slack"])
+        #expect(rows.allSatisfy { !$0.addsAnother })
+
+        // With no connection, the Slack row is unchanged: its label and help.
+        let slack = try #require(rows.last)
+        #expect(slack.title == "Slack")
+        #expect(slack.note == Self.slackHelp)
+        // A token server keeps its help for the token form.
+        #expect(rows.first?.title == "GitHub")
+        #expect(rows.first?.note == nil)
+    }
+
+    @Test
+    func aConnectedSlackStaysToAddAnotherWorkspace() throws {
+        let servers = try [
+            server("github"), server("jira"), server("slack", multipleAccounts: .bool(true)),
+        ]
+        let connections = try [
+            connection("github_1", server: "github"),
+            connection("slack_t1u1", server: "slack", workspace: "Acme"),
+        ]
+        let rows = ConnectedSourceAddRow.rows(servers: servers, connections: connections)
+        // GitHub leaves the list. Slack stays to add one more workspace.
+        #expect(rows.map(\.id) == ["jira", "slack"])
+        #expect(rows.map(\.addsAnother) == [false, true])
+
+        let slack = try #require(rows.last)
+        #expect(slack.server.signsInWithBrowser)
+        #expect(slack.title == "Add another Slack workspace")
+        #expect(slack.note == "Sign in to one more workspace. Each workspace is its own connection.")
+
+        // Two Slack connections keep the one add row.
+        let more = try connections + [connection("slack_t2u1", server: "slack", workspace: "Beta")]
+        #expect(ConnectedSourceAddRow.rows(servers: servers, connections: more).map(\.id) == ["jira", "slack"])
+
+        // A Slack connection that needs a reconnect still counts as a connection.
+        let broken = try [connection("slack_t1u1", server: "slack", status: "error", workspace: "Acme")]
+        let brokenRows = ConnectedSourceAddRow.rows(servers: servers, connections: broken)
+        #expect(brokenRows.last?.title == "Add another Slack workspace")
+    }
+
+    @Test
+    func aServerWithOneAccountLeavesTheListOnceConnected() throws {
+        // An older server sends no `multipleAccounts`, so a connected Slack leaves the list.
+        let servers = try [server("jira"), server("slack")]
+        let connections = try [
+            connection("jira_1", server: "jira", workspace: "Acme"),
+            connection("slack_1", server: "slack", workspace: "Acme"),
+        ]
+        #expect(ConnectedSourceAddRow.rows(servers: servers, connections: connections).isEmpty)
+    }
+
+    @Test
+    func theAddAnotherTitleUsesTheServerLabel() throws {
+        let team = try #require(ConnectedSourceServer(json: .object([
+            "id": .string("teams"), "label": .string("Teams"), "connectMode": .string("oauth"),
+            "tokenHelp": .string("Sign in with Teams."), "multipleAccounts": .bool(true),
+        ])))
+        let first = ConnectedSourceAddRow(server: team, addsAnother: false)
+        #expect(first.title == "Teams")
+        #expect(first.note == "Sign in with Teams.")
+        let another = ConnectedSourceAddRow(server: team, addsAnother: true)
+        #expect(another.title == "Add another Teams workspace")
+        #expect(another.note == "Sign in to one more workspace. Each workspace is its own connection.")
+    }
+
+    @Test
+    func twoSlackRowsAreToldApartByTheirWorkspace() throws {
+        let acme = try connection("slack_t1u1", server: "slack", workspace: "Acme")
+        let beta = try connection("slack_t2u1", server: "slack", workspace: "Beta")
+        // Both rows have the same title and no nickname, so the identity line tells them apart.
+        #expect(acme.sourceName(serverLabel: "Slack") == beta.sourceName(serverLabel: "Slack"))
+        #expect(acme.nickname(serverLabel: "Slack") == nil)
+        #expect(beta.nickname(serverLabel: "Slack") == nil)
+        #expect(acme.identityText == "Acme")
+        #expect(beta.identityText == "Beta")
+        #expect(acme.identityText != beta.identityText)
+
+        // The disconnect question names the workspace too.
+        #expect(acme.disconnectTitle(serverLabel: "Slack") == "Disconnect Slack (Acme)?")
+        #expect(beta.disconnectTitle(serverLabel: "Slack") == "Disconnect Slack (Beta)?")
+        let github = try connection("github_1", server: "github")
+        #expect(github.disconnectTitle(serverLabel: nil) == "Disconnect GitHub?")
+    }
 }

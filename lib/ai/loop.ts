@@ -237,6 +237,8 @@ export const AGENT_TOOL_NAMES = new Set([
   'mcp_search',
   'mcp_connection_status',
   'github_search',
+  'slack_search',
+  'slack_read_thread',
   'mcp_list_items',
   'mcp_create_task',
   'contact_lookup',
