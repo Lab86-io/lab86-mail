@@ -26,3 +26,27 @@ export const tick = internalAction({
     console.log(`[mcp-sync cron] polled ${ok}/${userIds.length} users`);
   },
 });
+
+// Atlassian personal data reporting: once a day, each user with an Atlassian
+// sign-in reports that account (lib/mcp/atlassian-privacy.ts). Atlassian
+// requires a report at least every 7 days for an app with sharing on.
+export const atlassianPrivacyTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[atlassian-privacy cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    const userIds = await ctx.runQuery(internal.mcp.listAtlassianSignInUserIds, {});
+    if (!userIds.length) return;
+    const ok = await fanOutInternalPost(
+      `${appUrl}/api/cron/atlassian-privacy`,
+      secret,
+      userIds.map((userId) => ({ userId })),
+      { label: 'atlassian-privacy cron' },
+    );
+    console.log(`[atlassian-privacy cron] reported ${ok}/${userIds.length} users`);
+  },
+});

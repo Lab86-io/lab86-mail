@@ -890,6 +890,21 @@ export function mcpConnectionWantsSync(row: {
   return row.includeInBrief !== false || row.includeInSearch !== false;
 }
 
+/** Users with an Atlassian sign-in, for the daily personal data report. */
+export const listAtlassianSignInUserIds = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query('mcpConnections').collect();
+    return [
+      ...new Set(
+        rows
+          .filter((row) => row.server === 'jira' && row.authKind === 'oauth' && row.status !== 'disconnected')
+          .map((row) => row.userId),
+      ),
+    ];
+  },
+});
+
 export const listSyncTargetUserIds = internalQuery({
   args: {},
   handler: async (ctx) => {

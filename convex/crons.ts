@@ -144,6 +144,8 @@ crons.interval('albatross routines', { minutes: 5 }, internal.albatrossRoutines.
 // Poll each user's connected tool servers/APIs every 20 minutes
 // so brief/search items stay current.
 crons.interval('mcp sync', { minutes: 20 }, internal.mcpSync.tick, {});
+// Atlassian personal data reporting for the Atlassian sign-in (at least every 7 days).
+crons.interval('atlassian personal data report', { hours: 24 }, internal.mcpSync.atlassianPrivacyTick, {});
 crons.interval('connected content and Brief preparation', { minutes: 2 }, internal.content.tick, {});
 
 // Disconnect normally schedules its own bounded cleanup chain. This sweep is

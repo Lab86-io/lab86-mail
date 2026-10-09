@@ -137,11 +137,14 @@ describe('Atlassian item normalizers', () => {
       title: 'PAY-1: Fix PAY-1',
       url: 'https://acme.atlassian.net/browse/PAY-1',
       state: 'In Progress',
-      author: 'Jane',
       organization: 'acme',
       assignedToUser: true,
       summary: 'Payments · Bug · High priority\nCard fails',
     });
+    // No name of another person is kept (Atlassian personal data reporting).
+    expect(item?.author).toBeUndefined();
+    expect(JSON.stringify(item)).not.toContain('Jane');
+    expect(JSON.stringify(item)).not.toContain('Jakob');
     expect(item?.updatedAtSource).toBe(Date.parse('2026-10-08T12:00:00.000+0000'));
     expect(normalizeJiraIssue({ id: '1' }, site)).toBeNull();
     expect(normalizeJiraIssue({ id: '2', key: 'X-2' }, site)).toMatchObject({
