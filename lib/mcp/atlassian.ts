@@ -91,6 +91,15 @@ export interface AtlassianSyncResult {
   workspaceName?: string;
 }
 
+/**
+ * The changed issues. `resumeAt` is set when the page limit ended the read
+ * early: the next recheck starts there, so no later page is lost.
+ */
+export interface AtlassianChangedIssues {
+  items: NormalizedMcpItem[];
+  resumeAt?: number;
+}
+
 export interface AtlassianHistoryPosition {
   site: number;
   token?: string;
@@ -459,23 +468,33 @@ export async function loadAtlassianHistoryPage(
   return { items, ...(next ? { next } : {}) };
 }
 
-/** The issues that involve the user and changed since `sinceMs`, on every site. */
+/**
+ * The issues that involve the user and changed since `sinceMs`, on every site.
+ * The read goes oldest first, so a read that the page limit ends early can
+ * resume after the newest issue that it read.
+ */
 export async function loadAtlassianChangedIssues(
   baseUrl: string,
   token: string,
   sinceMs: number,
   now = Date.now(),
   fetchFn: typeof fetch = fetch,
-): Promise<NormalizedMcpItem[]> {
+): Promise<AtlassianChangedIssues> {
   const minutes = Math.max(1, Math.ceil((now - sinceMs) / 60_000));
-  const jql = JIRA_HISTORY_JQL.replace('updated >= -365d', `updated >= -${minutes}m`);
+  const jql = JIRA_HISTORY_JQL.replace('updated >= -365d', `updated >= -${minutes}m`).replace(
+    'ORDER BY updated DESC',
+    'ORDER BY updated ASC',
+  );
   const items: NormalizedMcpItem[] = [];
+  let resumeAt: number | undefined;
   const sites = jiraSites(await listAtlassianSites(baseUrl, token, fetchFn));
   const accountId = sites.length ? (await readProfile(baseUrl, token, fetchFn))?.account_id : undefined;
   for (const site of sites) {
     // Read every page of the change window, up to the page limit.
     const requested = new Set<string>();
     let nextPageToken: string | undefined;
+    let newest = sinceMs;
+    let complete = false;
     for (let pageNumber = 0; pageNumber < JIRA_CHANGE_PAGE_LIMIT; pageNumber += 1) {
       const page = await searchJiraIssues({
         baseUrl,
@@ -488,15 +507,23 @@ export async function loadAtlassianChangedIssues(
       });
       for (const issue of page.issues || []) {
         const item = normalizeJiraIssue(issue, site, { accountId });
-        if (item) items.push(item);
+        if (!item) continue;
+        items.push(item);
+        newest = Math.max(newest, item.updatedAtSource ?? newest);
       }
-      if (!page.nextPageToken || page.isLast === true) break;
+      if (!page.nextPageToken || page.isLast === true) {
+        complete = true;
+        break;
+      }
       if (requested.has(page.nextPageToken)) {
         throw new Error(`Jira search on ${site.name} returned the same page token again`);
       }
       requested.add(page.nextPageToken);
       nextPageToken = page.nextPageToken;
     }
+    // Pages remain: resume after the newest issue read. A read with no
+    // progress at all takes `now`, so it cannot repeat the same pages.
+    if (!complete) resumeAt = Math.min(resumeAt ?? now, newest > sinceMs ? newest : now);
   }
-  return dedupe(items);
+  return { items: dedupe(items), ...(resumeAt !== undefined ? { resumeAt } : {}) };
 }

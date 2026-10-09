@@ -62,6 +62,15 @@ export interface SlackSyncResult {
   workspaceName?: string;
 }
 
+/**
+ * The new messages. `resumeAt` is set when the page limit ended the read
+ * early: the next recheck starts there, so no later page is lost.
+ */
+export interface SlackChangedMessages {
+  items: NormalizedMcpItem[];
+  resumeAt?: number;
+}
+
 export interface SlackHistoryPosition {
   query: number;
   page: number;
@@ -198,6 +207,8 @@ async function searchMessages(input: {
   query: SlackQuery;
   count: number;
   page?: number;
+  /** Newest first by default; a change recheck reads oldest first. */
+  sortDir?: 'asc' | 'desc';
   auth: SlackAuthTest;
   fetchFn: typeof fetch;
 }) {
@@ -210,7 +221,7 @@ async function searchMessages(input: {
       count: String(input.count),
       page: String(input.page || 1),
       sort: 'timestamp',
-      sort_dir: 'desc',
+      sort_dir: input.sortDir || 'desc',
     },
     operation: 'search',
     fetchFn: input.fetchFn,
@@ -281,26 +292,48 @@ export async function loadSlackHistoryPage(
   return { items: result.items, ...(next ? { next } : {}) };
 }
 
-/** Mentions and direct messages newer than `sinceMs`. */
+/**
+ * Mentions and direct messages newer than `sinceMs`. The read goes oldest
+ * first, so a read that the page limit ends early can resume after the
+ * newest message that it read.
+ */
 export async function loadSlackChangedMessages(
   baseUrl: string,
   token: string,
   sinceMs: number,
   now = Date.now(),
   fetchFn: typeof fetch = fetch,
-): Promise<NormalizedMcpItem[]> {
+): Promise<SlackChangedMessages> {
   const auth = await authTest(baseUrl, token, fetchFn);
   const items: NormalizedMcpItem[] = [];
+  let resumeAt: number | undefined;
   // `after:` takes a day and excludes it, so search from the day before.
   for (const query of directedQueries(auth.user_id!, Math.min(now, sinceMs) - DAY_MS)) {
-    // Results come newest first, so a page that reaches the last check ends
-    // the read.
+    let newest = sinceMs;
+    let complete = false;
     for (let page = 1; page <= SLACK_CHANGE_PAGE_LIMIT; page += 1) {
-      const result = await searchMessages({ baseUrl, token, query, count: 100, page, auth, fetchFn });
-      const changed = result.items.filter((item) => (item.updatedAtSource ?? now) > sinceMs);
-      items.push(...changed);
-      if (page >= result.pages || changed.length < result.items.length || !result.items.length) break;
+      const result = await searchMessages({
+        baseUrl,
+        token,
+        query,
+        count: 100,
+        page,
+        sortDir: 'asc',
+        auth,
+        fetchFn,
+      });
+      for (const item of result.items) {
+        newest = Math.max(newest, item.updatedAtSource ?? newest);
+        if ((item.updatedAtSource ?? now) > sinceMs) items.push(item);
+      }
+      if (page >= result.pages || !result.items.length) {
+        complete = true;
+        break;
+      }
     }
+    // Pages remain: resume after the newest message read. A read with no
+    // progress at all takes `now`, so it cannot repeat the same pages.
+    if (!complete) resumeAt = Math.min(resumeAt ?? now, newest > sinceMs ? newest : now);
   }
-  return dedupe(items);
+  return { items: dedupe(items), ...(resumeAt !== undefined ? { resumeAt } : {}) };
 }

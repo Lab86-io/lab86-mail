@@ -62,10 +62,16 @@ async function readRestHistory(input: {
   const slack = transport === 'slack-rest';
   if (saved.complete) {
     const since = (saved.checkedAt || 0) - CHANGE_MARGIN_MS;
-    const items = slack
+    const changed = slack
       ? await deps.loadSlackChangedMessages(serverUrl, token, since, now)
       : await deps.loadAtlassianChangedIssues(serverUrl, token, since, now);
-    return { items, cursor: { complete: true, checkedAt: now }, status: 'provider_limited' };
+    // A read that the page limit ended early saves where it stopped, so the
+    // next recheck reads the pages that remain.
+    return {
+      items: changed.items,
+      cursor: { complete: true, checkedAt: changed.resumeAt ?? now },
+      status: 'provider_limited',
+    };
   }
   if (slack) {
     const page = await deps.loadSlackHistoryPage(

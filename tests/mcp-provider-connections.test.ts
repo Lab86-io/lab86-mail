@@ -422,12 +422,12 @@ describe('provider history walk', () => {
         items: [{ externalId: 's1' }],
         next: { query: 0, page: 2 },
       }),
-      loadSlackChangedMessages: record('slackChanged', [{ externalId: 's2' }]),
+      loadSlackChangedMessages: record('slackChanged', { items: [{ externalId: 's2' }] }),
       loadAtlassianHistoryPage: record('atlassianPage', {
         items: [{ externalId: 'j1' }],
         next: { site: 1, token: 't2' },
       }),
-      loadAtlassianChangedIssues: record('atlassianChanged', []),
+      loadAtlassianChangedIssues: record('atlassianChanged', { items: [], resumeAt: 1_234 }),
     };
     return { deps, writes, calls };
   }
@@ -477,6 +477,8 @@ describe('provider history walk', () => {
     const atlassian = harness('jira', { complete: true, checkedAt: Date.now() - 2 * 3_600_000 });
     await syncMcpContent('user_1', atlassian.deps);
     expect(atlassian.calls.map((c) => c.name)).toEqual(['atlassianChanged']);
+    // A recheck that the page limit ended early saves where it stopped.
+    expect(atlassian.writes.at(-1)).toMatchObject({ cursor: { complete: true, checkedAt: 1_234 } });
   });
 
   test('a Bitbucket sign-in has no history walk', async () => {

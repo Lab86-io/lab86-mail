@@ -302,10 +302,17 @@ describe('Atlassian history walk', () => {
       return json({ issues: [issue('10', 'PAY-1'), { id: 'x' }] });
     });
     const now = 1_000_000_000;
-    const items = await loadAtlassianChangedIssues(API, 'token-1', now - 90 * 60_000 - 1, now, mock.fetchFn);
+    const changed = await loadAtlassianChangedIssues(
+      API,
+      'token-1',
+      now - 90 * 60_000 - 1,
+      now,
+      mock.fetchFn,
+    );
     expect(jqls[0]).toContain('updated >= -91m');
+    expect(jqls[0]).toEndWith('ORDER BY updated ASC');
     expect(jqls[0]).not.toContain('-365d');
-    expect(items.map((item) => item.externalId)).toEqual(['jira:cloud-1:10']);
+    expect(changed).toEqual({ items: [expect.objectContaining({ externalId: 'jira:cloud-1:10' })] });
   });
 });
 
@@ -337,9 +344,11 @@ describe('Atlassian page guards', () => {
         ? { issues: [issue('11', 'PAY-2')], isLast: true }
         : { issues: [issue('10', 'PAY-1')], nextPageToken: 'p2' };
     });
-    const items = await loadAtlassianChangedIssues(API, 'token-1', 0, 60_000, mock.fetchFn);
+    const changed = await loadAtlassianChangedIssues(API, 'token-1', 0, 60_000, mock.fetchFn);
     expect(tokens).toEqual([undefined, 'p2']);
-    expect(items.map((item) => item.externalId)).toEqual(['jira:cloud-1:10', 'jira:cloud-1:11']);
+    expect(changed.items.map((item) => item.externalId)).toEqual(['jira:cloud-1:10', 'jira:cloud-1:11']);
+    // Every page was read, so the next recheck starts at the current time.
+    expect(changed.resumeAt).toBeUndefined();
   });
 
   test('a change recheck stops on a repeated token and at the page limit', async () => {
@@ -357,8 +366,25 @@ describe('Atlassian page guards', () => {
       calls += 1;
       return { issues: [issue(String(calls), `PAY-${calls}`)], nextPageToken: `p${calls + 1}` };
     });
-    const items = await loadAtlassianChangedIssues(API, 'token-1', 0, 60_000, endless.fetchFn);
+    const capped = await loadAtlassianChangedIssues(
+      API,
+      'token-1',
+      Date.parse('2026-10-01T00:00:00.000Z'),
+      Date.parse('2026-10-09T00:00:00.000Z'),
+      endless.fetchFn,
+    );
     expect(calls).toBe(JIRA_CHANGE_PAGE_LIMIT);
-    expect(items).toHaveLength(JIRA_CHANGE_PAGE_LIMIT);
+    expect(capped.items).toHaveLength(JIRA_CHANGE_PAGE_LIMIT);
+    // Pages remain, so the next recheck resumes after the newest issue read.
+    expect(capped.resumeAt).toBe(Date.parse('2026-10-08T12:00:00.000+0000'));
+
+    // A capped read with no progress past the last check resumes at `now`.
+    const stale = pagedFetch((body) => ({
+      issues: [issue('1', 'PAY-1', { updated: '2020-01-01T00:00:00.000+0000' })],
+      nextPageToken: `t${(Number(String(body.nextPageToken || 't0').slice(1)) || 0) + 1}`,
+    }));
+    const since = Date.parse('2026-10-08T00:00:00.000Z');
+    const noProgress = await loadAtlassianChangedIssues(API, 'token-1', since, since + 60_000, stale.fetchFn);
+    expect(noProgress.resumeAt).toBe(since + 60_000);
   });
 });

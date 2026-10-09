@@ -211,9 +211,11 @@ describe('Slack history walk', () => {
         messages: { matches: [match(String(since / 1000 - 60)), match(String(since / 1000 + 60))] },
       });
     });
-    const items = await loadSlackChangedMessages(API, 'xoxp-1', since, NOW, mock.fetchFn);
+    const changed = await loadSlackChangedMessages(API, 'xoxp-1', since, NOW, mock.fetchFn);
     expect(mock.calls[1]?.searchParams.get('query')).toBe('<@U1> after:2026-10-08');
-    expect(items.map((item) => item.updatedAtSource)).toEqual([since + 60_000]);
+    expect(mock.calls[1]?.searchParams.get('sort_dir')).toBe('asc');
+    expect(changed.items.map((item) => item.updatedAtSource)).toEqual([since + 60_000]);
+    expect(changed.resumeAt).toBeUndefined();
   });
 });
 
@@ -221,7 +223,7 @@ describe('Slack change recheck pages', () => {
   const since = Date.parse('2026-10-09T10:00:00.000Z');
   const newer = (offset: number) => match(String(since / 1000 + offset));
 
-  test('reads the next page while every message is new, and stops at the last check', async () => {
+  test('reads every page oldest first and keeps only the new messages', async () => {
     const pages: number[] = [];
     const mock = slackFetch((url) => {
       if (url.pathname === '/api/auth.test') return auth();
@@ -230,12 +232,13 @@ describe('Slack change recheck pages', () => {
         return json({ ok: true, messages: { matches: [], paging: { page, pages: 1 } } });
       }
       pages.push(page);
-      const matches = page === 1 ? [newer(300), newer(200)] : [newer(100), match(String(since / 1000 - 60))];
-      return json({ ok: true, messages: { matches, paging: { page, pages: 5 } } });
+      const matches = page === 1 ? [match(String(since / 1000 - 60)), newer(100)] : [newer(200), newer(300)];
+      return json({ ok: true, messages: { matches, paging: { page, pages: 2 } } });
     });
-    const items = await loadSlackChangedMessages(API, 'xoxp-1', since, NOW, mock.fetchFn);
+    const changed = await loadSlackChangedMessages(API, 'xoxp-1', since, NOW, mock.fetchFn);
     expect(pages).toEqual([1, 2]);
-    expect(items).toHaveLength(3);
+    expect(changed.items).toHaveLength(3);
+    expect(changed.resumeAt).toBeUndefined();
   });
 
   test('stops at the page limit', async () => {
@@ -246,7 +249,20 @@ describe('Slack change recheck pages', () => {
       if ((url.searchParams.get('query') || '').startsWith('<@U1>')) mentionPages += 1;
       return json({ ok: true, messages: { matches: [newer(1_000 - page)], paging: { page, pages: 50 } } });
     });
-    await loadSlackChangedMessages(API, 'xoxp-1', since, NOW, mock.fetchFn);
+    const capped = await loadSlackChangedMessages(API, 'xoxp-1', since, NOW, mock.fetchFn);
     expect(mentionPages).toBe(SLACK_CHANGE_PAGE_LIMIT);
+    // Pages remain, so the next recheck resumes after the newest message read.
+    expect(capped.resumeAt).toBe(since + (1_000 - 1) * 1_000);
+
+    // A capped read with no progress past the last check resumes at `now`.
+    const old = slackFetch((url) => {
+      if (url.pathname === '/api/auth.test') return auth();
+      const page = Number(url.searchParams.get('page'));
+      return json({
+        ok: true,
+        messages: { matches: [match(String(since / 1000 - 60))], paging: { page, pages: 50 } },
+      });
+    });
+    expect((await loadSlackChangedMessages(API, 'xoxp-1', since, NOW, old.fetchFn)).resumeAt).toBe(NOW);
   });
 });
