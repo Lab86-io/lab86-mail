@@ -517,12 +517,14 @@ describe('openWorkQuestions', () => {
 describe('formValueDisplay for a contact and a plain value', () => {
   test('a contact names the person, the relation, and the phone', async () => {
     const { formValueDisplay } = await import('../lib/albatross/thread-view');
+    const { phoneDisplay } = await import('../lib/personal-details/format');
+    const phone = phoneDisplay('5555550100');
     const contact = { id: 'contact', label: 'Emergency contact', kind: 'contact' } as any;
     expect(
       formValueDisplay(contact, { name: 'Robin Lee', phone: '5555550100', relationship: 'Friend' } as any),
-    ).toContain('Robin Lee (Friend), ');
-    expect(formValueDisplay(contact, { name: 'Robin Lee', phone: '5555550100' } as any)).toStartWith(
-      'Robin Lee, ',
+    ).toBe(`Robin Lee (Friend), ${phone}`);
+    expect(formValueDisplay(contact, { name: 'Robin Lee', phone: '5555550100' } as any)).toBe(
+      `Robin Lee, ${phone}`,
     );
     const hours = { id: 'hours', label: 'Hours', kind: 'number' } as any;
     expect(formValueDisplay(hours, 32 as any)).toBe('32');
