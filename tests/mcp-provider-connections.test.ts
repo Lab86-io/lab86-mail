@@ -460,6 +460,15 @@ describe('provider history walk', () => {
     await syncMcpContent('user_1', ending.deps);
     expect(ending.writes.at(-1)).toMatchObject({ status: 'provider_limited', cursor: { complete: true } });
 
+    const slackEnding = harness('slack', { query: 1, page: 3 });
+    slackEnding.deps.loadSlackHistoryPage = async () => ({ items: [{ externalId: 's9' }] });
+    await syncMcpContent('user_1', slackEnding.deps);
+    expect(slackEnding.writes.at(-1)).toMatchObject({
+      status: 'provider_limited',
+      indexed: 1,
+      cursor: { complete: true },
+    });
+
     const recheck = harness('slack', { complete: true, checkedAt: Date.now() - 2 * 3_600_000 });
     await syncMcpContent('user_1', recheck.deps);
     expect(recheck.calls.map((c) => c.name)).toEqual(['slackChanged']);

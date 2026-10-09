@@ -135,10 +135,9 @@ export async function syncMcpContent(userId: string, deps = defaults) {
           saved,
           now,
         }));
-      } else if (transport !== 'mcp') {
-        // Other REST sources have no history walk.
-        throw new Error('Source has no history walk.');
       } else {
+        // The server filter above lets only Slack, Jira, and Granola in, so
+        // every other connection here is an MCP connection.
         handle = await deps.connectMcp(connection.serverUrl, credentials.token, definition.authMode);
         const tool = definition.syncQueries[0].tool;
         if (!handle.toolNames.has(tool)) throw new Error('Source listing tool unavailable.');

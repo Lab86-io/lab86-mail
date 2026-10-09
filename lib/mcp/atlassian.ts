@@ -29,6 +29,8 @@ export const JIRA_INVOLVED_JQL =
  */
 export const JIRA_HISTORY_JQL =
   '(assignee = currentUser() OR assignee was currentUser() OR reporter = currentUser() OR watcher = currentUser()) AND updated >= -365d ORDER BY updated DESC';
+/** The most Jira pages that one change recheck reads on a site (100 issues each). */
+export const JIRA_CHANGE_PAGE_LIMIT = 10;
 export const CONFLUENCE_RECENT_CQL =
   'type = page AND (contributor = currentUser() OR mention = currentUser()) AND lastmodified >= now("-30d") ORDER BY lastmodified DESC';
 
@@ -443,6 +445,11 @@ export async function loadAtlassianHistoryPage(
   const items = (page.issues || [])
     .map((issue) => normalizeJiraIssue(issue, site, { accountId }))
     .filter((item): item is NormalizedMcpItem => Boolean(item));
+  // A repeated token would walk the same page forever. The error keeps the
+  // saved cursor, so the next pass tries the same page again.
+  if (page.nextPageToken && page.isLast !== true && page.nextPageToken === position.token) {
+    throw new Error(`Jira search on ${site.name} returned the same page token again`);
+  }
   const next =
     page.nextPageToken && page.isLast !== true
       ? { site: index, token: page.nextPageToken }
@@ -466,10 +473,29 @@ export async function loadAtlassianChangedIssues(
   const sites = jiraSites(await listAtlassianSites(baseUrl, token, fetchFn));
   const accountId = sites.length ? (await readProfile(baseUrl, token, fetchFn))?.account_id : undefined;
   for (const site of sites) {
-    const page = await searchJiraIssues({ baseUrl, token, site, jql, maxResults: 100, fetchFn });
-    for (const issue of page.issues || []) {
-      const item = normalizeJiraIssue(issue, site, { accountId });
-      if (item) items.push(item);
+    // Read every page of the change window, up to the page limit.
+    const requested = new Set<string>();
+    let nextPageToken: string | undefined;
+    for (let pageNumber = 0; pageNumber < JIRA_CHANGE_PAGE_LIMIT; pageNumber += 1) {
+      const page = await searchJiraIssues({
+        baseUrl,
+        token,
+        site,
+        jql,
+        maxResults: 100,
+        nextPageToken,
+        fetchFn,
+      });
+      for (const issue of page.issues || []) {
+        const item = normalizeJiraIssue(issue, site, { accountId });
+        if (item) items.push(item);
+      }
+      if (!page.nextPageToken || page.isLast === true) break;
+      if (requested.has(page.nextPageToken)) {
+        throw new Error(`Jira search on ${site.name} returned the same page token again`);
+      }
+      requested.add(page.nextPageToken);
+      nextPageToken = page.nextPageToken;
     }
   }
   return dedupe(items);

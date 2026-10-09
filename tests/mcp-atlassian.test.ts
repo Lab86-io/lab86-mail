@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   atlassianDocumentText,
   JIRA_ASSIGNED_JQL,
+  JIRA_CHANGE_PAGE_LIMIT,
   JIRA_HISTORY_JQL,
   loadAtlassianChangedIssues,
   loadAtlassianHistoryPage,
@@ -305,5 +306,59 @@ describe('Atlassian history walk', () => {
     expect(jqls[0]).toContain('updated >= -91m');
     expect(jqls[0]).not.toContain('-365d');
     expect(items.map((item) => item.externalId)).toEqual(['jira:cloud-1:10']);
+  });
+});
+
+describe('Atlassian page guards', () => {
+  function pagedFetch(pages: (body: any, url: URL) => unknown) {
+    return atlassianFetch((url, init) => {
+      if (url.pathname === '/oauth/token/accessible-resources') return json([site]);
+      if (url.pathname === '/me') return json({ account_id: 'me-1' });
+      return json(pages(JSON.parse(String(init.body)), url));
+    });
+  }
+
+  test('the history walk stops on a repeated page token and keeps its cursor', async () => {
+    const mock = pagedFetch(() => ({ issues: [issue('10', 'PAY-1')], nextPageToken: 'same' }));
+    const error = await loadAtlassianHistoryPage(
+      API,
+      'token-1',
+      { site: 0, token: 'same' },
+      mock.fetchFn,
+    ).catch((err) => err);
+    expect(error.message).toBe('Jira search on acme returned the same page token again');
+  });
+
+  test('a change recheck reads every page of the window', async () => {
+    const tokens: Array<string | undefined> = [];
+    const mock = pagedFetch((body) => {
+      tokens.push(body.nextPageToken);
+      return body.nextPageToken === 'p2'
+        ? { issues: [issue('11', 'PAY-2')], isLast: true }
+        : { issues: [issue('10', 'PAY-1')], nextPageToken: 'p2' };
+    });
+    const items = await loadAtlassianChangedIssues(API, 'token-1', 0, 60_000, mock.fetchFn);
+    expect(tokens).toEqual([undefined, 'p2']);
+    expect(items.map((item) => item.externalId)).toEqual(['jira:cloud-1:10', 'jira:cloud-1:11']);
+  });
+
+  test('a change recheck stops on a repeated token and at the page limit', async () => {
+    const repeated = pagedFetch((body) => ({
+      issues: [issue('10', 'PAY-1')],
+      nextPageToken: body.nextPageToken ? body.nextPageToken : 'loop',
+    }));
+    const error = await loadAtlassianChangedIssues(API, 'token-1', 0, 60_000, repeated.fetchFn).catch(
+      (err) => err,
+    );
+    expect(error.message).toBe('Jira search on acme returned the same page token again');
+
+    let calls = 0;
+    const endless = pagedFetch(() => {
+      calls += 1;
+      return { issues: [issue(String(calls), `PAY-${calls}`)], nextPageToken: `p${calls + 1}` };
+    });
+    const items = await loadAtlassianChangedIssues(API, 'token-1', 0, 60_000, endless.fetchFn);
+    expect(calls).toBe(JIRA_CHANGE_PAGE_LIMIT);
+    expect(items).toHaveLength(JIRA_CHANGE_PAGE_LIMIT);
   });
 });

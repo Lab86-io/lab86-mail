@@ -4,6 +4,7 @@ import {
   loadSlackHistoryPage,
   loadSlackItems,
   normalizeSlackMatch,
+  SLACK_CHANGE_PAGE_LIMIT,
   slackPlainText,
 } from '../lib/mcp/slack';
 
@@ -213,5 +214,39 @@ describe('Slack history walk', () => {
     const items = await loadSlackChangedMessages(API, 'xoxp-1', since, NOW, mock.fetchFn);
     expect(mock.calls[1]?.searchParams.get('query')).toBe('<@U1> after:2026-10-08');
     expect(items.map((item) => item.updatedAtSource)).toEqual([since + 60_000]);
+  });
+});
+
+describe('Slack change recheck pages', () => {
+  const since = Date.parse('2026-10-09T10:00:00.000Z');
+  const newer = (offset: number) => match(String(since / 1000 + offset));
+
+  test('reads the next page while every message is new, and stops at the last check', async () => {
+    const pages: number[] = [];
+    const mock = slackFetch((url) => {
+      if (url.pathname === '/api/auth.test') return auth();
+      const page = Number(url.searchParams.get('page'));
+      if ((url.searchParams.get('query') || '').startsWith('to:me')) {
+        return json({ ok: true, messages: { matches: [], paging: { page, pages: 1 } } });
+      }
+      pages.push(page);
+      const matches = page === 1 ? [newer(300), newer(200)] : [newer(100), match(String(since / 1000 - 60))];
+      return json({ ok: true, messages: { matches, paging: { page, pages: 5 } } });
+    });
+    const items = await loadSlackChangedMessages(API, 'xoxp-1', since, NOW, mock.fetchFn);
+    expect(pages).toEqual([1, 2]);
+    expect(items).toHaveLength(3);
+  });
+
+  test('stops at the page limit', async () => {
+    let mentionPages = 0;
+    const mock = slackFetch((url) => {
+      if (url.pathname === '/api/auth.test') return auth();
+      const page = Number(url.searchParams.get('page'));
+      if ((url.searchParams.get('query') || '').startsWith('<@U1>')) mentionPages += 1;
+      return json({ ok: true, messages: { matches: [newer(1_000 - page)], paging: { page, pages: 50 } } });
+    });
+    await loadSlackChangedMessages(API, 'xoxp-1', since, NOW, mock.fetchFn);
+    expect(mentionPages).toBe(SLACK_CHANGE_PAGE_LIMIT);
   });
 });

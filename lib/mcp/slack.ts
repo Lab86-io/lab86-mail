@@ -10,6 +10,8 @@ const SLACK_REQUEST_TIMEOUT_MS = 15_000;
 const RECENT_DAYS = 14;
 /** The search history walk keeps to the last year of mentions and direct messages. */
 export const SLACK_HISTORY_DAYS = 365;
+/** The most search pages that one change recheck reads for each query (100 messages each). */
+export const SLACK_CHANGE_PAGE_LIMIT = 10;
 const DAY_MS = 86_400_000;
 
 // Slack answers HTTP 200 with `ok: false`. These errors mean the sign-in no
@@ -291,8 +293,14 @@ export async function loadSlackChangedMessages(
   const items: NormalizedMcpItem[] = [];
   // `after:` takes a day and excludes it, so search from the day before.
   for (const query of directedQueries(auth.user_id!, Math.min(now, sinceMs) - DAY_MS)) {
-    const result = await searchMessages({ baseUrl, token, query, count: 100, auth, fetchFn });
-    items.push(...result.items.filter((item) => (item.updatedAtSource ?? now) > sinceMs));
+    // Results come newest first, so a page that reaches the last check ends
+    // the read.
+    for (let page = 1; page <= SLACK_CHANGE_PAGE_LIMIT; page += 1) {
+      const result = await searchMessages({ baseUrl, token, query, count: 100, page, auth, fetchFn });
+      const changed = result.items.filter((item) => (item.updatedAtSource ?? now) > sinceMs);
+      items.push(...changed);
+      if (page >= result.pages || changed.length < result.items.length || !result.items.length) break;
+    }
   }
   return dedupe(items);
 }
