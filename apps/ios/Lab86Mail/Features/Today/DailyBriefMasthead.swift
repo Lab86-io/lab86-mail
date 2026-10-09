@@ -245,6 +245,9 @@ enum DailyBriefServices {
         case "github": DailyBriefServiceMark(id: id, label: "GitHub", symbol: "chevron.left.forwardslash.chevron.right")
         case "bitbucket": DailyBriefServiceMark(id: id, label: "Bitbucket", symbol: "chevron.left.forwardslash.chevron.right")
         case "jira": DailyBriefServiceMark(id: id, label: "Jira", symbol: "square.grid.2x2")
+        // A Confluence page comes from the Atlassian sign-in under the `jira`
+        // server; the edition names it as its own service.
+        case "confluence": DailyBriefServiceMark(id: id, label: "Confluence", symbol: "doc.text")
         case "slack": DailyBriefServiceMark(id: id, label: "Slack", symbol: "number")
         case "granola": DailyBriefServiceMark(id: id, label: "Granola", symbol: "waveform")
         default:

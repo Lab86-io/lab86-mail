@@ -1,5 +1,76 @@
 import SwiftUI
 
+/// Names for connected source servers, so a server id never shows as text.
+/// An Atlassian sign-in brings Jira issues and Confluence pages under the one
+/// `jira` server, so a page reads as Confluence (as on the web).
+enum ConnectedSourceNames {
+    /// The product name for a server id.
+    static func serverName(_ server: String) -> String {
+        switch server.lowercased() {
+        case "github": "GitHub"
+        case "bitbucket": "Bitbucket"
+        case "jira": "Jira"
+        case "slack": "Slack"
+        case "granola": "Granola"
+        default: server.capitalized
+        }
+    }
+
+    /// The name of a connected row: the label the status sent for its server,
+    /// else the product name. An Atlassian sign-in covers Jira and Confluence.
+    static func connectionName(server: String, authKind: String?, serverLabel: String?) -> String {
+        if let label = serverLabel?.nilIfBlank { return label }
+        if server.lowercased() == "jira", authKind == "oauth" { return "Atlassian" }
+        return serverName(server)
+    }
+
+    /// The source name of one connected item.
+    static func itemSourceName(server: String, kind: String?) -> String {
+        if server.lowercased() == "jira", kind == "page" { return "Confluence" }
+        return serverName(server)
+    }
+
+    /// The names the server saves as `displayName` when the user gives none,
+    /// past and present. A display name equal to one of them is no nickname.
+    static func defaultDisplayNames(_ server: String) -> [String] {
+        server.lowercased() == "jira" ? ["Atlassian", "Jira", "Atlassian / Jira"] : []
+    }
+
+    /// Two names are the same when their letters and digits match.
+    static func sameName(_ first: String, _ second: String) -> Bool {
+        func key(_ value: String) -> String {
+            String(value.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) })
+        }
+        return key(first) == key(second)
+    }
+}
+
+/// One server the user can connect, from `/api/mcp/status`. A server with
+/// `connectMode` "oauth" signs in through the browser; "token" opens the
+/// token form. An older server sends no `connectMode`, so it reads as token.
+struct ConnectedSourceServer: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let tokenLabel: String
+    let tokenHelp: String
+    let connectMode: String
+
+    init?(json row: JSONValue) {
+        guard let id = row["id"]?.stringValue?.nilIfBlank else { return nil }
+        self.id = id
+        label = row["label"]?.stringValue?.nilIfBlank ?? ConnectedSourceNames.serverName(id)
+        tokenLabel = row["tokenLabel"]?.stringValue ?? "Access token"
+        tokenHelp = row["tokenHelp"]?.stringValue ?? ""
+        connectMode = row["connectMode"]?.stringValue ?? "token"
+    }
+
+    var signsInWithBrowser: Bool { connectMode == "oauth" }
+
+    /// The quiet line under the server in "Add a source". Only a browser
+    /// sign-in has one: a token server shows its help in the token form.
+    var addNote: String? { signsInWithBrowser ? tokenHelp.nilIfBlank : nil }
+}
+
 /// One connected tool row from `/api/mcp/status` (AI-7). `status` says only
 /// whether the saved sign-in works: `error` means the user must reconnect. A
 /// failed or partial sync is `syncProblem`, a quiet note that retries by
@@ -8,6 +79,12 @@ struct ConnectedSourceConnection: Identifiable, Equatable {
     let id: String
     let server: String
     let displayName: String?
+    // "token" or "oauth". Nil from an older server.
+    let authKind: String?
+    // The signed-in account, after a sync. Atlassian sends its site names and
+    // Bitbucket its workspace slugs in `workspaceName`, joined with ", ".
+    let accountEmail: String?
+    let workspaceName: String?
     let status: String
     let includeInBrief: Bool
     let includeInSearch: Bool
@@ -21,6 +98,9 @@ struct ConnectedSourceConnection: Identifiable, Equatable {
         self.id = id
         self.server = server
         displayName = row["displayName"]?.stringValue?.nilIfBlank
+        authKind = row["authKind"]?.stringValue?.nilIfBlank
+        accountEmail = row["accountEmail"]?.stringValue?.nilIfBlank
+        workspaceName = row["workspaceName"]?.stringValue?.nilIfBlank
         status = row["status"]?.stringValue ?? "connected"
         includeInBrief = row["includeInBrief"]?.boolValue ?? true
         includeInSearch = row["includeInSearch"]?.boolValue ?? true
@@ -37,6 +117,31 @@ struct ConnectedSourceConnection: Identifiable, Equatable {
 
     /// Only a failed sign-in asks for Reconnect.
     var needsReconnect: Bool { status == "error" }
+
+    /// The tool name, never the server id: "Atlassian", "GitHub".
+    func sourceName(serverLabel: String?) -> String {
+        ConnectedSourceNames.connectionName(server: server, authKind: authKind, serverLabel: serverLabel)
+    }
+
+    /// The user's own name for the connection, or nil when the saved display
+    /// name only repeats a tool name (the server saves one by default).
+    func nickname(serverLabel: String?) -> String? {
+        guard let displayName else { return nil }
+        let defaults = [sourceName(serverLabel: serverLabel), ConnectedSourceNames.serverName(server)]
+            + ConnectedSourceNames.defaultDisplayNames(server)
+        let repeatsToolName = defaults.contains(where: { ConnectedSourceNames.sameName($0, displayName) })
+        return repeatsToolName ? nil : displayName
+    }
+
+    /// "Acme · ann@example.com" under the title, or nil before the first
+    /// sync and from an older server.
+    var identityText: String? {
+        var parts: [String] = []
+        for part in [workspaceName, accountEmail].compactMap({ $0 }) where !parts.contains(part) {
+            parts.append(part)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 
     var statusText: String {
         if needsReconnect { return "Reconnect needed. The saved sign-in no longer works." }
@@ -58,14 +163,7 @@ struct ConnectionsSettingsView: View {
     @Environment(AppEnvironment.self) private var environment
 
     private typealias Connection = ConnectedSourceConnection
-
-    private struct Server: Identifiable {
-        let id: String
-        let label: String
-        let tokenLabel: String
-        let tokenHelp: String
-        let connectMode: String
-    }
+    private typealias Server = ConnectedSourceServer
 
     @State private var connections: [Connection] = []
     @State private var servers: [Server] = []
@@ -102,15 +200,14 @@ struct ConnectionsSettingsView: View {
                     Button {
                         startConnect(server)
                     } label: {
-                        HStack {
-                            Label(server.label, systemImage: "plus.circle")
-                            Spacer()
-                            if busyID == "server:\(server.id)" {
-                                ProgressView().controlSize(.small)
-                            }
-                        }
+                        addSourceRow(server)
                     }
+                    #if os(macOS)
+                    // A Mac button in a list row draws a bordered push button.
+                    .buttonStyle(.plain)
+                    #endif
                     .disabled(busyID != nil)
+                    .accessibilityHint(connectHint(server))
                 }
             }
 
@@ -157,7 +254,7 @@ struct ConnectionsSettingsView: View {
             .presentationDetents([.medium, .large])
         }
         .confirmationDialog(
-            "Disconnect \(disconnectTarget?.displayName ?? disconnectTarget?.server.capitalized ?? "source")?",
+            disconnectTitle,
             isPresented: Binding(
                 get: { disconnectTarget != nil },
                 set: { if !$0 { disconnectTarget = nil } }
@@ -180,11 +277,67 @@ struct ConnectionsSettingsView: View {
         return servers.filter { !connected.contains($0.id) }
     }
 
+    private func serverLabel(for connection: Connection) -> String? {
+        servers.first(where: { $0.id == connection.server })?.label
+    }
+
+    private var disconnectTitle: String {
+        guard let target = disconnectTarget else { return "Disconnect source?" }
+        return "Disconnect \(target.sourceName(serverLabel: serverLabel(for: target)))?"
+    }
+
+    private func connectHint(_ server: Server) -> String {
+        server.signsInWithBrowser ? "Opens the \(server.label) sign-in page." : "Asks for an access token."
+    }
+
+    // The source name, the sign-in help for a browser sign-in, and a quiet
+    // Connect at the trailing edge.
+    private func addSourceRow(_ server: Server) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(server.label)
+                    .foregroundStyle(Color.primary)
+                if let note = server.addNote {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(Color.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            if busyID == "server:\(server.id)" {
+                ProgressView().controlSize(.small)
+            } else {
+                Text("Connect")
+                    .font(.subheadline)
+                    .foregroundStyle(.tint)
+                    .opacity(busyID == nil ? 1 : 0.5)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
     private func connectionRow(_ connection: Connection) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(connection.displayName ?? connection.server.capitalized).font(.headline)
+                    // The tool name, then the user's own name when it differs.
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(connection.sourceName(serverLabel: serverLabel(for: connection)))
+                            .font(.headline)
+                        if let nickname = connection.nickname(serverLabel: serverLabel(for: connection)) {
+                            Text(verbatim: "· \(nickname)")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    if let identity = connection.identityText {
+                        Text(identity)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                     Text(connection.statusText)
                         .font(.caption)
                         .foregroundStyle(connection.needsReconnect ? .red : .secondary)
@@ -246,16 +399,7 @@ struct ConnectionsSettingsView: View {
         do {
             let result = try await environment.backend.get(path: "/api/mcp/status")
             connections = (result["connections"]?.arrayValue ?? []).compactMap(Connection.init(json:))
-            servers = (result["servers"]?.arrayValue ?? []).compactMap { row in
-                guard let id = row["id"]?.stringValue else { return nil }
-                return Server(
-                    id: id,
-                    label: row["label"]?.stringValue ?? id.capitalized,
-                    tokenLabel: row["tokenLabel"]?.stringValue ?? "Access token",
-                    tokenHelp: row["tokenHelp"]?.stringValue ?? "",
-                    connectMode: row["connectMode"]?.stringValue ?? "token"
-                )
-            }
+            servers = (result["servers"]?.arrayValue ?? []).compactMap(Server.init(json:))
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -264,7 +408,7 @@ struct ConnectionsSettingsView: View {
     // Starts a sign-in. For a server whose connection needs a reconnect, the
     // server replaces that broken connection in place.
     private func startConnect(_ server: Server) {
-        if server.connectMode == "oauth" {
+        if server.signsInWithBrowser {
             Task { await connectOAuth(server) }
         } else {
             token = ""
