@@ -497,3 +497,18 @@ describe('the thread state ranks a run at work above another question', () => {
     expect(threadState(input({ handoff: runs.readyDraft }))).toBe('waiting');
   });
 });
+
+// Questions the plan asked: the header counts them, so the thread shows them.
+describe('openWorkQuestions', () => {
+  test('keeps pending questions that no run owns', async () => {
+    const { openWorkQuestions } = await import('../lib/albatross/thread-view');
+    const questions = [
+      { _id: 'q_plan', status: 'pending', prompt: 'Which weeks does the invoice cover?' },
+      { _id: 'q_run', status: 'pending', prompt: 'Which class?' },
+      { _id: 'q_done', status: 'answered', prompt: 'Which rate?' },
+    ];
+    const runs = [{ question: { id: 'q_run' } }, { question: null }] as unknown as ThreadRunView[];
+    expect(openWorkQuestions({ questions }, runs).map((question) => question._id)).toEqual(['q_plan']);
+    expect(openWorkQuestions(null, runs)).toEqual([]);
+  });
+});

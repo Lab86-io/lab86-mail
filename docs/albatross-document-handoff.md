@@ -116,3 +116,15 @@ block) opens **document mode** inside the Work thread. It does not go to Files.
 - Composer placeholder in document mode: "Tell Albatross what to put in the document"
 - No "-ing" verbs, no star icons, no ALL-CAPS labels (the "YOUR PART" in the sketch is a
   sentence-case small label in the build).
+
+## Fixes after the first test (2026-10-09)
+
+- **A Word file named by id opened as a missing document.** A run from before the server
+  filled target links named its `.docx` by id only. Clients now take the link of the run's own
+  file with that id (`resolveDocumentTarget`, Swift `DocumentTarget.resolve`), so `?office=`
+  opens the Word editor.
+- **"Needs your answer" pointed at nothing.** The plan's open questions (no run owns them) were
+  counted in the header but shown nowhere in the thread. The thread now shows them above the
+  composer as "Albatross asks" with the usual form (`openWorkQuestions`, `WorkQuestions.tsx`,
+  Swift `WorkQuestionsView`). They also show in document mode.
+- The editor's error screen in the thread says "Close the document", not "Back to Files".

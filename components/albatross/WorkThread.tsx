@@ -48,15 +48,11 @@ import {
   DOCUMENT_HANDOFF_COPY,
   documentHandoffDetail,
   documentHandoffFor,
+  resolveDocumentTarget,
 } from '@/lib/albatross/document-handoff';
 import { ALLOW_COPY, type AllowScope } from '@/lib/albatross/secure-view';
 import { shapeDetail } from '@/lib/albatross/shape-policy';
-import {
-  type DocumentTarget,
-  documentTargetOf,
-  type NextBehaviour,
-  runForStep,
-} from '@/lib/albatross/step-run-client';
+import { type DocumentTarget, type NextBehaviour, runForStep } from '@/lib/albatross/step-run-client';
 import { performNextBehaviour } from '@/lib/albatross/step-run-navigation';
 import {
   type FormAnswer,
@@ -68,6 +64,7 @@ import { hopDirection, isTextFieldTarget } from '@/lib/albatross/thread-list-vie
 import { setThreadDraft, setThreadScroll, threadDraft, threadScroll } from '@/lib/albatross/thread-memory';
 import {
   composerPlaceholder,
+  openWorkQuestions,
   planLine,
   planStepRows,
   stepNumberFor,
@@ -98,6 +95,7 @@ import { PlanIntro, PlanLine, PlanOutro } from './thread/PlanIntro';
 import { RunBlock } from './thread/RunBlock';
 import { ThreadJumpPill } from './thread/ThreadJumpPill';
 import { useWorkShape, type WorkShapeState } from './thread/use-work-shape';
+import { WorkQuestions } from './thread/WorkQuestions';
 import { useThreadActions, useThreadDraftIds } from './use-thread-actions';
 import { useAllWork, useMarkSeen, useThreadRows } from './use-thread-rows';
 
@@ -172,6 +170,8 @@ export interface ThreadModel {
   document?: DocumentTarget | null;
   /** "Done, continue" is in flight, or failed with this line. */
   documentDone?: { busy: boolean; error: string | null };
+  /** A Work question (no run owns it) whose answer is in flight, or the line of a failed answer. */
+  workQuestion?: { busyId: string | null; error: { questionId: string; text: string } | null };
 }
 
 export interface ThreadHandlers {
@@ -192,6 +192,8 @@ export interface ThreadHandlers {
   onOpenDocument?: (target: DocumentTarget) => void;
   onCloseDocument?: () => void;
   onDocumentDone?: (run: ThreadRunView) => void;
+  /** Answer a question of the Work that no run owns. */
+  onAnswerWorkQuestion?: (questionId: string, answer: FormAnswer) => void;
   onNext: (behaviour: NextBehaviour, run: ThreadRunView) => void;
   onAnswer: (run: ThreadRunView, questionId: string, answer: FormAnswer) => void;
   onUndoSave: (keys: string[]) => Promise<void>;
@@ -223,6 +225,7 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
   const stateInput = useMemo(() => threadStateInput(detail, runs), [detail, runs]);
   const line = planLine(stateInput);
   const stepRows = useMemo(() => planStepRows(steps, { runnerEnabled, runs }), [steps, runnerEnabled, runs]);
+  const workQuestions = useMemo(() => openWorkQuestions(detail, runs), [detail, runs]);
   const activeRun = stateInput.activeRun;
   const open = workIsOpen(detail.work);
   const showsPlan = shapeShowsPlan(shape.shape);
@@ -412,7 +415,20 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
             renderRun,
             // The "Your part" card names the step; the plan stays in Details.
             intro: documentTarget ? undefined : intro,
-            outro: <PlanOutro state={line.state} />,
+            outro: (
+              <>
+                {handlers.onAnswerWorkQuestion ? (
+                  <WorkQuestions
+                    questions={workQuestions}
+                    details={model.personalDetails}
+                    busyId={model.workQuestion?.busyId ?? null}
+                    error={model.workQuestion?.error ?? null}
+                    onAnswer={handlers.onAnswerWorkQuestion}
+                  />
+                ) : null}
+                <PlanOutro state={line.state} />
+              </>
+            ),
             placeholder: documentTarget ? DOCUMENT_HANDOFF_COPY.placeholder : composerPlaceholder(line.state),
             document: documentTarget
               ? { kind: 'document', id: documentTarget.id, provider: documentTarget.provider }
@@ -930,6 +946,10 @@ export function WorkThread({ workId }: { workId: string }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [region, setRegionState] = useState<ThreadRegion>(null);
   const [openDocument, setOpenDocument] = useState<DocumentTarget | null>(null);
+  const [workQuestion, setWorkQuestion] = useState<NonNullable<ThreadModel['workQuestion']>>({
+    busyId: null,
+    error: null,
+  });
   const [documentDone, setDocumentDone] = useState<{ busy: boolean; error: string | null }>({
     busy: false,
     error: null,
@@ -1089,7 +1109,7 @@ export function WorkThread({ workId }: { workId: string }) {
       onNext: (behaviour, run) => {
         // A document opens here, in document mode, not in Files.
         if (behaviour.kind === 'open_document') {
-          const target = documentTargetOf(behaviour.url, behaviour.id);
+          const target = resolveDocumentTarget(run.artifacts, behaviour.url, behaviour.id);
           if (target) {
             handlers.onOpenDocument?.(target);
             return;
@@ -1169,6 +1189,25 @@ export function WorkThread({ workId }: { workId: string }) {
         setRegion('page');
       },
       onRegionChange: (next) => setRegion(next),
+      onAnswerWorkQuestion: (questionId, answer) => {
+        setWorkQuestion({ busyId: questionId, error: null });
+        void postJson(
+          `/api/albatross/work/questions/${encodeURIComponent(questionId)}/answer`,
+          { form: answer, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+          THREAD_COPY.answerFailed,
+        )
+          .then((result) => {
+            if (typeof result?.runId === 'string') startedHere.current.add(result.runId);
+            if (answer.save) void queryClient.invalidateQueries({ queryKey: ['personal-details'] });
+            setWorkQuestion({ busyId: null, error: null });
+          })
+          .catch((cause) =>
+            setWorkQuestion({
+              busyId: null,
+              error: { questionId, text: cause instanceof Error ? cause.message : THREAD_COPY.answerFailed },
+            }),
+          );
+      },
       onOpenDocument: (target) => {
         setOpenDocument(target);
         setDocumentDone({ busy: false, error: null });
@@ -1366,6 +1405,7 @@ export function WorkThread({ workId }: { workId: string }) {
     replyInProgress: row?.status === 'answering',
     document: openDocument,
     documentDone,
+    workQuestion,
   };
   // The rail beside the thread (lead decision 3): 300 px on desktops, 272 px on
   // laptops, where it also yields to an open region; none below 1024 px.

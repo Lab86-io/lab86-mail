@@ -127,6 +127,15 @@ final class WorkThreadModel {
 
     var pendingQuestion: ThreadQuestion? { store.pendingQuestion }
 
+    /// The plan's open questions that no run owns (WorkQuestionsView).
+    var openWorkQuestions: [ThreadQuestion] {
+        WorkQuestions.open(detail?.questions ?? [], runs: store.runs)
+    }
+
+    func questionState(forQuestionID id: String) -> QuestionState {
+        questionStates[id] ?? QuestionState()
+    }
+
     var currentStep: WorkDetail.ExecutionStep? { detail?.execution.currentStep }
 
     func step(for run: StepRunView) -> WorkDetail.ExecutionStep? {

@@ -5,6 +5,7 @@ import {
   documentHandoffDetail,
   documentHandoffFor,
   normalizeDocumentAttachment,
+  resolveDocumentTarget,
 } from '../lib/albatross/document-handoff';
 import type { ThreadRunView } from '../lib/albatross/thread-contract';
 import { threadRunFixtures } from '../lib/albatross/thread-fixtures';
@@ -188,5 +189,45 @@ describe('copy', () => {
       close: 'Close',
       placeholder: 'Tell Albatross what to put in the document',
     });
+  });
+});
+
+// A run from before the server filled the link named its Word file by id only.
+describe('resolveDocumentTarget', () => {
+  const files = [
+    { kind: 'document', id: 'doc_summary', title: 'Hours summary', url: '/?view=files&document=doc_summary' },
+    { kind: 'document', id: 'word_invoice', title: 'Invoice.docx', url: '/?view=files&office=word_invoice' },
+    { kind: 'draft', id: 'word_other', title: 'Draft' },
+  ];
+
+  test('an id with no link takes the link of the run file with that id', () => {
+    expect(resolveDocumentTarget(files, null, 'word_invoice')).toEqual({
+      provider: 'office',
+      id: 'word_invoice',
+    });
+    expect(resolveDocumentTarget(files, '  ', 'doc_summary')).toEqual({
+      provider: 'albatross',
+      id: 'doc_summary',
+    });
+  });
+
+  test('a link wins; an unknown id or a file of another kind stays an Albatross document', () => {
+    expect(resolveDocumentTarget(files, '/?view=files&document=doc_x', 'word_invoice')).toEqual({
+      provider: 'albatross',
+      id: 'doc_x',
+    });
+    expect(resolveDocumentTarget(files, null, 'word_other')).toEqual({
+      provider: 'albatross',
+      id: 'word_other',
+    });
+    expect(resolveDocumentTarget([], null, null)).toBeNull();
+  });
+
+  test('the handoff of a Word file named by id matches document mode for that file', () => {
+    const run = documentRun({
+      next: { ...documentRun({}).next!, target: { kind: 'document', id: 'word_invoice' } },
+      artifacts: files.slice(0, 2) as ThreadRunView['artifacts'],
+    });
+    expect(documentHandoffFor([run], { provider: 'office', id: 'word_invoice' })).toBe(run);
   });
 });

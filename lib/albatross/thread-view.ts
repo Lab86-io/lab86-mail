@@ -416,6 +416,21 @@ export function stepNumberFor(steps: readonly ExecutionStepRow[], stepKey: strin
   return index === -1 ? null : index + 1;
 }
 
+/**
+ * The open questions of the Work that no run owns: the plan asked them. The
+ * header counts every pending question, so the thread shows these too, or
+ * "Needs your answer" would point at nothing (docs/albatross-document-handoff.md).
+ */
+export function openWorkQuestions(
+  detail: Pick<WorkDetailData, 'questions'> | null,
+  runs: readonly ThreadRunView[],
+): WorkDetailData['questions'] {
+  const owned = new Set(runs.map((run) => run.question?.id).filter(Boolean));
+  return (detail?.questions ?? []).filter(
+    (question) => question.status === 'pending' && !owned.has(question._id),
+  );
+}
+
 /** The state input of a thread from the detail projection and the live runs. */
 export function threadStateInput(
   detail: Pick<WorkDetailData, 'work' | 'plan' | 'execution' | 'questions'> | null,

@@ -191,4 +191,53 @@ struct DocumentHandoffTests {
         #expect(DocumentHandoff.editsDocument(toolName: "document_create"))
         #expect(!DocumentHandoff.editsDocument(toolName: "documents_more"))
     }
+
+    // MARK: - A target named by id only (runs from before the server filled the link)
+
+    private static let summaryDoc = StepRunView.Artifact(
+        kind: .document,
+        referenceID: "doc_summary",
+        title: "Hours summary, Harbor Design",
+        url: "/?view=files&document=doc_summary"
+    )
+
+    @Test func anIDWithNoLinkTakesTheLinkOfTheRunFile() {
+        let files = [Self.summaryDoc, Self.hoursSheet]
+        #expect(DocumentTarget.resolve(url: nil, id: "doc_hours", artifacts: files) == DocumentTarget(provider: .office, id: "doc_hours"))
+        #expect(DocumentTarget.resolve(url: "  ", id: "doc_summary", artifacts: files) == DocumentTarget(provider: .albatross, id: "doc_summary"))
+        // A link wins; an unknown id stays an Albatross document; nothing names nothing.
+        #expect(DocumentTarget.resolve(url: "/?view=files&document=doc_x", id: "doc_hours", artifacts: files) == DocumentTarget(provider: .albatross, id: "doc_x"))
+        #expect(DocumentTarget.resolve(url: nil, id: "doc_unknown", artifacts: files) == DocumentTarget(provider: .albatross, id: "doc_unknown"))
+        #expect(DocumentTarget.resolve(url: nil, id: nil, artifacts: files) == nil)
+    }
+
+    @Test func theHandoffOfAWordFileNamedByIDMatchesItsDocumentMode() {
+        let next = StepRunView.Next(
+            kind: .reviewDocument,
+            label: "Fill in hours",
+            detail: "Fill in the hours.",
+            target: StepRunView.Target(kind: .document, id: "doc_hours")
+        )
+        let view = Self.run(id: "run_old", state: .handedOff, outcome: .readyForYou, next: next, artifacts: [Self.summaryDoc, Self.hoursSheet])
+        #expect(DocumentHandoff.run(for: [view], target: DocumentTarget(provider: .office, id: "doc_hours"))?.id == "run_old")
+    }
+
+    // MARK: - The plan's open questions
+
+    @Test func theThreadShowsPendingQuestionsThatNoRunOwns() {
+        let questions = [
+            WorkDetail.Question(id: "q_plan", status: "pending", prompt: "Which weeks does the invoice cover?", reason: "No email lists the hours.", options: []),
+            WorkDetail.Question(id: "q_run", status: "pending", prompt: "Which rate?", reason: nil, options: []),
+            WorkDetail.Question(id: "q_done", status: "answered", prompt: "Which studio?", reason: nil, options: []),
+        ]
+        let owned = ThreadRunView(
+            run: Self.run(id: "run_q", state: .handedOff, outcome: .needsAnswer).run,
+            question: ThreadQuestion(id: "q_run", prompt: "Which rate?")
+        )
+        let open = WorkQuestions.open(questions, runs: [owned])
+        #expect(open.map(\.id) == ["q_plan"])
+        #expect(open.first?.reason == "No email lists the hours.")
+        #expect(WorkQuestions.open([], runs: []).isEmpty)
+        #expect(WorkQuestions.label == "Albatross asks")
+    }
 }
