@@ -33,7 +33,7 @@ import {
 } from '@/lib/daily-report-action-review';
 import { handleDailyReportNavigationAction, openBriefMailThread } from '@/lib/daily-report-navigation';
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
-import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
+import { type BriefService, briefServiceIdForMcpItem, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
 import { type BriefFrameCspOptions, withBriefFrameCsp } from '@/lib/security/brief-frame-csp';
 import { withFrameNonce } from '@/lib/security/frame-nonce';
@@ -239,7 +239,7 @@ function dailyReportThreadKey(account: string, threadId: string): string {
 function servicesForReport(report: DailyReportPayload): BriefService[] {
   const serviceIds = [
     ...(report.services || []),
-    ...asMcpItems(report.sections.mcp).map((item) => item.server),
+    ...asMcpItems(report.sections.mcp).map(briefServiceIdForMcpItem),
     ...(asEvents(report.sections.calendar).length ? ['calendar'] : []),
     ...(asTasks(report.sections.tasks).some((task) => !task.completedAt) ? ['tasks'] : []),
   ];
@@ -297,6 +297,7 @@ function ServiceLogo({ service }: { service: BriefService }) {
     service.id === 'github' ||
     service.id === 'bitbucket' ||
     service.id === 'jira' ||
+    service.id === 'confluence' ||
     service.id === 'slack' ||
     service.id === 'granola'
   ) {

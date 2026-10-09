@@ -1,5 +1,6 @@
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { stripLoneSurrogatesDeep, truncateText } from '@/lib/shared/text';
+import { loadAtlassianItems } from './atlassian';
 import { loadBitbucketItems } from './bitbucket';
 import { callMcpTool, connectMcp, type McpClientHandle } from './client';
 import { getConnectionToken, listUserConnections, type McpConnectionRow } from './connections';
@@ -10,7 +11,15 @@ import {
   granolaMeetingDetailBatches,
   mergeGranolaMeetingDetails,
 } from './granola';
-import { getServerDef, type NormalizedMcpItem, normalizeItems, resolveMcpConnectionConfig } from './servers';
+import {
+  connectionTransport,
+  getServerDef,
+  type McpServerTransport,
+  type NormalizedMcpItem,
+  normalizeItems,
+  resolveMcpConnectionConfig,
+} from './servers';
+import { loadSlackItems } from './slack';
 
 const mcpApi = api.mcp;
 const UPSERT_BATCH_SIZE = 100;
@@ -21,6 +30,8 @@ export interface SyncConnectionDeps {
   convexMutation: typeof convexMutation;
   loadBitbucketItems: typeof loadBitbucketItems;
   loadGitHubItems: typeof loadGitHubItems;
+  loadAtlassianItems: typeof loadAtlassianItems;
+  loadSlackItems: typeof loadSlackItems;
   connectMcp: typeof connectMcp;
   callMcpTool: typeof callMcpTool;
 }
@@ -31,6 +42,8 @@ const defaultDeps: SyncConnectionDeps = {
   convexMutation,
   loadBitbucketItems,
   loadGitHubItems,
+  loadAtlassianItems,
+  loadSlackItems,
   connectMcp,
   callMcpTool,
 };
@@ -48,8 +61,12 @@ export function isMcpAuthFailure(err: unknown): boolean {
   return !/rate limit|secondary rate|abuse detection/i.test(message);
 }
 
-function classifyError(err: unknown): string {
-  if (isMcpAuthFailure(err)) return 'auth rejected — reconnect with a valid token';
+function classifyError(err: unknown, authKind?: string): string {
+  if (isMcpAuthFailure(err)) {
+    return authKind === 'oauth'
+      ? 'sign-in rejected — reconnect to sign in again'
+      : 'auth rejected — reconnect with a valid token';
+  }
   return truncateText(String((err as { message?: string })?.message || 'sync failed'), 200);
 }
 
@@ -109,6 +126,35 @@ async function missingTokenState(
   };
 }
 
+interface RestLoadResult {
+  items: NormalizedMcpItem[];
+  /** Part of the sync failed, but the source answered. */
+  problems?: string[];
+  accountEmail?: string;
+  workspaceName?: string;
+}
+
+/** One sync of a source that Albatross reads through its REST API. */
+async function loadRestItems(
+  deps: SyncConnectionDeps,
+  transport: Exclude<McpServerTransport, 'mcp'>,
+  serverUrl: string,
+  token: string,
+): Promise<RestLoadResult> {
+  switch (transport) {
+    case 'github-rest':
+      return deps.loadGitHubItems(serverUrl, token);
+    case 'bitbucket-rest': {
+      const result = await deps.loadBitbucketItems(serverUrl, token);
+      return { items: result.items, workspaceName: result.workspaces?.join(', ') || undefined };
+    }
+    case 'atlassian-rest':
+      return deps.loadAtlassianItems(serverUrl, token);
+    case 'slack-rest':
+      return deps.loadSlackItems(serverUrl, token);
+  }
+}
+
 async function upsertItemsInBatches(
   deps: SyncConnectionDeps,
   args: { userId: string; connectionId: string; server: McpConnectionRow['server'] },
@@ -145,8 +191,9 @@ export async function syncConnection(
   const { row, token } = resolved;
   const def = getServerDef(row.server);
   if (!def) return { ok: false, count: 0, error: 'unknown server' };
-  const config = resolveMcpConnectionConfig(row.server, row.serverUrl, row.scopes);
+  const config = resolveMcpConnectionConfig(row.server, row.serverUrl, row.scopes, row.authKind);
   const connection = { ...row, serverUrl: config.serverUrl, scopes: config.scopes };
+  const transport = connectionTransport(def, row.authKind);
 
   if (config.migrated) {
     try {
@@ -158,7 +205,7 @@ export async function syncConnection(
         scopes: config.scopes,
       });
     } catch (err) {
-      const error = classifyError(err);
+      const error = classifyError(err, row.authKind);
       await deps.convexMutation(mcpApi.setSyncState, {
         userId,
         connectionId,
@@ -177,27 +224,30 @@ export async function syncConnection(
     status: 'syncing',
   });
 
-  if (def.transport === 'bitbucket-rest' || def.transport === 'github-rest') {
+  if (transport !== 'mcp') {
     try {
-      const result =
-        def.transport === 'github-rest'
-          ? await deps.loadGitHubItems(connection.serverUrl, token)
-          : await deps.loadBitbucketItems(connection.serverUrl, token);
+      const result = await loadRestItems(deps, transport, connection.serverUrl, token);
       if (result.items.length) {
         await upsertItemsInBatches(deps, { userId, connectionId, server: row.server }, result.items);
       }
+      const problem = result.problems?.[0];
       await deps.convexMutation(mcpApi.setSyncState, {
         userId,
         connectionId,
         server: row.server,
-        status: 'ready',
+        status: problem ? 'error' : 'ready',
+        ...(problem ? { error: problem } : {}),
+        // The source answered, so the sign-in works even when part of the
+        // sync failed (AI-7).
         outcome: 'ok',
         lastSyncedAt: Date.now(),
         itemCount: result.items.length,
+        ...(result.accountEmail ? { accountEmail: result.accountEmail } : {}),
+        ...(result.workspaceName ? { workspaceName: result.workspaceName } : {}),
       });
-      return { ok: true, count: result.items.length };
+      return { ok: !problem, count: result.items.length, ...(problem ? { error: problem } : {}) };
     } catch (err) {
-      const error = classifyError(err);
+      const error = classifyError(err, row.authKind);
       await deps.convexMutation(mcpApi.setSyncState, {
         userId,
         connectionId,
@@ -214,7 +264,7 @@ export async function syncConnection(
   try {
     handle = await deps.connectMcp(connection.serverUrl, token, def.authMode);
   } catch (err) {
-    const error = classifyError(err);
+    const error = classifyError(err, row.authKind);
     await deps.convexMutation(mcpApi.setSyncState, {
       userId,
       connectionId,
@@ -234,7 +284,7 @@ export async function syncConnection(
   let authFailures = 0;
   const noteQueryError = (err: unknown, prefix = '') => {
     if (isMcpAuthFailure(err)) authFailures += 1;
-    queryErrors.push(`${prefix}${classifyError(err)}`);
+    queryErrors.push(`${prefix}${classifyError(err, row.authKind)}`);
   };
   let accountInfo: { email?: string; workspaceName?: string } = {};
   try {

@@ -1,5 +1,6 @@
 import { saveOAuthConnection } from '@/lib/mcp/connections';
 import { finishMcpOAuth, type PersistedMcpOAuthState } from '@/lib/mcp/oauth';
+import { finishProviderOAuth } from '@/lib/mcp/provider-oauth';
 import { getServerDef, type McpServerId } from '@/lib/mcp/servers';
 import { syncConnection } from '@/lib/mcp/sync';
 
@@ -14,6 +15,7 @@ export interface McpOAuthCompletionPayload {
 const defaultDependencies = {
   getServerDef,
   finishMcpOAuth,
+  finishProviderOAuth,
   saveOAuthConnection,
   syncConnection,
 };
@@ -37,11 +39,18 @@ export async function completeMcpOAuthConnection(
   const deps = { ...defaultDependencies, ...dependencies };
   const definition = deps.getServerDef(input.server);
   if (!definition || definition.connectMode !== 'oauth') throw new Error('Unsupported OAuth server.');
-  const completed = await deps.finishMcpOAuth({
-    serverUrl: definition.defaultUrl,
-    code: input.code,
-    persisted: input.persisted,
-  });
+  // A provider sign-in must finish with the provider app of this server.
+  const provider = input.persisted.provider;
+  if (provider && provider !== definition.providerOAuth?.provider) {
+    throw new Error('OAuth provider did not match the server.');
+  }
+  const completed = provider
+    ? await deps.finishProviderOAuth({ provider, code: input.code, persisted: input.persisted })
+    : await deps.finishMcpOAuth({
+        serverUrl: definition.defaultUrl,
+        code: input.code,
+        persisted: input.persisted,
+      });
   const { connectionId } = await deps.saveOAuthConnection({
     userId: input.userId,
     server: input.server as McpServerId,

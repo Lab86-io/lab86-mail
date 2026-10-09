@@ -1,4 +1,5 @@
 import { recommendationFor } from '../mail/thread-handoff';
+import { mcpItemSourceLabel } from '../mcp/connection-display';
 import type { BriefActionV2, BriefSourceRefV2 } from '../shared/brief-document';
 import { truncateText } from '../shared/text';
 import { parseTriageHandoffs, type TriageHandoffV1 } from '../shared/triage-handoff';
@@ -555,7 +556,7 @@ function connectedHandoff(item: DailyReportMcpItem, generatedAt: number): Atomic
     label: clean(item.title) || 'Connected item',
   };
   const situation = clean(item.title) || 'Connected item';
-  const sourceName = capitalize(item.server);
+  const sourceName = mcpItemSourceLabel(item);
   const assessment = [
     item.state
       ? `${capitalize(clean(item.state))} ${clean(item.kind)} in ${sourceName}.`

@@ -1,4 +1,5 @@
 import { api, convexQuery } from '../hosted/convex';
+import { mcpConnectionLabel } from '../mcp/connection-display';
 import { mcpNeedsReconnect, mcpSyncProblem } from '../mcp/connection-health';
 import { isReconnectReason } from '../nylas/grant-health';
 import type { DailyReport } from '../shared/types';
@@ -83,14 +84,6 @@ export interface BriefSourceRows {
 
 /** A source that has not synced for this long reads as stale. */
 export const BRIEF_SOURCE_STALE_MS = 6 * 3600_000;
-
-const CONNECTOR_LABELS: Record<string, string> = {
-  github: 'GitHub',
-  bitbucket: 'Bitbucket',
-  jira: 'Jira',
-  slack: 'Slack',
-  granola: 'Granola',
-};
 
 function newest(...values: Array<number | undefined | null>): number | null {
   const valid = values.filter((value): value is number => typeof value === 'number' && value > 0);
@@ -192,7 +185,8 @@ export function briefSourceHealth(
 
   for (const connection of rows.connections) {
     if (connection.status === 'disconnected' || !connection.includeInBrief) continue;
-    const name = CONNECTOR_LABELS[connection.server] ?? connection.server;
+    // An Atlassian sign-in reads "Atlassian"; an Atlassian token reads "Jira".
+    const name = mcpConnectionLabel(connection);
     const sync = connectorSync.get(connection.connectionId);
     const last = newest(sync?.lastSyncedAt, connection.lastSyncedAt);
     // Only a failed sign-in asks for a reconnect (AI-7). A sync problem on a

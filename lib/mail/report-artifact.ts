@@ -6,7 +6,7 @@ import {
   compositionFromReport,
 } from '../shared/brief-composition';
 import type { DailyReport } from '../shared/types';
-import { type BriefService, briefServicesFromIds } from './brief-services';
+import { type BriefService, briefServiceIdForMcpItem, briefServicesFromIds } from './brief-services';
 import { getDailyArt } from './daily-art';
 
 export function buildNativeDailyReportArtifact(
@@ -486,7 +486,7 @@ function servicesForReport(report: DailyReport, composition: BriefComposition): 
   const serviceIds = [
     ...(composition.services || []),
     ...(report.services || []),
-    ...(report.sections?.mcp || []).map((item) => item.server),
+    ...(report.sections?.mcp || []).map(briefServiceIdForMcpItem),
     ...(hasCalendar ? ['calendar'] : []),
     ...(hasTasks ? ['tasks'] : []),
   ];

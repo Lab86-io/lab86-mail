@@ -6,7 +6,7 @@ export default function PrivacyPage() {
       <article className="mx-auto max-w-3xl space-y-5">
         <h1 className="text-2xl font-semibold">Privacy Policy</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
-          Effective June 2026. Updated October 8, 2026.
+          Effective June 2026. Updated October 9, 2026.
         </p>
         <p>
           {PRODUCT_NAME} is hosted email and personal operations software from {COMPANY_NAME}. This policy
@@ -163,8 +163,10 @@ export default function PrivacyPage() {
             that place from Google Maps. Google receives the place text and your IP address.
           </li>
           <li>
-            <strong>Connected tools:</strong> if you connect GitHub, Bitbucket, Jira, Slack, or Granola, we
-            send your requests to that service and read the results for you, with the access that you give.
+            <strong>Connected tools:</strong> if you connect GitHub, Bitbucket, Atlassian (Jira and
+            Confluence), Slack, or Granola, we send your requests to that service and read the results for
+            you, with the access that you give. These connections only read. They do not change your issues,
+            pages, pull requests, or messages.
           </li>
         </ul>
         <p>

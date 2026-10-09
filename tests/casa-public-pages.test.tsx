@@ -83,7 +83,9 @@ describe('privacy policy service providers', () => {
       'Google Fonts',
       'museum collections',
       'DiceBear',
-      'GitHub, Bitbucket, Jira, Slack, or Granola',
+      'GitHub, Bitbucket, Atlassian (Jira and Confluence),',
+      'Slack, or Granola',
+      'These connections only read.',
     ]) {
       expect(privacy, provider).toContain(provider);
     }

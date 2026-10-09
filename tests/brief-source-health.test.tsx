@@ -446,6 +446,26 @@ describe('connector sync problems in the source line (AI-7)', () => {
     });
   });
 
+  test('an Atlassian sign-in reads as Atlassian, and an Atlassian token reads as Jira', () => {
+    const summary = briefSourceHealth(
+      {
+        accounts: [],
+        mailSync: [],
+        calendarSync: [],
+        connections: [
+          connector({ connectionId: 'atl', server: 'jira', authKind: 'oauth', lastSyncedAt: undefined }),
+          connector({ connectionId: 'tok', server: 'jira', lastSyncedAt: undefined }),
+        ],
+        connectorSync: [],
+      },
+      { now: NOW },
+    );
+    expect(summary.sources.map((source) => source.detail)).toEqual([
+      'Atlassian has not synced yet.',
+      'Jira has not synced yet.',
+    ]);
+  });
+
   test('Convex passes the connector sync problem fields to the source line', async () => {
     const previous = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     process.env.LAB86_CONVEX_INTERNAL_SECRET = SECRET;

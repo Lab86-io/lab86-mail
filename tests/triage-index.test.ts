@@ -47,11 +47,29 @@ describe('canonical SBAR triage index', () => {
     expect(connected?.actions).toEqual([
       {
         action: 'open_url',
-        label: 'Open in Github',
+        label: 'Open in GitHub',
         payload: { url: 'https://github.com/lab86/mail/pull/86' },
         style: 'primary',
       },
     ]);
+  });
+
+  test('a Confluence page from the Atlassian sign-in reads as Confluence', () => {
+    const report = reportFixture();
+    report.sections.mcp = [
+      {
+        server: 'jira',
+        externalId: 'confluence:acme:42',
+        kind: 'page',
+        title: 'Launch plan',
+        url: 'https://acme.atlassian.net/wiki/spaces/ENG/pages/42',
+      },
+    ];
+    const connected = buildTriageHandoffIndex(report).find((handoff) => handoff.kind === 'connected');
+    expect(connected?.source).toBe('jira');
+    expect(connected?.assessment).toBe('Page in Confluence.');
+    expect(connected?.recommendation).toBe('Review “Launch plan” in Confluence and decide the next step.');
+    expect(connected?.actions[0]?.label).toBe('Open in Confluence');
   });
 
   test('deduplicates one source across lanes without losing richer lifecycle actions', () => {
