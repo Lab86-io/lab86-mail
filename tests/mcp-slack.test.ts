@@ -254,7 +254,7 @@ describe('Slack change recheck pages', () => {
     // Pages remain, so the next recheck resumes after the newest message read.
     expect(capped.resumeAt).toBe(since + (1_000 - 1) * 1_000);
 
-    // A capped read with no progress past the last check resumes at `now`.
+    // A capped read with no progress past the last check fails and keeps the cursor.
     const old = slackFetch((url) => {
       if (url.pathname === '/api/auth.test') return auth();
       const page = Number(url.searchParams.get('page'));
@@ -263,6 +263,8 @@ describe('Slack change recheck pages', () => {
         messages: { matches: [match(String(since / 1000 - 60))], paging: { page, pages: 50 } },
       });
     });
-    expect((await loadSlackChangedMessages(API, 'xoxp-1', since, NOW, old.fetchFn)).resumeAt).toBe(NOW);
+    await expect(loadSlackChangedMessages(API, 'xoxp-1', since, NOW, old.fetchFn)).rejects.toThrow(
+      'Slack search read 10 pages without reaching messages newer than the last check',
+    );
   });
 });

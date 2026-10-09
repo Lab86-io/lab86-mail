@@ -378,13 +378,14 @@ describe('Atlassian page guards', () => {
     // Pages remain, so the next recheck resumes after the newest issue read.
     expect(capped.resumeAt).toBe(Date.parse('2026-10-08T12:00:00.000+0000'));
 
-    // A capped read with no progress past the last check resumes at `now`.
+    // A capped read with no progress past the last check fails and keeps the cursor.
     const stale = pagedFetch((body) => ({
       issues: [issue('1', 'PAY-1', { updated: '2020-01-01T00:00:00.000+0000' })],
       nextPageToken: `t${(Number(String(body.nextPageToken || 't0').slice(1)) || 0) + 1}`,
     }));
     const since = Date.parse('2026-10-08T00:00:00.000Z');
-    const noProgress = await loadAtlassianChangedIssues(API, 'token-1', since, since + 60_000, stale.fetchFn);
-    expect(noProgress.resumeAt).toBe(since + 60_000);
+    await expect(
+      loadAtlassianChangedIssues(API, 'token-1', since, since + 60_000, stale.fetchFn),
+    ).rejects.toThrow('Jira search on acme read 10 pages without reaching issues newer than the last check');
   });
 });

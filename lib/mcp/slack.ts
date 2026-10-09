@@ -331,9 +331,17 @@ export async function loadSlackChangedMessages(
         break;
       }
     }
-    // Pages remain: resume after the newest message read. A read with no
-    // progress at all takes `now`, so it cannot repeat the same pages.
-    if (!complete) resumeAt = Math.min(resumeAt ?? now, newest > sinceMs ? newest : now);
+    if (!complete) {
+      // Pages remain and none of them reached the last check. The error
+      // keeps the saved cursor and shows a sync problem; no message is lost.
+      if (newest <= sinceMs) {
+        throw new Error(
+          `Slack search read ${SLACK_CHANGE_PAGE_LIMIT} pages without reaching messages newer than the last check`,
+        );
+      }
+      // Pages remain: resume after the newest message read.
+      resumeAt = Math.min(resumeAt ?? now, newest);
+    }
   }
   return { items: dedupe(items), ...(resumeAt !== undefined ? { resumeAt } : {}) };
 }
