@@ -116,12 +116,20 @@ struct RunBlockView: View {
                 if state.isOpen {
                     RevealDot()
                 }
-                Text(RunBlockCopy.headline(run))
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(headlineColor)
-                Text("· \(StepRunCopy.triggerLine(run))")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                // The blank sentence says what waits for the user, so the
+                // state word does not repeat it (docs/albatross-blank-design.md).
+                if showsBlanks {
+                    Text(StepRunCopy.triggerLine(run))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Text(RunBlockCopy.headline(run))
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(headlineColor)
+                    Text("· \(StepRunCopy.triggerLine(run))")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
             }
             Text(run.stepTitle)
                 .font(.subheadline.weight(.medium))
@@ -228,7 +236,9 @@ struct RunBlockView: View {
         let behaviour = StepRunNextBehaviour.from(run.next)
         return VStack(alignment: .leading, spacing: 12) {
             summary
-            if let detail = run.next?.detail, outcome != .needsAnswer {
+            if RunBlockBlanks.draws(run) {
+                handoffSentence
+            } else if let detail = run.next?.detail, outcome != .needsAnswer {
                 Text(detail)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -263,6 +273,27 @@ struct RunBlockView: View {
             dismissRow
         }
         .pointerMenu { blockMenu(continues: StepRunNextBehaviour.showsContinue(run.next)) }
+    }
+
+    /// The block shows blanks: the state word leaves the header.
+    private var showsBlanks: Bool {
+        RunBlockBlanks.draws(run) && !(run.next?.blanks.isEmpty ?? true)
+    }
+
+    /// The user's part as the largest text of the handoff: the blank
+    /// sentence, then the handoff's words as a quiet line. With no blanks,
+    /// the handoff's words show in the display font.
+    @ViewBuilder private var handoffSentence: some View {
+        let blanks = run.next?.blanks ?? []
+        let detail = run.next?.detail?.nilIfBlank
+        BlankSentence(blanks: blanks, fallback: detail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        if !blanks.isEmpty, let detail {
+            Text(detail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     /// The primary button of the handoff (docs/albatross-document-handoff.md, D2).

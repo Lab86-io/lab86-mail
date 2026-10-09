@@ -7,6 +7,7 @@
 // the parent renders in place; the context menu holds "Mark as unread".
 
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { BlankSentence } from '@/components/albatross/BlankSentence';
 import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
@@ -106,6 +107,8 @@ export function ThreadRow({
   const [sentAt, setSentAt] = useState<number | null>(null);
   const sentShows = sentAt !== null && nowMs - sentAt < STEER_SENT_SHOWS_MS;
   const list = variant === 'list';
+  // A row that waits for you, in the list: the blank sentence and the action in view.
+  const yours = list && prominent;
   const labelId = useId();
 
   // "Sent to the run" leaves on its own, even when the clock stands still.
@@ -176,12 +179,8 @@ export function ThreadRow({
                   id={labelId}
                   className={cn(
                     'min-w-0 flex-1 truncate leading-[18px]',
-                    prominent
-                      ? 'font-serif text-[16px] leading-[20px]'
-                      : list
-                        ? 'text-[13.5px]'
-                        : 'text-[13px]',
-                    row.unread ? 'font-semibold' : prominent ? 'font-semibold' : 'font-medium',
+                    list ? 'text-[14.5px] leading-[20px]' : 'text-[13px]',
+                    row.unread ? 'font-semibold' : 'font-medium',
                   )}
                 >
                   {row.title}
@@ -193,6 +192,7 @@ export function ThreadRow({
                     row.unread ? 'font-medium text-[var(--color-accent)]' : 'text-[var(--color-text-faint)]',
                     hasDraft && !open && 'font-medium text-[var(--color-accent-2)]',
                     actions.length &&
+                      !yours &&
                       'group-focus-within/thread-row:opacity-0 group-hover/thread-row:opacity-0',
                     'motion-reduce:transition-none',
                   )}
@@ -200,31 +200,52 @@ export function ThreadRow({
                   {hasDraft && !open ? THREAD_ROW_COPY.draft : time}
                 </span>
               </span>
-              <span
-                className={cn(
-                  'mt-0.5 block truncate leading-4 text-[var(--color-text-muted)]',
-                  list ? 'text-[12.5px]' : 'text-[12px]',
-                  previewTone,
-                )}
-              >
-                {row.statusLabel ? (
-                  <>
-                    <span className={cn('font-medium', WORD_CLASS[word])}>{row.statusLabel}</span>
-                    {preview ? <span className="mx-1 text-[var(--color-text-faint)]">·</span> : null}
-                  </>
-                ) : null}
-                {preview}
-                {list && row.areaName ? (
-                  <>
-                    <span className="mx-1 text-[var(--color-text-faint)]">·</span>
-                    <span className="text-[var(--color-text-faint)]">{row.areaName}</span>
-                  </>
-                ) : null}
-              </span>
+              {yours ? (
+                <BlankSentence
+                  as="span"
+                  blanks={row.blanks}
+                  fallback={preview}
+                  className="mt-1 block text-[18px]"
+                />
+              ) : (
+                <span
+                  className={cn(
+                    'mt-0.5 block truncate leading-4 text-[var(--color-text-muted)]',
+                    list ? 'text-[12.5px]' : 'text-[12px]',
+                    previewTone,
+                  )}
+                >
+                  {/* The rail names the status; the list's dot already says it, so the line is the news. */}
+                  {row.statusLabel && (!list || !preview) ? (
+                    <>
+                      <span className={cn('font-medium', WORD_CLASS[word])}>{row.statusLabel}</span>
+                      {preview ? <span className="mx-1 text-[var(--color-text-faint)]">·</span> : null}
+                    </>
+                  ) : null}
+                  {preview}
+                </span>
+              )}
             </span>
           </button>
 
-          {actions.length ? (
+          {yours && actions.length && !inPlace ? (
+            <div data-thread-row-actions className="flex flex-wrap gap-2 pb-4 pl-[38px] pr-3.5">
+              {actions.map((action) => (
+                <Button
+                  key={action.kind}
+                  type="button"
+                  size="sm"
+                  variant={action.primary ? 'default' : 'outline'}
+                  data-thread-row-action={action.kind}
+                  onClick={() => act(action)}
+                >
+                  {action.kind === 'open' && row.nextLabel ? row.nextLabel : action.label}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+
+          {actions.length && !yours ? (
             <span
               data-thread-row-actions
               className={cn(

@@ -74,6 +74,17 @@ const outcomeValidator = v.union(
   v.literal('stopped'),
 );
 
+/** The handoff's blanks: trimmed, short, unique, at most six. */
+export function cleanBlanks(blanks: readonly string[] | undefined): string[] {
+  const out: string[] = [];
+  for (const blank of blanks || []) {
+    const name = truncateText(blank.replace(/\s+/g, ' ').trim(), 40);
+    if (name && !out.some((other) => other.toLowerCase() === name.toLowerCase())) out.push(name);
+    if (out.length === 6) break;
+  }
+  return out;
+}
+
 const nextValidator = v.object({
   kind: v.union(
     v.literal('review_draft'),
@@ -89,6 +100,7 @@ const nextValidator = v.object({
   ),
   label: v.string(),
   detail: v.string(),
+  blanks: v.optional(v.array(v.string())),
   doneLabel: v.optional(v.string()),
   allow: v.optional(
     v.object({
@@ -173,6 +185,7 @@ export function stepRunView(run: RunDoc) {
           kind: run.next.kind,
           label: run.next.label,
           detail: run.next.detail,
+          blanks: run.next.blanks ?? [],
           doneLabel: run.next.doneLabel ?? null,
           target: run.next.target ?? null,
           allow: run.next.allow ?? null,
@@ -452,6 +465,7 @@ export const settle = mutation({
     const run = await ownedRun(ctx, args);
     if (!run) return { state: null };
     const ts = now();
+    const blanks = cleanBlanks(args.next?.blanks);
     if (args.error && args.retryable && run.attempts < STEP_RUN_MAX_ATTEMPTS) {
       const retryAt = ts + 15_000 * run.attempts;
       await ctx.db.patch(run._id, {
@@ -478,6 +492,7 @@ export const settle = mutation({
               kind: args.next.kind,
               label: truncateText(args.next.label, 48),
               detail: truncateText(args.next.detail, 500),
+              ...(blanks.length ? { blanks } : {}),
               ...(args.next.doneLabel?.trim()
                 ? { doneLabel: truncateText(args.next.doneLabel.trim(), 32) }
                 : {}),

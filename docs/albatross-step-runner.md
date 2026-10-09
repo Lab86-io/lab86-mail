@@ -230,6 +230,10 @@ delivery is the usual path.
 - `next.doneLabel`: for `sign_in` and `finish_on_page`, the button the user presses after doing
   their part on the page ("I signed in", "I paid"). `null` means "Continue". The thread has no
   "Check the page" button; the resumed run checks the page itself.
+- `next.blanks`: the names of the fields the run left empty for the user, in page order (at
+  most six, 40 characters each). The view always sends an array. Every surface draws them as
+  blanks: "Fill in ___, ___, and ___." (docs/albatross-blank-design.md). The list activity
+  carries them as `nextBlanks`, and `ThreadRow.blanks` holds them for an open handoff only.
 - Run questions are forms: `step_handoff.question.form` (`FormQuestion`). The server stores it on
   the Work question (`albatrossWorkQuestions.form`, dedupe salted with the run id). The answer
   route takes `{ form: { values, save } }`.

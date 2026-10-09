@@ -4,13 +4,24 @@ import SwiftUI
 // (docs/albatross-document-handoff.md, D5, and
 // docs/research/document-handoff-macos-design-2026-10-08.md). The web editor
 // opens in the native workspace, docked in the center of the detail column.
-// The thread moves to a column on the right, with the "Your part" card on
-// top. The pure rules are here and tested; the views stay thin.
+// The thread moves to a column on the right, with the "your part" card on
+// top. The card shows the blank sentence ("Fill in ___ and ___.") or the
+// handoff's words (docs/albatross-blank-design.md). The pure rules are here
+// and tested; the views stay thin.
 
 /// The words of document mode that only the Mac uses.
 enum MacDocumentModeCopy {
     /// The header title when no run names the document.
     static let document = "Document"
+    /// The VoiceOver name of the card. The card shows no label above it.
+    static let yourPart = "Your part"
+}
+
+/// What the "your part" card shows: the fields to fill in, else the
+/// handoff's words.
+struct MacDocumentYourPart: Equatable {
+    let blanks: [String]
+    let detail: String?
 }
 
 enum MacDocumentMode {
@@ -26,16 +37,30 @@ enum MacDocumentMode {
         return MacDocumentModeCopy.document
     }
 
-    /// The step line of the "Your part" card: "Step 2 · Make the hours
+    /// The content of the "your part" card for the handoff of the open
+    /// document. Nil (no card) when there is no handoff, or when the handoff
+    /// names no blank and has no words.
+    static func yourPart(of run: ThreadRunView?) -> MacDocumentYourPart? {
+        guard let next = run?.run.next else { return nil }
+        let blanks = next.blanks
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let detail = next.detail?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+        guard !blanks.isEmpty || detail != nil else { return nil }
+        return MacDocumentYourPart(blanks: blanks, detail: detail)
+    }
+
+    /// The step line of the "your part" card: "Step 2: Make the hours
     /// summary", or the title alone when the plan has no position for it.
-    /// The web rule is the `stepLabel` of `YourPartCard`.
+    /// The web rule is the `stepLabel` of `YourPartCard` in WorkThread.tsx.
+    /// No middle dot joins the parts (docs/albatross-blank-design.md).
     static func stepLabel(detail: WorkDetail?, run: ThreadRunView?) -> String? {
         guard let run else { return nil }
         let title = run.run.stepTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let index = detail?.execution.guideSteps.firstIndex(where: { $0.id == run.run.stepKey }) else {
             return title.nilIfBlank
         }
-        return title.isEmpty ? "Step \(index + 1)" : "Step \(index + 1) · \(title)"
+        return title.isEmpty ? "Step \(index + 1)" : "Step \(index + 1): \(title)"
     }
 }
 
@@ -79,23 +104,45 @@ struct MacDocumentSplit<Column: View>: View {
     }
 }
 
-/// The card on top of the thread column: "Your part" and the step, the
-/// handoff's words, "Done, continue", and the quiet "Back to thread".
+/// The card on top of the thread column: the step, the blank sentence (or
+/// the handoff's words alone), "Done, continue", and the quiet "Back to
+/// thread".
+/// No label shows above the card (docs/albatross-blank-design.md).
 struct MacDocumentYourPartCard: View {
-    @Environment(AppEnvironment.self) private var environment
     let stepLabel: String?
-    let detail: String
+    let yourPart: MacDocumentYourPart
     var busy = false
     var notice: String? = nil
     let onDone: () -> Void
     let onBack: () -> Void
 
+    /// The point size of the blank sentence. The handoff's words alone
+    /// show a little smaller, as on the web card.
+    static let sentenceSize: CGFloat = 19
+    static let fallbackSize: CGFloat = 17
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            Text(detail)
-                .font(.subheadline.weight(.medium))
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 12) {
+            if let stepLabel {
+                Text(stepLabel)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            BlankSentence(
+                blanks: yourPart.blanks,
+                fallback: yourPart.detail,
+                size: yourPart.blanks.isEmpty ? Self.fallbackSize : Self.sentenceSize
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // With blanks, the handoff's words stay as a quiet line under
+            // the sentence: what happens after the fields are full.
+            if !yourPart.blanks.isEmpty, let detail = yourPart.detail {
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             buttons
             if let notice {
                 Text(notice)
@@ -107,21 +154,7 @@ struct MacDocumentYourPartCard: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(DocumentHandoffCopy.yourPart)
-    }
-
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(DocumentHandoffCopy.yourPart)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(environment.theme.accent2Color)
-            if let stepLabel {
-                Text(stepLabel)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-            }
-        }
+        .accessibilityLabel(MacDocumentModeCopy.yourPart)
     }
 
     private var buttons: some View {

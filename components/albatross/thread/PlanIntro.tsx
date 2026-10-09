@@ -108,6 +108,101 @@ export function PlanSteps({
   );
 }
 
+/**
+ * The plan as one strip of steps under the title: a bar on top of each step
+ * shows done, now, and next. A plan is a real sequence, so the steps keep
+ * their numbers. The step that waits for the user carries the blank voice.
+ */
+export function PlanStrip({
+  steps,
+  activeStepKey,
+  busyStepKey,
+  onHandle,
+}: {
+  steps: readonly PlanStepRow[];
+  activeStepKey?: string | null;
+  busyStepKey?: string | null;
+  onHandle?: (stepKey: string) => void;
+}) {
+  return (
+    <ol
+      data-slot="plan-steps"
+      className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-x-3 gap-y-4"
+    >
+      {steps.map((step) => {
+        const active = step.key === activeStepKey;
+        return (
+          <li
+            key={step.key}
+            data-plan-step={step.state}
+            className={cn(
+              'flex min-w-0 flex-col gap-1 border-t-[3px] pt-2',
+              step.state === 'done'
+                ? 'border-[var(--color-text-faint)]'
+                : step.state === 'now'
+                  ? step.waiting
+                    ? 'border-[var(--color-accent-3)]'
+                    : 'border-[var(--color-accent)]'
+                  : 'border-[var(--color-border)]',
+            )}
+          >
+            <span
+              className={cn(
+                'font-display text-[15px] leading-none tabular-nums',
+                step.state === 'now'
+                  ? step.waiting
+                    ? 'text-[var(--color-accent-3)]'
+                    : 'text-[var(--color-accent)]'
+                  : 'text-[var(--color-text-faint)]',
+              )}
+            >
+              {step.index + 1}
+            </span>
+            <span
+              className={cn(
+                'text-[12.5px] leading-snug',
+                step.state === 'done'
+                  ? 'text-[var(--color-text-faint)]'
+                  : step.state === 'now'
+                    ? 'text-[var(--color-text)]'
+                    : 'text-[var(--color-text-muted)]',
+              )}
+            >
+              {step.title}
+            </span>
+            {step.proof ? (
+              <span className="text-[11.5px] text-[var(--color-success)]">{step.proof}</span>
+            ) : active ? (
+              <span className="text-[11.5px] text-[var(--color-accent)]">{PLAN_COPY.working}</span>
+            ) : step.waiting ? (
+              <span className="text-[11.5px] text-[var(--color-accent-3)]">
+                {step.waitingLabel ?? PLAN_COPY.waiting}
+              </span>
+            ) : step.runnable && onHandle ? (
+              <Button
+                type="button"
+                size="xs"
+                className="mt-0.5 w-fit"
+                variant={step.state === 'now' ? 'default' : 'outline'}
+                disabled={Boolean(busyStepKey)}
+                aria-busy={busyStepKey === step.key || undefined}
+                onClick={() => onHandle(step.key)}
+              >
+                {PLAN_COPY.handleIt}
+              </Button>
+            ) : (
+              <span className="text-[11.5px] text-[var(--color-text-faint)]">
+                {PLAN_STEP_STATE_LABEL[step.state]}
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** The top of every thread: the outcome as the page title, and the plan strip under it. */
 export function PlanIntro({
   outcome,
   summary,
@@ -130,37 +225,32 @@ export function PlanIntro({
       data-slot="plan-intro"
       data-thread-state={state}
       aria-label={PLAN_COPY.heading}
-      className="surface-card rounded-card flex w-full min-w-0 flex-col gap-3 px-4 py-3.5"
+      className="flex w-full min-w-0 flex-col gap-4 pb-2 pt-2"
     >
-      <p className="text-[11.5px] text-[var(--color-text-faint)]">{PLAN_COPY.heading}</p>
-      <div className="grid gap-x-4 gap-y-1 sm:grid-cols-[64px_minmax(0,1fr)]">
-        <span className="text-[12px] text-[var(--color-text-muted)]">{PLAN_COPY.outcome}</span>
-        <div className="min-w-0">
-          <p className="font-display text-[15px] font-medium leading-snug">{outcome}</p>
-          {summary ? (
-            <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">{summary}</p>
-          ) : null}
-        </div>
+      <div className="min-w-0">
+        <p className="font-display text-[28px] font-normal leading-[1.15] tracking-[-0.015em] text-balance">
+          {outcome}
+        </p>
+        {summary ? (
+          <p className="mt-2 max-w-[68ch] text-[13.5px] leading-relaxed text-[var(--color-text-muted)]">
+            {summary}
+          </p>
+        ) : null}
       </div>
-      <div className="grid gap-x-4 gap-y-1 border-t border-[var(--color-list-divider)] pt-3 sm:grid-cols-[64px_minmax(0,1fr)]">
-        <span className="pt-2 text-[12px] text-[var(--color-text-muted)]">{PLAN_COPY.plan}</span>
-        <div className="min-w-0">
-          {state === 'planning' ? (
-            <p className="py-2 text-[12.5px]" aria-live="polite">
-              <ShimmerText text={PLAN_COPY.making} duration={1.6} startOnView={false} />
-            </p>
-          ) : steps.length ? (
-            <PlanSteps
-              steps={steps}
-              activeStepKey={activeStepKey}
-              busyStepKey={busyStepKey}
-              onHandle={onHandle}
-            />
-          ) : (
-            <p className="py-2 text-[12.5px] text-[var(--color-text-muted)]">{PLAN_COPY.noSteps}</p>
-          )}
-        </div>
-      </div>
+      {state === 'planning' ? (
+        <p className="text-[12.5px]" aria-live="polite">
+          <ShimmerText text={PLAN_COPY.making} duration={1.6} startOnView={false} />
+        </p>
+      ) : steps.length ? (
+        <PlanStrip
+          steps={steps}
+          activeStepKey={activeStepKey}
+          busyStepKey={busyStepKey}
+          onHandle={onHandle}
+        />
+      ) : (
+        <p className="text-[12.5px] text-[var(--color-text-muted)]">{PLAN_COPY.noSteps}</p>
+      )}
     </section>
   );
 }
@@ -175,7 +265,7 @@ export function PlanOutro({ state }: { state: ThreadState }) {
   );
 }
 
-/** The header pill: "Step 1 of 2 · Your turn". Opens the Details panel at Plan. */
+/** The header pill: "Step 1 of 2" and the state word. Opens the Details panel at Plan. */
 export function PlanLine({
   text,
   state,
@@ -201,12 +291,7 @@ export function PlanLine({
         active && 'bg-[var(--color-control-hover)]',
       )}
     >
-      {step ? (
-        <>
-          <span className="tabular-nums">{step}</span>
-          <span className="text-[var(--color-text-faint)]">·</span>
-        </>
-      ) : null}
+      {step ? <span className="tabular-nums">{step}</span> : null}
       <span
         className={cn(
           'font-medium',

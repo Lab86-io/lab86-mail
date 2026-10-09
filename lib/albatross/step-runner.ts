@@ -99,6 +99,8 @@ export interface SettleInput {
     kind: NonNullable<HandoffInput['next']>['kind'];
     label: string;
     detail: string;
+    /** The empty fields the user fills in, by short name (the "blanks"). */
+    blanks?: string[];
     doneLabel?: string;
     target?: { kind: string; id?: string; url?: string; accountId?: string };
     allow?: SecureAllowRequest;

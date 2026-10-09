@@ -44,6 +44,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { useMediaQuery } from '@/hooks/use-media-query';
+import { handoffBlanks } from '@/lib/albatross/blanks';
 import {
   DOCUMENT_HANDOFF_COPY,
   documentHandoffDetail,
@@ -446,12 +447,17 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
 
   const documentDone = model.documentDone ?? { busy: false, error: null };
   const yourPart =
-    documentTarget && documentRun && documentDetail && handlers.onDocumentDone ? (
+    // Blanks alone are enough: a handoff can name its fields with an empty detail.
+    documentTarget &&
+    documentRun &&
+    (documentDetail || handoffBlanks(documentRun.next).length) &&
+    handlers.onDocumentDone ? (
       <YourPartCard
         stepLabel={
-          documentStepNumber ? `Step ${documentStepNumber} · ${documentRun.stepTitle}` : documentRun.stepTitle
+          documentStepNumber ? `Step ${documentStepNumber}: ${documentRun.stepTitle}` : documentRun.stepTitle
         }
-        detail={documentDetail}
+        detail={documentDetail ?? ''}
+        blanks={handoffBlanks(documentRun.next)}
         busy={documentDone.busy}
         error={documentDone.error}
         onDone={() => handlers.onDocumentDone?.(documentRun)}
@@ -620,6 +626,7 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
             <div className="min-h-0 flex-1">{documentNode}</div>
             <YourPartBar
               detail={yourPart ? documentDetail : null}
+              blanks={yourPart ? handoffBlanks(documentRun?.next) : []}
               busy={documentDone.busy}
               error={documentDone.error}
               onDone={yourPart && documentRun ? () => handlers.onDocumentDone?.(documentRun) : null}
@@ -994,6 +1001,16 @@ export function WorkThread({ workId }: { workId: string }) {
     regionBy.current = next ? by : null;
     setRegionState(next);
   }, []);
+  // The Documents page opens this thread on a document that waits for the user:
+  // document mode at once, the same as the handoff's own button.
+  const pendingDocument = useClientStore((state) => state.pendingThreadDocument);
+  useEffect(() => {
+    if (!pendingDocument || pendingDocument.workId !== workId) return;
+    useClientStore.getState().setPendingThreadDocument(null);
+    setOpenDocument(pendingDocument.target);
+    setDocumentDone({ busy: false, error: null });
+    setRegion('document');
+  }, [pendingDocument, workId, setRegion]);
 
   // The page pane opens by itself only for a run the user started from this
   // view (lead review decision 13), and closes again when that session ends.

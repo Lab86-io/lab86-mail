@@ -392,6 +392,46 @@ export function readyForYouRows(items: readonly StepRunHandoffItem[]): ReadyForY
 }
 
 // ---------------------------------------------------------------------------
+// The Documents page's "Waiting for you" section.
+// ---------------------------------------------------------------------------
+
+export interface DocumentWaitingRow {
+  runId: string;
+  workId: string;
+  workTitle: string;
+  /** The title of the document the handoff opens, from the run's artifacts. */
+  documentTitle: string;
+  detail: string;
+  blanks: string[];
+  /** The same row and button as the Brief's list, so both open the document the same way. */
+  row: ReadyForYouRow;
+}
+
+/** The open handoffs whose next action opens a document: the documents that wait for the user. */
+export function documentsWaitingRows(items: readonly StepRunHandoffItem[]): DocumentWaitingRow[] {
+  const rows: DocumentWaitingRow[] = [];
+  for (const item of items) {
+    const { run } = item;
+    const target = run.next?.target;
+    if (!isOpenHandoff(run) || !run.next || target?.kind !== 'document') continue;
+    const row = readyForYouRows([item])[0];
+    if (!row) continue;
+    const documents = run.artifacts.filter((artifact) => artifact.kind === 'document');
+    const made = documents.find((artifact) => artifact.id === target.id) ?? documents.at(-1);
+    rows.push({
+      runId: run.id,
+      workId: item.workId,
+      workTitle: item.workTitle,
+      documentTitle: made?.title?.trim() || run.stepTitle,
+      detail: run.next.detail,
+      blanks: (run.next.blanks || []).filter(Boolean),
+      row,
+    });
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
 // The shared browser bar.
 // ---------------------------------------------------------------------------
 

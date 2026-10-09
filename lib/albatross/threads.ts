@@ -71,6 +71,10 @@ export interface ThreadRow {
   /** One line under the title. Never more than 160 characters. */
   preview: string;
   stepTitle: string | null;
+  /** The button of the open handoff ("Fill in hours"), when the user has one. */
+  nextLabel: string | null;
+  /** The empty fields of the open handoff, drawn as blanks (lib/albatross/blanks.ts). */
+  blanks: string[];
   needsYou: boolean;
   working: boolean;
   latestRunId: string | null;
@@ -177,6 +181,7 @@ export function threadRow(
   );
   const meaningful = meaningfulAt(run, state);
   const working = WORKING_STATUSES.includes(status);
+  const handoffOpen = status === 'ready_for_you' || status === 'your_turn';
   return {
     workId: work._id,
     title: line(work.title || work.rawText) || 'Untitled Albatross',
@@ -185,6 +190,8 @@ export function threadRow(
     statusLabel: THREAD_STATUS_LABEL[status],
     preview: preview(status, work, run, state),
     stepTitle: run?.stepTitle ?? null,
+    nextLabel: handoffOpen ? (run?.nextLabel ?? null) : null,
+    blanks: handoffOpen ? (run?.nextBlanks ?? []).filter(Boolean) : [],
     needsYou: NEEDS_YOU_STATUSES.includes(status),
     working,
     latestRunId: run?.runId ?? null,

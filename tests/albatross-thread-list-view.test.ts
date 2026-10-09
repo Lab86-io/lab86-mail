@@ -47,6 +47,8 @@ function row(over: Partial<ThreadRow> & { status: ThreadStatus }): ThreadRow {
     statusLabel: THREAD_STATUS_LABEL[over.status],
     preview: "Typed your saved Driver's license on dmv.ny.gov",
     stepTitle: 'Renew online',
+    nextLabel: null,
+    blanks: [],
     needsYou,
     working,
     latestRunId: 'r1',

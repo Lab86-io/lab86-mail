@@ -40,6 +40,17 @@ export const THREAD_GROUP_HINT: Record<ThreadGroupKey, string> = {
   finished: 'These reached the outcome you wanted.',
 };
 
+/** The one sentence under the list title: "3 wait for you. Albatross works on 2." */
+export function listCountSentence(needsYou: number, working: number): string {
+  const yours =
+    needsYou === 0
+      ? 'Nothing waits for you.'
+      : needsYou === 1
+        ? '1 waits for you.'
+        : `${needsYou} wait for you.`;
+  return working > 0 ? `${yours} Albatross works on ${working}.` : yours;
+}
+
 /** The list's group of a row. The rail folds waiting and paused into "Open". */
 export function threadGroupKey(row: ThreadRow): ThreadGroupKey {
   if (row.needsYou) return 'needs_you';

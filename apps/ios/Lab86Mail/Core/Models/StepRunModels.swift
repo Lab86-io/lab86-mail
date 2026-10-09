@@ -165,6 +165,10 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         }
 
         static let labelLimit = 48
+        /// The most blanks one handoff names (the web `cleanBlanks`).
+        static let blankLimit = 6
+        /// The most characters in one blank's name (the web `cleanBlanks`).
+        static let blankNameLimit = 40
 
         let kind: Kind
         let label: String
@@ -173,6 +177,10 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         /// The button that ends the user's part of a page handoff ("I paid",
         /// "I signed in"). Nil when the server sends none: "Continue".
         let doneLabel: String?
+        /// The names of the fields the run left empty for the user ("hours
+        /// for each week", "hourly rate"), drawn as blanks
+        /// (docs/albatross-blank-design.md). Empty when the server sends none.
+        let blanks: [String]
         /// `allow_secure`: what the run asks to use, and where.
         let allow: SecureAllowRequest?
         /// `allow_secure`: the first answer, so every device shows the same receipt.
@@ -186,6 +194,7 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
             detail: String? = nil,
             target: Target? = nil,
             doneLabel: String? = nil,
+            blanks: [String] = [],
             allow: SecureAllowRequest? = nil,
             allowAnswer: SecureAllowAnswerView? = nil,
             saveSignIn: SecureSaveSignInOffer? = nil
@@ -195,6 +204,7 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
             self.detail = detail
             self.target = target
             self.doneLabel = doneLabel?.nilIfBlank.map { String($0.prefix(Self.labelLimit)) }
+            self.blanks = Self.cleanBlanks(blanks)
             self.allow = allow
             self.allowAnswer = allowAnswer
             self.saveSignIn = saveSignIn
@@ -208,9 +218,44 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
             detail = json["detail"]?.stringValue?.nilIfBlank
             target = json["target"].flatMap { Target(json: $0) }
             doneLabel = json["doneLabel"]?.stringValue?.nilIfBlank.map { String($0.prefix(Self.labelLimit)) }
+            blanks = Self.cleanBlanks((json["blanks"]?.arrayValue ?? []).compactMap(\.stringValue))
             allow = json["allow"].flatMap { SecureAllowRequest(json: $0) }
             allowAnswer = json["allowAnswer"].flatMap { SecureAllowAnswerView(json: $0) }
             saveSignIn = json["saveSignIn"].flatMap { SecureSaveSignInOffer(json: $0) }
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case kind, label, detail, target, doneLabel, blanks, allow, allowAnswer, saveSignIn
+        }
+
+        /// The offline cache. A run cached before blanks existed has no
+        /// `blanks` key and reads as no blanks.
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            kind = try container.decode(Kind.self, forKey: .kind)
+            label = try container.decode(String.self, forKey: .label)
+            detail = try container.decodeIfPresent(String.self, forKey: .detail)
+            target = try container.decodeIfPresent(Target.self, forKey: .target)
+            doneLabel = try container.decodeIfPresent(String.self, forKey: .doneLabel)
+            blanks = try Self.cleanBlanks(container.decodeIfPresent([String].self, forKey: .blanks) ?? [])
+            allow = try container.decodeIfPresent(SecureAllowRequest.self, forKey: .allow)
+            allowAnswer = try container.decodeIfPresent(SecureAllowAnswerView.self, forKey: .allowAnswer)
+            saveSignIn = try container.decodeIfPresent(SecureSaveSignInOffer.self, forKey: .saveSignIn)
+        }
+
+        /// The same rules as the web `cleanBlanks` (convex/albatrossStepRuns.ts):
+        /// one space between words, at most 40 characters, no empty name, no
+        /// name twice (case does not count), and the first six only.
+        static func cleanBlanks(_ raw: [String]) -> [String] {
+            var names: [String] = []
+            for blank in raw {
+                let words = blank.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+                let name = String(words.prefix(blankNameLimit))
+                guard !name.isEmpty, !names.contains(where: { $0.lowercased() == name.lowercased() }) else { continue }
+                names.append(name)
+                if names.count == blankLimit { break }
+            }
+            return names
         }
     }
 

@@ -1,10 +1,12 @@
 /** Synthetic data only. Never connects to a provider or account. */
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRoot } from 'react-dom/client';
 import { FilesSurface } from '../../components/files/FilesSurface';
 import { MobileNavigation } from '../../components/shell/MobileNavigation';
 import { SidebarProvider } from '../../components/ui/sidebar';
 import { TooltipProvider } from '../../components/ui/tooltip';
+import { documentHandoffRunsFixture } from '../../lib/albatross/document-handoff-fixtures';
 import { createDefaultDocumentModel } from '../../lib/documents/model';
 
 const mode = new URLSearchParams(location.search).get('scenario');
@@ -125,6 +127,21 @@ globalThis.fetch = (async (input, init) => {
   const url = new URL(String(input), location.origin);
   calls.push(`${init?.method || 'GET'} ${url.pathname}${url.search}`);
   if (url.pathname === '/api/office') return Response.json({ ok: true, enabled: false, files: [] });
+  // One document that waits for the user: the "Waiting for you" section on top.
+  if (url.pathname === '/api/albatross/handoffs')
+    return Response.json({
+      ok: true,
+      items:
+        mode === 'empty' || mode === 'error'
+          ? []
+          : [
+              {
+                workId: 'work_hours',
+                workTitle: 'Send the September hours and invoice to Harbor Design',
+                run: documentHandoffRunsFixture(Date.UTC(2026, 9, 9, 17, 15)).document,
+              },
+            ],
+    });
   if (url.pathname === '/api/documents/doc') {
     if (init?.method === 'PATCH') {
       const submitted = JSON.parse(String(init?.body));

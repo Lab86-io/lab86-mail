@@ -8,6 +8,7 @@
 import dynamic from 'next/dynamic';
 import { type ReactNode, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
+import { BlankSentence } from '@/components/albatross/BlankSentence';
 import { Button } from '@/components/ui/button';
 import { DOCUMENT_HANDOFF_COPY } from '@/lib/albatross/document-handoff';
 import type { DocumentTarget } from '@/lib/albatross/step-run-client';
@@ -51,14 +52,17 @@ export function ThreadDocumentEditor({
 export function YourPartCard({
   stepLabel,
   detail,
+  blanks = [],
   busy,
   error,
   onDone,
   onBack,
 }: {
-  /** "Step 2 · Make the hours summary and invoice". */
+  /** "Step 2: Make the hours summary and invoice". */
   stepLabel: string | null;
   detail: string;
+  /** The empty fields the user fills in (lib/albatross/blanks.ts). */
+  blanks?: readonly string[];
   busy: boolean;
   error: string | null;
   onDone: () => void;
@@ -70,15 +74,17 @@ export function YourPartCard({
       aria-label={DOCUMENT_HANDOFF_COPY.yourPart}
       className="flex shrink-0 flex-col gap-1.5 border-b border-[var(--color-border)] px-4 pb-3.5 pt-3"
     >
-      <div className="flex min-w-0 items-baseline gap-2">
-        <span className="text-[11.5px] font-medium text-[var(--color-accent-3)]">
-          {DOCUMENT_HANDOFF_COPY.yourPart}
-        </span>
-        {stepLabel ? (
-          <span className="min-w-0 truncate text-[11.5px] text-[var(--color-text-faint)]">{stepLabel}</span>
-        ) : null}
-      </div>
-      <p className="text-[14px] font-medium leading-snug">{detail}</p>
+      {stepLabel ? (
+        <span className="min-w-0 truncate text-[11.5px] text-[var(--color-text-faint)]">{stepLabel}</span>
+      ) : null}
+      <BlankSentence
+        blanks={blanks}
+        fallback={detail}
+        className={blanks.length ? 'text-[20px]' : 'text-[17px]'}
+      />
+      {blanks.length && detail.trim() ? (
+        <p className="text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">{detail}</p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <Button type="button" size="sm" disabled={busy} onClick={onDone}>
           {busy ? DOCUMENT_HANDOFF_COPY.saving : DOCUMENT_HANDOFF_COPY.done}
@@ -95,12 +101,14 @@ export function YourPartCard({
 /** Narrow screens: the document is full screen, and this bar holds the way on and the chat. */
 export function YourPartBar({
   detail,
+  blanks = [],
   busy,
   error,
   onDone,
   onChat,
 }: {
   detail: string | null;
+  blanks?: readonly string[];
   busy: boolean;
   error: string | null;
   onDone: (() => void) | null;
@@ -111,11 +119,10 @@ export function YourPartBar({
       data-slot="document-your-part-bar"
       className="flex shrink-0 flex-col gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2.5"
     >
-      {detail ? (
-        <p className="line-clamp-2 text-[13px] leading-snug">
-          <span className="font-medium text-[var(--color-accent-3)]">{DOCUMENT_HANDOFF_COPY.yourPart}: </span>
-          {detail}
-        </p>
+      {blanks.length ? (
+        <BlankSentence blanks={blanks} className="text-[16px]" />
+      ) : detail ? (
+        <p className="line-clamp-2 text-[13px] leading-snug">{detail}</p>
       ) : null}
       <div className="flex items-center gap-2">
         {onDone ? (

@@ -50,6 +50,7 @@ function run(over: Partial<RunActivity> & { runId: string; state: RunActivity['s
     nextKind: null,
     nextLabel: null,
     nextDetail: null,
+    nextBlanks: [],
     allowAnswered: false,
     summary: null,
     error: null,
@@ -86,9 +87,10 @@ export const THREAD_LIST_FIXTURE_IDS = {
   recycling: 'work_recycling',
   insurance: 'work_insurance',
   taxes: 'work_taxes',
+  invoice: 'work_invoice',
 } as const;
 
-/** Eight awake threads in mixed states, plus one finished one, as the design note shows them. */
+/** Nine awake threads in mixed states, plus one finished one, as the design note shows them. */
 export function threadListFixture(now = Date.now()): {
   works: ThreadListFixtureWork[];
   activity: ThreadActivity;
@@ -104,6 +106,15 @@ export function threadListFixture(now = Date.now()): {
       updatedAt: now - 3 * MINUTE,
       lastUserTouchAt: now - 40 * MINUTE,
       nextStep: 'Choose the dates',
+    }),
+    work({
+      _id: ids.invoice,
+      title: 'Send the September hours and invoice to Harbor Design',
+      primaryAreaId: 'area_money',
+      areaName: 'Money',
+      updatedAt: now - 4 * MINUTE,
+      lastUserTouchAt: now - 30 * MINUTE,
+      nextStep: 'Make the hours summary and invoice',
     }),
     work({
       _id: ids.dentist,
@@ -201,6 +212,20 @@ export function threadListFixture(now = Date.now()): {
         createdAt: now - 9 * MINUTE,
         updatedAt: now - 3 * MINUTE,
         finishedAt: now - 3 * MINUTE,
+      }),
+      [ids.invoice]: run({
+        runId: 'run_invoice',
+        state: 'handed_off',
+        outcome: 'ready_for_you',
+        stepTitle: 'Make the hours summary and invoice',
+        nextKind: 'review_document',
+        nextLabel: 'Fill in hours',
+        nextDetail: 'Fill in the hours for each week, the hourly rate, and the invoice number.',
+        nextBlanks: ['hours for each week', 'hourly rate', 'invoice number'],
+        summary: 'Made the hours summary and the invoice from the template.',
+        createdAt: now - 9 * MINUTE,
+        updatedAt: now - 4 * MINUTE,
+        finishedAt: now - 4 * MINUTE,
       }),
       [ids.dentist]: run({
         runId: 'run_dentist',

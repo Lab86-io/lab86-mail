@@ -131,6 +131,13 @@ enum ThreadRowPresentation {
         }
     }
 
+    /// The blanks a row draws in place of line 2: only for an open
+    /// `ready_for_you` or `your_turn` handoff (docs/albatross-blank-design.md).
+    static func blanks(_ row: ThreadListRow) -> [String] {
+        guard let live = row.live, live.status == .readyForYou || live.status == .yourTurn else { return [] }
+        return live.blanks
+    }
+
     /// Line 2 after two failed reads in a row: a live row says when it was
     /// last seen instead of a false "In progress".
     static func staleLine(_ row: ThreadListRow, locale: Locale = .current) -> String {
@@ -188,7 +195,14 @@ enum ThreadRowPresentation {
     /// The VoiceOver label: the title leads, then the state, the time, the
     /// area, and the unread mark.
     static func accessibilityLabel(_ row: ThreadListRow, time: String?, area: String?, stale: Bool = false) -> String {
-        var parts = [row.title, stale ? staleLine(row) : statusLine(row)]
+        let rowBlanks: [String] = stale ? [] : Self.blanks(row)
+        var parts = [row.title]
+        if rowBlanks.isEmpty {
+            parts.append(stale ? staleLine(row) : statusLine(row))
+        } else {
+            if let status = Self.word(row) { parts.append(status) }
+            parts.append(BlankSentenceRules.text(rowBlanks))
+        }
         if let time { parts.append(time) }
         if let area { parts.append(area) }
         if row.unread { parts.append("Unread") }

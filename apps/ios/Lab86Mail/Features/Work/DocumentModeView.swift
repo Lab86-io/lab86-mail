@@ -7,7 +7,8 @@ import SwiftUI
 // opens in the native workspace. On the phone it fills the screen, with a
 // bar at the bottom for the user's part and "Chat", which opens the same
 // thread as a sheet. On the iPad the thread sits in a column on the right,
-// with the "Your part" card on top. The Mac has its own layout.
+// with the "your part" card on top. The card and the bar draw the handoff's
+// blanks (docs/albatross-blank-design.md). The Mac has its own layout.
 struct DocumentModeView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -37,6 +38,7 @@ struct DocumentModeView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 DocumentModeBar(
                     yourPart: model.documentYourPart,
+                    blanks: model.documentBlanks,
                     busy: model.isMarkingDone,
                     notice: model.stepNotice,
                     onDone: { Task { await model.finishDocument() } },
@@ -55,9 +57,10 @@ struct DocumentModeView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
             VStack(spacing: 0) {
-                if let yourPart = model.documentYourPart {
+                if model.documentYourPart != nil || !model.documentBlanks.isEmpty {
                     DocumentYourPartCard(
-                        detail: yourPart,
+                        detail: model.documentYourPart,
+                        blanks: model.documentBlanks,
                         busy: model.isMarkingDone,
                         notice: model.stepNotice,
                         onDone: { Task { await model.finishDocument() } },
@@ -80,11 +83,13 @@ struct DocumentModeView: View {
     }
 }
 
-/// The bar under the document on the phone: "Your part" with the handoff's
-/// words, then "Done, continue" and "Chat". With no open handoff, "Chat" only.
+/// The bar under the document on the phone: the blank sentence or the
+/// handoff's words, then "Done, continue" and "Chat". With no open handoff,
+/// "Chat" only.
 struct DocumentModeBar: View {
     @Environment(AppEnvironment.self) private var environment
     let yourPart: String?
+    var blanks: [String] = []
     var busy = false
     var notice: String? = nil
     let onDone: () -> Void
@@ -92,8 +97,8 @@ struct DocumentModeBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let yourPart {
-                DocumentYourPartText(detail: yourPart)
+            if hasYourPart {
+                DocumentYourPartText(detail: yourPart, blanks: blanks, size: 17, detailLineLimit: 2)
             }
             if let notice {
                 Text(notice)
@@ -112,9 +117,11 @@ struct DocumentModeBar: View {
         }
     }
 
+    private var hasYourPart: Bool { yourPart != nil || !blanks.isEmpty }
+
     private var buttons: some View {
         HStack(spacing: 10) {
-            if yourPart != nil {
+            if hasYourPart {
                 Button(busy ? DocumentHandoffCopy.saving : DocumentHandoffCopy.done) { onDone() }
                     .buttonStyle(.borderedProminent)
                     .disabled(busy)
@@ -128,10 +135,11 @@ struct DocumentModeBar: View {
     }
 }
 
-/// The card on top of the thread column on the iPad: "Your part", the
-/// handoff's words, "Done, continue", and the quiet "Back to thread".
+/// The card on top of the thread column on the iPad: the blank sentence or
+/// the handoff's words, "Done, continue", and the quiet "Back to thread".
 struct DocumentYourPartCard: View {
-    let detail: String
+    let detail: String?
+    var blanks: [String] = []
     var busy = false
     var notice: String? = nil
     let onDone: () -> Void
@@ -139,7 +147,7 @@ struct DocumentYourPartCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            DocumentYourPartText(detail: detail)
+            DocumentYourPartText(detail: detail, blanks: blanks)
             if let notice {
                 Text(notice)
                     .font(.footnote)
@@ -162,18 +170,26 @@ struct DocumentYourPartCard: View {
     }
 }
 
-/// "Your part" as a sentence-case small label, then the handoff's own words.
+/// The user's part: the blank sentence, then the handoff's words as a quiet
+/// line. With no blanks, the handoff's words show in the display font. No
+/// label above it: the sentence says what waits for the user.
 struct DocumentYourPartText: View {
-    let detail: String
+    let detail: String?
+    var blanks: [String] = []
+    var size: CGFloat = 19
+    /// The bar on the phone keeps the quiet line short.
+    var detailLineLimit: Int? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(DocumentHandoffCopy.yourPart)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-            Text(detail)
-                .font(.subheadline)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 6) {
+            BlankSentence(blanks: blanks, fallback: detail, size: size)
+            if !blanks.isEmpty, let detail = detail?.nilIfBlank {
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(detailLineLimit)
+                    .fixedSize(horizontal: false, vertical: detailLineLimit == nil)
+            }
         }
         .accessibilityElement(children: .combine)
     }

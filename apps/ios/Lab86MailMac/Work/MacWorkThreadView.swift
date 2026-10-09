@@ -304,7 +304,7 @@ struct MacWorkThreadView: View {
     }
 
     /// The transcript alone, or document mode: the document in the center
-    /// and the transcript in a column on the right under the "Your part"
+    /// and the transcript in a column on the right under the "your part"
     /// card (docs/albatross-document-handoff.md, D5).
     @ViewBuilder private func stage(_ model: WorkThreadModel, proxy: ScrollViewProxy) -> some View {
         if let target = model.document {
@@ -326,10 +326,10 @@ struct MacWorkThreadView: View {
     /// on the document (the user opened an older artifact).
     private func documentColumn(_ model: WorkThreadModel, proxy: ScrollViewProxy) -> some View {
         VStack(spacing: 0) {
-            if let yourPart = model.documentYourPart {
+            if let yourPart = MacDocumentMode.yourPart(of: model.documentHandoff) {
                 MacDocumentYourPartCard(
                     stepLabel: MacDocumentMode.stepLabel(detail: model.detail, run: model.documentHandoff),
-                    detail: yourPart,
+                    yourPart: yourPart,
                     busy: model.isMarkingDone,
                     notice: model.stepNotice,
                     onDone: { Task { await model.finishDocument() } },

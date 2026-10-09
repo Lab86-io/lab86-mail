@@ -8,8 +8,10 @@
 import { useMemo, useState } from 'react';
 import { FormQuestionCard, type FormReceipt } from '@/components/ai-elements/form-question-card';
 import { Task, TaskContent, TaskItem, TaskTrigger } from '@/components/ai-elements/task';
+import { BlankSentence } from '@/components/albatross/BlankSentence';
 import { ShimmerText } from '@/components/odysseyui/text-shimmer';
 import { Button } from '@/components/ui/button';
+import { handoffBlanks } from '@/lib/albatross/blanks';
 import {
   type AllowScope,
   allowAnswerOf,
@@ -268,9 +270,17 @@ export function RunBlock(props: RunBlockProps) {
       run.outcome !== 'needs_answer' &&
       run.outcome !== 'stopped' &&
       !handoffShownElsewhere ? (
-        <div className="flex flex-col gap-0.5">
-          <span className={cn('text-[11.5px] font-medium', TONE_CLASS[state.tone])}>{state.text}</span>
-          {detailLine ? <p className="text-[14px] font-medium leading-snug">{detailLine}</p> : null}
+        <div className="flex flex-col gap-0.5" data-slot="run-handoff">
+          {/* The user's part is the largest text of the run: the blanks to fill, or the next detail.
+              The header already names the state, so no label repeats it here. */}
+          <BlankSentence
+            blanks={savedSite ? [] : handoffBlanks(run.next)}
+            fallback={detailLine}
+            className={handoffBlanks(run.next).length && !savedSite ? 'text-[24px]' : 'text-[19px]'}
+          />
+          {detailLine && handoffBlanks(run.next).length && !savedSite ? (
+            <p className="pb-1 text-[13px] leading-relaxed text-[var(--color-text-muted)]">{detailLine}</p>
+          ) : null}
           {savedSite ? (
             <p
               data-slot="save-sign-in-saved"

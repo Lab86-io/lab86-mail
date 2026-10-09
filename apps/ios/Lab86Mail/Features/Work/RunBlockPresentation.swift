@@ -167,6 +167,19 @@ enum RunBlockCopy {
     }
 }
 
+/// The blank rules of the run block (docs/albatross-blank-design.md).
+enum RunBlockBlanks {
+    /// A `ready_for_you` or `your_turn` handoff draws the user's part as the
+    /// blank sentence, or its words in the display font when it names no
+    /// blanks. An allow card keeps its plain words.
+    static func draws(_ run: StepRunView) -> Bool {
+        guard case .handedOff(let outcome) = RunBlockState.from(run),
+              outcome == .readyForYou || outcome == .yourTurn,
+              let next = run.next, next.kind != .allowSecure else { return false }
+        return !next.blanks.isEmpty || next.detail?.nilIfBlank != nil
+    }
+}
+
 /// Where the thread stands, for the plan line, the composer placeholder, and
 /// the jump pill.
 enum ThreadState: Equatable, Sendable {

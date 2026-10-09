@@ -51,6 +51,18 @@ extension ThemeStore {
         }
     }
 
+    // The highlight voice (--color-accent-3): the third hue of the palette
+    // chord, 94 degrees after the action accent, at chroma 0.08 scaled by the
+    // accent's own brilliance. The web rule is lib/theme/palette-presets.ts.
+    // The default Forest accent (hue 156) gives the web default, hue 250.
+    // Blanks for the user (BlankSentence) use it.
+    var accent3Color: Color {
+        let hue = (accentHue + 94).truncatingRemainder(dividingBy: 360)
+        let brilliance = min(1.5, max(0.25, accentChroma / 0.09))
+        let chroma = min(0.16, max(0.012, 0.08 * brilliance))
+        return Color(Self.adaptiveUIColor(hue: hue, chroma: chroma))
+    }
+
     var hairlineColor: Color { Color.primary.opacity(0.08) }
 
     private static func adaptiveSurface(
