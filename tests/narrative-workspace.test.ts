@@ -225,6 +225,24 @@ describe('Today workspace composition and trust boundary', () => {
         .originalUrl,
     ).toBe('https://example.test/meeting');
   });
+  test('connected items take their kind from their tool, not their title', () => {
+    const kind = (extra: Record<string, unknown>) => workspaceSource(source('x', extra)).kind;
+    expect(kind({ source: 'mcp:jira_1', url: 'https://acme.atlassian.net/browse/PAY-1' })).toBe(
+      'development',
+    );
+    expect(kind({ source: 'mcp:jira_1', url: 'https://acme.atlassian.net/wiki/spaces/ENG/pages/7' })).toBe(
+      'file',
+    );
+    expect(kind({ source: 'mcp:slack_t1u1', title: 'github PR merged in the granola sync' })).toBe(
+      'conversation',
+    );
+    expect(kind({ source: 'mcp:bitbucket_1' })).toBe('development');
+    expect(kind({ source: 'mcp:granola_1' })).toBe('meeting');
+    expect(kind({ source: 'mcp:other_1', title: 'notes' })).toBe('context');
+    expect(kind({ source: 'mail:acct', title: 'hello' })).toBe('mail');
+    expect(kind({ source: 'files:drive_1' })).toBe('file');
+  });
+
   test('large old work lists cannot crowd out fresh meetings and development', () => {
     const rows = Array.from({ length: 40 }, (_, i) =>
       source(`old-${i}`, { occurredAt: now - 30 * 86_400_000 }),

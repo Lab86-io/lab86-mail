@@ -12,6 +12,7 @@ import {
   GitPullRequest,
   Mail,
   MessageSquare,
+  MessagesSquare,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
@@ -156,6 +157,7 @@ const sourceIcons = {
   meeting: CalendarDays,
   development: GitPullRequest,
   mail: Mail,
+  conversation: MessagesSquare,
   work: CheckSquare,
   intention: MessageSquare,
   file: FileText,
@@ -165,6 +167,7 @@ const sourceLabels = {
   meeting: 'Meeting',
   development: 'Development',
   mail: 'Email',
+  conversation: 'Message',
   work: 'Work',
   intention: 'Your intention',
   file: 'File',

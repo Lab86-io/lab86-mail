@@ -137,6 +137,78 @@ describe('narrative memory contracts', () => {
       })[0].topics,
     ).toContain('event:a:event');
   });
+  test('Atlassian, Bitbucket, and Slack items read with product names and their place', () => {
+    const base = { connectionId: 'jira_1', updatedAt: 1, state: 'In Progress' };
+    const [ticket] = observationsForRow('mcpItems', {
+      ...base,
+      _id: 'ticket',
+      server: 'jira',
+      kind: 'ticket',
+      externalId: 'jira:c:10',
+      title: 'PAY-1: Fix checkout',
+      organization: 'acme',
+      raw: { project: 'PAY' },
+    });
+    expect(ticket.text).toStartWith('Jira ticket in acme: PAY-1: Fix checkout. State: In Progress.');
+    expect(ticket.topics).toEqual(expect.arrayContaining(['jira:jira:c:10', 'org:acme', 'project:PAY']));
+    const [page] = observationsForRow('mcpItems', {
+      ...base,
+      _id: 'page',
+      server: 'jira',
+      kind: 'page',
+      externalId: 'confluence:c:77',
+      title: 'Launch plan',
+      organization: 'acme',
+    });
+    expect(page.text).toStartWith('Confluence page in acme: Launch plan.');
+    expect(page.topics).not.toContain('project:undefined');
+    const [message] = observationsForRow('mcpItems', {
+      ...base,
+      _id: 'message',
+      connectionId: 'slack_t1u1',
+      server: 'slack',
+      kind: 'message',
+      externalId: 'slack:T1:C1:1.0',
+      title: '#eng · jane: launch moves',
+      organization: 'Acme',
+      raw: { channelName: 'eng' },
+    });
+    expect(message.text).toStartWith('Slack message in Acme: #eng · jane: launch moves.');
+    expect(message.topics).toEqual(expect.arrayContaining(['org:Acme', 'channel:#eng']));
+    const [dm] = observationsForRow('mcpItems', {
+      ...base,
+      _id: 'dm',
+      server: 'slack',
+      kind: 'message',
+      title: 'Direct message · jane: hi',
+      raw: { channelName: 'U1', directMessage: true },
+    });
+    expect(dm.topics.some((topic) => topic.startsWith('channel:'))).toBe(false);
+    const [pr] = observationsForRow('mcpItems', {
+      ...base,
+      _id: 'pr',
+      server: 'bitbucket',
+      kind: 'pull_request',
+      title: 'Add login',
+    });
+    expect(pr.text).toStartWith('Bitbucket pull request: Add login.');
+  });
+
+  test('GitHub and Granola items keep their first wording, so their versions stay', () => {
+    const [item] = observationsForRow('mcpItems', {
+      _id: 'gh',
+      server: 'github',
+      kind: 'pull_request',
+      connectionId: 'github_1',
+      externalId: '1',
+      title: 'Fix the flaky test',
+      organization: 'org',
+      updatedAt: 1,
+    });
+    expect(item.text).toStartWith('github pull_request: Fix the flaky test.');
+    expect(item.topics).not.toContain('org:org');
+  });
+
   test('Granola participant metadata connects meeting history even when titles differ', () => {
     const row = {
       _id: 'meeting',

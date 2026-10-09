@@ -12,6 +12,8 @@ import {
   mcpConnectionsCountLine,
   mcpConnectRowCopy,
   mcpConnectRows,
+  mcpItemKindLabel,
+  mcpItemName,
   mcpItemSourceLabel,
 } from '../lib/mcp/connection-display';
 
@@ -262,5 +264,18 @@ describe('Confluence pages from the Atlassian sign-in', () => {
     expect(renderToStaticMarkup(<ProviderLogo provider="confluence" />)).toContain('aria-label="Confluence"');
     expect(renderToStaticMarkup(<ConnectionLogo server="jira" />)).toContain('aria-label="Jira"');
     expect(providerDisplayName('confluence')).toBe('Confluence');
+  });
+});
+
+describe('connected item names', () => {
+  test('name the source and the kind in words', () => {
+    expect(mcpItemKindLabel('pull_request')).toBe('pull request');
+    expect(mcpItemKindLabel('project_v2_item')).toBe('project v2 item');
+    expect(mcpItemKindLabel(undefined)).toBe('');
+    expect(mcpItemName({ server: 'jira', kind: 'page' })).toBe('Confluence page');
+    expect(mcpItemName({ server: 'jira', kind: 'ticket' })).toBe('Jira ticket');
+    expect(mcpItemName({ server: 'slack', kind: 'message' })).toBe('Slack message');
+    expect(mcpItemName({ server: 'bitbucket', kind: 'pull_request' })).toBe('Bitbucket pull request');
+    expect(mcpItemName({ server: 'custom' })).toBe('custom');
   });
 });

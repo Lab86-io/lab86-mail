@@ -1,3 +1,4 @@
+import { mcpItemName } from '../mcp/connection-display';
 import { cleanNarrativeText as clean, nextNarrativeDay, safeNarrativeUrl } from './core';
 
 export interface Observation {
@@ -29,6 +30,22 @@ function calendarInstant(value: unknown) {
 }
 
 /** Only source assertions are observed here. No model is allowed to upgrade activity to completion. */
+/**
+ * Topics that tie a connected item to its place: the Atlassian site or Slack
+ * workspace, the Jira project, and the Slack channel.
+ */
+function connectedItemTopics(row: any): string[] {
+  const topics: string[] = [];
+  if (row.organization) topics.push(`org:${clean(row.organization, 120)}`);
+  if (row.server === 'jira' && row.kind === 'ticket' && row.raw?.project) {
+    topics.push(`project:${clean(row.raw.project, 60)}`);
+  }
+  if (row.server === 'slack' && row.raw?.channelName && !row.raw?.directMessage) {
+    topics.push(`channel:#${clean(row.raw.channelName, 80)}`);
+  }
+  return topics;
+}
+
 export function observationsForRow(table: string, row: any): Observation[] {
   const sourceId = String(row._id);
   const base = {
@@ -245,21 +262,29 @@ export function observationsForRow(table: string, row: any): Observation[] {
         ],
       }),
     ];
-  if (table === 'mcpItems')
+  if (table === 'mcpItems') {
+    // GitHub and Granola keep their first wording, so their entries keep their
+    // versions. The newer sources read with product names ("Confluence page",
+    // "Slack message") and name their site or workspace.
+    const legacy = row.server === 'github' || row.server === 'granola';
+    const name = legacy ? `${row.server} ${row.kind}` : mcpItemName(row);
+    const place = !legacy && row.organization ? ` in ${row.organization}` : '';
     return [
       make({
         source: `mcp:${row.connectionId}`,
         title: row.title,
-        text: `${row.server} ${row.kind}: ${row.title}. State: ${row.state || 'unspecified'}. ${people(row.raw?.attendees).length ? `Participants: ${people(row.raw?.attendees).join(', ')}. ` : ''}${row.summary || ''}`,
+        text: `${name}${place}: ${row.title}. State: ${row.state || 'unspecified'}. ${people(row.raw?.attendees).length ? `Participants: ${people(row.raw?.attendees).join(', ')}. ` : ''}${row.summary || ''}`,
         occurredAt: row.updatedAtSource || row.updatedAt,
         topics: [
           row.repository && `repo:${row.repository}`,
           row.author,
           `${row.server}:${row.externalId}`,
           ...people(row.raw?.attendees),
+          ...(legacy ? [] : connectedItemTopics(row)),
         ].filter(Boolean),
       }),
     ];
+  }
   if (table === 'contentItems') {
     if (row.deleted || !['google_drive', 'onedrive'].includes(row.source)) return [];
     return [

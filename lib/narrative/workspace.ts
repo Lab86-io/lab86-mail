@@ -37,7 +37,7 @@ export interface WorkspaceSource {
   id: string;
   title: string;
   excerpt: string;
-  kind: 'meeting' | 'development' | 'mail' | 'work' | 'intention' | 'file' | 'context';
+  kind: 'meeting' | 'development' | 'mail' | 'conversation' | 'work' | 'intention' | 'file' | 'context';
   occurredAt: number;
   trust: NarrativeEntry['trust'];
   href: string;
@@ -75,7 +75,16 @@ export const workspaceResponseSchema = z.object({
               id: z.string().min(1),
               title: z.string(),
               excerpt: z.string(),
-              kind: z.enum(['meeting', 'development', 'mail', 'work', 'intention', 'file', 'context']),
+              kind: z.enum([
+                'meeting',
+                'development',
+                'mail',
+                'conversation',
+                'work',
+                'intention',
+                'file',
+                'context',
+              ]),
               occurredAt: z.number().finite(),
               trust: z.enum(['observed', 'reported', 'inferred']),
               href: z.string().startsWith('/narrative?id='),
@@ -101,22 +110,37 @@ export const workspaceResponseSchema = z.object({
     )
     .max(3),
 });
+/** The connected tool of an `mcp:<connectionId>` source: connection ids start with the server. */
+function connectedServer(source: string): string {
+  return source.startsWith('mcp:') ? (source.slice(4).split(/[_:]/u)[0] ?? '') : '';
+}
+
+function workspaceKind(entry: NarrativeEntry, hint: string): WorkspaceSource['kind'] {
+  if (entry.source === 'work') return 'work';
+  if (entry.source === 'checkins') return 'intention';
+  // A connected item takes its kind from its tool, not from words in its title.
+  switch (connectedServer(entry.source)) {
+    case 'granola':
+      return 'meeting';
+    case 'github':
+    case 'bitbucket':
+      return 'development';
+    case 'jira':
+      // An Atlassian sign-in holds Jira issues and Confluence pages.
+      return /\/wiki\//u.test(entry.url || '') ? 'file' : 'development';
+    case 'slack':
+      return 'conversation';
+  }
+  if (/granola|calendar:/.test(hint)) return 'meeting';
+  if (/github|bitbucket/.test(hint)) return 'development';
+  if (entry.source.startsWith('mail:')) return 'mail';
+  if (entry.source === 'documents' || entry.source.startsWith('files:')) return 'file';
+  return 'context';
+}
+
 export function workspaceSource(entry: NarrativeEntry): WorkspaceSource {
   const hint = `${entry.source} ${entry.title} ${entry.url || ''}`.toLowerCase();
-  const kind =
-    entry.source === 'work'
-      ? 'work'
-      : entry.source === 'checkins'
-        ? 'intention'
-        : /granola|calendar:/.test(hint)
-          ? 'meeting'
-          : /github|bitbucket/.test(hint)
-            ? 'development'
-            : entry.source.startsWith('mail:')
-              ? 'mail'
-              : entry.source === 'documents' || entry.source.startsWith('files:')
-                ? 'file'
-                : 'context';
+  const kind = workspaceKind(entry, hint);
   return {
     id: entry._id,
     title: cleanNarrativeText(entry.title, 160),
