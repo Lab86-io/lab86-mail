@@ -4,7 +4,8 @@ import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, type ConvexCallArgs, convexMutation } from '@/lib/hosted/convex';
 import { beginMcpOAuth } from '@/lib/mcp/oauth';
-import { getServerDef, type McpServerId } from '@/lib/mcp/servers';
+import { beginProviderOAuth } from '@/lib/mcp/provider-oauth';
+import { getServerDef, type McpServerId, usesProviderOAuth } from '@/lib/mcp/servers';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { encryptSecret } from '@/lib/security/crypto';
 
@@ -16,6 +17,7 @@ interface McpOAuthStartDependencies {
   enforceUserRateLimit: typeof enforceUserRateLimit;
   getServerDef: typeof getServerDef;
   beginMcpOAuth: typeof beginMcpOAuth;
+  beginProviderOAuth: typeof beginProviderOAuth;
   saveOAuthState(args: ConvexCallArgs<typeof api.mcp.saveOAuthState>): Promise<unknown>;
   encryptSecret: typeof encryptSecret;
   randomState: () => string;
@@ -28,6 +30,7 @@ const defaultDependencies: McpOAuthStartDependencies = {
   enforceUserRateLimit,
   getServerDef,
   beginMcpOAuth,
+  beginProviderOAuth,
   saveOAuthState: (args) => convexMutation(api.mcp.saveOAuthState, args),
   encryptSecret,
   randomState: () => randomBytes(32).toString('base64url'),
@@ -57,7 +60,11 @@ export function createMcpOAuthStartGet(deps: McpOAuthStartDependencies = default
       }
 
       const state = deps.randomState();
-      const started = await deps.beginMcpOAuth({ serverUrl: definition.defaultUrl, state });
+      // Atlassian, Bitbucket, and Slack use our own OAuth apps; an MCP server
+      // such as Granola registers Albatross as a client by itself.
+      const started = usesProviderOAuth(definition)
+        ? deps.beginProviderOAuth({ provider: definition.providerOAuth.provider, state })
+        : await deps.beginMcpOAuth({ serverUrl: definition.defaultUrl, state });
       await deps.saveOAuthState({
         userId: user.userId,
         state,

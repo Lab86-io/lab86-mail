@@ -163,8 +163,10 @@ export default function PrivacyPage() {
             that place from Google Maps. Google receives the place text and your IP address.
           </li>
           <li>
-            <strong>Connected tools:</strong> if you connect GitHub, Bitbucket, Jira, Slack, or Granola, we
-            send your requests to that service and read the results for you, with the access that you give.
+            <strong>Connected tools:</strong> if you connect GitHub, Bitbucket, Atlassian (Jira and
+            Confluence), Slack, or Granola, we send your requests to that service and read the results for
+            you, with the access that you give. These connections only read. They do not change your issues,
+            pages, pull requests, or messages.
           </li>
         </ul>
         <p>

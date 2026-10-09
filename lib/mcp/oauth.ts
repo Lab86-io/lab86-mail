@@ -9,9 +9,12 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { hostedPublicUrl } from '@/lib/hosted/env';
+import type { ProviderOAuthId } from './provider-oauth';
 
 export interface PersistedMcpOAuthState {
   state: string;
+  /** Set for a fixed-client provider sign-in (lib/mcp/provider-oauth.ts). */
+  provider?: ProviderOAuthId;
   codeVerifier?: string;
   clientInformation?: OAuthClientInformationMixed;
   discoveryState?: OAuthDiscoveryState;

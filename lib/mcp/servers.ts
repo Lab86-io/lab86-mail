@@ -7,14 +7,30 @@
 import { truncateText } from '../shared/text';
 import type { McpAuthMode } from './auth';
 import { granolaMeetingsFromText } from './granola';
+import { PROVIDER_OAUTH, type ProviderOAuthId, providerOAuthConfigured } from './provider-oauth';
 
 export type McpServerId = 'github' | 'bitbucket' | 'jira' | 'slack' | 'granola';
-export type McpServerTransport = 'mcp' | 'bitbucket-rest' | 'github-rest';
+export type McpServerTransport = 'mcp' | 'bitbucket-rest' | 'github-rest' | 'atlassian-rest' | 'slack-rest';
 
 export interface McpSyncQuery {
   tool: string;
   args: Record<string, unknown>;
   kind: string;
+}
+
+/**
+ * A browser sign-in through an OAuth app that we register (provider-oauth.ts).
+ * When its client id and secret are set, it replaces the token form, and the
+ * connections it makes read the provider's REST API with `transport`. Token
+ * connections keep the server's own transport.
+ */
+export interface McpProviderOAuthDef {
+  provider: ProviderOAuthId;
+  label: string;
+  help: string;
+  transport: McpServerTransport;
+  serverUrl: string;
+  scopes: string[];
 }
 
 export interface McpServerDef {
@@ -30,6 +46,7 @@ export interface McpServerDef {
   tokenHelp: string;
   scopes: string[];
   syncQueries: McpSyncQuery[];
+  providerOAuth?: McpProviderOAuthDef;
 }
 
 export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
@@ -58,6 +75,14 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
       'Paste email:api_token from your Atlassian account, or a Bitbucket access token. Needs repository and pull request read access.',
     scopes: ['repository:read', 'pullrequest:read'],
     syncQueries: [],
+    providerOAuth: {
+      provider: 'bitbucket',
+      label: 'Bitbucket',
+      help: 'Sign in with Bitbucket to add your pull requests.',
+      transport: 'bitbucket-rest',
+      serverUrl: 'https://api.bitbucket.org/2.0',
+      scopes: ['account', 'repository', 'pullrequest'],
+    },
   },
   jira: {
     id: 'jira',
@@ -80,6 +105,14 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
         kind: 'ticket',
       },
     ],
+    providerOAuth: {
+      provider: 'atlassian',
+      label: 'Atlassian',
+      help: 'Sign in with Atlassian to add your Jira issues and the Confluence pages that you work on.',
+      transport: 'atlassian-rest',
+      serverUrl: 'https://api.atlassian.com',
+      scopes: PROVIDER_OAUTH.atlassian.scopes,
+    },
   },
   slack: {
     id: 'slack',
@@ -93,6 +126,14 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
       'Connect via a Slack token with search scope. Your workspace admin must approve the Slack MCP integration first.',
     scopes: ['search:read'],
     syncQueries: [{ tool: 'search_messages', args: { query: 'is:mention', count: 30 }, kind: 'message' }],
+    providerOAuth: {
+      provider: 'slack',
+      label: 'Slack',
+      help: 'Sign in with Slack to add the messages that mention you and your direct messages.',
+      transport: 'slack-rest',
+      serverUrl: 'https://slack.com/api',
+      scopes: PROVIDER_OAUTH.slack.scopes,
+    },
   },
   granola: {
     id: 'granola',
@@ -109,8 +150,53 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
   },
 };
 
-export function getServerDef(id: string): McpServerDef | null {
-  return (MCP_SERVERS as Record<string, McpServerDef>)[id] ?? null;
+type Env = Record<string, string | undefined>;
+
+/**
+ * The definition with its provider sign-in applied: when the owner set the
+ * provider's OAuth app, the server connects through the browser and the token
+ * form goes away.
+ */
+function effectiveServerDef(definition: McpServerDef, env: Env): McpServerDef {
+  const oauth = definition.providerOAuth;
+  if (!oauth || !providerOAuthConfigured(oauth.provider, env)) return definition;
+  return {
+    ...definition,
+    label: oauth.label,
+    connectMode: 'oauth',
+    tokenLabel: `${oauth.label} sign-in`,
+    tokenHelp: oauth.help,
+  };
+}
+
+export function getServerDef(id: string, env: Env = process.env): McpServerDef | null {
+  const definition = (MCP_SERVERS as Record<string, McpServerDef>)[id];
+  return definition ? effectiveServerDef(definition, env) : null;
+}
+
+export function listServerDefs(env: Env = process.env): McpServerDef[] {
+  return Object.values(MCP_SERVERS).map((definition) => effectiveServerDef(definition, env));
+}
+
+/** True when a new sign-in for this server uses our own provider OAuth app. */
+export function usesProviderOAuth(definition: McpServerDef): definition is McpServerDef & {
+  providerOAuth: McpProviderOAuthDef;
+} {
+  // getServerDef sets `oauth` on a provider server only when its app is set.
+  return Boolean(definition.providerOAuth && definition.connectMode === 'oauth');
+}
+
+/**
+ * How one saved connection reaches its source. A provider sign-in reads the
+ * provider REST API; a pasted token keeps the server's own transport.
+ */
+export function connectionTransport(
+  definition: McpServerDef,
+  authKind: 'token' | 'oauth' | string | undefined,
+): McpServerTransport {
+  return authKind === 'oauth' && definition.providerOAuth
+    ? definition.providerOAuth.transport
+    : definition.transport;
 }
 
 const LEGACY_GITHUB_MCP_HOSTS = new Set(['api.githubcopilot.com']);
@@ -123,10 +209,19 @@ export function resolveMcpConnectionConfig(
   server: string,
   storedUrl: string,
   storedScopes: readonly string[] = [],
+  authKind?: 'token' | 'oauth' | string,
 ): { serverUrl: string; scopes: string[]; migrated: boolean } {
   const definition = getServerDef(server);
   if (!definition) {
     return { serverUrl: storedUrl, scopes: [...storedScopes], migrated: false };
+  }
+  // A provider sign-in keeps the scopes that the provider granted.
+  if (authKind === 'oauth' && definition.providerOAuth) {
+    return {
+      serverUrl: String(storedUrl || '').replace(/\/+$/u, '') || definition.providerOAuth.serverUrl,
+      scopes: [...storedScopes],
+      migrated: false,
+    };
   }
 
   const normalizedStoredUrl = String(storedUrl || '').replace(/\/+$/u, '');

@@ -78,11 +78,18 @@ const KIND_LABELS: Record<string, string> = {
   ticket: 'ticket',
   message: 'message',
   meeting: 'meeting',
+  page: 'page',
 };
+
+// An Atlassian sign-in brings Confluence pages under the `jira` server.
+function sourceLabel(item: DailyReportMcpItem) {
+  if (item.server === 'jira' && item.kind === 'page') return 'Confluence';
+  return SERVER_LABELS[item.server] || item.server;
+}
 
 // One short line under a connected item: "GitHub pull request, review requested".
 export function connectedItemReason(item: DailyReportMcpItem): string {
-  const parts = [`${SERVER_LABELS[item.server] || item.server} ${KIND_LABELS[item.kind] || item.kind}`];
+  const parts = [`${sourceLabel(item)} ${KIND_LABELS[item.kind] || item.kind}`];
   const state = String(item.state || '')
     .replace(/[_-]+/g, ' ')
     .trim()

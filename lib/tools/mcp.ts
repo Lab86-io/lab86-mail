@@ -31,7 +31,7 @@ const serverEnum = z.enum(['github', 'bitbucket', 'jira', 'slack', 'granola']);
 export const mcpSearch = defineTool({
   name: 'mcp_search',
   description:
-    "Search the user's connected sources (GitHub, Granola, Bitbucket, Atlassian/Jira, Slack) for items — issues, pull requests, meetings, tickets, messages — by text. Only searches connections the user enabled for search. Returns items with title, source, state, url, and updated time.",
+    "Search the user's connected sources (GitHub, Granola, Bitbucket, Atlassian Jira and Confluence, Slack) for items — issues, pull requests, meetings, tickets, Confluence pages, messages — by text. The jira source holds both Jira tickets and Confluence pages. Only searches connections the user enabled for search. Returns items with title, source, state, url, and updated time.",
   category: 'mcp',
   mutating: false,
   input: z.object({
@@ -86,7 +86,7 @@ export const githubSearch = defineTool({
 export const mcpListItems = defineTool({
   name: 'mcp_list_items',
   description:
-    "List the user's most recently updated items from connected sources (GitHub/Granola/Bitbucket/Atlassian/Jira/Slack) that are enabled for the brief. Results include the indexed summary/notes and an ISO timestamp when available. Use to see meetings, open issues, PRs awaiting review, assigned tickets, and recent mentions across tools.",
+    "List the user's most recently updated items from connected sources (GitHub/Granola/Bitbucket/Atlassian Jira and Confluence/Slack) that are enabled for the brief. Results include the indexed summary/notes and an ISO timestamp when available. Use to see meetings, open issues, PRs awaiting review, assigned tickets, and recent mentions across tools.",
   category: 'mcp',
   mutating: false,
   input: z.object({

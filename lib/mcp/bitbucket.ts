@@ -43,6 +43,8 @@ interface BitbucketPullRequest {
 
 export interface BitbucketSyncResult {
   displayName?: string;
+  /** The workspace slugs that the sign-in reached. */
+  workspaces?: string[];
   items: NormalizedMcpItem[];
 }
 
@@ -231,6 +233,7 @@ export async function loadBitbucketItems(baseUrl: string, token: string): Promis
 
   return {
     displayName: user.display_name || user.username || user.account_id,
+    workspaces,
     items: [...new Map(items.map((item) => [item.externalId, item])).values()],
   };
 }

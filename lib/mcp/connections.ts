@@ -3,6 +3,7 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { decryptSecret, encryptSecret, maskFingerprint, secretFingerprint } from '@/lib/security/crypto';
 import type { McpConnectionStatus } from './connection-health';
 import { oauthExpiresAt, oauthScopes, type PersistedMcpOAuthState, refreshMcpOAuth } from './oauth';
+import { isProviderClientInformation, refreshProviderOAuth } from './provider-oauth';
 import { getServerDef, type McpServerId } from './servers';
 
 const mcpApi = api.mcp;
@@ -15,6 +16,7 @@ const defaultDeps = {
   maskFingerprint,
   secretFingerprint,
   refreshMcpOAuth,
+  refreshProviderOAuth,
   now: () => Date.now(),
 };
 
@@ -71,14 +73,21 @@ async function refreshConnectionToken(input: {
     const clientInformation = JSON.parse(
       deps.decryptSecret(credentials.oauthClientInformationEncrypted),
     ) as PersistedMcpOAuthState['clientInformation'];
-    const refreshed = await deps.refreshMcpOAuth({
-      serverUrl: row.serverUrl,
-      persisted: {
-        state: `refresh:${connectionId}`,
-        clientInformation,
-        tokens: { access_token: input.token, refresh_token: refreshToken, token_type: 'Bearer' },
-      },
-    });
+    // A provider app (Atlassian, Bitbucket, Slack) refreshes at its own token
+    // endpoint; an MCP registration refreshes through MCP discovery.
+    const refreshed = isProviderClientInformation(clientInformation)
+      ? {
+          tokens: await deps.refreshProviderOAuth({ provider: clientInformation.provider, refreshToken }),
+          clientInformation,
+        }
+      : await deps.refreshMcpOAuth({
+          serverUrl: row.serverUrl,
+          persisted: {
+            state: `refresh:${connectionId}`,
+            clientInformation,
+            tokens: { access_token: input.token, refresh_token: refreshToken, token_type: 'Bearer' },
+          },
+        });
     const nextTokens = refreshed.tokens!;
     const nextClientInformation = refreshed.clientInformation!;
     const nextToken = nextTokens.access_token;
@@ -172,6 +181,8 @@ export async function saveOAuthConnection(opts: {
   const clientInformation = opts.persisted.clientInformation;
   if (!def || def.connectMode !== 'oauth') throw new Error(`OAuth is not supported for ${opts.server}.`);
   if (!tokens?.access_token || !clientInformation) throw new Error('OAuth credentials are incomplete.');
+  // A provider sign-in reads the provider REST API, not the MCP endpoint.
+  const providerOAuth = opts.persisted.provider ? def.providerOAuth : undefined;
   const target = await connectionTarget(opts.userId, opts.server);
   const connectionId = target.connectionId;
   const fingerprint = deps.secretFingerprint(tokens.access_token);
@@ -179,10 +190,10 @@ export async function saveOAuthConnection(opts: {
     userId: opts.userId,
     connectionId,
     server: opts.server,
-    serverUrl: def.defaultUrl,
+    serverUrl: providerOAuth?.serverUrl || def.defaultUrl,
     authKind: 'oauth',
     displayName: target.displayName || opts.displayName || def.label,
-    scopes: oauthScopes(tokens, def.scopes),
+    scopes: oauthScopes(tokens, providerOAuth?.scopes || def.scopes),
     accessTokenEncrypted: deps.encryptSecret(tokens.access_token),
     refreshTokenEncrypted: tokens.refresh_token ? deps.encryptSecret(tokens.refresh_token) : undefined,
     expiresAt: oauthExpiresAt(tokens),
