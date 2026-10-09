@@ -512,3 +512,19 @@ describe('openWorkQuestions', () => {
     expect(openWorkQuestions(null, runs)).toEqual([]);
   });
 });
+
+// An answered contact field and a value of no special kind, as one line each.
+describe('formValueDisplay for a contact and a plain value', () => {
+  test('a contact names the person, the relation, and the phone', async () => {
+    const { formValueDisplay } = await import('../lib/albatross/thread-view');
+    const contact = { id: 'contact', label: 'Emergency contact', kind: 'contact' } as any;
+    expect(
+      formValueDisplay(contact, { name: 'Robin Lee', phone: '5555550100', relationship: 'Friend' } as any),
+    ).toContain('Robin Lee (Friend), ');
+    expect(formValueDisplay(contact, { name: 'Robin Lee', phone: '5555550100' } as any)).toStartWith(
+      'Robin Lee, ',
+    );
+    const hours = { id: 'hours', label: 'Hours', kind: 'number' } as any;
+    expect(formValueDisplay(hours, 32 as any)).toBe('32');
+  });
+});

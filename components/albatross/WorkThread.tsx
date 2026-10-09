@@ -950,6 +950,17 @@ export function WorkThread({ workId }: { workId: string }) {
     busyId: null,
     error: null,
   });
+  // An answered Work question keeps its busy form until the live detail drops it,
+  // so the user cannot send the same answer twice.
+  useEffect(() => {
+    const busyId = workQuestion.busyId;
+    if (!busyId || !detail) return;
+    const open = detail.questions.some(
+      (question) => question._id === busyId && question.status === 'pending',
+    );
+    if (!open)
+      setWorkQuestion((current) => (current.busyId === busyId ? { busyId: null, error: null } : current));
+  }, [detail, workQuestion.busyId]);
   const [documentDone, setDocumentDone] = useState<{ busy: boolean; error: string | null }>({
     busy: false,
     error: null,
@@ -1199,7 +1210,7 @@ export function WorkThread({ workId }: { workId: string }) {
           .then((result) => {
             if (typeof result?.runId === 'string') startedHere.current.add(result.runId);
             if (answer.save) void queryClient.invalidateQueries({ queryKey: ['personal-details'] });
-            setWorkQuestion({ busyId: null, error: null });
+            // The form stays busy until the live detail drops the question (the effect below).
           })
           .catch((cause) =>
             setWorkQuestion({
