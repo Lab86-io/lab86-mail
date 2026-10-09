@@ -180,3 +180,50 @@ describe('blank width', () => {
     expect(blankMinWidth('hours for each week')).toBe('max(5.4em, 130px)');
   });
 });
+
+describe('review fixes', () => {
+  test('blanks alone fill the card and the bar, with no empty detail line', () => {
+    const card = renderToStaticMarkup(
+      <YourPartCard
+        stepLabel={null}
+        detail=""
+        blanks={HOURS_BLANKS}
+        busy={false}
+        error={null}
+        onDone={noop}
+        onBack={noop}
+      />,
+    );
+    expect(blanksIn(card)).toEqual(HOURS_BLANKS);
+    expect(doc(card).querySelectorAll('section > p').length).toBe(1);
+    const bar = renderToStaticMarkup(
+      <YourPartBar
+        detail={null}
+        blanks={HOURS_BLANKS}
+        busy={false}
+        error={null}
+        onDone={noop}
+        onChat={noop}
+      />,
+    );
+    expect(blanksIn(bar)).toEqual(HOURS_BLANKS);
+  });
+
+  test('a document row with no target clears an older open request', () => {
+    const [row] = documentsWaitingRows([
+      {
+        workId: 'work_hours',
+        workTitle: 'Send the September hours and invoice to Harbor Design',
+        run: documentHandoffRunsFixture(NOW).document,
+      },
+    ]);
+    if (!row) throw new Error('no row');
+    useClientStore.getState().setPendingThreadDocument({
+      workId: 'work_other',
+      target: { provider: 'albatross', id: 'doc_other' },
+    });
+    openWaitingDocument({ ...row, row: { ...row.row, action: null } });
+    expect(useClientStore.getState().pendingThreadDocument).toBeNull();
+    expect(useClientStore.getState().selectedWorkId).toBe('work_hours');
+  });
+});

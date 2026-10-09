@@ -465,6 +465,7 @@ export const settle = mutation({
     const run = await ownedRun(ctx, args);
     if (!run) return { state: null };
     const ts = now();
+    const blanks = cleanBlanks(args.next?.blanks);
     if (args.error && args.retryable && run.attempts < STEP_RUN_MAX_ATTEMPTS) {
       const retryAt = ts + 15_000 * run.attempts;
       await ctx.db.patch(run._id, {
@@ -491,7 +492,7 @@ export const settle = mutation({
               kind: args.next.kind,
               label: truncateText(args.next.label, 48),
               detail: truncateText(args.next.detail, 500),
-              ...(cleanBlanks(args.next.blanks).length ? { blanks: cleanBlanks(args.next.blanks) } : {}),
+              ...(blanks.length ? { blanks } : {}),
               ...(args.next.doneLabel?.trim()
                 ? { doneLabel: truncateText(args.next.doneLabel.trim(), 32) }
                 : {}),

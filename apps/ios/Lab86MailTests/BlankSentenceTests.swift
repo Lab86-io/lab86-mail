@@ -47,6 +47,14 @@ struct BlankSentenceTests {
         #expect(BlankSentenceRules.parts([" rate\n"]) == [.text("Fill in "), .blank("rate"), .text(".")])
     }
 
+    @Test func cleanBlanksMatchesTheWebRules() {
+        let long = String(repeating: "x", count: 60)
+        #expect(
+            StepRunView.Next.cleanBlanks(["  hourly   rate ", "Hourly rate", "", long, "a", "b", "c", "d", "e"])
+                == ["hourly rate", String(repeating: "x", count: 40), "a", "b", "c", "d"]
+        )
+    }
+
     @Test func punctuationAfterABlankHasNoSpace() {
         let tokens = BlankSentenceRules.tokens(BlankSentenceRules.parts(["hours", "rate", "invoice number"]))
         typealias Token = BlankSentenceRules.Token

@@ -447,12 +447,16 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
 
   const documentDone = model.documentDone ?? { busy: false, error: null };
   const yourPart =
-    documentTarget && documentRun && documentDetail && handlers.onDocumentDone ? (
+    // Blanks alone are enough: a handoff can name its fields with an empty detail.
+    documentTarget &&
+    documentRun &&
+    (documentDetail || handoffBlanks(documentRun.next).length) &&
+    handlers.onDocumentDone ? (
       <YourPartCard
         stepLabel={
           documentStepNumber ? `Step ${documentStepNumber}: ${documentRun.stepTitle}` : documentRun.stepTitle
         }
-        detail={documentDetail}
+        detail={documentDetail ?? ''}
         blanks={handoffBlanks(documentRun.next)}
         busy={documentDone.busy}
         error={documentDone.error}

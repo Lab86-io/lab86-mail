@@ -82,7 +82,7 @@ export function YourPartCard({
         fallback={detail}
         className={blanks.length ? 'text-[20px]' : 'text-[17px]'}
       />
-      {blanks.length ? (
+      {blanks.length && detail.trim() ? (
         <p className="text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">{detail}</p>
       ) : null}
       <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -119,7 +119,7 @@ export function YourPartBar({
       data-slot="document-your-part-bar"
       className="flex shrink-0 flex-col gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2.5"
     >
-      {detail && blanks.length ? (
+      {blanks.length ? (
         <BlankSentence blanks={blanks} className="text-[16px]" />
       ) : detail ? (
         <p className="line-clamp-2 text-[13px] leading-snug">{detail}</p>

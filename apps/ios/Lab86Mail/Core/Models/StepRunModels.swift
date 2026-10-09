@@ -167,6 +167,8 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         static let labelLimit = 48
         /// The most blanks one handoff names (the web `cleanBlanks`).
         static let blankLimit = 6
+        /// The most characters in one blank's name (the web `cleanBlanks`).
+        static let blankNameLimit = 40
 
         let kind: Kind
         let label: String
@@ -241,12 +243,19 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
             saveSignIn = try container.decodeIfPresent(SecureSaveSignInOffer.self, forKey: .saveSignIn)
         }
 
-        /// Trim each name, drop the empty ones, and keep the first six.
+        /// The same rules as the web `cleanBlanks` (convex/albatrossStepRuns.ts):
+        /// one space between words, at most 40 characters, no empty name, no
+        /// name twice (case does not count), and the first six only.
         static func cleanBlanks(_ raw: [String]) -> [String] {
-            let names = raw
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            return Array(names.prefix(blankLimit))
+            var names: [String] = []
+            for blank in raw {
+                let words = blank.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+                let name = String(words.prefix(blankNameLimit))
+                guard !name.isEmpty, !names.contains(where: { $0.lowercased() == name.lowercased() }) else { continue }
+                names.append(name)
+                if names.count == blankLimit { break }
+            }
+            return names
         }
     }
 

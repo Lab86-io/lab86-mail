@@ -30,7 +30,8 @@ export function openWaitingDocument(row: DocumentWaitingRow) {
   const next = row.row.action?.behaviour;
   const target =
     next && next.kind === 'open_document' ? documentTargetOf(next.url ?? null, next.id ?? null) : null;
-  if (target) state.setPendingThreadDocument({ workId: row.workId, target });
+  // Always replace the request, so an older one never opens a document later.
+  state.setPendingThreadDocument(target ? { workId: row.workId, target } : null);
   openWorkPage({ getState: () => state }, row.workId);
 }
 
