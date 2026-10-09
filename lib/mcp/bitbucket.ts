@@ -19,9 +19,12 @@ interface BitbucketUser {
   uuid?: string;
 }
 
+// GET /user/workspaces answers `workspace_access` rows with the workspace
+// nested under `workspace`, not the documented flat workspace object.
 interface BitbucketWorkspace {
   slug?: string;
   name?: string;
+  workspace?: { slug?: string; name?: string };
 }
 
 interface BitbucketPullRequest {
@@ -204,7 +207,7 @@ export async function loadBitbucketItems(baseUrl: string, token: string): Promis
     { pagelen: String(WORKSPACE_PAGE_SIZE) },
   );
   const workspaces = workspaceRows
-    .map((workspace) => workspace.slug?.trim())
+    .map((row) => (row.workspace?.slug ?? row.slug)?.trim())
     .filter((slug): slug is string => Boolean(slug));
 
   const items: NormalizedMcpItem[] = [];

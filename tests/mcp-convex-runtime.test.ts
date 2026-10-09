@@ -305,6 +305,38 @@ describe('sync state', () => {
     });
     expect(await t.query(internal.mcp.listSyncTargetUserIds, {})).toEqual([USER]);
   });
+
+  test('listAtlassianSignInUserIds lists only users with a live Atlassian sign-in', async () => {
+    const t = newHarness();
+    await connect(t);
+    await connect(t, { connectionId: 'jira_token', server: 'jira' as const });
+    expect(await t.query(internal.mcp.listAtlassianSignInUserIds, {})).toEqual([]);
+    await connect(t, {
+      connectionId: 'jira_oauth',
+      server: 'jira' as const,
+      serverUrl: 'https://api.atlassian.com',
+      authKind: 'oauth' as const,
+    });
+    await connect(t, {
+      userId: 'other_user',
+      connectionId: 'jira_oauth_2',
+      server: 'jira' as const,
+      authKind: 'oauth' as const,
+    });
+    expect((await t.query(internal.mcp.listAtlassianSignInUserIds, {})).sort()).toEqual(
+      ['other_user', USER].sort(),
+    );
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('mcpConnections')
+        .withIndex('by_user_connection', (q) =>
+          q.eq('userId', 'other_user').eq('connectionId', 'jira_oauth_2'),
+        )
+        .unique();
+      await ctx.db.patch(row!._id, { status: 'disconnected' });
+    });
+    expect(await t.query(internal.mcp.listAtlassianSignInUserIds, {})).toEqual([USER]);
+  });
 });
 
 describe('item ingest', () => {

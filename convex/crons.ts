@@ -144,6 +144,15 @@ crons.interval('albatross routines', { minutes: 5 }, internal.albatrossRoutines.
 // Poll each user's connected tool servers/APIs every 20 minutes
 // so brief/search items stay current.
 crons.interval('mcp sync', { minutes: 20 }, internal.mcpSync.tick, {});
+// Atlassian personal data reporting for the Atlassian sign-in. Atlassian's
+// default reporting cycle is 7 days, and an app must not report an account
+// more often than its cycle.
+crons.weekly(
+  'atlassian personal data report',
+  { dayOfWeek: 'monday', hourUTC: 9, minuteUTC: 0 },
+  internal.mcpSync.atlassianPrivacyTick,
+  {},
+);
 crons.interval('connected content and Brief preparation', { minutes: 2 }, internal.content.tick, {});
 
 // Disconnect normally schedules its own bounded cleanup chain. This sweep is

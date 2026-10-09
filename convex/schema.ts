@@ -3356,7 +3356,8 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_connection', ['connectionId'])
-    .index('by_status', ['status']),
+    .index('by_status', ['status'])
+    .index('by_server_status', ['server', 'status']),
 
   mcpCredentials: defineTable({
     userId: v.string(),

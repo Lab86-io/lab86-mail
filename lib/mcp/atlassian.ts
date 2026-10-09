@@ -10,8 +10,9 @@ const JIRA_FIELDS = [
   'summary',
   'status',
   'updated',
+  // Only the assignee id: it marks issues assigned to the user. No name of
+  // another person is read or kept (Atlassian personal data reporting).
   'assignee',
-  'reporter',
   'project',
   'issuetype',
   'priority',
@@ -54,8 +55,7 @@ interface JiraIssue {
     summary?: string;
     status?: { name?: string; statusCategory?: { key?: string } };
     updated?: string;
-    assignee?: { accountId?: string; displayName?: string } | null;
-    reporter?: { displayName?: string } | null;
+    assignee?: { accountId?: string } | null;
     project?: { key?: string; name?: string };
     issuetype?: { name?: string };
     priority?: { name?: string } | null;
@@ -144,11 +144,8 @@ async function atlassianJson<T>(input: {
     // A 401 anywhere means the sign-in no longer works. Other statuses on a
     // later call are sync problems; the sign-in probe owns the rest.
     const authStatus = response.status === 401 || input.operation === 'auth probe';
-    throw Object.assign(
-      error,
-      { httpStatus: response.status },
-      authStatus ? { statusCode: response.status } : {},
-    );
+    const status = { httpStatus: response.status };
+    throw Object.assign(error, status, authStatus ? { statusCode: response.status } : {});
   }
   return (await response.json()) as T;
 }
@@ -206,7 +203,6 @@ export function normalizeJiraIssue(
     summary,
     url: `${siteBase(site)}/browse/${key}`,
     state,
-    author: fields.reporter?.displayName?.trim() || undefined,
     organization: site.name,
     assignedToUser,
     updatedAtSource: parseTimestamp(fields.updated),
@@ -218,7 +214,6 @@ export function normalizeJiraIssue(
       statusCategory: fields.status?.statusCategory?.key,
       issueType,
       priority,
-      assignee: fields.assignee?.displayName,
     },
     searchText: [key, summaryText, project, state, issueType, priority, site.name, 'jira', description]
       .filter(Boolean)
