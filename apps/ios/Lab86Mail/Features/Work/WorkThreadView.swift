@@ -325,6 +325,8 @@ struct WorkThreadView: View {
 
     /// The hold receipts and the chat errors, under the newest item.
     @ViewBuilder private func chatFooter(_ model: WorkThreadModel) -> some View {
+        // The plan's open questions, so "Needs your answer" points at something.
+        WorkQuestionsView(model: model)
         // A reply runs on the server (T5): one quiet row until it lands.
         if model.replyInProgress {
             HStack(spacing: 8) {
@@ -586,8 +588,9 @@ struct WorkThreadView: View {
         case .showQuestion, .showArtifacts, .allowSecure, .none:
             break
         case .openDocument(let id, let url):
-            // The document opens inside the thread, not in Files (D5).
-            if let target = DocumentTarget.of(url: url, id: id) {
+            // The document opens inside the thread, not in Files (D5). An id
+            // with no link takes the link of the run's own file.
+            if let target = DocumentTarget.resolve(url: url, id: id, artifacts: view.run.artifacts) {
                 await openDocument(target, model: model)
             } else {
                 _ = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)

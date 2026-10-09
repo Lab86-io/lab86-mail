@@ -294,6 +294,15 @@ function buildModel(
       } else {
         threadRuns = [handoffs.document];
         region = 'document';
+        // A plan question that no run owns: the thread shows it above the composer.
+        detail.questions = [
+          {
+            _id: 'question_weeks',
+            status: 'pending',
+            prompt: 'Which weeks does this invoice cover, and how many hours for each?',
+            reason: 'No email lists the hours.',
+          },
+        ];
       }
       messages = [];
       break;
@@ -381,6 +390,7 @@ function ThreadPreview() {
       onOpenDocument: () => setRegion('document'),
       onCloseDocument: () => setRegion(null),
       onDocumentDone: () => setRegion(null),
+      onAnswerWorkQuestion: noop,
       onSetWorkState: noop,
       onError: noop,
       chat: { transport, preview: true },

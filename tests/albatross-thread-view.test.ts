@@ -497,3 +497,36 @@ describe('the thread state ranks a run at work above another question', () => {
     expect(threadState(input({ handoff: runs.readyDraft }))).toBe('waiting');
   });
 });
+
+// Questions the plan asked: the header counts them, so the thread shows them.
+describe('openWorkQuestions', () => {
+  test('keeps pending questions that no run owns', async () => {
+    const { openWorkQuestions } = await import('../lib/albatross/thread-view');
+    const questions = [
+      { _id: 'q_plan', status: 'pending', prompt: 'Which weeks does the invoice cover?' },
+      { _id: 'q_run', status: 'pending', prompt: 'Which class?' },
+      { _id: 'q_done', status: 'answered', prompt: 'Which rate?' },
+    ];
+    const runs = [{ question: { id: 'q_run' } }, { question: null }] as unknown as ThreadRunView[];
+    expect(openWorkQuestions({ questions }, runs).map((question) => question._id)).toEqual(['q_plan']);
+    expect(openWorkQuestions(null, runs)).toEqual([]);
+  });
+});
+
+// An answered contact field and a value of no special kind, as one line each.
+describe('formValueDisplay for a contact and a plain value', () => {
+  test('a contact names the person, the relation, and the phone', async () => {
+    const { formValueDisplay } = await import('../lib/albatross/thread-view');
+    const { phoneDisplay } = await import('../lib/personal-details/format');
+    const phone = phoneDisplay('5555550100');
+    const contact = { id: 'contact', label: 'Emergency contact', kind: 'contact' } as any;
+    expect(
+      formValueDisplay(contact, { name: 'Robin Lee', phone: '5555550100', relationship: 'Friend' } as any),
+    ).toBe(`Robin Lee (Friend), ${phone}`);
+    expect(formValueDisplay(contact, { name: 'Robin Lee', phone: '5555550100' } as any)).toBe(
+      `Robin Lee, ${phone}`,
+    );
+    const hours = { id: 'hours', label: 'Hours', kind: 'number' } as any;
+    expect(formValueDisplay(hours, 32 as any)).toBe('32');
+  });
+});

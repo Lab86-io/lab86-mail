@@ -40,7 +40,7 @@ export function documentHandoffFor(
     const next = run.next;
     const named =
       next?.target?.kind === 'document'
-        ? documentTargetOf(next.target.url ?? null, next.target.id ?? null)
+        ? resolveDocumentTarget(run.artifacts, next.target.url ?? null, next.target.id ?? null)
         : null;
     if (named && named.id === target.id) return run;
     const made = run.artifacts.some((artifact) => {
@@ -51,6 +51,26 @@ export function documentHandoffFor(
     if (made) return run;
   }
   return null;
+}
+
+/**
+ * The document a run's button or file row opens. A target with an id and no
+ * link takes the link of the run's own file with that id: a Word file opens in
+ * the Word editor, not as a missing Albatross document. Runs from before the
+ * server filled the link (normalizeHandoff) need this.
+ */
+export function resolveDocumentTarget(
+  artifacts: ReadonlyArray<{ kind: string; id?: string | null; url?: string | null }>,
+  url: string | null | undefined,
+  id: string | null | undefined,
+): DocumentTarget | null {
+  const link = url?.trim()
+    ? url
+    : id
+      ? (artifacts.find((artifact) => artifact.kind === 'document' && artifact.id === id && artifact.url)
+          ?.url ?? null)
+      : null;
+  return documentTargetOf(link, id);
 }
 
 /** The "Your part" text: the handoff's own words, or null for no card. */

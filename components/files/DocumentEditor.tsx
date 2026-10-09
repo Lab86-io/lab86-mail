@@ -516,7 +516,7 @@ export function DocumentEditor({
             {(documentQuery.error as Error)?.message || 'The file may have been removed.'}
           </p>
           <Button className="mt-4" variant="outline" size="sm" onClick={onClose}>
-            Back to Files
+            {host === 'thread' ? 'Close the document' : 'Back to Files'}
           </Button>
         </div>
       </div>

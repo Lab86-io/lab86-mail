@@ -43,6 +43,18 @@ struct DocumentTarget: Identifiable, Hashable, Sendable {
         return DocumentTarget(provider: .albatross, id: bare)
     }
 
+    /// The document a run's button opens. A target with an id and no link
+    /// takes the link of the run's own document with that id, so a Word file
+    /// opens in the Word editor (runs from before the server filled the link).
+    /// The web rule is `resolveDocumentTarget`.
+    static func resolve(url raw: String?, id: String?, artifacts: [StepRunView.Artifact]) -> DocumentTarget? {
+        if raw?.nilIfBlank == nil, let id = id?.nilIfBlank,
+           let link = artifacts.first(where: { $0.kind == .document && $0.referenceID == id && $0.url?.nilIfBlank != nil })?.url {
+            return of(url: link, id: id)
+        }
+        return of(url: raw, id: id)
+    }
+
     /// `/files/<id>`: one segment after `/files/`, nothing else.
     private static func legacyID(path: String) -> String? {
         let prefix = "/files/"
@@ -101,7 +113,7 @@ enum DocumentHandoff {
             let run = view.run
             guard run.state == .handedOff, run.outcome == .readyForYou || run.outcome == .yourTurn else { continue }
             if let next = run.next?.target, next.kind == .document,
-               DocumentTarget.of(url: next.url, id: next.id)?.id == target.id {
+               DocumentTarget.resolve(url: next.url, id: next.id, artifacts: run.artifacts)?.id == target.id {
                 return view
             }
             let made = run.artifacts.contains { artifact in
