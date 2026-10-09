@@ -15,6 +15,12 @@ export interface PersistedMcpOAuthState {
   state: string;
   /** Set for a fixed-client provider sign-in (lib/mcp/provider-oauth.ts). */
   provider?: ProviderOAuthId;
+  /**
+   * The provider account that the sign-in reached, when the token answer
+   * names it (a Slack workspace and member). A server that allows several
+   * accounts keeps one connection for each.
+   */
+  account?: { id: string; name?: string };
   codeVerifier?: string;
   clientInformation?: OAuthClientInformationMixed;
   discoveryState?: OAuthDiscoveryState;

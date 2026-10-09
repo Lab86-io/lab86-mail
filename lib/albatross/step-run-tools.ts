@@ -89,6 +89,8 @@ export const RUNNER_REGISTRY_TOOLS = [
   'mcp_search',
   'mcp_list_items',
   'github_search',
+  'slack_search',
+  'slack_read_thread',
   'narrative_search',
   'narrative_read',
 ] as const;

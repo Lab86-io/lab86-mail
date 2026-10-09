@@ -6,8 +6,12 @@ import { connectedItemReason } from '../lib/mail/brief-connected';
 import { briefServiceIdForMcpItem, briefServicesFromIds } from '../lib/mail/brief-services';
 import {
   isConfluencePage,
+  MCP_ADD_ANOTHER_HELP,
   mcpConnectionDisplay,
   mcpConnectionLabel,
+  mcpConnectionsCountLine,
+  mcpConnectRowCopy,
+  mcpConnectRows,
   mcpItemSourceLabel,
 } from '../lib/mcp/connection-display';
 
@@ -131,6 +135,100 @@ describe('the connection display', () => {
     expect(
       renderToStaticMarkup(<McpConnectionIdentity display={mcpConnectionDisplay({ server: 'github' })} />),
     ).toBe('');
+  });
+});
+
+// Settings > Connections lists a connect row for each tool that the user can
+// add. Slack allows one connection for each workspace, so its row stays after
+// the first sign-in and reads as an add-another row.
+
+const CONNECT_SERVERS = [
+  { id: 'github', label: 'GitHub', tokenHelp: 'Sign in with GitHub.' },
+  { id: 'jira', label: 'Atlassian', tokenHelp: 'Sign in with Atlassian.', multipleAccounts: false },
+  { id: 'slack', label: 'Slack', tokenHelp: 'Sign in with Slack.', multipleAccounts: true },
+];
+
+function rowSummary(rows: ReturnType<typeof mcpConnectRows>) {
+  return rows.map((row) => `${row.server.id}${row.addAnother ? ' +' : ''}`);
+}
+
+describe('the connect rows', () => {
+  test('with no connection, every tool has a first-connection row', () => {
+    const rows = mcpConnectRows(CONNECT_SERVERS, []);
+    expect(rowSummary(rows)).toEqual(['github', 'jira', 'slack']);
+    expect(rows[0]?.server).toBe(CONNECT_SERVERS[0]);
+    expect(mcpConnectRowCopy(rows[2]!)).toEqual({ title: 'Slack', help: 'Sign in with Slack.' });
+  });
+
+  test('a working connection removes a single-account tool from the list', () => {
+    const rows = mcpConnectRows(CONNECT_SERVERS, [
+      { server: 'github', status: 'connected' },
+      { server: 'jira', status: 'disconnected' },
+    ]);
+    expect(rowSummary(rows)).toEqual(['slack']);
+  });
+
+  test('a single-account tool whose only connection failed stays, so a new sign-in replaces it', () => {
+    expect(rowSummary(mcpConnectRows(CONNECT_SERVERS, [{ server: 'github', status: 'error' }]))).toEqual([
+      'github',
+      'jira',
+      'slack',
+    ]);
+    expect(
+      rowSummary(
+        mcpConnectRows(CONNECT_SERVERS, [
+          { server: 'github', status: 'error' },
+          { server: 'github', status: 'connected' },
+        ]),
+      ),
+    ).toEqual(['jira', 'slack']);
+  });
+
+  test('a connected Slack stays as a row that adds one more workspace', () => {
+    for (const status of ['connected', 'error', undefined]) {
+      const rows = mcpConnectRows(CONNECT_SERVERS, [{ server: 'slack', status }]);
+      expect(rowSummary(rows)).toEqual(['github', 'jira', 'slack +']);
+    }
+    const twoWorkspaces = mcpConnectRows(CONNECT_SERVERS, [
+      { server: 'slack', status: 'connected' },
+      { server: 'slack', status: 'connected' },
+    ]);
+    expect(rowSummary(twoWorkspaces)).toEqual(['github', 'jira', 'slack +']);
+  });
+
+  test('an add-another row names the workspace and keeps the same tool', () => {
+    const [row] = mcpConnectRows([CONNECT_SERVERS[2]!], [{ server: 'slack', status: 'connected' }]);
+    expect(row?.server.id).toBe('slack');
+    expect(mcpConnectRowCopy(row!)).toEqual({
+      title: 'Add another Slack workspace',
+      help: 'Sign in to one more workspace. Each workspace is its own connection.',
+    });
+    expect(MCP_ADD_ANOTHER_HELP).toBe('Sign in to one more workspace. Each workspace is its own connection.');
+    expect(
+      mcpConnectRowCopy({ server: { id: 'teams', label: 'Teams', multipleAccounts: true }, addAnother: true })
+        .title,
+    ).toBe('Add another Teams workspace');
+    expect(mcpConnectRowCopy({ server: { id: 'linear', label: 'Linear' }, addAnother: false })).toEqual({
+      title: 'Linear',
+      help: '',
+    });
+  });
+
+  test('the heading count does not count an add-another row as available', () => {
+    expect(mcpConnectionsCountLine(0, mcpConnectRows(CONNECT_SERVERS, []))).toBe('3 available');
+    expect(
+      mcpConnectionsCountLine(1, mcpConnectRows(CONNECT_SERVERS, [{ server: 'slack', status: 'connected' }])),
+    ).toBe('1 connected · 2 available');
+    const everything = [
+      { server: 'github', status: 'connected' },
+      { server: 'jira', status: 'connected' },
+      { server: 'slack', status: 'connected' },
+      { server: 'slack', status: 'connected' },
+    ];
+    expect(mcpConnectionsCountLine(everything.length, mcpConnectRows(CONNECT_SERVERS, everything))).toBe(
+      '4 connected · 0 available',
+    );
+    expect(mcpConnectionsCountLine(0, [])).toBe('0 available');
   });
 });
 

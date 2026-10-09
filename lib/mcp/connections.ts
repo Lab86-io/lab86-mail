@@ -117,6 +117,16 @@ export function newConnectionId(server: string): string {
 }
 
 /**
+ * The connection id of one provider account (a Slack workspace member). A new
+ * sign-in to the same account replaces that connection in place, and a
+ * sign-in to another workspace adds a connection.
+ */
+export function accountConnectionId(server: string, accountId: string): string {
+  const key = accountId.toLowerCase().replace(/[^a-z0-9]+/gu, '');
+  return `${server}_${key || randomBytes(8).toString('hex')}`;
+}
+
+/**
  * A new sign-in for a server whose connection needs a reconnect replaces that
  * row in place (AI-7), so its items, toggles, and task links stay and the
  * Reconnect prompt goes away. Otherwise the sign-in makes a new connection.
@@ -183,7 +193,10 @@ export async function saveOAuthConnection(opts: {
   if (!tokens?.access_token || !clientInformation) throw new Error('OAuth credentials are incomplete.');
   // A provider sign-in reads the provider REST API, not the MCP endpoint.
   const providerOAuth = opts.persisted.provider ? def.providerOAuth : undefined;
-  const target = await connectionTarget(opts.userId, opts.server);
+  const account = providerOAuth?.multipleAccounts ? opts.persisted.account : undefined;
+  const target = account
+    ? { connectionId: accountConnectionId(opts.server, account.id), displayName: undefined }
+    : await connectionTarget(opts.userId, opts.server);
   const connectionId = target.connectionId;
   const fingerprint = deps.secretFingerprint(tokens.access_token);
   await deps.convexMutation(mcpApi.upsertConnection, {

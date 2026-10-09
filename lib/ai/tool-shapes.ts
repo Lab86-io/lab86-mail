@@ -1348,6 +1348,14 @@ const MAPPERS: Record<string, Mapper> = {
       asArray(output.items),
       `GitHub results for “${clip(str(input.query), 60)}”`,
     ),
+  slack_search: (input, output, tool) =>
+    sourcesShape(
+      tool,
+      input,
+      output,
+      asArray(output.items),
+      `Slack results for “${clip(str(input.query), 60)}”`,
+    ),
   mcp_list_items: (input, output, tool) =>
     sourcesShape(
       tool,

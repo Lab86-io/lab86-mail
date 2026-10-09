@@ -162,6 +162,7 @@ import { presentationPlan } from './presentations';
 import type { AnyTool } from './registry';
 import { salvageContext } from './salvage';
 import { secureDetailsList } from './secure-details';
+import { slackReadThread, slackSearch } from './slack';
 import {
   applySmartCorrection,
   createSmartLabel,
@@ -215,6 +216,8 @@ import { wordDocumentCreate, wordDocumentEdit, wordDocumentGet } from './word-do
 const allTools: AnyTool[] = [
   mcpSearch,
   githubSearch,
+  slackSearch,
+  slackReadThread,
   mcpListItems,
   mcpConnectionStatus,
   mcpCreateTask,

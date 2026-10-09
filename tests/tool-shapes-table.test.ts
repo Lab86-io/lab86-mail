@@ -462,6 +462,16 @@ const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
     'sources',
   ],
   [
+    'slack_search',
+    { query: 'launch' },
+    {
+      items: [
+        { server: 'slack', title: '#eng · jane: launch moves', url: 'https://acme.slack.com/archives/C1/p1' },
+      ],
+    },
+    'sources',
+  ],
+  [
     'mcp_list_items',
     { server: 'granola' },
     { items: [{ server: 'granola', title: 'Standup notes', summary: 'Decided x' }] },

@@ -149,6 +149,10 @@ export const TOOL_GROUPS = {
     label: 'Google Drive and OneDrive file search, Google document reads and edits, and file import',
     tools: ['cloud_file_search', 'google_document_get', 'google_document_edit', 'google_file_import'],
   },
+  slack: {
+    label: 'Slack live search and thread reads across every connected Slack workspace',
+    tools: ['slack_search', 'slack_read_thread'],
+  },
   ui_extras: {
     label: 'Web app toast notices and mailbox account switch',
     tools: ['ui_toast', 'ui_switch_account'],

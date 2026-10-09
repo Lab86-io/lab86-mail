@@ -82,7 +82,12 @@ import { type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach
 import { signOutAndClearStorage } from '@/lib/auth/sign-out-storage';
 import { useClientStore } from '@/lib/client-state';
 import type { ContactAccountStatus } from '@/lib/contacts/lookup';
-import { mcpConnectionDisplay } from '@/lib/mcp/connection-display';
+import {
+  mcpConnectionDisplay,
+  mcpConnectionsCountLine,
+  mcpConnectRowCopy,
+  mcpConnectRows,
+} from '@/lib/mcp/connection-display';
 import {
   initialNotificationForm,
   type NotificationPreferences,
@@ -1212,6 +1217,8 @@ interface McpServerInfo {
   tokenLabel: string;
   tokenHelp: string;
   connectMode: 'token' | 'oauth';
+  /** True when the user can connect several accounts (one Slack connection per workspace). */
+  multipleAccounts?: boolean;
 }
 
 function relativeTime(ms: number) {
@@ -1289,10 +1296,9 @@ function ConnectionsSection() {
 
   const connections: McpConnectionRow[] = data?.connections || [];
   const servers: McpServerInfo[] = data?.servers || [];
-  // A server whose only connection needs a reconnect stays available, so its
-  // new sign-in or token replaces the broken connection in place.
-  const connectedServers = new Set(connections.filter((c) => c.status !== 'error').map((c) => c.server));
-  const availableServers = servers.filter((s) => !connectedServers.has(s.id));
+  // A connected server leaves the connect list, except a server that allows
+  // several accounts (Slack): its row then adds one more workspace.
+  const connectRows = mcpConnectRows(servers, connections);
 
   return (
     <section>
@@ -1300,11 +1306,7 @@ function ConnectionsSection() {
         title="Connections"
         badge={<BetaBadge />}
         blurb="Bring GitHub, Granola, Bitbucket, Jira and Confluence, and Slack into your brief, Areas, and search."
-        aside={
-          connections.length
-            ? `${connections.length} connected · ${availableServers.length} available`
-            : `${availableServers.length} available`
-        }
+        aside={mcpConnectionsCountLine(connections.length, connectRows)}
       />
       <div className="space-y-2.5">
         {connections.map((connection) => {
@@ -1405,11 +1407,13 @@ function ConnectionsSection() {
         })}
       </div>
 
-      {availableServers.length ? (
+      {connectRows.length ? (
         <div className="mt-4 space-y-2.5">
-          {availableServers.map((server) => {
+          {connectRows.map((row) => {
+            const { server } = row;
             const token = tokenInputs[server.id] || '';
             if (server.connectMode === 'oauth') {
+              const copy = mcpConnectRowCopy(row);
               return (
                 <div
                   key={server.id}
@@ -1421,11 +1425,11 @@ function ConnectionsSection() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-[13.5px] font-medium">{server.label}</span>
+                        <span className="text-[13.5px] font-medium">{copy.title}</span>
                         <BetaBadge />
                       </div>
                       <p className="mt-0.5 text-[11px] leading-snug text-[var(--color-text-muted)]">
-                        {server.tokenHelp}
+                        {copy.help}
                       </p>
                     </div>
                     <Button asChild size="sm" variant="outline">
@@ -1498,7 +1502,7 @@ function ConnectionsSection() {
         </div>
       ) : null}
 
-      {!connections.length && !availableServers.length ? (
+      {!connections.length && !connectRows.length ? (
         <div className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">
           No connected tools available yet.
         </div>

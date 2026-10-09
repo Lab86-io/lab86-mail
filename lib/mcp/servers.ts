@@ -31,6 +31,8 @@ export interface McpProviderOAuthDef {
   transport: McpServerTransport;
   serverUrl: string;
   scopes: string[];
+  /** One sign-in reaches one account (a Slack workspace), so a user can add several. */
+  multipleAccounts?: boolean;
 }
 
 export interface McpServerDef {
@@ -129,10 +131,11 @@ export const MCP_SERVERS: Record<McpServerId, McpServerDef> = {
     providerOAuth: {
       provider: 'slack',
       label: 'Slack',
-      help: 'Sign in with Slack to add the messages that mention you and your direct messages.',
+      help: 'Sign in with Slack to search your channels and direct messages. Add each workspace that you use.',
       transport: 'slack-rest',
       serverUrl: 'https://slack.com/api',
       scopes: PROVIDER_OAUTH.slack.scopes,
+      multipleAccounts: true,
     },
   },
   granola: {
@@ -176,6 +179,11 @@ export function getServerDef(id: string, env: Env = process.env): McpServerDef |
 
 export function listServerDefs(env: Env = process.env): McpServerDef[] {
   return Object.values(MCP_SERVERS).map((definition) => effectiveServerDef(definition, env));
+}
+
+/** True when a user can connect several accounts of this server (Slack workspaces). */
+export function allowsMultipleAccounts(definition: McpServerDef): boolean {
+  return usesProviderOAuth(definition) && definition.providerOAuth.multipleAccounts === true;
 }
 
 /** True when a new sign-in for this server uses our own provider OAuth app. */

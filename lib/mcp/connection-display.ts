@@ -86,3 +86,61 @@ export function mcpConnectionDisplay(
   const identity = [...new Set(parts)].join(' · ') || null;
   return { label, nickname, identity };
 }
+
+export interface McpConnectServerInput extends McpServerLabel {
+  /** Help line for a first connection, from `/api/mcp/status`. */
+  tokenHelp?: string;
+  /** True when a user can connect several accounts of this server (Slack workspaces). */
+  multipleAccounts?: boolean;
+}
+
+export interface McpConnectionStatusInput {
+  server: string;
+  status?: string;
+}
+
+export interface McpConnectRow<S extends McpConnectServerInput = McpConnectServerInput> {
+  server: S;
+  /** True when the user has a connection of this server and the row adds one more account. */
+  addAnother: boolean;
+}
+
+export const MCP_ADD_ANOTHER_HELP = 'Sign in to one more workspace. Each workspace is its own connection.';
+
+/**
+ * The rows in the connect list under the connected tools. A server leaves the
+ * list when it has a working connection. A server whose only connection needs
+ * a reconnect stays, so its new sign-in or token replaces the broken
+ * connection in place. A server that allows several accounts always stays.
+ * When it has a connection, its row adds one more account.
+ */
+export function mcpConnectRows<S extends McpConnectServerInput>(
+  servers: readonly S[],
+  connections: readonly McpConnectionStatusInput[],
+): McpConnectRow<S>[] {
+  const withAny = new Set(connections.map((connection) => connection.server));
+  const withWorking = new Set(
+    connections.filter((connection) => connection.status !== 'error').map((connection) => connection.server),
+  );
+  return servers.flatMap((server) => {
+    if (server.multipleAccounts === true) return [{ server, addAnother: withAny.has(server.id) }];
+    return withWorking.has(server.id) ? [] : [{ server, addAnother: false }];
+  });
+}
+
+/** The title and help line of one connect row. */
+export function mcpConnectRowCopy(row: McpConnectRow): { title: string; help: string } {
+  if (row.addAnother) {
+    return { title: `Add another ${row.server.label} workspace`, help: MCP_ADD_ANOTHER_HELP };
+  }
+  return { title: row.server.label, help: row.server.tokenHelp ?? '' };
+}
+
+/**
+ * The count beside the Connections heading: "2 connected · 3 available". An
+ * add-another row is not a new tool, so it is not in the available count.
+ */
+export function mcpConnectionsCountLine(connectionCount: number, rows: readonly McpConnectRow[]): string {
+  const available = rows.filter((row) => !row.addAnother).length;
+  return connectionCount ? `${connectionCount} connected · ${available} available` : `${available} available`;
+}
