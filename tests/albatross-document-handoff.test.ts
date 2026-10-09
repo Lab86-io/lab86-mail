@@ -28,6 +28,7 @@ function documentRun(over: Partial<ThreadRunView>): ThreadRunView {
       kind: 'review_document',
       label: 'Fill in hours',
       detail: 'Fill in the months and hours you worked.',
+      blanks: [],
       doneLabel: null,
       allow: null,
       saveSignIn: null,

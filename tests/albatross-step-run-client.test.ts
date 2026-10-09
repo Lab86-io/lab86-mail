@@ -101,6 +101,7 @@ describe('the next action', () => {
     kind: 'review',
     label: 'Open',
     detail: '',
+    blanks: [],
     doneLabel: null,
     target: null,
     allow: null,

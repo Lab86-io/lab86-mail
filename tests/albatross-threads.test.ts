@@ -41,6 +41,7 @@ function run(over: Partial<RunActivity> = {}): RunActivity {
     nextKind: null,
     nextLabel: null,
     nextDetail: null,
+    nextBlanks: [],
     allowAnswered: false,
     summary: null,
     error: null,
