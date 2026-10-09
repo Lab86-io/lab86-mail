@@ -42,6 +42,29 @@ export function isConfluencePage(item: { server: string; kind?: string | null })
   return item.server === 'jira' && item.kind === 'page';
 }
 
+const MCP_KIND_LABELS: Record<string, string> = {
+  pull_request: 'pull request',
+  issue: 'issue',
+  commit: 'commit',
+  project: 'project',
+  project_item: 'project item',
+  ticket: 'ticket',
+  message: 'message',
+  meeting: 'meeting',
+  page: 'page',
+};
+
+/** The words for an item kind: "pull request" for `pull_request`. */
+export function mcpItemKindLabel(kind: string | null | undefined): string {
+  const value = String(kind || '');
+  return MCP_KIND_LABELS[value] ?? value.replace(/_/gu, ' ');
+}
+
+/** "Confluence page", "Jira ticket", "Slack message": the source and the kind. */
+export function mcpItemName(item: { server: string; kind?: string | null }): string {
+  return `${mcpItemSourceLabel(item)} ${mcpItemKindLabel(item.kind)}`.trim();
+}
+
 /** The source name for one connected item: "Confluence" for a page, else the tool name. */
 export function mcpItemSourceLabel(item: { server: string; kind?: string | null }): string {
   if (isConfluencePage(item)) return 'Confluence';

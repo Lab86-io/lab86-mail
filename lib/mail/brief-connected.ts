@@ -1,4 +1,4 @@
-import { mcpItemSourceLabel } from '../mcp/connection-display';
+import { mcpItemName } from '../mcp/connection-display';
 import type { DailyReportMcpItem } from '../shared/types';
 
 // Relevance ranking for connected-tool items in the Daily Brief (brief round
@@ -62,22 +62,10 @@ export function rankConnectedItems(
     .map((entry) => entry.item);
 }
 
-const KIND_LABELS: Record<string, string> = {
-  pull_request: 'pull request',
-  issue: 'issue',
-  commit: 'commit',
-  project: 'project',
-  project_item: 'project item',
-  ticket: 'ticket',
-  message: 'message',
-  meeting: 'meeting',
-  page: 'page',
-};
-
 // One short line under a connected item: "GitHub pull request, review requested".
 export function connectedItemReason(item: DailyReportMcpItem): string {
   // A Confluence page reads "Confluence page", not "Jira page".
-  const parts = [`${mcpItemSourceLabel(item)} ${KIND_LABELS[item.kind] || item.kind}`];
+  const parts = [mcpItemName(item)];
   const state = String(item.state || '')
     .replace(/[_-]+/g, ' ')
     .trim()
