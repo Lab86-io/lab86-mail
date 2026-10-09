@@ -42,7 +42,18 @@ describe('Bitbucket sync with an OAuth access token', () => {
       if (url.pathname === '/2.0/user/workspaces') {
         return url.searchParams.get('page') === '2'
           ? json({ values: [{ slug: 'labs' }] })
-          : json({ values: [{ slug: 'acme' }, { name: 'no slug' }], next: `${API}/user/workspaces?page=2` });
+          : json({
+              // Bitbucket's real answer nests the workspace in a workspace_access row.
+              values: [
+                {
+                  type: 'workspace_access',
+                  administrator: true,
+                  workspace: { slug: 'acme', type: 'workspace_base' },
+                },
+                { name: 'no slug' },
+              ],
+              next: `${API}/user/workspaces?page=2`,
+            });
       }
       if (url.pathname === '/2.0/workspaces/acme/pullrequests/acc-1') {
         const state = url.searchParams.get('state');
