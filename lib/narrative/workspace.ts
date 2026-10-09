@@ -131,6 +131,8 @@ function workspaceKind(entry: NarrativeEntry, hint: string): WorkspaceSource['ki
     case 'slack':
       return 'conversation';
   }
+  // An unknown connected tool is context: its title words decide nothing.
+  if (entry.source.startsWith('mcp:')) return 'context';
   if (/granola|calendar:/.test(hint)) return 'meeting';
   if (/github|bitbucket/.test(hint)) return 'development';
   if (entry.source.startsWith('mail:')) return 'mail';

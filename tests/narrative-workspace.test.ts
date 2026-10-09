@@ -239,6 +239,8 @@ describe('Today workspace composition and trust boundary', () => {
     expect(kind({ source: 'mcp:bitbucket_1' })).toBe('development');
     expect(kind({ source: 'mcp:granola_1' })).toBe('meeting');
     expect(kind({ source: 'mcp:other_1', title: 'notes' })).toBe('context');
+    expect(kind({ source: 'mcp:other_1', title: 'github granola notes' })).toBe('context');
+    expect(kind({ source: 'calendar:acct', title: 'Standup' })).toBe('meeting');
     expect(kind({ source: 'mail:acct', title: 'hello' })).toBe('mail');
     expect(kind({ source: 'files:drive_1' })).toBe('file');
   });
