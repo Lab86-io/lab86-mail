@@ -22,6 +22,12 @@ const REQUEST_TIMEOUT_MS = 15_000;
 
 export type AtlassianAccountReport = 'ok' | 'closed' | 'updated';
 
+export interface AtlassianReportAnswer {
+  status: AtlassianAccountReport;
+  /** Atlassian's Cycle-Period header (days), when it sends one. The cron runs weekly. */
+  cyclePeriodDays?: number;
+}
+
 export interface AtlassianPrivacyResult {
   connectionId: string;
   outcome: 'reported' | 'erased' | 'refreshed' | 'skipped' | 'failed';
@@ -60,7 +66,7 @@ export async function reportAtlassianAccount(input: {
   accountId: string;
   updatedAt: number;
   fetchFn?: typeof fetch;
-}): Promise<AtlassianAccountReport> {
+}): Promise<AtlassianReportAnswer> {
   const response = await (input.fetchFn || fetch)(ATLASSIAN_REPORT_URL, {
     method: 'POST',
     headers: {
@@ -74,15 +80,19 @@ export async function reportAtlassianAccount(input: {
     cache: 'no-store',
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (response.status === 204) return 'ok';
+  const cycle = Number(response.headers.get('cycle-period'));
+  const cyclePeriodDays = Number.isFinite(cycle) && cycle > 0 ? cycle : undefined;
+  const answer = (status: AtlassianAccountReport): AtlassianReportAnswer =>
+    cyclePeriodDays ? { status, cyclePeriodDays } : { status };
+  if (response.status === 204) return answer('ok');
   if (response.status === 200) {
     const body = (await response.json().catch(() => null)) as {
       accounts?: Array<{ accountId?: string; status?: string }>;
     } | null;
     const row = body?.accounts?.find((account) => account.accountId === input.accountId);
-    if (row?.status === 'closed') return 'closed';
-    if (row?.status === 'updated') return 'updated';
-    return 'ok';
+    if (row?.status === 'closed') return answer('closed');
+    if (row?.status === 'updated') return answer('updated');
+    return answer('ok');
   }
   const text = await response.text().catch(() => '');
   throw new Error(
@@ -116,22 +126,25 @@ export async function reportAtlassianPersonalData(
         results.push({ connectionId, outcome: 'skipped', detail: 'profile not readable' });
         continue;
       }
-      const status = await reportAtlassianAccount({
+      const answer = await reportAtlassianAccount({
         token: credentials.token,
         accountId,
         updatedAt: row.lastSyncOkAt || row.lastSyncedAt || deps.now(),
         fetchFn: deps.fetchFn,
       });
-      if (status === 'closed') {
+      // A cycle longer than the weekly cron shows in the result, so the
+      // schedule can follow it.
+      const cycle = answer.cyclePeriodDays ? { detail: `cycle period ${answer.cyclePeriodDays} days` } : {};
+      if (answer.status === 'closed') {
         // The account is closed: remove the connection and its data.
         await deps.disconnectConnection(userId, connectionId);
-        results.push({ connectionId, outcome: 'erased' });
-      } else if (status === 'updated') {
+        results.push({ connectionId, outcome: 'erased', ...cycle });
+      } else if (answer.status === 'updated') {
         // The profile changed: a sync reads it again.
         await deps.syncConnection(userId, connectionId);
-        results.push({ connectionId, outcome: 'refreshed' });
+        results.push({ connectionId, outcome: 'refreshed', ...cycle });
       } else {
-        results.push({ connectionId, outcome: 'reported' });
+        results.push({ connectionId, outcome: 'reported', ...cycle });
       }
     } catch (error) {
       results.push({

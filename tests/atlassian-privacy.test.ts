@@ -49,7 +49,7 @@ describe('Atlassian account report', () => {
     const mock = atlassian({ t: new Response(null, { status: 204 }) }, {});
     expect(
       await reportAtlassianAccount({ token: 't', accountId: 'acc-1', updatedAt: 0, fetchFn: mock.fetchFn }),
-    ).toBe('ok');
+    ).toEqual({ status: 'ok' });
     expect(mock.posts[0]?.body).toEqual({
       accounts: [{ accountId: 'acc-1', updatedAt: '1970-01-01T00:00:00.000Z' }],
     });
@@ -65,10 +65,39 @@ describe('Atlassian account report', () => {
     const mock = atlassian(answers, {});
     const run = (token: string) =>
       reportAtlassianAccount({ token, accountId: 'acc-1', updatedAt: 0, fetchFn: mock.fetchFn });
-    expect(await run('closed')).toBe('closed');
-    expect(await run('updated')).toBe('updated');
-    expect(await run('other')).toBe('ok');
+    expect(await run('closed')).toEqual({ status: 'closed' });
+    expect(await run('updated')).toEqual({ status: 'updated' });
+    expect(await run('other')).toEqual({ status: 'ok' });
     await expect(run('down')).rejects.toThrow('Atlassian account report failed with HTTP 503: try later');
+  });
+});
+
+describe('Atlassian cycle period', () => {
+  test('keeps a Cycle-Period that Atlassian sends, and ignores a bad one', async () => {
+    const answers: Record<string, Response> = {
+      long: new Response(null, { status: 204, headers: { 'Cycle-Period': '14' } }),
+      bad: new Response(null, { status: 204, headers: { 'Cycle-Period': 'soon' } }),
+      closed: json({ accounts: [{ accountId: 'acc-1', status: 'closed' }] }, 200),
+    };
+    answers.closed.headers.set('Cycle-Period', '30');
+    const mock = atlassian(answers, {});
+    const run = (token: string) =>
+      reportAtlassianAccount({ token, accountId: 'acc-1', updatedAt: 0, fetchFn: mock.fetchFn });
+    expect(await run('long')).toEqual({ status: 'ok', cyclePeriodDays: 14 });
+    expect(await run('bad')).toEqual({ status: 'ok' });
+    expect(await run('closed')).toEqual({ status: 'closed', cyclePeriodDays: 30 });
+
+    const reported = await reportAtlassianPersonalData('user_1', {
+      listUserConnections: async () => [row('jira_long')],
+      getConnectionToken: (async () => ({ row: row('jira_long'), token: 'long' })) as any,
+      fetchFn: atlassian(
+        { long: new Response(null, { status: 204, headers: { 'Cycle-Period': '14' } }) },
+        { long: 'acc-1' },
+      ).fetchFn,
+    });
+    expect(reported).toEqual([
+      { connectionId: 'jira_long', outcome: 'reported', detail: 'cycle period 14 days' },
+    ]);
   });
 });
 
@@ -173,6 +202,19 @@ describe('Atlassian privacy cron route', () => {
       results: [{ connectionId: 'jira_1', outcome: 'reported' }],
     });
     expect(report.mock.calls).toEqual([['user_1']]);
+  });
+
+  test('answers 502 when a connection report failed', async () => {
+    const post = createAtlassianPrivacyPost({
+      isInternalCronRequest: () => true,
+      reportAtlassianPersonalData: async () => [
+        { connectionId: 'jira_1', outcome: 'reported' },
+        { connectionId: 'jira_2', outcome: 'failed', detail: 'HTTP 500' },
+      ],
+    });
+    const response = await post(request({ userId: 'user_1' }));
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ ok: false, userId: 'user_1' });
   });
 
   test('refuses other callers, needs a user, and hides a failure', async () => {

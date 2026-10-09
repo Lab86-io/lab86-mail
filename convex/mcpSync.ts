@@ -27,9 +27,9 @@ export const tick = internalAction({
   },
 });
 
-// Atlassian personal data reporting: once a day, each user with an Atlassian
-// sign-in reports that account (lib/mcp/atlassian-privacy.ts). Atlassian
-// requires a report at least every 7 days for an app with sharing on.
+// Atlassian personal data reporting: once a week (Atlassian's default cycle),
+// each user with an Atlassian sign-in reports that account
+// (lib/mcp/atlassian-privacy.ts).
 export const atlassianPrivacyTick = internalAction({
   args: {},
   handler: async (ctx) => {

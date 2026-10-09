@@ -144,11 +144,8 @@ async function atlassianJson<T>(input: {
     // A 401 anywhere means the sign-in no longer works. Other statuses on a
     // later call are sync problems; the sign-in probe owns the rest.
     const authStatus = response.status === 401 || input.operation === 'auth probe';
-    throw Object.assign(
-      error,
-      { httpStatus: response.status },
-      authStatus ? { statusCode: response.status } : {},
-    );
+    const status = { httpStatus: response.status };
+    throw Object.assign(error, status, authStatus ? { statusCode: response.status } : {});
   }
   return (await response.json()) as T;
 }

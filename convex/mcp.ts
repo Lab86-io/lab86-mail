@@ -894,14 +894,17 @@ export function mcpConnectionWantsSync(row: {
 export const listAtlassianSignInUserIds = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db.query('mcpConnections').collect();
-    return [
-      ...new Set(
-        rows
-          .filter((row) => row.server === 'jira' && row.authKind === 'oauth' && row.status !== 'disconnected')
-          .map((row) => row.userId),
-      ),
-    ];
+    // The index reads only Atlassian connections that are not disconnected.
+    const rows = [];
+    for (const status of ['connected', 'error'] as const) {
+      rows.push(
+        ...(await ctx.db
+          .query('mcpConnections')
+          .withIndex('by_server_status', (q) => q.eq('server', 'jira').eq('status', status))
+          .collect()),
+      );
+    }
+    return [...new Set(rows.filter((row) => row.authKind === 'oauth').map((row) => row.userId))];
   },
 });
 
