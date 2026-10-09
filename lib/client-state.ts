@@ -61,6 +61,8 @@ export interface ClientState {
   // never persisted.
   pendingOpenIntentId: string | null;
   pendingOpenWorkId: string | null;
+  /** Open this Albatross in document mode on this document (the Documents page's "Waiting for you"). */
+  pendingThreadDocument: { workId: string; target: { provider: 'albatross' | 'office'; id: string } } | null;
   /** A task card or board to open once the Tasks surface mounts (shape card actions). */
   pendingOpenCardId: string | null;
   pendingOpenBoardId: string | null;
@@ -172,6 +174,7 @@ export interface ClientState {
   setSelectedWorkId: (workId: string | null) => void;
   setPendingOpenIntentId: (intentId: string | null) => void;
   setPendingOpenWorkId: (workId: string | null) => void;
+  setPendingThreadDocument: (pending: ClientState['pendingThreadDocument']) => void;
   setPendingOpenCardId: (cardId: string | null) => void;
   setPendingOpenBoardId: (boardId: string | null) => void;
   setSearchDraft: (draft: string) => void;
@@ -392,6 +395,7 @@ export const useClientStore = create<ClientState>()(
       selectedWorkId: null,
       pendingOpenIntentId: null,
       pendingOpenWorkId: null,
+      pendingThreadDocument: null,
       pendingOpenCardId: null,
       pendingOpenBoardId: null,
       searchDraft: '',
@@ -527,6 +531,7 @@ export const useClientStore = create<ClientState>()(
         set(selectedWorkId ? { selectedWorkId, aiBarOpen: false } : { selectedWorkId }),
       setPendingOpenIntentId: (pendingOpenIntentId) => set({ pendingOpenIntentId }),
       setPendingOpenWorkId: (pendingOpenWorkId) => set({ pendingOpenWorkId }),
+      setPendingThreadDocument: (pendingThreadDocument) => set({ pendingThreadDocument }),
       setPendingOpenCardId: (pendingOpenCardId) => set({ pendingOpenCardId }),
       setPendingOpenBoardId: (pendingOpenBoardId) => set({ pendingOpenBoardId }),
       setSearchDraft: (searchDraft) => set({ searchDraft }),

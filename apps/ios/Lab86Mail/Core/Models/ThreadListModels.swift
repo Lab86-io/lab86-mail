@@ -73,6 +73,10 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
     /// the handoff, or the next step.
     let preview: String?
     let stepTitle: String?
+    /// The empty fields of an open `ready_for_you` or `your_turn` handoff,
+    /// drawn as blanks (docs/albatross-blank-design.md). Empty otherwise,
+    /// and empty from an older server.
+    let blanks: [String]
     let needsYou: Bool
     /// A run or a reply works now. The list polls every 5 s while any row works.
     let working: Bool
@@ -94,6 +98,7 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
         statusLabel: String? = nil,
         preview: String? = nil,
         stepTitle: String? = nil,
+        blanks: [String] = [],
         needsYou: Bool? = nil,
         working: Bool? = nil,
         latestRunID: String? = nil,
@@ -111,6 +116,7 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
         self.statusLabel = statusLabel
         self.preview = preview
         self.stepTitle = stepTitle
+        self.blanks = StepRunView.Next.cleanBlanks(blanks)
         self.needsYou = needsYou ?? status.needsYou
         self.working = working ?? (status == .inProgress || status == .answering)
         self.latestRunID = latestRunID
@@ -133,6 +139,7 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
             statusLabel: json["statusLabel"]?.stringValue?.nilIfBlank,
             preview: json["preview"]?.stringValue?.nilIfBlank,
             stepTitle: json["stepTitle"]?.stringValue?.nilIfBlank,
+            blanks: (json["blanks"]?.arrayValue ?? []).compactMap(\.stringValue),
             needsYou: json["needsYou"]?.boolValue,
             working: json["working"]?.boolValue,
             latestRunID: json["latestRunId"]?.stringValue?.nilIfBlank,
@@ -170,6 +177,7 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
             statusLabel: statusLabel,
             preview: preview,
             stepTitle: stepTitle,
+            blanks: blanks,
             needsYou: needsYou,
             working: working,
             latestRunID: latestRunID,
@@ -193,6 +201,7 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
             statusLabel: statusLabel,
             preview: preview,
             stepTitle: stepTitle,
+            blanks: status == .readyForYou || status == .yourTurn ? blanks : [],
             needsYou: status.needsYou,
             working: status == .inProgress || status == .answering || status == .startsSoon,
             latestRunID: latestRunID,

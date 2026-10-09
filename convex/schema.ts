@@ -1042,6 +1042,8 @@ export default defineSchema({
         ),
         label: v.string(),
         detail: v.string(),
+        // The empty fields the user fills in, by short name: the page draws them as blanks.
+        blanks: v.optional(v.array(v.string())),
         // The button the user presses after doing it on the page ("I paid").
         doneLabel: v.optional(v.string()),
         // allow_secure: what the run asks to use, and where. No value.

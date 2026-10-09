@@ -43,6 +43,7 @@ Writing (summary, next.label, next.detail, questions):
 - summary: one to three past-tense sentences about what you did.
 - next.label: a short verb phrase, at most four words ("Read and send", "Sign in", "Approve the invite", "Check and submit", "Pick a venue").
 - next.detail: what the user does now, and what happens after.
+- next.blanks: when you leave fields empty for the user in a draft, document, or form you made, name each one (2 to 4 words, page order). The user sees them as blanks to fill in.
 - Never write "AI", "assistant", or "agent". No emoji. No exclamation marks.`;
 
 export interface RunnerStep {

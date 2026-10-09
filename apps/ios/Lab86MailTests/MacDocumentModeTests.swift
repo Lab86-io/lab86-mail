@@ -5,9 +5,10 @@ import Testing
 
 // Document mode of the Albatross thread on the Mac
 // (docs/albatross-document-handoff.md, D5): the room the split needs, the
-// column's width, the header title, the step line of the "Your part" card,
-// and the View menu item. The shared rules (which editor a target names, the
-// handoff a document belongs to) are in DocumentHandoffTests.
+// column's width, the header title, the content and the step line of the
+// "your part" card, and the View menu item. The shared rules (which editor a
+// target names, the handoff a document belongs to) are in
+// DocumentHandoffTests.
 @MainActor
 struct MacDocumentModeTests {
     // MARK: - Fixtures: hours for the Harbor Design studio
@@ -18,6 +19,7 @@ struct MacDocumentModeTests {
         stepTitle: String = "Make the hours summary",
         state: StepRunView.State = .handedOff,
         outcome: StepRunView.Outcome? = .readyForYou,
+        next: StepRunView.Next? = nil,
         artifacts: [StepRunView.Artifact] = []
     ) -> ThreadRunView {
         ThreadRunView(run: StepRunView(
@@ -27,6 +29,7 @@ struct MacDocumentModeTests {
             stepTitle: stepTitle,
             state: state,
             outcome: outcome,
+            next: next,
             artifacts: artifacts
         ))
     }
@@ -97,7 +100,7 @@ struct MacDocumentModeTests {
         ]))
         #expect(detail?.execution.guideSteps.count == 2)
         let handoff = Self.run(id: "r2")
-        #expect(MacDocumentMode.stepLabel(detail: detail, run: handoff) == "Step 2 · Make the hours summary")
+        #expect(MacDocumentMode.stepLabel(detail: detail, run: handoff) == "Step 2: Make the hours summary")
         // No plan position: the title alone.
         #expect(MacDocumentMode.stepLabel(detail: nil, run: handoff) == "Make the hours summary")
         let unknown = Self.run(id: "r5", stepKey: "step-else")
@@ -107,6 +110,39 @@ struct MacDocumentModeTests {
         let blank = Self.run(id: "r6", stepTitle: "  ")
         #expect(MacDocumentMode.stepLabel(detail: nil, run: blank) == nil)
         #expect(MacDocumentMode.stepLabel(detail: detail, run: blank) == "Step 2")
+    }
+
+    // MARK: - The content of the card
+
+    @Test func theCardShowsTheBlanksAndTheWords() {
+        let handoff = Self.run(id: "r2", next: StepRunView.Next(
+            kind: .reviewDocument,
+            detail: "Then Albatross drafts the email to Harbor Design.",
+            blanks: ["hours for each week", " hourly rate ", "", "invoice number"]
+        ))
+        let part = MacDocumentMode.yourPart(of: handoff)
+        #expect(part?.blanks == ["hours for each week", "hourly rate", "invoice number"])
+        #expect(part?.detail == "Then Albatross drafts the email to Harbor Design.")
+    }
+
+    @Test func noBlanksShowsTheWordsAlone() {
+        let handoff = Self.run(id: "r2", next: StepRunView.Next(
+            kind: .reviewDocument,
+            detail: "  Check the hours for September.  "
+        ))
+        #expect(MacDocumentMode.yourPart(of: handoff) == MacDocumentYourPart(blanks: [], detail: "Check the hours for September."))
+    }
+
+    @Test func blanksWithNoWordsStillShowTheCard() {
+        let handoff = Self.run(id: "r2", next: StepRunView.Next(kind: .reviewDocument, blanks: ["hourly rate"]))
+        #expect(MacDocumentMode.yourPart(of: handoff) == MacDocumentYourPart(blanks: ["hourly rate"], detail: nil))
+    }
+
+    @Test func noHandoffOrNoContentShowsNoCard() {
+        #expect(MacDocumentMode.yourPart(of: nil) == nil)
+        #expect(MacDocumentMode.yourPart(of: Self.run(id: "r2")) == nil)
+        let quiet = Self.run(id: "r3", next: StepRunView.Next(kind: .reviewDocument, detail: "  ", blanks: ["  "]))
+        #expect(MacDocumentMode.yourPart(of: quiet) == nil)
     }
 
     // MARK: - The View menu and the words
@@ -128,7 +164,7 @@ struct MacDocumentModeTests {
     }
 
     @Test func theCopyHasNoIngForms() {
-        for word in [MacDocumentModeCopy.document, DocumentHandoffCopy.close, MacThreadCommandState.closeDocument] {
+        for word in [MacDocumentModeCopy.document, MacDocumentModeCopy.yourPart, DocumentHandoffCopy.close, MacThreadCommandState.closeDocument] {
             #expect(!word.lowercased().contains("ing "), "\(word)")
             #expect(!word.hasSuffix("ing"), "\(word)")
         }

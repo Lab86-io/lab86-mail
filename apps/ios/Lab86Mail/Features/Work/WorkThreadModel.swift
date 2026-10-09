@@ -430,6 +430,11 @@ final class WorkThreadModel {
         DocumentHandoff.detail(of: documentHandoff)
     }
 
+    /// The blanks of the document's open handoff, or none.
+    var documentBlanks: [String] {
+        DocumentHandoff.blanks(of: documentHandoff)
+    }
+
     /// "Done, continue": marks the handoff's step done, then closes document
     /// mode. With no handoff the document only closes.
     @discardableResult

@@ -174,7 +174,7 @@ export function ThreadRail({
       )}
     >
       <div className="flex h-[50px] shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-4">
-        <h2 className="min-w-0 truncate font-serif text-[15px] font-semibold tracking-tight">
+        <h2 className="min-w-0 truncate font-display text-[17px] font-normal tracking-[-0.01em]">
           {THREAD_RAIL_COPY.title}
           {areaName ? (
             <span className="font-sans text-[12px] font-normal text-[var(--color-text-muted)]">
@@ -296,7 +296,7 @@ function RailEmpty({ filter }: { filter: ThreadFilter }) {
   const copy = RAIL_EMPTY_COPY[filter];
   return (
     <div data-thread-rail-empty={filter} className="px-3 pt-8 text-center">
-      <p className="font-serif text-[15px] font-semibold">{copy.title}</p>
+      <p className="font-display text-[17px] font-normal">{copy.title}</p>
       <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">{copy.detail}</p>
     </div>
   );

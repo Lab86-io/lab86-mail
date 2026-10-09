@@ -158,6 +158,13 @@ export const handoffInputSchema = z.object({
         .min(1)
         .max(500)
         .describe('What the user does next, and what you do after that. One or two sentences.'),
+      blanks: z
+        .array(z.string().min(1).max(40))
+        .max(6)
+        .optional()
+        .describe(
+          'The empty fields the user fills in, by short name, in page order: for example ["hours for each week", "hourly rate", "invoice number"]. Only for fields in the draft, document, or form that you left empty for the user. Omit when nothing is left blank.',
+        ),
       doneLabel: z
         .string()
         .max(32)

@@ -15,10 +15,10 @@ import { LaterShelf } from '@/components/albatross/LaterShelf';
 import { reviewBatch, type WorkShape } from '@/lib/albatross/forgiveness';
 import { isDormant, laterShelf, type WorkHorizon } from '@/lib/albatross/horizon';
 import {
+  listCountSentence,
   listThreadGroups,
   THREAD_FILTER_LABEL,
   THREAD_FILTERS,
-  THREAD_GROUP_HINT,
   THREAD_GROUP_LABEL,
   type ThreadGroupKey,
 } from '@/lib/albatross/thread-list-view';
@@ -169,10 +169,15 @@ export function AlbatrossesSurface() {
     <section className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
       {/* The header shares the measure of the list below it. A title that starts
           somewhere the content does not is a page that looks assembled. */}
-      <header className="border-b border-[var(--color-border)] bg-[var(--color-content)] px-5 py-3">
+      <header className="px-5 pb-2 pt-8">
         <div className="mx-auto max-w-3xl">
-          <div className="flex items-baseline justify-between gap-3">
-            <h1 className="font-serif text-[17px] font-semibold tracking-tight">{LIST_COPY.title}</h1>
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <h1 className="font-display text-[34px] font-normal leading-[1.1] tracking-[-0.015em]">
+              {LIST_COPY.title}
+            </h1>
+            <p data-list-count className="flex-1 text-[14px] text-[var(--color-text-muted)]">
+              {listCountSentence(counts.needsYou, counts.working)}
+            </p>
             {closedCount ? (
               <button
                 type="button"
@@ -184,7 +189,7 @@ export function AlbatrossesSurface() {
             ) : null}
           </div>
 
-          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          <div className="mt-4 flex flex-wrap items-center gap-1.5">
             {THREAD_FILTERS.map((key) => (
               <FilterPill
                 key={key}
@@ -220,7 +225,7 @@ export function AlbatrossesSurface() {
         </div>
       </header>
 
-      <div className="assistant-launcher-clearance min-h-0 flex-1 overflow-y-auto px-5 pt-5">
+      <div className="assistant-launcher-clearance min-h-0 flex-1 overflow-y-auto px-5 pt-6">
         <div className="mx-auto max-w-3xl">
           {stale.length ? (
             <div className="mb-8">
@@ -267,10 +272,10 @@ export function AlbatrossesSurface() {
           {later.length ? (
             <div className="mb-8">
               <div className="mb-3 flex items-baseline gap-2">
-                <span aria-hidden className="h-px w-5 shrink-0 bg-[var(--color-border-strong)]" />
-                <h2 className="font-serif text-[15px] font-semibold">{LIST_COPY.later}</h2>
+                <h2 className="text-[13px] font-semibold text-[var(--color-text-muted)]">
+                  {LIST_COPY.later}
+                </h2>
                 <p className="text-[12px] text-[var(--color-text-faint)]">{LIST_COPY.laterHint}</p>
-                <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
               </div>
               <LaterShelf items={later} nowMs={nowMs} onOpen={setSelectedWorkId} />
             </div>
@@ -281,7 +286,7 @@ export function AlbatrossesSurface() {
   );
 }
 
-/** A group: the serif heading, its hint, and the card of rows. */
+/** A group: a quiet heading, then the rows, separated by space only. */
 export function ThreadGroupSection({
   groupKey,
   children,
@@ -291,23 +296,10 @@ export function ThreadGroupSection({
 }) {
   return (
     <section aria-label={THREAD_GROUP_LABEL[groupKey]} data-thread-group={groupKey} className="mb-8">
-      {/* A section rule, weighted by whether the group is asking for
-          anything. Needs-you carries the accent; the rest are hairlines. */}
-      <div className="mb-2 flex items-baseline gap-2">
-        <span
-          aria-hidden
-          className={cn(
-            'h-px w-5 shrink-0',
-            groupKey === 'needs_you' ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border-strong)]',
-          )}
-        />
-        <h2 className="font-serif text-[15px] font-semibold">{THREAD_GROUP_LABEL[groupKey]}</h2>
-        <p className="text-[12px] text-[var(--color-text-faint)]">{THREAD_GROUP_HINT[groupKey]}</p>
-        <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
-      </div>
-      <ul className="surface-card rounded-card p-1 [&>li+li]:relative [&>li+li]:before:pointer-events-none [&>li+li]:before:absolute [&>li+li]:before:inset-x-4 [&>li+li]:before:top-0 [&>li+li]:before:h-px [&>li+li]:before:bg-[var(--color-list-divider)]">
-        {children}
-      </ul>
+      <h2 className="mb-1 px-3.5 text-[13px] font-semibold text-[var(--color-text-muted)]">
+        {THREAD_GROUP_LABEL[groupKey]}
+      </h2>
+      <ul className="flex flex-col gap-1">{children}</ul>
     </section>
   );
 }
@@ -355,7 +347,7 @@ function EmptyState({ filter }: { filter: ThreadFilter }) {
   if (filter === 'needs_you') {
     return (
       <div className="mx-auto max-w-md py-20 text-center">
-        <h2 className="font-serif text-[20px] font-semibold">Nothing needs you</h2>
+        <h2 className="font-display text-[22px] font-normal">Nothing needs you</h2>
         <p className="mt-2 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
           Albatross is carrying everything that is open. It will ask when it cannot go further on its own.
         </p>
@@ -365,7 +357,7 @@ function EmptyState({ filter }: { filter: ThreadFilter }) {
   if (filter === 'working') {
     return (
       <div className="mx-auto max-w-md py-20 text-center">
-        <h2 className="font-serif text-[20px] font-semibold">No run is in progress</h2>
+        <h2 className="font-display text-[22px] font-normal">No run is in progress</h2>
         <p className="mt-2 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
           Press Handle it in a thread to start one.
         </p>
@@ -375,7 +367,7 @@ function EmptyState({ filter }: { filter: ThreadFilter }) {
   return (
     <div className="mx-auto max-w-md py-20 text-center">
       <AlbatrossMark className="mx-auto mb-4 size-10 text-[var(--color-text-faint)]" />
-      <h2 className="font-serif text-[20px] font-semibold">Nothing on your shoulders yet</h2>
+      <h2 className="font-display text-[22px] font-normal">Nothing on your shoulders yet</h2>
       <p className="mt-2 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
         Tell Albatross what you keep meaning to handle. It works out what you want, finds the context, and
         carries the parts it can.

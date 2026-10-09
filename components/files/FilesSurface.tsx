@@ -38,6 +38,7 @@ import {
   GoogleDocumentEditor,
   type GoogleEditorSource,
 } from '@/components/files/DocumentEditor';
+import { DocumentsWaiting } from '@/components/files/DocumentsWaiting';
 import { FileLocationPicker } from '@/components/files/FileLocationPicker';
 import { OfficeEditor } from '@/components/files/OfficeEditor';
 import { AppleLogo, GoogleLogo, MicrosoftLogo } from '@/components/icons/provider-logos';
@@ -850,7 +851,10 @@ export function FilesSurface() {
         {...({ webkitdirectory: '' } as any)}
       />
 
-      <header className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-content)] p-3 @min-[680px]/files:px-4">
+      <header className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-content)] p-3 @min-[680px]/files:px-4">
+        <h1 className="mr-1 font-display text-[22px] font-normal leading-none tracking-[-0.01em] @max-[479px]/files:sr-only">
+          Documents
+        </h1>
         <label className="relative block min-w-0">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
           <input
@@ -916,6 +920,7 @@ export function FilesSurface() {
       </header>
 
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {search.trim() ? null : <DocumentsWaiting />}
         <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
           <FileLocationPicker
             locations={locations.map((item) => ({

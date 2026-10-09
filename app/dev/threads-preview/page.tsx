@@ -26,7 +26,12 @@ import {
   threadRunFixtures,
 } from '@/lib/albatross/thread-fixtures';
 import { THREAD_LIST_FIXTURE_IDS, threadListFixture } from '@/lib/albatross/thread-list-fixtures';
-import { listThreadGroups, THREAD_FILTER_LABEL, THREAD_FILTERS } from '@/lib/albatross/thread-list-view';
+import {
+  listCountSentence,
+  listThreadGroups,
+  THREAD_FILTER_LABEL,
+  THREAD_FILTERS,
+} from '@/lib/albatross/thread-list-view';
 import { steerNoteMessage } from '@/lib/albatross/thread-notes';
 import { filterThreadRows, type ThreadFilter } from '@/lib/albatross/threads';
 
@@ -265,13 +270,21 @@ function ListScreen({ answer }: { answer: boolean }) {
   );
   return (
     <section className="flex h-full min-h-0 flex-col">
-      <header className="border-b border-[var(--color-border)] px-5 py-3">
+      <header className="px-5 pb-2 pt-8">
         <div className="mx-auto max-w-3xl">
-          <div className="flex items-baseline justify-between gap-3">
-            <h1 className="font-serif text-[17px] font-semibold tracking-tight">Albatrosses</h1>
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <h1 className="font-display text-[34px] font-normal leading-[1.1] tracking-[-0.015em]">
+              Albatrosses
+            </h1>
+            <p className="flex-1 text-[14px] text-[var(--color-text-muted)]">
+              {listCountSentence(
+                groups.find((group) => group.key === 'needs_you')?.rows.length ?? 0,
+                groups.find((group) => group.key === 'working')?.rows.length ?? 0,
+              )}
+            </p>
             <span className="text-[12px] text-[var(--color-text-muted)]">Show finished</span>
           </div>
-          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          <div className="mt-4 flex flex-wrap items-center gap-1.5">
             {THREAD_FILTERS.map((key) => (
               <button
                 key={key}
@@ -290,7 +303,7 @@ function ListScreen({ answer }: { answer: boolean }) {
           </div>
         </div>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-6">
         <div className="mx-auto max-w-3xl">
           {groups.map((group) => (
             <ThreadGroupSection key={group.key} groupKey={group.key}>
@@ -329,7 +342,7 @@ function ListScreen({ answer }: { answer: boolean }) {
           {groups.length === 0 ? (
             <div className="mx-auto max-w-md py-20 text-center">
               <AlbatrossMark className="mx-auto mb-4 size-10 text-[var(--color-text-faint)]" />
-              <p className="font-serif text-[20px] font-semibold">Nothing on your shoulders yet</p>
+              <p className="font-display text-[22px] font-normal">Nothing on your shoulders yet</p>
             </div>
           ) : null}
         </div>

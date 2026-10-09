@@ -49,6 +49,7 @@ export function runActivity(run: RunDoc) {
     nextKind: run.next?.kind ?? null,
     nextLabel: run.next?.label ?? null,
     nextDetail: run.next?.detail ?? null,
+    nextBlanks: run.next?.blanks ?? [],
     allowAnswered: Boolean(run.next?.allowAnswer),
     summary: run.summary ?? null,
     error: run.error ?? null,

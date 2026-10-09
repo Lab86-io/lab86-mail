@@ -2,7 +2,9 @@ import SwiftUI
 
 // One Albatross in the live list (docs/albatross-threads.md, T1 and T2):
 // the status dot, the title with weight as the unread mark, "Status word ·
-// preview", the time, and the area. The Mac rail mounts the same view.
+// preview", the time, and the area. A row with an open handoff that names
+// blanks shows the blank sentence in place of line 2
+// (docs/albatross-blank-design.md). The Mac rail mounts the same view.
 struct ThreadListRowView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let row: ThreadListRow
@@ -20,6 +22,9 @@ struct ThreadListRowView: View {
     }
 
     private var area: String? { showsArea ? row.areaName : nil }
+
+    /// The blanks of an open handoff. None while the rows are stale.
+    private var blanks: [String] { stale ? [] : ThreadRowPresentation.blanks(row) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -40,7 +45,16 @@ struct ThreadListRowView: View {
                             .fixedSize()
                     }
                 }
-                if dynamicTypeSize.isAccessibilitySize {
+                if !blanks.isEmpty {
+                    BlankSentence(blanks: blanks, size: 16)
+                        .padding(.top, 2)
+                    if let area {
+                        Text(area)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                } else if dynamicTypeSize.isAccessibilitySize {
                     Text(line)
                         .font(.caption)
                         .foregroundStyle(.secondary)

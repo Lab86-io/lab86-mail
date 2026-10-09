@@ -92,6 +92,7 @@ export function documentHandoffRunsFixture(now = Date.now()): {
       next: {
         kind: 'review',
         label: 'Check the result',
+        blanks: [],
         doneLabel: null,
         allow: null,
         saveSignIn: null,
@@ -124,6 +125,7 @@ export function documentHandoffRunsFixture(now = Date.now()): {
       next: {
         kind: 'review_document',
         label: 'Fill in hours',
+        blanks: ['hours for each week', 'hourly rate', 'invoice number'],
         doneLabel: null,
         allow: null,
         saveSignIn: null,

@@ -121,13 +121,13 @@ export function ReadyForYou({ className }: { className?: string }) {
   return <ReadyForYouLive className={className} />;
 }
 
-function ReadyForYouLive({ className }: { className?: string }) {
-  const { isAuthenticated } = useConvexAuth();
-  const items = useQuery(api.albatrossStepRuns.openHandoffs, isAuthenticated ? {} : 'skip') as
-    | StepRunHandoffItem[]
-    | undefined;
-  const deps = useMemo(
-    () => ({
+/**
+ * The way a handoff row opens: in place when it opens a file, a page, or a
+ * draft, and the Work page otherwise. The Brief and the Documents page share it.
+ */
+export function useHandoffRowActions() {
+  return useMemo(() => {
+    const deps = {
       getState: () => useClientStore.getState(),
       setState: (patch: Record<string, unknown>) => useClientStore.setState(patch as never),
       callTool: (name: string, args: Record<string, unknown>) => callTool(name, args),
@@ -136,39 +136,44 @@ function ReadyForYouLive({ className }: { className?: string }) {
       },
       pushPath: (path: string) => window.history.pushState(window.history.state, '', path),
       dispatch: (eventName: string) => window.dispatchEvent(new Event(eventName)),
-    }),
-    [],
-  );
+    };
+    const openWork = (workId: string) => openWorkPage(deps, workId);
+    const act = (row: ReadyForYouRow) => {
+      if (!row.action || row.action.behaviour.kind === 'open_work') {
+        openWork(row.workId);
+        return;
+      }
+      void performNextBehaviour(row.action.behaviour, deps, {
+        resume: () => {
+          void fetch(`/api/albatross/work/${encodeURIComponent(row.workId)}/run`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action: 'resume', runId: row.runId }),
+          })
+            .then((response) => response.ok)
+            .catch(() => false)
+            .then((ok) => {
+              if (!ok) openWork(row.workId);
+            });
+        },
+      })
+        .catch(() => false)
+        .then((opened) => {
+          if (!opened) openWork(row.workId);
+        });
+    };
+    return { openWork, act };
+  }, []);
+}
+
+function ReadyForYouLive({ className }: { className?: string }) {
+  const { isAuthenticated } = useConvexAuth();
+  const items = useQuery(api.albatrossStepRuns.openHandoffs, isAuthenticated ? {} : 'skip') as
+    | StepRunHandoffItem[]
+    | undefined;
+  const actions = useHandoffRowActions();
   if (!items?.length) return null;
   return (
-    <ReadyForYouList
-      items={items}
-      className={className}
-      onOpenWork={(workId) => openWorkPage(deps, workId)}
-      onAct={(row) => {
-        if (!row.action || row.action.behaviour.kind === 'open_work') {
-          openWorkPage(deps, row.workId);
-          return;
-        }
-        void performNextBehaviour(row.action.behaviour, deps, {
-          resume: () => {
-            void fetch(`/api/albatross/work/${encodeURIComponent(row.workId)}/run`, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ action: 'resume', runId: row.runId }),
-            })
-              .then((response) => response.ok)
-              .catch(() => false)
-              .then((ok) => {
-                if (!ok) openWorkPage(deps, row.workId);
-              });
-          },
-        })
-          .catch(() => false)
-          .then((opened) => {
-            if (!opened) openWorkPage(deps, row.workId);
-          });
-      }}
-    />
+    <ReadyForYouList items={items} className={className} onOpenWork={actions.openWork} onAct={actions.act} />
   );
 }

@@ -129,6 +129,12 @@ enum DocumentHandoff {
         run?.run.next?.detail?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
     }
 
+    /// The blanks of the handoff, drawn in the "your part" card and bar
+    /// (docs/albatross-blank-design.md). Empty for no handoff.
+    static func blanks(of run: ThreadRunView?) -> [String] {
+        run?.run.next?.blanks ?? []
+    }
+
     /// True when a chat reply ran a tool that writes a document, so the
     /// editor loads the saved document again.
     static func turnEditedDocument(_ message: AssistantChatMessage) -> Bool {

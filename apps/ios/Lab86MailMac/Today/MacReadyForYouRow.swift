@@ -3,7 +3,9 @@ import SwiftUI
 // One "Ready for you" row on the Mac Brief: the text at the left, one button
 // at the trailing edge, a quiet fill under the pointer, and a context menu
 // with the same verbs. A click on the text opens the Work. Design note:
-// docs/research/step-runner-macos-design-2026-10-07.md.
+// docs/research/step-runner-macos-design-2026-10-07.md. A handoff that names
+// blanks shows the blank sentence in place of its line
+// (docs/albatross-blank-design.md).
 
 struct MacReadyForYouRow: View {
     let item: StepHandoffItem
@@ -13,6 +15,12 @@ struct MacReadyForYouRow: View {
     let onDismiss: () -> Void
 
     private var next: StepRunView.Next? { item.run.isHandoff ? item.run.next : nil }
+
+    /// The fields the user fills in, for a handoff that is not at work.
+    private var blanks: [String] { item.run.state.isOpen ? [] : (next?.blanks ?? []) }
+
+    /// The point size of the blank sentence in a Brief row.
+    static let sentenceSize: CGFloat = 16
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
@@ -32,11 +40,16 @@ struct MacReadyForYouRow: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text(StepRunCopy.readyRowLine(item.run))
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if blanks.isEmpty {
+                        Text(StepRunCopy.readyRowLine(item.run))
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        BlankSentence(blanks: blanks, size: Self.sentenceSize)
+                            .padding(.top, 2)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())

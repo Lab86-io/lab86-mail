@@ -81,6 +81,7 @@ describe('the fixture rows', () => {
   test('come through buildThreadRows in the design order: needs you, in progress, then the newest', () => {
     expect(fixture.rows.map((item) => item.status)).toEqual([
       'needs_answer',
+      'ready_for_you',
       'your_turn',
       'did_not_finish',
       'in_progress',
@@ -104,7 +105,7 @@ describe('the rail', () => {
   test('is a landmark with the filter words and live counts', () => {
     expect(doc.querySelector('nav[aria-label="Albatrosses"]')).not.toBeNull();
     const pills = [...doc.querySelectorAll('fieldset button')].map((node) => node.textContent?.trim());
-    expect(pills).toEqual(['All10', 'Needs you3', 'In progress4']);
+    expect(pills).toEqual(['All11', 'Needs you4', 'In progress4']);
     expect(doc.querySelector('fieldset button[aria-pressed="true"]')?.textContent).toContain('All');
   });
 
@@ -222,10 +223,40 @@ describe('a row', () => {
     }
   });
 
-  test('the list variant shows the area and the serif title for a prominent row', () => {
+  test('a row that waits for you in the list draws its blanks and shows its action', () => {
+    const doc = dom(row(byId(ids.invoice), { variant: 'list', prominent: true }));
+    const sentence = doc.querySelector('[data-thread-row-main] [data-blank-sentence]');
+    expect(sentence?.tagName).toBe('SPAN');
+    expect([...doc.querySelectorAll('[data-blank]')].map((node) => node.getAttribute('data-blank'))).toEqual([
+      'hours for each week',
+      'hourly rate',
+      'invoice number',
+    ]);
+    expect(sentence?.querySelector('.sr-only')?.textContent).toBe(
+      'Fill in hours for each week, hourly rate, and invoice number.',
+    );
+    // The action is in view, outside the row's main button, and carries the handoff's own label.
+    const action = doc.querySelector('[data-thread-row-actions] [data-thread-row-action="open"]');
+    expect(action?.textContent).toBe('Fill in hours');
+    expect(action?.closest('[data-thread-row-main]')).toBeNull();
+    expect(doc.querySelector('[data-thread-row-main] .font-serif')).toBeNull();
+  });
+
+  test('a row without blanks shows its next detail in the same display style', () => {
     const doc = dom(row(byId(ids.lisbon), { variant: 'list', prominent: true }));
-    expect(doc.body.textContent).toContain('Travel');
-    expect(doc.querySelector('[data-thread-row-main] .font-serif')).not.toBeNull();
+    expect(doc.querySelector('[data-blank-sentence]')?.textContent).toBe('Which dates work?');
+    expect(doc.querySelector('[data-blank]')).toBeNull();
+    expect(doc.querySelector('[data-thread-row-action="answer"]')?.textContent).toBe('Answer');
+  });
+
+  test('the list says the news without the status word; the rail keeps the word', () => {
+    const list = dom(row(byId(ids.car), { variant: 'list' }));
+    expect(list.querySelector('[data-thread-row-main]')?.textContent).not.toContain('In progress');
+    expect(list.querySelector('[data-thread-row-main]')?.textContent).toContain(
+      "Typed your saved Driver's license",
+    );
+    const rail = dom(row(byId(ids.car)));
+    expect(rail.querySelector('[data-thread-row-main]')?.textContent).toContain('In progress');
   });
 
   test('an in-place panel renders inside the row', () => {
