@@ -628,6 +628,26 @@ describe('Jira issue read', () => {
     });
     expect(linked?.url).toBe('https://beta.atlassian.net/browse/PAY-3');
     expect(read).toEqual(['cloud-2']);
+    // A last slash or another letter case still selects the site of the link.
+    read.length = 0;
+    await readJiraIssue({
+      baseUrl: API,
+      token: 'token-1',
+      key: 'PAY-3',
+      siteUrl: ' https://Beta.atlassian.net// ',
+      fetchFn: mock.fetchFn,
+    });
+    expect(read).toEqual(['cloud-2']);
+    // A site that the sign-in does not reach falls back to every Jira site.
+    read.length = 0;
+    await readJiraIssue({
+      baseUrl: API,
+      token: 'token-1',
+      key: 'PAY-3',
+      siteUrl: 'https://other.atlassian.net',
+      fetchFn: mock.fetchFn,
+    });
+    expect(read).toEqual(['cloud-1', 'cloud-2']);
   });
 
   test('answers null for no issue or a bad key, and keeps the issue when comments fail', async () => {

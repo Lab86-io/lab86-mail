@@ -778,7 +778,9 @@ export async function readJiraIssue(input: {
   const key = input.key.trim().toUpperCase();
   if (!JIRA_KEY.test(key)) return null;
   const all = jiraSites(await listAtlassianSites(baseUrl, token, fetchFn));
-  const wanted = input.siteUrl ? all.filter((site) => siteBase(site) === input.siteUrl) : [];
+  // The same form as `siteBase`, so "https://Acme.atlassian.net/" matches its site.
+  const wantedUrl = input.siteUrl?.trim().replace(/\/+$/u, '').toLowerCase();
+  const wanted = wantedUrl ? all.filter((site) => siteBase(site).toLowerCase() === wantedUrl) : [];
   const sites = wanted.length ? wanted : all;
   const accountId = sites.length ? (await readProfile(baseUrl, token, fetchFn))?.account_id : undefined;
   for (const site of sites) {
