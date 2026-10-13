@@ -1356,6 +1356,14 @@ const MAPPERS: Record<string, Mapper> = {
       asArray(output.items),
       `Slack results for “${clip(str(input.query), 60)}”`,
     ),
+  atlassian_search: (input, output, tool) =>
+    sourcesShape(
+      tool,
+      input,
+      output,
+      asArray(output.items),
+      `Jira and Confluence results for “${clip(str(input.query) || str(input.jql) || str(input.cql), 60)}”`,
+    ),
   mcp_list_items: (input, output, tool) =>
     sourcesShape(
       tool,

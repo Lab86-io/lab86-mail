@@ -27,7 +27,13 @@ import {
   tasksForBrief,
   threadActions,
 } from '../lib/mail/brief-budget-document';
-import { connectedItemReason, connectedItemScore, rankConnectedItems } from '../lib/mail/brief-connected';
+import {
+  connectedBriefItem,
+  connectedItemReason,
+  connectedItemScore,
+  connectedStateCategory,
+  rankConnectedItems,
+} from '../lib/mail/brief-connected';
 import { buildBriefProsePrompt, yesterdayFallback } from '../lib/mail/brief-prose';
 import { lintBriefDocument } from '../lib/shared/brief-document';
 import type {
@@ -236,6 +242,86 @@ describe('connected item ranking', () => {
         mcp('9', { server: 'jira', kind: 'ticket', state: 'In Progress', repository: 'OPS' }),
       ),
     ).toBe('Jira ticket, in progress, OPS');
+  });
+
+  test('a Jira status category decides open and done for a state name of any workflow', () => {
+    const ticket = (state: string, raw: unknown) => ({ server: 'jira', kind: 'ticket', state, raw });
+    expect(connectedStateCategory(ticket('Approved', { statusCategory: 'new' }))).toBe('open');
+    expect(connectedStateCategory(ticket('Reviewing Code', { statusCategory: 'indeterminate' }))).toBe(
+      'open',
+    );
+    expect(connectedStateCategory(ticket('Released', { statusCategory: 'done' }))).toBe('done');
+    expect(connectedStateCategory(ticket('Odd', { statusCategory: 'other' }))).toBeUndefined();
+    expect(connectedStateCategory(ticket('Odd', null))).toBeUndefined();
+    // Only a Jira ticket row keeps a category.
+    expect(
+      connectedStateCategory({ server: 'jira', kind: 'page', raw: { statusCategory: 'done' } }),
+    ).toBeUndefined();
+    expect(
+      connectedStateCategory({ server: 'github', kind: 'ticket', raw: { statusCategory: 'done' } }),
+    ).toBeUndefined();
+
+    const jira = (id: string, extra: Record<string, unknown>) =>
+      mcp(id, { server: 'jira', kind: 'ticket', updatedAt: NOW - 30 * DAY, ...extra });
+    // An index row becomes a brief item with the category of its status.
+    expect(
+      connectedBriefItem({
+        server: 'jira',
+        externalId: 12,
+        kind: 'ticket',
+        title: 'STAT-1: Fix',
+        state: 'Approved',
+        url: 'https://acme.atlassian.net/browse/STAT-1',
+        updatedAtSource: 5,
+        assignedToUser: true,
+        summary: 'x'.repeat(500),
+        raw: { statusCategory: 'new' },
+      }),
+    ).toEqual({
+      server: 'jira',
+      externalId: '12',
+      kind: 'ticket',
+      title: 'STAT-1: Fix',
+      state: 'Approved',
+      author: null,
+      url: 'https://acme.atlassian.net/browse/STAT-1',
+      updatedAt: 5,
+      assignedToUser: true,
+      stateCategory: 'open',
+      repository: null,
+      summary: expect.stringMatching(/^x{1,400}/u),
+    });
+    expect(connectedBriefItem({ server: 'github', kind: 'issue', title: 'T' })).toEqual({
+      server: 'github',
+      externalId: undefined,
+      kind: 'issue',
+      title: 'T',
+      state: null,
+      author: null,
+      url: null,
+      updatedAt: null,
+      assignedToUser: false,
+      stateCategory: undefined,
+      repository: null,
+      summary: null,
+    });
+
+    // "Approved" is open and "Released" is done, though no state list has the names.
+    expect(connectedItemScore(jira('a', { state: 'Approved', stateCategory: 'open' }), NOW)).toBe(1);
+    expect(connectedItemScore(jira('b', { state: 'Released', stateCategory: 'done' }), NOW)).toBe(-2);
+    // The category wins over the state name.
+    expect(connectedItemScore(jira('c', { state: 'Closed', stateCategory: 'open' }), NOW)).toBe(1);
+    expect(connectedItemScore(jira('d', { state: 'Open', stateCategory: 'done' }), NOW)).toBe(-2);
+    expect(connectedItemScore(jira('e', { state: 'Approved' }), NOW)).toBe(0);
+    // An old done ticket leaves the list; an old open ticket stays.
+    const ranked = rankConnectedItems(
+      [
+        jira('done', { state: 'Released', stateCategory: 'done' }),
+        jira('open', { state: 'Approved', stateCategory: 'open' }),
+      ],
+      NOW,
+    );
+    expect(ranked.map((row) => row.externalId)).toEqual(['open']);
   });
 });
 

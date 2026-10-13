@@ -1,14 +1,24 @@
 import { describe, expect, test } from 'bun:test';
 import {
   atlassianDocumentText,
+  CONFLUENCE_QUIET_SITE_LIMIT,
+  CONFLUENCE_RECENT_CQL,
+  CONFLUENCE_SITE_RECENT_CQL,
+  confluenceTextCql,
   JIRA_ASSIGNED_JQL,
   JIRA_CHANGE_PAGE_LIMIT,
   JIRA_HISTORY_JQL,
+  JIRA_QUIET_SITE_LIMIT,
+  JIRA_SITE_RECENT_JQL,
+  JIRA_SITE_WINDOW_JQL,
+  jiraTextJql,
   loadAtlassianChangedIssues,
   loadAtlassianHistoryPage,
   loadAtlassianItems,
   normalizeConfluencePage,
   normalizeJiraIssue,
+  readJiraIssue,
+  searchAtlassianLive,
 } from '../lib/mcp/atlassian';
 
 const API = 'https://api.atlassian.com';
@@ -54,14 +64,40 @@ function atlassianFetch(handler: Handler) {
   return { fetchFn, calls };
 }
 
-function standardHandler(overrides: Partial<Record<'jira' | 'confluence' | 'me', Handler>> = {}): Handler {
+function confluenceResult(id: string, title: string) {
+  return {
+    content: { id, type: 'page', title, _links: { webui: `/spaces/ENG/pages/${id}` } },
+    lastModified: '2026-10-07T09:00:00.000Z',
+    resultGlobalContainer: { title: 'Engineering' },
+  };
+}
+
+/**
+ * The default site is not quiet: many issues changed, and no page changed.
+ * So the sync reads only the items that involve the user. `count` and
+ * `sitePages` make the site quiet.
+ */
+function standardHandler(
+  overrides: Partial<Record<'jira' | 'confluence' | 'me' | 'count' | 'sitePages' | 'sites', Handler>> = {},
+): Handler {
   return (url, init) => {
-    if (url.pathname === '/oauth/token/accessible-resources') return json([site]);
+    if (url.pathname === '/oauth/token/accessible-resources')
+      return overrides.sites?.(url, init) ?? json([site]);
     if (url.pathname === '/me')
       return overrides.me?.(url, init) ?? json({ account_id: 'me-1', email: 'j@acme.test' });
+    if (url.pathname.endsWith('/rest/api/3/search/approximate-count')) {
+      if (overrides.count) return overrides.count(url, init);
+      if (overrides.jira) return overrides.jira(url, init);
+      return json({ count: JIRA_QUIET_SITE_LIMIT + 1 });
+    }
     if (url.pathname.endsWith('/rest/api/3/search/jql')) {
       if (overrides.jira) return overrides.jira(url, init);
       const body = JSON.parse(String(init.body));
+      if (body.jql === JIRA_SITE_RECENT_JQL) {
+        return json({
+          issues: [issue('10', 'PAY-1'), issue('12', 'PAY-3', { assignee: { accountId: 'other-1' } })],
+        });
+      }
       return json({
         issues:
           body.jql === JIRA_ASSIGNED_JQL
@@ -71,6 +107,9 @@ function standardHandler(overrides: Partial<Record<'jira' | 'confluence' | 'me',
     }
     if (url.pathname.endsWith('/wiki/rest/api/search')) {
       if (overrides.confluence) return overrides.confluence(url, init);
+      if (url.searchParams.get('cql') === CONFLUENCE_SITE_RECENT_CQL) {
+        return overrides.sitePages?.(url, init) ?? json({ results: [], totalSize: 0 });
+      }
       return json({
         _links: { base: 'https://acme.atlassian.net/wiki' },
         results: [
@@ -258,6 +297,397 @@ describe('Atlassian sync', () => {
       atlassianFetch(() => new Response('bad', { status: 403 })).fetchFn,
     ).catch((err) => err);
     expect(probe.statusCode).toBe(403);
+  });
+});
+
+describe('Atlassian quiet site', () => {
+  test('adds the newest team changes when few issues changed on the site', async () => {
+    const mock = atlassianFetch(standardHandler({ count: () => json({ count: JIRA_QUIET_SITE_LIMIT }) }));
+    const result = await loadAtlassianItems(API, 'token-1', mock.fetchFn);
+    expect(result.items.map((item) => item.externalId)).toEqual([
+      'jira:cloud-1:10',
+      'jira:cloud-1:11',
+      'jira:cloud-1:12',
+      'confluence:cloud-1:77',
+    ]);
+    // The issue of another person is in the index, but not as the user's own.
+    expect(result.items[2]).toMatchObject({ title: 'PAY-3: Fix PAY-3', assignedToUser: false });
+    expect(result.items[0]?.assignedToUser).toBe(true);
+    const count = mock.calls.find((call) => call.url.pathname.endsWith('/search/approximate-count'));
+    expect(count?.body).toEqual({ jql: JIRA_SITE_WINDOW_JQL });
+    const recent = mock.calls.find((call) => call.body?.jql === JIRA_SITE_RECENT_JQL);
+    expect(recent?.body).toMatchObject({ maxResults: 50 });
+  });
+
+  test('gives a user that no issue names the changes of the team', async () => {
+    const mock = atlassianFetch(
+      standardHandler({
+        count: () => json({ count: 53 }),
+        jira: (_url, init) =>
+          json({
+            issues:
+              JSON.parse(String(init.body)).jql === JIRA_SITE_RECENT_JQL
+                ? [issue('12', 'PAY-3', { assignee: { accountId: 'other-1' } })]
+                : [],
+          }),
+        confluence: () => json({ results: [], totalSize: 0 }),
+      }),
+    );
+    const result = await loadAtlassianItems(API, 'token-1', mock.fetchFn);
+    expect(result.items.map((item) => item.externalId)).toEqual(['jira:cloud-1:12']);
+    expect(result.problems).toEqual([]);
+  });
+
+  test('keeps to the issues of the user on a site with many changes, or with no count', async () => {
+    for (const answer of [{ count: JIRA_QUIET_SITE_LIMIT + 1 }, {}]) {
+      const mock = atlassianFetch(standardHandler({ count: () => json(answer) }));
+      const result = await loadAtlassianItems(API, 'token-1', mock.fetchFn);
+      expect(result.items.map((item) => item.externalId)).not.toContain('jira:cloud-1:12');
+      expect(mock.calls.some((call) => call.body?.jql === JIRA_SITE_RECENT_JQL)).toBe(false);
+    }
+  });
+
+  test('reports a failed count as a problem and keeps the other items', async () => {
+    const result = await loadAtlassianItems(
+      API,
+      'token-1',
+      atlassianFetch(standardHandler({ count: () => new Response('no', { status: 400 }) })).fetchFn,
+    );
+    expect(result.items).toHaveLength(3);
+    expect(result.problems[0]).toContain('Atlassian Jira count on acme failed with HTTP 400');
+  });
+
+  test('adds the newest pages of a quiet Confluence site only', async () => {
+    const pages = (body: unknown) =>
+      loadAtlassianItems(
+        API,
+        'token-1',
+        atlassianFetch(standardHandler({ sitePages: () => json(body) })).fetchFn,
+      ).then((result) => result.items.map((item) => item.externalId));
+    const page = confluenceResult('78', 'Runbook');
+    expect(await pages({ results: [page], totalSize: CONFLUENCE_QUIET_SITE_LIMIT })).toContain(
+      'confluence:cloud-1:78',
+    );
+    expect(await pages({ results: [page], totalSize: CONFLUENCE_QUIET_SITE_LIMIT + 1 })).not.toContain(
+      'confluence:cloud-1:78',
+    );
+    // No total: a short page is the whole answer, a full page can hide more.
+    expect(await pages({ results: [page] })).toContain('confluence:cloud-1:78');
+    const full = Array.from({ length: 25 }, (_, index) => confluenceResult(String(100 + index), `P${index}`));
+    expect(await pages({ results: full })).not.toContain('confluence:cloud-1:100');
+  });
+
+  test('names a site once when Atlassian lists it for each product', async () => {
+    const mock = atlassianFetch(
+      standardHandler({
+        sites: () =>
+          json([
+            { ...site, scopes: ['read:confluence-content.summary', 'search:confluence'] },
+            { ...site, scopes: ['read:jira-user', 'read:jira-work'] },
+          ]),
+      }),
+    );
+    const result = await loadAtlassianItems(API, 'token-1', mock.fetchFn);
+    expect(result.workspaceName).toBe('acme');
+    expect(result.items.map((item) => item.externalId).sort()).toEqual([
+      'confluence:cloud-1:77',
+      'jira:cloud-1:10',
+      'jira:cloud-1:11',
+    ]);
+    // Each product is read through the entry that has its scope.
+    const cqls = mock.calls
+      .filter((call) => call.url.pathname.endsWith('/wiki/rest/api/search'))
+      .map((call) => call.url.searchParams.get('cql'));
+    expect(cqls).toEqual([CONFLUENCE_RECENT_CQL, CONFLUENCE_SITE_RECENT_CQL]);
+  });
+});
+
+describe('Atlassian live search', () => {
+  test('writes JQL and CQL for plain words and for an issue key', () => {
+    expect(jiraTextJql(' pay-12 ')).toBe('key = "PAY-12"');
+    expect(jiraTextJql('refund "late" \\ fee')).toBe(
+      'text ~ "refund \\"late\\" \\\\ fee" ORDER BY updated DESC',
+    );
+    expect(confluenceTextCql('launch plan')).toBe('siteSearch ~ "launch plan" AND type in (page, blogpost)');
+  });
+
+  test('searches both products with plain words and keeps no stored state', async () => {
+    const mock = atlassianFetch(
+      standardHandler({
+        jira: () => json({ issues: [issue('12', 'PAY-3', { assignee: { accountId: 'other-1' } })] }),
+        confluence: () => json({ results: [confluenceResult('78', 'Runbook')], totalSize: 1 }),
+      }),
+    );
+    const found = await searchAtlassianLive({
+      baseUrl: API,
+      token: 'token-1',
+      query: 'refund',
+      limit: 7,
+      fetchFn: mock.fetchFn,
+    });
+    expect(found.items.map((item) => item.externalId)).toEqual(['jira:cloud-1:12', 'confluence:cloud-1:78']);
+    expect(found.sources).toEqual([
+      { site: 'acme', product: 'jira', ok: true },
+      { site: 'acme', product: 'confluence', ok: true },
+    ]);
+    const jira = mock.calls.find((call) => call.url.pathname.endsWith('/search/jql'));
+    expect(jira?.body).toMatchObject({ jql: 'text ~ "refund" ORDER BY updated DESC', maxResults: 7 });
+    const wiki = mock.calls.find((call) => call.url.pathname.endsWith('/wiki/rest/api/search'));
+    expect(wiki?.url.searchParams.get('cql')).toBe('siteSearch ~ "refund" AND type in (page, blogpost)');
+    expect(wiki?.url.searchParams.get('limit')).toBe('7');
+  });
+
+  test('takes a complete JQL or CQL, and one product on request', async () => {
+    const run = async (input: Record<string, unknown>) => {
+      const mock = atlassianFetch(
+        standardHandler({
+          jira: () => json({ issues: [] }),
+          confluence: () => json({ results: [], totalSize: 0 }),
+        }),
+      );
+      const found = await searchAtlassianLive({
+        baseUrl: API,
+        token: 'token-1',
+        limit: 5,
+        fetchFn: mock.fetchFn,
+        ...input,
+      });
+      return {
+        products: found.sources.map((source) => source.product),
+        jql: mock.calls.find((call) => call.url.pathname.endsWith('/search/jql'))?.body?.jql,
+        cql: mock.calls
+          .find((call) => call.url.pathname.endsWith('/wiki/rest/api/search'))
+          ?.url.searchParams.get('cql'),
+        profile: mock.calls.some((call) => call.url.pathname === '/me'),
+      };
+    };
+    expect(await run({ jql: 'project = PAY' })).toEqual({
+      products: ['jira'],
+      jql: 'project = PAY',
+      cql: undefined,
+      profile: true,
+    });
+    expect(await run({ cql: 'space = ENG' })).toEqual({
+      products: ['confluence'],
+      jql: undefined,
+      cql: 'space = ENG',
+      profile: false,
+    });
+    expect((await run({ query: 'x', product: 'jira' })).products).toEqual(['jira']);
+    expect((await run({ query: 'x', product: 'confluence', jql: 'project = PAY' })).products).toEqual([
+      'confluence',
+    ]);
+  });
+
+  test('reports a failed product, skips a missing one, and passes a rejected sign-in', async () => {
+    const search = (overrides: Parameters<typeof standardHandler>[0]) =>
+      searchAtlassianLive({
+        baseUrl: API,
+        token: 'token-1',
+        query: 'x',
+        limit: 5,
+        fetchFn: atlassianFetch(standardHandler(overrides)).fetchFn,
+      });
+    const partial = await search({
+      jira: () => new Response('The JQL is not valid.', { status: 400 }),
+      confluence: () => new Response('gone', { status: 404 }),
+    });
+    expect(partial.items).toEqual([]);
+    expect(partial.sources).toEqual([
+      {
+        site: 'acme',
+        product: 'jira',
+        ok: false,
+        error: 'Atlassian Jira search on acme failed with HTTP 400: The JQL is not valid.',
+      },
+    ]);
+    const rejected = await search({ jira: () => new Response('expired', { status: 401 }) }).catch(
+      (error) => error,
+    );
+    expect(rejected.statusCode).toBe(401);
+  });
+});
+
+describe('Jira issue read', () => {
+  const detail = {
+    key: 'PAY-3',
+    fields: {
+      summary: 'Refund fails',
+      status: { name: 'In Review', statusCategory: { key: 'indeterminate' } },
+      created: '2026-10-01T08:00:00.000+0000',
+      updated: '2026-10-08T12:00:00.000+0000',
+      assignee: { accountId: 'other-1', displayName: 'Jane Roe' },
+      project: { key: 'PAY', name: 'Payments' },
+      issuetype: { name: 'Bug' },
+      priority: { name: 'High' },
+      labels: ['billing'],
+      duedate: '2026-10-20',
+      parent: { key: 'PAY-1', fields: { summary: 'Refunds' } },
+      subtasks: [{ key: 'PAY-4', fields: { summary: 'Add test', status: { name: 'To Do' } } }, {}],
+      description: {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'text', text: 'Card refund fails for ' },
+              { type: 'mention', attrs: { id: 'other-1', text: '@Jane Roe' } },
+            ],
+          },
+        ],
+      },
+    },
+  };
+  const comments = {
+    total: 14,
+    comments: [
+      { created: '2026-10-08T11:00:00.000+0000', author: { accountId: 'me-1' }, body: 'I can take it' },
+      {
+        created: '2026-10-07T10:00:00.000+0000',
+        author: { accountId: 'other-1', displayName: 'Jane Roe' },
+        body: 'Seen on prod',
+      },
+      {
+        created: '2026-10-06T10:00:00.000+0000',
+        author: { accountId: 'other-1' },
+        body: { type: 'doc', content: [] },
+      },
+    ],
+  };
+
+  function issueFetch(overrides: { issue?: Handler; comment?: Handler; sites?: unknown[] } = {}) {
+    return atlassianFetch((url, init) => {
+      if (url.pathname === '/oauth/token/accessible-resources') return json(overrides.sites ?? [site]);
+      if (url.pathname === '/me') return json({ account_id: 'me-1' });
+      if (url.pathname.endsWith('/comment')) return overrides.comment?.(url, init) ?? json(comments);
+      if (url.pathname.includes('/rest/api/3/issue/')) return overrides.issue?.(url, init) ?? json(detail);
+      throw new Error(`unexpected ${url}`);
+    });
+  }
+
+  test('reads the issue and its newest comments with no name of another person', async () => {
+    const mock = issueFetch();
+    const read = await readJiraIssue({ baseUrl: API, token: 'token-1', key: 'pay-3', fetchFn: mock.fetchFn });
+    expect(read).toEqual({
+      site: 'acme',
+      key: 'PAY-3',
+      title: 'Refund fails',
+      url: 'https://acme.atlassian.net/browse/PAY-3',
+      state: 'In Review',
+      statusCategory: 'indeterminate',
+      project: 'Payments',
+      issueType: 'Bug',
+      priority: 'High',
+      hasAssignee: true,
+      assignedToUser: false,
+      labels: ['billing'],
+      due: '2026-10-20',
+      createdAt: Date.parse('2026-10-01T08:00:00.000+0000'),
+      updatedAt: Date.parse('2026-10-08T12:00:00.000+0000'),
+      parent: { key: 'PAY-1', title: 'Refunds' },
+      subtasks: [{ key: 'PAY-4', title: 'Add test', state: 'To Do' }],
+      description: 'Card refund fails for',
+      comments: [
+        { createdAt: Date.parse('2026-10-07T10:00:00.000+0000'), fromUser: false, text: 'Seen on prod' },
+        { createdAt: Date.parse('2026-10-08T11:00:00.000+0000'), fromUser: true, text: 'I can take it' },
+      ],
+      commentTotal: 14,
+    });
+    expect(JSON.stringify(read)).not.toContain('Jane');
+    const issueCall = mock.calls.find((call) => call.url.pathname.endsWith('/issue/PAY-3'));
+    expect(issueCall?.url.searchParams.get('fields')).toContain('subtasks');
+    const commentCall = mock.calls.find((call) => call.url.pathname.endsWith('/comment'));
+    expect(commentCall?.url.search).toBe('?orderBy=-created&maxResults=10');
+  });
+
+  test('tries each Jira site, and the site of a link first', async () => {
+    const second = { ...site, id: 'cloud-2', url: 'https://beta.atlassian.net', name: 'beta' };
+    const read: string[] = [];
+    const mock = issueFetch({
+      sites: [site, second, { ...site, id: 'c3', scopes: ['search:confluence'] }],
+      issue: (url) => {
+        read.push(url.pathname.split('/')[3] || '');
+        return url.pathname.includes('cloud-2') ? json(detail) : new Response('none', { status: 404 });
+      },
+    });
+    const found = await readJiraIssue({
+      baseUrl: API,
+      token: 'token-1',
+      key: 'PAY-3',
+      fetchFn: mock.fetchFn,
+    });
+    expect(found?.site).toBe('beta');
+    expect(read).toEqual(['cloud-1', 'cloud-2']);
+    read.length = 0;
+    const linked = await readJiraIssue({
+      baseUrl: API,
+      token: 'token-1',
+      key: 'PAY-3',
+      siteUrl: 'https://beta.atlassian.net',
+      fetchFn: mock.fetchFn,
+    });
+    expect(linked?.url).toBe('https://beta.atlassian.net/browse/PAY-3');
+    expect(read).toEqual(['cloud-2']);
+    // A last slash or another letter case still selects the site of the link.
+    read.length = 0;
+    await readJiraIssue({
+      baseUrl: API,
+      token: 'token-1',
+      key: 'PAY-3',
+      siteUrl: ' https://Beta.atlassian.net// ',
+      fetchFn: mock.fetchFn,
+    });
+    expect(read).toEqual(['cloud-2']);
+    // A site that the sign-in does not reach falls back to every Jira site.
+    read.length = 0;
+    await readJiraIssue({
+      baseUrl: API,
+      token: 'token-1',
+      key: 'PAY-3',
+      siteUrl: 'https://other.atlassian.net',
+      fetchFn: mock.fetchFn,
+    });
+    expect(read).toEqual(['cloud-1', 'cloud-2']);
+  });
+
+  test('answers null for no issue or a bad key, and keeps the issue when comments fail', async () => {
+    const none = issueFetch({ issue: () => new Response('none', { status: 404 }) });
+    expect(
+      await readJiraIssue({ baseUrl: API, token: 'token-1', key: 'PAY-9', fetchFn: none.fetchFn }),
+    ).toBeNull();
+    expect(
+      await readJiraIssue({ baseUrl: API, token: 'token-1', key: 'not a key', fetchFn: none.fetchFn }),
+    ).toBeNull();
+    expect(none.calls.filter((call) => call.url.pathname.includes('/issue/'))).toHaveLength(1);
+
+    const bare = issueFetch({
+      issue: () => json({ fields: {} }),
+      comment: () => new Response('no', { status: 403 }),
+    });
+    expect(
+      await readJiraIssue({ baseUrl: API, token: 'token-1', key: 'PAY-3', fetchFn: bare.fetchFn }),
+    ).toMatchObject({
+      key: 'PAY-3',
+      title: 'PAY-3',
+      hasAssignee: false,
+      subtasks: [],
+      comments: [],
+      commentTotal: 0,
+      commentsUnavailable: true,
+    });
+
+    const down = issueFetch({ issue: () => new Response('down', { status: 500 }) });
+    await expect(
+      readJiraIssue({ baseUrl: API, token: 'token-1', key: 'PAY-3', fetchFn: down.fetchFn }),
+    ).rejects.toThrow('Atlassian Jira issue read on acme failed with HTTP 500');
+    const expired = issueFetch({ comment: () => new Response('expired', { status: 401 }) });
+    const rejected = await readJiraIssue({
+      baseUrl: API,
+      token: 'token-1',
+      key: 'PAY-3',
+      fetchFn: expired.fetchFn,
+    }).catch((error) => error);
+    expect(rejected.statusCode).toBe(401);
   });
 });
 

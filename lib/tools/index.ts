@@ -48,6 +48,7 @@ import {
   workHome,
   workList,
 } from './areas';
+import { atlassianSearch, jiraReadIssue } from './atlassian';
 import {
   calendarCountEvents,
   calendarCreateEvent,
@@ -218,6 +219,8 @@ const allTools: AnyTool[] = [
   githubSearch,
   slackSearch,
   slackReadThread,
+  atlassianSearch,
+  jiraReadIssue,
   mcpListItems,
   mcpConnectionStatus,
   mcpCreateTask,

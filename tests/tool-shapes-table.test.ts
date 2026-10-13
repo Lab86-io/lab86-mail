@@ -472,6 +472,14 @@ const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
     'sources',
   ],
   [
+    'atlassian_search',
+    { jql: 'project = PAY' },
+    {
+      items: [{ server: 'jira', title: 'PAY-1: Fix refund', url: 'https://acme.atlassian.net/browse/PAY-1' }],
+    },
+    'sources',
+  ],
+  [
     'mcp_list_items',
     { server: 'granola' },
     { items: [{ server: 'granola', title: 'Standup notes', summary: 'Decided x' }] },

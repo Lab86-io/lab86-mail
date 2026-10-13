@@ -61,6 +61,7 @@ import { listSmartRules } from '../store/smart-rules';
 import { insightId, upsertThreadInsight } from '../store/thread-insights';
 import { getThread, upsertThread } from '../store/threads';
 import { listTrackedThreads, updateTrackedThread, upsertTrackedThread } from '../store/tracked-threads';
+import { connectedBriefItem } from './brief-connected';
 import { resolveBriefPlanTier } from './brief-plan';
 import { capCalendarPerDay } from './brief-prose';
 import {
@@ -1478,19 +1479,7 @@ async function loadMcpContext(userId: string | null | undefined): Promise<DailyR
   if (!userId) return [];
   try {
     const rows = await convexQuery<any[]>(api.mcp.listItemsForBrief, { userId, limit: 25 });
-    return (rows || []).map((row) => ({
-      server: row.server,
-      externalId: row.externalId ? String(row.externalId) : undefined,
-      kind: row.kind,
-      title: row.title,
-      state: row.state ?? null,
-      author: row.author ?? null,
-      url: row.url ?? null,
-      updatedAt: row.updatedAtSource ?? null,
-      assignedToUser: Boolean(row.assignedToUser),
-      repository: row.repository ?? null,
-      summary: row.summary ? truncateText(String(row.summary), 400) : null,
-    }));
+    return (rows || []).map(connectedBriefItem);
   } catch {
     return [];
   }

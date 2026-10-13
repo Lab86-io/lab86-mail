@@ -153,6 +153,10 @@ export const TOOL_GROUPS = {
     label: 'Slack live search and thread reads across every connected Slack workspace',
     tools: ['slack_search', 'slack_read_thread'],
   },
+  atlassian: {
+    label: 'Jira and Confluence live search and Jira issue reads across every connected Atlassian site',
+    tools: ['atlassian_search', 'jira_read_issue'],
+  },
   ui_extras: {
     label: 'Web app toast notices and mailbox account switch',
     tools: ['ui_toast', 'ui_switch_account'],
