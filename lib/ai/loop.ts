@@ -239,6 +239,8 @@ export const AGENT_TOOL_NAMES = new Set([
   'github_search',
   'slack_search',
   'slack_read_thread',
+  'atlassian_search',
+  'jira_read_issue',
   'mcp_list_items',
   'mcp_create_task',
   'contact_lookup',

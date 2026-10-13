@@ -542,6 +542,11 @@ export interface DailyReportMcpItem {
   updatedAt?: number | null;
   // Relevance inputs (brief round 2026-09-22).
   assignedToUser?: boolean;
+  /**
+   * Open or done, when the source says so apart from the state name. A Jira
+   * workflow can name its states freely ("Approved", "Released").
+   */
+  stateCategory?: 'open' | 'done';
   repository?: string | null;
   summary?: string | null;
 }

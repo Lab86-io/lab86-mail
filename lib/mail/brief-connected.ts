@@ -1,4 +1,5 @@
 import { mcpItemName } from '../mcp/connection-display';
+import { truncateText } from '../shared/text';
 import type { DailyReportMcpItem } from '../shared/types';
 
 // Relevance ranking for connected-tool items in the Daily Brief (brief round
@@ -23,12 +24,48 @@ const OPEN_STATES = new Set([
 ]);
 const CLOSED_STATES = new Set(['closed', 'merged', 'done', 'resolved', 'cancelled', 'canceled', 'archived']);
 
+/**
+ * The category that a Jira ticket row keeps with its status: "done", or one
+ * of the open categories ("new", "indeterminate"). Other rows have none.
+ */
+export function connectedStateCategory(row: {
+  server?: unknown;
+  kind?: unknown;
+  raw?: unknown;
+}): DailyReportMcpItem['stateCategory'] {
+  if (row.server !== 'jira' || row.kind !== 'ticket') return undefined;
+  const category = (row.raw as { statusCategory?: unknown } | null | undefined)?.statusCategory;
+  if (category === 'done') return 'done';
+  return category === 'new' || category === 'indeterminate' ? 'open' : undefined;
+}
+
+/** A row of the connected-tool index as an item of the Daily Brief. */
+export function connectedBriefItem(row: any): DailyReportMcpItem {
+  return {
+    server: row.server,
+    externalId: row.externalId ? String(row.externalId) : undefined,
+    kind: row.kind,
+    title: row.title,
+    state: row.state ?? null,
+    author: row.author ?? null,
+    url: row.url ?? null,
+    updatedAt: row.updatedAtSource ?? null,
+    assignedToUser: Boolean(row.assignedToUser),
+    stateCategory: connectedStateCategory(row),
+    repository: row.repository ?? null,
+    summary: row.summary ? truncateText(String(row.summary), 400) : null,
+  };
+}
+
 export function connectedItemScore(item: DailyReportMcpItem, now: number): number {
   let score = 0;
   if (item.assignedToUser) score += 3;
   const state = String(item.state || '').toLowerCase();
-  if (OPEN_STATES.has(state)) score += 1;
-  if (CLOSED_STATES.has(state)) score -= 2;
+  // The category of the source decides before the state name does.
+  const open = item.stateCategory ? item.stateCategory === 'open' : OPEN_STATES.has(state);
+  const closed = item.stateCategory ? item.stateCategory === 'done' : CLOSED_STATES.has(state);
+  if (open) score += 1;
+  if (closed) score -= 2;
   if (typeof item.updatedAt === 'number' && now - item.updatedAt <= RECENT_WINDOW_MS) score += 2;
   if (item.kind === 'pull_request' && (state === 'review_requested' || state === 'changes_requested')) {
     score += 2;

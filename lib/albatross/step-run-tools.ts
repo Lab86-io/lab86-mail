@@ -91,6 +91,8 @@ export const RUNNER_REGISTRY_TOOLS = [
   'github_search',
   'slack_search',
   'slack_read_thread',
+  'atlassian_search',
+  'jira_read_issue',
   'narrative_search',
   'narrative_read',
 ] as const;

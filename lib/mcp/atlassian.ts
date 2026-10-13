@@ -34,6 +34,22 @@ export const JIRA_HISTORY_JQL =
 export const JIRA_CHANGE_PAGE_LIMIT = 10;
 export const CONFLUENCE_RECENT_CQL =
   'type = page AND (contributor = currentUser() OR mention = currentUser()) AND lastmodified >= now("-30d") ORDER BY lastmodified DESC';
+/** Every issue that changed on the site in the last two weeks. */
+export const JIRA_SITE_WINDOW_JQL = 'updated >= -14d';
+export const JIRA_SITE_RECENT_JQL = `${JIRA_SITE_WINDOW_JQL} ORDER BY updated DESC`;
+/**
+ * A Jira site is quiet when at most this many issues changed in two weeks.
+ * On a quiet site (a small team), each change is relevant to the user, so the
+ * newest changes also go in the index. On a larger site, the index keeps to
+ * the issues that involve the user, and the live search reaches the rest.
+ */
+export const JIRA_QUIET_SITE_LIMIT = 300;
+/** Every page that changed on the site in the last 30 days. */
+export const CONFLUENCE_SITE_RECENT_CQL =
+  'type = page AND lastmodified >= now("-30d") ORDER BY lastmodified DESC';
+/** A Confluence site is quiet when at most this many pages changed in 30 days. */
+export const CONFLUENCE_QUIET_SITE_LIMIT = 100;
+const CONFLUENCE_PAGE_SIZE = 25;
 
 export interface AtlassianSite {
   id: string;
@@ -80,6 +96,7 @@ interface ConfluenceSearchResult {
 
 interface ConfluenceSearchPage {
   results?: ConfluenceSearchResult[];
+  totalSize?: number;
   _links?: { base?: string };
 }
 
@@ -310,26 +327,66 @@ export async function searchJiraIssues(input: {
   });
 }
 
+/** The number of issues that match a JQL, or infinity when Jira gives no count. */
+async function countJiraIssues(input: {
+  baseUrl: string;
+  token: string;
+  site: AtlassianSite;
+  jql: string;
+  fetchFn: typeof fetch;
+}): Promise<number> {
+  const body = await atlassianJson<{ count?: number }>({
+    url: `${apiBase(input.baseUrl)}/ex/jira/${encodeURIComponent(input.site.id)}/rest/api/3/search/approximate-count`,
+    token: input.token,
+    operation: `Jira count on ${input.site.name}`,
+    body: { jql: input.jql },
+    fetchFn: input.fetchFn,
+  });
+  return typeof body?.count === 'number' ? body.count : Number.POSITIVE_INFINITY;
+}
+
+function normalizeJiraPage(
+  page: JiraSearchPage,
+  site: AtlassianSite,
+  options: { assigned?: boolean; accountId?: string },
+): NormalizedMcpItem[] {
+  return (page.issues || [])
+    .map((issue) => normalizeJiraIssue(issue, site, options))
+    .filter((item): item is NormalizedMcpItem => Boolean(item));
+}
+
 async function searchConfluencePages(input: {
   baseUrl: string;
   token: string;
   site: AtlassianSite;
+  cql: string;
+  limit?: number;
   fetchFn: typeof fetch;
-}): Promise<NormalizedMcpItem[]> {
+}): Promise<{ items: NormalizedMcpItem[]; total: number }> {
+  const limit = input.limit ?? CONFLUENCE_PAGE_SIZE;
   const url = new URL(
     `${apiBase(input.baseUrl)}/ex/confluence/${encodeURIComponent(input.site.id)}/wiki/rest/api/search`,
   );
-  url.searchParams.set('cql', CONFLUENCE_RECENT_CQL);
-  url.searchParams.set('limit', '25');
+  url.searchParams.set('cql', input.cql);
+  url.searchParams.set('limit', String(limit));
   const page = await atlassianJson<ConfluenceSearchPage>({
     url: url.toString(),
     token: input.token,
     operation: `Confluence search on ${input.site.name}`,
     fetchFn: input.fetchFn,
   });
-  return (page.results || [])
+  const results = page.results || [];
+  const items = results
     .map((result) => normalizeConfluencePage(result, input.site, page._links?.base))
     .filter((item): item is NormalizedMcpItem => Boolean(item));
+  // A full page with no total can hide more pages, so it counts as not quiet.
+  const total =
+    typeof page.totalSize === 'number'
+      ? page.totalSize
+      : results.length < limit
+        ? results.length
+        : Number.POSITIVE_INFINITY;
+  return { items, total };
 }
 
 function isAuthFailure(error: unknown) {
@@ -397,16 +454,40 @@ export async function loadAtlassianItems(
       ]) {
         await run(async () => {
           const page = await searchJiraIssues({ baseUrl, token, site, ...query, fetchFn });
-          return (page.issues || [])
-            .map((issue) =>
-              normalizeJiraIssue(issue, site, { assigned: query.assigned, accountId: me?.account_id }),
-            )
-            .filter((item): item is NormalizedMcpItem => Boolean(item));
+          return normalizeJiraPage(page, site, { assigned: query.assigned, accountId: me?.account_id });
         });
       }
+      // A quiet site: the newest changes of the team also go in the index.
+      // Without them, a user that no issue names gets an empty index.
+      await run(async () => {
+        const changed = await countJiraIssues({ baseUrl, token, site, jql: JIRA_SITE_WINDOW_JQL, fetchFn });
+        if (changed > JIRA_QUIET_SITE_LIMIT) return [];
+        const page = await searchJiraIssues({
+          baseUrl,
+          token,
+          site,
+          jql: JIRA_SITE_RECENT_JQL,
+          maxResults: 50,
+          fetchFn,
+        });
+        return normalizeJiraPage(page, site, { accountId: me?.account_id });
+      });
     }
     if (hasScope(site, 'search:confluence')) {
-      await run(() => searchConfluencePages({ baseUrl, token, site, fetchFn }));
+      await run(
+        async () =>
+          (await searchConfluencePages({ baseUrl, token, site, cql: CONFLUENCE_RECENT_CQL, fetchFn })).items,
+      );
+      await run(async () => {
+        const recent = await searchConfluencePages({
+          baseUrl,
+          token,
+          site,
+          cql: CONFLUENCE_SITE_RECENT_CQL,
+          fetchFn,
+        });
+        return recent.total > CONFLUENCE_QUIET_SITE_LIMIT ? [] : recent.items;
+      });
     }
   }
   if (attempted > 0 && succeeded === 0 && firstError) throw firstError;
@@ -415,7 +496,8 @@ export async function loadAtlassianItems(
     items: dedupe(items),
     problems,
     accountEmail: me?.email?.trim() || undefined,
-    workspaceName: sites.map((site) => site.name).join(', '),
+    // Atlassian lists a site once for each product, so a name can repeat.
+    workspaceName: [...new Set(sites.map((site) => site.name))].join(', '),
   };
 }
 
@@ -446,9 +528,7 @@ export async function loadAtlassianHistoryPage(
     nextPageToken: position.token,
     fetchFn,
   });
-  const items = (page.issues || [])
-    .map((issue) => normalizeJiraIssue(issue, site, { accountId }))
-    .filter((item): item is NormalizedMcpItem => Boolean(item));
+  const items = normalizeJiraPage(page, site, { accountId });
   // A repeated token would walk the same page forever. The error keeps the
   // saved cursor, so the next pass tries the same page again.
   if (page.nextPageToken && page.isLast !== true && page.nextPageToken === position.token) {
@@ -529,4 +609,245 @@ export async function loadAtlassianChangedIssues(
     }
   }
   return { items: dedupe(items), ...(resumeAt !== undefined ? { resumeAt } : {}) };
+}
+
+// --- Live reads for the assistant. Nothing here is stored. ---
+
+const JIRA_KEY = /^[A-Za-z][A-Za-z0-9_]*-\d+$/u;
+const JIRA_ISSUE_FIELDS = [...JIRA_FIELDS, 'created', 'labels', 'duedate', 'parent', 'subtasks'];
+const JIRA_COMMENT_LIMIT = 10;
+
+function quoted(value: string) {
+  return `"${value.trim().replace(/\\/gu, '\\\\').replace(/"/gu, '\\"')}"`;
+}
+
+/** The JQL for plain words: one issue for an issue key, else a text match. */
+export function jiraTextJql(query: string): string {
+  const text = query.trim();
+  if (JIRA_KEY.test(text)) return `key = ${quoted(text.toUpperCase())}`;
+  return `text ~ ${quoted(text)} ORDER BY updated DESC`;
+}
+
+/** The CQL for plain words, over pages and blog posts. */
+export function confluenceTextCql(query: string): string {
+  return `siteSearch ~ ${quoted(query)} AND type in (page, blogpost)`;
+}
+
+export interface AtlassianLiveSource {
+  site: string;
+  product: 'jira' | 'confluence';
+  ok: boolean;
+  error?: string;
+}
+
+export interface AtlassianLiveSearch {
+  items: NormalizedMcpItem[];
+  /** One entry for each site product that the search read. */
+  sources: AtlassianLiveSource[];
+}
+
+/**
+ * A live search of every Jira issue and Confluence page that the user can
+ * see. `jql` and `cql` are complete queries; `query` is plain words for both
+ * products.
+ */
+export async function searchAtlassianLive(input: {
+  baseUrl: string;
+  token: string;
+  query?: string;
+  jql?: string;
+  cql?: string;
+  product?: 'jira' | 'confluence';
+  limit: number;
+  fetchFn?: typeof fetch;
+}): Promise<AtlassianLiveSearch> {
+  const { baseUrl, token } = input;
+  const fetchFn = input.fetchFn || fetch;
+  const text = input.query?.trim();
+  const jql = input.product === 'confluence' ? '' : input.jql?.trim() || (text ? jiraTextJql(text) : '');
+  const cql = input.product === 'jira' ? '' : input.cql?.trim() || (text ? confluenceTextCql(text) : '');
+  const sites = await listAtlassianSites(baseUrl, token, fetchFn);
+  const accountId = jql ? (await readProfile(baseUrl, token, fetchFn))?.account_id : undefined;
+
+  const items: NormalizedMcpItem[] = [];
+  const sources: AtlassianLiveSource[] = [];
+  const read = async (
+    site: AtlassianSite,
+    product: AtlassianLiveSource['product'],
+    task: () => Promise<NormalizedMcpItem[]>,
+  ) => {
+    try {
+      items.push(...(await task()));
+      sources.push({ site: site.name, product, ok: true });
+    } catch (error) {
+      if (isAuthFailure(error)) throw error;
+      // A site without the product is not a failed search.
+      if (isMissingProduct(error)) return;
+      sources.push({
+        site: site.name,
+        product,
+        ok: false,
+        error: truncateText(String((error as Error)?.message || 'Atlassian search failed'), 300),
+      });
+    }
+  };
+  for (const site of sites) {
+    if (jql && hasScope(site, 'read:jira-work')) {
+      await read(site, 'jira', async () =>
+        normalizeJiraPage(
+          await searchJiraIssues({ baseUrl, token, site, jql, maxResults: input.limit, fetchFn }),
+          site,
+          { accountId },
+        ),
+      );
+    }
+    if (cql && hasScope(site, 'search:confluence')) {
+      await read(
+        site,
+        'confluence',
+        async () =>
+          (await searchConfluencePages({ baseUrl, token, site, cql, limit: input.limit, fetchFn })).items,
+      );
+    }
+  }
+  return { items: dedupe(items), sources };
+}
+
+interface JiraIssueDetailFields {
+  summary?: string;
+  status?: { name?: string; statusCategory?: { key?: string } };
+  updated?: string;
+  created?: string;
+  assignee?: { accountId?: string } | null;
+  project?: { key?: string; name?: string };
+  issuetype?: { name?: string };
+  priority?: { name?: string } | null;
+  description?: unknown;
+  labels?: string[];
+  duedate?: string | null;
+  parent?: { key?: string; fields?: { summary?: string } };
+  subtasks?: Array<{ key?: string; fields?: { summary?: string; status?: { name?: string } } }>;
+}
+
+interface JiraCommentPage {
+  total?: number;
+  comments?: Array<{ created?: string; author?: { accountId?: string }; body?: unknown }>;
+}
+
+export interface JiraIssueDetail {
+  site: string;
+  key: string;
+  title: string;
+  url: string;
+  state?: string;
+  statusCategory?: string;
+  project?: string;
+  issueType?: string;
+  priority?: string;
+  /** An issue can have an assignee that is not the user. No name is read. */
+  hasAssignee: boolean;
+  assignedToUser: boolean;
+  labels: string[];
+  due?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  parent?: { key: string; title?: string };
+  subtasks: Array<{ key: string; title?: string; state?: string }>;
+  description: string;
+  /** The newest comments, oldest first. `fromUser` marks the user's own. */
+  comments: Array<{ createdAt?: number; fromUser: boolean; text: string }>;
+  commentTotal: number;
+  /** The comments did not load; the rest of the issue did. */
+  commentsUnavailable?: boolean;
+}
+
+/**
+ * One Jira issue with its description and newest comments, live. Returns null
+ * when no connected site has the issue. No name of another person is read.
+ */
+export async function readJiraIssue(input: {
+  baseUrl: string;
+  token: string;
+  key: string;
+  /** The site of an issue link, to read that site first. */
+  siteUrl?: string;
+  fetchFn?: typeof fetch;
+}): Promise<JiraIssueDetail | null> {
+  const { baseUrl, token } = input;
+  const fetchFn = input.fetchFn || fetch;
+  const key = input.key.trim().toUpperCase();
+  if (!JIRA_KEY.test(key)) return null;
+  const all = jiraSites(await listAtlassianSites(baseUrl, token, fetchFn));
+  const wanted = input.siteUrl ? all.filter((site) => siteBase(site) === input.siteUrl) : [];
+  const sites = wanted.length ? wanted : all;
+  const accountId = sites.length ? (await readProfile(baseUrl, token, fetchFn))?.account_id : undefined;
+  for (const site of sites) {
+    const issueUrl = `${apiBase(baseUrl)}/ex/jira/${encodeURIComponent(site.id)}/rest/api/3/issue/${encodeURIComponent(key)}`;
+    let issue: { key?: string; fields?: JiraIssueDetailFields };
+    try {
+      issue = await atlassianJson({
+        url: `${issueUrl}?fields=${JIRA_ISSUE_FIELDS.join(',')}`,
+        token,
+        operation: `Jira issue read on ${site.name}`,
+        fetchFn,
+      });
+    } catch (error) {
+      // This site does not have the issue: try the next site.
+      if (isMissingProduct(error)) continue;
+      throw error;
+    }
+    const fields = issue.fields || {};
+    const comments = await atlassianJson<JiraCommentPage>({
+      url: `${issueUrl}/comment?orderBy=-created&maxResults=${JIRA_COMMENT_LIMIT}`,
+      token,
+      operation: `Jira comment read on ${site.name}`,
+      fetchFn,
+    }).catch((error) => {
+      if (isAuthFailure(error)) throw error;
+      return null;
+    });
+    const issueKey = issue.key?.trim() || key;
+    return {
+      site: site.name,
+      key: issueKey,
+      title: fields.summary?.trim() || issueKey,
+      url: `${siteBase(site)}/browse/${issueKey}`,
+      state: fields.status?.name?.trim() || undefined,
+      statusCategory: fields.status?.statusCategory?.key,
+      project: fields.project?.name?.trim() || fields.project?.key?.trim() || undefined,
+      issueType: fields.issuetype?.name?.trim() || undefined,
+      priority: fields.priority?.name?.trim() || undefined,
+      hasAssignee: Boolean(fields.assignee?.accountId),
+      assignedToUser: Boolean(accountId && fields.assignee?.accountId === accountId),
+      labels: (fields.labels || []).filter((label) => typeof label === 'string'),
+      due: fields.duedate || undefined,
+      createdAt: parseTimestamp(fields.created),
+      updatedAt: parseTimestamp(fields.updated),
+      ...(fields.parent?.key
+        ? { parent: { key: fields.parent.key, title: fields.parent.fields?.summary?.trim() || undefined } }
+        : {}),
+      subtasks: (fields.subtasks || [])
+        .filter(
+          (subtask): subtask is { key: string; fields?: { summary?: string; status?: { name?: string } } } =>
+            Boolean(subtask?.key),
+        )
+        .map((subtask) => ({
+          key: subtask.key,
+          title: subtask.fields?.summary?.trim() || undefined,
+          state: subtask.fields?.status?.name?.trim() || undefined,
+        })),
+      description: atlassianDocumentText(fields.description, 6_000),
+      comments: (comments?.comments || [])
+        .map((comment) => ({
+          createdAt: parseTimestamp(comment.created),
+          fromUser: Boolean(accountId && comment.author?.accountId === accountId),
+          text: atlassianDocumentText(comment.body, 1_500),
+        }))
+        .filter((comment) => comment.text)
+        .reverse(),
+      commentTotal: typeof comments?.total === 'number' ? comments.total : 0,
+      ...(comments ? {} : { commentsUnavailable: true }),
+    };
+  }
+  return null;
 }
