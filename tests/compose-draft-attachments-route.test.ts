@@ -57,6 +57,9 @@ function deps(list: DraftAttachment[] = [invoice, sealed]) {
     getPref: async () => '10',
     writeAudit: mock(async (): Promise<any> => undefined),
     checkDraftAttachments: mock(async () => list),
+    sendTokenValid: mock(
+      async (_user: string, token: string, sendKey: string) => token === 'tok' && sendKey === key,
+    ),
     resolveDraftAttachments: mock(
       async (_user: string, _list: readonly DraftAttachment[], options: { hold?: boolean }) =>
         options.hold
@@ -120,7 +123,7 @@ describe('compose with draft attachments', () => {
     expect(d.sendPrepared).not.toHaveBeenCalled();
   });
 
-  test('a send without a grant gets 409 with the items and sites to add', async () => {
+  test('a send without a send grant gets 409 with the send id, the domains, and the items', async () => {
     const d = deps();
     d.resolveDraftAttachments.mockImplementation(async () => {
       throw new SealedFileNeedsAllow([
@@ -128,7 +131,7 @@ describe('compose with draft attachments', () => {
           itemId: 'si_x',
           itemLabel: 'Social Security number',
           fieldLabels: ['Number'],
-          sites: ['example.com'],
+          domains: ['example.com'],
         },
       ]);
     });
@@ -138,13 +141,16 @@ describe('compose with draft attachments', () => {
       ok: false,
       code: 'needs_allow',
       error:
-        'This file has your saved Social Security number. Before it goes to example.com, add that site to the item in Passwords and IDs.',
+        'This file has your saved Social Security number. Before it goes in mail to example.com, allow it for this send or for all mail to that domain.',
+      grant: 'send',
+      sendId: key,
+      domains: ['example.com'],
       allow: [
         {
           itemId: 'si_x',
           itemLabel: 'Social Security number',
           fieldLabels: ['Number'],
-          sites: ['example.com'],
+          domains: ['example.com'],
         },
       ],
     });
@@ -153,6 +159,29 @@ describe('compose with draft attachments', () => {
       throw new SealedFileError('not_found', 'This file is not in Files any more.');
     });
     expect((await createComposePost(d)(request())).status).toBe(404);
+  });
+
+  test('the retry with allowToken passes the send key; a wrong or ended token stops the send', async () => {
+    const d = deps();
+    expect((await createComposePost(d)(request({ allowToken: 'tok' }))).status).toBe(200);
+    expect(d.sendTokenValid).toHaveBeenCalledWith('owner', 'tok', key);
+    expect((d.resolveDraftAttachments.mock.calls[0][2] as unknown as { sendKey?: string }).sendKey).toBe(key);
+    const ended = deps();
+    const res = await createComposePost(ended)(request({ allowToken: 'old' }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      ok: false,
+      code: 'allow_ended',
+      error: 'This permission ended. Allow the send again.',
+    });
+    expect(ended.resolveDraftAttachments).not.toHaveBeenCalled();
+    // Without a token, no send key: only "Always for mail to" grants count.
+    const plain = deps();
+    await createComposePost(plain)(request());
+    expect(
+      (plain.resolveDraftAttachments.mock.calls[0][2] as unknown as { sendKey?: string }).sendKey,
+    ).toBeUndefined();
+    expect(plain.sendTokenValid).not.toHaveBeenCalled();
   });
 
   test('bad JSON, a file that is not the user’s, and no draft files at all', async () => {
@@ -228,7 +257,7 @@ describe('the outbox fills held files at dispatch', () => {
           itemId: 'si_x',
           itemLabel: 'Social Security number',
           fieldLabels: ['Number'],
-          sites: ['example.com'],
+          domains: ['example.com'],
         },
       ]);
     });

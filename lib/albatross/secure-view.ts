@@ -328,6 +328,10 @@ export function secureUseLine(
       return `You allowed it on ${site} for one run`;
     case 'allowed_always':
       return `You allowed it on ${site} from now on`;
+    case 'allowed_send_once':
+      return `You allowed it in mail to ${site} for one send`;
+    case 'allowed_send_always':
+      return `You allowed it in mail to ${site} from now on`;
     case 'denied':
       return `You did not allow it on ${site}`;
   }
@@ -337,6 +341,11 @@ export function secureUseTone(outcome: SecureUseOutcome): SecureUseTone {
   if (outcome === 'typed' || outcome === 'sent' || outcome === 'downloaded') return 'did';
   if (outcome === 'refused_site') return 'warn';
   return 'quiet';
+}
+
+/** One "Always for mail to" grant of an item, for its detail in Settings: "Mail to statpearls.com". */
+export function mailDomainLine(domain: string): string {
+  return `Mail to ${domain}`;
 }
 
 /** "Today, 9:12 AM" or "Oct 2, 4:30 PM". */

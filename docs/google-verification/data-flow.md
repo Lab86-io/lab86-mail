@@ -220,8 +220,10 @@ content has no second, app-level encryption.
   number or a date of birth. It checks the reference against the item list, which holds no value,
   and leaves that field empty in the stored PDF. The file keeps the reference only
   (`agentUploads.sealedFields`). The Next server fills the value in memory at one of two moments:
-  a mail send to recipient domains that the item is saved for, or a download after a Clerk
-  first-factor check in the last 10 minutes (`lib/files/materialize.ts`,
+  a mail send to recipient domains that have a send grant for the item ("Allow for this send",
+  one time, or "Always for mail to <domain>"; both need a Clerk first-factor check in the last 10
+  minutes, and a send grant never lets a run type the value on a website), or a download after
+  the same check (`lib/files/materialize.ts`,
   `GET /api/files/saved/[fileId]`). The filled bytes go to Nylas or Gmail, or to the user's
   browser. They are not stored, not logged, and not given to a model. A send that waits for Undo
   stores the file reference, not the filled file. A password or an API key never goes into a

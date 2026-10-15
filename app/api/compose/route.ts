@@ -15,6 +15,7 @@ import { resolveComposeFrom, SendAsUnavailableError } from '@/lib/mail/send-as';
 import { withAccountSignature } from '@/lib/mail/signature';
 import { sendNylasMessage } from '@/lib/nylas/provider';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { sendTokenValid } from '@/lib/secure/send-grants';
 import { errorAnswerMessage } from '@/lib/security/error-answer';
 import {
   buildForwardMessagePayload,
@@ -57,6 +58,7 @@ const defaults = {
   enforceUserRateLimit,
   checkDraftAttachments,
   resolveDraftAttachments,
+  sendTokenValid,
   enqueueOutbox,
   getPref,
   writeAudit,
@@ -153,6 +155,13 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
       const draftAttachments: DraftAttachment[] = draftInputs.length
         ? await deps.checkDraftAttachments(user.userId, draftInputs)
         : [];
+      // "Allow for this send": the token from POST /api/secure-details/allow-send,
+      // for this send key (pendingId) only. Without a valid token, only
+      // "Always for mail to" grants count.
+      const allowToken = String(form.get('allowToken') || '').trim();
+      if (allowToken && !(await deps.sendTokenValid(user.userId, allowToken, pendingId)))
+        throw new SealedFileError('allow_ended', 'This permission ended. Allow the send again.');
+      const sendKey = allowToken ? pendingId : undefined;
       // A scheduled send waits outside Albatross (Nylas, or the outbox for a
       // Google mailbox) for days. A saved detail never waits there.
       if (sendAt && hasSealedAttachment(draftAttachments))
@@ -222,6 +231,7 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
             recipients: [prepared.to, prepared.cc, prepared.bcc],
             hold,
             usedBytes: total,
+            ...(sendKey ? { sendKey } : {}),
           }),
         );
         return {
@@ -310,15 +320,19 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
       });
     } catch (err: any) {
       if (err instanceof RateLimitError) return rateLimitJson(err);
-      // A file with saved details: the item must be saved for each recipient
-      // domain first. `allow` names the items and the sites to add.
+      // A file with saved details needs a send grant for each recipient
+      // domain first. `allow` names the items, their fields, and the domains;
+      // the client asks POST /api/secure-details/allow-send, then sends again.
       if (err instanceof SealedFileError)
         return NextResponse.json(
           {
             ok: false,
             code: err.code,
             error: err.message,
-            ...(err instanceof SealedFileNeedsAllow ? { allow: err.needs } : {}),
+            // The send key to allow, and to send again with: the same pendingId.
+            ...(err instanceof SealedFileNeedsAllow
+              ? { grant: err.grant, sendId: pendingId, domains: err.domains, allow: err.needs }
+              : {}),
           },
           { status: err.code === 'not_found' ? 404 : 409 },
         );

@@ -90,6 +90,8 @@ they hold only ciphertext.
 | `secureItems` (`convex/schema.ts`, `convex/secureDetails.ts`) | Sign-ins, ID numbers, date of birth, API keys, envelope-encrypted under the secure key; label, sites, masked hints, plain facts | Until the user deletes the item (Settings, Passwords and IDs) or the account. A replaced value is overwritten at once; there is no Undo copy | No (not mailbox data) | No | Yes (`USER_INLINE_TABLES`) |
 | `secureGrants` | "Allow once": item, site, Work step, end time. No value | Two hours at most; the prune cron deletes ended grants every 6 hours. A new value or fewer sites delete the item's grants at once | No | No | Yes (`USER_INLINE_TABLES`) |
 | `secureUses` | Use history: item, field name, site, host, run, outcome, time. No value | 90 days (`convex/secureDetails.ts prune`, every 6 hours). Deleting the item deletes its history | No | No | Yes (`USER_BULK_TABLES`) |
+| `secureSendGrants` (`convex/secureDetails.ts`) | "Allow for this send": item, mail domain, send key, the SHA-256 of a single-use token, end time. No value | 30 minutes at most and one use; the prune cron deletes ended grants every 6 hours. A new value or a deleted item deletes them at once | No | No | Yes (`USER_INLINE_TABLES`; the export removes `tokenHash`) |
+| `secureItems.mailDomains` | "Always for mail to <domain>": mail domains that a filled PDF with the item may go to. No value | Until the user removes the domain, deletes the item, or deletes the account | No | No | Yes (with `secureItems`) |
 | `agentUploads.sealedFields` (`convex/schema.ts`, `lib/files/sealed-fields.ts`) | For a filled PDF form: the field names that take a saved ID number or date of birth, each with a reference `{{secure:<itemId>.<field>}}`. No value: these fields are empty in the stored PDF | With the saved file: until the user deletes the file or the account | No | No | Yes (with `agentUploads`) |
 
 "Export my data" lists each item in `data/secure-items.json` with its label, kind,
@@ -98,8 +100,8 @@ sites, and plain facts. It never exports a value or a masked hint, and the raw
 export as their own tables.
 
 A filled PDF form (2026-10-15) never stores a saved value. The value goes into
-the PDF in memory only, when the user sends the mail to a domain that the item
-is saved for, or downloads the file after the identity check
+the PDF in memory only, when the user sends the mail to a domain with a send
+grant for the item, or downloads the file after the identity check
 (`lib/files/materialize.ts`). A send that waits for Undo keeps only the file
 reference in `mailOutbox`, and the dispatch fills the PDF at that moment. A
 scheduled send cannot carry such a file. The export lists the sealed fields as

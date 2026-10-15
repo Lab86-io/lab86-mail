@@ -2,9 +2,10 @@
 // values in a PDF"). A file with sealed fields fills them here, in memory,
 // and only for one purpose:
 //
-// - send: every recipient domain must be one of the item's sites. This is the
-//   same rule as a run that types the value on a page: the user adds the site
-//   to the item in Passwords and IDs (that needs one more check).
+// - send: every recipient domain needs a send grant for the item: "Always for
+//   mail to <domain>" (the item's mailDomains) or "Allow for this send" (a
+//   single-use grant for this send key). A send grant is not a site: the
+//   item's sites never let a mail carry the value (lib/secure/send-grants.ts).
 // - download: the user passed the identity check ("One more check") in the
 //   last 10 minutes. The route checks it and says so here.
 //
@@ -14,6 +15,7 @@
 
 import { SECURE_FIELD_LABELS, type SecureItemView } from '../secure/contract';
 import { formatSecureValue, type SecureReference, siteCovers, siteForHost } from '../secure/policy';
+import { sendGrantCovers } from '../secure/send-grants';
 import {
   listSecureItems,
   type OpenedItem,
@@ -26,7 +28,13 @@ import { getSavedFileRow, readSavedFileBytes, type SavedFileRow, type SealedFiel
 import { checkSealedReference, recipientDomains, wholeReference } from './sealed-fields';
 
 export type MaterializePurpose =
-  | { kind: 'send'; recipients: ReadonlyArray<string | null | undefined>; workId?: string }
+  | {
+      kind: 'send';
+      recipients: ReadonlyArray<string | null | undefined>;
+      workId?: string;
+      /** The send key (outbox key) when the client showed a valid "Allow for this send" token. */
+      sendKey?: string;
+    }
   | { kind: 'download'; checked: boolean };
 
 export type SealedFileErrorCode =
@@ -35,7 +43,8 @@ export type SealedFileErrorCode =
   | 'gone'
   | 'needs_allow'
   | 'verify_identity'
-  | 'invalid';
+  | 'invalid'
+  | 'allow_ended';
 
 export class SealedFileError extends Error {
   constructor(
@@ -53,19 +62,25 @@ export interface SealedAllowNeed {
   itemLabel: string;
   /** "Number", "Date of birth". */
   fieldLabels: string[];
-  /** The recipient sites that the item is not saved for: "example.com". */
-  sites: string[];
+  /** The recipient mail domains with no send grant for the item: "example.com". */
+  domains: string[];
 }
 
-/** A send to a domain that the item is not saved for. The user adds the site first. */
+/** A send to a mail domain with no send grant. The user allows it for this send or always. */
 export class SealedFileNeedsAllow extends SealedFileError {
+  readonly grant = 'send' as const;
   constructor(readonly needs: SealedAllowNeed[]) {
     const first = needs[0];
     super(
       'needs_allow',
-      `This file has your saved ${first.itemLabel}. Before it goes to ${first.sites.join(', ')}, add that site to the item in Passwords and IDs.`,
+      `This file has your saved ${first.itemLabel}. Before it goes in mail to ${first.domains.join(', ')}, allow it for this send or for all mail to that domain.`,
     );
     this.name = 'SealedFileNeedsAllow';
+  }
+
+  /** Every domain that needs a grant, once. */
+  get domains(): string[] {
+    return [...new Set(this.needs.flatMap((need) => need.domains))];
   }
 }
 
@@ -87,6 +102,8 @@ export const materializeDeps = {
   listItems: listSecureItems,
   openItems: openSecureItems,
   recordUse: recordSecureUse,
+  sendGrantCovers: (input: { userId: string; itemId: string; domain: string; sendKey: string }) =>
+    sendGrantCovers(input),
 };
 
 export interface MaterializedFile {
@@ -117,26 +134,33 @@ function parseSealed(sealed: readonly SealedField[]): ParsedSealed[] {
   });
 }
 
-/** The recipient sites that each sealed item is not saved for. Empty when the send may go. */
-function allowNeeds(
+/**
+ * The recipient domains that each sealed item has no send grant for. Empty
+ * when the send may go. The item's sites do not count: a site is for pages.
+ */
+async function allowNeeds(
+  userId: string,
   sealed: readonly ParsedSealed[],
-  items: ReadonlyArray<Pick<SecureItemView, 'id' | 'label' | 'sites'>>,
+  items: ReadonlyArray<Pick<SecureItemView, 'id' | 'label' | 'mailDomains'>>,
   domains: readonly string[],
-): SealedAllowNeed[] {
+  sendKey: string | undefined,
+  deps: typeof materializeDeps,
+): Promise<SealedAllowNeed[]> {
   const needs = new Map<string, SealedAllowNeed>();
   for (const { ref } of sealed) {
     const item = items.find((entry) => entry.id === ref.itemId);
     if (!item) throw new SealedFileError('gone', GONE);
-    for (const domain of domains) {
-      if (item.sites.some((site) => siteCovers(site, domain))) continue;
+    for (const host of domains) {
+      const domain = siteForHost(host) || host;
+      if ((item.mailDomains ?? []).some((allowed) => siteCovers(allowed, host))) continue;
+      if (sendKey && (await deps.sendGrantCovers({ userId, itemId: item.id, domain, sendKey }))) continue;
       const need = needs.get(item.id) ?? {
         itemId: item.id,
         itemLabel: item.label,
         fieldLabels: [],
-        sites: [],
+        domains: [],
       };
-      const site = siteForHost(domain) || domain;
-      if (!need.sites.includes(site)) need.sites.push(site);
+      if (!need.domains.includes(domain)) need.domains.push(domain);
       const label = SECURE_FIELD_LABELS[ref.field] || ref.field;
       if (!need.fieldLabels.includes(label)) need.fieldLabels.push(label);
       needs.set(item.id, need);
@@ -174,6 +198,7 @@ export async function checkSavedFileSend(
   userId: string,
   fileId: string,
   recipients: ReadonlyArray<string | null | undefined>,
+  sendKey?: string,
   deps: typeof materializeDeps = materializeDeps,
 ): Promise<boolean> {
   const row = await ownedRow(userId, fileId, deps);
@@ -184,7 +209,7 @@ export async function checkSavedFileSend(
   const items = await deps.listItems(userId);
   for (const { ref } of sealed)
     if (!checkSealedReference(ref, items).ok) throw new SealedFileError('gone', GONE);
-  const needs = allowNeeds(sealed, items, domains);
+  const needs = await allowNeeds(userId, sealed, items, domains, sendKey, deps);
   if (needs.length) throw new SealedFileNeedsAllow(needs);
   return true;
 }
@@ -210,10 +235,13 @@ export async function materializeSavedFile(
   const domains = purpose.kind === 'send' ? domainsOf(purpose) : [];
   const opened: OpenedItem[] = await deps.openItems(userId);
   if (purpose.kind === 'send') {
-    const needs = allowNeeds(
+    const needs = await allowNeeds(
+      userId,
       sealed,
       opened.map((entry) => entry.item),
       domains,
+      purpose.sendKey,
+      deps,
     );
     if (needs.length) throw new SealedFileNeedsAllow(needs);
   }

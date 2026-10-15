@@ -92,13 +92,19 @@ Platforms: W (web), I (iOS), M (macOS).
    tool checks the item, the saved field, and the format against the item list, without a value.
    The field stays empty in the saved PDF, and the file keeps `sealedFields: [{ field, ref }]`.
    The value goes in only in memory (`lib/files/materialize.ts`):
-   - **Send:** each recipient domain must be one of the item's sites. Else the send stops with
-     `409 { code: 'needs_allow', allow: [{ itemId, itemLabel, fieldLabels, sites }] }`, and the
-     user adds the site to the item (that needs the identity check). A send that waits for Undo
-     keeps the reference and fills when it goes. A scheduled send refuses the file.
+   - **Send:** each recipient domain needs a send grant. A send grant is not a site: a site lets a
+     run type the value on pages, a mail domain lets a mail carry it, and neither gives the other.
+     Without a grant, `POST /api/compose` answers `409 { code: 'needs_allow', grant: 'send',
+     sendId, domains, allow: [{ itemId, itemLabel, fieldLabels, domains }] }`. The user answers
+     with `POST /api/secure-details/allow-send` (identity check for both answers):
+     "Allow for this send" (`scope: 'once'`, a token for this send only, used one time, 30
+     minutes at most) or "Always for mail to <domain>" (`scope: 'always'`, the domain goes to
+     the item's `mailDomains`, shown as "Mail to <domain>"). A send that waits for Undo keeps
+     the reference and fills when it goes. A scheduled send refuses the file.
    - **Download:** `GET /api/files/saved/[fileId]` needs the identity check (403
      `verify_identity`, "One more check"). The native apps offer "Open on the web".
-   - Each fill records a use: `sent` (with the recipient site) or `downloaded`.
+   - Each fill records a use: `sent` (with the recipient domain) or `downloaded`. Each answer
+     records `allowed_send_once` or `allowed_send_always`.
 7. **Asking for a missing item.** In the chat, `ask_secure_detail({ kind, label?, site?, reason })`
    shows a card that waits (V12, decision 12). It holds no value and saves nothing: the user adds
    the item in the sheet, through the normal route, and the answer is

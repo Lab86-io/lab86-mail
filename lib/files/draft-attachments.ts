@@ -17,6 +17,7 @@ import { exportOfficePdf } from '../documents/office-pdf';
 import { OFFICE_MIME, type OfficeExtension, readOfficeResponse } from '../documents/office-security';
 import { getOfficeFile } from '../documents/office-service';
 import { getDocument } from '../documents/service';
+import { consumeSendGrants } from '../secure/send-grants';
 import { sanitizeFilename } from '../shared/files';
 import type { DraftAttachment } from '../shared/types';
 import { checkSavedFileSend, materializeSavedFile } from './materialize';
@@ -66,6 +67,8 @@ export class DraftAttachmentError extends Error {
 export interface HeldSealedAttachment {
   fileId: string;
   filename: string;
+  /** The send key, when the client showed a valid "Allow for this send" token. */
+  sendKey?: string;
 }
 
 /** The attachment shape that the Nylas send takes (and the outbox stores). */
@@ -87,8 +90,14 @@ export const draftAttachmentDeps = {
   exportOfficePdf,
   getDocument,
   exportDocument,
-  checkSend: checkSavedFileSend,
+  checkSend: (
+    userId: string,
+    fileId: string,
+    recipients: ReadonlyArray<string | null | undefined>,
+    sendKey?: string,
+  ) => checkSavedFileSend(userId, fileId, recipients, sendKey),
   materialize: materializeSavedFile,
+  consumeSendGrants: (userId: string, sendKey: string) => consumeSendGrants(userId, sendKey),
 };
 
 const KIND_EXTENSION: Record<string, OfficeExtension> = { doc: 'docx', sheet: 'xlsx', deck: 'pptx' };
@@ -204,11 +213,14 @@ export async function resolveDraftAttachments(
     /** Bytes that the rest of the mail already uses (form uploads). */
     usedBytes?: number;
     workId?: string;
+    /** The outbox key, only when the client showed a valid "Allow for this send" token. */
+    sendKey?: string;
   },
   deps: typeof draftAttachmentDeps = draftAttachmentDeps,
 ): Promise<{ attachments: SendAttachment[]; held: HeldSealedAttachment[] }> {
   const attachments: SendAttachment[] = [];
   const held: HeldSealedAttachment[] = [];
+  let filledSealed = false;
   let total = options.usedBytes ?? 0;
   const count = (bytes: number) => {
     total += bytes;
@@ -221,16 +233,22 @@ export async function resolveDraftAttachments(
       if (!row) throw new DraftAttachmentError('One of the files is not in Files any more.', 404);
       if (row.sealedFields?.length) {
         if (options.hold) {
-          await deps.checkSend(userId, row._id, options.recipients);
+          await deps.checkSend(userId, row._id, options.recipients, options.sendKey);
           count(row.size);
-          held.push({ fileId: row._id, filename: sanitizeFilename(attachment.name || row.name) });
+          held.push({
+            fileId: row._id,
+            filename: sanitizeFilename(attachment.name || row.name),
+            ...(options.sendKey ? { sendKey: options.sendKey } : {}),
+          });
           continue;
         }
         const filled = await deps.materialize(userId, row._id, {
           kind: 'send',
           recipients: options.recipients,
           ...(options.workId ? { workId: options.workId } : {}),
+          ...(options.sendKey ? { sendKey: options.sendKey } : {}),
         });
+        filledSealed = true;
         count(filled.bytes.byteLength);
         attachments.push(sendAttachment(attachment.name || row.name, filled.contentType, filled.bytes));
         continue;
@@ -271,6 +289,8 @@ export async function resolveDraftAttachments(
       );
     }
   }
+  // "Allow for this send" works one time: it is used when every file is filled.
+  if (filledSealed && options.sendKey) await deps.consumeSendGrants(userId, options.sendKey);
   return { attachments, held };
 }
 
@@ -279,12 +299,19 @@ export async function fillHeldAttachments(
   userId: string,
   held: readonly HeldSealedAttachment[],
   recipients: ReadonlyArray<string | null | undefined>,
-  deps: Pick<typeof draftAttachmentDeps, 'materialize'> = draftAttachmentDeps,
+  deps: Pick<typeof draftAttachmentDeps, 'materialize' | 'consumeSendGrants'> = draftAttachmentDeps,
 ): Promise<SendAttachment[]> {
   const out: SendAttachment[] = [];
+  const sendKeys = new Set<string>();
   for (const entry of held.slice(0, DRAFT_ATTACHMENTS_MAX)) {
-    const filled = await deps.materialize(userId, entry.fileId, { kind: 'send', recipients });
+    const filled = await deps.materialize(userId, entry.fileId, {
+      kind: 'send',
+      recipients,
+      ...(entry.sendKey ? { sendKey: entry.sendKey } : {}),
+    });
+    if (entry.sendKey) sendKeys.add(entry.sendKey);
     out.push(sendAttachment(entry.filename || filled.name, filled.contentType, filled.bytes));
   }
+  for (const sendKey of sendKeys) await deps.consumeSendGrants(userId, sendKey);
   return out;
 }

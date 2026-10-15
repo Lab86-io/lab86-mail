@@ -87,6 +87,7 @@ function fake(overrides: Partial<typeof draftAttachmentDeps> = {}) {
       fidelity: 'full',
     })),
     checkSend: track('checkSend', async () => true),
+    consumeSendGrants: track('consumeSendGrants', async () => undefined),
     materialize: track('materialize', async () => ({
       bytes: new Uint8Array(1_200),
       name: 'fw9 (filled).pdf',
@@ -251,7 +252,7 @@ describe('resolving draft attachments at send time', () => {
       hold: true,
     });
     expect(later).toEqual({ attachments: [], held: [{ fileId: 'sealed_1', filename: 'W-9.pdf' }] });
-    expect(calls.checkSend).toEqual([['test_user_tools', 'sealed_1', ['ap@example.com']]]);
+    expect(calls.checkSend).toEqual([['test_user_tools', 'sealed_1', ['ap@example.com'], undefined]]);
     expect(calls.materialize).toHaveLength(1);
     const filled = await fillHeldAttachments('test_user_tools', later.held, ['ap@example.com']);
     expect(filled[0]).toMatchObject({ filename: 'W-9.pdf', size: 1_200 });
@@ -259,6 +260,38 @@ describe('resolving draft attachments at send time', () => {
       'test_user_tools',
       'sealed_1',
       { kind: 'send', recipients: ['ap@example.com'] },
+    ]);
+    // Without "Allow for this send", no grant is used.
+    expect(calls.consumeSendGrants).toBeUndefined();
+  });
+
+  test('"Allow for this send": the send key goes with the fill, and the grant is used one time', async () => {
+    const calls = fake();
+    const sendKey = 'outbox:00000000-0000-4000-8000-000000000001';
+    const sealed: DraftAttachment[] = [
+      { source: 'file', fileId: 'sealed_1', provider: 'upload', format: 'native', name: 'W-9.pdf' },
+      { source: 'file', fileId: 'sealed_1', provider: 'upload', format: 'native', name: 'W-9 copy.pdf' },
+    ];
+    await resolveDraftAttachments('test_user_tools', sealed, { recipients: ['ap@example.org'], sendKey });
+    expect(calls.materialize.map((call) => call[2])).toEqual([
+      { kind: 'send', recipients: ['ap@example.org'], sendKey },
+      { kind: 'send', recipients: ['ap@example.org'], sendKey },
+    ]);
+    // Used after every file is filled, not after the first one.
+    expect(calls.consumeSendGrants).toEqual([['test_user_tools', sendKey]]);
+    const later = await resolveDraftAttachments('test_user_tools', sealed.slice(0, 1), {
+      recipients: ['ap@example.org'],
+      hold: true,
+      sendKey,
+    });
+    expect(later.held).toEqual([{ fileId: 'sealed_1', filename: 'W-9.pdf', sendKey }]);
+    expect(calls.checkSend.at(-1)).toEqual(['test_user_tools', 'sealed_1', ['ap@example.org'], sendKey]);
+    expect(calls.consumeSendGrants).toHaveLength(1);
+    await fillHeldAttachments('test_user_tools', later.held, ['ap@example.org']);
+    expect(calls.materialize.at(-1)?.[2]).toEqual({ kind: 'send', recipients: ['ap@example.org'], sendKey });
+    expect(calls.consumeSendGrants).toEqual([
+      ['test_user_tools', sendKey],
+      ['test_user_tools', sendKey],
     ]);
   });
 
@@ -270,7 +303,7 @@ describe('resolving draft attachments at send time', () => {
             itemId: 'si_x',
             itemLabel: 'Social Security number',
             fieldLabels: ['Number'],
-            sites: ['example.org'],
+            domains: ['example.org'],
           },
         ]);
       },

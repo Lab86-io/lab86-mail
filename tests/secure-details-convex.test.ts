@@ -232,8 +232,17 @@ describe('secureDetails', () => {
         expiresAt: 1,
         createdAt: 1,
       });
+      await ctx.db.insert('secureSendGrants', {
+        userId,
+        itemId: ITEM,
+        domain: 'example.com',
+        sendKey: 'outbox:00000000-0000-4000-8000-000000000001',
+        tokenHash: 'a'.repeat(64),
+        expiresAt: 1,
+        createdAt: 1,
+      });
     });
-    expect(await t.mutation(internal.secureDetails.prune, {})).toEqual({ uses: 1, grants: 1 });
+    expect(await t.mutation(internal.secureDetails.prune, {})).toEqual({ uses: 1, grants: 1, sendGrants: 1 });
   });
 
   test('rotation pages and compare-and-set rewrap', async () => {
@@ -343,7 +352,7 @@ test('a full prune batch schedules the next pass at once', async () => {
     for (let index = 0; index < 501; index += 1)
       await ctx.db.insert('secureUses', { userId, itemId: ITEM, outcome: 'typed', at: index + 1 });
   });
-  expect(await t.mutation(internal.secureDetails.prune, {})).toEqual({ uses: 500, grants: 0 });
+  expect(await t.mutation(internal.secureDetails.prune, {})).toEqual({ uses: 500, grants: 0, sendGrants: 0 });
   const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
   expect(scheduled.map((job) => job.name)).toContain('secureDetails:prune');
 });

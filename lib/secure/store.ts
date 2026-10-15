@@ -19,10 +19,12 @@ import { secureStoreEnabledFor } from './flag';
 import {
   ageYears,
   kindMayAskForSite,
+  normalizeSite,
   normalizeSites,
   type ParsedSecureItem,
   parseSecureItem,
   SECURE_ITEMS_MAX,
+  SECURE_SITES_MAX,
   SecurePolicyError,
   secureHints,
 } from './policy';
@@ -51,6 +53,7 @@ interface ItemRow {
   kind: SecureItemKind;
   label: string;
   sites: string[];
+  mailDomains?: string[];
   hints: Array<{ field: string; hint: string }>;
   facts: Array<{ name: string; value: string }>;
   createdAt: number;
@@ -66,6 +69,7 @@ export function itemViewFromRow(row: ItemRow): SecureItemView {
     kind: row.kind,
     label: row.label,
     sites: row.sites,
+    mailDomains: row.mailDomains ?? [],
     hints: Object.fromEntries(row.hints.map((entry) => [entry.field, entry.hint])),
     facts: Object.fromEntries(row.facts.map((entry) => [entry.name, entry.value])),
     createdAt: row.createdAt,
@@ -159,6 +163,16 @@ export async function createSecureItem(userId: string, input: SecureItemCreate):
   });
 }
 
+/** Mail domains as registrable domains ("billing.example.com" → "example.com"), unique, 20 at most. */
+export function normalizeMailDomains(raw: readonly string[]): string[] {
+  const domains = [
+    ...new Set(raw.map((entry) => normalizeSite(String(entry || '').replace(/^.*@/, ''), 'id_number'))),
+  ];
+  if (domains.length > SECURE_SITES_MAX)
+    throw new SecurePolicyError('limit', `An item goes to ${SECURE_SITES_MAX} mail domains at most.`);
+  return domains;
+}
+
 /** The values a kind takes from its plain facts when the user replaces only one field. */
 function factValues(kind: SecureItemKind, facts: Record<string, string>): Record<string, unknown> {
   if (kind === 'id_number')
@@ -197,6 +211,16 @@ export async function updateSecureItem(
         'Albatross needs one more check before it adds the site.',
       );
   }
+  let mailDomains: string[] | undefined;
+  if (input.mailDomains) {
+    mailDomains = normalizeMailDomains(input.mailDomains);
+    const added = mailDomains.filter((domain) => !(row.mailDomains ?? []).includes(domain));
+    if (added.length && !options.identityChecked)
+      throw new SecureStoreError(
+        'verify_identity',
+        'Albatross needs one more check before it adds the mail domain.',
+      );
+  }
   const label = input.label === undefined ? undefined : input.label;
   let parsed: ParsedSecureItem | null = null;
   if (input.values || label !== undefined) {
@@ -217,6 +241,7 @@ export async function updateSecureItem(
     itemId,
     ...(parsed && label !== undefined ? { label: parsed.label } : {}),
     ...(sites ? { sites } : {}),
+    ...(mailDomains ? { mailDomains } : {}),
     ...(parsed && input.values ? shownOf(parsed) : {}),
     ...(sealed ? { sealed } : {}),
   });
@@ -225,6 +250,7 @@ export async function updateSecureItem(
     ...row,
     label: parsed && label !== undefined ? parsed.label : row.label,
     sites: sites ?? row.sites,
+    mailDomains: mailDomains ?? row.mailDomains ?? [],
     ...shown,
     updatedAt: secureStoreDeps.now(),
   });

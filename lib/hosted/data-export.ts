@@ -44,6 +44,8 @@ export interface SecureExportItem {
   kind: string;
   label: string;
   sites: string[];
+  /** "Always for mail to" domains (send grants). */
+  mailDomains: string[];
   facts: Record<string, string>;
   createdAt: number;
   updatedAt: number;
@@ -69,6 +71,7 @@ export async function exportSecureItems(
       kind: string;
       label: string;
       sites: string[];
+      mailDomains?: string[];
       facts: Array<{ name: string; value: string }>;
       createdAt: number;
       updatedAt: number;
@@ -80,6 +83,7 @@ export async function exportSecureItems(
     kind: row.kind,
     label: row.label,
     sites: row.sites,
+    mailDomains: row.mailDomains ?? [],
     facts: Object.fromEntries(row.facts.map((fact) => [fact.name, fact.value])),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

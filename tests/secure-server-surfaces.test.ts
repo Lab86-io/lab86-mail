@@ -74,6 +74,7 @@ test('the export lists items without hints or sealed values', async () => {
       kind: 'id_number',
       label: "Driver's license",
       sites: ['ny.gov'],
+      mailDomains: [],
       facts: { type: 'drivers_license' },
       createdAt: 1,
       updatedAt: 2,

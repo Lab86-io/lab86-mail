@@ -52,10 +52,13 @@ Facts about the file:
 - **A raw secret-shaped value is refused.** `pdf_form_fill` refuses a plain value that looks like
   a Social Security number, a card number, or an API key (`detectSecretShapes`), and asks for a
   reference.
-- **The grant for a send is the item's site list.** Each recipient domain must be covered by one
-  of the item's sites, as for a page. There is no "Allow once" for a send. To send a W-9 to
-  `ap@example.com`, the user adds `example.com` to the Social Security number item (identity
-  check). This also lets a run type the number on `example.com` pages.
+- **A send has its own grant (lead decision, 2026-10-15).** A mail domain and a website are
+  different permissions. "Allow for this send" is a single-use grant for each (item, domain) of
+  one send key (the outbox key), 30 minutes at most; the client holds a random token, and Convex
+  keeps its SHA-256 (`secureSendGrants`). "Always for mail to <domain>" adds the domain to the
+  item's `mailDomains`. Both need the identity check. A send grant never lets a run type the
+  value on a website, and an item's sites never let a mail carry it. The grant is used after
+  every file of the mail is filled (for a held send, at dispatch).
 - **A held send keeps a reference.** The outbox payload is in Convex storage without our key, and
   a failed send keeps it for 7 days. So a sealed file goes into the payload as
   `sealedAttachments: [{ fileId, filename }]`, is checked at enqueue, and fills at dispatch. A
@@ -64,16 +67,16 @@ Facts about the file:
   outbox holds a Google one for up to 30 days, with the bytes.
 - **The use is recorded when the value is filled**, not when the provider confirms the send. This
   is the same as a run that types a value.
-- **New use outcome `downloaded`.** Web line: "Filled in a PDF that you downloaded". The Swift
-  enum has no case for it yet and shows "Used".
+- **New use outcomes `downloaded`, `allowed_send_once`, `allowed_send_always`.** Web lines:
+  "Filled in a PDF that you downloaded", "You allowed it in mail to <domain> for one send", "You
+  allowed it in mail to <domain> from now on". A send grant in Settings: "Mail to <domain>"
+  (`mailDomainLine`). The Swift enum has no cases for them yet and shows "Used" (native builder).
 - **`DraftAttachment.sealed?: boolean`** (new optional field in `lib/shared/types.ts`). The server
   sets it when the saved file has sealed fields, so a composer can say that saved details fill in
   at send time.
 
 ## Open questions
 
-- Should a send have its own "Allow once" (one mail, one domain), so the user does not add a site
-  to the item for runs too?
 - The download route needs the identity check for each download of a sealed file. A web client
   that previews the PDF inline gets the check too.
 - `pdf_form_fields` returns the exact shared shape, so it does not say which fields of a filled

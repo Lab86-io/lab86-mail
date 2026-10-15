@@ -51,7 +51,10 @@ function view(id: string, overrides: Partial<SecureItemView>): SecureItemView {
   };
 }
 
-const ssnView = (sites: string[] = ['example.com']) => view(SSN_ITEM, { sites });
+// "Always for mail to example.com" is a send grant; `sites` is for pages and never allows a send.
+const ssnView = (mailDomains: string[] = ['example.com'], sites: string[] = []) =>
+  view(SSN_ITEM, { mailDomains, sites });
+const SEND_KEY = 'outbox:00000000-0000-4000-8000-000000000001';
 const dobView = view(DOB_ITEM, {
   kind: 'date_of_birth',
   label: 'Date of birth',
@@ -91,7 +94,13 @@ function row(overrides: Partial<SavedFileRow> = {}): SavedFileRow {
 }
 
 function deps(
-  options: { row?: SavedFileRow | null; bytes?: Uint8Array; items?: OpenedItem[]; enabled?: boolean } = {},
+  options: {
+    row?: SavedFileRow | null;
+    bytes?: Uint8Array;
+    items?: OpenedItem[];
+    enabled?: boolean;
+    grants?: Array<{ itemId: string; domain: string; sendKey: string }>;
+  } = {},
 ) {
   const uses: Array<Record<string, unknown>> = [];
   const items = options.items ?? [{ item: ssnView(), values: { number: SSN } }];
@@ -107,6 +116,11 @@ function deps(
       recordUse: async (use: Record<string, unknown>) => {
         uses.push(use);
       },
+      sendGrantCovers: async (input: { itemId: string; domain: string; sendKey: string }) =>
+        (options.grants ?? []).some(
+          (grant) =>
+            grant.itemId === input.itemId && grant.domain === input.domain && grant.sendKey === input.sendKey,
+        ),
     } as unknown as typeof materializeDeps,
   };
 }
@@ -289,7 +303,7 @@ describe('materializeSavedFile', () => {
     }
   });
 
-  test('a send to a domain the item is not saved for is blocked before any fill', async () => {
+  test('a send to a mail domain with no send grant is blocked before any fill', async () => {
     const { deps: d, uses } = deps({ items: [{ item: ssnView(['example.com']), values: { number: SSN } }] });
     const error = (await materializeSavedFile(
       'u1',
@@ -299,27 +313,64 @@ describe('materializeSavedFile', () => {
     ).catch((caught) => caught)) as SealedFileNeedsAllow;
     expect(error).toBeInstanceOf(SealedFileNeedsAllow);
     expect(error.code).toBe('needs_allow');
+    expect(error.grant).toBe('send');
+    expect(error.domains).toEqual(['example.org']);
     expect(error.needs).toEqual([
       {
         itemId: SSN_ITEM,
         itemLabel: 'Social Security number',
         fieldLabels: ['Number'],
-        sites: ['example.org'],
+        domains: ['example.org'],
       },
     ]);
     expect(error.message).toBe(
-      'This file has your saved Social Security number. Before it goes to example.org, add that site to the item in Passwords and IDs.',
+      'This file has your saved Social Security number. Before it goes in mail to example.org, allow it for this send or for all mail to that domain.',
     );
     expect(error.message).not.toContain(SSN);
     expect(uses).toEqual([]);
     // The same check without a fill, for a held send.
     await expect(
-      checkSavedFileSend('u1', 'upload_1', ['someone@other.example.org'], d),
+      checkSavedFileSend('u1', 'upload_1', ['someone@other.example.org'], undefined, d),
     ).rejects.toBeInstanceOf(SealedFileNeedsAllow);
-    expect(await checkSavedFileSend('u1', 'upload_1', ['ap@example.com'], d)).toBe(true);
+    expect(await checkSavedFileSend('u1', 'upload_1', ['ap@example.com'], undefined, d)).toBe(true);
     const plain = deps({ row: row() });
-    expect(await checkSavedFileSend('u1', 'upload_1', ['x@y.example'], plain.deps)).toBe(false);
-    await expect(checkSavedFileSend('u1', 'upload_1', [], d)).rejects.toMatchObject({ code: 'invalid' });
+    expect(await checkSavedFileSend('u1', 'upload_1', ['x@y.example'], undefined, plain.deps)).toBe(false);
+    await expect(checkSavedFileSend('u1', 'upload_1', [], undefined, d)).rejects.toMatchObject({
+      code: 'invalid',
+    });
+  });
+
+  test('a site grant never allows a send: the item is saved for example.org pages, not mail', async () => {
+    const { deps: d } = deps({
+      bytes: await sealedW9(),
+      items: [{ item: ssnView([], ['example.org']), values: { number: SSN } }],
+    });
+    await expect(
+      materializeSavedFile('u1', 'upload_1', { kind: 'send', recipients: ['ap@example.org'] }, d),
+    ).rejects.toBeInstanceOf(SealedFileNeedsAllow);
+  });
+
+  test('"Allow for this send" covers its send key only', async () => {
+    const options = {
+      bytes: await sealedW9(),
+      items: [{ item: ssnView([]), values: { number: SSN } }],
+      grants: [{ itemId: SSN_ITEM, domain: 'example.org', sendKey: SEND_KEY }],
+    };
+    const send = (sendKey?: string) =>
+      materializeSavedFile(
+        'u1',
+        'upload_1',
+        { kind: 'send', recipients: ['ap@billing.example.org'], ...(sendKey ? { sendKey } : {}) },
+        deps(options).deps,
+      );
+    expect((await send(SEND_KEY)).sealed).toBe(true);
+    await expect(send()).rejects.toBeInstanceOf(SealedFileNeedsAllow);
+    await expect(send('outbox:00000000-0000-4000-8000-000000000002')).rejects.toBeInstanceOf(
+      SealedFileNeedsAllow,
+    );
+    expect(await checkSavedFileSend('u1', 'upload_1', ['ap@example.org'], SEND_KEY, deps(options).deps)).toBe(
+      true,
+    );
   });
 
   test('a download needs the check, then fills and records the download', async () => {
@@ -352,7 +403,7 @@ describe('materializeSavedFile', () => {
       ),
     ).rejects.toMatchObject({ code: 'gone' });
     await expect(
-      checkSavedFileSend('u1', 'x', ['a@example.com'], deps({ items: [] }).deps),
+      checkSavedFileSend('u1', 'x', ['a@example.com'], undefined, deps({ items: [] }).deps),
     ).rejects.toMatchObject({
       code: 'gone',
     });
