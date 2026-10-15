@@ -280,6 +280,19 @@ struct GoalRunPresentationTests {
         #expect(RunSource(kind: .document, title: "Hours sheet", referenceID: "d1", detail: "  ").detail == nil)
     }
 
+    @Test func aLocatorTheTitleAlreadyHoldsDoesNotShowTwice() {
+        #expect(RunSourceLocator.text(RunSource(kind: .jira, title: "BP-214 worklog, July", referenceID: "BP-214", detail: "BP-214")) == nil)
+        #expect(RunSourceLocator.text(RunSource(kind: .jira, title: "Worklog for bp-214", referenceID: "BP-214", detail: " BP-214 ")) == nil)
+        #expect(RunSourceLocator.text(RunSource(kind: .web, title: "Form W-9 on irs.gov", url: "https://www.irs.gov/w9", detail: "irs.gov")) == nil)
+        #expect(RunSourceLocator.text(RunSource(kind: .mail, title: "Re: Q3 hours", referenceID: "t1", detail: "Priya, Jul 30")) == "Priya, Jul 30")
+        #expect(RunSourceLocator.text(RunSource(kind: .jira, title: "Invoice hours", referenceID: "BP-214", detail: "BP-214")) == "BP-214")
+        // The host fallback follows the same rule.
+        #expect(RunSourceLocator.text(RunSource(kind: .web, title: "irs.gov", url: "https://www.irs.gov/w9")) == nil)
+        #expect(RunSourceLocator.text(RunSource(kind: .web, title: "Form W-9", url: "https://www.irs.gov/w9")) == "irs.gov")
+        #expect(RunSourceLocator.contains("BP-214 worklog", "bp-214"))
+        #expect(!RunSourceLocator.contains("Worklog", "BP-214"))
+    }
+
     @Test func theBriefLineNamesUpToThreeItems() {
         #expect(PackageRows.line([]) == nil)
         #expect(PackageRows.line([Self.draft]) == "1 item: Draft to Priya Shah.")

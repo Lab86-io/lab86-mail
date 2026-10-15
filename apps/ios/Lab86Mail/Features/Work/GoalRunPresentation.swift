@@ -61,8 +61,18 @@ enum GoalRunCopy {
 /// one, a web page still shows its host; the rest shows nothing.
 enum RunSourceLocator {
     static func text(_ source: RunSource) -> String? {
-        if let detail = source.detail { return detail }
-        return source.kind == .web ? host(of: source.url) : nil
+        let candidate = source.detail ?? (source.kind == .web ? host(of: source.url) : nil)
+        guard let candidate else { return nil }
+        // The same rule as the web: a locator the title already holds does
+        // not show twice ("BP-214 worklog, July" and "BP-214").
+        return contains(source.title, candidate) ? nil : candidate
+    }
+
+    /// True when the title holds the detail, case and outer spaces aside.
+    static func contains(_ title: String, _ detail: String) -> Bool {
+        let needle = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return true }
+        return title.range(of: needle, options: [.caseInsensitive]) != nil
     }
 
     /// "irs.gov" for "https://www.irs.gov/forms/w9".
