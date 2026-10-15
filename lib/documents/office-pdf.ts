@@ -92,7 +92,7 @@ export async function convertOfficeToPdf(bytes: Uint8Array, extension: OfficeExt
 }
 
 const pdfName = (title: string) =>
-  savedFileName(`${title.replace(/\.(docx|xlsx|pptx)$/i, '')}.pdf`, 'document.pdf');
+  savedFileName(`${title.replace(/\.(docx|xlsx|pptx)$/i, '').trim() || 'document'}.pdf`);
 
 /** The PDF of the saved revision of a Word file. */
 export async function exportOfficePdf(

@@ -150,16 +150,16 @@ function controls(doc: Document): BlankControl[] {
 }
 
 function contentText(content: Element) {
+  let paragraphs = 0;
   return all(content, '*')
-    .map((node) =>
-      node.localName === 't'
-        ? node.textContent || ''
-        : node.localName === 'tab'
-          ? '\t'
-          : node.localName === 'br' || node.localName === 'cr'
-            ? '\n'
-            : '',
-    )
+    .map((node) => {
+      if (node.localName === 't') return node.textContent || '';
+      if (node.localName === 'tab') return '\t';
+      if (node.localName === 'br' || node.localName === 'cr') return '\n';
+      // A block-level control: each paragraph after the first starts a new line.
+      if (node.localName === 'p') return paragraphs++ ? '\n' : '';
+      return '';
+    })
     .join('');
 }
 
