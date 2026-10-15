@@ -2412,6 +2412,13 @@ export default defineSchema({
     contentType: v.optional(v.string()),
     size: v.number(),
     createdAt: v.number(),
+    // Saved files (docs/albatross-goal-runs.md, lib/files/saved-files.ts).
+    origin: v.optional(v.union(v.literal('web'), v.literal('filled'), v.literal('export'))),
+    sourceUrl: v.optional(v.string()),
+    sha256: v.optional(v.string()),
+    // Fields that fill from the secure store at send or download time. The bytes never hold them.
+    sealedFields: v.optional(v.array(v.object({ field: v.string(), ref: v.string() }))),
+    workId: v.optional(v.string()),
   })
     .index('by_user_created', ['userId', 'createdAt'])
     .index('by_storage', ['storageId']),
