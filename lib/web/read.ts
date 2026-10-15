@@ -91,6 +91,17 @@ export async function searchWeb(
   }));
 }
 
+/**
+ * A JSON answer through Fetch raw (a small public API, for example the
+ * Nominatim reverse geocode). Throws on a site error or bad JSON.
+ */
+export async function readJson(rawUrl: string, options: BrowserbaseCallOptions = {}): Promise<any> {
+  const url = publicWebUrl(rawUrl);
+  const answer = await deps.fetch({ url: url.toString(), format: 'raw' }, options);
+  if (answer.statusCode >= 400) throw new Error(`GET ${url.toString()} failed (${answer.statusCode})`);
+  return JSON.parse(new TextDecoder().decode(decodeBody(answer)));
+}
+
 export interface PageRead {
   url: string;
   content: string;

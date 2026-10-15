@@ -5,6 +5,7 @@ import {
   displayHost,
   PAGE_READ_MAX_CHARS,
   publicWebUrl,
+  readJson,
   readPage,
   searchWeb,
   WebUrlError,
@@ -224,5 +225,41 @@ describe('readPage', () => {
     fetchStub({ markdown: new Error('network'), raw: {} });
     await expect(readPage('https://example.com/x')).rejects.toThrow('network');
     await expect(readPage('http://192.168.1.1/')).rejects.toThrow(/private network/);
+  });
+});
+
+describe('readJson', () => {
+  test('parses the raw answer, text or base64; a site error and a private host are errors', async () => {
+    const calls = fetchStub({
+      markdown: new Error('unused'),
+      raw: {
+        statusCode: 200,
+        headers: {},
+        content: '{"address":{"city":"Albany"}}',
+        contentType: 'application/json',
+        encoding: 'utf-8',
+      },
+    });
+    expect(await readJson('https://nominatim.example/reverse?lat=1&lon=2')).toEqual({
+      address: { city: 'Albany' },
+    });
+    expect(calls).toEqual([{ url: 'https://nominatim.example/reverse?lat=1&lon=2', format: 'raw' }]);
+    fetchStub({
+      markdown: new Error('unused'),
+      raw: {
+        statusCode: 200,
+        headers: {},
+        content: Buffer.from('[1]').toString('base64'),
+        contentType: '',
+        encoding: 'base64',
+      },
+    });
+    expect(await readJson('https://api.example/x')).toEqual([1]);
+    fetchStub({
+      markdown: new Error('unused'),
+      raw: { statusCode: 429, headers: {}, content: '', contentType: '' },
+    });
+    await expect(readJson('https://api.example/x')).rejects.toThrow('GET https://api.example/x failed (429)');
+    await expect(readJson('http://127.0.0.1/x')).rejects.toThrow(/private network/);
   });
 });
