@@ -294,40 +294,37 @@ describe('blanks as content controls', () => {
 });
 
 describe('page number fields', () => {
-  test('each field is five runs, and every run keeps the footer size', async () => {
+  test('each field is five runs, every run keeps the footer size, and page 1 has no footer text', async () => {
     const { bytes } = await renderTemplate('memo', sampleMemo);
     const zip = await JSZip.loadAsync(bytes);
-    const footers = Object.keys(zip.files).filter((name) => /^word\/footer\d+\.xml$/.test(name));
-    const footer = xml((await Promise.all(footers.map((name) => zip.file(name)!.async('string')))).join(''));
-    const runs = w(footer, 'r');
-    const fieldRuns = runs.filter((run) => w(run, 'fldChar').length || w(run, 'instrText').length);
-    expect(fieldRuns).toHaveLength(8);
-    for (const run of runs) {
-      expect(w(run, 'fldChar').length + w(run, 'instrText').length).toBeLessThanOrEqual(1);
-      expect(attr(w(run, 'sz')[0], 'val')).toBe('15');
+    const names = Object.keys(zip.files).filter((name) => /^word\/footer\d+\.xml$/.test(name));
+    expect(names).toHaveLength(2);
+    const sequences: string[][] = [];
+    for (const name of names) {
+      const runs = w(xml(await zip.file(name)!.async('string')), 'r');
+      expect(runs.filter((run) => w(run, 'fldChar').length || w(run, 'instrText').length)).toHaveLength(8);
+      for (const run of runs) {
+        expect(w(run, 'fldChar').length + w(run, 'instrText').length).toBeLessThanOrEqual(1);
+        expect(attr(w(run, 'sz')[0], 'val')).toBe('15');
+      }
+      sequences.push(
+        runs
+          .map((run) =>
+            w(run, 'fldChar')[0]
+              ? attr(w(run, 'fldChar')[0], 'fldCharType')
+              : w(run, 'instrText')[0]
+                ? w(run, 'instrText')[0].textContent
+                : w(run, 't')[0]?.textContent,
+          )
+          .filter((value): value is string => Boolean(value) && value !== ' of ' && value !== 'Page '),
+      );
     }
-    const sequence = runs
-      .map((run) =>
-        w(run, 'fldChar')[0]
-          ? attr(w(run, 'fldChar')[0], 'fldCharType')
-          : w(run, 'instrText')[0]
-            ? w(run, 'instrText')[0].textContent
-            : w(run, 't')[0]?.textContent,
-      )
-      .filter((value) => value !== undefined && value !== '' && value !== ' of ' && value !== 'Page ');
-    expect(sequence).toEqual([
-      'New check-in process from November 3',
-      'begin',
-      ' PAGE ',
-      'separate',
-      '1',
-      'end',
-      'begin',
-      ' NUMPAGES ',
-      'separate',
-      '1',
-      'end',
+    const fields = ['begin', ' PAGE ', 'separate', '1', 'end', 'begin', ' NUMPAGES ', 'separate', '1', 'end'];
+    expect(sequences.sort((a, b) => a.length - b.length)).toEqual([
+      fields,
+      ['New check-in process from November 3', ...fields],
     ]);
+    expect(await zip.file('word/document.xml')!.async('string')).toContain('<w:titlePg/>');
   });
 
   test('a field run with no properties still splits into five runs', () => {

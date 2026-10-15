@@ -1,7 +1,7 @@
 // Memo template: the title, a block of To, From, Date, and Subject with
 // hairline rules, then the body.
 
-import { Document, Footer, Table, TableRow, WidthType } from 'docx';
+import { Document, Table, TableRow, WidthType } from 'docx';
 import { z } from 'zod';
 import {
   cell,
@@ -89,8 +89,8 @@ export function buildMemo(canvas: TemplateCanvas, data: MemoData, title: string)
     numbering: houseNumbering(),
     sections: [
       {
-        properties: pageProperties(),
-        footers: { default: new Footer({ children: [c.footer(subject || 'Memo')] }) },
+        properties: pageProperties(true),
+        footers: c.pageFooters(subject || 'Memo'),
         children: [
           c.paragraph([c.run('Memo', { font: SERIF, size: SIZE.title })], { after: 360 }),
           block,

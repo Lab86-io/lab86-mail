@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import {
   AlignmentType,
   BorderStyle,
+  Footer,
   LevelFormat,
   Paragraph,
   ShadingType,
@@ -242,6 +243,17 @@ export class TemplateCanvas {
 
   spacer(after: number) {
     return this.paragraph([this.run('')], { after });
+  }
+
+  /**
+   * Page 1 shows only "Page N of M", because the page itself shows the document
+   * facts. Later pages add the text on the left. Use with `pageProperties(true)`.
+   */
+  pageFooters(text: string) {
+    return {
+      first: new Footer({ children: [this.footer('')] }),
+      default: new Footer({ children: [this.footer(text)] }),
+    };
   }
 
   /** The footer line: text on the left, "Page N of M" on the right. */

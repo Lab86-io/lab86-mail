@@ -15,6 +15,10 @@ Date: 2026-10-15. Branch: `claude/goal-runs-documents`. Design: `docs/albatross-
 - Design review of 2026-10-15: the prototype accent AE4B2B and the tint F6E9E3 are removed,
   because a brick accent on a cream fill is a common generated look. Footers and the report
   byline do not join text with middle dots.
+- Review of the previews (2026-10-15): no fact shows twice on a page. The invoice masthead is
+  the sender, so the invoice has no "From" column. Under the facts row, "Bill to" takes the first
+  half of the fact columns, and "Engagement" (when present) takes the rest. Page 1 of an
+  invoice, a memo, or a report shows only "Page N of M" in the footer.
 - `lib/documents/templates/fonts/`: Geist Regular, Geist Bold, and Fraunces Display Regular, as
   Latin subsets (140 KB in total, about 73 KB in a DOCX). `scripts/build-template-fonts.py` makes
   them from `public/fonts`. The OFL text is in `fonts/LICENSE.md`.
@@ -56,11 +60,11 @@ Date: 2026-10-15. Branch: `claude/goal-runs-documents`. Design: `docs/albatross-
 
 ## Page numbers
 
-The footer has a short plain line on the left (for example "Invoice INV-1042 from Mara Ellison")
-and "Page N of M" on the right. Each field is five runs (begin, instruction, separate, result,
+From page 2, the footer has a short plain line on the left (for example "Invoice INV-1042 from
+Mara Ellison") and "Page N of M" on the right. Page 1 shows only "Page N of M". Each field is five runs (begin, instruction, separate, result,
 end). Each run has its own copy of the footer run properties (15 half-points, muted). The docx
 library puts a field in one run, and LibreOffice then shows it in the body size. The letter has
-no footer on page 1 (`titlePg`). The other footers start on page 1.
+no footer on page 1 (`titlePg`).
 
 `lib/documents/rich-docx-fixture.ts` still uses `PageNumber.CURRENT`. Its runs have no size, so
 the problem does not occur there. The fixture is test data only.
@@ -86,7 +90,8 @@ own default styles. Before the fix, the file grew from 85 KB to 1.8 MB (Liberati
 Liberation Serif). A house "Heading" style removes Liberation Sans. The file is now about
 0.97 MB after a save. Liberation Serif comes from the internal defaults of LibreOffice. No DOCX
 setting stops it. Each Collabora save of a template document stores about 0.9 MB more than a
-plain document. This is a storage cost, not an I/O cost on the database.
+plain document. This is a storage cost, not an I/O cost on the database. Accepted on 2026-10-15.
+Documents keep the fixed house accent 216440, not the accent that the user sets in the app.
 
 ## PDF export and the document server
 
@@ -104,7 +109,7 @@ The code is ready. It calls `<OFFICE_CONVERT_URL or OFFICE_DOCUMENT_SERVER_URL>/
 A 403 gives the error "The document server does not accept PDF conversion from this app. Its
 settings must allow this app first."
 
-Config change to make (not done; it needs the owner):
+Config change to make. The coordinator makes it at deploy time (decision of 2026-10-15):
 
 1. On the `web` service, set `OFFICE_CONVERT_URL=http://documents.railway.internal:9980`. The
    call then uses the private network (WireGuard), not the public URL. The code allows plain

@@ -74,6 +74,10 @@ describe('Word templates', () => {
     expect(document).not.toContain('AE4B2B');
     expect(document).not.toContain('F6E9E3');
     expect(await part(bytes, 'word/footer1.xml')).toContain('Invoice INV-1042 from Mara Ellison');
+    expect(body).toContain('Bill to');
+    expect(body).toContain('Engagement');
+    expect(body).not.toContain('From');
+    expect(body.match(/Mara Ellison/g)).toHaveLength(1);
   });
 
   test('invoice numbers: a given amount wins, missing numbers become blanks, and the total waits for them', () => {
@@ -127,7 +131,8 @@ describe('Word templates', () => {
       tag.getAttributeNS(W, 'val'),
     );
     expect(tags.filter((tag) => tag === 'blank:total-due')).toHaveLength(2);
-    expect(tags.filter((tag) => tag === 'blank:your-name')).toHaveLength(2);
+    // The masthead is the only place for the sender.
+    expect(tags.filter((tag) => tag === 'blank:your-name')).toHaveLength(1);
     const body = await text(bytes);
     expect(body).toContain('€400.00');
     expect(body).toContain('Total due (EUR)');

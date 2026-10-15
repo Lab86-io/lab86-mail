@@ -1,8 +1,8 @@
 // Invoice template. Layout from the approved prototype of 2026-10-14:
-// masthead, facts row, From and Bill to, engagement, line items with hairline
+// masthead (the sender), facts row, Bill to and the engagement, line items with hairline
 // rules, totals, payment. The server computes each amount and the totals.
 
-import { AlignmentType, Document, Footer, Table, TableRow, WidthType } from 'docx';
+import { AlignmentType, Document, Table, TableRow, WidthType } from 'docx';
 import { z } from 'zod';
 import {
   ACCENT,
@@ -217,21 +217,30 @@ export function buildInvoice(canvas: TemplateCanvas, data: InvoiceData, title: s
     ],
   );
 
-  const partyCell = (label: string, value: InvoiceData['from'], blank: string) => [
-    c.label(label),
-    c.paragraph(c.value(value.name, blank, { bold: true })),
-    ...(value.lines ?? [])
+  // The masthead is the sender, so this row holds only the client and the engagement.
+  // It keeps to the facts grid: Bill to takes the first half of the fact columns.
+  const engagement = cleanText(data.engagement);
+  const billWidth = factWidth * Math.max(1, Math.floor(facts.length / 2));
+  const billTo = [
+    c.label('Bill to'),
+    c.paragraph(c.value(data.billTo.name, 'Client name', { bold: true })),
+    ...(data.billTo.lines ?? [])
       .map(cleanText)
       .filter(Boolean)
       .map((line) => c.paragraph([c.run(line, { color: MUTED })])),
   ];
   const parties = table(
-    [WIDTH / 2, WIDTH / 2],
+    [billWidth, WIDTH - billWidth],
     [
       new TableRow({
         children: [
-          cell(partyCell('From', data.from, 'Your name'), WIDTH / 2),
-          cell(partyCell('Bill to', data.billTo, 'Client name'), WIDTH / 2),
+          cell(billTo, billWidth),
+          cell(
+            engagement
+              ? [c.label('Engagement'), c.paragraph(c.lines(engagement))]
+              : [c.paragraph([c.run('')])],
+            WIDTH - billWidth,
+          ),
         ],
       }),
     ],
@@ -319,7 +328,6 @@ export function buildInvoice(canvas: TemplateCanvas, data: InvoiceData, title: s
     ),
   ];
 
-  const engagement = cleanText(data.engagement);
   const notes = cleanText(data.notes);
   // A plain line with no separators: "Invoice INV-1042 from Mara Ellison".
   const footerText = [number ? `Invoice ${number}` : 'Invoice', fromName ? `from ${fromName}` : '']
@@ -332,16 +340,15 @@ export function buildInvoice(canvas: TemplateCanvas, data: InvoiceData, title: s
     numbering: houseNumbering(),
     sections: [
       {
-        properties: pageProperties(),
-        footers: { default: new Footer({ children: [c.footer(footerText)] }) },
+        properties: pageProperties(true),
+        footers: c.pageFooters(footerText),
         children: [
           masthead,
           c.spacer(440),
           factRow,
           c.spacer(440),
           parties,
-          c.spacer(360),
-          ...(engagement ? [c.paragraph([c.run(engagement, { color: MUTED })], { after: 360 })] : []),
+          c.spacer(480),
           items,
           c.spacer(120),
           table(totalsWidths, totalRows),

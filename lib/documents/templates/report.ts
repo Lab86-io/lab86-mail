@@ -2,7 +2,7 @@
 // and an optional table. Headings use the Heading 1 style, so the navigator
 // and a table of contents in Word find them.
 
-import { AlignmentType, Document, Footer, Table, TableRow, WidthType } from 'docx';
+import { AlignmentType, Document, Table, TableRow, WidthType } from 'docx';
 import { z } from 'zod';
 import {
   cell,
@@ -124,8 +124,8 @@ export function buildReport(canvas: TemplateCanvas, data: ReportData, title: str
     numbering: houseNumbering(),
     sections: [
       {
-        properties: pageProperties(),
-        footers: { default: new Footer({ children: [c.footer(reportTitle)] }) },
+        properties: pageProperties(true),
+        footers: c.pageFooters(reportTitle),
         children: [
           c.paragraph([c.run(reportTitle, { font: SERIF, size: 56 })], { after: subtitle ? 120 : 240 }),
           ...(subtitle
