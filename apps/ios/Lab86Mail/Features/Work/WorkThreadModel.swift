@@ -76,9 +76,10 @@ final class WorkThreadModel {
     /// True once this model saw a reply run on the server; the thread reads
     /// the saved reply when it ends.
     private var awaitedServerReply = false
-    /// The document open in the thread (docs/albatross-document-handoff.md,
-    /// D5), or nil. The chat sends it with every turn while it is open.
-    private(set) var document: DocumentTarget?
+    /// The items open in document mode (docs/albatross-document-handoff.md,
+    /// D5, and docs/albatross-goal-runs.md), or nil. The chat sends the
+    /// selected document with every turn while it is open.
+    private(set) var documentSet: DocumentModeSet?
     /// Grows when a chat turn edited the open document: the editor loads
     /// the saved document again.
     private(set) var documentReloadToken = 0
@@ -116,7 +117,23 @@ final class WorkThreadModel {
     }
 
     var planLine: String {
-        threadState.planLine(stepNumber: ThreadPlanPosition.stepNumber(detail), total: ThreadPlanPosition.total(detail))
+        threadState.planLine(
+            stepNumber: ThreadPlanPosition.stepNumber(detail),
+            total: ThreadPlanPosition.total(detail),
+            goal: isGoalWork
+        )
+    }
+
+    /// The Work works as one goal, with no step plan (docs/albatross-goal-runs.md).
+    var isGoalWork: Bool {
+        ThreadGoal.isGoalWork(detail: detail, runs: store.runs)
+    }
+
+    /// The checklist the thread shows for a goal Work: the newest run's, else
+    /// the detail's.
+    var checklist: [ChecklistItem] {
+        if let newest = store.runs.last(where: { !$0.run.checklist.isEmpty }) { return newest.run.checklist }
+        return detail?.checklist ?? []
     }
 
     var title: String {
@@ -181,7 +198,7 @@ final class WorkThreadModel {
     /// The composer placeholder by route and state (decision 11, T7, T8).
     var composerPlaceholder: String {
         if redirectArmed != nil { return RunBlockCopy.redirectPlaceholder }
-        if document != nil { return DocumentHandoffCopy.placeholder }
+        if documentOpen { return DocumentHandoffCopy.placeholder }
         switch chat.route {
         case .run:
             return ThreadState.running.composerPlaceholder
@@ -354,6 +371,14 @@ final class WorkThreadModel {
         await loadDetail()
     }
 
+    /// "Handle it" on a goal Work (docs/albatross-goal-runs.md, G1): a goal
+    /// run on the whole goal, with no step key.
+    func handleGoal() async {
+        guard let runID = await store.start(stepKey: nil, stepTitle: title, transport: transport) else { return }
+        autoOpenRunID = runID
+        await loadDetail()
+    }
+
     func stop(_ view: ThreadRunView) async {
         _ = await store.stop(view, transport: transport)
         syncRunRoute()
@@ -374,7 +399,7 @@ final class WorkThreadModel {
     /// run is open), so read the runs once now.
     func turnDidEnd() async {
         // The reply wrote to the open document: the editor loads it again.
-        if document != nil, let reply = chat.messages.last(where: { $0.role == .assistant }),
+        if documentOpen, let reply = chat.messages.last(where: { $0.role == .assistant }),
            DocumentHandoff.turnEditedDocument(reply) {
             documentReloadToken += 1
         }
@@ -397,7 +422,14 @@ final class WorkThreadModel {
         defer { isMarkingDone = false }
         let previous = detail
         if let previous { detail = previous.completing(stepID: view.run.stepKey) }
-        guard let result = await productStore.completeWorkStepAndContinue(workID, stepKey: view.run.stepKey) else {
+        // A goal run: "Done, continue" goes through one function, so the
+        // request body lives in one place (docs/albatross-goal-runs.md).
+        let result: WorkStepContinuation? = if view.run.isGoal {
+            await productStore.completeGoalAndContinue(workID)
+        } else {
+            await productStore.completeWorkStepAndContinue(workID, stepKey: view.run.stepKey)
+        }
+        guard let result else {
             detail = previous
             stepNotice = DocumentHandoffCopy.failed
             return false
@@ -407,32 +439,67 @@ final class WorkThreadModel {
         return true
     }
 
+    /// True while document mode is open, whatever item is selected.
+    var documentOpen: Bool { documentSet != nil }
+
+    /// The document of the selected item: an Albatross or Word document, a
+    /// sheet, or a deck. Nil on a file or a draft tab, and with nothing open.
+    var document: DocumentTarget? { documentSet?.selected.documentTarget }
+
     /// Opens a document inside the thread (D5). The chat carries it from now on.
-    func openDocument(_ target: DocumentTarget) {
-        document = target
-        chat.documentAttachment = target.attachment
+    func openDocument(_ target: DocumentTarget, title: String? = nil) {
+        openItem(.document(target), title: title)
+    }
+
+    /// Opens one item of a package in document mode. The other items of the
+    /// same handoff come with it, so the user switches between them.
+    func openItem(_ content: DocumentModeItem.Content, title: String? = nil) {
+        documentSet = DocumentModeItems.set(opening: content, title: title, runs: store.runs)
+        syncDocumentAttachment()
+    }
+
+    /// The item bar or the package list chose another item.
+    func selectItem(id: String) {
+        documentSet?.select(id: id)
+        syncDocumentAttachment()
+    }
+
+    /// "Next Item" and "Previous Item" on the Mac.
+    func selectItem(step: Int) {
+        documentSet?.select(step: step)
+        syncDocumentAttachment()
+    }
+
+    private func syncDocumentAttachment() {
+        chat.documentAttachment = documentSet?.selected.documentAttachment
     }
 
     /// "Close" or "Back to thread": the document leaves, the thread stays.
     func closeDocument() {
-        document = nil
+        documentSet = nil
         chat.documentAttachment = nil
     }
 
-    /// The open handoff the document belongs to, or nil for an older artifact.
+    /// The open handoff the selected item belongs to, or nil for an older artifact.
     var documentHandoff: ThreadRunView? {
-        guard let document else { return nil }
-        return DocumentHandoff.run(for: store.runs, target: document)
+        guard let selected = documentSet?.selected else { return nil }
+        return DocumentHandoff.run(for: store.runs, content: selected.content)
     }
 
-    /// The "Your part" text, or nil for no card.
+    /// The "Your part" text, or nil for no card: the selected item's note
+    /// when it waits for a check, else the handoff's own words.
     var documentYourPart: String? {
-        DocumentHandoff.detail(of: documentHandoff)
+        if let item = documentSet?.selected {
+            if !item.blanks.isEmpty { return nil }
+            if item.state == .check, let note = item.note { return note }
+        }
+        return DocumentHandoff.detail(of: documentHandoff)
     }
 
-    /// The blanks of the document's open handoff, or none.
+    /// The blanks of the selected item, else of the document's open handoff.
     var documentBlanks: [String] {
-        DocumentHandoff.blanks(of: documentHandoff)
+        if let item = documentSet?.selected, !item.blanks.isEmpty { return item.blanks }
+        return DocumentHandoff.blanks(of: documentHandoff)
     }
 
     /// "Done, continue": marks the handoff's step done, then closes document
@@ -508,7 +575,7 @@ final class WorkThreadModel {
                     restarted = true
                 }
             } else if let runID = await store.start(
-                stepKey: view.run.stepKey, stepTitle: view.run.stepTitle, note: text, transport: transport
+                stepKey: view.run.isGoal ? nil : view.run.stepKey, stepTitle: view.run.stepTitle, note: text, transport: transport
             ) {
                 chat.appendSteerMessage(text, id: ThreadNoteID.make(), runID: runID, redirect: true)
                 restarted = true
@@ -589,7 +656,8 @@ final class WorkThreadModel {
     }
 
     func tryAgain(_ view: ThreadRunView) async {
-        guard let runID = await store.start(stepKey: view.run.stepKey, stepTitle: view.run.stepTitle, transport: transport) else { return }
+        let stepKey = view.run.isGoal ? nil : view.run.stepKey
+        guard let runID = await store.start(stepKey: stepKey, stepTitle: view.run.stepTitle, transport: transport) else { return }
         autoOpenRunID = runID
     }
 

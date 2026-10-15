@@ -1606,6 +1606,14 @@ final class ProductStore {
         await postWorkStep(workID, stepKey: stepKey, note: nil, continues: true)
     }
 
+    /// "Done, continue" on a goal handoff (docs/albatross-goal-runs.md): the
+    /// user did their part. The server records it and queues a goal run that
+    /// checks the outcome contract. The one place that builds this request,
+    /// so the body is easy to change when the server shape settles.
+    func completeGoalAndContinue(_ workID: String) async -> WorkStepContinuation? {
+        await postWorkStep(workID, stepKey: GoalRun.stepKey, note: nil, continues: true)
+    }
+
     private func postWorkStep(_ workID: String, stepKey: String?, note: String?, continues: Bool) async -> WorkStepContinuation? {
         let previous = workDetails[workID]
         let optimistic = stepKey.flatMap { previous?.completing(stepID: $0) }

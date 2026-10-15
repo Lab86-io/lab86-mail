@@ -50,12 +50,18 @@ enum MacDocumentMode {
         return MacDocumentYourPart(blanks: blanks, detail: detail)
     }
 
+    /// The header title of document mode with a package: the selected item.
+    static func title(set: DocumentModeSet) -> String {
+        set.selected.title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank ?? MacDocumentModeCopy.document
+    }
+
     /// The step line of the "your part" card: "Step 2: Make the hours
     /// summary", or the title alone when the plan has no position for it.
     /// The web rule is the `stepLabel` of `YourPartCard` in WorkThread.tsx.
-    /// No middle dot joins the parts (docs/albatross-blank-design.md).
+    /// No middle dot joins the parts (docs/albatross-blank-design.md). A
+    /// goal run has no step, and its title is the Work title: no line.
     static func stepLabel(detail: WorkDetail?, run: ThreadRunView?) -> String? {
-        guard let run else { return nil }
+        guard let run, !run.run.isGoal else { return nil }
         let title = run.run.stepTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let index = detail?.execution.guideSteps.firstIndex(where: { $0.id == run.run.stepKey }) else {
             return title.nilIfBlank
