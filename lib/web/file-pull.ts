@@ -50,12 +50,18 @@ export const WEB_FILE_KINDS = {
   csv: { contentType: 'text/csv', extension: 'csv', label: 'CSV' },
   png: { contentType: 'image/png', extension: 'png', label: 'PNG' },
   jpeg: { contentType: 'image/jpeg', extension: 'jpg', label: 'JPEG' },
+  txt: { contentType: 'text/plain', extension: 'txt', label: 'plain text' },
 } as const;
 export type WebFileKind = keyof typeof WEB_FILE_KINDS;
 
-const ALLOWED_LABEL = Object.values(WEB_FILE_KINDS)
-  .map((kind) => kind.label)
-  .join(', ');
+/** web_file_save and browser_download: the seven types of the design. */
+export const SAVE_FILE_KINDS: readonly WebFileKind[] = ['pdf', 'docx', 'xlsx', 'pptx', 'csv', 'png', 'jpeg'];
+/** A mail or task attachment from a URL: the same, plus plain text. Never a zip. */
+export const ATTACHMENT_FILE_KINDS: readonly WebFileKind[] = [...SAVE_FILE_KINDS, 'txt'];
+
+function allowedLabel(kinds: readonly WebFileKind[]) {
+  return kinds.map((kind) => WEB_FILE_KINDS[kind].label).join(', ');
+}
 
 export type WebFileErrorCode =
   | 'bad_url'
@@ -108,6 +114,9 @@ function isPlainText(bytes: Uint8Array): boolean {
 /** The kind that a declared type or a file name says, if it is one we accept. */
 function declaredKind(contentType: string, name: string): WebFileKind | null {
   const type = contentType.split(';')[0].trim().toLowerCase();
+  const extension = name.toLowerCase().split('.').pop() || '';
+  // Servers often send a CSV file as text/plain: the name decides.
+  if (type === 'text/plain') return extension === 'csv' ? 'csv' : 'txt';
   for (const [kind, info] of Object.entries(WEB_FILE_KINDS) as [
     WebFileKind,
     (typeof WEB_FILE_KINDS)[WebFileKind],
@@ -115,7 +124,6 @@ function declaredKind(contentType: string, name: string): WebFileKind | null {
     if (type === info.contentType) return kind;
   if (type === 'image/jpg' || type === 'image/pjpeg') return 'jpeg';
   if (type === 'application/csv' || type === 'text/comma-separated-values') return 'csv';
-  const extension = name.toLowerCase().split('.').pop() || '';
   if (extension === 'jpeg') return 'jpeg';
   return (
     (Object.keys(WEB_FILE_KINDS) as WebFileKind[]).find(
@@ -131,6 +139,7 @@ function declaredKind(contentType: string, name: string): WebFileKind | null {
 export function detectWebFile(
   bytes: Uint8Array,
   hints: { contentType?: string; name?: string } = {},
+  allowed: readonly WebFileKind[] = SAVE_FILE_KINDS,
 ): WebFileKind {
   const declared = declaredKind(hints.contentType || '', hints.name || '');
   let kind: WebFileKind | null = null;
@@ -145,11 +154,15 @@ export function detectWebFile(
       else if (containsAscii(bytes, 'ppt/presentation.xml')) kind = 'pptx';
     }
     if (!kind)
-      throw new WebFileError('type', `This zip file is not an Office file. Allowed: ${ALLOWED_LABEL}.`);
+      throw new WebFileError(
+        'type',
+        `This zip file is not an Office file. Allowed: ${allowedLabel(allowed)}.`,
+      );
   } else if (looksLikeHtml(bytes)) {
     throw new WebFileError('page', 'The address gives a web page, not a file.');
-  } else if (declared === 'csv' && isPlainText(bytes)) kind = 'csv';
-  if (!kind) throw new WebFileError('type', `This file type is not allowed. Allowed: ${ALLOWED_LABEL}.`);
+  } else if ((declared === 'csv' || declared === 'txt') && isPlainText(bytes)) kind = declared;
+  if (!kind || !allowed.includes(kind))
+    throw new WebFileError('type', `This file type is not allowed. Allowed: ${allowedLabel(allowed)}.`);
   if (declared && declared !== kind)
     throw new WebFileError(
       'mismatch',
@@ -236,10 +249,11 @@ function finish(
   requestedName: string | undefined,
   sourceUrl: string,
   tier: PullTier,
+  kinds: readonly WebFileKind[] = SAVE_FILE_KINDS,
 ): PulledFile {
   if (!bytes.byteLength) throw new WebFileError('failed', 'The file is empty.');
   if (bytes.byteLength > WEB_FILE_MAX_BYTES) throw new WebFileError('size', 'The file is larger than 25 MB.');
-  const kind = detectWebFile(bytes, hints);
+  const kind = detectWebFile(bytes, hints, kinds);
   return {
     bytes,
     kind,
@@ -257,6 +271,7 @@ type TierOneResult = { file: PulledFile } | { fallback: string };
 async function pullWithFetch(
   url: URL,
   name: string | undefined,
+  kinds: readonly WebFileKind[],
   signal?: AbortSignal,
 ): Promise<TierOneResult> {
   let raw: Awaited<ReturnType<typeof deps.fetchRaw>>;
@@ -281,7 +296,14 @@ async function pullWithFetch(
   const hintName = nameFromDisposition(raw.headers['content-disposition']) || nameFromUrl(url);
   try {
     return {
-      file: finish(bytes, { contentType: raw.contentType, name: hintName }, name, url.toString(), 'fetch'),
+      file: finish(
+        bytes,
+        { contentType: raw.contentType, name: hintName },
+        name,
+        url.toString(),
+        'fetch',
+        kinds,
+      ),
     };
   } catch (error) {
     // A page where a file was expected: a sign-in page, or a page that needs JavaScript.
@@ -294,6 +316,7 @@ async function pullWithSession(
   url: URL,
   name: string | undefined,
   contextId: string | null,
+  kinds: readonly WebFileKind[],
   signal?: AbortSignal,
 ): Promise<PulledFile> {
   const tier: PullTier = contextId ? 'signed_in' : 'session';
@@ -311,6 +334,7 @@ async function pullWithSession(
           name,
           url.toString(),
           tier,
+          kinds,
         );
       }
       if (opened.status === 404 || opened.status === 410)
@@ -335,6 +359,7 @@ async function pullWithSession(
         name,
         url.toString(),
         tier,
+        kinds,
       );
     } catch (error) {
       if (error instanceof DownloadError)
@@ -348,6 +373,8 @@ async function pullWithSession(
 
 export interface PullOptions {
   name?: string;
+  /** The accepted types. Default: SAVE_FILE_KINDS. */
+  kinds?: readonly WebFileKind[];
   /** The user whose saved sign-ins tier 3 reads. Without it, tier 2 runs. */
   userId?: string;
   signal?: AbortSignal;
@@ -362,10 +389,11 @@ export async function pullWebFile(rawUrl: string, options: PullOptions = {}): Pr
     const message = error instanceof Error ? error.message : 'Use a full http or https address.';
     throw new WebFileError(/private/.test(message) ? 'private_host' : 'bad_url', message);
   }
-  const first = await pullWithFetch(url, options.name, options.signal);
+  const kinds = options.kinds ?? SAVE_FILE_KINDS;
+  const first = await pullWithFetch(url, options.name, kinds, options.signal);
   if ('file' in first) return first.file;
   const contextId = options.userId ? await deps.savedContextId(options.userId).catch(() => null) : null;
-  return pullWithSession(url, options.name, contextId, options.signal);
+  return pullWithSession(url, options.name, contextId, kinds, options.signal);
 }
 
 export interface SaveWebFileInput {

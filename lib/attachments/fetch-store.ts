@@ -3,7 +3,7 @@ import net from 'node:net';
 import { AttachmentTooLargeError, readMailAttachmentBytes } from '@/lib/attachments/mail-files';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { normalizeUrl } from '@/lib/shared/url';
-import { pullWebFile } from '@/lib/web/file-pull';
+import { ATTACHMENT_FILE_KINDS, pullWebFile } from '@/lib/web/file-pull';
 
 const boardsApi = api.boards;
 const agentUploadsApi = api.agentUploads;
@@ -157,11 +157,15 @@ interface FetchedBlob {
 // Download a public web file through Browserbase (lib/web/file-pull.ts):
 // Fetch first, then a short session. Our server never requests the file
 // itself, so no redirect hop can reach a private address from here. The
-// type allow list, the 25 MB limit, and the first-bytes check apply.
+// type allow list (the save types plus plain text), the 25 MB limit, and
+// the first-bytes check apply.
 export async function fetchWebFile(rawUrl: string, fallbackName?: string): Promise<FetchedBlob> {
   const normalized = normalizeUrl(rawUrl);
   if (!normalized) throw new Error(`Not a usable URL: ${rawUrl}`);
-  const file = await webFileDeps.pullWebFile(normalized, { name: fallbackName });
+  const file = await webFileDeps.pullWebFile(normalized, {
+    name: fallbackName,
+    kinds: ATTACHMENT_FILE_KINDS,
+  });
   return { bytes: file.bytes, contentType: file.contentType, name: file.name };
 }
 

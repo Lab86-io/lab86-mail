@@ -4,9 +4,11 @@ import JSZip from 'jszip';
 import { BrowserbaseRequestError } from '../lib/web/browserbase-client';
 import {
   __setFilePullDepsForTest,
+  ATTACHMENT_FILE_KINDS,
   detectWebFile,
   looksLikeHtml,
   pullWebFile,
+  SAVE_FILE_KINDS,
   saveBrowserDownload,
   saveWebFile,
   sourceAddress,
@@ -56,6 +58,42 @@ describe('detectWebFile', () => {
     ).toBe('csv');
   });
 
+  test('plain text only where the caller allows it (mail and task attachments); never a zip', async () => {
+    const text = new TextEncoder().encode('Line one\nLine two\n');
+    expect(() => detectWebFile(text, { contentType: 'text/plain' })).toThrow(
+      'This file type is not allowed. Allowed: PDF, Word (DOCX), Excel (XLSX), PowerPoint (PPTX), CSV, PNG, JPEG.',
+    );
+    expect(detectWebFile(text, { contentType: 'text/plain; charset=utf-8' }, ATTACHMENT_FILE_KINDS)).toBe(
+      'txt',
+    );
+    expect(detectWebFile(text, { name: 'readme.txt' }, ATTACHMENT_FILE_KINDS)).toBe('txt');
+    expect(() => detectWebFile(PDF, { contentType: 'text/plain' }, ATTACHMENT_FILE_KINDS)).toThrow(
+      'The file says it is plain text, but its contents are PDF.',
+    );
+    const zip = new JSZip();
+    zip.file('notes.txt', 'x');
+    const zipped = new Uint8Array(await zip.generateAsync({ type: 'uint8array' }));
+    expect(() => detectWebFile(zipped, {}, ATTACHMENT_FILE_KINDS)).toThrow(
+      /not an Office file. Allowed: .*plain text/,
+    );
+    __setFilePullDepsForTest({
+      fetchRaw: async () =>
+        ({
+          statusCode: 200,
+          headers: {},
+          content: 'hello',
+          contentType: 'text/plain',
+          encoding: 'utf-8',
+        }) as any,
+    });
+    expect(await pullWebFile('https://a.test/notes', { kinds: ATTACHMENT_FILE_KINDS })).toMatchObject({
+      kind: 'txt',
+      name: 'notes.txt',
+      contentType: 'text/plain',
+    });
+    await expect(pullWebFile('https://a.test/notes')).rejects.toThrow('This file type is not allowed.');
+  });
+
   test('a page, a plain zip, another type, or a mismatch is refused with its code', async () => {
     const code = (bytes: Uint8Array, hints = {}) => {
       try {
@@ -92,7 +130,10 @@ describe('detectWebFile', () => {
     expect(webFileName('report.bin', 'xlsx')).toBe('report.xlsx');
     expect(webFileName('', 'csv')).toBe('download.csv');
     expect(webFileName('.pdf', 'png')).toBe('download.png');
-    expect(Object.keys(WEB_FILE_KINDS)).toEqual(['pdf', 'docx', 'xlsx', 'pptx', 'csv', 'png', 'jpeg']);
+    expect(Object.keys(WEB_FILE_KINDS)).toEqual(['pdf', 'docx', 'xlsx', 'pptx', 'csv', 'png', 'jpeg', 'txt']);
+    expect(SAVE_FILE_KINDS).toEqual(['pdf', 'docx', 'xlsx', 'pptx', 'csv', 'png', 'jpeg']);
+    expect(ATTACHMENT_FILE_KINDS).toEqual([...SAVE_FILE_KINDS, 'txt']);
+    expect(webFileName('notes', 'txt')).toBe('notes.txt');
     expect(sourceAddress('https://u:p@a.test/f.pdf?t=1#x')).toBe('https://a.test/f.pdf?t=1');
     expect(sourceAddress('https://a.test/f.pdf?token=secret', false)).toBe('https://a.test/f.pdf');
     expect(sourceAddress('nope')).toBe('');

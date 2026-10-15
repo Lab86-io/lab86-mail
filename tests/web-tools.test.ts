@@ -9,7 +9,7 @@ import { SecureScrubber } from '../lib/secure/scrub';
 import { getTool } from '../lib/tools/index';
 import { browserbaseFetch, browserbaseSearch, webFileSave, webResearch } from '../lib/tools/web';
 import { BrowserbaseRequestError } from '../lib/web/browserbase-client';
-import { __setFilePullDepsForTest } from '../lib/web/file-pull';
+import { __setFilePullDepsForTest, SAVE_FILE_KINDS } from '../lib/web/file-pull';
 import { __setWebReadDepsForTest } from '../lib/web/read';
 import { __setWebResearchDepsForTest } from '../lib/web/research';
 import type { SessionPage } from '../lib/web/session';
@@ -174,7 +174,9 @@ describe('fetchWebFile', () => {
       contentType: 'application/pdf',
       name: 'Invoice.pdf',
     });
-    expect(calls).toEqual([['https://example.com/invoice', { name: 'Invoice' }]]);
+    expect(calls).toEqual([
+      ['https://example.com/invoice', { name: 'Invoice', kinds: [...SAVE_FILE_KINDS, 'txt'] }],
+    ]);
     await expect(fetchWebFile('   ')).rejects.toThrow('Not a usable URL');
   });
 });
