@@ -172,8 +172,17 @@ describe('secureDetails', () => {
       workId: String(workId),
       runId: 'r1',
     });
+    // A filled PDF that the user downloaded is a use too.
+    await t.mutation(api.secureDetails.recordUse, {
+      ...caller,
+      itemId: ITEM,
+      outcome: 'downloaded',
+      field: 'number',
+    });
     const uses = await t.query(api.secureDetails.listUses, { ...caller, itemId: ITEM });
-    expect(uses.map((use) => use.outcome)).toEqual(['typed', 'asked']);
+    expect(uses.map((use) => use.outcome)).toEqual(['downloaded', 'typed', 'asked']);
+    expect(uses[0].site).toBeNull();
+    uses.shift();
     expect(uses[0]).toMatchObject({
       workTitle: 'Renew the car registration',
       host: 'dmv.ny.gov',

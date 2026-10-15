@@ -154,6 +154,11 @@ describe('the list', () => {
     expect(secureUseLine({ ...uses[2], outcome: 'sent', site: 'api.openai.com' }, 'api_key')).toBe(
       'Sent to api.openai.com',
     );
+    // A filled PDF that the user downloaded (docs/albatross-goal-runs.md G5).
+    expect(secureUseLine({ ...uses[1], outcome: 'downloaded', site: null }, 'id_number')).toBe(
+      'Filled in a PDF that you downloaded',
+    );
+    expect(secureUseTone('downloaded')).toBe('did');
     expect(secureUseTone('typed')).toBe('did');
     expect(secureUseTone('refused_site')).toBe('warn');
     expect(secureUseTone('denied')).toBe('quiet');

@@ -152,6 +152,7 @@ export function exportReadme(exportedAt: Date): string {
     'Mail: data/mailCorpusMessages.json has the headers, snippet, and labels of each message.',
     `Personal details (name, phone, address, and others you saved) are in ${PERSONAL_DETAILS_FILE}.`,
     `Passwords and IDs are listed in ${SECURE_ITEMS_FILE}: each item's name, kind, and sites. Their values are never exported.`,
+    'A filled form in data/agentUploads.json lists its sealed fields: each field name with a reference to an item in Passwords and IDs, never the value.',
     'data/mailCorpusBodies.json has the text and HTML body of each message.',
     '',
     'What is not in this file:',
