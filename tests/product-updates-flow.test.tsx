@@ -59,14 +59,20 @@ describe('the global update flow', () => {
       });
       expect(fetchSpy).not.toHaveBeenCalled();
       Object.defineProperty(window.document, 'visibilityState', { value: 'hidden', configurable: true });
-      await act(async () => window.dispatchEvent(new Event('focus')));
+      await act(async () => {
+        window.dispatchEvent(new Event('focus'));
+      });
       expect(fetchSpy).not.toHaveBeenCalled();
       Object.defineProperty(window.document, 'visibilityState', { value: 'visible', configurable: true });
-      await act(async () => window.dispatchEvent(new Event('focus')));
+      await act(async () => {
+        window.dispatchEvent(new Event('focus'));
+      });
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       await act(async () => renderer!.unmount());
       renderer = undefined;
-      await act(async () => window.dispatchEvent(new Event('focus')));
+      await act(async () => {
+        window.dispatchEvent(new Event('focus'));
+      });
       expect(fetchSpy).toHaveBeenCalledTimes(1);
     } finally {
       fetchSpy.mockRestore();

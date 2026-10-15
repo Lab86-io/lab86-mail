@@ -80,7 +80,7 @@ script prohibition, screenshots, theme support and authored immutable notes rema
 
 ## Verification
 
-- 66 focused update, component, icon-rule and shell-vocabulary tests pass. App and test
+- 67 focused update, component, icon-rule and shell-vocabulary tests pass. App and test
   typechecks pass. Receipt cases cover first visits, refresh before dismissal,
   all intervening batches, rollbacks, removed notes, legacy migration, corrupted
   stores, blocked stores, and independent active tabs.
@@ -100,3 +100,9 @@ script prohibition, screenshots, theme support and authored immutable notes rema
   component regressions pass separately and are included in the final CI run.
   New update logic has 100% line coverage. No production credentials are used
   in local validation.
+
+The installed TanStack focus manager listens to visibility changes. An explicit
+window-focus listener also matches Sprebuild when a visible window regains focus.
+It skips hidden tabs, shares any in-flight request, and is removed on unmount.
+The component regression checks those cases; Chromium confirms that a fresh
+manifest is rechecked immediately on window focus.
