@@ -287,7 +287,7 @@ Mac: the same block. Package rows take the hover fill and a context menu with th
 - A tap on the plan line opens the Checklist sheet (iPhone) or the Checklist popover (Mac) in
   place of the plan. The sheet title is "Checklist". With no run yet it reads "No checklist yet.
   Albatross writes one when it starts." The footer reads "Albatross keeps this list while it
-  works. Tell Albatross in the conversation when something changed."
+  works. Tell Albatross in the conversation what changed."
 - Details: for a goal Work, a "Checklist" section replaces the "Plan" section. It shows the
   newest run's checklist in the same rows. "Files" lists every artifact as today, and a `file`
   or `deck` artifact opens like its package item.
@@ -403,7 +403,7 @@ Sentence case. Simplified Technical English. No -ing forms, no "AI", no icons be
 | `GoalRunCopy.checklist` | "Checklist" |
 | `GoalRunCopy.checklistSummary` | "Checklist · {done} of {count} done", plus " · {n} for you" when n > 0 |
 | `GoalRunCopy.noChecklist` | "No checklist yet. Albatross writes one when it starts." |
-| `GoalRunCopy.checklistFooter` | "Albatross keeps this list while it works. Tell Albatross in the conversation when something changed." |
+| `GoalRunCopy.checklistFooter` | "Albatross keeps this list while it works. Tell Albatross in the conversation what changed." |
 | `ChecklistItem.State.word` | done "Done", yours "You", todo and doing none (doing draws the live dot) |
 | `RunSource.Kind.word` | web "Web", mail "Mail", file "File", calendar "Calendar", jira "Jira", document "Document", unknown "Source" |
 | `GoalRunCopy.sourceLabel` | "{kind word} · {title}"; a web source with no title shows its host |

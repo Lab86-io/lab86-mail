@@ -11,7 +11,7 @@ enum GoalRunCopy {
     static let earlierMessages = "Earlier messages"
     static let checklist = "Checklist"
     static let noChecklist = "No checklist yet. Albatross writes one when it starts."
-    static let checklistFooter = "Albatross keeps this list while it works. Tell Albatross in the conversation when something changed."
+    static let checklistFooter = "Albatross keeps this list while it works. Tell Albatross in the conversation what changed."
     static let notSure = "Not sure"
     static let openOnWeb = "Open on the web"
     /// The second button of a goal handoff: the same words as document mode.

@@ -2200,6 +2200,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
         evidence = try container.decodeIfPresent([Evidence].self, forKey: .evidence) ?? []
         metricEntries = try container.decodeIfPresent([WorkMetricEntry].self, forKey: .metricEntries) ?? []
         metricSummary = try container.decodeIfPresent(WorkMetricSummary.self, forKey: .metricSummary)
+        goalRuns = try container.decodeIfPresent(Bool.self, forKey: .goalRuns)
+        checklist = try container.decodeIfPresent([ChecklistItem].self, forKey: .checklist)
     }
 
     /// Where the outcome stands. This is a state, not a sentence: the views test
