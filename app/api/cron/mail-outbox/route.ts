@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { isInternalCronRequest } from '@/lib/cron-auth';
+import { fillHeldAttachments } from '@/lib/files/draft-attachments';
 import { sendNylasMessage } from '@/lib/nylas/provider';
 import { claimOutbox, completeOutbox, type OutboxPayload } from '@/lib/send/outbox';
 import { isSendAsError } from '@/lib/shared/send-as';
@@ -19,6 +20,7 @@ const defaults = {
   sendNylasMessage,
   upsertMessage,
   upsertThread,
+  fillHeldAttachments,
 };
 export function createDispatchPost(deps = defaults) {
   return async (req: NextRequest) => {
@@ -32,8 +34,19 @@ export function createDispatchPost(deps = defaults) {
     try {
       const response = await deps.fetch(claimed.url);
       if (!response.ok) throw new Error('Held payload unavailable');
-      const payload = (await response.json()) as OutboxPayload;
+      const { sealedAttachments, ...payload } = (await response.json()) as OutboxPayload;
       if (payload.userId !== userId) throw new Error('Payload owner mismatch');
+      // Files with saved details fill now, for the recipients of this mail.
+      // A refusal here (the item lost a site, or is gone) fails the send.
+      if (sealedAttachments?.length) {
+        const filled = await runWithAiRequestContext({ userId, agent: 'user' }, () =>
+          deps.fillHeldAttachments(userId, sealedAttachments, [payload.to, payload.cc, payload.bcc]),
+        );
+        payload.attachments = [
+          ...(payload.attachments ?? []),
+          ...(filled as NonNullable<OutboxPayload['attachments']>),
+        ];
+      }
       const sent = await runWithAiRequestContext({ userId, agent: 'user' }, async () => {
         handedOff = true;
         const message = await deps.sendNylasMessage(payload);

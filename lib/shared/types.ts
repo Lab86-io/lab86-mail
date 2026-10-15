@@ -165,6 +165,11 @@ export interface DraftAttachment {
   name: string;
   size?: number;
   contentType?: string;
+  /**
+   * True when saved details from Passwords and IDs fill into this file at send
+   * time (a filled PDF with sealed fields). The stored file holds no value.
+   */
+  sealed?: boolean;
 }
 
 export interface LabelRecord {
