@@ -340,7 +340,7 @@ describe('resolving draft attachments at send time', () => {
     });
   });
 
-  test('the default readers: the office version from storage, and the PDF export placeholder', async () => {
+  test('the default readers: the office version from storage, and the PDF export', async () => {
     const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(
       (async () => new Response(new Uint8Array([1, 2, 3]))) as unknown as typeof fetch,
     );
@@ -350,7 +350,8 @@ describe('resolving draft attachments at send time', () => {
     } finally {
       fetchSpy.mockRestore();
     }
-    await expect(exportOfficePdf('u1', 'office_1')).rejects.toThrow('PDF export is not ready.');
+    // The real export needs the document store; with no Convex here it fails, and the draft never sends a broken file.
+    await expect(exportOfficePdf('u1', 'office_1')).rejects.toThrow();
     // The default send-grant hooks reach the store; with no Convex here, the file is not found.
     await expect(original.checkSend('u1', 'upload_1', ['ap@example.com'])).rejects.toMatchObject({
       code: 'not_found',
