@@ -152,10 +152,14 @@ describe('blanks as content controls', () => {
     expect(attr(w(sdtPr, 'text')[0], 'multiLine')).toBe('1');
     expect(attr(w(w(sdtPr, 'rPr')[0], 'color')[0], 'val')).toBe('1F1D1A');
     expect(w(w(sdtPr, 'rPr')[0], 'shd')).toHaveLength(0);
+    expect(w(w(sdtPr, 'rPr')[0], 'u')).toHaveLength(0);
     const content = w(sdt, 'sdtContent')[0];
-    expect(content.textContent).toBe(' Payment details ');
-    expect(attr(w(content, 'color')[0], 'val')).toBe('AE4B2B');
-    expect(attr(w(content, 'shd')[0], 'fill')).toBe('F6E9E3');
+    // An empty underlined slot: the muted label on an accent underline, with no fill.
+    expect(content.textContent).toBe(`Payment details${'\u00a0'.repeat(6)}`);
+    expect(attr(w(content, 'color')[0], 'val')).toBe('6B665D');
+    expect(attr(w(content, 'u')[0], 'val')).toBe('single');
+    expect(attr(w(content, 'u')[0], 'color')).toBe('216440');
+    expect(w(content, 'shd')).toHaveLength(0);
     expect(sdt.parentElement?.localName).toBe('p');
     const ids = w(document, 'sdt').map((node) => attr(w(node, 'id')[0], 'val'));
     expect(new Set(ids).size).toBe(ids.length);
@@ -198,6 +202,7 @@ describe('blanks as content controls', () => {
     const run = w(w(payment, 'sdtContent')[0], 'r')[0];
     expect(attr(w(run, 'color')[0], 'val')).toBe('1F1D1A');
     expect(w(run, 'shd')).toHaveLength(0);
+    expect(w(run, 'u')).toHaveLength(0);
     expect(w(run, 'br')).toHaveLength(1);
 
     const cleared = await editWordPackage(filled, [
@@ -221,7 +226,8 @@ describe('blanks as content controls', () => {
       'showingPlcHdr',
       'text',
     ]);
-    expect(attr(w(w(again, 'sdtContent')[0], 'color')[0], 'val')).toBe('AE4B2B');
+    expect(attr(w(w(again, 'sdtContent')[0], 'color')[0], 'val')).toBe('6B665D');
+    expect(attr(w(w(again, 'sdtContent')[0], 'u')[0], 'color')).toBe('216440');
   });
 
   test('one blank in two places fills both; an unknown blank names the real ones and saves nothing', async () => {
@@ -269,6 +275,8 @@ describe('blanks as content controls', () => {
     expect(w(content, 'p')).toHaveLength(1);
     expect(attr(w(content, 'jc')[0], 'val')).toBe('right');
     expect(content.textContent).toBe('Paid in full.');
+    // No stored style: the filled value is ink, not the muted label color.
+    expect(attr(w(content, 'color')[0], 'val')).toBe('1F1D1A');
     expect(readBlanks(doc)[0]).toMatchObject({ value: 'Paid in full.', filled: true });
     expect(() => fillBlank(doc, 'Missing', 'x')).toThrow(BlankNotFoundError);
   });
@@ -308,7 +316,7 @@ describe('page number fields', () => {
       )
       .filter((value) => value !== undefined && value !== '' && value !== ' of ' && value !== 'Page ');
     expect(sequence).toEqual([
-      'Memo  ·  New check-in process from November 3',
+      'New check-in process from November 3',
       'begin',
       ' PAGE ',
       'separate',

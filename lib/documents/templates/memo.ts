@@ -90,7 +90,7 @@ export function buildMemo(canvas: TemplateCanvas, data: MemoData, title: string)
     sections: [
       {
         properties: pageProperties(),
-        footers: { default: new Footer({ children: [c.footer(subject ? `Memo  ·  ${subject}` : 'Memo')] }) },
+        footers: { default: new Footer({ children: [c.footer(subject || 'Memo')] }) },
         children: [
           c.paragraph([c.run('Memo', { font: SERIF, size: SIZE.title })], { after: 360 }),
           block,

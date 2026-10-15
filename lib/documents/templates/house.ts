@@ -1,4 +1,4 @@
-// House style for the Word templates. One type scale, one ink, one accent.
+// House style for the Word templates. One type scale, one ink, one restrained accent.
 // The templates own every font, size, color, rule, and space; the model sends
 // data only. Sizes are half-points; lengths are twips (1/1440 inch).
 
@@ -20,8 +20,11 @@ import {
 export const INK = '1F1D1A';
 export const MUTED = '6B665D';
 export const RULE = 'D9D3C7';
-export const ACCENT = 'AE4B2B';
-export const TINT = 'F6E9E3';
+/**
+ * The one accent: the app accent, oklch(0.45 0.09 156) in app/globals.css, as sRGB.
+ * Only the invoice total rule and the blank underline use it. The page stays white.
+ */
+export const ACCENT = '216440';
 export const SERIF = 'Fraunces Display';
 export const SANS = 'Geist';
 

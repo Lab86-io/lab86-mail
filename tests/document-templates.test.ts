@@ -69,6 +69,11 @@ describe('Word templates', () => {
     expect(document).toContain('w:ascii="Fraunces Display"');
     expect(document).toContain('<w:sz w:val="64"/>');
     expect(document).toContain('<w:sz w:val="36"/>');
+    // One restrained accent: the total rule. No brick accent and no tinted fill.
+    expect(document.match(/<w:top w:val="single" w:color="216440" w:sz="8"\/>/g)).toHaveLength(2);
+    expect(document).not.toContain('AE4B2B');
+    expect(document).not.toContain('F6E9E3');
+    expect(await part(bytes, 'word/footer1.xml')).toContain('Invoice INV-1042 from Mara Ellison');
   });
 
   test('invoice numbers: a given amount wins, missing numbers become blanks, and the total waits for them', () => {

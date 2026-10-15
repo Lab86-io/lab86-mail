@@ -109,10 +109,13 @@ export function buildReport(canvas: TemplateCanvas, data: ReportData, title: str
   const reportTitle = cleanText(data.title) || title;
   const subtitle = cleanText(data.subtitle);
   const author = cleanText(data.author);
+  // Author and date on their own lines, with no separator characters.
   const byline = [
-    ...(author ? [c.run(author, { color: MUTED })] : []),
-    ...(author ? [c.run('  ·  ', { color: MUTED })] : []),
-    ...c.value(data.date, 'Date', { color: MUTED }, { display: displayDate }),
+    ...(author ? [c.paragraph([c.run(author, { color: MUTED })], { after: 40 })] : []),
+    c.paragraph(c.value(data.date, 'Date', { color: MUTED }, { display: displayDate }), {
+      ruleBelow: true,
+      after: 480,
+    }),
   ];
   return new Document({
     title,
@@ -128,7 +131,7 @@ export function buildReport(canvas: TemplateCanvas, data: ReportData, title: str
           ...(subtitle
             ? [c.paragraph([c.run(subtitle, { size: SIZE.lead, color: MUTED })], { after: 240 })]
             : []),
-          c.paragraph(byline, { ruleBelow: true, after: 480 }),
+          ...byline,
           ...data.sections.flatMap((section) => [
             c.paragraph([c.run(cleanText(section.heading), { font: SERIF, size: SIZE.heading })], {
               style: 'Heading1',

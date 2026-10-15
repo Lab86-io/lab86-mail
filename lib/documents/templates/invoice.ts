@@ -5,6 +5,7 @@
 import { AlignmentType, Document, Footer, Table, TableRow, WidthType } from 'docx';
 import { z } from 'zod';
 import {
+  ACCENT,
   cell,
   cleanText,
   displayDate,
@@ -294,11 +295,11 @@ export function buildInvoice(canvas: TemplateCanvas, data: InvoiceData, title: s
         cell(
           [c.paragraph([c.run(label, { color: strong ? INK : MUTED, size: strong ? SIZE.body : 18 })])],
           totalsWidths[1],
-          { top: strong ? 160 : 100, borders: strong ? { top: hairline(INK, 8) } : {} },
+          { top: strong ? 160 : 100, borders: strong ? { top: hairline(ACCENT, 8) } : {} },
         ),
         cell([c.paragraph(value, { align: right })], totalsWidths[2], {
           top: 100,
-          borders: strong ? { top: hairline(INK, 8) } : {},
+          borders: strong ? { top: hairline(ACCENT, 8) } : {},
         }),
       ],
     });
@@ -320,9 +321,10 @@ export function buildInvoice(canvas: TemplateCanvas, data: InvoiceData, title: s
 
   const engagement = cleanText(data.engagement);
   const notes = cleanText(data.notes);
-  const footerText = [fromName, number ? `Invoice ${number}` : 'Invoice', period]
+  // A plain line with no separators: "Invoice INV-1042 from Mara Ellison".
+  const footerText = [number ? `Invoice ${number}` : 'Invoice', fromName ? `from ${fromName}` : '']
     .filter(Boolean)
-    .join('  ·  ');
+    .join(' ');
   return new Document({
     title,
     creator: fromName || 'Albatross',

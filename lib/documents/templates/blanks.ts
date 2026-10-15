@@ -1,11 +1,12 @@
 // Blanks: fields the user must still fill, kept as Word content controls
 // (`w:sdt`) with the tag `blank:<slug>` and the label as the alias. The
-// placeholder shows the label in the accent tint. `w:sdtPr/w:rPr` holds the
+// placeholder is an empty underlined slot: the label in the muted color on an
+// accent underline, with no fill. `w:sdtPr/w:rPr` holds the
 // style of a filled value, so Word, the document server, and `fill_blank`
 // all write the value in the body style. Reading a control gives the same
 // value that the thread shows.
 
-import { ACCENT, BLANK_TAG_PREFIX, type BlankSpec, blankSlug, INK, TINT } from './house';
+import { ACCENT, BLANK_TAG_PREFIX, type BlankSpec, blankSlug, INK, MUTED } from './house';
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const XML_NS = 'http://www.w3.org/XML/1998/namespace';
@@ -62,16 +63,22 @@ function setRunProperty(rPr: Element, name: string, attrs: Record<string, string
 
 function placeholderProperties(source: Element | undefined, doc: Document) {
   const rPr = source ? (source.cloneNode(true) as Element) : el(doc, 'rPr');
-  setRunProperty(rPr, 'color', { val: ACCENT });
-  setRunProperty(rPr, 'shd', { val: 'clear', color: 'auto', fill: TINT });
+  setRunProperty(rPr, 'shd', null);
+  setRunProperty(rPr, 'color', { val: MUTED });
+  setRunProperty(rPr, 'u', { val: 'single', color: ACCENT });
   return rPr;
 }
 
-function filledProperties(source: Element | undefined, doc: Document) {
+/**
+ * The style of a filled value. From `w:sdtPr/w:rPr` it keeps its color. From a
+ * placeholder run (a control that another editor saved without `w:rPr`) the
+ * muted label color becomes ink.
+ */
+function filledProperties(source: Element | undefined, doc: Document, fromPlaceholder = false) {
   const rPr = source ? (source.cloneNode(true) as Element) : el(doc, 'rPr');
   setRunProperty(rPr, 'shd', null);
-  if (!kid(rPr, 'color') || kid(rPr, 'color')?.getAttributeNS(W, 'val') === ACCENT)
-    setRunProperty(rPr, 'color', { val: INK });
+  setRunProperty(rPr, 'u', null);
+  if (fromPlaceholder || !kid(rPr, 'color')) setRunProperty(rPr, 'color', { val: INK });
   return rPr;
 }
 
@@ -91,7 +98,9 @@ function textRun(doc: Document, rPr: Element, value: string) {
   return run;
 }
 
-const placeholderText = (label: string) => ` ${label} `;
+// Non-breaking spaces carry the underline past the label, so the slot reads as a line to fill.
+const SLOT = '\u00a0'.repeat(6);
+const placeholderText = (label: string) => `${label}${SLOT}`;
 
 // CT_SdtPr: rPr alias tag id lock placeholder temporary showingPlcHdr ...
 const BEFORE_PLACEHOLDER_FLAG = ['rPr', 'alias', 'tag', 'id', 'lock', 'placeholder', 'temporary'];
@@ -210,9 +219,10 @@ export function fillBlank(doc: Document, blank: string, value: string): string {
   const text = value.replace(/\r\n?/g, '\n');
   for (const control of matches) {
     const firstRun = all(control.content, 'r')[0];
-    const rPrSource = kid(control.sdtPr, 'rPr') ?? (firstRun && kid(firstRun, 'rPr'));
+    const stored = kid(control.sdtPr, 'rPr');
+    const rPrSource = stored ?? (firstRun && kid(firstRun, 'rPr'));
     const empty = !text.trim();
-    const rPr = empty ? placeholderProperties(rPrSource, doc) : filledProperties(rPrSource, doc);
+    const rPr = empty ? placeholderProperties(rPrSource, doc) : filledProperties(rPrSource, doc, !stored);
     const run = textRun(doc, rPr, empty ? placeholderText(control.name) : text);
     // A block-level control holds paragraphs: keep the first one and its properties.
     const [paragraph, ...others] = kids(control.content, 'p');
