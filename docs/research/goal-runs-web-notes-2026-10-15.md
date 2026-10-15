@@ -30,8 +30,8 @@ These modules now use the client: `lib/tools/web.ts`, `lib/albatross/browser-ses
 | `web_file_save` | `{ url, name? }` | `{ ok: true, fileId, title, openPath, size, contentType, sourceUrl?, sha256 }` |
 | `browser_download` (runner) | `{ ref?, url?, name? }` | The same shape as `web_file_save`. |
 
-- `web_research` and `web_file_save` are registry tools in the new chat group `web`. The runner
-  list belongs to the core builder.
+- `web_research` and `web_file_save` are registry tools in the new chat group `web`. The core
+  builder adds them to the runner list and maps their results to `file` artifacts and `web` sources.
 - `browser_download` records a `file` artifact and one log line itself.
 - `web_research` limits: 6 searches, plus 1 search for each of the first 2 sites; 6 pages
   read; max 3 pages in a browser; max 2 sessions; 20 s for each page; 60 s in total;
@@ -77,8 +77,9 @@ The egress test lists each one. A new one fails the test.
 1. The module name is `lib/web/browserbase-client.ts` (as in the research), not `lib/web/browserbase.ts`.
 2. The `secure_fetch` session path uses the CDP Fetch domain, not `page.route`. Reason: the live
    test in section 3.
-3. `fetchWebFile` (task attachments and mail attachments from a URL) now accepts only the seven
-   file types. Before, it accepted any type. A `.txt`, `.zip`, or `.gif` from a URL now fails.
+3. `fetchWebFile` (task attachments and mail attachments from a URL) now accepts the seven file
+   types and plain text (`text/plain`, `.txt`). Before, it accepted any type. A `.zip` or `.gif`
+   from a URL now fails. `web_file_save` and `browser_download` accept the seven types only.
 4. `browserbase_fetch` now cuts the text at 80,000 characters. Before, it had no limit.
 5. `web_file_save` uses the user's saved sign-ins only after Fetch fails or gives a page. It
    never uses them for a public file.
@@ -86,12 +87,26 @@ The egress test lists each one. A new one fails the test.
 7. `deck-render.ts` keeps `renderSessionBody(projectId)` from PR #332, with the same values.
 8. `secure_fetch` through a new session takes about 3 to 4 s, not 2.4 s as in the research.
 
-## 6. Open questions
+## 6. Chat tool shapes
 
-1. Must the runner list (core) also get `web_research` and `web_file_save` before the release?
-2. Does a download from a popup tab show in the Downloads API? `browser_download` waits on the
-   current tab only.
-3. Is a `.txt` or `.zip` from a URL necessary for mail attachments? If yes, add a small "attach
-   only" type list.
-4. Must `tool-shapes.ts` (ui-web) get shapes for `web_research` (sources) and `web_file_save` (a file)?
-5. When can `LAB86_SECURE_FETCH_BROWSERBASE` go on in production?
+- `web_research`: the `sources` kind. Each row has the number and the title, the host, and a link.
+  The passages stay with the model.
+- `web_file_save` and `browser_download`: the `files` kind. One row has the name, the type, the
+  size, and the source host. The row opens the file in Files (`open_document` with the
+  `/?view=files&file=<id>` path). `FileRow` has a new optional `size`. The web files card shows it.
+- `browser_download` is a runner tool, not a registry tool. It has its own mapper table, so
+  `SHAPED_TOOL_NAMES` keeps registry tools only.
+- Native follow-up: the native `open_document` action opens an Albatross document by id. For a
+  saved file it must open the Files path. Native also does not show `size` yet.
+
+## 7. Known limits and follow-ups
+
+1. **Popup downloads.** `browser_download` waits for the download event on the current tab only.
+   A download that starts in a popup tab is not collected. The release then deletes it.
+2. **Deck-art redirects.** `lib/documents/deck-art.ts` fetches a museum image with
+   `redirect: 'follow'`. An allowed host can send the request to any host. Stop the redirects, or
+   check the last host against `ARTWORK_IMAGE_HOSTS`.
+3. **`secure_fetch` flag.** `LAB86_SECURE_FETCH_BROWSERBASE` stays off at deploy. The owner turns
+   it on for one user after the round ships and a live check passes.
+4. **A session that times out** (no release) keeps its leftover downloads until the Browserbase
+   retention ends.
