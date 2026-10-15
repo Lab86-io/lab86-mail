@@ -6,11 +6,13 @@ import {
   setRailScrollTop,
   setThreadDraft,
   setThreadScroll,
+  setThreadTab,
   subscribeThreadMemory,
   threadDraft,
   threadDraftWorkIds,
   threadMemoryVersion,
   threadScroll,
+  threadTab,
 } from '../lib/albatross/thread-memory';
 import { mainSidebarOpen } from '../lib/client-state';
 
@@ -44,6 +46,14 @@ describe('drafts and scroll per thread', () => {
     stop();
     setThreadDraft('w1', 'c');
     expect(heard).toBe(2);
+  });
+
+  test('the open package tab is kept per thread, and a null key forgets it', () => {
+    expect(threadTab('w_tab')).toBeNull();
+    setThreadTab('w_tab', 'item:w1');
+    expect(threadTab('w_tab')).toBe('item:w1');
+    setThreadTab('w_tab', null);
+    expect(threadTab('w_tab')).toBeNull();
   });
 
   test('the scroll state is kept per thread', () => {

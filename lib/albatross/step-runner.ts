@@ -1000,18 +1000,15 @@ export async function runStepRun(
       finalHandoff?.next?.kind === 'sign_in' && secure && browser
         ? await secure.signInOffer((browser as AgentBrowser).currentUrl()).catch(() => null)
         : null;
+    const answerDetail = goal
+      ? 'Answer the question and I continue.'
+      : 'Answer the question and I continue the step.';
     let settled: SettleInput = finalHandoff
       ? normalizeHandoff(
           finalHandoff.outcome === 'needs_answer'
             ? {
                 ...finalHandoff,
-                next: finalHandoff.next ?? {
-                  kind: 'answer',
-                  label: 'Answer',
-                  detail: goal
-                    ? 'Answer the question and I continue.'
-                    : 'Answer the question and I continue the step.',
-                },
+                next: finalHandoff.next ?? { kind: 'answer', label: 'Answer', detail: answerDetail },
               }
             : finalHandoff,
           {
