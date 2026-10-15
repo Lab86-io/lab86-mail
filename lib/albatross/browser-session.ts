@@ -30,6 +30,8 @@ import {
   createContext,
   createSession,
   deleteContext,
+  deleteDownload,
+  listDownloads,
   releaseSession,
   sessionLiveUrls,
 } from '../web/browserbase-client';
@@ -118,8 +120,15 @@ export function sessionConnectUrl(sessionId: string) {
   return clientConnectUrl(sessionId, { notConfigured: NOT_CONFIGURED });
 }
 
+/**
+ * End the session, then delete the file copies it left in Browserbase storage
+ * (a download that no browser_download collected, for example after
+ * browser_open on a file address). The copies that count are in Files.
+ */
 export async function releaseBrowserSession(sessionId: string, fetcher: typeof fetch = fetch) {
   await releaseSession(sessionId, callOptions(fetcher));
+  const left = await listDownloads({ sessionId, limit: 100 }, callOptions(fetcher)).catch(() => []);
+  await Promise.all(left.map((item) => deleteDownload(item.id, callOptions(fetcher)).catch(() => undefined)));
 }
 
 export interface SessionPageState {
