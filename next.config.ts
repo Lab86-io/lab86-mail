@@ -74,6 +74,7 @@ const config: NextConfig = {
     '/*': [
       './lib/documents/spreadsheet-worker.mjs',
       './lib/documents/grid-workbook.mjs',
+      './lib/documents/templates/fonts/*.ttf',
       './node_modules/@odoo/owl/dist/owl.iife.js',
       './node_modules/@odoo/o-spreadsheet/dist/o_spreadsheet.iife.js',
     ],
