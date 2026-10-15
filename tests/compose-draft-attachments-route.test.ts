@@ -58,7 +58,7 @@ function deps(list: DraftAttachment[] = [invoice, sealed]) {
     writeAudit: mock(async (): Promise<any> => undefined),
     checkDraftAttachments: mock(async () => list),
     resolveDraftAttachments: mock(
-      async (_user: string, _list: DraftAttachment[], options: { hold?: boolean }) =>
+      async (_user: string, _list: readonly DraftAttachment[], options: { hold?: boolean }) =>
         options.hold
           ? { attachments: [pdf('Invoice 42.pdf')], held: [{ fileId: 'sealed_1', filename: 'W-9.pdf' }] }
           : { attachments: [pdf('Invoice 42.pdf'), pdf('W-9.pdf')], held: [] },
@@ -84,7 +84,7 @@ describe('compose with draft attachments', () => {
       { fileId: 'office_1', provider: 'office', format: 'pdf' },
       { source: 'file', fileId: 'sealed_1', provider: 'upload' },
     ]);
-    expect(d.resolveDraftAttachments.mock.calls[0][2]).toEqual({
+    expect(d.resolveDraftAttachments.mock.calls[0][2] as unknown).toEqual({
       recipients: ['Pay <ap@example.com>', undefined, undefined],
       hold: true,
       usedBytes: 0,

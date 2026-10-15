@@ -22,7 +22,8 @@ const defaults = {
   upsertThread,
   fillHeldAttachments,
 };
-export function createDispatchPost(deps = defaults) {
+export function createDispatchPost(overrides: Partial<typeof defaults> = {}) {
+  const deps = { ...defaults, ...overrides };
   return async (req: NextRequest) => {
     if (!deps.isInternalCronRequest(req)) return NextResponse.json({ ok: false }, { status: 401 });
     const { userId, key } = await req.json().catch(() => ({}));
