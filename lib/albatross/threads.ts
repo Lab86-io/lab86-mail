@@ -5,6 +5,7 @@
 
 import type { RunActivity, ThreadStateView } from '@/convex/albatrossThreads';
 import { truncateText } from '../shared/text';
+import { packageLine } from './goal-run-view';
 import { isClosed, type WorkStateInput, needsYou as workNeedsYou } from './work-state';
 
 export type ThreadStatus =
@@ -120,6 +121,22 @@ export function threadStatus(
   return 'idle';
 }
 
+/**
+ * The goal-run fields of an activity row, when the server sends them
+ * (docs/albatross-goal-runs.md): the newest run message, the checklist item it
+ * works on now, and the package items. Old rows have none; the preview falls
+ * back to the log line and the next detail.
+ */
+export interface GoalRunActivityFields {
+  message?: string | null;
+  doing?: string | null;
+  items?: ReadonlyArray<{ title: string; state?: string }> | null;
+}
+
+function goalFields(run: RunActivity | null): GoalRunActivityFields {
+  return (run ?? {}) as GoalRunActivityFields;
+}
+
 function preview(
   status: ThreadStatus,
   work: ThreadWorkInput,
@@ -127,9 +144,15 @@ function preview(
   state: ThreadStateView | null,
 ) {
   const step = run?.stepTitle ?? null;
+  const goal = goalFields(run);
   switch (status) {
     case 'in_progress':
-      return line(run?.logLine) || line(step ? `In progress: ${step}` : '');
+      return (
+        line(goal.doing) ||
+        line(goal.message) ||
+        line(run?.logLine) ||
+        line(step ? `In progress: ${step}` : '')
+      );
     case 'starts_soon':
       return line(step ? `${step} starts when a run ends.` : 'Starts when a run ends.');
     case 'answering':
@@ -143,7 +166,8 @@ function preview(
         : 'A question waits for you.';
     case 'your_turn':
     case 'ready_for_you':
-      return line(run?.nextDetail) || line(run?.summary);
+      if (goal.items && goal.items.length > 1) return line(packageLine(goal.items));
+      return line(run?.nextDetail) || line(goal.message) || line(run?.summary);
     case 'did_not_finish':
       return line(run?.error) || line(run?.summary) || line(step ? `Did not finish: ${step}` : '');
     case 'stopped':

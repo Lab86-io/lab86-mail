@@ -16,6 +16,7 @@ type Listener = () => void;
 
 const drafts = new Map<string, string>();
 const scrolls = new Map<string, ThreadScrollState>();
+const tabs = new Map<string, string>();
 const listeners = new Set<Listener>();
 let version = 0;
 let railTop = 0;
@@ -65,6 +66,16 @@ export function setThreadScroll(workId: string, state: ThreadScrollState) {
   scrolls.set(workId, state);
 }
 
+/** The document tab the user had open in this thread's package (goal runs), so a hop and back lands on it. */
+export function threadTab(workId: string): string | null {
+  return tabs.get(workId) ?? null;
+}
+
+export function setThreadTab(workId: string, key: string | null) {
+  if (key) tabs.set(workId, key);
+  else tabs.delete(workId);
+}
+
 /** Where the rail was scrolled, so a hop does not send it back to the top. */
 export function railScrollTop(): number {
   return railTop;
@@ -78,6 +89,7 @@ export function setRailScrollTop(top: number) {
 export function resetThreadMemory() {
   drafts.clear();
   scrolls.clear();
+  tabs.clear();
   railTop = 0;
   notify();
 }

@@ -98,6 +98,10 @@ export interface WorkDetailData {
     /** `enabled: false` hides every run control. */
     runner?: { enabled: boolean };
   };
+  /** The Work runs on goal runs: no step plan (docs/albatross-goal-runs.md). Absent on old rows. */
+  goalRuns?: boolean;
+  /** The newest checklist of the newest goal run, for the Work detail. */
+  checklist?: Array<{ id: string; text: string; state: 'todo' | 'doing' | 'done' | 'yours' }>;
   contract: OutcomeContract | null;
   evidence: EvidenceLike[];
   application: null | {
