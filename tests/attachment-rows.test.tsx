@@ -43,7 +43,9 @@ describe('the meta line', () => {
         sealedNote: 'The tax ID fills in when you send.',
       } as DraftAttachment),
     ).toBe('The tax ID fills in when you send.');
-    expect(attachmentSealedNote(attachments[2])).toBeNull();
+    expect(attachmentSealedNote(attachments[0])).toBeNull();
+    // The fixture's W-9 is sealed, as the server marks it.
+    expect(attachmentSealedNote(attachments[2])).toBe(ATTACHMENT_COPY.sealed);
     expect(attachmentMeta(sealed).note).toBe(ATTACHMENT_COPY.sealed);
   });
 

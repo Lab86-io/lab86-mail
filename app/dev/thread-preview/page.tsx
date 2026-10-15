@@ -468,9 +468,11 @@ function useDocumentFetchStub() {
       if (url.includes(`/api/documents/${GOAL_HOURS_DOCUMENT_ID}`) && method === 'GET')
         return Response.json({ ok: true, document: goalHoursDocumentFixture(NOW) });
       if (url.includes(`/api/files/saved/${GOAL_W9_FILE_ID}`)) return original('/dev/w9-sample.pdf');
-      if (url.includes('/api/tools/list_drafts')) return Response.json({ drafts: [goalDraftFixture(NOW)] });
+      // callTool reads `result` (lib/api-client.ts).
+      if (url.includes('/api/tools/list_drafts'))
+        return Response.json({ ok: true, result: { drafts: [goalDraftFixture(NOW)] } });
       if (url.includes('/api/tools/update_draft') || url.includes('/api/tools/save_draft'))
-        return Response.json({ ok: true, draft: goalDraftFixture(NOW) });
+        return Response.json({ ok: true, result: { ok: true, draft: goalDraftFixture(NOW) } });
       if (url.includes('/api/secure-details/allow-send')) {
         allowed = true;
         const body = JSON.parse(String(init?.body ?? '{}')) as { scope?: string };
@@ -480,7 +482,7 @@ function useDocumentFetchStub() {
             : { ok: true, scope: 'always' },
         );
       }
-      if (url.includes('/api/compose')) {
+      if (new URL(url, window.location.origin).pathname === '/api/compose') {
         if (askForAllow && !allowed)
           return Response.json(
             {

@@ -349,10 +349,17 @@ export function PdfPane({
                   data-slot="pdf-sealed-mark"
                   role="note"
                   aria-label={`${mark.name}, ${mark.label}`}
+                  title={mark.label}
                   className="absolute border border-[var(--color-accent-3)] bg-[var(--color-accent-3-soft)]"
                   style={{ left: mark.left, top: mark.top, width: mark.width, height: mark.height }}
                 >
-                  <span className="absolute left-0 -top-[17px] whitespace-nowrap bg-white px-0.5 text-[10.5px] font-medium leading-[14px] text-[var(--color-accent-3)]">
+                  {/* A small page (a phone) keeps the mark and its tooltip; the label would cover the form text. */}
+                  <span
+                    className={cn(
+                      'absolute left-0 -top-[17px] whitespace-nowrap bg-white px-0.5 text-[10.5px] font-medium leading-[14px] text-[var(--color-accent-3)]',
+                      page.width < 480 && 'sr-only',
+                    )}
+                  >
                     {mark.label}
                   </span>
                 </span>

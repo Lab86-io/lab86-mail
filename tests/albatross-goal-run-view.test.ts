@@ -142,11 +142,9 @@ describe('source chips', () => {
 
   test('a mail chip opens the thread in its account; its locator is the server detail', () => {
     const chip = sourceChip(goalSourceFixtures.mailHours);
-    expect(chip.locator).toBeNull();
-    expect(sourceChip({ ...goalSourceFixtures.mailHours, detail: 'Priya, Jul 30' } as never).locator).toBe(
-      'Priya, Jul 30',
-    );
-    expect(sourceChipName(chip)).toBe('July hours');
+    expect(chip.locator).toBe('Priya, Jul 30');
+    expect(sourceChip({ ...goalSourceFixtures.mailHours, detail: undefined }).locator).toBeNull();
+    expect(sourceChipName(chip)).toBe('July hours, Priya, Jul 30');
     expect(chip.behaviour).toEqual({
       kind: 'open_mail',
       threadId: 'thread_july_hours',
@@ -155,12 +153,13 @@ describe('source chips', () => {
     expect(chip.external).toBe(false);
   });
 
-  test('a Jira chip shows the issue key and opens its URL; without one it is text', () => {
+  test('a Jira chip shows the server detail and opens its URL; without one it is text', () => {
     const chip = sourceChip(goalSourceFixtures.jira);
     expect(chip.behaviour?.kind).toBe('open_url');
     expect(chip.locator).toBe('BP-214');
     expect(sourceChip({ kind: 'jira', title: 'BP-9', id: 'BP-9' }).behaviour).toBeNull();
     expect(sourceChip({ kind: 'jira', title: 'An issue', id: '10042' }).locator).toBeNull();
+    expect(sourceChip({ kind: 'jira', title: 'An issue', id: '10042', detail: 'BP-9' }).locator).toBe('BP-9');
   });
 
   test('a document chip opens the package tab when the item is in it, else the document', () => {
@@ -208,12 +207,13 @@ describe('source chips', () => {
     expect(sourceChip({ kind: 'web', title: 'Bad', url: 'javascript:alert(1)' }).behaviour).toBeNull();
   });
 
-  test('the locator never joins parts with a middle dot', () => {
+  test('the locator is the server detail, the host for a web page without one, else nothing', () => {
     expect(sourceLocator(goalSourceFixtures.w9)).toBe('irs.gov');
-    expect(sourceLocator(goalSourceFixtures.mailHours)).toBeNull();
-    expect(
-      sourceLocator({ kind: 'calendar', title: 'Invoice day', id: 'evt_1', detail: 'Oct 15' } as never),
-    ).toBe('Oct 15');
+    expect(sourceLocator({ ...goalSourceFixtures.w9, detail: 'irs.gov forms' })).toBe('irs.gov forms');
+    expect(sourceLocator(goalSourceFixtures.invoice0006)).toBeNull();
+    expect(sourceLocator({ kind: 'calendar', title: 'Invoice day', id: 'evt_1', detail: 'Oct 15' })).toBe(
+      'Oct 15',
+    );
     for (const source of Object.values(goalSourceFixtures))
       expect(sourceLocator(source) ?? '').not.toContain('·');
   });

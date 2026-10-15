@@ -50,6 +50,12 @@ export interface RunSource {
   url?: string;
   id?: string;
   accountId?: string;
+  /**
+   * The locator the server computes for the chip after the title: the host
+   * of a web page, "Priya, Jul 30" for mail, the key of a Jira issue, a short
+   * date for an event, the kind word of a file when the title lacks it.
+   */
+  detail?: string;
 }
 
 /** Text the model wrote to the user between tool calls. */

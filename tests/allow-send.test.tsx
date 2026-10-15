@@ -139,7 +139,7 @@ describe('the allow-send call', () => {
           ? { ok: true, scope: 'once', allowToken: 'tok_1', expiresAt: 1 }
           : { ok: true, scope: 'always' },
       );
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     const refusal = parseAllowSendRefusal(409, refusalBody)!;
     const once = await allowSendWithoutCheck(allowSendBody(refusal, 'once'));
     expect(once).toMatchObject({ ok: true, scope: 'once', allowToken: 'tok_1' });
@@ -153,7 +153,7 @@ describe('the allow-send call', () => {
       Response.json(
         { code: 'verify_identity', clerk_error: { type: 'forbidden', reason: 'reverification-error' } },
         { status: 403 },
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
     const result = await postAllowSendOrCheck(
       allowSendBody(parseAllowSendRefusal(409, refusalBody)!, 'once'),
     );
@@ -171,7 +171,7 @@ describe('the allow-send call', () => {
       Response.json(
         { ok: false, code: 'off', error: 'Passwords and IDs is off.' },
         { status: 404 },
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
     await expect(
       postAllowSendOrCheck(allowSendBody(parseAllowSendRefusal(409, refusalBody)!, 'always')),
     ).rejects.toMatchObject({

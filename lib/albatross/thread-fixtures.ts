@@ -758,8 +758,15 @@ export const goalSourceFixtures: Record<
     title: 'BP-214 worklog, July',
     url: 'https://bramble.example.atlassian.net/browse/BP-214',
     id: 'BP-214',
+    detail: 'BP-214',
   },
-  mailHours: { kind: 'mail', title: 'July hours', id: 'thread_july_hours', accountId: GOAL_ACCOUNT },
+  mailHours: {
+    kind: 'mail',
+    title: 'July hours',
+    id: 'thread_july_hours',
+    accountId: GOAL_ACCOUNT,
+    detail: 'Priya, Jul 30',
+  },
   invoice0006: {
     kind: 'document',
     title: 'Invoice 0006',
@@ -1205,15 +1212,19 @@ export function goalDraftFixture(now = Date.now()): Draft {
         size: 21_504,
         contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       },
-      {
-        source: 'file',
-        fileId: GOAL_W9_FILE_ID,
-        provider: 'upload',
-        format: 'pdf',
-        name: 'Form W-9.pdf',
-        size: 131_072,
-        contentType: 'application/pdf',
-      },
+      // The server marks a file with a sealed field (the files builder's `sealed`).
+      Object.assign(
+        {
+          source: 'file' as const,
+          fileId: GOAL_W9_FILE_ID,
+          provider: 'upload' as const,
+          format: 'pdf' as const,
+          name: 'Form W-9.pdf',
+          size: 131_072,
+          contentType: 'application/pdf',
+        },
+        { sealed: true },
+      ),
     ],
     updatedAt: now - 2 * MINUTE,
   };

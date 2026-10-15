@@ -270,7 +270,7 @@ export function InlineComposer({
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const composeRecoveredFiles = useClientStore((s) => s.composeRecoveredFiles);
   const setComposeRecoveredFiles = useClientStore((s) => s.setComposeRecoveredFiles);
-  const { registerPendingSend, cancelPendingSend } = usePendingSend();
+  const { registerPendingSend, cancelPendingSend, dropPendingSend } = usePendingSend();
   const pendingSendId = useRef<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -537,8 +537,9 @@ export function InlineComposer({
         setAllowRequest(data.refused as AllowSendRefusal);
         setAllowError(null);
         setPhase('draft');
+        // The server refused before it kept anything: drop the undo record here.
         if (pendingSendId.current) {
-          cancelPendingSend(pendingSendId.current);
+          dropPendingSend(pendingSendId.current);
           pendingSendId.current = null;
         }
         return;

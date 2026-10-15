@@ -79,24 +79,17 @@ export const KIND_WORD: Record<HandoffItemKind, string> = {
 };
 
 /**
- * The locator after a chip's title, in the muted voice: the host of a web
- * page, the key of a Jira issue, and the server's `detail` for the rest (a
- * sender and a date for mail, a date for an event, a file kind for a file).
+ * The locator after a chip's title, in the muted voice: the server's
+ * `detail` (the host of a web page, "Priya, Jul 30" for mail, the key of a
+ * Jira issue, a short date for an event, a file kind when the title lacks
+ * it). A web source without one shows its host. Nothing else when absent.
  * No generic kind word, and no middle dots (design critique, 2026-10-15).
  */
-export function sourceLocator(source: RunSource & { detail?: string | null }): string | null {
+export function sourceLocator(source: Pick<RunSource, 'kind'> & Partial<RunSource>): string | null {
   const detail = source.detail?.trim() || null;
-  switch (source.kind) {
-    case 'web':
-      return hostOf(source.url) ?? detail;
-    case 'jira':
-      return source.id && JIRA_KEY.test(source.id) ? source.id : detail;
-    default:
-      return detail;
-  }
+  if (detail) return detail;
+  return source.kind === 'web' ? hostOf(source.url) : null;
 }
-
-const JIRA_KEY = /^[A-Z][A-Z0-9_]*-\d+$/i;
 
 /** A run with goal-run fields. An old row has none of them. */
 export function isGoalRun(

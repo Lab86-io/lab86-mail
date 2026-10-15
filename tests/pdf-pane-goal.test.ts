@@ -39,7 +39,7 @@ describe('the identity check body', () => {
 describe('the bytes', () => {
   test('come back as bytes, or as the check body on a 403, or throw', async () => {
     const bytes = new Uint8Array([37, 80, 68, 70]).buffer;
-    globalThis.fetch = (async () => new Response(bytes, { status: 200 })) as typeof fetch;
+    globalThis.fetch = (async () => new Response(bytes, { status: 200 })) as unknown as typeof fetch;
     const ok = await fetchSavedFileOrCheck('/api/files/saved/upload_1?preview=1');
     expect('bytes' in ok && ok.bytes.byteLength).toBe(4);
 
@@ -47,7 +47,7 @@ describe('the bytes', () => {
       Response.json(
         { code: 'verify_identity', error: 'Verify your identity.' },
         { status: 403 },
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
     const check = await fetchSavedFileOrCheck('/api/files/saved/upload_1');
     expect('code' in check && check.code).toBe('verify_identity');
     await expect(fetchSavedFile('/api/files/saved/upload_1')).rejects.toMatchObject({
@@ -55,7 +55,8 @@ describe('the bytes', () => {
       status: 403,
     });
 
-    globalThis.fetch = (async () => Response.json({ error: 'Gone.' }, { status: 404 })) as typeof fetch;
+    globalThis.fetch = (async () =>
+      Response.json({ error: 'Gone.' }, { status: 404 })) as unknown as typeof fetch;
     await expect(fetchSavedFileOrCheck('/api/files/saved/upload_2')).rejects.toBeInstanceOf(SavedFileError);
     await expect(fetchSavedFileOrCheck('/api/files/saved/upload_2')).rejects.toMatchObject({
       status: 404,
