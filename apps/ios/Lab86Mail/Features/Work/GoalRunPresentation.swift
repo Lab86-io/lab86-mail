@@ -39,6 +39,14 @@ enum GoalRunCopy {
         "The \(field) fills in when you send."
     }
 
+    /// The composer row of a sealed file when nothing names the field.
+    static let sealedGenericComposerLine = "A field fills in when you send."
+    /// The composer line when the server needs a send permission for a
+    /// sealed file (409 `needs_allow`). The permission lives on the web.
+    static let sendNeedsAllow = "This file needs your permission to send. Give it on the web, then send again."
+    /// The file viewer line when the bytes need the identity check (403 `verify_identity`).
+    static let fileNeedsIdentity = "This file fills in a sealed field. Open it on the web with one more check."
+
     /// "Tab 2 of 3", for VoiceOver on the item bar.
     static func tab(index: Int, count: Int) -> String {
         "Tab \(index + 1) of \(count)"
