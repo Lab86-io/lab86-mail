@@ -20,6 +20,9 @@ const WATCH_PREFILTER_FLOOR = 0.08;
 const WATCH_STEP_LIMIT = 3;
 const WATCH_THREADS_PER_STEP = 2;
 const WATCH_RECENT_THREADS = 40;
+/** The goal watch reads new threads in pages of 50, at most 10 pages in one pass. */
+const GOAL_WATCH_PAGE = 50;
+const GOAL_WATCH_PAGES = 10;
 
 interface StepWatchDependencies {
   isInternalCronRequest: typeof isInternalCronRequest;
@@ -62,6 +65,40 @@ export interface RecentCorpusThread {
   lastDate?: number;
   labels?: string[];
   smartCategory?: { primary?: unknown; model?: unknown } | null;
+}
+
+/** One page of `mailCorpus.pageRecentCorpusThreads`, newest first. */
+interface RecentCorpusThreadPage {
+  items: RecentCorpusThread[];
+  nextBefore?: number | null;
+}
+
+/**
+ * The threads newer than the mark, newest first. The first pass (no mark)
+ * reads one page. `complete` is false when the page cap stopped the read
+ * before it got to the mark.
+ */
+export async function goalThreadsSince(
+  query: typeof convexQuery,
+  userId: string,
+  after: number,
+): Promise<{ threads: RecentCorpusThread[]; complete: boolean }> {
+  const threads: RecentCorpusThread[] = [];
+  let before: number | undefined;
+  for (let page = 0; page < (after ? GOAL_WATCH_PAGES : 1); page += 1) {
+    const result = await query<RecentCorpusThreadPage>(api.mailCorpus.pageRecentCorpusThreads, {
+      userId,
+      limit: GOAL_WATCH_PAGE,
+      ...(before === undefined ? {} : { before }),
+    });
+    const items = result?.items || [];
+    const newer = after ? items.filter((thread) => (thread.lastDate || 0) > after) : items;
+    threads.push(...newer);
+    // A page that gets to the mark, or the last page, ends the read.
+    if (!after || newer.length < items.length || !result?.nextBefore) return { threads, complete: true };
+    before = result.nextBefore;
+  }
+  return { threads, complete: false };
 }
 
 /**
@@ -132,11 +169,12 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
         return NextResponse.json({ ok: true, watched: 0, completedSteps: 0 });
       }
 
-      const threads =
-        (await deps.convexQuery<RecentCorpusThread[]>(api.mailCorpus.listRecentCorpusThreads, {
-          userId,
-          limit: WATCH_RECENT_THREADS,
-        })) || [];
+      const threads = outstanding.length
+        ? (await deps.convexQuery<RecentCorpusThread[]>(api.mailCorpus.listRecentCorpusThreads, {
+            userId,
+            limit: WATCH_RECENT_THREADS,
+          })) || []
+        : [];
       const confirmable = threads.filter((thread) => proofOfferAllowed(threadPrimaryCategory(thread)));
       const workTitle = String(detail?.plan?.outcome || detail?.work?.title || '');
 
@@ -190,8 +228,15 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
       // A goal proof can stay open for weeks. Each pass judges only threads
       // newer than the last pass, so the cost does not grow with time.
       const watchedAfter = Number(detail?.work?.goalWatchAfter) || 0;
-      const fresh = confirmable.filter((thread) => !watchedAfter || (thread.lastDate || 0) > watchedAfter);
-      const newestDate = threads.reduce((newest, thread) => Math.max(newest, thread.lastDate || 0), 0);
+      const read = openProofs.length
+        ? await goalThreadsSince(deps.convexQuery, userId, watchedAfter)
+        : { threads: [], complete: true };
+      const fresh = read.threads.filter((thread) => proofOfferAllowed(threadPrimaryCategory(thread)));
+      // The mark moves only after a full read. After a cap hit, the next pass
+      // reads the same span again, so no thread is skipped.
+      const newestDate = read.complete
+        ? read.threads.reduce((newest, thread) => Math.max(newest, thread.lastDate || 0), 0)
+        : 0;
       for (const proof of fresh.length ? openProofs : []) {
         const needle = [outcome, workTitle, proof.what].filter(Boolean).join(' ');
         const ranked = fresh
@@ -234,7 +279,7 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
         userId,
         workId,
         stillWatching,
-        ...(openProofs.length && newestDate > watchedAfter ? { goalWatchAfter: newestDate } : {}),
+        ...(newestDate > watchedAfter ? { goalWatchAfter: newestDate } : {}),
       });
       return NextResponse.json({
         ok: true,
