@@ -179,6 +179,10 @@ struct SecureItemView: Identifiable, Hashable, Sendable {
     let createdAt: Date?
     let updatedAt: Date?
     let lastUsedAt: Date?
+    /// The mail domains this item may go to, inside a sealed file
+    /// (docs/albatross-goal-runs.md, G5). Empty from an older server. The
+    /// grant changes on the web this round.
+    let mailDomains: [String]
 
     init(
         id: String,
@@ -189,7 +193,8 @@ struct SecureItemView: Identifiable, Hashable, Sendable {
         facts: [String: String] = [:],
         createdAt: Date? = nil,
         updatedAt: Date? = nil,
-        lastUsedAt: Date? = nil
+        lastUsedAt: Date? = nil,
+        mailDomains: [String] = []
     ) {
         self.id = id
         self.kind = kind
@@ -200,6 +205,7 @@ struct SecureItemView: Identifiable, Hashable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastUsedAt = lastUsedAt
+        self.mailDomains = mailDomains
     }
 
     init?(json: JSONValue) {
@@ -214,6 +220,7 @@ struct SecureItemView: Identifiable, Hashable, Sendable {
         createdAt = CalendarDateParser.date(json["createdAt"])
         updatedAt = CalendarDateParser.date(json["updatedAt"])
         lastUsedAt = CalendarDateParser.date(json["lastUsedAt"])
+        mailDomains = (json["mailDomains"]?.arrayValue ?? []).compactMap { $0.stringValue?.nilIfBlank }
     }
 
     private static func strings(_ json: JSONValue?) -> [String: String] {
@@ -283,6 +290,10 @@ enum SecureUseOutcome: String, Hashable, Sendable {
     /// The user downloaded a saved file with the value filled in
     /// (docs/albatross-goal-runs.md, G5).
     case downloaded
+    /// The user allowed one send of a sealed file to a mail domain.
+    case allowedSendOnce = "allowed_send_once"
+    /// The user allowed every send of this item to a mail domain.
+    case allowedSendAlways = "allowed_send_always"
     case unknown
 
     static func from(_ raw: String?) -> SecureUseOutcome {
@@ -389,6 +400,8 @@ struct SecureUseRow: Identifiable, Hashable, Sendable {
         case .allowedAlways: verb = "Always allowed"
         case .denied: verb = "Not allowed"
         case .downloaded: verb = "Downloaded"
+        case .allowedSendOnce: verb = "Allowed for one send"
+        case .allowedSendAlways: verb = "Allowed for mail"
         case .unknown: verb = "Used"
         }
         var text = verb

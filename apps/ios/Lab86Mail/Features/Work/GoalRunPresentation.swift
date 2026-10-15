@@ -44,6 +44,8 @@ enum GoalRunCopy {
     /// The composer line when the server needs a send permission for a
     /// sealed file (409 `needs_allow`). The permission lives on the web.
     static let sendNeedsAllow = "This file needs your permission to send. Give it on the web, then send again."
+    /// The second sentence after the item, the file, and the domain.
+    static let allowOnWeb = "Allow it on the web, then send again."
     /// The file viewer line when the bytes need the identity check (403 `verify_identity`).
     static let fileNeedsIdentity = "This file fills in a sealed field. Open it on the web with one more check."
 

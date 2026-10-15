@@ -157,6 +157,72 @@ final class NativeTourMacTests: XCTestCase {
         try await tour(screen)
     }
 
+    func testMacTour24WorkThreadGoalRun() async throws {
+        // A goal run at work (docs/albatross-goal-runs.md, G1 and G2) at the
+        // reading measure: the messages with their source capsules, the
+        // checklist open, and the folded log.
+        var screen = Screen(id: "mac-work-thread-goal-run", title: "The Albatross thread while a goal run works", section: "Tasks and Work", tab: .work)
+        screen.scenarioID = "work-thread-goal-run"
+        screen.afterAppear = { environment in
+            environment.navigation.openWork(id: "w-invoice-goal", title: "Bill Harbor Design for the quarter")
+        }
+        try await tour(screen)
+    }
+
+    func testMacTour25WorkThreadGoalPackage() async throws {
+        // The package (G3): the rows with a blank sentence and a sealed
+        // note, "Not sure", "Read and send", and "Done, continue".
+        var screen = Screen(id: "mac-work-thread-goal-package", title: "The Albatross thread with a package", section: "Tasks and Work", tab: .work)
+        screen.scenarioID = "work-thread-goal-package"
+        screen.afterAppear = { environment in
+            environment.navigation.openWork(id: "w-invoice-goal", title: "Bill Harbor Design for the quarter")
+        }
+        try await tour(screen)
+    }
+
+    func testMacTour26DocumentModePackage() async throws {
+        // Document mode with the package: the list on the left, the draft
+        // item in the center with its attachments, the thread column on the
+        // right.
+        var screen = Screen(id: "mac-document-mode-package", title: "Document mode with a package", section: "Tasks and Work", tab: .work)
+        screen.scenarioID = "document-mode-package"
+        screen.afterAppear = { environment in
+            environment.navigation.openWork(id: "w-invoice-goal", title: "Bill Harbor Design for the quarter")
+            let model = environment.threadModels.model(for: "w-invoice-goal", title: "Bill Harbor Design for the quarter", environment: environment)
+            await model.store.load(environment.backend)
+            model.openItem(.draft(id: "draft_7", accountID: "acct-work"), title: "Draft to Priya Shah")
+        }
+        try await tour(screen)
+    }
+
+    func testMacTour27ComposeAttachments() async throws {
+        // The compose sheet with a run's files as rows (G7).
+        var screen = Screen(id: "mac-compose-attachments", title: "Compose with the files of a run", section: "Compose", tab: .mail)
+        screen.setUp = { environment in
+            var prefill = ComposePrefill(
+                recipient: "Priya Shah <priya@harbordesign.example>",
+                cc: "",
+                bcc: "",
+                subject: "Invoice 2026-10 for Harbor Design",
+                body: "Hi Priya,\n\nThe Q3 invoice is attached, with the W-9 for your records. The hours come from HD-214.\n\nSam",
+                mode: "new",
+                accountID: "acct-work",
+                threadID: nil,
+                messageID: nil,
+                replyAll: false,
+                attachmentsKey: nil,
+                draftID: nil
+            )
+            prefill.fileAttachments = [
+                DraftAttachment(fileID: "file_inv", provider: .office, format: .pdf, name: "Invoice 2026-10.pdf", size: 86_016, contentType: "application/pdf"),
+                DraftAttachment(fileID: "file_w9", provider: .upload, format: .native, name: "Form W-9.pdf", contentType: "application/pdf", sealed: true, sealedLine: "The tax ID fills in when you send."),
+            ]
+            environment.navigation.pendingCompose = prefill
+            environment.navigation.sheet = .compose
+        }
+        try await tour(screen)
+    }
+
     func testMacTour17WorkThreadNarrow() async throws {
         // A narrow window: no pane. The page row offers "Open" (the sheet),
         // and the Details toggle opens a popover.
@@ -296,7 +362,8 @@ final class NativeTourMacTests: XCTestCase {
         "mac-today", "mac-mail", "mac-compose", "mac-calendar-week", "mac-calendar-month", "mac-tasks", "mac-work",
         "mac-work-detail", "mac-work-detail-run", "mac-work-detail-handoff", "mac-work-thread-run",
         "mac-work-thread-form", "mac-work-thread-handoff", "mac-work-thread-narrow", "mac-work-thread-allow",
-        "mac-work-thread-receipt", "mac-sidebar-threads-steer", "mac-files",
+        "mac-work-thread-receipt", "mac-work-thread-goal-run", "mac-work-thread-goal-package", "mac-document-mode-package",
+        "mac-compose-attachments", "mac-sidebar-threads-steer", "mac-files",
         "mac-chat", "mac-settings", "mac-settings-personal-details", "mac-settings-passwords-ids",
         "mac-settings-passwords-ids-detail",
     ]

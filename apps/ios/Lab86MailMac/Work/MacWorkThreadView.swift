@@ -433,7 +433,7 @@ struct MacWorkThreadView: View {
         case .outcome:
             // In document mode the "Your part" card names the step; the
             // plan stays in Details, as on the web.
-            if model.document == nil {
+            if !model.documentOpen {
                 OutcomeBlockView(
                     detail: model.detail,
                     routeTitle: route.title,
@@ -507,7 +507,7 @@ struct MacWorkThreadView: View {
             Text(notice).font(.footnote).foregroundStyle(.red)
         }
         // A refused "Mark step done". In document mode the card shows it.
-        if let notice = model.stepNotice, model.document == nil {
+        if let notice = model.stepNotice, !model.documentOpen {
             Text(notice).font(.footnote).foregroundStyle(.red)
         }
         if let error = model.detailError, model.detail == nil {
@@ -785,7 +785,7 @@ struct MacWorkThreadView: View {
         if next == .none {
             if paneMode == .page { model.pageRun = nil }
             // The source list stays away while a document has the column.
-            if model.document == nil { restoreSidebar() }
+            if !model.documentOpen { restoreSidebar() }
         }
         guard next != paneMode else { return }
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {

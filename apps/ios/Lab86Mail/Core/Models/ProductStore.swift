@@ -2593,8 +2593,37 @@ final class ProductStore {
         bcc: String,
         subject: String,
         body: String,
+        scheduledFor: Date?
+    ) async throws -> String {
+        try await saveDraft(
+            id: id,
+            accountID: accountID,
+            threadID: threadID,
+            messageID: messageID,
+            to: to,
+            cc: cc,
+            bcc: bcc,
+            subject: subject,
+            body: body,
+            scheduledFor: scheduledFor,
+            attachments: nil
+        )
+    }
+
+    /// The same save with the draft's saved files (docs/albatross-goal-runs.md,
+    /// G3): the full list replaces the rows, `[]` removes them, nil keeps them.
+    func saveDraft(
+        id: String?,
+        accountID: String,
+        threadID: String?,
+        messageID: String?,
+        to: String,
+        cc: String,
+        bcc: String,
+        subject: String,
+        body: String,
         scheduledFor: Date?,
-        attachments: [DraftAttachment]? = nil
+        attachments: [DraftAttachment]?
     ) async throws -> String {
         if let id {
             var patch: [String: JSONValue] = [

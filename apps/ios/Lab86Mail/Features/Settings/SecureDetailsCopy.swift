@@ -94,6 +94,12 @@ enum SecureDetailsCopy {
     static let rename = "Rename"
     static let sitesTitle = "Sites"
     static let hostsTitle = "Hosts"
+    /// The mail domains a sealed file may go to (docs/albatross-goal-runs.md, G5).
+    static let mailTitle = "Mail"
+    static let mailFooter = "Albatross fills this in a file only for mail to these domains. Change the list on the web."
+    static func mailTo(_ domain: String) -> String {
+        "Mail to \(domain)"
+    }
     static let addSite = "Add a site"
     static let addHost = "Add a host"
     static let remove = "Remove"

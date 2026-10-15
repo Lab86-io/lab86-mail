@@ -825,8 +825,10 @@ struct ComposeView: View {
             await loadSendAs()
         } catch let refusal as DraftAttachmentRefusal {
             // The draft stays open with its rows. A sealed file that needs a
-            // send permission sends the user to the web for it.
-            errorMessage = refusal.localizedDescription
+            // send permission sends the user to the web for it; the line
+            // names the item, the file, and the domain.
+            let sealed = fileAttachments.filter(\.sealed)
+            errorMessage = refusal.line(fileName: sealed.count == 1 ? sealed[0].name : nil)
             sendNeedsWeb = refusal.code.offersWeb
         } catch { errorMessage = error.localizedDescription }
     }

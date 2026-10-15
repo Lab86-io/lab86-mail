@@ -357,7 +357,7 @@ struct WorkThreadView: View {
             Text(notice).font(.footnote).foregroundStyle(.red)
         }
         // Document mode shows this line in its own card or bar (DocumentModeView).
-        if let notice = model.stepNotice, model.document == nil {
+        if let notice = model.stepNotice, !model.documentOpen {
             Text(notice).font(.footnote).foregroundStyle(.red)
         }
         if let error = model.detailError, model.detail == nil {
