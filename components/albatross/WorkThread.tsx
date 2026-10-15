@@ -61,7 +61,6 @@ import {
   isGoalRun,
   newestGoalRun,
   newestPackageRun,
-  type PackageBehaviour,
   packageTabs,
   type SourceBehaviour,
 } from '@/lib/albatross/goal-run-view';
@@ -120,6 +119,7 @@ import {
   YourPartCard,
 } from './thread/DocumentPane';
 import { DocumentTabs } from './thread/DocumentTabs';
+import { openPackageBehaviour } from './thread/PackageRows';
 import { PagePane, type PageSession } from './thread/PagePane';
 import { PlanIntro, PlanLine, PlanOutro } from './thread/PlanIntro';
 import { RunBlock } from './thread/RunBlock';
@@ -859,30 +859,6 @@ function HeaderTool({
       {children}
     </button>
   );
-}
-
-/** A package row in the Details panel opens the same way as in the block. */
-function openPackageBehaviour(behaviour: PackageBehaviour, run: ThreadRunView, handlers: ThreadHandlers) {
-  switch (behaviour.kind) {
-    case 'open_tab':
-      handlers.onOpenItem?.(run, behaviour.key);
-      return;
-    case 'open_approval':
-      handlers.onNext({ kind: 'open_approval', id: behaviour.id }, run);
-      return;
-    case 'open_url':
-      handlers.onNext({ kind: 'open_url', url: behaviour.url }, run);
-      return;
-    case 'open_calendar':
-      handlers.onOpenSource?.(
-        { kind: 'open_calendar', id: behaviour.id },
-        { kind: 'calendar', title: '', id: behaviour.id },
-        run,
-      );
-      return;
-    default:
-      return;
-  }
 }
 
 function Recovery({ detail, workId, nowMs }: { detail: WorkDetailData; workId: string; nowMs: number }) {

@@ -120,6 +120,17 @@ export async function fetchSavedFilePreview(url: string): Promise<{ bytes: Array
   };
 }
 
+const SEALED_KEY_SEPARATOR = '\u001f';
+
+/** One string for a list of field names, so equal lists are one key. */
+export function sealedFieldsKey(fields: readonly string[]): string {
+  return fields.join(SEALED_KEY_SEPARATOR);
+}
+
+export function sealedFieldsFromKey(key: string): string[] {
+  return key ? key.split(SEALED_KEY_SEPARATOR) : [];
+}
+
 /** True for a widget whose field name is in the sealed list. Field names compare without case. */
 export function isSealedField(fieldName: string | null | undefined, sealed: readonly string[]): boolean {
   const name = String(fieldName || '')
@@ -160,7 +171,10 @@ export function PdfPane({
   const canvases = useRef(new Map<number, HTMLCanvasElement>());
   const docRef = useRef<{ numPages: number; getPage: (n: number) => Promise<unknown> } | null>(null);
   const widthRef = useRef(0);
-  const sealed = useMemo(() => [...sealedFields], [sealedFields]);
+  // Keyed on the content: a caller that omits the prop, or passes an equal
+  // list, must not start the load again on each render.
+  const sealedKey = sealedFieldsKey(sealedFields);
+  const sealed = useMemo(() => sealedFieldsFromKey(sealedKey), [sealedKey]);
 
   const load = useCallback(
     (target: string) => (loadFile ? loadFile(target) : fetchSavedFile(target)),
