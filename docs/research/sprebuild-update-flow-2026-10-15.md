@@ -80,7 +80,7 @@ script prohibition, screenshots, theme support and authored immutable notes rema
 
 ## Verification
 
-- 63 focused update, icon-rule and shell-vocabulary tests pass. App and test
+- 66 focused update, component, icon-rule and shell-vocabulary tests pass. App and test
   typechecks pass. Receipt cases cover first visits, refresh before dismissal,
   all intervening batches, rollbacks, removed notes, legacy migration, corrupted
   stores, blocked stores, and independent active tabs.
@@ -94,5 +94,9 @@ script prohibition, screenshots, theme support and authored immutable notes rema
 - Verified 320px/360px notice placement, dark phone appearance, keyboard-operated
   HTML demos inside the summary, collapsed full notes, and no uncaught page errors.
   The dialog initially focuses its heading so long notes begin at the top.
-- Production build and the full test suite are also required before merge. No
-  production credentials are used in local validation.
+- The production build passes, and the browser scenarios pass against that
+  build too, including heading focus and blocked-storage live detection. The
+  full suite passes 7,873 tests with one skip and no failures; three additional
+  component regressions pass separately and are included in the final CI run.
+  New update logic has 100% line coverage. No production credentials are used
+  in local validation.
