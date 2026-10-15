@@ -22,7 +22,7 @@ Docs read: docs.browserbase.com and the Browserbase changelog, on 2026-10-15.
    It copies the browser cookies to our server. Do not use it.
 7. **`secure_fetch` can move into Browserbase**, and the model does not see the key. The
    Fetch API cannot do it (no header field). Functions with Secrets do not fit (one project, not
-   one user). A session with a route-added header works. It adds about 2 s cold or 0.6 s warm.
+   one user). A session with a route-added header works. A cold call takes about 2.4 s, about 2 s more than now.
 8. **Nominatim moves** to Fetch `raw`. The answer is JSON text.
 9. **There is a third path that does not use Browserbase.** `fetchWebFile` (in `tasks_attach_file` and in mail attachments
    from a URL) downloads web files to our server with no Browserbase step. It must move to the new file pull.
@@ -37,9 +37,9 @@ Docs read: docs.browserbase.com and the Browserbase changelog, on 2026-10-15.
 | Shared browser, step runner | `lib/albatross/browser-session.ts`, `browser-agent.ts`, `browser-contexts.ts` | Yes, sessions over CDP | `recordSession: false`. `logSession` is not set, so it is `true`. No download behavior is set. |
 | Slide render | `lib/documents/deck-render.ts` | Yes, its own REST call | A third copy of the Browserbase client code. |
 | Place lookup | `lib/albatross/place-enrichment.ts` | Yes, through `web.ts` | No change necessary. |
-| API call with a saved key | `lib/secure/fetch.ts` `secure_fetch` | No, direct from the server | Section 5.7. |
-| Reverse geocode | `lib/albatross/intent-plan.ts` `reverseGeocode` | No, direct to Nominatim | Section 5.8. |
-| File from a URL | `lib/attachments/fetch-store.ts` `fetchWebFile` | No, direct from the server | Used by `tasks_attach_file` and by `resolveSendAttachments` in `lib/tools/compose.ts`. Max 25 MB. |
+| API call with a saved key | `lib/secure/fetch.ts` `secure_fetch` | No. Our server calls the API. | Section 5.7. |
+| Reverse geocode | `lib/albatross/intent-plan.ts` `reverseGeocode` | No. Our server calls Nominatim. | Section 5.8. |
+| File from a URL | `lib/attachments/fetch-store.ts` `fetchWebFile` | No. Our server downloads the file. | Used by `tasks_attach_file` and by `resolveSendAttachments` in `lib/tools/compose.ts`. Max 25 MB. |
 | Sender logos | `app/api/logos/[domain]/route.ts` | No | UI image proxy, not an agent path. Out of scope. |
 | Deck assets | `lib/documents/deck-assets.ts` | No | Owned storage only. Out of scope. |
 
@@ -77,7 +77,7 @@ Plan column: "Dev" is the Developer plan, our plan (section 4.1). The prices com
 
 | Feature | What it does | API shape | Our plan and cost | Doc |
 | - | - | - | - | - |
-| Downloads API | Each download in a session is one object. List with filters, get metadata or bytes, delete. Browserbase adds a time suffix in storage, but the API gives the name from the site. Large files can show late. New in May 2026. | `GET /v1/downloads?sessionId=&filename=&mimeType=&minSize=&maxSize=&createdAfter=&createdBefore=&limit=1..100&offset=` gives `{downloads[], total, limit, offset}`. Item: `{id, sessionId, filename, mimeType, size, checksum (SHA-256), createdAt}`. `GET /v1/downloads/{id}` with `Accept: application/json` or `application/octet-stream`. `DELETE /v1/downloads/{id}` gives 204. | All plans. Kept for the plan retention (Dev: 7 days). | [Downloads](https://docs.browserbase.com/platform/browser/files/downloads) |
+| Downloads API | Each download in a session is one object. List with filters, get metadata or bytes, delete. Browserbase adds a time suffix in storage, but the API gives the name from the site. Large files can show late. New in May 2026. | `GET /v1/downloads?sessionId=&filename=&mimeType=&minSize=&maxSize=&createdAfter=&createdBefore=&limit=1..100&offset=` gives `{downloads[], total, limit, offset}`. Item: `{id, sessionId, filename, mimeType, size, checksum (SHA-256), createdAt}`. `GET /v1/downloads/{id}` with `Accept: application/json` or `application/octet-stream`. `DELETE /v1/downloads/{id}` gives 204. | All plans. The docs give no download retention. Probably the plan data retention (Dev: 7 days). | [Downloads](https://docs.browserbase.com/platform/browser/files/downloads) |
 | Session zip (first version) | All downloads of a session in one zip. It continues to work. | `GET /v1/sessions/{id}/downloads` gives `application/zip` | All plans | [Changelog](https://www.browserbase.com/changelog/improved-downloads-api) |
 | Download setup | With Playwright or Puppeteer, set the download behavior first. Use the value `downloadPath: "downloads"` with no change. Playwright sets its own path when it connects, so without this call no file is kept. | CDP `Browser.setDownloadBehavior {behavior: "allow", downloadPath: "downloads", eventsEnabled: true}` | All plans | Same page |
 | PDF in a session | Opening a PDF URL starts a download and stops the navigation. `enablePdfViewer: true` shows the PDF in the tab. | `browserSettings.enablePdfViewer` (in the PDF guide, not in the OpenAPI schema) | All plans | [PDFs](https://docs.browserbase.com/platform/browser/files/pdfs) |
@@ -180,7 +180,8 @@ in-page `fetch()`. It opened a URL with a test cookie value. Then it read
 - Network events keep only the method and the URL. They keep no request headers.
 
 Result: a value that our server sends into the browser through CDP is kept in the session logs.
-With the plan retention, Browserbase keeps it for 7 days. The step runner types saved passwords
+Browserbase keeps it for the plan data retention (Dev: 7 days). The observability page says up to
+30 days for session data. The step runner types saved passwords
 and ID numbers with `fill()`. `docs/albatross-secure-store.md` says that no log holds a value.
 The session settings in `lib/albatross/browser-session.ts` break that rule at this time. The test did not
 test Live View typing, but Live View input probably goes through CDP `Input.*` too.
@@ -201,12 +202,12 @@ test Live View typing, but Live View input probably goes through CDP `Input.*` t
 
 | Module | Owns | Replaces |
 | - | - | - |
-| `lib/web/browserbase-client.ts` (new) | The key, the project id, time limits, the error class, retry on 429. Calls: search, fetch, sessions (create, release, live URLs), contexts, downloads (list, get, delete), uploads. | `postBrowserbase` in `lib/tools/web.ts`, `browserbaseRequest` in `browser-session.ts`, the direct calls in `deck-render.ts`. |
+| `lib/web/browserbase-client.ts` (new) | The key, the project id, time limits, the error class, retry on 429. Calls: search, fetch, sessions (create, release, live URLs), contexts, downloads (list, get, delete), uploads. | `postBrowserbase` in `lib/tools/web.ts`, `browserbaseRequest` in `browser-session.ts`, the REST calls in `deck-render.ts`. |
 | `lib/web/read.ts` (new) | `searchWeb` and `readPage`. `readPage` sets markdown. On a 400 for a PDF, it sets `raw` and gets the text with `pdfjs-dist` (a dependency at this time). | The handlers in `lib/tools/web.ts`. |
 | `lib/web/file-pull.ts` (new) | `pullWebFile(url, options)`: tier 1 Fetch `raw`, tier 2 a short download session, tier 3 a download in the user's session. Checks the type from the first bytes, the size, and the SHA-256. | `fetchWebFile` in `lib/attachments/fetch-store.ts`. |
 | `lib/albatross/browser-session.ts` | Session settings: `logSession: false`, `expiresIn` on live URLs, optional `allowedDomains` and `proxies`. | Its own REST helper. |
 | `lib/albatross/browser-agent.ts` | Sets the download behavior when it connects. Catches each `download` event and records its name and time. Does not use `context.request`. | None |
-| `lib/web/session-fetch.ts` (new, phase 2) | `secure_fetch` through a session (section 5.7). | The direct call in `lib/secure/fetch.ts`. |
+| `lib/web/session-fetch.ts` (new, phase 2) | `secure_fetch` through a session (section 5.7). | The server-side call in `lib/secure/fetch.ts`. |
 
 ### 5.3 Tools
 
@@ -217,7 +218,7 @@ test Live View typing, but Live View input probably goes through CDP `Input.*` t
 | `web_file_save` (new) | Chat, runner | `pullWebFile` tier 1, then tier 2 | `{fileId, name, size, type, sourceHost}` |
 | `browser_download` (new) | Runner, in the shared session | Click a ref or open a URL, then the Downloads API | `{fileId, name, size, type}`. A new file also shows in the run log. |
 | `tasks_attach_file` and mail attachments with `url` | Chat | `pullWebFile` | No change in the tool contract. |
-| `secure_fetch` | Runner | Phase 1: direct (no change). Phase 2: `session-fetch.ts` | No change in the tool contract. |
+| `secure_fetch` | Runner | Phase 1: server-side call (no change). Phase 2: `session-fetch.ts` | No change in the tool contract. |
 
 ### 5.4 How secrets stay out of the model and out of logs
 
@@ -250,7 +251,7 @@ Example: a pay statement on a payroll site where the user signed in before.
 10. The model gets `{fileId, name, size, type}`. The run log says "Saved pay-2026-09.pdf from
     adp.com."
 
-For a direct file link on the same site, an in-page `fetch(url, {credentials: "include"})` also
+For a link to a file on the same site, an in-page `fetch(url, {credentials: "include"})` also
 works (0.59 s in the test). But the bytes come back through CDP. Use the click path first.
 
 ### 5.6 The W-9, end to end
@@ -271,7 +272,8 @@ works (0.59 s in the test). But the bytes come back through CDP. Use the click p
 
 Tier 2 (Fetch gives 403, 502 for size, or an HTML sign-in page): the server opens a short session
 with no Context, sets the download behavior, opens the URL, and uses steps 6 to 9 of section 5.5.
-The test proved this path for the W-9: same bytes, about 4 s with the session start.
+The test proved this path for the W-9: same bytes, about 5.4 s in total (create 0.6 s, connect
+1.1 s, download 0.2 s, list 2.4 s, get 1.2 s).
 
 ### 5.7 `secure_fetch`
 
@@ -279,7 +281,7 @@ The test proved this path for the W-9: same bytes, about 4 s with the session st
 
 - The Fetch API cannot do it. It has no header, cookie, or method field.
 - Functions with Secrets do not fit. A Secret belongs to the project and to one Function. It is
-  not for one user. A Function run is async, has a time limit of a minimum of 60 s, and is only in `us-west-2`.
+  not for one user. A Function run is async, has a time limit of 60 to 900 s, and is only in `us-west-2`.
 - A session can do it. The server does the reference checks of today (https, a host saved for
   the key). Then it does these steps:
   1. Open a session with no Context, `logSession: false`, `recordSession: false`,
@@ -289,9 +291,9 @@ The test proved this path for the W-9: same bytes, about 4 s with the session st
   3. Open the URL as a top-level page. A top-level request has no CORS check.
   4. If the response is a redirect, stop, as today.
   5. Read the body, remove the saved values, cut it to 20 KB, and release the session.
-- Time (from the test): create 0.56 s, connect 1.14 s, request 0.6 to 0.7 s. A cold call adds
-  about 2 s over a direct call. In a session that is open before the call, it adds about 0.6 s. A cold
-  session costs a minimum of one browser minute ($0.002).
+- Time (from the test): create 0.56 s, connect 1.14 s, request 0.6 to 0.7 s. A cold call takes
+  about 2.4 s, about 2 s more than a server-side call. In a session that is open before the call,
+  the call takes about 0.6 s. A cold session costs a minimum of one browser minute ($0.002).
 - Trust: the key goes through Browserbase. Passwords from the secure store go through Browserbase at this time when the
   runner types them, so the trust boundary does not get larger. With `logSession: false`,
   Browserbase keeps no copy.
@@ -299,7 +301,7 @@ The test proved this path for the W-9: same bytes, about 4 s with the session st
   (`assertPublicHttpUrl`) is no longer necessary for this path.
 
 Recommendation: phase 1 changes no `secure_fetch` code. Phase 2 adds `session-fetch.ts` behind a
-flag, with the direct path as the fallback. Remove the direct path after the route method is satisfactory in
+flag, with the server-side path as the fallback. Remove the server-side path after the route method is satisfactory in
 tests (the live test did not try the `page.route` header method).
 
 ### 5.8 Nominatim
@@ -329,7 +331,7 @@ and macOS together.
 ### Risks
 
 - **Logs hold values from the secure store at this time.** Section 4.4. Production sessions since the secure store release
-  can hold typed passwords and IDs in Browserbase logs for 7 days. The fix in section 5.9 step 1
+  can hold typed passwords and IDs in Browserbase logs for 7 to 30 days. The fix in section 5.9 step 1
   stops new copies. Copies from before the fix expire with the retention. The CASA data flow text must say this.
 - **Live View typing.** A user who signs in through Live View probably sends keys through CDP.
   With logs on, Browserbase can keep them. The same fix applies.
@@ -348,7 +350,8 @@ and macOS together.
   no source text. Read pages with Fetch before a claim.
 - **Cost.** `browserbase_fetch` uses Fetch Extract ($4 for each 1,000). `raw` costs $1 for each
   1,000. A PDF read through `raw` is cheaper than markdown.
-- **Downloads retention.** Browserbase keeps each download for 7 days. Delete it after the copy.
+- **Downloads retention.** Browserbase probably keeps each download for the plan retention (7 days).
+  Delete it after the copy.
 
 ### Open questions
 
