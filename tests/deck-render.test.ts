@@ -122,7 +122,12 @@ describe('deck render page', () => {
   test('reports a browser outside production without configuration', () => {
     expect(['local', 'browserbase']).toContain<unknown>(availableRenderBrowser());
     // A Browserbase render session keeps no logs or video of the user's slides.
-    expect(RENDER_SESSION_SETTINGS).toEqual({ recordSession: false, logSession: false });
+    expect(renderSessionBody('project-1')).toEqual({
+      projectId: 'project-1',
+      timeout: 180,
+      keepAlive: false,
+      browserSettings: { recordSession: false, logSession: false },
+    });
   });
 });
 

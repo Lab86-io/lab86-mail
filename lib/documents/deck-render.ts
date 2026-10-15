@@ -134,8 +134,15 @@ export interface RenderDeckOptions extends RenderDeckHtmlOptions {
   abortSignal?: AbortSignal;
 }
 
-/** Slides can hold the user's own content: Browserbase keeps no CDP logs or video. */
-export const RENDER_SESSION_SETTINGS = { recordSession: false, logSession: false } as const;
+/** The session for one render. Slides hold the user's own content: no CDP logs, no video. */
+export function renderSessionBody(projectId: string) {
+  return {
+    projectId,
+    timeout: 180,
+    keepAlive: false,
+    browserSettings: { recordSession: false, logSession: false },
+  };
+}
 
 async function connectBrowser(kind: 'local' | 'browserbase', abortSignal?: AbortSignal) {
   const { chromium } = await import('playwright-core');
@@ -146,12 +153,7 @@ async function connectBrowser(kind: 'local' | 'browserbase', abortSignal?: Abort
     const response = await fetch('https://api.browserbase.com/v1/sessions', {
       method: 'POST',
       headers: { 'x-bb-api-key': apiKey, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        projectId,
-        timeout: 180,
-        keepAlive: false,
-        browserSettings: RENDER_SESSION_SETTINGS,
-      }),
+      body: JSON.stringify(renderSessionBody(projectId)),
       signal: abortSignal
         ? AbortSignal.any([abortSignal, AbortSignal.timeout(30_000)])
         : AbortSignal.timeout(30_000),
