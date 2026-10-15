@@ -1,4 +1,3 @@
-import { ArrowLeft } from 'lucide-react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { UpdateFeed } from '@/components/updates/UpdateFeed';
@@ -17,7 +16,6 @@ export default function UpdatesPage() {
           href="/"
           className="mb-8 inline-flex items-center gap-1.5 rounded-sm text-[12.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
         >
-          <ArrowLeft className="size-3.5" aria-hidden />
           Back to Albatross
         </Link>
         <header className="mb-8 border-b border-[var(--color-border)] pb-7">
