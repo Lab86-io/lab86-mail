@@ -528,17 +528,23 @@ async function handleGoalFromThread(
     if (steered) return { action: 'steered', runId: open.id, goal: true };
   }
   const waiting = newest?.state === 'handed_off' ? newest : undefined;
+  let note = input.note;
   if (input.done) {
     if (!waiting || !isGoalRun(waiting)) return null;
-    const check = await continueGoalRun(
-      { userId: input.userId, workId: input.workId, note: input.note },
-      deps,
-    );
-    return { action: 'resumed', runId: check.nextRunId, check, goal: true };
+    // "Done, continue" fits a handoff that waits on the user's part.
+    if (waiting.outcome === 'ready_for_you' || waiting.outcome === 'your_turn') {
+      const check = await continueGoalRun(
+        { userId: input.userId, workId: input.workId, note: input.note },
+        deps,
+      );
+      return { action: 'resumed', runId: check.nextRunId, check, goal: true };
+    }
+    // A question or a stop at the limit: the run continues with the user's word.
+    note = `The user says this part is done.${input.note ? ` ${input.note}` : ''}`;
   }
   if (waiting) {
     const questionId = waiting.next?.target?.kind === 'question' ? waiting.next.target.id : null;
-    if (questionId && input.note && waiting.question?.status === 'pending') {
+    if (!input.done && questionId && input.note && waiting.question?.status === 'pending') {
       await deps
         .convexMutation(api.albatrossWorkV2.answerQuestion, {
           userId: input.userId,
@@ -549,7 +555,7 @@ async function handleGoalFromThread(
         .catch(() => undefined);
     }
     const resumed = await resumeGoalRun(
-      { userId: input.userId, workId: input.workId, parent: waiting, note: input.note || undefined },
+      { userId: input.userId, workId: input.workId, parent: waiting, note: note || undefined },
       deps,
     );
     return { action: 'resumed', runId: resumed.runId, goal: true };

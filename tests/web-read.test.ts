@@ -134,6 +134,29 @@ describe('readPage', () => {
     expect(extracted).toEqual([{ head: '%PDF-', mime: 'application/pdf', name: 'fw9.pdf' }]);
   });
 
+  test('a PDF whose path has a bad percent escape keeps its raw file name', async () => {
+    const names: unknown[] = [];
+    __setWebReadDepsForTest({
+      fetch: async (input) => {
+        if (input.format === 'markdown') throw new BrowserbaseRequestError('x', 400);
+        return {
+          statusCode: 200,
+          headers: {},
+          content: PDF,
+          contentType: 'application/pdf',
+          encoding: 'base64',
+        };
+      },
+      extract: async (_bytes, _mime, name) => {
+        names.push(name);
+        return { text: '[Page 1]\nA form', partial: false };
+      },
+    });
+    const read = await readPage('https://forms.example.com/files/%E0%A4%A.pdf');
+    expect(read.content).toBe('[Page 1]\nA form');
+    expect(names).toEqual(['%E0%A4%A.pdf']);
+  });
+
   test('a long PDF says it is cut; a scan with no text is an error', async () => {
     __setWebReadDepsForTest({
       fetch: async (input) => {

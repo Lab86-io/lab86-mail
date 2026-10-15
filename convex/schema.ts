@@ -1672,6 +1672,9 @@ export default defineSchema({
     // an expected mail confirmation. The watcher conductor polls these.
     mailWatchAt: v.optional(v.number()),
     mailWatchClaimedAt: v.optional(v.number()),
+    // A goal Work's mail watch (docs/albatross-goal-runs.md): the newest mail
+    // date of the last pass. The next pass judges only newer threads.
+    goalWatchAfter: v.optional(v.number()),
     replyWatch: v.optional(
       v.object({
         id: v.string(),

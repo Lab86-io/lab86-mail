@@ -6,8 +6,50 @@
 // note. The whole row is a button that opens the item: document mode on its
 // tab, or the place of an approval, an event, or a page.
 
-import type { PackageBehaviour, PackageRowView } from '@/lib/albatross/goal-run-view';
+import type { RunSource } from '@/lib/albatross/goal-run-contract';
+import type { PackageBehaviour, PackageRowView, SourceBehaviour } from '@/lib/albatross/goal-run-view';
+import type { NextBehaviour } from '@/lib/albatross/step-run-client';
+import type { ThreadRunView } from '@/lib/albatross/thread-contract';
 import { cn } from '@/lib/utils';
+
+/** The handlers a package row needs: the run block's props and the thread's handlers both fit. */
+export interface PackageRowHandlers {
+  onOpenItem?: (run: ThreadRunView, key: string) => void;
+  onNext: (behaviour: NextBehaviour, run: ThreadRunView) => void;
+  onOpenSource?: (behaviour: SourceBehaviour, source: RunSource, run: ThreadRunView) => void;
+}
+
+/**
+ * What a package row opens: its tab in document mode, Notifications for an
+ * approval, a new tab for a page, the calendar for an event. One dispatch for
+ * the run block and the Details panel.
+ */
+export function openPackageBehaviour(
+  behaviour: PackageBehaviour,
+  run: ThreadRunView,
+  handlers: PackageRowHandlers,
+): void {
+  switch (behaviour.kind) {
+    case 'open_tab':
+      handlers.onOpenItem?.(run, behaviour.key);
+      return;
+    case 'open_approval':
+      handlers.onNext({ kind: 'open_approval', id: behaviour.id }, run);
+      return;
+    case 'open_url':
+      handlers.onNext({ kind: 'open_url', url: behaviour.url }, run);
+      return;
+    case 'open_calendar':
+      handlers.onOpenSource?.(
+        { kind: 'open_calendar', id: behaviour.id },
+        { kind: 'calendar', title: '', id: behaviour.id },
+        run,
+      );
+      return;
+    default:
+      return;
+  }
+}
 
 const TONE_CLASS: Record<PackageRowView['tone'], string> = {
   muted: 'text-[var(--color-text-muted)]',

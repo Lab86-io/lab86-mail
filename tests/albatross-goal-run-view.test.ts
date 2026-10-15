@@ -179,8 +179,12 @@ describe('source chips', () => {
     });
   });
 
-  test('a file chip needs a server link; a calendar chip needs an id', () => {
+  test('a file chip needs a Files link; a calendar chip needs an id', () => {
     expect(sourceChip({ kind: 'file', title: 'Notes', id: 'upload_1' }).behaviour).toBeNull();
+    expect(
+      sourceChip({ kind: 'file', title: 'Notes', id: 'upload_1', url: 'https://evil.example.com/notes' })
+        .behaviour,
+    ).toBeNull();
     expect(
       sourceChip({ kind: 'file', title: 'Notes', id: 'upload_1', url: '/?view=files&file=upload_1' })
         .behaviour,
@@ -273,10 +277,24 @@ describe('the package', () => {
     ).toBeLessThanOrEqual(32);
   });
 
-  test('an approval, an event, or a page has no pane; a file needs a server link', () => {
+  test('an approval, an event, or a page has no pane; a file needs a Files link', () => {
     expect(tabPane({ kind: 'approval', id: 'ap_1', title: 'Approve', state: 'check' })).toBeNull();
     expect(tabPane({ kind: 'event', id: 'evt_1', title: 'Call', state: 'ready' })).toBeNull();
     expect(tabPane({ kind: 'file', id: 'upload_2', title: 'A file', state: 'ready' })).toBeNull();
+    // A link outside Files gets no pane (CodeRabbit 4287727581); the row stays, with nothing to open.
+    const outside = {
+      kind: 'file' as const,
+      id: 'upload_3',
+      url: 'https://evil.example.com/x.pdf',
+      title: 'A file',
+      state: 'check' as const,
+    };
+    expect(tabPane(outside)).toBeNull();
+    expect(packageRows({ items: [outside] })[0]).toMatchObject({ behaviour: null, stateText: 'Check it.' });
+    expect(tabPane({ ...outside, url: '/?view=files&file=upload_3' })).toMatchObject({
+      kind: 'file',
+      id: 'upload_3',
+    });
     expect(tabPane({ kind: 'draft', title: 'No id', state: 'check' })).toBeNull();
     expect(
       tabPane({ kind: 'sheet', url: '/?view=files&office=off_1', title: 'Sheet', state: 'ready' }),

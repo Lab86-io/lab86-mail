@@ -95,6 +95,28 @@ interface InlineComposerProps {
 
 type Phase = 'draft' | 'sending' | 'sent';
 
+/** The variables of one send: a time for a scheduled send, and the id and token of a retry after a send permission. */
+export interface SendAttempt {
+  sendAt?: number;
+  allowToken?: string;
+  pendingId?: string;
+}
+
+/**
+ * The id the compose form carries, and the token when it has one. A retry
+ * after a send permission keeps the refused send's id, because the server
+ * bound the "once" token to it. A send with an open refusal reuses that id.
+ * Any other send gets a fresh outbox id.
+ */
+export function sendAttemptFields(
+  attempt: Pick<SendAttempt, 'pendingId' | 'allowToken'>,
+  refusal: { sendId: string } | null,
+  fresh: () => string = () => `outbox:${crypto.randomUUID()}`,
+): { pendingId: string; allowToken?: string } {
+  const pendingId = attempt.pendingId || refusal?.sendId || fresh();
+  return attempt.allowToken ? { pendingId, allowToken: attempt.allowToken } : { pendingId };
+}
+
 interface SentMessageRef {
   account?: string;
   threadId?: string | null;
@@ -431,7 +453,7 @@ export function InlineComposer({
   }, [composeRecoveredFiles, setComposeRecoveredFiles]);
 
   const send = useMutation({
-    mutationFn: async ({ sendAt, allowToken }: { sendAt?: number; allowToken?: string } = {}) => {
+    mutationFn: async ({ sendAt, allowToken, pendingId }: SendAttempt = {}) => {
       if (sendAt !== undefined && sendAt <= Date.now()) {
         throw new Error('Choose a future send time.');
       }
@@ -477,9 +499,10 @@ export function InlineComposer({
       if (!includeSignature) fd.set('signature', '0');
       // One id for the send and its retry after a send permission: the server
       // keys the permission on it (lib/mail/allow-send.ts).
-      const sendId = allowRequest?.sendId || `outbox:${crypto.randomUUID()}`;
+      const attempt = sendAttemptFields({ pendingId, allowToken }, allowRequest);
+      const sendId = attempt.pendingId;
       fd.set('pendingId', sendId);
-      if (allowToken) fd.set('allowToken', allowToken);
+      if (attempt.allowToken) fd.set('allowToken', attempt.allowToken);
       if (!sendAt && undoSendSeconds > 0) {
         const id = sendId;
         pendingSendId.current = id;
@@ -998,7 +1021,8 @@ export function InlineComposer({
               .then((answer) => {
                 const retry = sendRetryFields(allowRequest, answer);
                 setAllowRequest(null);
-                send.mutate({ allowToken: retry.allowToken });
+                // The token is bound to the refused send's id: the retry carries both.
+                send.mutate({ pendingId: retry.pendingId, allowToken: retry.allowToken });
               })
               .catch((cause: Error) =>
                 setAllowError(cause?.message || 'The permission did not save. Try again.'),

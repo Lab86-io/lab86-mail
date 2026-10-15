@@ -16,7 +16,7 @@ import {
   type RunMessage,
   type RunSource,
 } from './goal-run-contract';
-import { type DocumentTarget, documentTargetOf, type StepRunView } from './step-run-client';
+import { type DocumentTarget, documentTargetOf, filesPath, type StepRunView } from './step-run-client';
 import type { ThreadRunView } from './thread-contract';
 
 export const GOAL_RUN_COPY = {
@@ -240,7 +240,8 @@ export function sourceChip(source: RunSource, tabs: readonly DocumentTab[] = [])
       break;
     case 'file':
       if (tab) behaviour = { kind: 'open_tab', key: tab.key };
-      else if (source.url) behaviour = { kind: 'open_file', url: source.url, id: source.id ?? null };
+      else if (filesPath(source.url))
+        behaviour = { kind: 'open_file', url: source.url!, id: source.id ?? null };
       break;
     case 'document':
       if (tab) behaviour = { kind: 'open_tab', key: tab.key };
@@ -366,8 +367,11 @@ export function tabPane(item: HandoffItem): TabPane | null {
       return target ? { kind: 'document', target } : null;
     }
     case 'file':
-      // The server writes the link of a saved file; the client never builds one.
-      return item.url ? { kind: 'file', id: item.id ?? null, url: item.url, title: item.title } : null;
+      // The server writes the Files link of a saved file; the client never
+      // builds one, and a link outside Files gets no pane (the row stays).
+      return filesPath(item.url)
+        ? { kind: 'file', id: item.id ?? null, url: item.url!, title: item.title }
+        : null;
     default:
       return null;
   }

@@ -342,7 +342,7 @@ export function artifactBehaviour(artifact: StepRunArtifact): NextBehaviour | nu
 }
 
 /** A path inside Files ("/?view=files&…"), the only place a saved file opens. */
-function filesPath(url: string | null | undefined): boolean {
+export function filesPath(url: string | null | undefined): boolean {
   return typeof url === 'string' && url.startsWith('/?view=files&');
 }
 

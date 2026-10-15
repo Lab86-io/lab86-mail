@@ -21,7 +21,6 @@ import {
   doingLine,
   isGoalRun,
   liveLine,
-  type PackageBehaviour,
   packageRows,
   packageTabs,
   runWhenLine,
@@ -68,7 +67,7 @@ import type { SecureItemView } from '@/lib/secure/contract';
 import { cn } from '@/lib/utils';
 import { AllowSecureBlock, type AllowSecureNote } from './AllowSecureBlock';
 import { NotSure } from './NotSure';
-import { PackageRows } from './PackageRows';
+import { openPackageBehaviour, PackageRows } from './PackageRows';
 import { RunChecklist } from './RunChecklist';
 import { RunMessages } from './RunMessages';
 
@@ -283,31 +282,9 @@ export function RunBlock(props: RunBlockProps) {
       </ul>
     ) : null;
 
-  const openPackageRow = (behaviour: PackageBehaviour) => {
-    switch (behaviour.kind) {
-      case 'open_tab':
-        props.onOpenItem?.(run, behaviour.key);
-        return;
-      case 'open_approval':
-        props.onNext({ kind: 'open_approval', id: behaviour.id }, run);
-        return;
-      case 'open_url':
-        props.onNext({ kind: 'open_url', url: behaviour.url }, run);
-        return;
-      case 'open_calendar':
-        props.onOpenSource?.(
-          { kind: 'open_calendar', id: behaviour.id },
-          { kind: 'calendar', title: '', id: behaviour.id },
-          run,
-        );
-        return;
-      default:
-        return;
-    }
-  };
   const packageNode =
     goal && rows.length ? (
-      <PackageRows rows={rows} onOpen={(behaviour) => openPackageRow(behaviour)} />
+      <PackageRows rows={rows} onOpen={(behaviour) => openPackageBehaviour(behaviour, run, props)} />
     ) : null;
 
   const questionNode = question ? (

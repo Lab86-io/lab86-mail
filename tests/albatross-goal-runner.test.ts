@@ -81,6 +81,8 @@ function harness(
     run?: Record<string, unknown> | null;
     detail?: any;
     freshDetail?: any;
+    /** The Work after the proofs settled (the third read). */
+    afterDetail?: any;
     history?: any[] | Error;
     verdict?: { satisfies: boolean; reason: string; unavailable?: boolean };
     runtimes?: any[];
@@ -187,6 +189,7 @@ function harness(
       switch (fnName) {
         case 'albatrossWorkV2:workDetail':
           detailReads += 1;
+          if (detailReads > 2 && options.afterDetail) return options.afterDetail;
           if (detailReads > 1 && options.freshDetail) return options.freshDetail;
           return options.detail === undefined ? detail : options.detail;
         case 'albatrossStepRuns:runsForWorkHistory':
@@ -544,7 +547,20 @@ describe('a goal run', () => {
           steps: [{ toolResults: [{ toolName: 'read_thread', output: sentThread }] }],
         };
       },
-      { freshDetail: fresh, run: { resumeNote: 'The user did their part: Read and send.' } },
+      {
+        freshDetail: fresh,
+        // After the settle: the sent proof holds, the reply does not.
+        afterDetail: {
+          ...fresh,
+          contract: {
+            ...fresh.contract,
+            proofs: fresh.contract.proofs.map((proof) =>
+              proof.id === 'sent' ? { ...proof, satisfiedAt: 7 } : proof,
+            ),
+          },
+        },
+        run: { resumeNote: 'The user did their part: Read and send.' },
+      },
     );
     const gate = mock(async (input: any) =>
       input.requirement === 'A reply came'
@@ -584,7 +600,139 @@ describe('a goal run', () => {
       },
     ]);
     expect(h.deps.completeWorkStep).not.toHaveBeenCalled();
+    // One of two proofs settled and the Work stays open: the claim is not "done".
+    expect(h.settled()).toMatchObject({
+      outcome: 'your_turn',
+      next: {
+        kind: 'review',
+        label: 'Check the result',
+        detail: GOAL_CHECK_COPY.notProved('nothing shows "A reply came" yet'),
+      },
+    });
+    expect(h.calls('albatrossNotifications:queueStepRunHandoff')).toEqual([]);
+  });
+
+  test('proofs that close the Work make the run done', async () => {
+    const sentThread = { account: 'acct-1', threadId: 't9', subject: 'July invoice', messages: [] };
+    const closed = { ...detail, work: { ...detail.work, workState: 'done' } };
+    const h = harness(
+      async (opts) => {
+        await opts.tools.save_draft.execute({ subject: 'July invoice' });
+        await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'The client replied.' });
+        return {
+          text: '',
+          usage,
+          steps: [{ toolResults: [{ toolName: 'read_thread', output: sentThread }] }],
+        };
+      },
+      { afterDetail: closed },
+    );
+    await runStepRun('user-1', 'run-2', h.deps);
+    expect(h.calls('albatrossWorkV2:attachProof').map((args) => args.proofId)).toEqual(['send-0', 'send-1']);
     expect(h.settled()).toMatchObject({ outcome: 'done' });
+  });
+
+  test('every proof settled but the Work needs the user word: it waits with the plain copy', async () => {
+    const settledAll = {
+      ...detail,
+      contract: {
+        ...contract,
+        closeWhen: 'outcome_confirmed',
+        proofs: [{ id: 'p', what: 'x', satisfiedAt: 9 }],
+      },
+    };
+    const h = harness(
+      async (opts) => {
+        await opts.tools.save_draft.execute({ subject: 'July invoice' });
+        await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'Done.' });
+        return { text: '', usage };
+      },
+      { afterDetail: settledAll },
+    );
+    await runStepRun('user-1', 'run-2', h.deps);
+    expect(h.settled()).toMatchObject({
+      outcome: 'ready_for_you',
+      next: { kind: 'review_draft', detail: GOAL_CHECK_COPY.needsYourWord },
+      items: [{ kind: 'draft', id: 'draft-1' }],
+    });
+    // A failed read after the settle counts as not closed.
+    const unread = harness(
+      async (opts) => {
+        await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'Done.' });
+        return { text: '', usage };
+      },
+      { afterDetail: null },
+    );
+    unread.deps.convexQuery = (async (fn: any) => {
+      if (name(fn) === 'albatrossStepRuns:runsForWorkHistory') return [];
+      if (name(fn) === 'albatrossWorkV2:workDetail') {
+        unread.queries.push({ fn: name(fn), args: {} });
+        if (unread.queries.filter((query) => query.fn === 'albatrossWorkV2:workDetail').length > 2)
+          throw new Error('down');
+        return detail;
+      }
+      return null;
+    }) as any;
+    await runStepRun('user-1', 'run-2', unread.deps);
+    expect(unread.settled().outcome).not.toBe('done');
+  });
+
+  test('a draft body that the model wrote never settles an outside result', async () => {
+    const h = harness(
+      async (opts) => {
+        await opts.tools.save_draft.execute({ subject: 'July invoice' });
+        await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'Priya confirmed.' });
+        return {
+          text: '',
+          usage,
+          steps: [
+            {
+              toolResults: [
+                {
+                  toolName: 'save_draft',
+                  output: {
+                    ok: true,
+                    draft: { id: 'draft-1', body: 'Thanks. Priya confirmed the invoice.' },
+                  },
+                },
+                { toolName: 'remember', output: { ok: true, note: 'Priya confirmed.' } },
+              ],
+            },
+          ],
+        };
+      },
+      {
+        freshDetail: {
+          ...detail,
+          contract: { ...contract, proofs: [{ id: 'ack', what: 'The person acknowledged it' }] },
+        },
+      },
+    );
+    const gate = mock(async (input: any) => ({
+      satisfies: input.evidenceText.includes('Priya confirmed'),
+      reason: 'Priya confirmed.',
+    }));
+    h.deps.evidenceSatisfies = gate as any;
+    await runStepRun('user-1', 'run-2', h.deps);
+    const [combined, ack] = gate.mock.calls.map((call: any[]) => call[0]);
+    // The combined check sees the draft; the proof check does not.
+    expect(combined.evidenceText).toContain('Priya confirmed');
+    expect(ack.requirement).toBe('The person acknowledged it');
+    expect(ack.evidenceText).not.toContain('Priya confirmed');
+    expect(ack.evidenceText).toContain('Made: draft "July invoice"');
+    expect(h.calls('albatrossWorkV2:attachProof').map((args) => args.settleContract)).toEqual([false]);
+    expect(h.settled().outcome).not.toBe('done');
+  });
+
+  test('a goal run on a closed Work settles at once', async () => {
+    for (const workState of ['done', 'released', 'archived']) {
+      const h = harness(async () => ({ text: '', usage }), {
+        detail: { ...detail, work: { ...detail.work, workState } },
+      });
+      await runStepRun('user-1', 'run-2', h.deps);
+      expect(h.settled()).toMatchObject({ error: 'This Albatross is no longer open.' });
+      expect(h.generateOptions()).toBeUndefined();
+    }
   });
 
   test('a model claim with no observed result does not settle', async () => {
@@ -615,6 +763,8 @@ describe('a goal run', () => {
     ]);
     expect(proofs[0]).not.toHaveProperty('proofId');
     expect(proofs[0]).not.toHaveProperty('stepIdentity');
+    // The Work stays open, so the run is not done: the next part is the user's.
+    expect(h.settled()).toMatchObject({ outcome: 'your_turn' });
   });
 
   test('observed facts that show no proof settle nothing; a failed attach is reported', async () => {

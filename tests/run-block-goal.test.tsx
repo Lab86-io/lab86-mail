@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { JSDOM } from 'jsdom';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { openPackageBehaviour, type PackageRowHandlers } from '../components/albatross/thread/PackageRows';
 import { RunBlock } from '../components/albatross/thread/RunBlock';
 import type { ThreadRunView } from '../lib/albatross/thread-contract';
 import { goalRunFixtures, threadRunFixtures } from '../lib/albatross/thread-fixtures';
@@ -210,6 +211,41 @@ describe('the other goal run states', () => {
     const doc = render(runs.goalYourTurn, { onOpenPage: noop });
     expect(buttons(doc)).toContain('I signed in');
     expect(buttons(doc)).not.toContain('Done, continue');
+  });
+});
+
+describe('a package row opens one way everywhere', () => {
+  const runs = goalRunFixtures(NOW);
+  const calls: string[] = [];
+  const handlers: PackageRowHandlers = {
+    onOpenItem: (_run, key) => {
+      calls.push(`tab:${key}`);
+    },
+    onNext: (behaviour) => {
+      calls.push(`next:${behaviour.kind}`);
+    },
+    onOpenSource: (behaviour) => {
+      calls.push(`source:${behaviour.kind}:${'id' in behaviour ? behaviour.id : ''}`);
+    },
+  };
+
+  test('each behaviour reaches its handler, from the block and from Details', () => {
+    openPackageBehaviour({ kind: 'open_tab', key: 'draft:1' }, runs.goalPackage, handlers);
+    openPackageBehaviour({ kind: 'open_approval', id: 'ap_1' }, runs.goalPackage, handlers);
+    openPackageBehaviour({ kind: 'open_url', url: 'https://example.com/portal' }, runs.goalPackage, handlers);
+    openPackageBehaviour({ kind: 'open_calendar', id: 'evt_1' }, runs.goalPackage, handlers);
+    expect(calls).toEqual([
+      'tab:draft:1',
+      'next:open_approval',
+      'next:open_url',
+      'source:open_calendar:evt_1',
+    ]);
+  });
+
+  test('a handler that is absent is skipped, not thrown', () => {
+    expect(() =>
+      openPackageBehaviour({ kind: 'open_tab', key: 'x' }, runs.goalPackage, { onNext: noop }),
+    ).not.toThrow();
   });
 });
 

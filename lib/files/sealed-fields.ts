@@ -7,6 +7,7 @@
 // This module is pure. It never reads a value: it checks references against
 // the item views (labels, sites, field hints), which hold no value.
 
+import { emailList } from '../nylas/normalize';
 import {
   DATE_FORMATS,
   NUMBER_FORMATS,
@@ -120,13 +121,24 @@ export function checkSealedReference(
   };
 }
 
-const ADDRESS = /[^\s<>,;"'()]+@([^\s<>,;"'()]+)/g;
+/** A plain address: an unquoted local part and a host name with at least one dot. */
+const PLAIN_ADDRESS =
+  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+)$/;
 
-/** The lower-case mail domains of every address in To, Cc, and Bcc. */
-export function recipientDomains(fields: ReadonlyArray<string | null | undefined>): string[] {
+/**
+ * The lower-case mail domains of every recipient in To, Cc, and Bcc. It reads
+ * the fields with the same split as the send request (`emailList`), so the
+ * check covers each address the provider gets. Null when one recipient is not
+ * a plain address, or its name holds an address: a sealed value never goes to
+ * an address that this check cannot read.
+ */
+export function recipientDomains(fields: ReadonlyArray<string | null | undefined>): string[] | null {
   const domains = new Set<string>();
   for (const field of fields)
-    for (const match of String(field || '').matchAll(ADDRESS))
-      domains.add(match[1].toLowerCase().replace(/\.$/, ''));
+    for (const entry of emailList(field || undefined)) {
+      const match = entry.email.trim().match(PLAIN_ADDRESS);
+      if (!match || /[<>@]/.test(entry.name || '')) return null;
+      domains.add(match[1].toLowerCase());
+    }
   return [...domains];
 }

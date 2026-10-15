@@ -125,7 +125,13 @@ function decodeBody(result: { content: string; encoding?: string }): Uint8Array 
 }
 
 function fileNameOf(url: URL) {
-  return decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || '');
+  const last = url.pathname.split('/').filter(Boolean).pop() || '';
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    // A bad percent escape: keep the raw name, as file-pull.ts does.
+    return last;
+  }
 }
 
 function cut(text: string, maxChars: number): { content: string; truncated?: true } {
