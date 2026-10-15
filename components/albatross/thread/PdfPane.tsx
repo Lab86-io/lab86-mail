@@ -89,6 +89,37 @@ export async function fetchSavedFile(url: string): Promise<ArrayBuffer> {
   throw new SavedFileError(GOAL_RUN_COPY.pdfNotDownloaded, 403, 'verify_identity');
 }
 
+/** The names in an `x-sealed-fields` header (a URL-encoded JSON list). Bad input gives none. */
+export function sealedFieldsHeader(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(decodeURIComponent(value));
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The preview of a saved file: the stored bytes (a sealed field is empty in
+ * them) and the names of its sealed fields. A preview never asks for the check.
+ */
+export async function fetchSavedFilePreview(url: string): Promise<{ bytes: ArrayBuffer; sealed: string[] }> {
+  const response = await fetch(url, { credentials: 'same-origin' });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new SavedFileError(
+      String(body?.error || GOAL_RUN_COPY.pdfFailed),
+      response.status,
+      typeof body?.code === 'string' ? body.code : undefined,
+    );
+  }
+  return {
+    bytes: await response.arrayBuffer(),
+    sealed: sealedFieldsHeader(response.headers.get('x-sealed-fields')),
+  };
+}
+
 /** True for a widget whose field name is in the sealed list. Field names compare without case. */
 export function isSealedField(fieldName: string | null | undefined, sealed: readonly string[]): boolean {
   const name = String(fieldName || '')
@@ -144,7 +175,10 @@ export function PdfPane({
     setPages([]);
     canvases.current.clear();
     (async () => {
-      const bytes = await load(url);
+      // The preview needs no check; Download (below) runs it for a sealed file.
+      const preview = await fetchSavedFilePreview(url);
+      const bytes = preview.bytes;
+      const sealedNames = [...new Set([...sealed, ...preview.sealed])];
       if (!alive) return;
       setSize(bytes.byteLength);
       const pdfjs = await loadPdfjs();
@@ -168,7 +202,7 @@ export function PdfPane({
         }>;
         for (const annotation of annotations) {
           if (annotation.subtype !== 'Widget' || !annotation.rect) continue;
-          const sealedField = isSealedField(annotation.fieldName, sealed);
+          const sealedField = isSealedField(annotation.fieldName, sealedNames);
           const signature = annotation.fieldType === 'Sig';
           if (!sealedField && !signature) continue;
           const [ax, ay, bx, by] = annotation.rect;
@@ -196,7 +230,7 @@ export function PdfPane({
     return () => {
       alive = false;
     };
-  }, [url, load, sealed]);
+  }, [url, sealed]);
 
   // Draw each page once its canvas is on screen.
   const drawPage = useCallback(async (index: number, canvas: HTMLCanvasElement) => {
