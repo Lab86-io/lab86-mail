@@ -1221,3 +1221,27 @@ describe('a run source keeps its detail (docs/albatross-goal-runs.md)', () => {
     ]);
   });
 });
+
+describe('the goal watch mark (docs/albatross-goal-runs.md)', () => {
+  test('completeMailWatch keeps the newest mail date of a pass, and the mark only moves forward', async () => {
+    const t = harness();
+    const workId = await seedWork(t);
+    const read = async () => (await t.run((ctx) => ctx.db.get(workId)))!.goalWatchAfter;
+    await t.mutation(api.albatrossWorkV2.completeMailWatch, { ...caller, workId, stillWatching: true });
+    expect(await read()).toBeUndefined();
+    await t.mutation(api.albatrossWorkV2.completeMailWatch, {
+      ...caller,
+      workId,
+      stillWatching: true,
+      goalWatchAfter: 200,
+    });
+    expect(await read()).toBe(200);
+    await t.mutation(api.albatrossWorkV2.completeMailWatch, {
+      ...caller,
+      workId,
+      stillWatching: false,
+      goalWatchAfter: 100,
+    });
+    expect(await read()).toBe(200);
+  });
+});

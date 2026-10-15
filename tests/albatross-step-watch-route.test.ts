@@ -420,6 +420,31 @@ describe('the mail watch of a goal Work (docs/albatross-goal-runs.md)', () => {
     }
   });
 
+  test('each pass judges only threads newer than the last pass, and moves the mark forward', async () => {
+    const older = { ...sentThread, _id: 'old', lastDate: Date.UTC(2026, 9, 10) };
+    const newer = { ...sentThread, _id: 'new', lastDate: Date.UTC(2026, 9, 16) };
+    const marked = { ...goalDetail, work: { ...goalDetail.work, goalWatchAfter: Date.UTC(2026, 9, 12) } };
+    const { post, gate, mutations } = goalPost({
+      detail: marked,
+      threads: [older, newer],
+      gate: async () => ({ satisfies: false, reason: 'No.' }),
+    });
+    await post(watchRequest({ userId: 'user-1', workId: 'work-g' }));
+    expect(gate.mock.calls.length).toBeGreaterThan(0);
+    for (const call of gate.mock.calls) expect((call[0] as any).evidenceText).toContain('Date: 2026-10-16');
+    expect(mutations.at(-1)).toMatchObject({ stillWatching: true, goalWatchAfter: Date.UTC(2026, 9, 16) });
+
+    // Nothing new: no gate call at all, and the mark stays.
+    const quiet = goalPost({
+      detail: { ...goalDetail, work: { ...goalDetail.work, goalWatchAfter: Date.UTC(2026, 9, 16) } },
+      threads: [older, newer],
+    });
+    const response = await quiet.post(watchRequest({ userId: 'user-1', workId: 'work-g' }));
+    expect(await response.json()).toMatchObject({ settledProofs: 0, stillWatching: true });
+    expect(quiet.gate).not.toHaveBeenCalled();
+    expect(quiet.mutations.at(-1)).not.toHaveProperty('goalWatchAfter');
+  });
+
   test('a thread with only a subject still reads as evidence', async () => {
     const { post, gate } = goalPost({
       threads: [{ _id: 't', account: 'work', subject: 'July invoice', snippet: '' }],

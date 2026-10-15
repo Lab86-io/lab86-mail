@@ -428,6 +428,36 @@ describe('the thread in goal mode', () => {
     });
   });
 
+  test('"done" on a question or a stop at the limit continues the run with the note, never a 409', async () => {
+    for (const waiting of [
+      handoff({
+        outcome: 'needs_answer',
+        next: { label: 'Answer', target: { kind: 'question', id: 'q1' } },
+        question: { status: 'pending' },
+      }),
+      handoff({ outcome: 'stopped', stoppedBy: 'time', next: { label: 'Continue' } }),
+    ]) {
+      const { deps, calls } = makeDeps({ runs: [waiting] });
+      expect(
+        await handleStepFromThread(
+          { userId: 'user-1', workId: 'work-1', done: true, note: 'I paid it.' },
+          deps,
+        ),
+      ).toEqual({ action: 'resumed', runId: 'run-new', goal: true });
+      expect(calls('albatrossStepRuns:enqueue')[0]).toMatchObject({
+        trigger: 'resume',
+        parentRunId: 'run-1',
+        resumeNote: 'The user says this part is done. I paid it.',
+      });
+      // "done" is not an answer: the question stays for the run to read.
+      expect(calls('albatrossWorkV2:answerQuestion')).toEqual([]);
+      expect(calls('albatrossStepRuns:dismissHandoff')).toEqual([]);
+    }
+    const bare = makeDeps({ runs: [handoff({ outcome: 'stopped', stoppedBy: 'cost' })] });
+    await handleStepFromThread({ userId: 'user-1', workId: 'work-1', done: true }, bare.deps);
+    expect(bare.calls('albatrossStepRuns:enqueue')[0].resumeNote).toBe('The user says this part is done.');
+  });
+
   test('"done" with no goal handoff checks the old step, then the goal goes on', async () => {
     const { deps, calls } = makeDeps({ runs: [] });
     const result = await handleStepFromThread({ userId: 'user-1', workId: 'work-1', done: true }, deps);

@@ -222,6 +222,37 @@ describe('the Brief and the Documents page', () => {
   });
 });
 
+describe('the Documents page falls back to the step row', () => {
+  const documentNext = (over: Partial<StepRunView> = {}) =>
+    goalHandoff({
+      next: { ...goalHandoff().next!, kind: 'review_document', target: { kind: 'document', id: 'w1' } },
+      artifacts: [{ kind: 'document', id: 'w1', title: 'Invoice 7', url: '/?view=files&office=w1' }],
+      ...over,
+    });
+
+  test('a package run that is not ready_for_you or your_turn gives one step row', () => {
+    const rows = documentsWaitingRows([
+      { workId: 'work_inv', workTitle: 'July invoice', run: documentNext({ outcome: 'needs_answer' }) },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      key: 'run_goal',
+      runId: 'run_goal',
+      documentTitle: 'Invoice 7',
+      detail: 'Check each thing, then send the mail.',
+    });
+    expect(rows[0]).not.toHaveProperty('itemId');
+  });
+
+  test('a package whose items are all ready gives one step row, with the step title when no document was made', () => {
+    const ready = items.map((item) => ({ ...item, state: 'ready' as const }));
+    const rows = documentsWaitingRows([
+      { workId: 'work_inv', workTitle: 'July invoice', run: documentNext({ items: ready, artifacts: [] }) },
+    ]);
+    expect(rows.map((row) => [row.key, row.documentTitle])).toEqual([['run_goal', 'July invoice']]);
+  });
+});
+
 describe('document mode and the thread state', () => {
   const thread = threadRunFixtures(NOW);
   const goalThreadRun = (over: Partial<ThreadRunView> = {}): ThreadRunView => ({

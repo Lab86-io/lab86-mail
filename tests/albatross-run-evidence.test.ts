@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { OBSERVED_PER_CALL, OBSERVED_TOTAL, observedEvidence } from '../lib/albatross/run-evidence';
+import {
+  MODEL_AUTHORED_TOOLS,
+  OBSERVED_PER_CALL,
+  OBSERVED_TOTAL,
+  observedEvidence,
+} from '../lib/albatross/run-evidence';
 
 // What a step run observed, as "Observed" lines for the proof check
 // (docs/albatross-document-handoff.md, D1). Story: a run for the Harbor
@@ -128,5 +133,26 @@ describe('observedEvidence', () => {
     const lines = text.split('\n');
     expect(lines.at(-1)).toStartWith('Observed read_thread: 19:');
     expect(lines.length).toBeLessThan(20);
+  });
+});
+
+describe('results whose words the model wrote (docs/albatross-goal-runs.md)', () => {
+  test('a goal proof can skip them; the plain record keeps them', () => {
+    const steps = [
+      {
+        toolResults: [
+          { toolName: 'save_draft', output: { draft: { body: 'Priya confirmed the invoice.' } } },
+          { toolName: 'document_create', output: { title: 'Payment received' } },
+          { toolName: 'read_thread', output: 'Reply from the client: thanks' },
+        ],
+      },
+    ];
+    expect(observedEvidence(steps, { skip: MODEL_AUTHORED_TOOLS })).toBe(
+      'Observed read_thread: Reply from the client: thanks',
+    );
+    expect(observedEvidence(steps)).toContain('Priya confirmed');
+    for (const name of ['save_draft', 'update_draft', 'document_create', 'word_document_edit', 'remember'])
+      expect(MODEL_AUTHORED_TOOLS.has(name)).toBe(true);
+    expect(MODEL_AUTHORED_TOOLS.has('read_thread')).toBe(false);
   });
 });

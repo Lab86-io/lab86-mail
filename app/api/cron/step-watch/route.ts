@@ -187,9 +187,14 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
 
       let settledProofs = 0;
       const outcome = String(detail?.contract?.outcome || '');
-      for (const proof of openProofs.slice(0, WATCH_STEP_LIMIT)) {
+      // A goal proof can stay open for weeks. Each pass judges only threads
+      // newer than the last pass, so the cost does not grow with time.
+      const watchedAfter = Number(detail?.work?.goalWatchAfter) || 0;
+      const fresh = confirmable.filter((thread) => !watchedAfter || (thread.lastDate || 0) > watchedAfter);
+      const newestDate = threads.reduce((newest, thread) => Math.max(newest, thread.lastDate || 0), 0);
+      for (const proof of fresh.length ? openProofs : []) {
         const needle = [outcome, workTitle, proof.what].filter(Boolean).join(' ');
-        const ranked = confirmable
+        const ranked = fresh
           .map((thread) => ({ thread, text: `${thread.subject || ''} ${thread.snippet || ''}`.trim() }))
           .map((row) => ({ ...row, score: proofMatchScore(needle, row.text) }))
           .filter((row) => row.score >= WATCH_PREFILTER_FLOOR && row.text)
@@ -229,6 +234,7 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
         userId,
         workId,
         stillWatching,
+        ...(openProofs.length && newestDate > watchedAfter ? { goalWatchAfter: newestDate } : {}),
       });
       return NextResponse.json({
         ok: true,

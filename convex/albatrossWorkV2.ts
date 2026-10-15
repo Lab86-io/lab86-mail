@@ -2243,7 +2243,13 @@ export const beginMailWatch = internalMutation({
 
 /** The watch pass finished: either keep polling later or stand down. */
 export const completeMailWatch = mutation({
-  args: { ...callerArgs, workId: v.id('albatrossIntents'), stillWatching: v.boolean() },
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    stillWatching: v.boolean(),
+    /** A goal Work: the newest mail date this pass read. It only moves forward. */
+    goalWatchAfter: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
@@ -2252,9 +2258,12 @@ export const completeMailWatch = mutation({
       ['active', 'waiting', 'blocked'].includes(workLifecycle(work)) &&
       (Boolean(work.replyWatch && work.workState === 'waiting') ||
         (args.stillWatching && (await openMailStepRemains(ctx, work))));
+    const goalWatchAfter =
+      args.goalWatchAfter && args.goalWatchAfter > (work.goalWatchAfter ?? 0) ? args.goalWatchAfter : null;
     await ctx.db.patch(args.workId, {
       mailWatchAt: stillWatching ? ts : undefined,
       mailWatchClaimedAt: undefined,
+      ...(goalWatchAfter ? { goalWatchAfter } : {}),
       updatedAt: ts,
     });
     return { stillWatching };

@@ -73,7 +73,7 @@ import {
   withOpenPath,
 } from './goal-runs';
 import { localDateKey } from './local-time';
-import { type ObservedStep, observedEvidence } from './run-evidence';
+import { MODEL_AUTHORED_TOOLS, type ObservedStep, observedEvidence } from './run-evidence';
 import { completeWorkStep } from './step-execution';
 import {
   goalRunLimits,
@@ -97,6 +97,7 @@ import {
 } from './step-run-prompt';
 import { addSecureFetchTool, buildRunnerTools, type HandoffInput, type RunArtifact } from './step-run-tools';
 import { workThreadSessionId } from './thread-contract';
+import { isTerminalWork } from './work-lifecycle';
 
 const HEARTBEAT_MS = 30_000;
 
@@ -611,7 +612,9 @@ export async function runStepRun(
     });
     let step: RunnerStep | undefined;
     if (goal) {
-      if (!detail?.work) return await settle({ error: 'This Albatross is no longer open.' });
+      // A goal Work can close while its run waits (the mail watch settles the last proof).
+      if (!detail?.work || isTerminalWork(detail.work))
+        return await settle({ error: 'This Albatross is no longer open.' });
     } else {
       step = (detail?.execution?.guideSteps || []).find((entry: RunnerStep) => entry.key === run.stepKey);
       if (!detail?.work || !step) return await settle({ error: 'This step is no longer in the plan.' });
@@ -1063,6 +1066,14 @@ export async function runStepRun(
         sessionId,
         settled,
         observed: observedEvidence((result as { steps?: ObservedStep[] }).steps),
+        // A goal proof reads no result whose words the model wrote (a draft, a document, a note).
+        ...(goal
+          ? {
+              facts: observedEvidence((result as { steps?: ObservedStep[] }).steps, {
+                skip: MODEL_AUTHORED_TOOLS,
+              }),
+            }
+          : {}),
       });
     }
     if (sessionId && usedPage) {
@@ -1199,6 +1210,8 @@ async function proveDone(input: {
   settled: SettleInput;
   /** The tool results this run recorded (lib/albatross/run-evidence.ts). */
   observed?: string;
+  /** Goal runs: the recorded results without the ones whose words the model wrote. */
+  facts?: string;
 }): Promise<SettleInput> {
   const { deps, userId, run, step } = input;
   const copy = input.goal ? GOAL_CHECK_COPY : STEP_CHECK_COPY;
@@ -1242,7 +1255,16 @@ async function proveDone(input: {
     return checkResult(input, verdict.unavailable ? copy.checkDidNotRun : copy.notProved(verdict.reason));
   if (input.goal) {
     await settleGoalProofs({ ...input, contract, title, outcome, workTitle, page, reason: verdict.reason });
-    return input.settled;
+    // The model's claim never decides the run: it is done only when the Work
+    // closed by its contract, on proof that the run observed (G1 Done).
+    const after = await deps
+      .convexQuery<any>(api.albatrossWorkV2.workDetail, { userId, workId: run.workId })
+      .catch(() => null);
+    if (after?.work && isTerminalWork(after.work)) return input.settled;
+    const open = ((after ?? fresh ?? input.detail)?.contract?.proofs || []).filter(
+      (proof: { satisfiedAt?: number | null }) => !proof.satisfiedAt,
+    ) as Array<{ what: string }>;
+    return goalNotDone(input, open);
   }
   // "Verified on the page" needs the page alone to show it. The combined
   // check above includes the agent's own words, so it proves less.
@@ -1290,6 +1312,23 @@ async function proveDone(input: {
 }
 
 /**
+ * A goal run's done claim that did not close the Work. It waits for the user
+ * with what is still open; the mail watch stays armed for the rest.
+ */
+function goalNotDone(
+  input: { artifacts: RunArtifact[]; settled: SettleInput; goal?: boolean },
+  open: ReadonlyArray<{ what: string }>,
+): SettleInput {
+  const detail = open.length
+    ? GOAL_CHECK_COPY.notProved(`nothing shows "${truncateText(open[0].what, 160)}" yet`)
+    : GOAL_CHECK_COPY.needsYourWord;
+  const result = checkResult(input, detail);
+  // Nothing to open: the next part is the user's.
+  if (!input.artifacts.length && !result.items?.length) return { ...result, outcome: 'your_turn' };
+  return result;
+}
+
+/**
  * A goal run's done claim passed the check. Each open proof of the contract
  * is checked again against what the run observed (tool results, the things it
  * made, the page), never against the run's own words or a note. A proof that
@@ -1311,10 +1350,13 @@ async function settleGoalProofs(input: {
   page: { url: string; title: string; text: string } | null;
   /** The reason of the check that passed the done claim. */
   reason: string;
-}) {
+  /** The recorded results without the ones whose words the model wrote. */
+  facts?: string;
+}): Promise<number> {
   const { deps, userId, run } = input;
+  // The things the run made count only as made, never as an outside result.
   const facts = [
-    input.observed?.trim() || null,
+    input.facts?.trim() || null,
     input.artifacts.length
       ? `Made: ${input.artifacts.map((artifact) => `${artifact.kind} "${artifact.title}"`).join('; ')}`
       : null,
@@ -1361,7 +1403,7 @@ async function settleGoalProofs(input: {
       });
     if (attached) settled += 1;
   }
-  if (settled) return;
+  if (settled) return settled;
   await deps
     .convexMutation(api.albatrossWorkV2.attachProof, {
       userId,
@@ -1376,6 +1418,7 @@ async function settleGoalProofs(input: {
       settleContract: false,
     })
     .catch((error) => deps.reportError('[step-runner] proof failed', run._id, describeModelError(error)));
+  return 0;
 }
 
 /** The words of a done claim that waits for the user. */
@@ -1393,6 +1436,7 @@ export const STEP_CHECK_COPY = {
 /** The words of a goal run's done claim that waits for the user (G1 Done). */
 export const GOAL_CHECK_COPY = {
   ownershipUnknown: 'I think the goal is done. Check it, then mark the Albatross done.',
+  needsYourWord: 'Everything that this goal needs is shown. Check it, then mark the Albatross done.',
   checkDidNotRun:
     'I think the goal is done, but the check did not run. Check it, then mark the Albatross done.',
   notProved: (reason: string) => {

@@ -19,6 +19,43 @@ const NOT_EVIDENCE = new Set([
   'goal_update',
 ]);
 
+/**
+ * Tools whose result holds words that the model wrote or chose: drafts,
+ * documents, notes, tasks, form values, summaries. Such a result shows that a
+ * thing was made, never that something happened outside (a send, a reply, a
+ * payment, a confirmation). A goal run's contract proof reads the facts
+ * without them; the things made stay as "Made" records
+ * (docs/albatross-goal-runs.md, G1 Done).
+ */
+export const MODEL_AUTHORED_TOOLS: ReadonlySet<string> = new Set([
+  'save_draft',
+  'update_draft',
+  'draft_reply',
+  'pre_send_critique',
+  'summarize_thread',
+  'extract_action_items',
+  'remember',
+  'document_create',
+  'document_edit',
+  'document_apply_instruction',
+  'document_review_slides',
+  'document_publish_google',
+  'document_export',
+  'word_document_create',
+  'word_document_edit',
+  'presentation_plan',
+  'pdf_form_fill',
+  'tasks_create_card',
+  'tasks_update_card',
+  'tasks_add_comment',
+  'tasks_attach_link',
+  'calendar_create_event',
+  'albatross_list_add',
+  'step_note',
+  'checklist_set',
+  'goal_update',
+]);
+
 /** One tool result, as the AI SDK step reports it. */
 export interface ObservedToolResult {
   toolName?: string;
@@ -46,7 +83,7 @@ function compact(value: unknown): string {
  */
 export function observedEvidence(
   steps: readonly ObservedStep[] | null | undefined,
-  limits: { perCall?: number; total?: number } = {},
+  limits: { perCall?: number; total?: number; skip?: ReadonlySet<string> } = {},
 ): string {
   const perCall = limits.perCall ?? OBSERVED_PER_CALL;
   const total = limits.total ?? OBSERVED_TOTAL;
@@ -54,7 +91,7 @@ export function observedEvidence(
   for (const step of steps || []) {
     for (const result of step?.toolResults || []) {
       const name = String(result?.toolName || '').trim();
-      if (!name || NOT_EVIDENCE.has(name)) continue;
+      if (!name || NOT_EVIDENCE.has(name) || limits.skip?.has(name)) continue;
       const body = compact(result.output ?? result.result);
       if (!body) continue;
       lines.push(`Observed ${name}: ${truncateText(body, perCall)}`);
