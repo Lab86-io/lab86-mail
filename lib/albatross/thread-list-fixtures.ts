@@ -51,6 +51,8 @@ function run(over: Partial<RunActivity> & { runId: string; state: RunActivity['s
     nextLabel: null,
     nextDetail: null,
     nextBlanks: [],
+    goal: false,
+    itemCount: 0,
     allowAnswered: false,
     summary: null,
     error: null,

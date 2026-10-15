@@ -6,6 +6,8 @@ import {
 import { mayCloseAutomatically } from '../lib/albatross/contract';
 import { type ExecutionWorkRow, selectExecutionSnapshot } from '../lib/albatross/execution';
 import { isStale } from '../lib/albatross/forgiveness';
+import { goalRunsEnabled } from '../lib/albatross/goal-run-contract';
+import { isGoalRun } from '../lib/albatross/goal-runs';
 import { isDormant, wakeIsDue, wokenHorizon } from '../lib/albatross/horizon';
 import { bindFrontierQuestionId } from '../lib/albatross/plan-frontier';
 import { metricSummary } from '../lib/albatross/practice-review';
@@ -2519,6 +2521,12 @@ export const workDetail = query({
       latestRunPerStep(runRows).map((row) => [row.stepKey, stepRunView(row)] as const),
     );
     const activeRunRow = runRows.find((row) => row.active);
+    // Goal runs (docs/albatross-goal-runs.md): the newest goal run and the
+    // newest checklist. A Work is a goal Work when the switch is on for the
+    // user or a goal run already worked on it.
+    const goalRows = runRows.filter((row) => isGoalRun(row));
+    const goalRunRow = goalRows[0] ?? null;
+    const checklistRow = goalRows.find((row) => row.checklist?.length);
     const runnerEnabled =
       (process.env.LAB86_STEP_RUNS || '').trim().toLowerCase() !== 'off' && !isTerminalWork(work);
     const guideSteps = projectedSteps.map((step) => ({
@@ -2554,7 +2562,10 @@ export const workDetail = query({
         scheduledEndAt,
         activeRun: activeRunRow ? stepRunView(activeRunRow) : null,
         runner: { enabled: runnerEnabled },
+        goalRun: goalRunRow ? stepRunView(goalRunRow) : null,
       },
+      goalRuns: goalRunsEnabled(userId) || goalRows.length > 0,
+      checklist: checklistRow?.checklist ?? [],
       lapses,
       contract: work.contract ?? null,
       evidence: evidence.map((row) => ({

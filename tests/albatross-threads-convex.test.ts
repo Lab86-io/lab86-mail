@@ -214,6 +214,52 @@ describe('albatrossThreads', () => {
     expect(activity.now).toBeNumber();
   });
 
+  test('activity: a goal run shows its newest message, its package blanks, and its item count', async () => {
+    const t = harness();
+    const workId = await seedWork(t);
+    const run = await enqueue(t, workId, { stepKey: 'goal', stepIdentity: `goal:${workId}`, goal: true });
+    await claim(t, String(run.runId), 'tk-goal');
+    const fence = { ...caller, id: run.runId as Id<'albatrossStepRuns'>, token: 'tk-goal' };
+    await t.mutation(api.albatrossStepRuns.progress, { ...fence, line: 'Read a mail thread.' });
+    let activity = await t.query(api.albatrossThreads.activity, caller);
+    expect(activity.runs[workId]).toMatchObject({ goal: true, logLine: 'Read a mail thread.', itemCount: 0 });
+    await t.mutation(api.albatrossStepRuns.progress, {
+      ...fence,
+      message: { id: 'm1', at: 1, text: '  The worklog   shows 78 hours. ', sources: [] },
+      line: 'Searched your mail.',
+    });
+    activity = await t.query(api.albatrossThreads.activity, caller);
+    expect(activity.runs[workId].logLine).toBe('The worklog shows 78 hours.');
+    await t.mutation(api.albatrossStepRuns.settle, {
+      ...fence,
+      outcome: 'ready_for_you',
+      summary: 'I made the invoice.',
+      next: { kind: 'review_draft', label: 'Read and send', detail: 'Read it.', blanks: ['rate'] },
+      items: [
+        { kind: 'draft', id: 'd1', title: 'Invoice mail', state: 'check' },
+        { kind: 'document', id: 'w1', title: 'Invoice', state: 'blanks', blanks: ['Rate', 'hours'] },
+      ],
+    });
+    activity = await t.query(api.albatrossThreads.activity, caller);
+    expect(activity.runs[workId]).toMatchObject({ nextBlanks: ['rate', 'hours'], itemCount: 2 });
+
+    // A step run keeps its log line even with a message on the row.
+    const stepWork = await seedWork(t, 'B');
+    const step = await enqueue(t, stepWork);
+    await claim(t, String(step.runId), 'tk-step');
+    await t.mutation(api.albatrossStepRuns.progress, {
+      ...caller,
+      id: step.runId as Id<'albatrossStepRuns'>,
+      token: 'tk-step',
+      line: 'Started on the step.',
+      message: { id: 'm', at: 1, text: 'Words', sources: [] },
+    });
+    expect((await t.query(api.albatrossThreads.activity, caller)).runs[stepWork]).toMatchObject({
+      goal: false,
+      logLine: 'Started on the step.',
+    });
+  });
+
   test('a reply ends; only the reply that started last clears "answering"', async () => {
     const t = harness();
     const workId = await seedWork(t);

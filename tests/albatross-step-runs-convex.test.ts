@@ -737,3 +737,278 @@ describe('approval dedupe', () => {
     expect(plain).not.toBe(first);
   });
 });
+
+describe('goal runs (docs/albatross-goal-runs.md)', () => {
+  function goalArgs(workId: string, overrides: Record<string, unknown> = {}) {
+    return enqueueArgs(workId, {
+      stepKey: 'goal',
+      stepIdentity: `goal:${workId}`,
+      stepTitle: 'Proposal',
+      goal: true,
+      checklist: [
+        { id: 'x', text: '  Write the proposal ', state: 'todo' },
+        { id: 'y', text: 'Call the venue', state: 'yours' },
+      ],
+      ...overrides,
+    });
+  }
+
+  test('enqueue marks a goal run and keeps its first checklist; a step run gets neither', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const { runId } = await t.mutation(api.albatrossStepRuns.enqueue, goalArgs(workId));
+    const view = await t.query(api.albatrossStepRuns.get, {
+      ...caller,
+      id: runId as Id<'albatrossStepRuns'>,
+    });
+    expect(view).toMatchObject({
+      stepKey: 'goal',
+      goal: true,
+      checklist: [
+        { id: 'c1', text: 'Write the proposal', state: 'todo' },
+        { id: 'c2', text: 'Call the venue', state: 'yours' },
+      ],
+      messages: [],
+      items: [],
+      unsure: [],
+    });
+    await t.mutation(api.albatrossStepRuns.cancel, { ...caller, id: runId as Id<'albatrossStepRuns'> });
+    const step = await t.mutation(
+      api.albatrossStepRuns.enqueue,
+      enqueueArgs(workId, { checklist: [{ id: 'z', text: 'Ignored', state: 'todo' }] }),
+    );
+    const stepView = await t.query(api.albatrossStepRuns.get, {
+      ...caller,
+      id: step.runId as Id<'albatrossStepRuns'>,
+    });
+    expect(stepView).toMatchObject({ goal: false, checklist: [] });
+  });
+
+  test('automatic goal runs dedupe by the day key; a user run on the goal key is not blocked', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const day = `goal:${workId}:2026-10-15`;
+    const first = await t.mutation(
+      api.albatrossStepRuns.enqueue,
+      goalArgs(workId, { trigger: 'brief', stepIdentity: day }),
+    );
+    expect(first.created).toBe(true);
+    await t.mutation(api.albatrossStepRuns.cancel, { ...caller, id: first.runId as Id<'albatrossStepRuns'> });
+    const again = await t.mutation(
+      api.albatrossStepRuns.enqueue,
+      goalArgs(workId, { trigger: 'conductor', stepIdentity: day }),
+    );
+    expect(again as unknown).toEqual({ runId: first.runId, created: false, reason: 'already_ran' });
+    const nextDay = await t.mutation(
+      api.albatrossStepRuns.enqueue,
+      goalArgs(workId, { trigger: 'conductor', stepIdentity: `goal:${workId}:2026-10-16` }),
+    );
+    expect(nextDay.created).toBe(true);
+  });
+
+  test('progress keeps the newest 40 messages and the newest checklist; settle keeps the package', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const { runId } = await t.mutation(api.albatrossStepRuns.enqueue, goalArgs(workId));
+    await claimRun(t, runId!);
+    const fence = { ...caller, id: runId as Id<'albatrossStepRuns'>, token: 'token-1' };
+    for (let index = 0; index < 42; index += 1)
+      await t.mutation(api.albatrossStepRuns.progress, {
+        ...fence,
+        message: {
+          id: `m${index}`,
+          at: index,
+          text: `Message ${index}`,
+          sources: [
+            { kind: 'web', title: 'Form', url: 'https://www.irs.gov/w9' },
+            { kind: 'web', title: 'Form again', url: 'https://www.irs.gov/w9' },
+          ],
+        },
+      });
+    await t.mutation(api.albatrossStepRuns.progress, {
+      ...fence,
+      message: { id: 'empty', at: 99, text: '   ', sources: [] },
+      checklist: [{ id: 'a', text: 'Write the proposal', state: 'done' }],
+    });
+    const settled = await t.mutation(api.albatrossStepRuns.settle, {
+      ...fence,
+      outcome: 'ready_for_you',
+      summary: 'I wrote it.',
+      next: { kind: 'review_draft', label: 'Read and send', detail: 'Read it.' },
+      items: [
+        {
+          kind: 'draft',
+          id: 'd1',
+          title: 'Proposal',
+          state: 'ready',
+          blanks: ['rate'],
+          url: '/?view=mail&draft=d1',
+        },
+        { kind: 'draft', id: 'd1', title: 'Same draft', state: 'check' },
+      ],
+      unsure: ['Check the rate.', 'Check the rate.', '  '],
+    });
+    expect(settled).toEqual({ state: 'handed_off' });
+    const view = await t.query(api.albatrossStepRuns.get, {
+      ...caller,
+      id: runId as Id<'albatrossStepRuns'>,
+    });
+    expect(view!.messages).toHaveLength(40);
+    expect(view!.messages[0].text).toBe('Message 2');
+    expect(view!.messages[0].sources).toEqual([
+      { kind: 'web', title: 'Form', url: 'https://www.irs.gov/w9' },
+    ]);
+    expect(view!.checklist).toEqual([{ id: 'c1', text: 'Write the proposal', state: 'done' }]);
+    expect(view!.items).toEqual([
+      {
+        kind: 'draft',
+        title: 'Proposal',
+        state: 'blanks',
+        id: 'd1',
+        url: '/?view=mail&draft=d1',
+        blanks: ['rate'],
+      },
+    ]);
+    expect(view!.unsure).toEqual(['Check the rate.']);
+  });
+
+  test('updateGoal changes the contract of its own Work only while the goal run holds the lease', async () => {
+    const t = harness();
+    const intentId = await seedWork(t, {
+      contract: {
+        outcome: 'Dana has the proposal',
+        proofs: [{ id: 'p1', what: 'The message left your account', satisfiedAt: 5, satisfiedBy: 'Sent' }],
+        closeWhen: 'outcome_likely',
+        updatedAt: 1,
+      },
+    });
+    const workId = String(intentId);
+    const { runId } = await t.mutation(api.albatrossStepRuns.enqueue, goalArgs(workId));
+    await claimRun(t, runId!);
+    const fence = { ...caller, id: runId as Id<'albatrossStepRuns'>, token: 'token-1' };
+    expect(await t.mutation(api.albatrossStepRuns.updateGoal, { ...fence, outcome: '  ' })).toEqual({
+      ok: false,
+      message: 'Send outcome, proofs, or both.',
+    });
+    expect(
+      await t.mutation(api.albatrossStepRuns.updateGoal, {
+        ...fence,
+        outcome: 'Dana has the proposal and the budget',
+        proofs: ['The message left your account', 'Dana replied'],
+      }),
+    ).toEqual({
+      ok: true,
+      outcome: 'Dana has the proposal and the budget',
+      proofs: [
+        { what: 'The message left your account', settled: true },
+        { what: 'Dana replied', settled: false },
+      ],
+    });
+    const work = await t.run((ctx) => ctx.db.get(intentId));
+    expect(work!.contract).toMatchObject({
+      outcome: 'Dana has the proposal and the budget',
+      proofs: [
+        { id: 'p1', what: 'The message left your account', satisfiedAt: 5, satisfiedBy: 'Sent' },
+        { id: 'goal-2', what: 'Dana replied' },
+      ],
+      closeWhen: 'outcome_likely',
+    });
+    // A lost lease, a step run, and a closed Work change nothing.
+    expect(
+      await t.mutation(api.albatrossStepRuns.updateGoal, { ...fence, token: 'wrong', outcome: 'x' }),
+    ).toEqual({
+      ok: false,
+      message: 'The run is not open.',
+    });
+    await t.run((ctx) => ctx.db.patch(intentId, { workState: 'done' }));
+    expect(await t.mutation(api.albatrossStepRuns.updateGoal, { ...fence, outcome: 'x' })).toEqual({
+      ok: false,
+      message: 'This Albatross is closed.',
+    });
+    const other = String(await seedWork(t));
+    const stepRun = await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(other));
+    await claimRun(t, stepRun.runId!, 'step-token');
+    expect(
+      await t.mutation(api.albatrossStepRuns.updateGoal, {
+        ...caller,
+        id: stepRun.runId as Id<'albatrossStepRuns'>,
+        token: 'step-token',
+        outcome: 'x',
+      }),
+    ).toEqual({ ok: false, message: 'The run is not open.' });
+  });
+
+  test('a Work with no contract gets its first contract from the update', async () => {
+    const t = harness();
+    const intentId = await seedWork(t);
+    const { runId } = await t.mutation(api.albatrossStepRuns.enqueue, goalArgs(String(intentId)));
+    await claimRun(t, runId!);
+    await t.mutation(api.albatrossStepRuns.updateGoal, {
+      ...caller,
+      id: runId as Id<'albatrossStepRuns'>,
+      token: 'token-1',
+      proofs: ['Dana replied'],
+    });
+    const work = await t.run((ctx) => ctx.db.get(intentId));
+    expect(work!.contract).toMatchObject({
+      outcome: 'Proposal',
+      proofs: [{ id: 'goal-1', what: 'Dana replied' }],
+      closeWhen: 'outcome_likely',
+    });
+  });
+
+  test('workDetail shows the goal switch, the newest goal run, and the newest checklist', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const before = await t.query(api.albatrossWorkV2.workDetail, {
+      ...caller,
+      workId: workId as Id<'albatrossIntents'>,
+    });
+    expect(before).toMatchObject({ goalRuns: false, checklist: [], execution: { goalRun: null } });
+
+    const first = await t.mutation(api.albatrossStepRuns.enqueue, goalArgs(workId));
+    await t.mutation(api.albatrossStepRuns.cancel, { ...caller, id: first.runId as Id<'albatrossStepRuns'> });
+    const second = await t.mutation(api.albatrossStepRuns.enqueue, goalArgs(workId, { checklist: [] }));
+    const detail = await t.query(api.albatrossWorkV2.workDetail, {
+      ...caller,
+      workId: workId as Id<'albatrossIntents'>,
+    });
+    expect(detail!.goalRuns).toBe(true);
+    expect(detail!.execution.goalRun?.id).toBe(second.runId!);
+    // The newest run has no list yet: the newest list of an earlier run shows.
+    expect(detail!.checklist.map((item) => item.text)).toEqual(['Write the proposal', 'Call the venue']);
+
+    const previous = process.env.LAB86_GOAL_RUNS;
+    process.env.LAB86_GOAL_RUNS = userId;
+    try {
+      const other = String(await seedWork(t));
+      const switched = await t.query(api.albatrossWorkV2.workDetail, {
+        ...caller,
+        workId: other as Id<'albatrossIntents'>,
+      });
+      expect(switched!.goalRuns).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.LAB86_GOAL_RUNS;
+      else process.env.LAB86_GOAL_RUNS = previous;
+    }
+  });
+
+  test('autoCandidates takes a goal Work whose plan has no steps', async () => {
+    const t = harness();
+    const now = Date.now();
+    const intentId = await seedWork(t, { lastUserTouchAt: now, createdAt: now });
+    const planId = await t.mutation(api.albatrossIntents.savePlan, {
+      ...caller,
+      intentId,
+      outcome: 'Proposal',
+      digitalActions: [],
+      physicalActions: [],
+      assumptions: [],
+      sourceRefs: [],
+    });
+    await t.mutation(api.albatrossIntents.markPlanApplied, { ...caller, planId, appliedSteps: [] });
+    expect(await t.query(internal.albatrossStepRuns.autoCandidates, {})).toEqual([
+      { userId, workId: String(intentId) },
+    ]);
+  });
+});

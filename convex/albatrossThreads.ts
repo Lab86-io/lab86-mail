@@ -3,6 +3,7 @@ import { truncateText } from '../lib/shared/text';
 import type { Doc } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
+import { cleanBlanks } from './albatrossStepRuns';
 import { now, requireInternalSecret } from './lib';
 
 // Many Albatross threads at once (docs/albatross-threads.md). The thread list
@@ -38,18 +39,29 @@ export const ANSWERING_STALE_MS = 10 * 60_000;
 
 type RunDoc = Doc<'albatrossStepRuns'>;
 
-/** What the list needs from a run: no artifacts, no full log. */
+/**
+ * What the list needs from a run: no artifacts, no full log. A goal run
+ * (docs/albatross-goal-runs.md) shows its newest message as its line, and its
+ * blanks come from the next action and from every item of its package.
+ */
 export function runActivity(run: RunDoc) {
+  const goal = run.goal === true || run.stepKey === 'goal';
+  const message = goal ? run.messages?.at(-1)?.text?.replace(/\s+/g, ' ').trim() : '';
   return {
     runId: String(run._id),
     state: run.state,
     outcome: run.outcome ?? null,
     stepTitle: run.stepTitle,
-    logLine: run.log.at(-1)?.text ?? null,
+    logLine: message ? truncateText(message, 200) : (run.log.at(-1)?.text ?? null),
     nextKind: run.next?.kind ?? null,
     nextLabel: run.next?.label ?? null,
     nextDetail: run.next?.detail ?? null,
-    nextBlanks: run.next?.blanks ?? [],
+    nextBlanks: cleanBlanks([
+      ...(run.next?.blanks ?? []),
+      ...(run.items ?? []).flatMap((item) => item.blanks ?? []),
+    ]),
+    goal,
+    itemCount: run.items?.length ?? 0,
     allowAnswered: Boolean(run.next?.allowAnswer),
     summary: run.summary ?? null,
     error: run.error ?? null,
