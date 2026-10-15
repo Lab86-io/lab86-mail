@@ -98,21 +98,11 @@ export function sourceLocator(source: Pick<RunSource, 'kind'> & Partial<RunSourc
     : locator;
 }
 
-/** A goal run: the server marks it, its step key is `goal`, or it has goal-run fields. */
+/** A goal run: the server marks it `goal`, and its step key is `goal`. */
 export function isGoalRun(
-  run:
-    | (Pick<ThreadRunView, 'goal' | 'messages' | 'checklist' | 'items'> & { stepKey?: string | null })
-    | null
-    | undefined,
+  run: { goal?: boolean | null; stepKey?: string | null } | null | undefined,
 ): boolean {
-  if (!run) return false;
-  return (
-    Boolean(run.goal) ||
-    isGoalStepKey(run.stepKey) ||
-    run.messages.length > 0 ||
-    run.checklist.length > 0 ||
-    run.items.length > 0
-  );
+  return Boolean(run && (run.goal === true || isGoalStepKey(run.stepKey)));
 }
 
 /** A Work on goal runs: the detail says so, or one of its runs is a goal run. */

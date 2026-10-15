@@ -183,9 +183,11 @@ describe('the header word of a goal Work', () => {
     expect(planLine(input).text).toBe('Step 1 of 2 · In progress');
   });
 
-  test('items alone make a goal run count for the Work', () => {
+  test('a goal run makes the Work a goal Work; items on a step run do not', () => {
     const detail = threadDetailFixture(NOW);
-    const run = { ...steps.readyDraft, items: goalItemsFixture() };
-    expect(threadStateInput(detail, [run]).goal).toBe(true);
+    const goalRun = { ...steps.readyDraft, stepKey: 'goal', goal: true, items: goalItemsFixture() };
+    expect(threadStateInput(detail, [goalRun]).goal).toBe(true);
+    const stepRun = { ...steps.readyDraft, items: goalItemsFixture() };
+    expect(threadStateInput(detail, [stepRun]).goal).toBe(false);
   });
 });

@@ -70,13 +70,13 @@ describe('the use lines of a send or a download', () => {
   test('read in the item history', () => {
     const use = { field: 'number', site: 'bramble-press.example.com' };
     expect(secureUseLine({ ...use, outcome: 'allowed_send_once' }, 'id_number')).toBe(
-      'You allowed it in a file for one send to bramble-press.example.com',
+      'You allowed it in mail to bramble-press.example.com for one send',
     );
     expect(secureUseLine({ ...use, outcome: 'allowed_send_always' }, 'id_number')).toBe(
-      'You allowed it in files for mail to bramble-press.example.com from now on',
+      'You allowed it in mail to bramble-press.example.com from now on',
     );
     expect(secureUseLine({ ...use, outcome: 'downloaded' }, 'id_number')).toBe(
-      'You downloaded a file with it',
+      'Filled in a PDF that you downloaded',
     );
     expect(secureUseLine({ ...use, outcome: 'allowed_once' }, 'id_number')).toBe(
       'You allowed it on bramble-press.example.com for one run',

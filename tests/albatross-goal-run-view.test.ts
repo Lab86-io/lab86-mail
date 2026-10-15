@@ -51,9 +51,10 @@ const runs = goalRunFixtures(NOW);
 const steps = threadRunFixtures(NOW);
 
 describe('a goal run', () => {
-  test('is one with the goal flag, or with messages, a checklist, or items', () => {
+  test('is one with the goal flag or the goal step key, never by its fields alone', () => {
     expect(isGoalRun(runs.goalRunning)).toBe(true);
-    expect(isGoalRun({ goal: false, messages: [], checklist: [], items: goalItemsFixture() })).toBe(true);
+    expect(isGoalRun({ goal: false, stepKey: 'goal' })).toBe(true);
+    expect(isGoalRun({ goal: false, stepKey: 'step-1' })).toBe(false);
     expect(isGoalRun(steps.running)).toBe(false);
     expect(isGoalRun(null)).toBe(false);
   });

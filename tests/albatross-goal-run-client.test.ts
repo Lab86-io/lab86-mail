@@ -161,13 +161,11 @@ describe('behaviours', () => {
 });
 
 describe('the Brief and the Documents page', () => {
-  test('a goal handoff whose next action opens nothing opens its first package item', () => {
+  test('a package opens the thread in document mode; a lone item opens in place', () => {
     const [row] = readyForYouRows([{ workId: 'work_inv', workTitle: 'July invoice', run: goalHandoff() }]);
-    expect(row.action).toEqual({
-      label: 'Check the package',
-      behaviour: { kind: 'open_draft', id: 'd1', accountId: 'a1' },
-    });
-    // A next action that opens in place wins over the package.
+    // Many items: the thread opens with a tab for each one.
+    expect(row.action).toEqual({ label: 'Check the package', behaviour: { kind: 'open_work' } });
+    // A package opens the thread even when the next action could open one item in place.
     const [own] = readyForYouRows([
       {
         workId: 'work_inv',
@@ -177,7 +175,12 @@ describe('the Brief and the Documents page', () => {
         }),
       },
     ]);
-    expect(own.action?.behaviour).toEqual({ kind: 'open_document', url: null, id: 'w1' });
+    expect(own.action?.behaviour).toEqual({ kind: 'open_work' });
+    // One item and a next action that opens nothing here: the item opens in place.
+    const [lone] = readyForYouRows([
+      { workId: 'work_inv', workTitle: 'July invoice', run: goalHandoff({ items: [items[0]] }) },
+    ]);
+    expect(lone.action?.behaviour).toEqual({ kind: 'open_draft', id: 'd1', accountId: 'a1' });
     // With no package the old rule stands: open the Work page.
     const [plain] = readyForYouRows([
       { workId: 'work_inv', workTitle: 'July invoice', run: goalHandoff({ items: [] }) },
@@ -185,7 +188,7 @@ describe('the Brief and the Documents page', () => {
     expect(plain.action?.behaviour).toEqual({ kind: 'open_work' });
   });
 
-  test('every document of a goal package that waits is a row; the old single row stays', () => {
+  test('every document or file of a goal package that waits is a row; the old single row stays', () => {
     const rows = documentsWaitingRows([
       { workId: 'work_inv', workTitle: 'July invoice', run: goalHandoff() },
       ...handoffFixtures(NOW),
@@ -193,16 +196,15 @@ describe('the Brief and the Documents page', () => {
     expect(
       rows.map((row) => [row.key, row.documentTitle, row.detail, row.blanks, row.row.action?.label]),
     ).toEqual([
-      ['run_goal:w1', 'Invoice 7', 'Check each thing, then send the mail.', ['rate'], 'Open the document'],
-      ['run_goal:k1', 'Summary deck', 'Check slide 3.', [], 'Open the document'],
+      ['run_goal:w1', 'Invoice 7', 'Check each thing, then send the mail.', ['rate'], 'Check the package'],
+      ['run_goal:k1', 'Summary deck', 'Check slide 3.', [], 'Check the package'],
+      ['run_goal:f1', 'W-9 filled', 'Check it.', [], 'Check the package'],
       [runs.readyDocument.id, expect.any(String), expect.any(String), expect.any(Array), expect.any(String)],
     ]);
-    expect(rows[0].row.action?.behaviour).toEqual({
-      kind: 'open_document',
-      url: '/?view=files&office=w1',
-      id: 'w1',
-    });
-    // The next target's document keeps the next label.
+    // Each package row opens the thread on its own tab.
+    expect(rows[0].row.action?.behaviour).toEqual({ kind: 'open_work' });
+    expect(rows.slice(0, 3).map((row) => row.itemId)).toEqual(['w1', 'k1', 'f1']);
+    // The next action's label names the button.
     const named = documentsWaitingRows([
       {
         workId: 'work_inv',

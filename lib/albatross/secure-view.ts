@@ -339,12 +339,6 @@ export function secureUseLine(
       return `You allowed it in mail to ${site} from now on`;
     case 'denied':
       return `You did not allow it on ${site}`;
-    case 'allowed_send_once':
-      return `You allowed it in a file for one send to ${use.site || 'the recipient'}`;
-    case 'allowed_send_always':
-      return `You allowed it in files for mail to ${use.site || 'the recipient'} from now on`;
-    case 'downloaded':
-      return 'You downloaded a file with it';
     default:
       return 'Used';
   }
