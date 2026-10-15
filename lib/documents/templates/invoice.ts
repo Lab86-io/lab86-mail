@@ -87,6 +87,31 @@ export const invoiceDataSchema = z.object({
     .max(800)
     .optional()
     .describe('How and when to pay: terms, due date, account. Empty makes a blank.'),
+  adjustments: z
+    .array(
+      z.object({
+        label: z
+          .string()
+          .min(1)
+          .max(80)
+          .describe('For example "Sales tax 6.25%" or "Returning client discount".'),
+        percent: z
+          .number()
+          .min(-100)
+          .max(100)
+          .optional()
+          .describe('Percent of the subtotal. A discount is negative. The server computes the amount.'),
+        amount: z
+          .number()
+          .min(-1_000_000_000)
+          .max(1_000_000_000)
+          .optional()
+          .describe('A fixed amount instead of a percent. A discount is negative.'),
+      }),
+    )
+    .max(6)
+    .optional()
+    .describe('Tax, discount, or another line after the subtotal. Omit it when there is none.'),
   notes: z.string().max(1_500).optional().describe('A short closing note. Omit it when not needed.'),
 });
 export type InvoiceData = z.infer<typeof invoiceDataSchema>;
@@ -114,12 +139,21 @@ export interface InvoiceLine {
   amount?: number;
 }
 
+export interface InvoiceAdjustment {
+  label: string;
+  /** Known when the amount is given, or when the percent and the subtotal are known. */
+  amount?: number;
+}
+
 export interface InvoiceTotals {
   lines: InvoiceLine[];
   hourly: boolean;
   /** Sum of the hours, when every hourly line has its hours. */
   hours?: number;
-  /** Known only when every line has an amount. */
+  /** Sum of the line amounts. Known only when every line has an amount. */
+  subtotal?: number;
+  adjustments: InvoiceAdjustment[];
+  /** The subtotal plus the adjustments. Known only when all of them are known. */
   total?: number;
 }
 
@@ -143,11 +177,26 @@ export function invoiceTotals(data: InvoiceData): InvoiceTotals {
   const hours = data.items.every((item) => item.hours !== undefined)
     ? data.items.reduce((sum, item) => sum + (item.hours ?? 0), 0)
     : undefined;
+  const subtotal = known ? cents(lines.reduce((sum, line) => sum + (line.amount ?? 0), 0)) : undefined;
+  const adjustments = (data.adjustments ?? []).map((adjustment) => ({
+    label: cleanText(adjustment.label),
+    amount:
+      adjustment.amount ??
+      (adjustment.percent !== undefined && subtotal !== undefined
+        ? cents((subtotal * adjustment.percent) / 100)
+        : undefined),
+  }));
+  const total =
+    subtotal !== undefined && adjustments.every((adjustment) => adjustment.amount !== undefined)
+      ? cents(adjustments.reduce((sum, adjustment) => sum + (adjustment.amount ?? 0), subtotal))
+      : undefined;
   return {
     lines,
     hourly,
+    adjustments,
     ...(hourly && hours !== undefined ? { hours } : {}),
-    ...(known ? { total: cents(lines.reduce((sum, line) => sum + (line.amount ?? 0), 0)) } : {}),
+    ...(subtotal !== undefined ? { subtotal } : {}),
+    ...(total !== undefined ? { total } : {}),
   };
 }
 
@@ -316,8 +365,25 @@ export function buildInvoice(canvas: TemplateCanvas, data: InvoiceData, title: s
     ...(totals.hours !== undefined
       ? [totalRow('Total hours', [c.run(formatQuantity(totals.hours), { color: MUTED, size: 18 })])]
       : []),
-    ...(totals.total !== undefined
-      ? [totalRow('Subtotal', [c.run(money(totals.total), { color: MUTED, size: 18 })])]
+    // The subtotal shows only before an adjustment; with none, it would repeat the total.
+    ...(totals.adjustments.length
+      ? [
+          totalRow('Subtotal', [
+            totals.subtotal !== undefined
+              ? c.run(money(totals.subtotal), { color: MUTED, size: 18 })
+              : c.blank('Subtotal', { color: MUTED, size: 18 }),
+          ]),
+          ...totals.adjustments.map((adjustment, index) =>
+            totalRow(adjustment.label, [
+              adjustment.amount !== undefined
+                ? c.run(money(adjustment.amount), { color: MUTED, size: 18 })
+                : c.blank(
+                    adjustment.label.length <= 30 ? `Amount: ${adjustment.label}` : `Adjustment ${index + 1}`,
+                    { color: MUTED, size: 18 },
+                  ),
+            ]),
+          ),
+        ]
       : []),
     totalRow(
       `Total due (${currency})`,

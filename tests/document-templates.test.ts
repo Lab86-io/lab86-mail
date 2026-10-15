@@ -60,7 +60,9 @@ describe('Word templates', () => {
     const body = await text(bytes);
     for (const value of ['Invoice', 'INV-1042', 'October 15, 2026', '$3,040.00', '$3,942.50', '$1,710.00'])
       expect(body).toContain(value);
-    expect(body.match(/\$8,692\.50/g)).toHaveLength(3);
+    // Amount due and Total due. No adjustment, so no Subtotal row that repeats the total.
+    expect(body.match(/\$8,692\.50/g)).toHaveLength(2);
+    expect(body).not.toContain('Subtotal');
     expect(body).toContain('91.5');
     expect(body).toContain('Total due (USD)');
     expect(body).toContain('Hours');
@@ -102,6 +104,51 @@ describe('Word templates', () => {
     expect(open.total).toBeUndefined();
     expect(open.hours).toBeUndefined();
     expect(open.lines[1].amount).toBeUndefined();
+    expect(totals.adjustments).toEqual([]);
+    expect(totals.subtotal).toBe(501.01);
+    const adjusted = invoiceTotals({
+      ...sampleInvoice,
+      items: [{ title: 'Work', hours: 10, rate: 100 }],
+      adjustments: [
+        { label: 'Tax', percent: 8 },
+        { label: 'Credit', amount: -50 },
+      ],
+    });
+    expect(adjusted).toMatchObject({ subtotal: 1000, total: 1030, hours: 10 });
+    expect(adjusted.adjustments).toEqual([
+      { label: 'Tax', amount: 80 },
+      { label: 'Credit', amount: -50 },
+    ]);
+    // A percent needs a known subtotal; without it the total stays open.
+    const unknown = invoiceTotals({
+      ...sampleInvoice,
+      items: [{ title: 'Work', rate: 100 }],
+      adjustments: [{ label: 'Tax', percent: 8 }],
+    });
+    expect(unknown.subtotal).toBeUndefined();
+    expect(unknown.adjustments[0].amount).toBeUndefined();
+    expect(unknown.total).toBeUndefined();
+  });
+
+  test('an adjustment brings back the Subtotal row and changes the total', async () => {
+    const { bytes, blanks } = await renderTemplate('invoice', {
+      ...sampleInvoice,
+      adjustments: [
+        { label: 'Sales tax 6.25%', percent: 6.25 },
+        { label: 'Returning client discount', amount: -100 },
+      ],
+    });
+    const body = await text(bytes);
+    expect(body).toContain('Subtotal');
+    expect(body).toContain('$8,692.50');
+    expect(body).toContain('Sales tax 6.25%');
+    expect(body).toContain('$543.28');
+    expect(body).toContain('-$100.00');
+    expect(body.match(/\$9,135\.78/g)).toHaveLength(2);
+    expect(blanks).toEqual(['Summary: August 2026', 'Payment details']);
+    const open = await renderTemplate('invoice', { ...sampleInvoice, adjustments: [{ label: 'Shipping' }] });
+    expect(open.blanks).toEqual(['Total due', 'Summary: August 2026', 'Amount: Shipping', 'Payment details']);
+    expect(await text(open.bytes)).toContain('Subtotal');
   });
 
   test('an invoice with unknown quantities shows blanks and one shared total blank', async () => {

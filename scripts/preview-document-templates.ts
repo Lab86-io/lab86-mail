@@ -8,15 +8,27 @@ import { sampleInvoice, sampleLetter, sampleMemo, sampleReport } from './fixture
 
 const out = process.argv[2] || '/tmp/goal-docs-preview';
 mkdirSync(out, { recursive: true });
-const samples = {
-  invoice: [sampleInvoice, 'Invoice INV-1042'],
-  letter: [sampleLetter, 'Proposal for the patient portal redesign'],
-  memo: [sampleMemo, 'New check-in process'],
-  report: [sampleReport, 'Patient portal use, third quarter 2026'],
-} as const;
-for (const [template, [data, title]] of Object.entries(samples)) {
-  const rendered = await renderTemplate(template as keyof typeof samples, data, { title });
-  const file = path.join(out, `${template}.docx`);
+const samples = [
+  ['invoice', 'invoice', sampleInvoice, 'Invoice INV-1042'],
+  [
+    'invoice-adjusted',
+    'invoice',
+    {
+      ...sampleInvoice,
+      adjustments: [
+        { label: 'Sales tax 6.25%', percent: 6.25 },
+        { label: 'Returning client discount', amount: -100 },
+      ],
+    },
+    'Invoice INV-1042',
+  ],
+  ['letter', 'letter', sampleLetter, 'Proposal for the patient portal redesign'],
+  ['memo', 'memo', sampleMemo, 'New check-in process'],
+  ['report', 'report', sampleReport, 'Patient portal use, third quarter 2026'],
+] as const;
+for (const [name, template, data, title] of samples) {
+  const rendered = await renderTemplate(template, data, { title });
+  const file = path.join(out, `${name}.docx`);
   writeFileSync(file, rendered.bytes);
   console.log(file, rendered.bytes.byteLength, 'bytes; blanks:', rendered.blanks.join(', ') || 'none');
 }

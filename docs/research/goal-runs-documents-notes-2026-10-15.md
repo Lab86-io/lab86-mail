@@ -35,6 +35,9 @@ Date: 2026-10-15. Branch: `claude/goal-runs-documents`. Design: `docs/albatross-
   cents. A given `amount` wins.
 - When every line has an amount, the server shows the subtotal and the total. When one line has
   no amount, the total is the blank "Total due" in both places (the facts row and the totals).
+- `adjustments` (max 6): tax, discount, or another line, as a percent of the subtotal or as an
+  amount. A discount is negative. The "Subtotal" row shows only when one or more adjustments
+  exist, because without one it repeats "Total due".
 - The column is "Hours" when one or more lines have hours. Otherwise it is "Qty".
 - Currency uses `Intl.NumberFormat` with the ISO code (default USD). An unknown code shows as
   "10.00 ZZZ".
