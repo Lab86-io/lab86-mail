@@ -54,7 +54,8 @@ function fake(overrides: Partial<typeof draftAttachmentDeps> = {}) {
   const track =
     <T>(name: string, value: (...args: any[]) => T) =>
     (...args: any[]) => {
-      (calls[name] ??= []).push(args);
+      calls[name] ??= [];
+      calls[name].push(args);
       return value(...args);
     };
   Object.assign(draftAttachmentDeps, {
