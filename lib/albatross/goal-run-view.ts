@@ -87,8 +87,14 @@ export const KIND_WORD: Record<HandoffItemKind, string> = {
  */
 export function sourceLocator(source: Pick<RunSource, 'kind'> & Partial<RunSource>): string | null {
   const detail = source.detail?.trim() || null;
-  if (detail) return detail;
-  return source.kind === 'web' ? hostOf(source.url) : null;
+  const locator = detail ?? (source.kind === 'web' ? hostOf(source.url) : null);
+  if (!locator) return null;
+  // A title that already names it ("BP-214 worklog, July") shows it once.
+  return String(source.title ?? '')
+    .toLowerCase()
+    .includes(locator.toLowerCase())
+    ? null
+    : locator;
 }
 
 /** A run with goal-run fields. An old row has none of them. */

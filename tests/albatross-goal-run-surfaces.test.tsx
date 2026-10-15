@@ -106,6 +106,7 @@ describe('the Details panel of a goal Work', () => {
     expect(sources.length).toBe(5);
     expect(sources[0].textContent).toContain('1');
     expect(sources[0].textContent).toContain('BP-214 worklog, July');
+    expect(sources[0].textContent?.match(/BP-214/g)?.length).toBe(1);
     expect(sources[4].textContent).toContain('irs.gov');
     for (const source of sources) expect(source.textContent).not.toContain('·');
   });

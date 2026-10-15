@@ -156,7 +156,8 @@ describe('source chips', () => {
   test('a Jira chip shows the server detail and opens its URL; without one it is text', () => {
     const chip = sourceChip(goalSourceFixtures.jira);
     expect(chip.behaviour?.kind).toBe('open_url');
-    expect(chip.locator).toBe('BP-214');
+    // The title names the key already, so the chip shows it once.
+    expect(chip.locator).toBeNull();
     expect(sourceChip({ kind: 'jira', title: 'BP-9', id: 'BP-9' }).behaviour).toBeNull();
     expect(sourceChip({ kind: 'jira', title: 'An issue', id: '10042' }).locator).toBeNull();
     expect(sourceChip({ kind: 'jira', title: 'An issue', id: '10042', detail: 'BP-9' }).locator).toBe('BP-9');
@@ -205,6 +206,19 @@ describe('source chips', () => {
     expect(hostOf('https://www.irs.gov/forms')).toBe('irs.gov');
     expect(hostOf('not a url')).toBeNull();
     expect(sourceChip({ kind: 'web', title: 'Bad', url: 'javascript:alert(1)' }).behaviour).toBeNull();
+  });
+
+  test('a locator the title already names shows once', () => {
+    expect(sourceLocator(goalSourceFixtures.jira)).toBeNull();
+    expect(sourceChip(goalSourceFixtures.jira).locator).toBeNull();
+    expect(sourceLocator({ kind: 'jira', title: 'Worklog for July', detail: 'BP-214' })).toBe('BP-214');
+    expect(sourceLocator({ kind: 'jira', title: 'bp-214 worklog', detail: ' BP-214 ' })).toBeNull();
+    expect(
+      sourceLocator({ kind: 'web', title: 'Forms on irs.gov', url: 'https://www.irs.gov/forms' }),
+    ).toBeNull();
+    expect(
+      sourceLocator({ kind: 'mail', title: 'Priya, Jul 30: hours', detail: 'Priya, Jul 30' }),
+    ).toBeNull();
   });
 
   test('the locator is the server detail, the host for a web page without one, else nothing', () => {

@@ -56,7 +56,7 @@ describe('a goal run in progress', () => {
     expect(doc.querySelector('[data-slot="earlier-messages"]')?.textContent).toContain('Earlier messages');
     expect(doc.querySelector('[data-slot="earlier-messages"]')?.textContent).toContain('1');
     const chips = texts(doc, '[data-slot="source"]');
-    expect(chips).toContain('BP-214 worklog, JulyBP-214');
+    expect(chips).toContain('BP-214 worklog, July');
     expect(chips).toContain('July hoursPriya, Jul 30');
     const packageDoc = render(runs.goalPackage);
     expect(texts(packageDoc, '[data-slot="source"]')).toContain('Form W-9 (Rev. March 2024)irs.gov');
