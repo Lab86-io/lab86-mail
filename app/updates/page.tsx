@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { UpdateFeed } from '@/components/updates/UpdateFeed';
-import { UpdatesSeen } from '@/components/updates/UpdatesSeen';
 import { PRODUCT_UPDATES } from '@/lib/updates/feed';
 import { APP_VERSION } from '@/lib/version';
 
@@ -10,7 +9,6 @@ export const metadata: Metadata = { title: 'What’s new · Albatross' };
 export default function UpdatesPage() {
   return (
     <main className="app-paper min-h-dvh bg-[var(--color-bg)] text-[var(--color-text)]">
-      <UpdatesSeen latestId={PRODUCT_UPDATES[0]?.id} />
       <div className="mx-auto max-w-2xl px-5 py-8 sm:px-8 sm:py-12">
         <Link
           href="/"

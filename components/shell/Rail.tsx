@@ -40,8 +40,6 @@ import {
 } from '@/components/ui/sidebar';
 import { UserIcon } from '@/components/ui/user';
 import { UsersIcon } from '@/components/ui/users';
-import { ProductUpdateNotice } from '@/components/updates/ProductUpdateNotice';
-import { UpdatesLink } from '@/components/updates/UpdatesLink';
 import { api } from '@/convex/_generated/api';
 import { railAreaRows } from '@/lib/albatross/area-home';
 import { orderedAreaImageSources } from '@/lib/albatross/area-image';
@@ -458,10 +456,6 @@ export function Rail({
                   <span>Activity</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-              <SidebarMenuItem>
-                <UpdatesLink onNavigate={closeMobileSidebar} />
-              </SidebarMenuItem>
-              <ProductUpdateNotice />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

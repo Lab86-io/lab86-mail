@@ -1,6 +1,9 @@
 # Product updates
 
-The web app’s **What’s new** link opens `/updates`. The feed lives in
+Product updates follow Sprebuild’s flow: a floating **Update available** notice
+at the lower left opens a review dialog. After refreshing or returning on a new
+version, its release notes open automatically with **Got it**. There is no sidebar
+item. Existing direct links to `/updates` still open the full history. The feed lives in
 `lib/updates/content.json` and ships with the app. It does not depend on an AI
 provider, GitHub availability, a separate backend, or a database migration.
 
@@ -63,18 +66,29 @@ the fragment compact enough for a 260px-high desktop frame and a 320px-high phon
 An open app checks `/api/app-release` every minute while visible and when focus
 or network access returns. The same-origin endpoint disables caching and uses
 the version and note IDs bundled with that app build. New versions or new note
-IDs offer **Update available** in the rail. **Later** keeps working; **Reload to
-update** rechecks the release before reloading the same URL, preserving native
+IDs offer the floating **Update available** notice. **Later** keeps working;
+**Update now** rechecks the release before reloading the same URL, preserving native
 unsaved-work guards. If another release supersedes the reviewed one, its notes
 replace the dialog contents and require another click. Unavailable checks leave
 the current app usable. No polling event opens the dialog or reloads the page.
 Rebuilds with the same package version and same note IDs share an identity; the
 production release workflow already bumps the package version for each release.
 
-The unread dot records the latest viewed batch ID in this browser’s local
-storage. Opening the feed marks its current latest batch read; prefetching does
-not. Tabs synchronize through storage events. Clearing browser storage makes
-the feed unread again. The receipt is device-local rather than account-wide.
+A first visit establishes a quiet baseline. Each tab’s session storage records
+the last acknowledged release; a new tab falls back to local storage for the last
+acknowledged browser visit. On arrival at a changed build, notes include every
+new batch since that baseline. The receipt advances when the installed notes
+are dismissed (Got it, Escape, or normal dialog dismissal), rather than when they
+open. Refreshing without dismissal shows them again. Another tab’s acknowledgement
+does not advance an active tab’s baseline. Clearing site data or changing devices
+establishes a fresh baseline. The receipt contains only schema version, release
+ID and note IDs; it contains no account data or draft contents. Blocked storage
+does not prevent live notices. Readers of the former sidebar feed carry over
+their last-seen batch without replaying old notes.
+
+The root layout mounts the flow on workspace, Settings, narrative, brief and
+update-history pages. Public pages, authentication, native handoffs and development
+previews do not show notices or acknowledge notes.
 
 Run `bun run updates:check` and `bun test tests/product-updates` before merging.
 The checked-in feed is also
