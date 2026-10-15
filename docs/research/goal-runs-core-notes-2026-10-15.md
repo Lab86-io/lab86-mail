@@ -38,7 +38,14 @@ Date: 2026-10-15. Branch: `claude/goal-runs-core`. Design: `docs/albatross-goal-
   - card: `/?view=tasks&card=<id>`
   - page: the page link
 - A filled PDF with sealed fields is an item with state `check` and the note "Your saved ID number fills in when the mail sends or when you download the file.".
-- Done: the requirement is the contract outcome and its open proofs. The proof attaches to the Work, without a step identity. No plan step is checked. Only proof that the page shows can settle the contract, as for step runs.
+- Done: the requirement is the contract outcome and its open proofs. No plan step is checked. When the check passes, the server checks each open proof again against the observed results of the run only (tool results, the things it made, the page). A proof that they show attaches to the Work as `inferred` and settles. The contract then closes the Work by its `closeWhen` rule. The run's own words and the user's note never settle a proof. With no observed result, the claim attaches and settles nothing.
+- Sources have a `detail` from the server (one line, at most 60 characters): the host for the web, "Priya, Jul 30" for mail, the issue key for Jira, the date for an event, and the kind of a file when the title does not say it.
+
+## The mail watch of a goal Work
+
+- A goal Work has no mail steps. The mail watch (`app/api/cron/step-watch/route.ts`) reads new mail against the open proofs of its contract: the sent message, a reply, a confirmation. The gate sees the subject, the sender, the folders (SENT), the date, and the text.
+- A thread that the gate accepts attaches as `mail_thread` proof with `inferred` trust and settles its proof. Only the server may record mail as `inferred`; a user's mail proof stays `observed`. Observed mail alone does not close an `outcome_likely` contract.
+- The watch arms at the goal plan row and at each goal handoff. It stays armed while a proof is open, for a user in `LAB86_GOAL_RUNS`.
 
 ## Read paths
 
