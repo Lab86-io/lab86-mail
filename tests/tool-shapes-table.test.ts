@@ -491,6 +491,31 @@ const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
     { results: [{ title: 'Site', url: 'https://s.test', snippet: 'About' }] },
     'sources',
   ],
+  [
+    'web_research',
+    { question: 'Which W-9 revision is current?', queries: ['W-9 revision'] },
+    {
+      ok: true,
+      sources: [{ n: 1, title: 'About Form W-9', url: 'https://www.irs.gov/w9', passage: 'Rev. March 2024' }],
+      failed: [],
+    },
+    'sources',
+  ],
+  [
+    'web_file_save',
+    { url: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf' },
+    {
+      ok: true,
+      fileId: 'f1',
+      title: 'fw9.pdf',
+      openPath: '/?view=files&file=f1',
+      size: 140815,
+      contentType: 'application/pdf',
+      sourceUrl: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf',
+      sha256: 'abc',
+    },
+    'files',
+  ],
   ['undo_operation', { operationId: 'op_1' }, { ok: true, undone: 'Created event' }, 'receipt'],
   [
     'list_recent_operations',

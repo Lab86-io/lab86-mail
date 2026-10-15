@@ -18,18 +18,27 @@
 //   `{{secure:<id>.<field>}}` reference, which lib/secure/runner-access.ts
 //   checks and opens. Every snapshot, title, URL, and page text the model
 //   reads has the user's saved values removed (docs/albatross-secure-store.md).
+//
+// Files: the connector sets the download behavior on connect, so a file that
+// the page downloads goes to Browserbase storage. browser_download gets it
+// through the Downloads API (lib/web/file-pull.ts saveBrowserDownload).
 
 import { findReferences, mentionsReference } from '../secure/policy';
 import type { SecureBrowserAccess, SecureFieldKind } from '../secure/runner-access';
 import { scrubTypedFields } from '../secure/scrub';
 import { isPrivateHost } from '../shared/private-host';
 import { truncateText } from '../shared/text';
+import { sessionIdFromConnectUrl } from '../web/browserbase-client';
+import { DOWNLOAD_BEHAVIOR, type InPageFile, inPageFetch } from '../web/session';
 
 export { isPrivateHost };
 
 export const SNAPSHOT_MAX_CHARS = 14_000;
 const ACTION_TIMEOUT_MS = 12_000;
 const NAVIGATION_TIMEOUT_MS = 25_000;
+const DOWNLOAD_START_TIMEOUT_MS = 20_000;
+/** After a click that did not navigate into a download, how long a download can still start. */
+const CLICK_DOWNLOAD_GRACE_MS = 8_000;
 
 export class BrowserHandoffRequired extends Error {
   constructor(
@@ -207,6 +216,15 @@ export interface AgentPage {
     ref: string,
   ): Promise<{ type?: string; autocomplete?: string; documentUrl?: string; formUrl?: string } | null>;
   text(): Promise<string>;
+  /** The Browserbase session of this browser, for the Downloads API. */
+  sessionId?(): string | null;
+  /**
+   * Click a ref, or open a URL, and wait for the file download it starts.
+   * Null when no download started (the page shows something instead).
+   */
+  downloadFrom?(action: { ref: string } | { url: string }): Promise<{ filename: string; url: string } | null>;
+  /** fetch() inside the page: same site, the page's cookies, from the Browserbase browser. */
+  fetchInPage?(url: string, maxBytes: number): Promise<InPageFile>;
 }
 
 export interface AgentConnection {
@@ -220,6 +238,12 @@ export type AgentConnector = (connectUrl: string) => Promise<AgentConnection>;
 export const playwrightAgentConnector: AgentConnector = async (connectUrl) => {
   const { chromium } = await import('playwright-core');
   const browser = await chromium.connectOverCDP(connectUrl);
+  // Playwright sets its own download path on connect; without this call a
+  // download is not kept, and opening a PDF only says "Download is starting".
+  await Promise.resolve()
+    .then(() => browser.newBrowserCDPSession())
+    .then((cdp) => cdp.send('Browser.setDownloadBehavior', DOWNLOAD_BEHAVIOR))
+    .catch(() => undefined);
   const context = browser.contexts()[0];
   const current = () => context?.pages().at(-1) ?? null;
   const settle = async (page: NonNullable<ReturnType<typeof current>>) => {
@@ -288,6 +312,42 @@ export const playwrightAgentConnector: AgentConnector = async (connectUrl) => {
             return '';
           }
         },
+        sessionId: () => sessionIdFromConnectUrl(connectUrl),
+        downloadFrom: async (action) => {
+          const target = current() ?? page;
+          const download = target
+            .waitForEvent('download', { timeout: DOWNLOAD_START_TIMEOUT_MS })
+            .catch(() => null);
+          let startedByNavigation = false;
+          try {
+            if ('ref' in action) {
+              await target.locator(`aria-ref=${action.ref}`).click({ timeout: ACTION_TIMEOUT_MS });
+            } else {
+              await target.goto(action.url, {
+                waitUntil: 'domcontentloaded',
+                timeout: NAVIGATION_TIMEOUT_MS,
+              });
+            }
+          } catch (error) {
+            const message = String((error as Error)?.message || error).split('\n')[0];
+            if (!/download is starting/i.test(message)) throw new Error(message);
+            startedByNavigation = true;
+          }
+          const started = startedByNavigation
+            ? await download
+            : await Promise.race([
+                download,
+                new Promise<null>((resolve) =>
+                  setTimeout(() => resolve(null), 'ref' in action ? CLICK_DOWNLOAD_GRACE_MS : 1_500),
+                ),
+              ]);
+          if (!started) return null;
+          // failure() waits for the end of the download; null means it is complete.
+          const failure = await started.failure();
+          if (failure) throw new Error(`The download failed: ${failure}`);
+          return { filename: started.suggestedFilename(), url: started.url() };
+        },
+        fetchInPage: (url, maxBytes) => inPageFetch(current() ?? page, url, maxBytes),
       };
     },
     // Disconnects this client only. The remote session ends by release or timeout.
@@ -308,6 +368,19 @@ const SAFE_KEYS = new Set([
   'Home',
   'End',
 ]);
+
+/** An http or https address, or '' (a blob: or data: download has no address of its own). */
+function webAddress(url: string): string {
+  return /^https?:\/\//i.test(url || '') ? url : '';
+}
+
+/** The largest file browser_download saves (Files has the same limit). */
+export const BROWSER_FILE_MAX_BYTES = 25 * 1024 * 1024;
+
+/** How a browser_download started: a download in Browserbase storage, or the file the page shows. */
+export type BrowserDownloadStart =
+  | { via: 'download'; filename: string; sourceUrl: string }
+  | { via: 'page'; file: InPageFile; sourceUrl: string };
 
 export interface PageView {
   url: string;
@@ -422,8 +495,55 @@ export class AgentBrowser {
   async open(rawUrl: string): Promise<PageView> {
     const url = safeBrowserUrl(rawUrl);
     if (!url) throw new Error('Only public http and https pages can be opened.');
-    await this.page.goto(url);
+    try {
+      await this.page.goto(url);
+    } catch (error) {
+      if (/download is starting/i.test(String((error as Error)?.message)))
+        throw new Error('This address is a file, not a page. Save it with browser_download and url.');
+      throw error;
+    }
     return this.view();
+  }
+
+  /** The Browserbase session of this browser, or null. */
+  sessionId(): string | null {
+    return this.page.sessionId?.() ?? null;
+  }
+
+  /**
+   * Start the download of a file: the file a ref links to, a file URL, or the
+   * file the current page shows. A ref that commits the user (pay, sign,
+   * submit) is refused, as for a click. The bytes of a download come later,
+   * through the Downloads API; a file that the page shows comes back at once.
+   */
+  async download(input: { ref?: string; url?: string }): Promise<BrowserDownloadStart> {
+    if (!this.page.downloadFrom || !this.page.fetchInPage) throw new Error('This browser cannot save files.');
+    if (input.ref) {
+      const element = this.element(input.ref);
+      if (isFinalAction(element))
+        throw new BrowserHandoffRequired(
+          'final_action',
+          `"${element.name}" commits the user. Stop here and hand the page to the user with next.kind finish_on_page.`,
+        );
+      const started = await this.page.downloadFrom({ ref: input.ref });
+      if (!started)
+        throw new Error(
+          'The click started no download. Find the link to the file, or call browser_download with its url.',
+        );
+      return {
+        via: 'download',
+        filename: started.filename,
+        sourceUrl: webAddress(started.url) || this.page.url(),
+      };
+    }
+    const url = safeBrowserUrl(input.url || this.page.url());
+    if (!url) throw new Error('Only files on public http and https sites can be saved.');
+    const started = await this.page.downloadFrom({ url });
+    if (started)
+      return { via: 'download', filename: started.filename, sourceUrl: webAddress(started.url) || url };
+    // The page shows the file (an image, a CSV): read it on the same site.
+    const shown = await this.page.fetchInPage(url, BROWSER_FILE_MAX_BYTES);
+    return { via: 'page', file: shown, sourceUrl: url };
   }
 
   snapshot(find?: string): Promise<PageView> {

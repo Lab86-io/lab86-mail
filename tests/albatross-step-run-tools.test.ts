@@ -402,6 +402,7 @@ describe('buildRunnerTools', () => {
     ).toEqual([
       'browser_back',
       'browser_click',
+      'browser_download',
       'browser_open',
       'browser_press',
       'browser_select',

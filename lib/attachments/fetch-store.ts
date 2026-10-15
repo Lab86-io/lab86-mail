@@ -3,6 +3,7 @@ import net from 'node:net';
 import { AttachmentTooLargeError, readMailAttachmentBytes } from '@/lib/attachments/mail-files';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { normalizeUrl } from '@/lib/shared/url';
+import { ATTACHMENT_FILE_KINDS, pullWebFile } from '@/lib/web/file-pull';
 
 const boardsApi = api.boards;
 const agentUploadsApi = api.agentUploads;
@@ -153,37 +154,25 @@ interface FetchedBlob {
   name: string;
 }
 
-// Download a public web file. Returns bytes + a best-effort name/type.
+// Download a public web file through Browserbase (lib/web/file-pull.ts):
+// Fetch first, then a short session. Our server never requests the file
+// itself, so no redirect hop can reach a private address from here. The
+// type allow list (the save types plus plain text), the 25 MB limit, and
+// the first-bytes check apply.
 export async function fetchWebFile(rawUrl: string, fallbackName?: string): Promise<FetchedBlob> {
   const normalized = normalizeUrl(rawUrl);
   if (!normalized) throw new Error(`Not a usable URL: ${rawUrl}`);
-  // Follow redirects manually so EVERY hop is re-validated by the SSRF guard —
-  // an allowed host can otherwise 302 into a private/metadata address.
-  let current = normalized;
-  let response: Response | null = null;
-  for (let hop = 0; hop < 5; hop += 1) {
-    current = await assertPublicHttpUrl(current);
-    response = await fetch(current, { redirect: 'manual' });
-    if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
-      current = new URL(response.headers.get('location') as string, current).toString();
-      continue;
-    }
-    break;
-  }
-  if (!response) throw new Error(`Fetch failed for ${normalized}`);
-  if (!response.ok) throw new Error(`Fetch failed (${response.status}) for ${current}`);
-  // Reject early on the declared size before buffering the whole body.
-  const declared = Number(response.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`File is too large (${Math.round(declared / 1e6)} MB; max 25 MB).`);
-  }
-  const buffer = new Uint8Array(await response.arrayBuffer());
-  if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`File is too large (${Math.round(buffer.byteLength / 1e6)} MB; max 25 MB).`);
-  }
-  const contentType = response.headers.get('content-type')?.split(';')[0] || 'application/octet-stream';
-  const name = fallbackName || nameFromUrl(current) || 'download';
-  return { bytes: buffer, contentType, name };
+  const file = await webFileDeps.pullWebFile(normalized, {
+    name: fallbackName,
+    kinds: ATTACHMENT_FILE_KINDS,
+  });
+  return { bytes: file.bytes, contentType: file.contentType, name: file.name };
+}
+
+const webFileDefaults = { pullWebFile };
+let webFileDeps = webFileDefaults;
+export function __setFetchWebFileDepsForTest(overrides: Partial<typeof webFileDefaults> = {}) {
+  webFileDeps = { ...webFileDefaults, ...overrides };
 }
 
 // Read an attachment off a synced email message: our encrypted storage first,
@@ -248,14 +237,4 @@ export async function getStagedAgentUpload(
     contentType: row.contentType,
     size: row.size,
   };
-}
-
-function nameFromUrl(url: string): string | undefined {
-  try {
-    const path = new URL(url).pathname;
-    const last = path.split('/').filter(Boolean).pop();
-    return last ? decodeURIComponent(last) : undefined;
-  } catch {
-    return undefined;
-  }
 }

@@ -249,6 +249,8 @@ export const AGENT_TOOL_NAMES = new Set([
   'expand_alias',
   'browserbase_search',
   'browserbase_fetch',
+  'web_research',
+  'web_file_save',
   'list_smart_labels',
   'create_smart_label',
   'preview_smart_label',

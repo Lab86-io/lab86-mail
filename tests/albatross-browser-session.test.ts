@@ -59,8 +59,9 @@ describe('browser session REST client', () => {
     expect(body).toMatchObject({
       keepAlive: true,
       timeout: 3_600,
-      // Runs type personal details and users sign in here: no recording.
-      browserSettings: { recordSession: false },
+      // Runs type personal details and saved passwords, and users sign in
+      // here: no recording and no CDP logs (Browserbase logs by default).
+      browserSettings: { recordSession: false, logSession: false },
     });
     expect((createCall.init?.headers as any)['x-bb-api-key']).toBe('bb-test-key');
     expect(calls[1].url).toBe('https://api.browserbase.com/v1/sessions/bb-1/debug');
@@ -82,14 +83,30 @@ describe('browser session REST client', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  test('release requests the session release', async () => {
+  test('release requests the session release, then deletes the files it left in storage', async () => {
     const calls: string[] = [];
     const fetcher = mock(async (url: any, init?: any) => {
-      calls.push(`${String(url)} ${JSON.parse(String(init?.body)).status}`);
+      calls.push(
+        `${init?.method} ${String(url)}${init?.body ? ` ${JSON.parse(String(init.body)).status}` : ''}`,
+      );
+      if (String(url).includes('/downloads?'))
+        return jsonResponse({ downloads: [{ id: 'd1' }, { id: 'd2' }] });
+      if (init?.method === 'DELETE')
+        return new Response(null, { status: String(url).endsWith('d2') ? 500 : 204 });
       return jsonResponse({});
     });
     await releaseBrowserSession('bb-9', fetcher as any);
-    expect(calls).toEqual(['https://api.browserbase.com/v1/sessions/bb-9 REQUEST_RELEASE']);
+    expect(calls).toEqual([
+      'POST https://api.browserbase.com/v1/sessions/bb-9 REQUEST_RELEASE',
+      'GET https://api.browserbase.com/v1/downloads?sessionId=bb-9&limit=100',
+      'DELETE https://api.browserbase.com/v1/downloads/d1',
+      'DELETE https://api.browserbase.com/v1/downloads/d2',
+    ]);
+    // A failed list never fails the release.
+    const listFails = mock(async (url: any) =>
+      String(url).includes('/downloads?') ? new Response('down', { status: 503 }) : jsonResponse({}),
+    );
+    await releaseBrowserSession('bb-10', listFails as any);
   });
 
   test('a session with saved sign-ins carries the context and its persist flag', async () => {
