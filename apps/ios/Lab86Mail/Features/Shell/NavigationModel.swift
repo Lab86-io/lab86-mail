@@ -190,12 +190,20 @@ struct ComposePrefill: Hashable, Sendable {
     var fileAttachments: [DraftAttachment] = []
 }
 
+/// A saved file opened outside the thread (a chat tool card): the native
+/// viewer in a sheet (docs/albatross-goal-runs.md, G5).
+struct SavedFileSheetTarget: Hashable, Sendable {
+    let fileID: String
+    let title: String
+}
+
 enum SheetDestination: Identifiable, Sendable {
     case assistant
     case activity
     case compose
     case settings
     case workspace(NativeWorkspaceDestination)
+    case savedFile(SavedFileSheetTarget)
 
     var id: String {
         switch self {
@@ -204,6 +212,7 @@ enum SheetDestination: Identifiable, Sendable {
         case .compose: "compose"
         case .settings: "settings"
         case .workspace(let destination): "workspace:\(destination.id)"
+        case .savedFile(let target): "savedFile:\(target.fileID)"
         }
     }
 }
@@ -375,6 +384,13 @@ final class NavigationModel {
         areaRoute = nil
         documentRoute = nil
         projectRoute = ProjectRoute(project: project)
+    }
+
+    /// A saved file from a chat tool card (`open_document` with a
+    /// `?view=files&file=` path): the native viewer in a sheet.
+    func openSavedFile(id: String, title: String?) {
+        guard !id.isEmpty else { return }
+        sheet = .savedFile(SavedFileSheetTarget(fileID: id, title: title?.nilIfBlank ?? HandoffItem.Kind.file.word))
     }
 
     func openDocument(id: String) {

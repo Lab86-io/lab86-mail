@@ -78,6 +78,8 @@ struct AppShellView: View {
                 SettingsView()
             case .workspace(let destination):
                 NativeWorkspaceView(destination: destination)
+            case .savedFile(let target):
+                SavedFileSheet(target: target)
             }
         }
         .alert(

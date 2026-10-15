@@ -152,6 +152,23 @@ struct SavedFileView: View {
     }
 }
 
+/// A saved file in a sheet, outside the thread (a chat tool card). The
+/// item content view gives it the title bar with "Close".
+struct SavedFileSheet: View {
+    let target: SavedFileSheetTarget
+
+    var body: some View {
+        DocumentItemContentView(
+            item: DocumentModeItem(
+                id: "file:\(target.fileID)",
+                kind: .file,
+                title: target.title,
+                content: .file(fileID: target.fileID)
+            )
+        )
+    }
+}
+
 /// A read-only PDF page view, on either platform.
 struct SavedFilePDFView {
     let url: URL
