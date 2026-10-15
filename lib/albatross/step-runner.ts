@@ -60,6 +60,7 @@ import {
 } from './goal-run-contract';
 import { GOAL_RUNNER_RULES, goalRunnerContext, goalTaskMessage } from './goal-run-prompt';
 import {
+  applySealedNotes,
   cleanGoalUpdate,
   earlierRunArtifacts,
   goalRequirement,
@@ -551,6 +552,8 @@ export async function runStepRun(
   let talk: Promise<void> = Promise.resolve();
   let spoke = false;
   const pendingSources: RunSource[] = [];
+  // Filled PDFs whose ID numbers stay sealed: their items wait for a check (G5).
+  const sealedFiles = new Set<string>();
 
   const settle = async (input: SettleInput) => {
     stopTimer(heartbeat);
@@ -560,6 +563,7 @@ export async function runStepRun(
     return deps.convexMutation<{ state: string | null }>(api.albatrossStepRuns.settle, {
       ...fence,
       ...input,
+      ...(input.items ? { items: applySealedNotes(input.items, sealedFiles) } : {}),
       ...(input.next?.target
         ? {
             next: {
@@ -802,6 +806,9 @@ export async function runStepRun(
             },
             sources: (found: RunSource[]) => {
               pendingSources.push(...found);
+            },
+            sealed: (fileId: string) => {
+              sealedFiles.add(fileId);
             },
             // An edit to an earlier run's draft or document puts that thing in this run's package.
             touch: async (artifact: RunArtifact) => {

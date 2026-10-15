@@ -19,6 +19,14 @@ const ACTION_MESSAGE = {
   working: 'Albatross already works on this step.',
 } as const;
 
+/** A goal run works on the whole goal (docs/albatross-goal-runs.md). */
+const GOAL_ACTION_MESSAGE = {
+  started: 'Albatross started on the goal. The run writes its progress in this conversation.',
+  resumed: 'Albatross continued the goal with the note.',
+  steered: 'The note went to the run that works now. It reads it before its next action.',
+  working: 'Albatross already works on this goal.',
+} as const;
+
 function checkedMessage(check: {
   allStepsComplete: boolean;
   nextRunId: string | null;
@@ -100,7 +108,9 @@ export async function runHandleStep(
       message:
         result.action === 'checked' && result.check
           ? checkedMessage(result.check)
-          : ACTION_MESSAGE[result.action as Exclude<typeof result.action, 'checked'>],
+          : (result.goal ? GOAL_ACTION_MESSAGE : ACTION_MESSAGE)[
+              result.action as Exclude<typeof result.action, 'checked'>
+            ],
     };
   } catch (error) {
     if (error instanceof StepRunStartError || error instanceof StepExecutionError)

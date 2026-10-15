@@ -22,7 +22,12 @@ import {
   type RunSource,
   unsureInputSchema,
 } from './goal-run-contract';
-import { type GoalUpdateInput, goalUpdateInputSchema, sourcesFromToolResult } from './goal-runs';
+import {
+  type GoalUpdateInput,
+  goalUpdateInputSchema,
+  sealedFileId,
+  sourcesFromToolResult,
+} from './goal-runs';
 import { formQuestionSchema } from './thread-contract';
 
 /** Registry tools a step run may use. Nothing here sends mail, deletes, or reaches a person alone. */
@@ -301,6 +306,8 @@ export interface RunnerToolHost {
   sources?(sources: RunSource[]): void;
   /** Goal runs: a thing that an edit tool changed, so it goes into the package. */
   touch?(artifact: RunArtifact): Promise<void>;
+  /** Goal runs: a filled PDF whose ID numbers stay sealed until send or download. */
+  sealed?(fileId: string): void;
 }
 
 function str(value: unknown, max = 160): string {
@@ -579,6 +586,8 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
           if (sources.length) host.sources?.(sources);
           const touched = artifact ? null : touchedArtifact(name, args, result);
           if (touched) await host.touch?.(touched);
+          const sealed = sealedFileId(name, result);
+          if (sealed) host.sealed?.(sealed);
         }
         return result;
       },

@@ -538,6 +538,26 @@ export function resolveHandoffItems(
   );
 }
 
+/** The note of a filled PDF whose ID numbers stay sealed until send or download (G5). */
+export const SEALED_FILE_NOTE =
+  'Your saved ID number fills in when the mail sends or when you download the file.';
+
+/** The file id of a pdf_form_fill result with sealed fields, else null. */
+export function sealedFileId(name: string, result: any): string | null {
+  if (name !== 'pdf_form_fill' || !result || result.ok === false || !result.fileId) return null;
+  return Array.isArray(result.sealedFields) && result.sealedFields.length ? String(result.fileId) : null;
+}
+
+/** A file item with sealed fields waits for the user's check, with the note that says why. */
+export function applySealedNotes(items: readonly HandoffItem[], sealed: ReadonlySet<string>): HandoffItem[] {
+  if (!sealed.size) return [...items];
+  return items.map((item) =>
+    item.kind === 'file' && item.id && sealed.has(item.id)
+      ? { ...item, state: 'check', note: item.note || SEALED_FILE_NOTE }
+      : item,
+  );
+}
+
 /** The things earlier runs of a Work made, one entry each, the newest version of each. */
 export function earlierRunArtifacts(
   runs: ReadonlyArray<{ id?: string; artifacts?: readonly RunArtifact[] | null }>,

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { z } from 'zod';
 import { GOAL_CHECK_FIRST, GOAL_RUNNER_RULES } from '../lib/albatross/goal-run-prompt';
+import { SEALED_FILE_NOTE } from '../lib/albatross/goal-runs';
 import {
   GOAL_CHECK_COPY,
   handoffNotice,
@@ -124,6 +125,20 @@ function harness(
         contentType: 'application/pdf',
         sourceUrl: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf',
         sha256: 'x',
+      }),
+    },
+    pdf_form_fill: {
+      description: 'Fill a PDF form',
+      inputSchema: z.object({}).passthrough(),
+      execute: async () => ({
+        ok: true,
+        fileId: 'file-2',
+        title: 'W-9 filled',
+        openPath: '/?view=files&file=file-2',
+        size: 10,
+        contentType: 'application/pdf',
+        sha256: 'y',
+        sealedFields: [{ field: 'tin', ref: '{{secure:abc.number}}' }],
       }),
     },
     document_create: {
@@ -361,6 +376,51 @@ describe('a goal run', () => {
       ],
       unsure: ['I used 78 hours from the mail.'],
     });
+  });
+
+  test('a filled PDF with a sealed ID is an item to check, with the note', async () => {
+    const h = harness(async (opts) => {
+      await opts.tools.pdf_form_fill.execute({ fileId: 'file-1', values: {} });
+      await opts.tools.step_handoff.execute({
+        outcome: 'ready_for_you',
+        summary: 'I filled the W-9.',
+        next: { kind: 'review', label: 'Check the form', detail: 'Check it.' },
+        items: [{ kind: 'file', id: 'file-2', title: 'W-9 filled', state: 'ready' }],
+      });
+      return { text: '', usage };
+    });
+    await runStepRun('user-1', 'run-2', h.deps);
+    expect(h.settled().items).toEqual([
+      {
+        kind: 'file',
+        title: 'W-9 filled',
+        state: 'check',
+        id: 'file-2',
+        url: '/?view=files&file=file-2',
+        note: SEALED_FILE_NOTE,
+      },
+    ]);
+    const lines = h.calls('albatrossStepRuns:progress').flatMap((args) => (args.line ? [args.line] : []));
+    expect(lines).toContain('Filled in “W-9 filled”.');
+  });
+
+  test('the rules carry the document, invoice, blank, and attachment rules', () => {
+    for (const rule of [
+      'For an invoice, a letter, a memo, or a report, call word_document_create with template and data. Send facts only; never style it.',
+      'For an invoice line, send hours or quantity and the rate. The server computes amounts and totals.',
+      "Leave a value empty when you cannot find it. Copy the result's blanks into the item blanks, with state blanks.",
+      'When the user gives a value, read word_document_get, then call word_document_edit with op fill_blank.',
+      "To attach the file as a PDF, fill the blanks, then call document_export with format pdf, and put the fileId on the draft (save_draft/update_draft attachments: { fileId, provider: 'upload', format: 'native' }).",
+      'web_file_save',
+      'pdf_form_fields',
+      'Change the existing draft or document with the edit tools',
+      'Make a new one only when the user asks for a new one.',
+      'Propose values that you can find or compute',
+      'Send mail. There is no send tool.',
+    ])
+      expect(GOAL_RUNNER_RULES).toContain(rule);
+    expect(GOAL_RUNNER_RULES).not.toMatch(/\bAI\b(?!")/);
+    expect(GOAL_RUNNER_RULES).not.toContain('!');
   });
 
   test('a step run keeps its text to itself', async () => {

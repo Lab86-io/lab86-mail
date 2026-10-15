@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  applySealedNotes,
   checklistFromSteps,
   cleanGoalUpdate,
   earlierRunArtifacts,
@@ -18,6 +19,8 @@ import {
   redactRunText,
   resolveHandoffItems,
   runOpenPath,
+  SEALED_FILE_NOTE,
+  sealedFileId,
   seedChecklist,
   sourcesFromToolResult,
   userDidPartNote,
@@ -535,6 +538,30 @@ describe('open paths', () => {
     expect(withOpenPath(doc)).toBe(doc);
     const page: RunArtifact = { kind: 'page', title: 'x' };
     expect(withOpenPath(page)).toBe(page);
+  });
+});
+
+describe('sealed fields', () => {
+  test('a filled PDF with sealed fields is a file to check, with the note', () => {
+    expect(
+      sealedFileId('pdf_form_fill', { ok: true, fileId: 'f1', sealedFields: [{ field: 'tin', ref: 'r' }] }),
+    ).toBe('f1');
+    expect(sealedFileId('pdf_form_fill', { ok: true, fileId: 'f1', sealedFields: [] })).toBeNull();
+    expect(sealedFileId('pdf_form_fill', { ok: false, fileId: 'f1', sealedFields: [{}] })).toBeNull();
+    expect(sealedFileId('web_file_save', { ok: true, fileId: 'f1', sealedFields: [{}] })).toBeNull();
+    expect(sealedFileId('pdf_form_fill', null)).toBeNull();
+    const items = [
+      { kind: 'file' as const, id: 'f1', title: 'W-9', state: 'ready' as const },
+      { kind: 'file' as const, id: 'f2', title: 'Other', state: 'ready' as const },
+      { kind: 'file' as const, id: 'f1', title: 'Own note', state: 'blanks' as const, note: 'Sign page 1.' },
+    ];
+    expect(applySealedNotes(items, new Set(['f1']))).toEqual([
+      { kind: 'file', id: 'f1', title: 'W-9', state: 'check', note: SEALED_FILE_NOTE },
+      { kind: 'file', id: 'f2', title: 'Other', state: 'ready' },
+      { kind: 'file', id: 'f1', title: 'Own note', state: 'check', note: 'Sign page 1.' },
+    ]);
+    expect(applySealedNotes(items, new Set())).toEqual(items);
+    expect(SEALED_FILE_NOTE.length).toBeLessThanOrEqual(200);
   });
 });
 
