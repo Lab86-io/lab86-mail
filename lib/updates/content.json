@@ -1,0 +1,78 @@
+[
+  {
+    "id": "2026-10-15-visual-update-previews",
+    "publishedAt": "2026-10-15",
+    "title": "Pictures and demos with your updates",
+    "changes": [
+      {
+        "id": "screenshot-previews",
+        "kind": "new",
+        "title": "A picture of what changed",
+        "description": "Update cards can include a real screenshot and a caption explaining what to look for."
+      },
+      {
+        "id": "html-demonstrations",
+        "kind": "improved",
+        "title": "Try a little demonstration",
+        "description": "Interactive previews let you switch views and explore native controls directly in the update."
+      },
+      {
+        "id": "keyboard-demos",
+        "kind": "improved",
+        "title": "Explore with your keyboard",
+        "description": "Interactive demonstrations accept keyboard focus. Use Tab and Enter to explore the example and open its full details."
+      }
+    ],
+    "preview": {
+      "caption": "A real capture of an HTML summary preview. Try the update notice demo in “A clearer view of what’s new” below.",
+      "image": "/updates/update-summary-demo.png",
+      "alt": "An Albatross update preview with Summary and Full details controls, showing a short summary of five changes.",
+      "width": 960,
+      "height": 490
+    }
+  },
+  {
+    "id": "2026-10-15-whats-new",
+    "publishedAt": "2026-10-15",
+    "title": "A clearer view of what’s new",
+    "summary": {
+      "text": "Catch up at a glance, then try what changed. Review the new update notice below while the full list of changes stays tucked away.",
+      "demo": {
+        "caption": "Try the new update notice: open Update available, then expand its five changes. This demonstration is part of the summary.",
+        "html": "<style>\n.app{max-width:460px;margin:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:14px}\n.bar{display:flex;justify-content:space-between;gap:12px;padding-bottom:10px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)}\n.bar strong{color:var(--text);font-weight:600}.workspace{padding:14px 0}.workspace h2{font:500 19px/1.2 Georgia,serif;margin:0 0 6px}.workspace p,.release p{font-size:12px;line-height:1.5;color:var(--muted);margin:0}\n.notice>summary{cursor:pointer;list-style:none;width:fit-content;border-radius:7px;padding:7px 10px;background:var(--soft);color:var(--accent);font-size:12px;font-weight:600}.notice>summary::-webkit-details-marker{display:none}\nsummary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.app:has(.notice[open]) .workspace{display:none}.notice[open]{margin-top:10px}\n.release{padding-top:12px}.release h2{font:500 20px/1.2 Georgia,serif;margin:0 0 8px}.changes{margin-top:10px;font-size:12px;line-height:1.4}.changes>summary{cursor:pointer;color:var(--accent);width:fit-content;padding:3px 0}\n.changes ul{padding-left:18px;margin:10px 0 2px;color:var(--muted)}.changes li+li{margin-top:5px}\n</style>\n<main class=\"app\" aria-label=\"Demonstration of the new update notice\">\n  <header class=\"bar\"><strong>Albatross</strong><span>Your current view</span></header>\n  <div class=\"workspace\"><h2>Keep your place.</h2><p>Review what changed while your current work stays open. Reload when you’re ready.</p></div>\n  <details class=\"notice\">\n    <summary>Update available</summary>\n    <section class=\"release\" aria-label=\"New update panel\">\n      <h2>A clearer view of what’s new</h2>\n      <p>One update history, short summaries with working demos, and a choice of when to reload.</p>\n      <details class=\"changes\"><summary>See all 5 changes</summary><ul>\n        <li>A dated update history</li><li>Short summaries for batches over three</li><li>A working HTML demo in each summary</li><li>A notice when a new version is ready</li><li>Your reading place remembered</li>\n      </ul></details>\n    </section>\n  </details>\n</main>\n"
+      }
+    },
+    "changes": [
+      {
+        "id": "update-history",
+        "kind": "new",
+        "title": "Updates have a home",
+        "description": "Open What’s new in the sidebar to find a dated history of changes to Albatross."
+      },
+      {
+        "id": "batch-summaries",
+        "kind": "new",
+        "title": "Less to read, more to discover",
+        "description": "Batches with more than three changes start with a short summary. Expand them for every detail; smaller batches stay visible."
+      },
+      {
+        "id": "visual-previews",
+        "kind": "new",
+        "title": "See the change",
+        "description": "Visual updates can include a small rendered preview, so you can see what changed alongside the explanation."
+      },
+      {
+        "id": "live-update-notice",
+        "kind": "new",
+        "title": "Know when an update is ready",
+        "description": "Albatross checks for new versions while you work. Review the changes and choose when to reload."
+      },
+      {
+        "id": "unread-updates",
+        "kind": "new",
+        "title": "Pick up where you left off",
+        "description": "A quiet dot marks updates you haven’t opened yet. Visiting What’s new clears it in this browser."
+      }
+    ]
+  }
+]
