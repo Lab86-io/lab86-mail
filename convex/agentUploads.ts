@@ -53,6 +53,11 @@ export const registerUpload = mutation({
     name: v.string(),
     contentType: v.optional(v.string()),
     size: v.number(),
+    origin: v.optional(v.union(v.literal('web'), v.literal('filled'), v.literal('export'))),
+    sourceUrl: v.optional(v.string()),
+    sha256: v.optional(v.string()),
+    sealedFields: v.optional(v.array(v.object({ field: v.string(), ref: v.string() }))),
+    workId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -63,6 +68,11 @@ export const registerUpload = mutation({
       contentType: args.contentType,
       size: args.size,
       createdAt: now(),
+      ...(args.origin ? { origin: args.origin } : {}),
+      ...(args.sourceUrl ? { sourceUrl: args.sourceUrl.slice(0, 2_000) } : {}),
+      ...(args.sha256 ? { sha256: args.sha256 } : {}),
+      ...(args.sealedFields?.length ? { sealedFields: args.sealedFields.slice(0, 40) } : {}),
+      ...(args.workId ? { workId: args.workId } : {}),
     });
   },
 });

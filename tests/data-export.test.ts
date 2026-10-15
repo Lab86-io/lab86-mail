@@ -231,6 +231,93 @@ describe('Convex export pages', () => {
   });
 });
 
+describe('saved files and drafts in the export (goal runs)', () => {
+  const SECRET = 'export-secret';
+  const USER = 'export_user';
+  let previous: string | undefined;
+  beforeAll(() => {
+    previous = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = SECRET;
+  });
+  afterAll(() => {
+    if (previous === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    else process.env.LAB86_CONVEX_INTERNAL_SECRET = previous;
+  });
+
+  test('a filled form exports its sealed references and no value; a draft keeps its file list', async () => {
+    const t = convexTest(schema, {
+      '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
+      '../convex/accounts.ts': () => import('../convex/accounts'),
+    });
+    await t.run(async (ctx) => {
+      const storageId = await ctx.storage.store(new Blob(['%PDF-1.7']));
+      await ctx.db.insert('agentUploads', {
+        userId: USER,
+        storageId,
+        name: 'fw9 (filled).pdf',
+        contentType: 'application/pdf',
+        size: 8,
+        createdAt: 1,
+        origin: 'filled',
+        sha256: 'abc',
+        sealedFields: [{ field: 'f1_11[0]', ref: '{{secure:si_ssn_000000000000000001.number|AREA}}' }],
+      });
+      await ctx.db.insert('userDocs', {
+        userId: USER,
+        kind: 'draft',
+        key: 'draft_1',
+        doc: {
+          _id: 'draft_1',
+          account: 'sam@example.com',
+          to: 'ap@example.com',
+          subject: 'W-9',
+          body: 'Attached.',
+          attachments: [
+            {
+              source: 'file',
+              fileId: 'upload_1',
+              provider: 'upload',
+              format: 'native',
+              name: 'fw9.pdf',
+              sealed: true,
+            },
+          ],
+          updatedAt: 1,
+        },
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+    const page = (table: string) =>
+      t.query(api.accounts.exportUserTablePage, {
+        internalSecret: SECRET,
+        userId: USER,
+        table,
+        cursor: null,
+        numItems: 10,
+      });
+    const uploads = await page('agentUploads');
+    expect(uploads.page).toEqual([
+      expect.objectContaining({
+        name: 'fw9 (filled).pdf',
+        origin: 'filled',
+        sealedFields: [{ field: 'f1_11[0]', ref: '{{secure:si_ssn_000000000000000001.number|AREA}}' }],
+      }),
+    ]);
+    const drafts = await page('userDocs');
+    expect(drafts.page[0].doc.attachments).toEqual([
+      {
+        source: 'file',
+        fileId: 'upload_1',
+        provider: 'upload',
+        format: 'native',
+        name: 'fw9.pdf',
+        sealed: true,
+      },
+    ]);
+  });
+});
+
 function fakeExport(pages: Record<string, unknown[][]>): DataExportDependencies {
   return {
     tables: async () => Object.keys(pages),
@@ -253,6 +340,7 @@ function fakeExport(pages: Record<string, unknown[][]>): DataExportDependencies 
         kind: 'sign_in',
         label: 'Chase',
         sites: ['chase.com'],
+        mailDomains: ['example.com'],
         facts: {},
         createdAt: 1,
         updatedAt: 1,
@@ -300,6 +388,7 @@ describe('the ZIP', () => {
       kind: 'sign_in',
       label: 'Chase',
       sites: ['chase.com'],
+      mailDomains: ['example.com'],
       facts: {},
       createdAt: 1,
       updatedAt: 1,
@@ -317,6 +406,7 @@ describe('the ZIP', () => {
     expect(readme).toContain('data/personal-details.json');
     expect(readme).toContain('data/secure-items.json');
     expect(readme).toContain('Their values are never exported.');
+    expect(readme).toContain('lists its sealed fields');
     expect(exportFileName(new Date('2031-01-02T00:00:00Z'))).toBe('albatross-export-2031-01-02.zip');
   });
 

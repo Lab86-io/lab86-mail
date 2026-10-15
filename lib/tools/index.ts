@@ -157,6 +157,7 @@ import { githubSearch, mcpConnectionStatus, mcpCreateTask, mcpListItems, mcpSear
 import { forget, listMemories, recall, remember } from './memories';
 import { NARRATIVE_TOOLS } from './narrative';
 import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
+import { pdfFormFields, pdfFormFill } from './pdf-forms';
 import { personalDetailsGet, personalDetailsSave } from './personal-details';
 import { resolvePhotos } from './photos';
 import { presentationPlan } from './presentations';
@@ -211,7 +212,7 @@ import {
   uiSwitchAccount,
   uiToast,
 } from './ui-tools';
-import { browserbaseFetch, browserbaseSearch } from './web';
+import { browserbaseFetch, browserbaseSearch, webFileSave, webResearch } from './web';
 import { wordDocumentCreate, wordDocumentEdit, wordDocumentGet } from './word-documents';
 
 const allTools: AnyTool[] = [
@@ -324,6 +325,8 @@ const allTools: AnyTool[] = [
   documentExport,
   cloudFileSearch,
   googleFileImport,
+  pdfFormFields,
+  pdfFormFill,
   googleDocumentGet,
   googleDocumentEdit,
   extractActionItems,
@@ -359,6 +362,8 @@ const allTools: AnyTool[] = [
   resolvePhotos,
   browserbaseSearch,
   browserbaseFetch,
+  webResearch,
+  webFileSave,
   listRecentOperationsTool,
   undoOperationTool,
   tasksListBoards,

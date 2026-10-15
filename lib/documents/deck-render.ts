@@ -2,6 +2,14 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createElement } from 'react';
 import { SlideSurface } from '@/components/files/editors/SlideRenderer';
+import {
+  BrowserbaseRequestError,
+  browserbaseConfigured,
+  browserbaseProjectId,
+  createSession,
+  releaseSession,
+  SESSION_PRIVACY,
+} from '../web/browserbase-client';
 import type { DeckModelV2 } from './model';
 
 /**
@@ -140,38 +148,37 @@ export function renderSessionBody(projectId: string) {
     projectId,
     timeout: 180,
     keepAlive: false,
-    browserSettings: { recordSession: false, logSession: false },
+    browserSettings: { ...SESSION_PRIVACY },
   };
 }
 
 async function connectBrowser(kind: 'local' | 'browserbase', abortSignal?: AbortSignal) {
   const { chromium } = await import('playwright-core');
   if (kind === 'browserbase') {
-    const apiKey = process.env.BROWSERBASE_API_KEY;
-    const projectId = process.env.BROWSERBASE_PROJECT_ID;
-    if (!apiKey || !projectId) throw new Error('Browserbase is not configured for slide rendering.');
-    const response = await fetch('https://api.browserbase.com/v1/sessions', {
-      method: 'POST',
-      headers: { 'x-bb-api-key': apiKey, 'content-type': 'application/json' },
-      body: JSON.stringify(renderSessionBody(projectId)),
-      signal: abortSignal
-        ? AbortSignal.any([abortSignal, AbortSignal.timeout(30_000)])
-        : AbortSignal.timeout(30_000),
+    const projectId = browserbaseProjectId();
+    if (!browserbaseConfigured() || !projectId)
+      throw new Error('Browserbase is not configured for slide rendering.');
+    // lib/web/browserbase-client.ts sends this body: the project, the time
+    // limit, and SESSION_PRIVACY on every session.
+    const body = renderSessionBody(projectId);
+    const session = await createSession(
+      { timeout: body.timeout, keepAlive: body.keepAlive },
+      {
+        signal: abortSignal,
+        timeoutMs: 30_000,
+        notConfigured: 'Browserbase is not configured for slide rendering.',
+      },
+    ).catch((error) => {
+      if (error instanceof BrowserbaseRequestError)
+        throw new Error(`Browserbase session failed (${error.status}).`);
+      throw error;
     });
-    if (!response.ok) throw new Error(`Browserbase session failed (${response.status}).`);
-    const session = (await response.json()) as { connectUrl?: string; id: string };
-    if (!session.connectUrl) throw new Error('Browserbase returned no connect URL.');
     try {
       const browser = await chromium.connectOverCDP(session.connectUrl, { timeout: 20_000 });
       return { browser, close: () => browser.close() };
     } catch (error) {
       // A failed CDP handshake must not leave a paid remote session running.
-      await fetch(`https://api.browserbase.com/v1/sessions/${session.id}`, {
-        method: 'POST',
-        headers: { 'x-bb-api-key': apiKey, 'content-type': 'application/json' },
-        body: JSON.stringify({ projectId, status: 'REQUEST_RELEASE' }),
-        signal: AbortSignal.timeout(5_000),
-      }).catch(() => undefined);
+      await releaseSession(session.id, { timeoutMs: 5_000 }).catch(() => undefined);
       throw error;
     }
   }
@@ -184,7 +191,7 @@ async function connectBrowser(kind: 'local' | 'browserbase', abortSignal?: Abort
 
 /** Which browser the environment can offer, or null when none is available. */
 export function availableRenderBrowser(): 'local' | 'browserbase' | null {
-  if (process.env.BROWSERBASE_API_KEY && process.env.BROWSERBASE_PROJECT_ID) return 'browserbase';
+  if (browserbaseConfigured() && browserbaseProjectId()) return 'browserbase';
   if (process.env.PLAYWRIGHT_CHROMIUM_PATH || process.env.NODE_ENV !== 'production') return 'local';
   return null;
 }

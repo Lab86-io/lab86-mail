@@ -207,3 +207,80 @@ describe('account deletion removes narrative and content rows', () => {
     }
   });
 });
+
+describe('account deletion removes saved files, drafts with files, and held sends (goal runs)', () => {
+  const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+  beforeEach(() => {
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'cascade-secret';
+  });
+  afterEach(() => {
+    if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+  });
+
+  test('a filled form with sealed fields, its stored bytes, a draft with files, and a held send go', async () => {
+    const t = convexTest(schema, modules);
+    const stored: Record<string, string> = {};
+    await t.run(async (ctx) => {
+      for (const userId of ['gone_user', 'kept_user']) {
+        const storageId = await ctx.storage.store(new Blob(['%PDF-1.7']));
+        stored[userId] = storageId;
+        await ctx.db.insert('agentUploads', {
+          userId,
+          storageId,
+          name: 'fw9 (filled).pdf',
+          contentType: 'application/pdf',
+          size: 8,
+          createdAt: 1,
+          origin: 'filled',
+          sealedFields: [{ field: 'f1_11[0]', ref: '{{secure:si_ssn_000000000000000001.number|AREA}}' }],
+        });
+        await ctx.db.insert('userDocs', {
+          userId,
+          kind: 'draft',
+          key: 'draft_1',
+          doc: {
+            attachments: [
+              { source: 'file', fileId: 'x', provider: 'upload', format: 'native', name: 'a.pdf' },
+            ],
+          },
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const payloadId = await ctx.storage.store(
+          new Blob([JSON.stringify({ sealedAttachments: [{ fileId: 'x', filename: 'a.pdf' }] })]),
+        );
+        await ctx.db.insert('mailOutbox', {
+          userId,
+          key: `outbox:${crypto.randomUUID()}`,
+          payloadId,
+          status: 'pending',
+          fireAt: 1,
+          undoSeconds: 10,
+          updatedAt: 1,
+        });
+      }
+    });
+    await t.mutation(api.accounts.deleteUserCascade, {
+      internalSecret: 'cascade-secret',
+      userId: 'gone_user',
+    });
+    for (let pass = 0; pass < 10; pass++) {
+      const { deleted } = await t.mutation(internal.accounts.purgeUserDataBatch, { userId: 'gone_user' });
+      if (deleted === 0) break;
+    }
+    for (const table of ['agentUploads', 'userDocs', 'mailOutbox'] as const) {
+      const rows = await t.run((ctx) => ctx.db.query(table).collect());
+      expect(
+        rows.filter((row: any) => row.userId === 'gone_user'),
+        table,
+      ).toHaveLength(0);
+      expect(
+        rows.filter((row: any) => row.userId === 'kept_user'),
+        table,
+      ).toHaveLength(1);
+    }
+    expect(await t.run((ctx) => ctx.storage.getUrl(stored.gone_user as any))).toBeNull();
+    expect(await t.run((ctx) => ctx.storage.getUrl(stored.kept_user as any))).not.toBeNull();
+  });
+});

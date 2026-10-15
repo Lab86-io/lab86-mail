@@ -2,6 +2,7 @@ import type { CreateAttachmentRequest } from 'nylas';
 import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '../ai/operations';
 import { fetchEmailAttachment, fetchWebFile } from '../attachments/fetch-store';
+import { checkDraftAttachments, draftAttachmentsInputSchema } from '../files/draft-attachments';
 import { convexInternalSecret, isConvexConfigured } from '../hosted/env';
 import { withAccountSignature } from '../mail/signature';
 import { listNylasScheduledMessages, sendNylasMessage, stopNylasScheduledMessage } from '../nylas/provider';
@@ -317,9 +318,20 @@ export const forwardMessage = defineTool({
   },
 });
 
+// Files on a draft: references to the user's own files. The bytes are read
+// at send time (lib/files/draft-attachments.ts).
+const DraftAttachments = draftAttachmentsInputSchema.describe(
+  'Files that go with the mail, at most 10: saved files (provider upload, for example a PDF from web_file_save or pdf_form_fill), Word, Excel, or PowerPoint files (provider office; format pdf sends a PDF copy), or Albatross documents (provider albatross).',
+);
+
+async function checkedAttachments(ctx: ToolContext, attachments: z.infer<typeof DraftAttachments>) {
+  if (!ctx.userId) throw new Error('Sign in required to attach files.');
+  return checkDraftAttachments(ctx.userId, attachments);
+}
+
 export const saveDraftTool = defineTool({
   name: 'save_draft',
-  description: 'Persist a draft locally (not yet uploaded to Gmail).',
+  description: 'Persist a draft locally (not yet uploaded to Gmail). It can carry files from Files.',
   category: 'compose',
   risk: 'write_self',
   mutating: true,
@@ -334,10 +346,15 @@ export const saveDraftTool = defineTool({
     body: z.string(),
     html: z.string().optional(),
     scheduledFor: z.number().optional(),
+    attachments: DraftAttachments.optional(),
   }),
   output: z.object({ ok: z.boolean(), draft: z.any(), operationId: z.string().optional() }),
-  async handler(args, ctx) {
-    const doc: Draft = { ...args, updatedAt: Date.now() };
+  async handler({ attachments, ...args }, ctx) {
+    const doc: Draft = {
+      ...args,
+      ...(attachments?.length ? { attachments: await checkedAttachments(ctx, attachments) } : {}),
+      updatedAt: Date.now(),
+    };
     const { saved, operationId } = await saveDraftAndRecordOperation({ ctx, doc, args });
     return { ok: true, draft: saved, operationId };
   },
@@ -360,16 +377,25 @@ export const updateDraft = defineTool({
       html: z.string().optional(),
       // `null` clears a scheduled send; `undefined` leaves it unchanged.
       scheduledFor: z.number().nullable().optional(),
+      attachments: DraftAttachments.optional().describe(
+        'The full list of files. It replaces the old list; [] removes every file. Leave it out to keep the files.',
+      ),
     }),
   }),
   output: z.object({ ok: z.boolean() }),
-  async handler({ id, patch }) {
+  async handler({ id, patch }, ctx) {
     const draft = await getDraft(id);
     if (!draft) throw new Error('Draft not found');
-    const { scheduledFor, ...fields } = patch;
+    const { scheduledFor, attachments, ...fields } = patch;
     Object.assign(draft, fields);
     if (scheduledFor === null) delete (draft as { scheduledFor?: number }).scheduledFor;
     else if (scheduledFor !== undefined) (draft as { scheduledFor?: number }).scheduledFor = scheduledFor;
+    // A change without `attachments` keeps the files: the composers send text edits only.
+    if (attachments) {
+      const checked = attachments.length ? await checkedAttachments(ctx, attachments) : [];
+      if (checked.length) draft.attachments = checked;
+      else delete draft.attachments;
+    }
     await saveDraftRecord(draft);
     return { ok: true };
   },

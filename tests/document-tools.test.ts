@@ -331,7 +331,7 @@ describe('document tools', () => {
     expect(read.document.documentId).toBe('document-1');
     expect(typeof read.text).toBe('string');
     const exported = await runTool(documentExport.handler, { documentId: 'document-1' });
-    expect(exported.downloadPath).toBe('/api/documents/document-1/export');
+    expect(exported).toMatchObject({ downloadPath: '/api/documents/document-1/export' });
     const published = await runTool(documentPublishGoogle.handler, {
       documentId: 'document-1',
       connectionId: 'google-1',

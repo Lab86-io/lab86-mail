@@ -672,6 +672,15 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
     'Checked what is in Passwords and IDs',
     'Checking Passwords and IDs failed',
   ),
+  pdf_form_fields: fixed('Reading the form fields', 'Read the form fields', 'Reading the form fields failed'),
+  pdf_form_fill: (_args, out) => {
+    const title = str(out.title);
+    return {
+      running: 'Filling the form',
+      done: title ? `Filled the form: ${title}` : 'Filled the form',
+      failed: 'Filling the form failed',
+    };
+  },
   ask_secure_detail: (args) => {
     const site = str(args?.site);
     const what =
@@ -812,6 +821,34 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
       running: url ? `Reading ${clip(url, 80)}` : 'Fetching a web page',
       done: url ? `Read ${clip(url, 80)}` : 'Read a web page',
       failed: 'Reading the page failed',
+    };
+  },
+  web_research: (a, r) => {
+    const question = clip(str(a.question), 80);
+    const count = Array.isArray(r.sources) ? r.sources.length : null;
+    return {
+      running: question ? `Researching “${question}”` : 'Researching on the web',
+      done:
+        count != null
+          ? `Read ${count} source${count === 1 ? '' : 's'}${question ? ` for “${question}”` : ''}`
+          : 'Researched on the web',
+      failed: 'Web research failed',
+    };
+  },
+  web_file_save: (_a, r) => {
+    const title = clip(str(r.title), 80);
+    return {
+      running: 'Saving the file in Files',
+      done: title ? `Saved ${title} in Files` : 'Saved the file in Files',
+      failed: 'Saving the file failed',
+    };
+  },
+  browser_download: (_a, r) => {
+    const title = clip(str(r.title), 80);
+    return {
+      running: 'Saving the file from the page',
+      done: title ? `Saved ${title} in Files` : 'Saved the file in Files',
+      failed: 'Saving the file failed',
     };
   },
 

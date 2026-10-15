@@ -69,6 +69,12 @@ export interface SecureItemView {
   label: string;
   /** Registrable domains or API hosts the item may be used on. */
   sites: string[];
+  /**
+   * "Always for mail to <domain>": mail domains that a filled PDF with this
+   * item may go to (docs/albatross-goal-runs.md G5). A separate permission
+   * from `sites`. Settings shows each one as "Mail to <domain>".
+   */
+  mailDomains?: string[];
   /** Field name → masked hint ("••••", "ends 4821", "sk-…f3a2"). */
   hints: Record<string, string>;
   /** Plain facts that are safe to show: an ID type, a region, a country, an expiry month. */
@@ -79,18 +85,24 @@ export interface SecureItemView {
 }
 
 /**
- * typed: a run typed it on a page. sent: secure_fetch sent it to an API host.
+ * typed: a run typed it on a page. sent: secure_fetch sent it to an API host,
+ * or a mail sent it in a filled PDF to the site's domain. downloaded: the
+ * user downloaded a filled PDF that holds it.
  * refused_site: a run asked for it on a site that is not its own. asked: a run
  * asked the user to allow a new site. allowed_once / allowed_always / denied:
- * the user's answer.
+ * the user's answer. allowed_send_once / allowed_send_always: the user let a
+ * mail carry it to a domain, for one send or from now on.
  */
 export type SecureUseOutcome =
   | 'typed'
   | 'sent'
+  | 'downloaded'
   | 'refused_site'
   | 'asked'
   | 'allowed_once'
   | 'allowed_always'
+  | 'allowed_send_once'
+  | 'allowed_send_always'
   | 'denied';
 
 export interface SecureUseView {
@@ -128,6 +140,8 @@ export interface SecureItemCreate {
 export interface SecureItemUpdate {
   label?: string;
   sites?: string[];
+  /** Replaces the "Always for mail to" domains. Adding one needs a recent identity check. */
+  mailDomains?: string[];
   values?: Record<string, unknown>;
 }
 
@@ -215,3 +229,23 @@ export const DATE_FORMATS = [
 
 /** Formats of an ID number. AREA, GROUP, SERIAL, and DASHED are for a Social Security number only. */
 export const NUMBER_FORMATS = ['DIGITS', 'LAST4', 'DASHED', 'AREA', 'GROUP', 'SERIAL'] as const;
+
+/**
+ * POST /api/secure-details/allow-send body: the answer to a send that stopped
+ * with 409 `{ code: 'needs_allow', grant: 'send' }`. Both scopes need a recent
+ * identity check (403 { code: 'verify_identity' }).
+ * - once: "Allow for this send". The answer holds `allowToken`; the client
+ *   sends the mail again with the same `pendingId` (= sendId) and `allowToken`.
+ *   The token works one time, for this send, for 30 minutes at most.
+ * - always: "Always for mail to <domain>". The domains go to the item's
+ *   `mailDomains`; the client sends again with the same form.
+ */
+export interface SecureSendAllowRequest {
+  sendId: string;
+  scope: 'once' | 'always';
+  items: Array<{ itemId: string; domains: string[] }>;
+}
+
+export type SecureSendAllowResponse =
+  | { ok: true; scope: 'once'; allowToken: string; expiresAt: number }
+  | { ok: true; scope: 'always' };

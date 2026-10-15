@@ -11,8 +11,11 @@ import {
   visualReviewSummary,
 } from '@/lib/documents/deck-visual-review';
 import { type DocumentEditContext, documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
+import { exportDocument } from '@/lib/documents/export';
 import { publishDocumentToGoogle } from '@/lib/documents/google';
 import { DOCUMENT_KINDS, documentModelText, isSheetWorkbookModel } from '@/lib/documents/model';
+import { saveDocxBytesAsPdf, saveOfficePdf } from '@/lib/documents/office-pdf';
+import { OfficeError } from '@/lib/documents/office-security';
 import {
   presentationAuthoringSchema,
   presentationAuthoringV2Schema,
@@ -52,12 +55,15 @@ const defaultDependencies = {
   createDocument,
   createDocumentSuggestion,
   composeDocumentPresentation,
+  exportDocument,
   generateDocumentProposal,
   getDocument,
   listDocumentSummaries,
   publishDocumentToGoogle,
   recordOperation,
   reviewDeckVisuals,
+  saveDocxBytesAsPdf,
+  saveOfficePdf,
   updateDocument,
 };
 
@@ -483,21 +489,70 @@ export const documentPublishGoogle = defineTool({
   },
 });
 
+/** A Word file converts as saved; a text document converts from its DOCX export. */
+async function exportPdf(userId: string, documentId: string) {
+  let saved: Awaited<ReturnType<typeof saveOfficePdf>>;
+  try {
+    saved = await dependencies.saveOfficePdf(userId, documentId);
+  } catch (error) {
+    if (!(error instanceof OfficeError) || error.status !== 404) throw error;
+    const document = await dependencies.getDocument(userId, documentId);
+    if (!document) throw new Error('Document not found.');
+    if (document.kind !== 'doc')
+      throw new Error('PDF export works for Word files and text documents. Use the native format.');
+    const exported = await dependencies.exportDocument(document);
+    saved = await dependencies.saveDocxBytesAsPdf(userId, exported.bytes, document.title);
+  }
+  return {
+    ok: true as const,
+    format: 'pdf' as const,
+    documentId,
+    fileId: saved.fileId,
+    title: saved.title,
+    openPath: saved.openPath,
+    size: saved.size,
+    contentType: saved.contentType,
+    sha256: saved.sha256,
+  };
+}
+
 export const documentExport = defineTool({
   name: 'document_export',
   description:
-    'Return the authenticated download URL for a file in DOCX, XLSX, or PPTX. Odoo workbook server downloads are values/formulas projections, not full-fidelity exports; use the editor download for the engine export.',
+    'Return the authenticated download URL for a file in DOCX, XLSX, or PPTX. Odoo workbook server downloads are values/formulas projections, not full-fidelity exports; use the editor download for the engine export. With format pdf, the document server makes a PDF of a Word file (from word_document_create) or of a text document, and the PDF is saved in Files: the result fileId can go on a draft as an attachment or into the package. The PDF shows the saved revision; fill the blanks first.',
   category: 'documents',
-  mutating: false,
-  input: z.object({ documentId: z.string().min(1) }),
-  output: z.object({
-    ok: z.boolean(),
-    downloadPath: z.string(),
-    fidelity: z.enum(['full', 'projection']),
-    warning: z.string().optional(),
-    openPath: z.string(),
+  // The pdf format saves a file in Files. Checkpointing keeps a retry from saving it twice.
+  risk: 'write_self',
+  mutating: true,
+  input: z.object({
+    documentId: z.string().min(1),
+    format: z
+      .enum(['native', 'pdf'])
+      .optional()
+      .describe('native (the default): a DOCX, XLSX, or PPTX download link. pdf: a saved PDF file.'),
   }),
+  output: z.union([
+    z.object({
+      ok: z.boolean(),
+      downloadPath: z.string(),
+      fidelity: z.enum(['full', 'projection']),
+      warning: z.string().optional(),
+      openPath: z.string(),
+    }),
+    z.object({
+      ok: z.literal(true),
+      format: z.literal('pdf'),
+      documentId: z.string(),
+      fileId: z.string(),
+      title: z.string(),
+      openPath: z.string(),
+      size: z.number(),
+      contentType: z.string(),
+      sha256: z.string(),
+    }),
+  ]),
   async handler(args, ctx) {
+    if (args.format === 'pdf') return exportPdf(requireUserId(ctx.userId), args.documentId);
     const document = await dependencies.getDocument(requireUserId(ctx.userId), args.documentId);
     if (!document) throw new Error('Document not found.');
     const engine = isSheetWorkbookModel(document.model);

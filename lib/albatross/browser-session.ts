@@ -22,70 +22,33 @@
  */
 
 import { truncateText } from '../shared/text';
+import {
+  type BrowserbaseCallOptions,
+  BrowserbaseRequestError,
+  browserbaseConfigured,
+  sessionConnectUrl as clientConnectUrl,
+  createContext,
+  createSession,
+  deleteContext,
+  deleteDownload,
+  listDownloads,
+  releaseSession,
+  sessionLiveUrls,
+} from '../web/browserbase-client';
 
-const BROWSERBASE_API_BASE = 'https://api.browserbase.com/v1';
-const BROWSERBASE_TIMEOUT_MS = 30_000;
+export { BrowserbaseRequestError };
+
 /** A guided session outlives one step but never a workday. */
 const SESSION_TIMEOUT_SECONDS = 3_600;
 const PAGE_TEXT_MAX = 6_000;
+const NOT_CONFIGURED = 'Browser sessions are not configured.';
 
-function browserbaseKey(): string {
-  const key =
-    process.env.BROWSERBASE_API_KEY || process.env.LAB86_BROWSERBASE_API_KEY || process.env.BB_API_KEY;
-  if (!key) throw new Error('Browser sessions are not configured.');
-  return key;
-}
-
-function browserbaseProjectId(): string | undefined {
-  return process.env.BROWSERBASE_PROJECT_ID || process.env.LAB86_BROWSERBASE_PROJECT_ID || undefined;
+function callOptions(fetcher: typeof fetch): BrowserbaseCallOptions {
+  return { fetcher, notConfigured: NOT_CONFIGURED };
 }
 
 export function browserSessionsConfigured(): boolean {
-  return Boolean(
-    process.env.BROWSERBASE_API_KEY || process.env.LAB86_BROWSERBASE_API_KEY || process.env.BB_API_KEY,
-  );
-}
-
-async function browserbaseRequest<T>(
-  method: 'GET' | 'POST' | 'DELETE',
-  path: string,
-  body?: Record<string, unknown>,
-  fetcher: typeof fetch = fetch,
-): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), BROWSERBASE_TIMEOUT_MS);
-  try {
-    const response = await fetcher(`${BROWSERBASE_API_BASE}${path}`, {
-      method,
-      headers: {
-        'x-bb-api-key': browserbaseKey(),
-        ...(body ? { 'content-type': 'application/json' } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new BrowserbaseRequestError(
-        `Browserbase ${path} failed (${response.status}): ${truncateText(text, 200)}`,
-        response.status,
-      );
-    }
-    const text = await response.text();
-    return (text ? JSON.parse(text) : {}) as T;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-export class BrowserbaseRequestError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = 'BrowserbaseRequestError';
-  }
+  return browserbaseConfigured();
 }
 
 export interface BrowserSessionInfo {
@@ -111,35 +74,21 @@ export async function createBrowserSession(
   fetcher: typeof fetch = fetch,
   options: BrowserSessionOptions = {},
 ): Promise<BrowserSessionInfo> {
-  const created = await browserbaseRequest<{ id: string; connectUrl: string }>(
-    'POST',
-    '/sessions',
+  // No recording and no logs (lib/web/browserbase-client.ts SESSION_PRIVACY):
+  // a run types personal details and saved passwords into forms, and the user
+  // signs in here. Browserbase keeps CDP logs by default, and a value typed
+  // with fill() shows in them (docs/research/browserbase-auth-files-2026-10-15.md).
+  // Proof is the page text the runner reads, not a replay.
+  const created = await createSession(
     {
-      ...(browserbaseProjectId() ? { projectId: browserbaseProjectId() } : {}),
       keepAlive: true,
       timeout: SESSION_TIMEOUT_SECONDS,
-      browserSettings: {
-        // No recording and no logs: a run types personal details and saved
-        // passwords into forms, and the user signs in here. Browserbase keeps
-        // CDP logs by default, and a value typed with fill() shows in them
-        // (docs/research/browserbase-auth-files-2026-10-15.md). Proof is the
-        // page text the runner reads, not a replay.
-        recordSession: false,
-        logSession: false,
-        viewport: { width: 1280, height: 800 },
-        ...(options.contextId
-          ? { context: { id: options.contextId, persist: options.persist === true } }
-          : {}),
-      },
+      viewport: { width: 1280, height: 800 },
+      ...(options.contextId ? { context: { id: options.contextId, persist: options.persist === true } } : {}),
     },
-    fetcher,
+    callOptions(fetcher),
   );
-  const debug = await browserbaseRequest<{ debuggerFullscreenUrl: string }>(
-    'GET',
-    `/sessions/${created.id}/debug`,
-    undefined,
-    fetcher,
-  );
+  const debug = await sessionLiveUrls(created.id, callOptions(fetcher));
   return {
     sessionId: created.id,
     connectUrl: created.connectUrl,
@@ -150,20 +99,13 @@ export async function createBrowserSession(
 
 /** A new, empty sign-in context for one user. */
 export async function createBrowserContext(fetcher: typeof fetch = fetch): Promise<string> {
-  const created = await browserbaseRequest<{ id: string }>(
-    'POST',
-    '/contexts',
-    browserbaseProjectId() ? { projectId: browserbaseProjectId() } : {},
-    fetcher,
-  );
-  if (!created?.id) throw new Error('Browserbase returned no context id.');
-  return created.id;
+  return createContext(callOptions(fetcher));
 }
 
 /** Delete a sign-in context. A context that is already gone counts as deleted. */
 export async function deleteBrowserContext(contextId: string, fetcher: typeof fetch = fetch) {
   try {
-    await browserbaseRequest('DELETE', `/contexts/${encodeURIComponent(contextId)}`, undefined, fetcher);
+    await deleteContext(contextId, callOptions(fetcher));
   } catch (error) {
     if (error instanceof BrowserbaseRequestError && error.status === 404) return;
     throw error;
@@ -175,19 +117,18 @@ export async function deleteBrowserContext(contextId: string, fetcher: typeof fe
  * reaches a client, a log line, or a stored row.
  */
 export function sessionConnectUrl(sessionId: string) {
-  return `wss://connect.browserbase.com?apiKey=${encodeURIComponent(browserbaseKey())}&sessionId=${encodeURIComponent(sessionId)}`;
+  return clientConnectUrl(sessionId, { notConfigured: NOT_CONFIGURED });
 }
 
+/**
+ * End the session, then delete the file copies it left in Browserbase storage
+ * (a download that no browser_download collected, for example after
+ * browser_open on a file address). The copies that count are in Files.
+ */
 export async function releaseBrowserSession(sessionId: string, fetcher: typeof fetch = fetch) {
-  await browserbaseRequest(
-    'POST',
-    `/sessions/${sessionId}`,
-    {
-      ...(browserbaseProjectId() ? { projectId: browserbaseProjectId() } : {}),
-      status: 'REQUEST_RELEASE',
-    },
-    fetcher,
-  );
+  await releaseSession(sessionId, callOptions(fetcher));
+  const left = await listDownloads({ sessionId, limit: 100 }, callOptions(fetcher)).catch(() => []);
+  await Promise.all(left.map((item) => deleteDownload(item.id, callOptions(fetcher)).catch(() => undefined)));
 }
 
 export interface SessionPageState {

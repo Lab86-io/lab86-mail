@@ -1,8 +1,17 @@
+import type { HeldSealedAttachment } from '@/lib/files/draft-attachments';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import type { sendNylasMessage } from '@/lib/nylas/provider';
 
 const outbox = api.mailOutbox;
-export type OutboxPayload = Omit<Parameters<typeof sendNylasMessage>[0], 'sendAt' | 'useDraft'>;
+/**
+ * A held send. `sealedAttachments` are files with saved details from
+ * Passwords and IDs: the outbox keeps their references only, and the
+ * dispatch fills them when the hold ends (lib/files/draft-attachments.ts), so
+ * a saved value is never in storage.
+ */
+export type OutboxPayload = Omit<Parameters<typeof sendNylasMessage>[0], 'sendAt' | 'useDraft'> & {
+  sealedAttachments?: HeldSealedAttachment[];
+};
 export type OutboxReceipt = { id: string; fireAt: number; undoSeconds: number; status: string };
 export async function enqueueOutbox(
   userId: string,

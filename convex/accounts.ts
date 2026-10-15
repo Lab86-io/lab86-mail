@@ -1272,6 +1272,8 @@ export const USER_INLINE_TABLES = [
   // grants that end within two hours. Their use history drains in batches.
   'secureItems',
   'secureGrants',
+  // "Allow for this send" grants: single use, 30 minutes at most.
+  'secureSendGrants',
   'areas',
   'mcpConnections',
   'mcpCredentials',

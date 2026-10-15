@@ -8,6 +8,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
+import { runArtifactKindValidator } from './goalRunSchema';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 // Step runs. The agent works one plan step as far as it can and stops with
@@ -139,14 +140,7 @@ const nextValidator = v.object({
 });
 
 const artifactValidator = v.object({
-  kind: v.union(
-    v.literal('document'),
-    v.literal('draft'),
-    v.literal('event'),
-    v.literal('card'),
-    v.literal('approval'),
-    v.literal('page'),
-  ),
+  kind: runArtifactKindValidator,
   id: v.optional(v.string()),
   title: v.string(),
   url: v.optional(v.string()),
@@ -194,6 +188,12 @@ export function stepRunView(run: RunDoc) {
         }
       : null,
     artifacts: run.artifacts,
+    // Goal runs (docs/albatross-goal-runs.md). Old rows read as empty.
+    goal: run.goal ?? false,
+    messages: run.messages ?? [],
+    checklist: run.checklist ?? [],
+    items: run.items ?? [],
+    unsure: run.unsure ?? [],
     browserSessionId: run.browserSessionId ?? null,
     parentRunId: run.parentRunId ? String(run.parentRunId) : null,
     // The user's own notes to the run, with read times, for their receipts (T7, T9).
