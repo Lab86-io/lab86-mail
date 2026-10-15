@@ -185,6 +185,7 @@ function requireStore(userId: string, deps: typeof materializeDeps) {
 
 function domainsOf(recipients: MaterializePurpose & { kind: 'send' }): string[] {
   const domains = recipientDomains(recipients.recipients);
+  if (domains === null) throw new SealedFileError('invalid', 'Check the recipient addresses.');
   if (!domains.length) throw new SealedFileError('invalid', 'Add a recipient first.');
   return domains;
 }

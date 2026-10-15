@@ -188,8 +188,15 @@ describe('sealed references', () => {
     expect(sealedValueLength('id_number', 'number', 'GROUP', 'ssn')).toBe(2);
     expect(sealedValueLength('id_number', 'number', null, 'passport')).toBeNull();
     expect(
-      recipientDomains(['Billing <billing@Example.com>, ap@pay.example.org', undefined, 'x@example.com.']),
+      recipientDomains(['Billing <billing@Example.com>, ap@pay.example.org', undefined, 'x@example.com']),
     ).toEqual(['example.com', 'pay.example.org']);
+    // Fail closed: one recipient that the check cannot read stops the whole send.
+    expect(recipientDomains(['ap@example.com, "a b"@attacker.example'])).toBeNull();
+    expect(recipientDomains(['ap@example.com; b@attacker.example'])).toBeNull();
+    expect(recipientDomains(['x <ap@example.com> <b@attacker.example>'])).toBeNull();
+    expect(recipientDomains(['x@example.com.'])).toBeNull();
+    expect(recipientDomains(['not an address'])).toBeNull();
+    expect(recipientDomains([undefined, ''])).toEqual([]);
   });
 });
 
@@ -338,6 +345,10 @@ describe('materializeSavedFile', () => {
     await expect(checkSavedFileSend('u1', 'upload_1', [], undefined, d)).rejects.toMatchObject({
       code: 'invalid',
     });
+    // A recipient the check cannot read stops the send before any value is opened.
+    await expect(
+      checkSavedFileSend('u1', 'upload_1', ['ap@example.com, "a b"@attacker.example'], undefined, d),
+    ).rejects.toMatchObject({ code: 'invalid', message: 'Check the recipient addresses.' });
   });
 
   test('a site grant never allows a send: the item is saved for example.org pages, not mail', async () => {

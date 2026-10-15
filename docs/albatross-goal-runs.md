@@ -180,14 +180,15 @@ The prompt says:
 
 ## G4. Official documents (templates)
 
-From the review of 2026-10-14 (`/home/jjalangtry/.claude` memory `official-documents-2026-10-14`):
+From the official documents review of 2026-10-14:
 
 - `word_document_create` gets `template`: `invoice`, `letter`, `memo`, `report`. With a template,
   the model sends typed `data` and the server renders the file. The model sets no font, size, or
   border.
 - One renderer for each template in `lib/documents/templates/`. House type: Fraunces Display for
-  the title and the total, Geist for body text. Tokens from the prototype: ink 1F1D1A, muted
-  6B665D, rule D9D3C7, accent AE4B2B, tint F6E9E3. Letter page, 0.8 inch margins.
+  the title and the total, Geist for body text. Tokens: ink 1F1D1A, muted
+  6B665D, rule D9D3C7, one accent 216440 (the app accent; no tint, design review of 2026-10-15).
+  Letter page, 0.8 inch margins.
 - The fonts are embedded in the DOCX, so Word and Pages on other computers show the same type.
 - An empty value becomes a Word content control (`w:sdt`) with the tag `blank:<slug>`. The item
   `blanks` names come from the same list. A new `word_document_edit` op `fill_blank` writes a
@@ -202,7 +203,7 @@ From the review of 2026-10-14 (`/home/jjalangtry/.claude` memory `official-docum
 
 Details and probe results: `docs/research/browserbase-auth-files-2026-10-15.md`.
 
-- One module, `lib/web/browserbase.ts`, owns every call to Browserbase: search, fetch, sessions,
+- One module, `lib/web/browserbase-client.ts`, owns every call to Browserbase: search, fetch, sessions,
   contexts, downloads, and requests inside a session. `lib/tools/web.ts`, `browser-agent.ts`,
   `browser-session.ts`, and `deck-render.ts` use it.
 - A model-given or content-given URL never goes to a plain server `fetch`. A test scans `lib/` and

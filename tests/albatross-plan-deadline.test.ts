@@ -18,15 +18,18 @@ function replay(
     stuckWriter?: boolean;
     earlyAnswer?: boolean;
     reasoningSensitive?: boolean;
+    /** Real milliseconds for each second of a production timer. */
+    timerScale?: number;
   } = {},
 ) {
   // Six seconds of context, then successive successful research rounds.
   // Scale wall timers so the production 144s failure takes milliseconds.
   const realSetTimeout = globalThis.setTimeout;
+  const scale = options.timerScale ?? 1000;
   let now = Date.now();
   const clock = spyOn(Date, 'now').mockImplementation(() => now);
   const timers = spyOn(globalThis, 'setTimeout').mockImplementation(((fn: any, ms: number, ...args: any[]) =>
-    realSetTimeout(fn, ms >= 1000 ? ms / 1000 : ms, ...args)) as typeof setTimeout);
+    realSetTimeout(fn, ms >= 1000 ? ms / scale : ms, ...args)) as typeof setTimeout);
   restores.push(
     () => clock.mockRestore(),
     () => timers.mockRestore(),
@@ -67,7 +70,7 @@ function replay(
         );
         call.abortSignal?.addEventListener('abort', abort, { once: true });
       });
-      now += delay * 1000;
+      now += delay * scale;
       return {
         content: finish
           ? [{ type: 'text', text: JSON.stringify(plan) }]
@@ -150,7 +153,9 @@ function replay(
 }
 
 test('slow successful research leaves time to finish and save the plan', async () => {
-  const harness = replay();
+  // 350 real ms at 100 ms for each second is 35 s of research for each step,
+  // the same as the production replay, with ten times more room for a busy runner.
+  const harness = replay({ researchMs: 350, timerScale: 100 });
   expect(await harness.run()).toMatchObject({ planId: 'plan_1' });
   expect(harness.generations).toHaveLength(2);
   expect(harness.generations[0].abortSignal.aborted).toBe(true);
@@ -167,7 +172,10 @@ test('slow successful research leaves time to finish and save the plan', async (
 });
 
 test('fast repeated research is forced to write before the step limit', async () => {
-  const harness = replay({ researchMs: 1 });
+  // Real time decides this race: at 1 ms for each second, the research
+  // deadline is about 80 ms, and a busy CI runner with coverage can pass it in
+  // five fast steps. A wider scale keeps the deadline far from the steps.
+  const harness = replay({ researchMs: 1, timerScale: 100 });
   expect(await harness.run()).toMatchObject({ planId: 'plan_1' });
   expect(harness.generations).toHaveLength(1);
   expect(harness.model.doGenerateCalls).toHaveLength(5);
