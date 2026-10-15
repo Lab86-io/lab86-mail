@@ -79,7 +79,9 @@ export interface SecureItemView {
 }
 
 /**
- * typed: a run typed it on a page. sent: secure_fetch sent it to an API host.
+ * typed: a run typed it on a page. sent: secure_fetch sent it to an API host,
+ * or a mail sent it in a filled PDF to the site's domain. downloaded: the
+ * user downloaded a filled PDF that holds it.
  * refused_site: a run asked for it on a site that is not its own. asked: a run
  * asked the user to allow a new site. allowed_once / allowed_always / denied:
  * the user's answer.
@@ -87,6 +89,7 @@ export interface SecureItemView {
 export type SecureUseOutcome =
   | 'typed'
   | 'sent'
+  | 'downloaded'
   | 'refused_site'
   | 'asked'
   | 'allowed_once'

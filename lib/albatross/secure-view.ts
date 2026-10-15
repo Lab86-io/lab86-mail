@@ -318,6 +318,8 @@ export function secureUseLine(
     }
     case 'sent':
       return `Sent to ${site}`;
+    case 'downloaded':
+      return 'Filled in a PDF that you downloaded';
     case 'refused_site':
       return 'Refused: not one of its sites';
     case 'asked':
@@ -332,7 +334,7 @@ export function secureUseLine(
 }
 
 export function secureUseTone(outcome: SecureUseOutcome): SecureUseTone {
-  if (outcome === 'typed' || outcome === 'sent') return 'did';
+  if (outcome === 'typed' || outcome === 'sent' || outcome === 'downloaded') return 'did';
   if (outcome === 'refused_site') return 'warn';
   return 'quiet';
 }

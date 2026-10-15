@@ -44,6 +44,7 @@ const sealedValidator = v.object({
 const outcomeValidator = v.union(
   v.literal('typed'),
   v.literal('sent'),
+  v.literal('downloaded'),
   v.literal('refused_site'),
   v.literal('asked'),
   v.literal('allowed_once'),
@@ -350,7 +351,8 @@ export const recordUse = mutation({
       outcome: args.outcome,
       at: ts,
     });
-    if (args.outcome === 'typed' || args.outcome === 'sent') await ctx.db.patch(row._id, { lastUsedAt: ts });
+    if (args.outcome === 'typed' || args.outcome === 'sent' || args.outcome === 'downloaded')
+      await ctx.db.patch(row._id, { lastUsedAt: ts });
     return { recorded: true };
   },
 });

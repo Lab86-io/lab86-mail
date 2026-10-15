@@ -1261,6 +1261,7 @@ export default defineSchema({
     outcome: v.union(
       v.literal('typed'),
       v.literal('sent'),
+      v.literal('downloaded'),
       v.literal('refused_site'),
       v.literal('asked'),
       v.literal('allowed_once'),
