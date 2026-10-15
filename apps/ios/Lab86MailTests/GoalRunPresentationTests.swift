@@ -263,20 +263,21 @@ struct GoalRunPresentationTests {
         #expect(PackageRows.accessibilityLabel(Self.w9) == "Form W-9. File. Check it. The tax ID fills in when you send.")
     }
 
-    @Test func aSourceCapsuleShowsTheTitleThenOneLocator() {
-        let web = RunSource(kind: .web, title: "Form W-9", url: "https://www.irs.gov/forms/w9")
-        #expect(RunSourceLocator.text(web) == "irs.gov")
-        let jiraByLink = RunSource(kind: .jira, title: "Invoice hours for the quarter", url: "https://harbordesign.example/browse/HD-214?page=worklog")
-        #expect(RunSourceLocator.text(jiraByLink) == "HD-214")
-        let jiraByTitle = RunSource(kind: .jira, title: "HD-214 worklog", referenceID: "HD-214")
-        #expect(RunSourceLocator.text(jiraByTitle) == "HD-214")
-        // The title is the key: nothing repeats.
-        #expect(RunSourceLocator.text(RunSource(kind: .jira, title: "HD-214", referenceID: "HD-214")) == nil)
-        #expect(RunSourceLocator.text(RunSource(kind: .mail, title: "Re: Q3 hours", referenceID: "t1")) == "Mail")
-        #expect(RunSourceLocator.text(RunSource(kind: .calendar, title: "Invoice review", referenceID: "ev1")) == "Calendar")
-        #expect(RunSourceLocator.text(RunSource(kind: .file, title: "Invoice 2026-09.pdf", referenceID: "f1")) == nil)
-        #expect(RunSourceLocator.text(RunSource(kind: .document, title: "Hours sheet", referenceID: "d1")) == nil)
+    @Test func aSourceCapsuleShowsTheTitleThenTheServerLocator() {
+        // The server's `detail` wins for every kind.
+        #expect(RunSourceLocator.text(RunSource(kind: .mail, title: "Re: Q3 hours", referenceID: "t1", detail: "Priya, Jul 30")) == "Priya, Jul 30")
+        #expect(RunSourceLocator.text(RunSource(kind: .jira, title: "Invoice hours", url: "https://harbordesign.example/browse/HD-214", detail: "HD-214")) == "HD-214")
+        #expect(RunSourceLocator.text(RunSource(kind: .calendar, title: "Invoice review", referenceID: "ev1", detail: "Oct 17")) == "Oct 17")
+        #expect(RunSourceLocator.text(RunSource(kind: .web, title: "Form W-9", url: "https://www.irs.gov/w9", detail: "irs.gov")) == "irs.gov")
+        // Without one, only a web page shows its host.
+        #expect(RunSourceLocator.text(RunSource(kind: .web, title: "Form W-9", url: "https://www.irs.gov/forms/w9")) == "irs.gov")
         #expect(RunSourceLocator.text(RunSource(kind: .web, title: "Page", referenceID: "x")) == nil)
+        #expect(RunSourceLocator.text(RunSource(kind: .jira, title: "HD-214 worklog", url: "https://harbordesign.example/browse/HD-214")) == nil)
+        #expect(RunSourceLocator.text(RunSource(kind: .mail, title: "Re: Q3 hours", referenceID: "t1")) == nil)
+        #expect(RunSourceLocator.text(RunSource(kind: .calendar, title: "Invoice review", referenceID: "ev1")) == nil)
+        #expect(RunSourceLocator.text(RunSource(kind: .file, title: "Invoice 2026-09.pdf", referenceID: "f1")) == nil)
+        // A blank detail reads as none.
+        #expect(RunSource(kind: .document, title: "Hours sheet", referenceID: "d1", detail: "  ").detail == nil)
     }
 
     @Test func theBriefLineNamesUpToThreeItems() {

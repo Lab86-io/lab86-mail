@@ -56,42 +56,19 @@ enum GoalRunCopy {
 }
 
 /// The second line of a source capsule: the title first, then one specific
-/// locator in the secondary style, with no middle dot. A web page shows its
-/// host, a Jira issue its key, and a mail or an event its kind word until
-/// the server sends a sender or a date. A file or a document needs nothing.
+/// locator in the secondary style, with no middle dot. The server sends it
+/// as `detail` (a host, "Priya, Jul 30", an issue key, a short date). Without
+/// one, a web page still shows its host; the rest shows nothing.
 enum RunSourceLocator {
     static func text(_ source: RunSource) -> String? {
-        switch source.kind {
-        case .web:
-            return host(of: source.url)
-        case .jira:
-            guard let key = issueKey(of: source), key.lowercased() != source.title.lowercased() else { return nil }
-            return key
-        case .mail, .calendar:
-            return source.kind.word
-        case .file, .document, .unknown:
-            return nil
-        }
+        if let detail = source.detail { return detail }
+        return source.kind == .web ? host(of: source.url) : nil
     }
 
     /// "irs.gov" for "https://www.irs.gov/forms/w9".
     static func host(of raw: String?) -> String? {
         guard let raw, let host = URL(string: raw)?.host()?.nilIfBlank else { return nil }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
-    }
-
-    /// The issue key of a Jira link ("/browse/HD-214"), else the key at the
-    /// start of the title ("HD-214 worklog").
-    static func issueKey(of source: RunSource) -> String? {
-        if let url = source.url, let range = url.range(of: "/browse/") {
-            let rest = url[range.upperBound...]
-            let key = rest.prefix { $0.isLetter || $0.isNumber || $0 == "-" }
-            if !key.isEmpty { return String(key) }
-        }
-        let first = source.title.split(separator: " ").first.map(String.init) ?? ""
-        let parts = first.split(separator: "-")
-        guard parts.count == 2, parts[0].allSatisfy(\.isLetter), parts[1].allSatisfy(\.isNumber) else { return nil }
-        return first
     }
 }
 

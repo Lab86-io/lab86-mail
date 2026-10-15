@@ -47,15 +47,19 @@ struct RunSource: Identifiable, Hashable, Codable, Sendable {
     /// The wire `id`: a thread id, an event id, a file id, an issue key.
     let referenceID: String?
     let accountID: String?
+    /// The server's locator after the title: a host, "Priya, Jul 30", an
+    /// issue key, a short date. Nil from an older server.
+    let detail: String?
 
     var id: String { "\(kind.rawValue):\(url ?? referenceID ?? title)" }
 
-    init(kind: Kind, title: String, url: String? = nil, referenceID: String? = nil, accountID: String? = nil) {
+    init(kind: Kind, title: String, url: String? = nil, referenceID: String? = nil, accountID: String? = nil, detail: String? = nil) {
         self.kind = kind
         self.title = title
         self.url = url
         self.referenceID = referenceID
         self.accountID = accountID
+        self.detail = detail?.nilIfBlank
     }
 
     /// A source needs a title and a place to open (a url or an id).
@@ -69,6 +73,7 @@ struct RunSource: Identifiable, Hashable, Codable, Sendable {
         self.url = url
         self.referenceID = referenceID
         accountID = json["accountId"]?.stringValue?.nilIfBlank
+        detail = json["detail"]?.stringValue?.nilIfBlank
     }
 }
 

@@ -144,6 +144,17 @@ struct GoalRunModelsTests {
         #expect(run.items[0].kind.verb == "Open")
     }
 
+    @Test func aSourceReadsTheServerDetail() throws {
+        let source = try #require(RunSource(json: .object([
+            "kind": .string("mail"), "title": .string("Re: Q3 hours"), "id": .string("t1"), "detail": .string("Priya, Jul 30"),
+        ])))
+        #expect(source.detail == "Priya, Jul 30")
+        let older = try #require(RunSource(json: .object(["kind": .string("mail"), "title": .string("Re: Q3 hours"), "id": .string("t1")])))
+        #expect(older.detail == nil)
+        let cached = try JSONDecoder().decode(RunSource.self, from: try JSONEncoder().encode(source))
+        #expect(cached.detail == "Priya, Jul 30")
+    }
+
     @Test func aSourceNeedsATitleAndAPlaceToOpen() {
         #expect(RunSource(json: .object(["kind": .string("web"), "url": .string("https://irs.gov")])) == nil)
         #expect(RunSource(json: .object(["kind": .string("web"), "title": .string("IRS")])) == nil)
