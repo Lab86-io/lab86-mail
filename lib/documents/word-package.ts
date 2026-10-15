@@ -5,6 +5,7 @@ import { JSDOM } from 'jsdom';
 import JSZip from 'jszip';
 import { z } from 'zod';
 import { OfficeError, validateOfficeArchive } from './office-security';
+import { BlankNotFoundError, fillBlank, readBlanks } from './templates/blanks';
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -91,6 +92,19 @@ export const wordEditSchema = z.discriminatedUnion('op', [
         .min(1)
         .max(100),
       header: z.boolean().default(true),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal('fill_blank'),
+      blank: z
+        .string()
+        .min(1)
+        .max(200)
+        .describe(
+          'The blank name from word_document_get or word_document_create, for example "Invoice number".',
+        ),
+      value: z.string().max(4_000).describe('The value to write. An empty value shows the blank again.'),
     })
     .strict(),
   z
@@ -230,8 +244,18 @@ async function open(bytes: Uint8Array) {
   return { zip, dom, document, body };
 }
 
+/** The blanks of a Word file (template content controls), in page order, with their values. */
+export async function readWordBlanks(bytes: Uint8Array) {
+  const { dom, document } = await open(bytes);
+  try {
+    return readBlanks(document);
+  } finally {
+    dom.window.close();
+  }
+}
+
 export async function readWordPackage(bytes: Uint8Array) {
-  const { zip, dom, body } = await open(bytes);
+  const { zip, dom, document, body } = await open(bytes);
   try {
     const notes: Array<{ part: string; text: string }> = [];
     for (const path of Object.keys(zip.files).filter((path) =>
@@ -258,6 +282,7 @@ export async function readWordPackage(bytes: Uint8Array) {
       tables: descendants(body, 'tbl').length,
       images: descendants(body, 'drawing').length,
       sections: descendants(body, 'sectPr').length,
+      blanks: readBlanks(document).map(({ name, value, filled }) => ({ name, value, filled })),
     };
   } finally {
     dom.window.close();
@@ -588,6 +613,13 @@ export async function editWordPackage(bytes: Uint8Array, input: WordEdit[]) {
           insert(drawing, edit.after);
         } finally {
           imageDom.window.close();
+        }
+      } else if (edit.op === 'fill_blank') {
+        try {
+          fillBlank(document, edit.blank, edit.value);
+        } catch (error) {
+          if (error instanceof BlankNotFoundError) throw new OfficeError(error.message);
+          throw error;
         }
       } else {
         const properties = section();
