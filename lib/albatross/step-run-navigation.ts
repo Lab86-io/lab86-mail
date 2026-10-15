@@ -113,6 +113,13 @@ export async function performNextBehaviour(
       deps.openWindow(url);
       return true;
     }
+    case 'open_file':
+      // A saved file opens in Files by the path the server gave; another place never opens.
+      if (!behaviour.url.startsWith('/?view=files&')) return false;
+      deps.pushPath(behaviour.url);
+      deps.getState().setPrimaryView('files');
+      deps.dispatch('lab86-mail:files-navigate');
+      return true;
     case 'open_card':
       deps.getState().setPendingOpenCardId(behaviour.id);
       deps.getState().setPrimaryView('tasks');

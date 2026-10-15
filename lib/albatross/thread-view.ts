@@ -5,6 +5,7 @@
 // details, the answered receipt, and the timeline readers. No React here.
 
 import { phoneDisplay } from '../personal-details/format';
+import { isGoalRun } from './goal-runs';
 import { type NextBehaviour, nextBehaviour, primaryLabel, type StepRunNext } from './step-run-client';
 import {
   type FormField,
@@ -442,14 +443,13 @@ export function threadStateInput(
   const activeRun = runs.find((run) => run.state === 'queued' || run.state === 'running') ?? null;
   // An answered question is a closed handoff: the run continued as a new run.
   const handoff =
-    [...runs]
-      .reverse()
-      .find(
-        (run) =>
-          run.state === 'handed_off' &&
-          (!current || run.stepKey === current.key) &&
-          !runQuestionAnswered(run),
-      ) ?? null;
+    [...runs].reverse().find(
+      (run) =>
+        run.state === 'handed_off' &&
+        // A goal run's handoff waits on the whole goal, not on one step.
+        (!current || run.stepKey === current.key || isGoalRun(run)) &&
+        !runQuestionAnswered(run),
+    ) ?? null;
   const pendingQuestion =
     (handoff?.outcome === 'needs_answer' && !runQuestionAnswered(handoff)) ||
     Boolean(detail?.questions.some((question) => question.status === 'pending'));
