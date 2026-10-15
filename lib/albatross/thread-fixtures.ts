@@ -654,7 +654,10 @@ export const GOAL_INVOICE_DOCUMENT_PATH = `/?view=files&document=${GOAL_INVOICE_
 export const GOAL_HOURS_DOCUMENT_PATH = `/?view=files&document=${GOAL_HOURS_DOCUMENT_ID}`;
 export const GOAL_W9_FILE_PATH = `/?view=files&file=${GOAL_W9_FILE_ID}`;
 
-export function goalDetailFixture(now = Date.now(), over: Partial<WorkDetailData['work']> = {}): WorkDetailData {
+export function goalDetailFixture(
+  now = Date.now(),
+  over: Partial<WorkDetailData['work']> = {},
+): WorkDetailData {
   return {
     work: {
       _id: GOAL_FIXTURE_WORK_ID,
@@ -700,7 +703,12 @@ export function goalDetailFixture(now = Date.now(), over: Partial<WorkDetailData
         { kind: 'document', id: GOAL_INVOICE_DOCUMENT_ID, title: 'Invoice 0007', operationId: 'op_invoice' },
         { kind: 'document', id: GOAL_HOURS_DOCUMENT_ID, title: 'Hours, July', operationId: 'op_hours' },
         { kind: 'file', id: GOAL_W9_FILE_ID, title: 'Form W-9, filled', operationId: 'op_w9' },
-        { kind: 'draft', id: GOAL_DRAFT_ID, title: 'Invoice 0007 to Priya Natarajan', operationId: 'op_draft' },
+        {
+          kind: 'draft',
+          id: GOAL_DRAFT_ID,
+          title: 'Invoice 0007 to Priya Natarajan',
+          operationId: 'op_draft',
+        },
       ],
     },
   };
@@ -741,20 +749,31 @@ export function goalDetailWithEarlierSteps(now = Date.now()): WorkDetailData {
   return detail;
 }
 
-export const goalSourceFixtures: Record<'jira' | 'mailHours' | 'invoice0006' | 'mailRate' | 'w9' | 'calendar', RunSource> =
-  {
-    jira: {
-      kind: 'jira',
-      title: 'BP-214 worklog, July',
-      url: 'https://bramble.example.atlassian.net/browse/BP-214',
-      id: 'BP-214',
-    },
-    mailHours: { kind: 'mail', title: 'July hours', id: 'thread_july_hours', accountId: GOAL_ACCOUNT },
-    invoice0006: { kind: 'document', title: 'Invoice 0006', id: 'doc_invoice_0006', url: '/?view=files&document=doc_invoice_0006' },
-    mailRate: { kind: 'mail', title: 'Rate for the autumn work', id: 'thread_rate', accountId: GOAL_ACCOUNT },
-    w9: { kind: 'web', title: 'Form W-9 (Rev. March 2024)', url: 'https://www.irs.gov/forms-pubs/about-form-w-9' },
-    calendar: { kind: 'calendar', title: 'Invoice day', id: 'evt_invoice_day' },
-  };
+export const goalSourceFixtures: Record<
+  'jira' | 'mailHours' | 'invoice0006' | 'mailRate' | 'w9' | 'calendar',
+  RunSource
+> = {
+  jira: {
+    kind: 'jira',
+    title: 'BP-214 worklog, July',
+    url: 'https://bramble.example.atlassian.net/browse/BP-214',
+    id: 'BP-214',
+  },
+  mailHours: { kind: 'mail', title: 'July hours', id: 'thread_july_hours', accountId: GOAL_ACCOUNT },
+  invoice0006: {
+    kind: 'document',
+    title: 'Invoice 0006',
+    id: 'doc_invoice_0006',
+    url: '/?view=files&document=doc_invoice_0006',
+  },
+  mailRate: { kind: 'mail', title: 'Rate for the autumn work', id: 'thread_rate', accountId: GOAL_ACCOUNT },
+  w9: {
+    kind: 'web',
+    title: 'Form W-9 (Rev. March 2024)',
+    url: 'https://www.irs.gov/forms-pubs/about-form-w-9',
+  },
+  calendar: { kind: 'calendar', title: 'Invoice day', id: 'evt_invoice_day' },
+};
 
 const GOAL_CHECKLIST_TEXTS = [
   'Find the July hours',
@@ -788,7 +807,10 @@ export function goalChecklistFixture(done: number, doing = true): ChecklistItem[
 export function goalMessageFixtures(now = Date.now(), count = 11): RunMessage[] {
   const start = now - 13 * MINUTE;
   const texts: Array<[string, RunSource[]]> = [
-    ['I look for the hours you worked for Bramble Press in July: the Jira worklog first, then your mail with Priya.', []],
+    [
+      'I look for the hours you worked for Bramble Press in July: the Jira worklog first, then your mail with Priya.',
+      [],
+    ],
     [
       'The BP-214 worklog shows 78 hours in July, across 11 days. No mail names a different number, so I use 78.',
       [goalSourceFixtures.jira, goalSourceFixtures.mailHours],
@@ -797,14 +819,14 @@ export function goalMessageFixtures(now = Date.now(), count = 11): RunMessage[] 
       'Your last invoice was 0006 on September 2, so this one is 0007. The rate is not on it, and I found no rate in your mail. I leave the rate for you.',
       [goalSourceFixtures.invoice0006, goalSourceFixtures.mailRate],
     ],
-    ['I make the invoice from the template with your details, the period July 1 to 31, and the 78 hours.', []],
+    [
+      'I make the invoice from the template with your details, the period July 1 to 31, and the 78 hours.',
+      [],
+    ],
     ['The invoice is saved. The rate, the amount, and the total are blanks for you.', []],
     ['Next, the hours sheet: one row for each of the 11 days, from the worklog.', [goalSourceFixtures.jira]],
     ['The hours sheet is saved.', []],
-    [
-      'I get the W-9 from irs.gov. The IRS form is the one Priya asked for in June.',
-      [goalSourceFixtures.w9],
-    ],
+    ['I get the W-9 from irs.gov. The IRS form is the one Priya asked for in June.', [goalSourceFixtures.w9]],
     [
       'I saved Form W-9 from irs.gov and filled in your name, your address, and the Individual box. The tax ID stays sealed: it fills in when the mail sends.',
       [goalSourceFixtures.w9],
@@ -918,7 +940,11 @@ export const goalAddressQuestionForm: FormQuestion = {
           detail: 'On the June invoice',
           recommended: 'On the last invoice',
         },
-        { id: 'boston', label: '8 Harbor Street, Boston, MA 02110', detail: 'In her mail signature since October' },
+        {
+          id: 'boston',
+          label: '8 Harbor Street, Boston, MA 02110',
+          detail: 'In her mail signature since October',
+        },
       ],
     },
   ],
@@ -1002,8 +1028,18 @@ export function goalRunFixtures(now = Date.now()): Record<GoalRunFixtureName, Th
         'The invoice, the hours sheet, the filled W-9, and the draft to Priya are ready. The rate is the one blank left.',
       next: packageNext,
       artifacts: [
-        { kind: 'draft', id: GOAL_DRAFT_ID, title: 'Invoice 0007 to Priya Natarajan', accountId: GOAL_ACCOUNT },
-        { kind: 'document', id: GOAL_INVOICE_DOCUMENT_ID, url: GOAL_INVOICE_DOCUMENT_PATH, title: 'Invoice 0007' },
+        {
+          kind: 'draft',
+          id: GOAL_DRAFT_ID,
+          title: 'Invoice 0007 to Priya Natarajan',
+          accountId: GOAL_ACCOUNT,
+        },
+        {
+          kind: 'document',
+          id: GOAL_INVOICE_DOCUMENT_ID,
+          url: GOAL_INVOICE_DOCUMENT_PATH,
+          title: 'Invoice 0007',
+        },
         { kind: 'document', id: GOAL_HOURS_DOCUMENT_ID, url: GOAL_HOURS_DOCUMENT_PATH, title: 'Hours, July' },
         { kind: 'file', id: GOAL_W9_FILE_ID, url: GOAL_W9_FILE_PATH, title: 'Form W-9, filled' },
       ],
@@ -1016,7 +1052,11 @@ export function goalRunFixtures(now = Date.now()): Record<GoalRunFixtureName, Th
       browserSessionId: 'session_bramble',
       messages: goalMessageFixtures(now, 8),
       checklist: goalChecklistFixture(3),
-      log: log(now, [...GOAL_LOG.slice(0, 7), 'Opened the Bramble Press vendor portal', 'Stopped at the sign-in form'], now - MINUTE),
+      log: log(
+        now,
+        [...GOAL_LOG.slice(0, 7), 'Opened the Bramble Press vendor portal', 'Stopped at the sign-in form'],
+        now - MINUTE,
+      ),
       summary: 'The vendor portal asks for your sign-in before it shows the W-9 upload.',
       next: {
         kind: 'sign_in',
@@ -1089,7 +1129,9 @@ export function goalRunFixtures(now = Date.now()): Record<GoalRunFixtureName, Th
       messages: goalMessageFixtures(now, 11),
       checklist: goalChecklistFixture(6, false),
       items: items.map((item) =>
-        item.kind === 'document' ? { ...item, state: 'ready' as const, blanks: undefined, note: 'Rate $90, total $7,020.' } : item,
+        item.kind === 'document'
+          ? { ...item, state: 'ready' as const, blanks: undefined, note: 'Rate $90, total $7,020.' }
+          : item,
       ),
       unsure,
       log: log(now, GOAL_LOG, now - 20 * MINUTE),
@@ -1108,11 +1150,26 @@ export function goalRunFixtures(now = Date.now()): Record<GoalRunFixtureName, Th
           id: 'msg_done',
           at: now - 40_000,
           text: 'The mail to Priya went out at 3:02 PM with the invoice, the hours sheet, and the W-9. The invoice total is $7,020 at $90 an hour.',
-          sources: [{ kind: 'mail', title: 'Invoice 0007 for July', id: 'thread_invoice_0007', accountId: GOAL_ACCOUNT }],
+          sources: [
+            {
+              kind: 'mail',
+              title: 'Invoice 0007 for July',
+              id: 'thread_invoice_0007',
+              accountId: GOAL_ACCOUNT,
+            },
+          ],
         },
       ],
       checklist: goalChecklistFixture(7),
-      log: log(now, ['Read your note: sent', 'Read the sent mail: Invoice 0007 for July', 'Checked the outcome: the invoice mail went out with three files'], now - 40_000),
+      log: log(
+        now,
+        [
+          'Read your note: sent',
+          'Read the sent mail: Invoice 0007 for July',
+          'Checked the outcome: the invoice mail went out with three files',
+        ],
+        now - 40_000,
+      ),
       summary: 'The invoice mail went out with the three files. The outcome holds.',
       createdAt: now - 2 * MINUTE,
       startedAt: now - 2 * MINUTE,
@@ -1189,7 +1246,11 @@ function documentRecord(
 export function goalInvoiceDocumentFixture(now = Date.now()) {
   return documentRecord(now, GOAL_INVOICE_DOCUMENT_ID, 'Invoice 0007', [
     ['b1', 'heading', 'Invoice 0007', 1],
-    ['b2', 'paragraph', 'From: Sam Rivera, 12 Elm Street, Apt 3, Springfield, IL 62704. sam.rivera@example.com'],
+    [
+      'b2',
+      'paragraph',
+      'From: Sam Rivera, 12 Elm Street, Apt 3, Springfield, IL 62704. sam.rivera@example.com',
+    ],
     ['b3', 'paragraph', 'Bill to: Bramble Press, Priya Natarajan, 40 Mill Lane, Portland, ME 04101'],
     ['b4', 'paragraph', 'Date: October 15, 2026. Due: October 29, 2026. Period: July 1 to July 31, 2026.'],
     ['b5', 'heading', 'Work', 2],
@@ -1197,7 +1258,11 @@ export function goalInvoiceDocumentFixture(now = Date.now()) {
     ['b7', 'paragraph', 'Rate: __ an hour'],
     ['b8', 'paragraph', 'Amount: 78 × rate = __'],
     ['b9', 'heading', 'Total due: __', 2],
-    ['b10', 'paragraph', 'Pay by direct deposit within 14 days. A W-9 and the direct deposit form are attached to the mail.'],
+    [
+      'b10',
+      'paragraph',
+      'Pay by direct deposit within 14 days. A W-9 and the direct deposit form are attached to the mail.',
+    ],
   ]);
 }
 
@@ -1225,7 +1290,11 @@ export function goalMessagesFixture(now = Date.now(), inlineRunId = 'run_goal_ru
       role: 'assistant',
       metadata: { createdAt: now - 14 * MINUTE + 4_000 },
       parts: [
-        { type: 'text', text: 'I handle it. I stop before the mail sends; the send is yours.', state: 'done' },
+        {
+          type: 'text',
+          text: 'I handle it. I stop before the mail sends; the send is yours.',
+          state: 'done',
+        },
         {
           type: 'tool-albatross_handle_step',
           toolCallId: 'call_goal_1',

@@ -1,0 +1,125 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [7 0 R 8 0 R 9 0 R 10 0 R 11 0 R 12 0 R 13 0 R] /DR << /Font << /Helv 5 0 R >> >> /DA (/Helv 9 Tf 0 g) /NeedAppearances true >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /Helv 5 0 R /HelvB 6 0 R >> >> /Annots [7 0 R 8 0 R 9 0 R 10 0 R 11 0 R 12 0 R 13 0 R] >>
+endobj
+4 0 obj
+<< /Length 2344 >>
+stream
+0 g
+BT /Helv 8 Tf 40 740 Td (Form) Tj ET
+BT /HelvB 22 Tf 40 718 Td (W-9) Tj ET
+BT /Helv 7 Tf 40 704 Td (\(Sample for the dev harness\)) Tj ET
+BT /HelvB 13 Tf 170 736 Td (Request for Taxpayer) Tj ET
+BT /HelvB 13 Tf 170 720 Td (Identification Number and Certification) Tj ET
+BT /Helv 7 Tf 450 740 Td (Give form to the requester.) Tj ET
+BT /Helv 7 Tf 450 730 Td (Do not send to the IRS.) Tj ET
+1.5 w 40 696 m 572 696 l S
+BT /Helv 8 Tf 44 680 Td (1  Name of entity/individual.) Tj ET
+0.8 w 40 668 m 572 668 l S
+BT /Helv 8 Tf 44 652 Td (2  Business name/disregarded entity name, if different from above.) Tj ET
+0.8 w 40 640 m 572 640 l S
+BT /Helv 8 Tf 44 624 Td (3a Check the appropriate box for federal tax classification:) Tj ET
+0.8 w 44 604 8 8 re S
+BT /Helv 8 Tf 56 606 Td (Individual/sole proprietor) Tj ET
+0.8 w 190 604 8 8 re S
+BT /Helv 8 Tf 202 606 Td (C corporation) Tj ET
+0.8 w 290 604 8 8 re S
+BT /Helv 8 Tf 302 606 Td (S corporation) Tj ET
+0.8 w 390 604 8 8 re S
+BT /Helv 8 Tf 402 606 Td (Partnership) Tj ET
+0.8 w 40 596 m 572 596 l S
+BT /Helv 8 Tf 44 580 Td (5  Address \(number, street, and apt. or suite no.\)) Tj ET
+0.8 w 40 568 m 572 568 l S
+BT /Helv 8 Tf 44 552 Td (6  City, state, and ZIP code) Tj ET
+1.5 w 40 540 m 572 540 l S
+0 g 40 512 200 14 re f
+1 g
+BT /HelvB 9 Tf 44 516 Td (Part I   Taxpayer Identification Number \(TIN\)) Tj ET
+0 g
+BT /Helv 7 Tf 44 496 Td (Social security number) Tj ET
+0.8 w 44 470 14 18 re S
+0.8 w 60 470 14 18 re S
+0.8 w 76 470 14 18 re S
+0.8 w 108 470 14 18 re S
+0.8 w 124 470 14 18 re S
+0.8 w 156 470 14 18 re S
+0.8 w 172 470 14 18 re S
+0.8 w 188 470 14 18 re S
+0.8 w 204 470 14 18 re S
+BT /Helv 7 Tf 320 496 Td (Employer identification number) Tj ET
+0.8 w 320 470 14 18 re S
+0.8 w 336 470 14 18 re S
+0.8 w 368 470 14 18 re S
+0.8 w 384 470 14 18 re S
+0.8 w 400 470 14 18 re S
+0.8 w 416 470 14 18 re S
+0.8 w 432 470 14 18 re S
+0.8 w 448 470 14 18 re S
+0.8 w 464 470 14 18 re S
+0 g 40 440 120 14 re f
+1 g
+BT /HelvB 9 Tf 44 444 Td (Part II   Certification) Tj ET
+0 g
+BT /Helv 7 Tf 44 426 Td (Under penalties of perjury, I certify that the number shown on this form is my correct) Tj ET
+BT /Helv 7 Tf 44 416 Td (taxpayer identification number ...) Tj ET
+BT /Helv 8 Tf 44 380 Td (Signature of U.S. person) Tj ET
+0.8 w 160 376 m 420 376 l S
+BT /Helv 8 Tf 440 380 Td (Date) Tj ET
+0.8 w 470 376 m 572 376 l S
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+7 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /Rect [240 670 570 690] /F 4 /P 3 0 R /V (SAM RIVERA) /DA (/Helv 9 Tf 0 g) >>
+endobj
+8 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (business_name) /Rect [330 642 570 662] /F 4 /P 3 0 R /V () /DA (/Helv 9 Tf 0 g) >>
+endobj
+9 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (address) /Rect [300 570 570 590] /F 4 /P 3 0 R /V (12 ELM STREET, APT 3) /DA (/Helv 9 Tf 0 g) >>
+endobj
+10 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (city_state_zip) /Rect [200 542 570 562] /F 4 /P 3 0 R /V (SPRINGFIELD, IL 62704) /DA (/Helv 9 Tf 0 g) >>
+endobj
+11 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (ssn) /Rect [44 470 202 488] /F 4 /P 3 0 R /V () /DA (/Helv 9 Tf 0 g) >>
+endobj
+12 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (ein) /Rect [320 470 478 488] /F 4 /P 3 0 R /V () /DA (/Helv 9 Tf 0 g) >>
+endobj
+13 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Sig /T (signature) /Rect [160 376 420 396] /F 4 /P 3 0 R >>
+endobj
+xref
+0 14
+0000000000 65535 f 
+0000000015 00000 n 
+0000000213 00000 n 
+0000000270 00000 n 
+0000000467 00000 n 
+0000002863 00000 n 
+0000002960 00000 n 
+0000003062 00000 n 
+0000003206 00000 n 
+0000003349 00000 n 
+0000003506 00000 n 
+0000003672 00000 n 
+0000003805 00000 n 
+0000003939 00000 n 
+trailer
+<< /Size 14 /Root 1 0 R >>
+startxref
+4053
+%%EOF

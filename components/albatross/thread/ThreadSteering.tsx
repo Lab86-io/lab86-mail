@@ -31,10 +31,13 @@ export interface ThreadSteerRun {
   id: string;
   stepTitle: string;
   stepNumber: number | null;
+  /** A goal run: the route line says "To the run" alone (the checklist names the current item). */
+  goal?: boolean;
 }
 
-/** "Step 2, Renew online"; "Renew online" when the step has no number. */
-export function steerRunLabel(run: Pick<ThreadSteerRun, 'stepTitle' | 'stepNumber'>): string {
+/** "Step 2, Renew online"; "Renew online" when the step has no number; nothing for a goal run. */
+export function steerRunLabel(run: Pick<ThreadSteerRun, 'stepTitle' | 'stepNumber' | 'goal'>): string {
+  if (run.goal) return '';
   return run.stepNumber ? `Step ${run.stepNumber}, ${run.stepTitle}` : run.stepTitle;
 }
 
@@ -104,8 +107,12 @@ export function ThreadRouteLine({
   return (
     <div data-thread-route="run" className="flex items-center gap-2 px-1 pb-2 pt-1 text-[12px]">
       <span className="font-medium text-[var(--color-accent-2)]">{THREAD_ROUTE_COPY.toRun}</span>
-      <span className="text-[var(--color-text-faint)]">·</span>
-      <span className="min-w-0 truncate text-[var(--color-text-muted)]">{steerRunLabel(run)}</span>
+      {steerRunLabel(run) ? (
+        <>
+          <span className="text-[var(--color-text-faint)]">·</span>
+          <span className="min-w-0 truncate text-[var(--color-text-muted)]">{steerRunLabel(run)}</span>
+        </>
+      ) : null}
       <button
         type="button"
         disabled={busy}

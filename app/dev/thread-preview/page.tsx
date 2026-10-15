@@ -20,9 +20,22 @@ import {
   HOURS_DOCUMENT_ID,
   hoursDocumentFixture,
 } from '@/lib/albatross/document-handoff-fixtures';
+import { activeTabKey, packageTabs } from '@/lib/albatross/goal-run-view';
 import type { PersonalDetailsResponse } from '@/lib/albatross/thread-contract';
 import {
   earlierChatMessageFixture,
+  GOAL_DRAFT_ID,
+  GOAL_FIXTURE_WORK_ID,
+  GOAL_HOURS_DOCUMENT_ID,
+  GOAL_INVOICE_DOCUMENT_ID,
+  GOAL_W9_FILE_ID,
+  goalDetailFixture,
+  goalDetailWithEarlierSteps,
+  goalDraftFixture,
+  goalHoursDocumentFixture,
+  goalInvoiceDocumentFixture,
+  goalMessagesFixture,
+  goalRunFixtures,
   threadDetailDoneStep,
   threadDetailFixture,
   threadDetailsFixture,
@@ -38,6 +51,10 @@ import { createFixtureTransport } from '@/lib/chat/preview-fixture';
  *   ?state=planning | running | steered | needsAnswer | answeredChat | signIn
  *          | finalPage | done | failed | stopped | details | earlier | settings
  *          | checkResult | document   (docs/albatross-document-handoff.md)
+ *          | goalQueued | goalRunning | goalNeedsAnswer | goalPackage | goalYourTurn
+ *          | goalStopped | goalFailed | goalDone | goalDetails | goalEarlierSteps
+ *          | goalDocument   (docs/albatross-goal-runs.md; &tab=draft | invoice | hours | w9;
+ *                           &allow=1 makes the compose route ask for a send permission)
  *   &region=page | details | document | none   (overrides the state's own region)
  * Not linked from anywhere; 404s outside development. */
 export default function ThreadPreviewPage() {
@@ -93,14 +110,40 @@ type StateName =
   | 'earlier'
   | 'settings'
   | 'checkResult'
-  | 'document';
+  | 'document'
+  | 'goalQueued'
+  | 'goalRunning'
+  | 'goalNeedsAnswer'
+  | 'goalPackage'
+  | 'goalYourTurn'
+  | 'goalStopped'
+  | 'goalFailed'
+  | 'goalDone'
+  | 'goalDetails'
+  | 'goalEarlierSteps'
+  | 'goalDocument';
+
+/** The `&tab=` name of a tab key, so the harness keeps the active tab in the URL vocabulary. */
+function tabNameOf(key: string): string | null {
+  return Object.entries(GOAL_TAB_IDS).find(([, id]) => key.endsWith(`:${id}`))?.[0] ?? null;
+}
+
+/** The `&tab=` names of the goal package, by item id. */
+const GOAL_TAB_IDS: Record<string, string> = {
+  draft: GOAL_DRAFT_ID,
+  invoice: GOAL_INVOICE_DOCUMENT_ID,
+  hours: GOAL_HOURS_DOCUMENT_ID,
+  w9: GOAL_W9_FILE_ID,
+};
 
 function buildModel(
   state: StateName,
   wide: boolean,
   regionOverride: ThreadRegion | undefined,
+  goalOptions: { tab: string | null; sentDrafts: Record<string, string> } = { tab: null, sentDrafts: {} },
 ): { model: ThreadModel; messages: ReturnType<typeof threadMessagesFixture>; region: ThreadRegion } {
   const runs = threadRunFixtures(NOW);
+  const goal = goalRunFixtures(NOW);
   const details = threadDetailsFixture(NOW).details;
   const common = {
     workId: 'work_alive25',
@@ -312,20 +355,86 @@ function buildModel(
       messages = [earlierChatMessageFixture(), ...threadMessagesFixture(NOW)];
       session = threadSessionFixture('agent', 'Reading the class schedule');
       break;
+    // Goal runs (docs/albatross-goal-runs.md): the Bramble Press invoice.
+    case 'goalQueued':
+      detail = goalDetailFixture(NOW);
+      threadRuns = [goal.goalQueued];
+      messages = goalMessagesFixture(NOW, 'run_goal_queued');
+      break;
+    case 'goalRunning':
+      detail = goalDetailFixture(NOW);
+      threadRuns = [goal.goalRunning];
+      messages = goalMessagesFixture(NOW, 'run_goal_running');
+      break;
+    case 'goalNeedsAnswer':
+      detail = goalDetailFixture(NOW);
+      threadRuns = [goal.goalNeedsAnswer];
+      messages = goalMessagesFixture(NOW, 'run_goal_needs_answer');
+      break;
+    case 'goalPackage':
+    case 'goalDetails':
+    case 'goalDocument':
+      detail = goalDetailFixture(NOW);
+      threadRuns = [goal.goalPackage];
+      messages = goalMessagesFixture(NOW, 'run_goal_package');
+      region = state === 'goalDetails' ? 'details' : state === 'goalDocument' ? 'document' : null;
+      break;
+    case 'goalYourTurn':
+      detail = goalDetailFixture(NOW);
+      threadRuns = [goal.goalYourTurn];
+      messages = goalMessagesFixture(NOW, 'run_goal_your_turn');
+      session = threadSessionFixture('user');
+      region = 'page';
+      break;
+    case 'goalStopped':
+      detail = goalDetailFixture(NOW);
+      threadRuns = [goal.goalStoppedTime];
+      messages = goalMessagesFixture(NOW, 'run_goal_stopped');
+      break;
+    case 'goalFailed':
+      detail = goalDetailFixture(NOW);
+      threadRuns = [goal.goalFailed];
+      messages = goalMessagesFixture(NOW, 'run_goal_failed');
+      break;
+    case 'goalDone':
+      detail = goalDetailFixture(NOW, { workState: 'done' });
+      threadRuns = [goal.goalClosedPackage, goal.goalDone];
+      messages = goalMessagesFixture(NOW, 'run_goal_closed');
+      break;
+    case 'goalEarlierSteps':
+      detail = goalDetailWithEarlierSteps(NOW);
+      threadRuns = [];
+      messages = [];
+      break;
     default:
       break;
   }
   if (regionOverride !== undefined) region = regionOverride;
-  const title = state === 'checkResult' || state === 'document' ? (detail.work.title ?? '') : common.title;
+  const goalState = state.startsWith('goal');
+  const title =
+    state === 'checkResult' || state === 'document' || goalState ? (detail.work.title ?? '') : common.title;
+  // Document mode with the package: one tab per item, the `&tab=` one or the next.target one active.
+  const packageRun =
+    goalState && region === 'document' ? threadRuns.find((run) => run.items.length) : undefined;
+  const tabs = packageRun ? packageTabs(packageRun) : [];
+  const wanted = goalOptions.tab ? GOAL_TAB_IDS[goalOptions.tab] : null;
+  const activeKey =
+    (wanted ? tabs.find((tab) => tab.item.id === wanted)?.key : null) ??
+    (packageRun ? activeTabKey(tabs, packageRun.next) : null);
   return {
     model: {
       ...common,
+      workId: goalState ? GOAL_FIXTURE_WORK_ID : common.workId,
       title,
       detail,
       runs: threadRuns,
       session,
       region,
-      document: region === 'document' ? { provider: 'albatross', id: HOURS_DOCUMENT_ID } : null,
+      document:
+        region === 'document' && !packageRun ? { provider: 'albatross', id: HOURS_DOCUMENT_ID } : null,
+      documentTabs: packageRun && activeKey ? { runId: packageRun.id, tabs, activeKey } : null,
+      sentDrafts: goalOptions.sentDrafts,
+      sealedFields: { [GOAL_W9_FILE_ID]: ['ssn'] },
     },
     messages,
     region,
@@ -338,15 +447,62 @@ function regionFromSearch(value: string | null): ThreadRegion | undefined {
   return undefined;
 }
 
-/** The harness has no backend: the document editor reads its fixture from this stub. */
+/**
+ * The harness has no backend: the document editor, the draft tab, the PDF
+ * pane, and the compose route read their fixtures from this stub. The sample
+ * W-9 is public/dev/w9-sample.pdf (scripts/dev/make-w9-sample.mjs).
+ */
 function useDocumentFetchStub() {
   useState(() => {
     if (typeof window === 'undefined') return null;
     const original = window.fetch.bind(window);
+    const askForAllow = new URLSearchParams(window.location.search).get('allow') === '1';
+    let allowed = false;
     window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes(`/api/documents/${HOURS_DOCUMENT_ID}`) && (!init?.method || init.method === 'GET'))
+      const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+      if (url.includes(`/api/documents/${HOURS_DOCUMENT_ID}`) && method === 'GET')
         return Response.json({ ok: true, document: hoursDocumentFixture(NOW) });
+      if (url.includes(`/api/documents/${GOAL_INVOICE_DOCUMENT_ID}`) && method === 'GET')
+        return Response.json({ ok: true, document: goalInvoiceDocumentFixture(NOW) });
+      if (url.includes(`/api/documents/${GOAL_HOURS_DOCUMENT_ID}`) && method === 'GET')
+        return Response.json({ ok: true, document: goalHoursDocumentFixture(NOW) });
+      if (url.includes(`/api/files/saved/${GOAL_W9_FILE_ID}`)) return original('/dev/w9-sample.pdf');
+      if (url.includes('/api/tools/list_drafts')) return Response.json({ drafts: [goalDraftFixture(NOW)] });
+      if (url.includes('/api/tools/update_draft') || url.includes('/api/tools/save_draft'))
+        return Response.json({ ok: true, draft: goalDraftFixture(NOW) });
+      if (url.includes('/api/secure-details/allow-send')) {
+        allowed = true;
+        const body = JSON.parse(String(init?.body ?? '{}')) as { scope?: string };
+        return Response.json(
+          body.scope === 'once'
+            ? { ok: true, scope: 'once', allowToken: 'tok_preview', expiresAt: NOW + 600_000 }
+            : { ok: true, scope: 'always' },
+        );
+      }
+      if (url.includes('/api/compose')) {
+        if (askForAllow && !allowed)
+          return Response.json(
+            {
+              ok: false,
+              code: 'needs_allow',
+              grant: 'send',
+              sendId: 'outbox:preview',
+              domains: ['bramble-press.example.com'],
+              allow: [
+                {
+                  itemId: 'secure_tax_id',
+                  itemLabel: 'Tax ID',
+                  fieldLabels: ['Social security number'],
+                  domains: ['bramble-press.example.com'],
+                },
+              ],
+              error: 'A sealed file needs your permission for this send.',
+            },
+            { status: 409 },
+          );
+        return Response.json({ ok: true, sent: true });
+      }
       return original(input, init);
     }) as typeof fetch;
     return null;
@@ -364,9 +520,11 @@ function ThreadPreview() {
   useEffect(() => setReady(true), []);
   const transport = useMemo(() => createFixtureTransport(), []);
   const [region, setRegion] = useState<ThreadRegion | undefined>(undefined);
+  const [tab, setTab] = useState<string | null>(params.get('tab'));
+  const [sentDrafts, setSentDrafts] = useState<Record<string, string>>({});
   const built = useMemo(
-    () => buildModel(state, wide, region ?? regionParam),
-    [state, wide, region, regionParam],
+    () => buildModel(state, wide, region ?? regionParam, { tab, sentDrafts }),
+    [state, wide, region, regionParam, tab, sentDrafts],
   );
   const handlers: ThreadHandlers = useMemo(
     () => ({
@@ -390,6 +548,19 @@ function ThreadPreview() {
       onOpenDocument: () => setRegion('document'),
       onCloseDocument: () => setRegion(null),
       onDocumentDone: () => setRegion(null),
+      onHandleGoal: noop,
+      onOpenPackage: (_run, key) => {
+        setTab(key ? tabNameOf(key) : null);
+        setRegion('document');
+      },
+      onOpenItem: (_run, key) => {
+        setTab(tabNameOf(key));
+        setRegion('document');
+      },
+      onSelectTab: (key) => setTab(tabNameOf(key)),
+      onDoneContinue: () => setRegion(null),
+      onOpenSource: noop,
+      onDraftSent: (draftId) => setSentDrafts((current) => ({ ...current, [draftId]: '3:02 PM' })),
       onAnswerWorkQuestion: noop,
       onSetWorkState: noop,
       onError: noop,

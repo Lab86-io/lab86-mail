@@ -69,6 +69,8 @@ export interface SecureItemView {
   label: string;
   /** Registrable domains or API hosts the item may be used on. */
   sites: string[];
+  /** Mail domains the item may fill a sealed file for at send time ("Always for mail to {domain}"). */
+  mailDomains?: string[];
   /** Field name → masked hint ("••••", "ends 4821", "sk-…f3a2"). */
   hints: Record<string, string>;
   /** Plain facts that are safe to show: an ID type, a region, a country, an expiry month. */
@@ -92,6 +94,9 @@ export type SecureUseOutcome =
   | 'allowed_once'
   | 'allowed_always'
   | 'denied';
+
+/** The use outcomes of a sealed file, written by the server: one send, mail to a domain from now on, a download. */
+export type SecureSendUseOutcome = 'allowed_send_once' | 'allowed_send_always' | 'downloaded';
 
 export interface SecureUseView {
   id: string;
@@ -128,6 +133,8 @@ export interface SecureItemCreate {
 export interface SecureItemUpdate {
   label?: string;
   sites?: string[];
+  /** Replaces the mail domain list. Removing one needs no check. */
+  mailDomains?: string[];
   values?: Record<string, unknown>;
 }
 

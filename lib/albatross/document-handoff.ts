@@ -49,6 +49,13 @@ export function documentHandoffFor(
       return found?.id === target.id;
     });
     if (made) return run;
+    // A package item (docs/albatross-goal-runs.md G3) names its document too.
+    const inPackage = (run.items ?? []).some((item) => {
+      if (item.kind !== 'document' && item.kind !== 'sheet' && item.kind !== 'deck') return false;
+      const found = documentTargetOf(item.url ?? null, item.id ?? null);
+      return found?.id === target.id;
+    });
+    if (inPackage) return run;
   }
   return null;
 }

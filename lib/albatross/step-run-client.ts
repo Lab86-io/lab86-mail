@@ -401,7 +401,9 @@ export function readyForYouRows(items: readonly StepRunHandoffItem[]): ReadyForY
       action: {
         label,
         behaviour:
-          !packageHandoff && behaviour && OPENS_IN_PLACE.has(behaviour.kind) ? behaviour : { kind: 'open_work' },
+          !packageHandoff && behaviour && OPENS_IN_PLACE.has(behaviour.kind)
+            ? behaviour
+            : { kind: 'open_work' },
       },
     });
   }
@@ -438,7 +440,10 @@ export function documentsWaitingRows(items: readonly StepRunHandoffItem[]): Docu
     if (!isOpenHandoff(run) || !run.next) continue;
     const packageItems = (run.items ?? []).filter(
       (entry) =>
-        (entry.kind === 'document' || entry.kind === 'sheet' || entry.kind === 'deck' || entry.kind === 'file') &&
+        (entry.kind === 'document' ||
+          entry.kind === 'sheet' ||
+          entry.kind === 'deck' ||
+          entry.kind === 'file') &&
         entry.state !== 'ready',
     );
     if (packageItems.length) {

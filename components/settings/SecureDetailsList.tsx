@@ -53,7 +53,7 @@ export type SecureUsesState =
   | { status: 'error' }
   | { status: 'ready'; uses: SecureUseView[] };
 
-export type SecureItemAction = 'replace' | 'rename' | 'remove_site' | 'add_site' | 'delete';
+export type SecureItemAction = 'replace' | 'rename' | 'remove_site' | 'add_site' | 'remove_mail' | 'delete';
 
 export interface SecureItemNote {
   text: string;
@@ -78,6 +78,8 @@ export interface SecureDetailsListProps {
   onRename: (item: SecureItemView, label: string) => Promise<boolean>;
   onRemoveSite: (item: SecureItemView, site: string) => void;
   onAddSite: (item: SecureItemView, raw: string) => Promise<boolean>;
+  /** Removes a mail domain the item may fill a sealed file for. No check. */
+  onRemoveMailDomain?: (item: SecureItemView, domain: string) => void;
   onDelete: (item: SecureItemView) => void;
   onAdd: (kind: SecureItemKind) => void;
   /** The "In the shared browser" group, after the list. */
@@ -256,6 +258,7 @@ function SecureItemDetail({
   onRename,
   onRemoveSite,
   onAddSite,
+  onRemoveMailDomain,
   onDelete,
 }: SecureDetailsListProps & { item: SecureItemView; now: number }) {
   const id = useId();
@@ -443,6 +446,30 @@ function SecureItemDetail({
             {note?.text ?? SECURE_COPY.addSiteHint}
           </span>
         </form>
+        {item.mailDomains?.length ? (
+          <div data-slot="secure-mail-domains" className="mt-3">
+            <p className="mb-1 text-[11.5px] font-medium text-[var(--color-text-muted)]">
+              {SECURE_COPY.mailTitle}
+            </p>
+            {item.mailDomains.map((domain) => (
+              <div
+                key={domain}
+                className="grid grid-cols-[136px_1fr_auto] items-baseline gap-x-4 border-t border-[var(--color-list-divider)] py-1.5 last:border-b"
+              >
+                <span className="text-[12px]">{SECURE_COPY.mailTo(domain)}</span>
+                <span className="text-[12.5px] text-[var(--color-text-muted)]">{SECURE_COPY.mailAlways}</span>
+                <button
+                  type="button"
+                  className="text-[11.5px] font-medium text-[var(--color-text-muted)] hover:underline disabled:opacity-50"
+                  disabled={Boolean(own) || !onRemoveMailDomain}
+                  onClick={() => onRemoveMailDomain?.(item, domain)}
+                >
+                  {own === 'remove_mail' ? SECURE_COPY.saving : SECURE_COPY.remove}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div>

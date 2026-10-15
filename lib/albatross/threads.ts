@@ -5,7 +5,7 @@
 
 import type { RunActivity, ThreadStateView } from '@/convex/albatrossThreads';
 import { truncateText } from '../shared/text';
-import { packageLine } from './goal-run-view';
+import { GOAL_RUN_COPY, packageLine } from './goal-run-view';
 import { isClosed, type WorkStateInput, needsYou as workNeedsYou } from './work-state';
 
 export type ThreadStatus =
@@ -128,8 +128,11 @@ export function threadStatus(
  * back to the log line and the next detail.
  */
 export interface GoalRunActivityFields {
+  goal?: boolean;
+  /** The server sends the newest message as `logLine` for a goal run; `message` and `doing` are read when present. */
   message?: string | null;
   doing?: string | null;
+  itemCount?: number | null;
   items?: ReadonlyArray<{ title: string; state?: string }> | null;
 }
 
@@ -165,9 +168,13 @@ function preview(
         ? `${work.openQuestions} questions wait for you.`
         : 'A question waits for you.';
     case 'your_turn':
-    case 'ready_for_you':
+    case 'ready_for_you': {
       if (goal.items && goal.items.length > 1) return line(packageLine(goal.items));
-      return line(run?.nextDetail) || line(goal.message) || line(run?.summary);
+      const count = goal.itemCount ?? 0;
+      const detail = line(run?.nextDetail) || line(goal.message) || line(run?.summary);
+      if (count > 1) return line(`${GOAL_RUN_COPY.packageItems(count)}. ${detail}`.trim());
+      return detail;
+    }
     case 'did_not_finish':
       return line(run?.error) || line(run?.summary) || line(step ? `Did not finish: ${step}` : '');
     case 'stopped':

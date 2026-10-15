@@ -46,7 +46,11 @@ describe('the buttons of a goal handoff', () => {
     const run = { ...runs.goalPackage, next: { ...runs.goalPackage.next!, label: 'Read and send' } };
     expect(runBlockAction(run)).toMatchObject({ kind: 'package', label: 'Read and send' });
     const noNext = { ...runs.goalPackage, next: null };
-    expect(runBlockAction(noNext)).toMatchObject({ kind: 'package', label: 'Open the package', activeKey: `draft:${GOAL_DRAFT_ID}` });
+    expect(runBlockAction(noNext)).toMatchObject({
+      kind: 'package',
+      label: 'Open the package',
+      activeKey: `draft:${GOAL_DRAFT_ID}`,
+    });
   });
 
   test('with no items and no next, the run continues', () => {
@@ -73,7 +77,14 @@ describe('the buttons of a goal handoff', () => {
   test('a result that opens a page offers the page and Done, continue', () => {
     const run = {
       ...runs.goalPackage,
-      items: [{ kind: 'page' as const, url: 'https://example.com/portal', title: 'Vendor portal', state: 'check' as const }],
+      items: [
+        {
+          kind: 'page' as const,
+          url: 'https://example.com/portal',
+          title: 'Vendor portal',
+          state: 'check' as const,
+        },
+      ],
       next: {
         ...runs.goalPackage.next!,
         kind: 'review' as const,
@@ -91,12 +102,17 @@ describe('the buttons of a goal handoff', () => {
       'Albatross stopped at its time limit. The next run starts from the checklist.',
     );
     expect(stoppedReason(runs.goalStoppedTime)).toBe(RUN_STATE_COPY.stoppedTime);
-    expect(stoppedReason({ ...runs.goalStoppedTime, stoppedBy: 'cost' }, { goal: true })).toContain('cost limit');
+    expect(stoppedReason({ ...runs.goalStoppedTime, stoppedBy: 'cost' }, { goal: true })).toContain(
+      'cost limit',
+    );
   });
 
   test('a question, a failure, and a done run keep their rules', () => {
     expect(runBlockAction(runs.goalNeedsAnswer)).toEqual({ kind: 'none' });
-    expect(runBlockAction(runs.goalFailed, { startable: true })).toEqual({ kind: 'start', label: 'Try again' });
+    expect(runBlockAction(runs.goalFailed, { startable: true })).toEqual({
+      kind: 'start',
+      label: 'Try again',
+    });
     expect(runBlockAction(runs.goalDone)).toEqual({ kind: 'none' });
     expect(runBlockDoneContinue(runs.goalDone)).toBe(false);
   });
@@ -112,21 +128,41 @@ describe('the buttons of a goal handoff', () => {
 describe('the header word of a goal Work', () => {
   test('the state alone, no step count', () => {
     const detail = goalDetailFixture(NOW);
-    expect(planLine(threadStateInput(detail, [runs.goalRunning]))).toEqual({ text: 'In progress', state: 'running' });
-    expect(planLine(threadStateInput(detail, [runs.goalQueued]))).toEqual({ text: 'Starts soon', state: 'running' });
-    expect(planLine(threadStateInput(detail, [runs.goalPackage]))).toEqual({ text: 'Ready for you', state: 'waiting' });
-    expect(planLine(threadStateInput(detail, [runs.goalYourTurn]))).toEqual({ text: 'Your turn', state: 'waiting' });
-    expect(planLine(threadStateInput(detail, [runs.goalStoppedTime]))).toEqual({ text: 'Stopped', state: 'waiting' });
+    expect(planLine(threadStateInput(detail, [runs.goalRunning]))).toEqual({
+      text: 'In progress',
+      state: 'running',
+    });
+    expect(planLine(threadStateInput(detail, [runs.goalQueued]))).toEqual({
+      text: 'Starts soon',
+      state: 'running',
+    });
+    expect(planLine(threadStateInput(detail, [runs.goalPackage]))).toEqual({
+      text: 'Ready for you',
+      state: 'waiting',
+    });
+    expect(planLine(threadStateInput(detail, [runs.goalYourTurn]))).toEqual({
+      text: 'Your turn',
+      state: 'waiting',
+    });
+    expect(planLine(threadStateInput(detail, [runs.goalStoppedTime]))).toEqual({
+      text: 'Stopped',
+      state: 'waiting',
+    });
     expect(planLine(threadStateInput(detail, [runs.goalNeedsAnswer]))).toEqual({
       text: 'Needs your answer',
       state: 'needs_answer',
     });
-    expect(planLine(threadStateInput(detail, [runs.goalFailed]))).toEqual({ text: 'Your move', state: 'ready' });
+    expect(planLine(threadStateInput(detail, [runs.goalFailed]))).toEqual({
+      text: 'Your move',
+      state: 'ready',
+    });
     expect(planLine(threadStateInput(detail, []))).toEqual({ text: 'Your move', state: 'ready' });
   });
 
   test('a done or put-down Work keeps its words', () => {
-    expect(planLine(threadStateInput(goalDetailFixture(NOW, { workState: 'done' }), [runs.goalDone]))).toEqual({
+    expect(
+      planLine(threadStateInput(goalDetailFixture(NOW, { workState: 'done' }), [runs.goalDone])),
+    ).toEqual({
       text: 'Done',
       state: 'done',
     });

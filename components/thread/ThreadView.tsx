@@ -49,6 +49,7 @@ import {
 import { InlineComposer } from './InlineComposer';
 import { JevMailDetails } from './JevMailDetails';
 import { blockSenderWithUndo, UnsubscribeDialog } from './UnsubscribeDialog';
+import { useAllowSend } from './use-allow-send';
 
 // One vocabulary for header icon groups: a segmented control strip. The ring
 // offset matches the reader card the header now sits on.
@@ -72,6 +73,8 @@ const SEGMENT_GROUP =
 export type ThreadViewVariant = 'split' | 'sheet';
 
 export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant } = {}) {
+  // The send permission of a sealed file on a draft (lib/mail/allow-send.ts).
+  const allowSend = useAllowSend();
   // The inbox runs unified; the open thread carries its own concrete account.
   const threadAccount = useClientStore((s) => s.threadAccount);
   const inboxAccount = useClientStore((s) => s.account);
@@ -436,6 +439,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
             <InlineComposer
               mode="new"
               account={fromAccount}
+              allowSend={allowSend}
               initialPrefill={compose.prefill || undefined}
               prefillNonce={compose.nonce}
               onSent={() => closeCompose()}
@@ -670,6 +674,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                 key={`${activeMode}-${activeAnchorMessageId}-${activeNonce}`}
                 mode={activeMode}
                 account={activeAccount}
+                allowSend={allowSend}
                 threadId={threadId}
                 anchorMessageId={activeAnchorMessageId}
                 replyToLabel={replyLabel}

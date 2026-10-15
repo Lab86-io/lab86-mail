@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
   activeTabKey,
-  checklistCount,
   CHECKLIST_STATE_WORD,
+  checklistCount,
   durationLabel,
   fileKindWord,
   formatFileSize,
@@ -67,13 +67,25 @@ describe('a goal run', () => {
 
 describe('the header line', () => {
   test('a run at work says when it started', () => {
-    expect(runWhenLine(runs.goalRunning, { timeZone: 'UTC' })).toEqual({ text: 'Started 6:38 PM', duration: null });
-    expect(runWhenLine(runs.goalQueued, { timeZone: 'UTC' })).toEqual({ text: 'Started 6:43 PM', duration: null });
+    expect(runWhenLine(runs.goalRunning, { timeZone: 'UTC' })).toEqual({
+      text: 'Started 6:38 PM',
+      duration: null,
+    });
+    expect(runWhenLine(runs.goalQueued, { timeZone: 'UTC' })).toEqual({
+      text: 'Started 6:43 PM',
+      duration: null,
+    });
   });
 
   test('a finished run says the start time and the duration beside it, with no dot', () => {
-    expect(runWhenLine(runs.goalPackage, { timeZone: 'UTC' })).toEqual({ text: '6:31 PM', duration: '11 min' });
-    expect(runWhenLine(runs.goalStoppedTime, { timeZone: 'UTC' })).toEqual({ text: '6:13 PM', duration: '30 min' });
+    expect(runWhenLine(runs.goalPackage, { timeZone: 'UTC' })).toEqual({
+      text: '6:31 PM',
+      duration: '11 min',
+    });
+    expect(runWhenLine(runs.goalStoppedTime, { timeZone: 'UTC' })).toEqual({
+      text: '6:13 PM',
+      duration: '30 min',
+    });
   });
 
   test('durations read as minutes, then hours', () => {
@@ -120,7 +132,10 @@ describe('source chips', () => {
     expect(chip.text).toBe('Form W-9 (Rev. March 2024)');
     expect(chip.locator).toBe('irs.gov');
     expect(chip.external).toBe(true);
-    expect(chip.behaviour).toEqual({ kind: 'open_url', url: 'https://www.irs.gov/forms-pubs/about-form-w-9' });
+    expect(chip.behaviour).toEqual({
+      kind: 'open_url',
+      url: 'https://www.irs.gov/forms-pubs/about-form-w-9',
+    });
     expect(sourceChipName(chip)).toBe('Form W-9 (Rev. March 2024), irs.gov, opens in a new tab');
     expect(chip.title).toContain('https://www.irs.gov/');
   });
@@ -128,7 +143,9 @@ describe('source chips', () => {
   test('a mail chip opens the thread in its account; its locator is the server detail', () => {
     const chip = sourceChip(goalSourceFixtures.mailHours);
     expect(chip.locator).toBeNull();
-    expect(sourceChip({ ...goalSourceFixtures.mailHours, detail: 'Priya, Jul 30' } as never).locator).toBe('Priya, Jul 30');
+    expect(sourceChip({ ...goalSourceFixtures.mailHours, detail: 'Priya, Jul 30' } as never).locator).toBe(
+      'Priya, Jul 30',
+    );
     expect(sourceChipName(chip)).toBe('July hours');
     expect(chip.behaviour).toEqual({
       kind: 'open_mail',
@@ -164,9 +181,13 @@ describe('source chips', () => {
   test('a file chip needs a server link; a calendar chip needs an id', () => {
     expect(sourceChip({ kind: 'file', title: 'Notes', id: 'upload_1' }).behaviour).toBeNull();
     expect(
-      sourceChip({ kind: 'file', title: 'Notes', id: 'upload_1', url: '/?view=files&file=upload_1' }).behaviour,
+      sourceChip({ kind: 'file', title: 'Notes', id: 'upload_1', url: '/?view=files&file=upload_1' })
+        .behaviour,
     ).toEqual({ kind: 'open_file', url: '/?view=files&file=upload_1', id: 'upload_1' });
-    expect(sourceChip(goalSourceFixtures.calendar).behaviour).toEqual({ kind: 'open_calendar', id: 'evt_invoice_day' });
+    expect(sourceChip(goalSourceFixtures.calendar).behaviour).toEqual({
+      kind: 'open_calendar',
+      id: 'evt_invoice_day',
+    });
   });
 
   test('a long title is cut for the chip and kept in the tooltip', () => {
@@ -190,8 +211,11 @@ describe('source chips', () => {
   test('the locator never joins parts with a middle dot', () => {
     expect(sourceLocator(goalSourceFixtures.w9)).toBe('irs.gov');
     expect(sourceLocator(goalSourceFixtures.mailHours)).toBeNull();
-    expect(sourceLocator({ kind: 'calendar', title: 'Invoice day', id: 'evt_1', detail: 'Oct 15' } as never)).toBe('Oct 15');
-    for (const source of Object.values(goalSourceFixtures)) expect(sourceLocator(source) ?? '').not.toContain('·');
+    expect(
+      sourceLocator({ kind: 'calendar', title: 'Invoice day', id: 'evt_1', detail: 'Oct 15' } as never),
+    ).toBe('Oct 15');
+    for (const source of Object.values(goalSourceFixtures))
+      expect(sourceLocator(source) ?? '').not.toContain('·');
   });
 });
 
@@ -227,7 +251,11 @@ describe('the package', () => {
     expect(tabs.map((tab) => tab.pane.kind)).toEqual(['draft', 'document', 'document', 'file']);
     expect(tabs.map((tab) => tab.stillYours)).toEqual([true, true, false, true]);
     expect(tabs[0].label).toBe('Invoice 0007 to Priya Natarajan');
-    expect(packageTabs({ items: [{ ...goalItemsFixture()[0], title: 'A very long draft title that runs past the tab width' }] })[0].label.length).toBeLessThanOrEqual(32);
+    expect(
+      packageTabs({
+        items: [{ ...goalItemsFixture()[0], title: 'A very long draft title that runs past the tab width' }],
+      })[0].label.length,
+    ).toBeLessThanOrEqual(32);
   });
 
   test('an approval, an event, or a page has no pane; a file needs a server link', () => {
@@ -235,7 +263,9 @@ describe('the package', () => {
     expect(tabPane({ kind: 'event', id: 'evt_1', title: 'Call', state: 'ready' })).toBeNull();
     expect(tabPane({ kind: 'file', id: 'upload_2', title: 'A file', state: 'ready' })).toBeNull();
     expect(tabPane({ kind: 'draft', title: 'No id', state: 'check' })).toBeNull();
-    expect(tabPane({ kind: 'sheet', url: '/?view=files&office=off_1', title: 'Sheet', state: 'ready' })).toEqual({
+    expect(
+      tabPane({ kind: 'sheet', url: '/?view=files&office=off_1', title: 'Sheet', state: 'ready' }),
+    ).toEqual({
       kind: 'document',
       target: { provider: 'office', id: 'off_1' },
     });
@@ -279,7 +309,9 @@ describe('the package', () => {
   });
 
   test('the state line of an item', () => {
-    expect(itemStateLine({ state: 'blanks', blanks: ['hours', 'rate'] }).text).toBe('Fill in hours and rate.');
+    expect(itemStateLine({ state: 'blanks', blanks: ['hours', 'rate'] }).text).toBe(
+      'Fill in hours and rate.',
+    );
     expect(itemStateLine({ state: 'blanks', blanks: [] }).text).toBe('Check it.');
     expect(itemStateLine({ state: 'ready' })).toEqual({ text: 'Ready.', tone: 'muted' });
   });
@@ -301,7 +333,9 @@ describe('the package', () => {
   });
 
   test('a document target finds its item', () => {
-    expect(itemForTarget(items, { provider: 'albatross', id: GOAL_INVOICE_DOCUMENT_ID })?.title).toBe('Invoice 0007');
+    expect(itemForTarget(items, { provider: 'albatross', id: GOAL_INVOICE_DOCUMENT_ID })?.title).toBe(
+      'Invoice 0007',
+    );
     expect(itemForTarget(items, { provider: 'albatross', id: 'doc_other' })).toBeNull();
   });
 });
@@ -314,9 +348,9 @@ describe('saved files', () => {
 
   test('kind words and sizes', () => {
     expect(fileKindWord('application/pdf', 'x.pdf')).toBe('PDF');
-    expect(fileKindWord('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'a.docx')).toBe(
-      'Word file',
-    );
+    expect(
+      fileKindWord('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'a.docx'),
+    ).toBe('Word file');
     expect(fileKindWord(null, 'Hours.xlsx')).toBe('Excel file');
     expect(fileKindWord('image/png', 'a.png')).toBe('Image');
     expect(fileKindWord('application/octet-stream', 'a.bin')).toBe('File');

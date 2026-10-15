@@ -59,6 +59,7 @@ import { type DriveCapability, driveReconnectMessage } from '@/lib/files/drive-c
 import { fileMatchesType, mergeFilePages, readFilePage } from '@/lib/files/library-client';
 import type { CloudFileItem, CloudFileProvider } from '@/lib/files/providers';
 import { cn } from '@/lib/utils';
+import { SavedFilePane } from './SavedFilePane';
 
 interface Connection {
   connectionId: string;
@@ -219,6 +220,8 @@ export function FilesSurface() {
   const [openDocumentId, setOpenDocumentId] = useState<string | null>(null);
   const [openOfficeId, setOpenOfficeId] = useState<string | null>(null);
   const [openGoogleFile, setOpenGoogleFile] = useState<GoogleEditorSource | null>(null);
+  // A saved file (`?view=files&file=<id>`, the link the server writes for a filled PDF).
+  const [openSavedFileId, setOpenSavedFileId] = useState<string | null>(null);
 
   const statusQuery = useQuery({
     queryKey: ['cloud-file-status'],
@@ -277,6 +280,7 @@ export function FilesSurface() {
           ? { connectionId, fileId, mimeType }
           : null,
       );
+      setOpenSavedFileId(fileId && !params.get('provider') ? fileId : null);
     };
     readOpenFile();
     const onPopState = () => {
@@ -328,6 +332,7 @@ export function FilesSurface() {
     params.delete('document');
     params.delete('office');
     setOpenOfficeId(null);
+    setOpenSavedFileId(null);
     params.delete('provider');
     params.delete('connection');
     params.delete('file');
@@ -782,6 +787,22 @@ export function FilesSurface() {
     return <OfficeEditor key={openOfficeId} documentId={openOfficeId} onClose={closeDocument} />;
   if (openDocumentId) {
     return <DocumentEditor key={openDocumentId} documentId={openDocumentId} onClose={closeDocument} />;
+  }
+  if (openSavedFileId) {
+    const row = libraryQuery.data?.pages
+      .flatMap((page) => page.items)
+      .find((item) => item.id === openSavedFileId) as
+      | { name?: string; contentType?: string; mimeType?: string }
+      | undefined;
+    return (
+      <SavedFilePane
+        key={openSavedFileId}
+        fileId={openSavedFileId}
+        title={row?.name || 'Saved file'}
+        contentType={row?.contentType ?? row?.mimeType ?? null}
+        onClose={closeDocument}
+      />
+    );
   }
   if (openGoogleFile) {
     return (

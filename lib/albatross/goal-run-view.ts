@@ -145,7 +145,8 @@ export function runWhenLine(
 ): { text: string; duration: string | null } {
   const start = run.startedAt ?? run.createdAt;
   const time = formatRunTime(start, format.locale, format.timeZone);
-  if (run.state === 'queued' || run.state === 'running') return { text: GOAL_RUN_COPY.started(time), duration: null };
+  if (run.state === 'queued' || run.state === 'running')
+    return { text: GOAL_RUN_COPY.started(time), duration: null };
   const end = run.finishedAt ?? run.updatedAt;
   return { text: time, duration: durationLabel(end - start) };
 }
@@ -234,7 +235,9 @@ export function sourceChip(source: RunSource, tabs: readonly DocumentTab[] = [])
       behaviour = url ? { kind: 'open_url', url } : null;
       break;
     case 'mail':
-      behaviour = source.id ? { kind: 'open_mail', threadId: source.id, accountId: source.accountId ?? null } : null;
+      behaviour = source.id
+        ? { kind: 'open_mail', threadId: source.id, accountId: source.accountId ?? null }
+        : null;
       break;
     case 'file':
       if (tab) behaviour = { kind: 'open_tab', key: tab.key };
@@ -284,12 +287,15 @@ export function runSources(run: Pick<ThreadRunView, 'messages'>): RunSource[] {
   return out;
 }
 
-
 // ---------------------------------------------------------------------------
 // The checklist and the live line.
 // ---------------------------------------------------------------------------
 
-export function checklistCount(items: readonly ChecklistItem[]): { done: number; total: number; text: string } {
+export function checklistCount(items: readonly ChecklistItem[]): {
+  done: number;
+  total: number;
+  text: string;
+} {
   const done = items.filter((item) => item.state === 'done').length;
   return { done, total: items.length, text: `${done} of ${items.length}` };
 }
@@ -319,7 +325,8 @@ export function liveLine(
   run: Pick<ThreadRunView, 'state' | 'checklist' | 'log'>,
   options: { pastCap?: boolean } = {},
 ): string {
-  if (run.state === 'queued') return options.pastCap ? GOAL_RUN_COPY.startsWhenRunEnds : GOAL_RUN_COPY.startsSoon;
+  if (run.state === 'queued')
+    return options.pastCap ? GOAL_RUN_COPY.startsWhenRunEnds : GOAL_RUN_COPY.startsSoon;
   const doing = doingLine(run);
   if (doing) return doing;
   const newest = [...run.log].sort((a, b) => a.at - b.at).at(-1)?.text;
@@ -493,10 +500,7 @@ export function newestPackageRun(runs: readonly ThreadRunView[]): ThreadRunView 
 }
 
 /** The handoff item that a document target belongs to, if any. */
-export function itemForTarget(
-  items: readonly HandoffItem[],
-  target: DocumentTarget,
-): HandoffItem | null {
+export function itemForTarget(items: readonly HandoffItem[], target: DocumentTarget): HandoffItem | null {
   return (
     items.find((item) => {
       if (item.kind !== 'document' && item.kind !== 'sheet' && item.kind !== 'deck') return false;
@@ -525,7 +529,10 @@ export function savedFileDownloadUrl(fileId: string): string {
 }
 
 /** The kind word of an attachment or a file, from its content type and name. */
-export function fileKindWord(contentType: string | null | undefined, name: string | null | undefined): string {
+export function fileKindWord(
+  contentType: string | null | undefined,
+  name: string | null | undefined,
+): string {
   const type = String(contentType || '').toLowerCase();
   const ext = String(name || '')
     .toLowerCase()
