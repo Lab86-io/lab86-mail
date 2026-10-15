@@ -12,8 +12,7 @@ notice while keeping the current work in place, then review its changes. Future
 summary authors must demonstrate the actual feature changed in their release.
 
 Jakob requested pictures or HTML demonstrations and explicitly asked for the
-frontend design skill. Loaded the installed
-`/home/jjalangtry/.claude/skills/frontend-design/SKILL.md`.
+frontend design skill. Loaded the installed frontend-design skill.
 
 Design plan before implementation:
 
@@ -73,8 +72,7 @@ body type. Avoid automatic modal interruptions.
   Raycast was also inspected in installed Chromium: releases use distinct New,
   Improvements, and Fixes headings. Local browser verification uses installed Playwright/Chromium as the explicit
   unavailable-browser fallback. No host security settings were changed.
-- Sprebuild was read over SSH on `lab86` at
-  `/Users/jakob/statpearls/repos/sprebuild`: `docs/UPDATES.md`,
+- The Sprebuild source was inspected: `docs/UPDATES.md`,
   `components/updates/AppUpdates.tsx`, and the release receipt/discovery flow.
   Its `sprebuild-changelog-summary` checkout was also inspected:
   `components/updates/Changelog.tsx`, `lib/releases/summary.ts`, and its summary
@@ -155,5 +153,13 @@ The original checkout was 963 commits behind current main. Applied this feature
 to `953b33b9` (v0.16.38) in an isolated checkout without production credentials.
 Preserved the newer Settings footer and placed the update controls with Activity
 in the lower sidebar. The validation above records the original implementation;
-the PR also runs current-main CI, including the separate test typecheck and
-production CSP/browser verification.
+the PR also runs current-main CI, including the separate test typecheck.
+
+Current-main local validation passes: 7,866 tests passed, one skipped, and no
+failures across 764 files. App and test typechecks, full lint (two existing
+warnings), production build, and 36 focused/regression tests pass. All new
+update logic has 100% line coverage. Chromium against the production build
+verified that demos remain styled and interactive under enforced CSP, with
+keyboard and pointer controls, closed full notes, 320px/360px layouts, dark
+appearance, and uncached release discovery. There were no uncaught page errors;
+the opaque frame sandbox continues to block script execution.
