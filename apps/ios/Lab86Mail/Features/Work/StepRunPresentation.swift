@@ -119,9 +119,16 @@ enum RunBlockHandoffAction: Equatable, Sendable {
     }
 
     /// "Mark step done" as a second button: a result that waits for the
-    /// user's check, where the primary button opens the result.
+    /// user's check, where the primary button opens the result. On a goal
+    /// run the button reads "Done, continue", and it also sits on a "your
+    /// turn" handoff that is not a page handoff (docs/albatross-goal-runs.md).
     static func marksDone(_ run: StepRunView) -> Bool {
-        guard run.state == .handedOff, run.outcome == .readyForYou else { return false }
+        guard run.state == .handedOff else { return false }
+        if run.outcome == .readyForYou {
+            if case .next(let behaviour, _) = primary(for: run) { return opensResult(behaviour) }
+            return false
+        }
+        guard run.isGoal, run.outcome == .yourTurn, !StepRunNextBehaviour.showsContinue(run.next) else { return false }
         if case .next(let behaviour, _) = primary(for: run) { return opensResult(behaviour) }
         return false
     }
@@ -159,15 +166,25 @@ enum StepRunCopy {
         }
     }
 
-    /// The row title in the Brief: what Albatross does, or the step that waits.
+    /// The row title in the Brief: what Albatross does, or the step that
+    /// waits. A goal run's step title is the Work title, which the row
+    /// already shows, so the caption is the state word alone.
     static func readyRowTitle(_ run: StepRunView) -> String {
-        run.state.isOpen ? workingLine(run) : run.stepTitle
+        if run.isGoal { return headline(run) }
+        return run.state.isOpen ? workingLine(run) : run.stepTitle
     }
 
     /// The one line of a Brief row.
     static func readyRowLine(_ run: StepRunView) -> String {
         if run.state.isOpen { return progressLine(run) }
         return run.summary ?? run.next?.detail ?? headline(run)
+    }
+
+    /// The package line of a Brief row, under the summary: "3 items: …".
+    /// Nil for a run that is at work or has no package.
+    static func readyRowPackageLine(_ run: StepRunView) -> String? {
+        guard !run.state.isOpen else { return nil }
+        return PackageRows.line(run.items)
     }
 
     /// The document id inside an `openPath` (`/?view=files&office=<id>`).
@@ -316,8 +333,12 @@ enum StepRunActions {
         case .draft:
             guard let id = artifact.referenceID else { return false }
             return await open(.openDraft(id: id, accountID: artifact.accountID), environment: environment, openURL: openURL)
-        case .document:
+        case .document, .deck:
             return await open(.openDocument(id: artifact.referenceID, url: artifact.url), environment: environment, openURL: openURL)
+        case .file:
+            // A saved file opens in document mode inside the thread; outside
+            // the thread only an absolute link opens.
+            return openWebURL(artifact.url, openURL: openURL)
         case .approval:
             return await open(.openApproval(id: artifact.referenceID), environment: environment, openURL: openURL)
         case .event:

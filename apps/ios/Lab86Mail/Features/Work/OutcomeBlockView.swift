@@ -13,6 +13,9 @@ struct OutcomeBlockView: View {
     var runs: [ThreadRunView] = []
     var busy = false
     let onHandle: (WorkDetail.ExecutionStep) -> Void
+    /// "Handle it" on a goal Work (docs/albatross-goal-runs.md, G1): a run on
+    /// the whole goal, with no step.
+    var onHandleGoal: () -> Void = {}
     let onOpenPlan: () -> Void
     let onOpenDetails: () -> Void
 
@@ -34,7 +37,9 @@ struct OutcomeBlockView: View {
             }
             if let detail {
                 shapeLine(detail)
-                if detail.execution.guideSteps.isEmpty {
+                if ThreadGoal.isGoalWork(detail: detail, runs: runs) {
+                    goalRow
+                } else if detail.execution.guideSteps.isEmpty {
                     planningRow
                 } else {
                     steps(detail)
@@ -45,6 +50,20 @@ struct OutcomeBlockView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
+    }
+
+    /// A goal Work has no step rows and no plan to wait for. "Handle it"
+    /// shows when nothing works and nothing waits; the run block and the
+    /// Checklist sheet show the checklist, so it does not repeat here.
+    @ViewBuilder private var goalRow: some View {
+        if threadState.offersHandleIt {
+            Button(busy ? RunBlockCopy.handleItBusy : RunBlockCopy.handleIt) { onHandleGoal() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(busy)
+                .help("Albatross works on the whole goal and stops when it needs you.")
+                .padding(.top, 2)
+        }
     }
 
     private var title: String {

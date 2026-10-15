@@ -91,6 +91,8 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
             case draft, document, approval, session, question, url, card, event
             /// A Passwords and IDs item (`allow_secure`): `id` is the item id.
             case secure
+            /// A saved file (docs/albatross-goal-runs.md): `id` is the file id.
+            case file
             case unknown
 
             init(from decoder: any Decoder) throws {
@@ -263,6 +265,9 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
     struct Artifact: Identifiable, Hashable, Codable, Sendable {
         enum Kind: String, Hashable, Codable, Sendable {
             case document, draft, event, card, approval, page
+            /// A deck from `document_create` with the deck kind, and a saved
+            /// file from `web_file_save` or `pdf_form_fill` (docs/albatross-goal-runs.md).
+            case deck, file
             case unknown
 
             init(from decoder: any Decoder) throws {
@@ -281,7 +286,8 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
                 case .card: "Card"
                 case .approval: "Approval"
                 case .page: "Page"
-                case .unknown: "File"
+                case .deck: "Deck"
+                case .file, .unknown: "File"
                 }
             }
         }
@@ -336,6 +342,21 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
     /// The run this one continues ("Continue" after a handoff). Optional so
     /// cached runs from older servers keep decoding.
     let parentRunID: String?
+    // Goal runs (docs/albatross-goal-runs.md). A step run, and a row from an
+    // older server, has `goal` false and the four lists empty.
+    /// The run works on the whole goal, not on one plan step.
+    let goal: Bool
+    /// What the run wrote to the user while it worked, oldest first.
+    let messages: [RunMessage]
+    /// The run's own checklist, newest list only.
+    let checklist: [ChecklistItem]
+    /// The package the run hands over, the most important first.
+    let items: [HandoffItem]
+    /// Things the user must check, one short line each.
+    let unsure: [String]
+
+    /// The most "Not sure" lines a run carries (the web `UNSURE_MAX`).
+    static let unsureLimit = 4
 
     init(
         id: String,
@@ -357,7 +378,12 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         startedAt: Date? = nil,
         updatedAt: Date? = nil,
         finishedAt: Date? = nil,
-        parentRunID: String? = nil
+        parentRunID: String? = nil,
+        goal: Bool = false,
+        messages: [RunMessage] = [],
+        checklist: [ChecklistItem] = [],
+        items: [HandoffItem] = [],
+        unsure: [String] = []
     ) {
         self.id = id
         self.workID = workID
@@ -379,6 +405,11 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         self.updatedAt = updatedAt
         self.finishedAt = finishedAt
         self.parentRunID = parentRunID
+        self.goal = goal
+        self.messages = messages
+        self.checklist = checklist
+        self.items = items
+        self.unsure = Self.cleanUnsure(unsure)
     }
 
     init?(json: JSONValue) {
@@ -406,10 +437,72 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
         updatedAt = CalendarDateParser.date(json["updatedAt"])
         finishedAt = CalendarDateParser.date(json["finishedAt"])
         parentRunID = json["parentRunId"]?.stringValue?.nilIfBlank
+        goal = json["goal"]?.boolValue ?? false
+        messages = (json["messages"]?.arrayValue ?? []).compactMap(RunMessage.init(json:))
+        checklist = (json["checklist"]?.arrayValue ?? []).compactMap(ChecklistItem.init(json:))
+        items = (json["items"]?.arrayValue ?? []).compactMap(HandoffItem.init(json:))
+        unsure = Self.cleanUnsure((json["unsure"]?.arrayValue ?? []).compactMap(\.stringValue))
+    }
+
+    // Every stored property, so the offline cache encodes all of them. A run
+    // cached before goal runs has none of the five goal keys.
+    private enum CodingKeys: String, CodingKey {
+        case id, workID, stepKey, stepIdentity, stepTitle, state, trigger, outcome, summary, log, next, artifacts
+        case browserSessionID, stoppedBy, error, createdAt, startedAt, updatedAt, finishedAt, parentRunID
+        case goal, messages, checklist, items, unsure
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        workID = try container.decode(String.self, forKey: .workID)
+        let stepKey = try container.decode(String.self, forKey: .stepKey)
+        self.stepKey = stepKey
+        stepIdentity = try container.decodeIfPresent(String.self, forKey: .stepIdentity) ?? stepKey
+        stepTitle = try container.decode(String.self, forKey: .stepTitle)
+        state = try container.decode(State.self, forKey: .state)
+        trigger = try container.decodeIfPresent(Trigger.self, forKey: .trigger) ?? .unknown
+        outcome = try container.decodeIfPresent(Outcome.self, forKey: .outcome)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        log = try container.decodeIfPresent([LogLine].self, forKey: .log) ?? []
+        next = try container.decodeIfPresent(Next.self, forKey: .next)
+        artifacts = try container.decodeIfPresent([Artifact].self, forKey: .artifacts) ?? []
+        browserSessionID = try container.decodeIfPresent(String.self, forKey: .browserSessionID)
+        stoppedBy = try container.decodeIfPresent(StoppedBy.self, forKey: .stoppedBy)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
+        startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
+        finishedAt = try container.decodeIfPresent(Date.self, forKey: .finishedAt)
+        parentRunID = try container.decodeIfPresent(String.self, forKey: .parentRunID)
+        goal = try container.decodeIfPresent(Bool.self, forKey: .goal) ?? false
+        messages = try container.decodeIfPresent([RunMessage].self, forKey: .messages) ?? []
+        checklist = try container.decodeIfPresent([ChecklistItem].self, forKey: .checklist) ?? []
+        items = try container.decodeIfPresent([HandoffItem].self, forKey: .items) ?? []
+        unsure = Self.cleanUnsure(try container.decodeIfPresent([String].self, forKey: .unsure) ?? [])
+    }
+
+    /// The web `cleanUnsure`: one line each, no blank line, no line twice,
+    /// the first four only.
+    static func cleanUnsure(_ raw: [String]) -> [String] {
+        var lines: [String] = []
+        for line in raw {
+            let text = line.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+            guard !text.isEmpty, !lines.contains(text) else { continue }
+            lines.append(text)
+            if lines.count == unsureLimit { break }
+        }
+        return lines
     }
 
     /// The run ended with a handoff and still waits for the user.
     var isHandoff: Bool { state == .handedOff }
+
+    /// A goal run: the server says so, or its key is the goal key.
+    var isGoal: Bool { goal || stepKey == GoalRun.stepKey }
+
+    /// The checklist item the run works on now, for the block's subtitle.
+    var doingItem: ChecklistItem? { checklist.first { $0.state == .doing } }
 
     /// The newest line the runner wrote.
     var latestLogLine: LogLine? { log.last }
@@ -437,7 +530,12 @@ struct StepRunView: Identifiable, Hashable, Codable, Sendable {
             startedAt: startedAt,
             updatedAt: updatedAt,
             finishedAt: finishedAt,
-            parentRunID: parentRunID
+            parentRunID: parentRunID,
+            goal: goal,
+            messages: messages,
+            checklist: checklist,
+            items: items,
+            unsure: unsure
         )
     }
 

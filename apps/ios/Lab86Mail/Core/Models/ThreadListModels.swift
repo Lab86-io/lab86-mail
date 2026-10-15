@@ -87,6 +87,11 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
     let seenAt: Date?
     let unread: Bool
     let closed: Bool
+    /// The newest run is a goal run (docs/albatross-goal-runs.md): its
+    /// preview is the newest message, never the Work title.
+    let goal: Bool
+    /// The items of its package, when it handed one over.
+    let itemCount: Int
 
     var id: String { workID }
 
@@ -107,7 +112,9 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
         lastActivityAt: Date? = nil,
         seenAt: Date? = nil,
         unread: Bool = false,
-        closed: Bool = false
+        closed: Bool = false,
+        goal: Bool = false,
+        itemCount: Int = 0
     ) {
         self.workID = workID
         self.title = title
@@ -126,6 +133,8 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
         self.seenAt = seenAt
         self.unread = unread
         self.closed = closed
+        self.goal = goal
+        self.itemCount = max(0, itemCount)
     }
 
     init?(json: JSONValue) {
@@ -148,7 +157,9 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
             lastActivityAt: CalendarDateParser.date(json["lastActivityAt"]),
             seenAt: CalendarDateParser.date(json["seenAt"]),
             unread: json["unread"]?.boolValue ?? false,
-            closed: json["closed"]?.boolValue ?? false
+            closed: json["closed"]?.boolValue ?? false,
+            goal: json["goal"]?.boolValue ?? false,
+            itemCount: Int(json["itemCount"]?.doubleValue ?? 0)
         )
     }
 
@@ -186,7 +197,9 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
             lastActivityAt: lastActivityAt,
             seenAt: seenAt,
             unread: unread,
-            closed: closed
+            closed: closed,
+            goal: goal,
+            itemCount: itemCount
         )
     }
 
@@ -210,7 +223,9 @@ struct ThreadRow: Identifiable, Hashable, Codable, Sendable {
             lastActivityAt: lastActivityAt,
             seenAt: seenAt,
             unread: unread,
-            closed: closed
+            closed: closed,
+            goal: goal,
+            itemCount: itemCount
         )
     }
 }

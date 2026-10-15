@@ -147,6 +147,14 @@ struct ReadyForYouSection: View {
                         .foregroundStyle(.primary)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
+                    // The package of a goal run (docs/albatross-goal-runs.md, G3).
+                    if let package = StepRunCopy.readyRowPackageLine(item.run) {
+                        Text(package)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())

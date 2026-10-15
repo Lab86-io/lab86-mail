@@ -122,7 +122,11 @@ enum ThreadRowPresentation {
     /// Line 2 of the row: "Status word · preview". Without a word, the
     /// preview alone; without both, today's standing line.
     static func statusLine(_ row: ThreadListRow) -> String {
-        let preview = row.live?.preview?.nilIfBlank ?? (row.working ? row.live?.stepTitle?.nilIfBlank : nil)
+        // A goal run's step title is the Work title: it never repeats as the
+        // preview (docs/albatross-goal-runs.md).
+        let stepTitle = row.live?.stepTitle?.nilIfBlank
+        let fallback = row.working && row.live?.goal != true && stepTitle != row.title ? stepTitle : nil
+        let preview = row.live?.preview?.nilIfBlank ?? fallback
         switch (word(row), preview) {
         case (let word?, let preview?): return "\(word) · \(preview)"
         case (let word?, nil): return word

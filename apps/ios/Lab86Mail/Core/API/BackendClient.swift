@@ -176,6 +176,8 @@ actor BackendClient {
             if http.statusCode == 401 { throw BackendError.unauthorized }
             // POST /api/compose names a refused From address with a `code`.
             if let refusal = ComposeFromRefusal(status: http.statusCode, body: decoded) { throw refusal }
+            // It names refused draft attachments the same way (docs/albatross-goal-runs.md, G3).
+            if let refusal = DraftAttachmentRefusal(status: http.statusCode, body: decoded) { throw refusal }
             let message = decoded?["error"]?.stringValue ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
             throw BackendError.server(status: http.statusCode, message: message)
         }

@@ -29,6 +29,11 @@ struct RunBlockActions {
     /// "Stop and redirect" on an open run (docs/albatross-threads.md, T8).
     /// The button shows only when the owner handles it.
     var redirect: ((ThreadRunView) -> Void)? = nil
+    /// A package row (docs/albatross-goal-runs.md, G3): the item opens in
+    /// document mode, in the composer, or where its kind opens.
+    var openItem: (ThreadRunView, HandoffItem) -> Void = { _, _ in }
+    /// A source capsule under a run message (G2).
+    var openSource: (RunSource) -> Void = { _ in }
 }
 
 /// A V13 save offer the user opened: the run, for the receipt, and its site.
@@ -50,6 +55,9 @@ struct RunBlockView: View {
     var ownsWaitingShortcut = false
     /// A later run continues this one: its "Continue" buttons hide.
     var hasContinuation = false
+    /// The newest run of the thread: its checklist opens by itself while it
+    /// works or after it stopped at a limit.
+    var isNewest = false
     var busy = false
     var pageShown = false
     var questionState = WorkThreadModel.QuestionState()
@@ -65,11 +73,18 @@ struct RunBlockView: View {
 
     @State private var showsWholeLog = false
     @State private var showsLog = false
+    /// Nil until the user opens or folds the checklist: the default rule applies.
+    @State private var showsChecklist: Bool?
 
     private static let shortLogLimit = 3
 
     private var run: StepRunView { view.run }
     private var state: RunBlockState { RunBlockState.from(run) }
+
+    private var checklistOpen: Bool {
+        guard !run.checklist.isEmpty else { return false }
+        return showsChecklist ?? ChecklistSummary.expandedByDefault(isNewest: isNewest, state: state)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -131,9 +146,13 @@ struct RunBlockView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            Text(run.stepTitle)
-                .font(.subheadline.weight(.medium))
-                .fixedSize(horizontal: false, vertical: true)
+            // A goal run never repeats the Work title; at work, while the
+            // checklist is folded, it names the current item once.
+            if let subtitle = RunBlockCopy.subtitle(run, checklistOpen: checklistOpen) {
+                Text(subtitle)
+                    .font(.subheadline.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -147,8 +166,13 @@ struct RunBlockView: View {
     }
 
     private var accessibilityHeader: String {
-        var parts = ["\(RunBlockCopy.headline(run)). \(run.stepTitle)."]
-        if state.isOpen { parts.append("Newest: \(RunBlockCopy.progressLine(run))") }
+        var parts = ["\(RunBlockCopy.headline(run))."]
+        if let subtitle = RunBlockCopy.subtitle(run) { parts.append("\(subtitle).") }
+        if state.isOpen, let newest = run.messages.last {
+            parts.append("Newest: \(RunMessageText.safe(newest.text))")
+        } else if state.isOpen {
+            parts.append("Newest: \(RunBlockCopy.progressLine(run))")
+        }
         else if let summary = run.summary { parts.append(summary) }
         parts.append(StepRunCopy.triggerLine(run))
         return parts.joined(separator: " ")
@@ -158,14 +182,22 @@ struct RunBlockView: View {
 
     private var openBody: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if run.log.count <= 1 {
+            if !run.messages.isEmpty {
+                // A goal run talks (docs/albatross-goal-runs.md, G2): the
+                // messages lead, and the tool lines fold under them.
+                messagesPart
+                checklistDisclosure
+                logDisclosure
+            } else if run.log.count <= 1 {
                 Text(RunBlockCopy.progressLine(run))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .contentTransition(.opacity)
+                checklistDisclosure
             } else {
                 logWell
+                checklistDisclosure
             }
             pageRow
             HStack(spacing: 10) {
@@ -235,19 +267,7 @@ struct RunBlockView: View {
     private func handoffBody(_ outcome: StepRunView.Outcome) -> some View {
         let behaviour = StepRunNextBehaviour.from(run.next)
         return VStack(alignment: .leading, spacing: 12) {
-            summary
-            if RunBlockBlanks.draws(run) {
-                handoffSentence
-            } else if let detail = run.next?.detail, outcome != .needsAnswer {
-                Text(detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if run.next?.kind == .signIn, let offer = run.next?.saveSignIn {
-                saveSignInRow(offer)
-            }
-            artifactRows
+            handoffLead(outcome)
             if case .allowSecure(let allow) = behaviour {
                 SecureAllowCard(
                     request: allow,
@@ -263,6 +283,7 @@ struct RunBlockView: View {
                 questionBody
             }
             pageRow
+            checklistDisclosure
             logDisclosure
             if handoffAction != .none || marksDone || StepRunNextBehaviour.showsContinue(run.next) {
                 ViewThatFits(in: .horizontal) {
@@ -273,6 +294,63 @@ struct RunBlockView: View {
             dismissRow
         }
         .pointerMenu { blockMenu(continues: StepRunNextBehaviour.showsContinue(run.next)) }
+    }
+
+    /// The top of a handoff: the summary, the newest message, the user's
+    /// part, the save offer, the package (or the artifacts), and "Not sure".
+    private func handoffLead(_ outcome: StepRunView.Outcome) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            summary
+            messagesPart
+            if RunBlockBlanks.draws(run) {
+                handoffSentence
+            } else if let detail = run.next?.detail, outcome != .needsAnswer {
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if run.next?.kind == .signIn, let offer = run.next?.saveSignIn {
+                saveSignInRow(offer)
+            }
+            packageOrArtifacts
+            unsurePart
+        }
+    }
+
+    // MARK: - Goal run parts (docs/albatross-goal-runs.md)
+
+    /// What the run wrote while it worked. Nothing for a step run.
+    @ViewBuilder private var messagesPart: some View {
+        if !run.messages.isEmpty {
+            RunMessagesView(messages: run.messages, state: state, onSource: actions.openSource)
+        }
+    }
+
+    /// The checklist, folded or open by the default rule until the user
+    /// decides. Nothing for a run without one.
+    @ViewBuilder private var checklistDisclosure: some View {
+        if !run.checklist.isEmpty {
+            RunChecklistView(
+                items: run.checklist,
+                expanded: Binding(get: { checklistOpen }, set: { showsChecklist = $0 })
+            )
+        }
+    }
+
+    /// The package card, or the artifact rows of a step run.
+    @ViewBuilder private var packageOrArtifacts: some View {
+        if !run.items.isEmpty {
+            PackageView(items: run.items) { item in actions.openItem(view, item) }
+        } else {
+            artifactRows
+        }
+    }
+
+    @ViewBuilder private var unsurePart: some View {
+        if !run.unsure.isEmpty {
+            UnsureView(lines: run.unsure)
+        }
     }
 
     /// The block shows blanks: the state word leaves the header.
@@ -313,7 +391,7 @@ struct RunBlockView: View {
                 .waitingActionShortcut(ownsWaitingShortcut && !StepRunNextBehaviour.showsContinue(run.next))
                 .frame(minHeight: 44)
         case .markDone:
-            Button(busy ? RunBlockCopy.markStepDoneBusy : RunBlockCopy.markStepDone) { actions.markDone(view) }
+            Button(busy ? RunBlockCopy.markStepDoneBusy : RunBlockCopy.secondButtonLabel(run)) { actions.markDone(view) }
                 .buttonStyle(.borderedProminent)
                 .disabled(busy)
                 .waitingActionShortcut(ownsWaitingShortcut)
@@ -322,7 +400,7 @@ struct RunBlockView: View {
             EmptyView()
         }
         if marksDone {
-            Button(busy ? RunBlockCopy.markStepDoneBusy : RunBlockCopy.markStepDone) { actions.markDone(view) }
+            Button(busy ? RunBlockCopy.markStepDoneBusy : RunBlockCopy.secondButtonLabel(run)) { actions.markDone(view) }
                 .buttonStyle(.bordered)
                 .disabled(busy)
                 .frame(minHeight: 44)
@@ -404,12 +482,12 @@ struct RunBlockView: View {
         case .next(let behaviour, let label):
             Button(label) { actions.primary(view, behaviour) }
         case .markDone:
-            Button(RunBlockCopy.markStepDone) { actions.markDone(view) }
+            Button(RunBlockCopy.secondButtonLabel(run)) { actions.markDone(view) }
         case .none:
             EmptyView()
         }
         if marksDone {
-            Button(RunBlockCopy.markStepDone) { actions.markDone(view) }
+            Button(RunBlockCopy.secondButtonLabel(run)) { actions.markDone(view) }
         }
         if continues {
             Button(doneLabel) { actions.resume(view) }
@@ -434,7 +512,9 @@ struct RunBlockView: View {
                     .foregroundStyle(.secondary)
             }
             summary
-            artifactRows
+            messagesPart
+            packageOrArtifacts
+            checklistDisclosure
             logDisclosure
             if !hasContinuation {
                 Button(busy ? RunBlockCopy.continueBusy : RunBlockCopy.continueButton) { actions.resume(view) }
@@ -454,7 +534,14 @@ struct RunBlockView: View {
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(.green)
             summary
-            artifactRows
+            messagesPart
+            if !run.items.isEmpty {
+                // A done run's package is a quiet list, not a card.
+                PackageRowsList(items: run.items) { item in actions.openItem(view, item) }
+            } else {
+                artifactRows
+            }
+            checklistDisclosure
             logDisclosure
         }
     }
@@ -465,6 +552,8 @@ struct RunBlockView: View {
                 .font(.subheadline)
                 .foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
+            messagesPart
+            checklistDisclosure
             logDisclosure
             Button(busy ? RunBlockCopy.handleItBusy : RunBlockCopy.tryAgain) { actions.tryAgain(view) }
                 .buttonStyle(.borderedProminent)

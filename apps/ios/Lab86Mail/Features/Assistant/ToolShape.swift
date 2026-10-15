@@ -117,6 +117,14 @@ enum ShapeAction: Equatable, Sendable, Identifiable {
     }
 
     /// Navigation actions leave the chat for a destination; mutations change
+    /// The saved file an `open_document` names by its path
+    /// (`/?view=files&file=<id>`, docs/albatross-goal-runs.md), else nil: an
+    /// Albatross document opens by id.
+    var savedFileID: String? {
+        guard case .openDocument(_, let path) = self, let path else { return nil }
+        return SavedFileLink.fileID(in: path)
+    }
+
     /// data and show their outcome in place.
     var isMutation: Bool {
         switch self {
@@ -384,6 +392,8 @@ struct ShapeFileRow: Decodable, Equatable, Sendable, Identifiable {
     let mimeType: String?
     let webUrl: String?
     let modifiedIso: String?
+    /// The size in bytes of a saved file (docs/albatross-goal-runs.md), when known.
+    let size: Int?
     let actions: [ShapeAction]
 
     var id: String { "\(connectionId):\(fileId)" }
@@ -398,11 +408,18 @@ struct ShapeFileRow: Decodable, Equatable, Sendable, Identifiable {
         mimeType = try values.decodeIfPresent(String.self, forKey: .mimeType)
         webUrl = try values.decodeIfPresent(String.self, forKey: .webUrl)
         modifiedIso = try values.decodeIfPresent(String.self, forKey: .modifiedIso)
+        size = (try? values.decodeIfPresent(Double.self, forKey: .size)).flatMap { $0 }.map { Int($0) }
         actions = ShapeDecoding.actions(values, .actions)
     }
 
     private enum Keys: String, CodingKey {
-        case connectionId, fileId, name, kind, source, mimeType, webUrl, modifiedIso, actions
+        case connectionId, fileId, name, kind, source, mimeType, webUrl, modifiedIso, size, actions
+    }
+
+    /// "84 KB", for the card line.
+    var sizeText: String? {
+        guard let size, size > 0 else { return nil }
+        return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
     }
 }
 

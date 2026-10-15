@@ -145,6 +145,9 @@ struct MacShellView: View {
                     .frame(minWidth: 620, minHeight: 620)
             case .workspace(let destination):
                 NativeWorkspaceView(destination: destination)
+            case .savedFile(let target):
+                SavedFileSheet(target: target)
+                    .frame(minWidth: 720, minHeight: 640)
             }
         }
         .alert(

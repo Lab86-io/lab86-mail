@@ -249,6 +249,76 @@ final class NativeTourTests: XCTestCase {
         try await tour(screen)
     }
 
+    func testTour30WorkThreadGoalRun() async throws {
+        // A goal run at work (docs/albatross-goal-runs.md, G1 and G2): the
+        // messages with their source capsules, the checklist open with the
+        // live row, the folded log, and "Stop".
+        var screen = Screen(id: "work-thread-goal-run", title: "The Albatross thread while a goal run works", section: "Tasks and Work", tab: .work) { environment in
+            environment.navigation.openWork(id: "w-invoice-goal", title: "Bill Harbor Design for the quarter")
+        }
+        screen.fullPage = true
+        try await tour(screen)
+    }
+
+    func testTour31WorkThreadGoalPackage() async throws {
+        // The package (G3): the summary, the newest message, the three rows
+        // with a blank sentence and a sealed note, "Not sure", "Read and
+        // send", and "Done, continue".
+        var screen = Screen(id: "work-thread-goal-package", title: "The Albatross thread with a package", section: "Tasks and Work", tab: .work) { environment in
+            environment.navigation.openWork(id: "w-invoice-goal", title: "Bill Harbor Design for the quarter")
+        }
+        screen.fullPage = true
+        try await tour(screen)
+    }
+
+    func testTour32WorkThreadGoalStopped() async throws {
+        // A goal run that stopped at its time limit: the checklist shows
+        // where it got to, and the block offers "Continue", not "Handle it".
+        var screen = Screen(id: "work-thread-goal-stopped", title: "The Albatross thread after a goal run stopped", section: "Tasks and Work", tab: .work) { environment in
+            environment.navigation.openWork(id: "w-invoice-goal", title: "Bill Harbor Design for the quarter")
+        }
+        screen.fullPage = true
+        try await tour(screen)
+    }
+
+    func testTour33DocumentModePackage() async throws {
+        // Document mode with the package (section 3.6 of the native note):
+        // the capsule bar with three items, the draft item with its
+        // attachments, and the bar with "Done, continue" and "Chat".
+        var screen = Screen(id: "document-mode-package", title: "Document mode with a package", section: "Tasks and Work", tab: .work) { environment in
+            environment.navigation.openWork(id: "w-invoice-goal", title: "Bill Harbor Design for the quarter")
+            let model = environment.threadModels.model(for: "w-invoice-goal", title: "Bill Harbor Design for the quarter", environment: environment)
+            await model.store.load(environment.backend)
+            model.openItem(.draft(id: "draft_7", accountID: "acct-work"), title: "Draft to Priya Shah")
+        }
+        try await tour(screen)
+    }
+
+    func testTour34ComposeAttachments() async throws {
+        // The composer with a run's files as rows (G7): the invoice with its
+        // size and "From Albatross", and the sealed W-9.
+        var screen = Screen(id: "compose-attachments", title: "Compose with the files of a run", section: "Compose", tab: .mail)
+        screen.setUp = { environment in
+            var prefill = NativeTourTests.prefill(
+                recipient: "Priya Shah <priya@harbordesign.example>",
+                cc: "",
+                subject: "Invoice 2026-10 for Harbor Design",
+                body: "Hi Priya,\n\nThe Q3 invoice is attached, with the W-9 for your records. The hours come from HD-214.\n\nSam",
+                mode: "new"
+            )
+            prefill.fileAttachments = NativeTourTests.goalAttachments
+            environment.navigation.pendingCompose = prefill
+            environment.navigation.sheet = .compose
+        }
+        try await tour(screen)
+    }
+
+    /// The files of the invoice package, as the draft row carries them.
+    static let goalAttachments: [DraftAttachment] = [
+        DraftAttachment(fileID: "file_inv", provider: .office, format: .pdf, name: "Invoice 2026-10.pdf", size: 86_016, contentType: "application/pdf"),
+        DraftAttachment(fileID: "file_w9", provider: .upload, format: .native, name: "Form W-9.pdf", contentType: "application/pdf", sealed: true, sealedLine: "The tax ID fills in when you send."),
+    ]
+
     func testTour29WorkThreadReceipt() async throws {
         // A note to the run (docs/albatross-threads.md, T7): the user's
         // bubble with "Read by Albatross", "Read your note" in the log, the
@@ -373,8 +443,9 @@ final class NativeTourTests: XCTestCase {
         "shell-sidebar", "today-brief", "today-empty", "today-error", "mail-list", "mail-thread", "mail-empty",
         "mail-error", "compose-new", "compose-reply", "calendar-day", "calendar-week", "calendar-month", "tasks",
         "work", "work-detail", "work-detail-run", "work-detail-handoff", "work-thread-run", "work-thread-form",
-        "work-thread-handoff", "work-thread-allow", "work-thread-receipt", "files", "chat", "settings", "settings-personal-details",
-        "settings-passwords-ids", "settings-passwords-ids-detail",
+        "work-thread-handoff", "work-thread-allow", "work-thread-receipt", "work-thread-goal-run", "work-thread-goal-package",
+        "work-thread-goal-stopped", "document-mode-package", "compose-attachments", "files", "chat", "settings",
+        "settings-personal-details", "settings-passwords-ids", "settings-passwords-ids-detail",
     ]
 
     // MARK: - The tour

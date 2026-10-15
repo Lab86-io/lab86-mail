@@ -57,7 +57,20 @@ struct WorkDetailsBody: View {
                     }
                 }
             }
-            if detail.work.resolvedShape.plans, !detail.execution.guideSteps.isEmpty {
+            if ThreadGoal.isGoalWork(detail: detail, runs: runs) {
+                // A goal Work keeps a checklist, not a plan (docs/albatross-goal-runs.md, G1).
+                documentSection(GoalRunCopy.checklist) {
+                    let items = Self.checklist(detail: detail, runs: runs)
+                    if items.isEmpty {
+                        Text(GoalRunCopy.noChecklist)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        ChecklistRows(items: items)
+                    }
+                }
+            } else if detail.work.resolvedShape.plans, !detail.execution.guideSteps.isEmpty {
                 documentSection("Plan") { planRows }
             }
             files
@@ -257,6 +270,12 @@ struct WorkDetailsBody: View {
                 }
             }
         }
+    }
+
+    /// The checklist of a goal Work: the newest run that has one, else the detail's.
+    static func checklist(detail: WorkDetail, runs: [ThreadRunView]) -> [ChecklistItem] {
+        if let newest = runs.last(where: { !$0.run.checklist.isEmpty }) { return newest.run.checklist }
+        return detail.checklist ?? []
     }
 
     /// The artifacts of every run, newest run first, one row for each file.

@@ -72,7 +72,8 @@ struct AssistantShapeCardView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(row.name).font(.subheadline.weight(.medium)).lineLimit(2)
                     detail([row.kind, row.source].compactMap { $0 }.joined(separator: " · "))
-                    AssistantShapeActions(actions: row.actions)
+                    if let size = row.sizeText { detail(size) }
+                    AssistantShapeActions(actions: row.actions, fileName: row.name)
                 }
             }
         case .contact(let name, let email, let count, let lastSeen, let memory):

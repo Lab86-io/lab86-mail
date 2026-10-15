@@ -2,19 +2,23 @@
 import SwiftUI
 
 // Document mode of the Albatross thread on iOS
-// (docs/albatross-document-handoff.md, D5, and
-// docs/research/document-handoff-ios-design-2026-10-08.md). The web editor
-// opens in the native workspace. On the phone it fills the screen, with a
-// bar at the bottom for the user's part and "Chat", which opens the same
-// thread as a sheet. On the iPad the thread sits in a column on the right,
-// with the "your part" card on top. The card and the bar draw the handoff's
-// blanks (docs/albatross-blank-design.md). The Mac has its own layout.
+// (docs/albatross-document-handoff.md, D5, docs/albatross-goal-runs.md, G3,
+// and the native design note of 2026-10-15, section 3.6). The selected item
+// opens in the native workspace, a saved-file viewer, or the read-only draft.
+// With several items a row of text capsules switches between them. On the
+// phone the item fills the screen, with a bar at the bottom for the user's
+// part and "Chat", which opens the same thread as a sheet. On the iPad the
+// thread sits in a column on the right, with the "your part" card on top.
+// The card and the bar draw the selected item's blanks
+// (docs/albatross-blank-design.md). The Mac has its own layout.
 struct DocumentModeView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.openURL) private var openURL
     let route: WorkRoute
     let model: WorkThreadModel
-    let target: DocumentTarget
+    /// The set at presentation. The model's live set wins once it moves.
+    let set: DocumentModeSet
 
     @State private var showsChat = false
 
@@ -28,13 +32,33 @@ struct DocumentModeView: View {
         }
     }
 
-    /// The web editor. A change of the token loads the saved document again.
-    private var editor: some View {
-        NativeWorkspaceView(destination: target.workspaceDestination, reloadToken: model.documentReloadToken)
+    private var liveSet: DocumentModeSet { model.documentSet ?? set }
+
+    private var selection: Binding<String> {
+        Binding(get: { liveSet.selectedID }, set: { model.selectItem(id: $0) })
+    }
+
+    /// The capsules (with several items), then the selected item. A new
+    /// item is a new view; a change of the token loads the document again.
+    private var stage: some View {
+        VStack(spacing: 0) {
+            if liveSet.showsSwitcher {
+                DocumentModeItemBar(set: liveSet, selection: selection)
+                    .padding(.vertical, 8)
+                Divider()
+            }
+            DocumentItemContentView(
+                item: liveSet.selected,
+                reloadToken: model.documentReloadToken,
+                onOpenWeb: { if let url = model.webURL { openURL(url) } },
+                onEditDraft: { id, accountID in editDraft(id: id, accountID: accountID) }
+            )
+            .id(liveSet.selected.id)
+        }
     }
 
     private var phone: some View {
-        editor
+        stage
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 DocumentModeBar(
                     yourPart: model.documentYourPart,
@@ -53,7 +77,7 @@ struct DocumentModeView: View {
 
     private var split: some View {
         HStack(spacing: 0) {
-            editor
+            stage
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
             VStack(spacing: 0) {
@@ -79,6 +103,15 @@ struct DocumentModeView: View {
     private var thread: some View {
         NavigationStack {
             WorkThreadView(route: route, showsAttentionBanner: false, presentsDocument: false)
+        }
+    }
+
+    /// "Edit and send": the cover closes first, so the composer can present.
+    private func editDraft(id: String, accountID: String?) {
+        Task {
+            model.closeDocument()
+            try? await Task.sleep(for: .milliseconds(400))
+            _ = await StepRunActions.open(.openDraft(id: id, accountID: accountID), environment: environment, openURL: openURL)
         }
     }
 }

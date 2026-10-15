@@ -124,6 +124,32 @@ enum DocumentHandoff {
         return nil
     }
 
+    /// The open handoff that an item of document mode belongs to: the newest
+    /// `ready_for_you` or `your_turn` run whose package names it, or whose
+    /// target or artifacts name the document (docs/albatross-goal-runs.md).
+    static func run(for runs: [ThreadRunView], content: DocumentModeItem.Content) -> ThreadRunView? {
+        for view in runs.reversed() {
+            let run = view.run
+            guard run.state == .handedOff, run.outcome == .readyForYou || run.outcome == .yourTurn else { continue }
+            if run.items.contains(where: { matches($0, content, artifacts: run.artifacts) }) { return view }
+            if case .document(let target) = content, Self.run(for: [view], target: target) != nil { return view }
+        }
+        return nil
+    }
+
+    private static func matches(_ item: HandoffItem, _ content: DocumentModeItem.Content, artifacts: [StepRunView.Artifact]) -> Bool {
+        switch (PackageItemBehaviour.from(item, artifacts: artifacts), content) {
+        case (.openDocument(let target), .document(let opened)):
+            return target == opened
+        case (.openFile(let fileID, _), .file(let opened)):
+            return fileID == opened
+        case (.openDraft(let id, _), .draft(let opened, _)):
+            return id == opened
+        default:
+            return false
+        }
+    }
+
     /// The "Your part" text: the handoff's own words, or nil for no card.
     static func detail(of run: ThreadRunView?) -> String? {
         run?.run.next?.detail?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank

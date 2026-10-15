@@ -1632,6 +1632,46 @@
       },
       "questions": [],
       "evidence": []
+    },
+    "w-invoice-goal": {
+      "work": {
+        "_id": "w-invoice-goal",
+        "title": "Bill Harbor Design for the quarter",
+        "rawText": "Bill Harbor Design for Q3: the invoice, the W-9, and the mail to Priya",
+        "status": "ready",
+        "workState": "active",
+        "agentState": "idle",
+        "updatedAt": "@ms:now-5m"
+      },
+      "execution": {
+        "currentStep": null,
+        "guideSteps": [],
+        "remainingSteps": 0,
+        "totalSteps": 0,
+        "activeRun": null,
+        "runner": {
+          "enabled": true
+        }
+      },
+      "plan": {
+        "_id": "plan-w-invoice-goal",
+        "status": "ready",
+        "outcome": "Bill Harbor Design for the quarter",
+        "summary": "Priya Shah at Harbor Design gets the Q3 invoice, the W-9, and one mail with both attached."
+      },
+      "questions": [],
+      "evidence": [],
+      "goalRuns": true,
+      "contract": {
+        "outcome": "Harbor Design has the Q3 invoice and the W-9",
+        "proofs": [
+          {
+            "id": "p1",
+            "what": "The mail to Priya Shah is sent with both files"
+          }
+        ],
+        "closeWhen": "outcome_confirmed"
+      }
     }
   },
   "paths": {
@@ -3124,6 +3164,939 @@
     },
     "mail-error": {
       "toolErrors": { "list_accounts": "The mail server did not answer. Try again in a minute." }
+    },
+    "work-thread-goal-run": {
+      "paths": {
+        "/api/albatross/work/w-invoice-goal/runs": {
+          "ok": true,
+          "runs": [
+            {
+              "id": "run-goal-1",
+              "workId": "w-invoice-goal",
+              "stepKey": "goal",
+              "stepIdentity": "goal:w-invoice-goal",
+              "stepTitle": "Bill Harbor Design for the quarter",
+              "state": "running",
+              "trigger": "user",
+              "outcome": null,
+              "summary": null,
+              "log": [
+                {
+                  "at": "@ms:now-9m",
+                  "text": "Read the Work and its contract"
+                },
+                {
+                  "at": "@ms:now-8m",
+                  "text": "Searched your mail for Harbor Design hours"
+                },
+                {
+                  "at": "@ms:now-7m",
+                  "text": "Read HD-214 in Jira"
+                },
+                {
+                  "at": "@ms:now-5m",
+                  "text": "Read the worklog of HD-214"
+                },
+                {
+                  "at": "@ms:now-2m",
+                  "text": "Made Invoice 2026-10 from the invoice template"
+                }
+              ],
+              "next": null,
+              "artifacts": [],
+              "goal": true,
+              "messages": [
+                {
+                  "id": "gm1",
+                  "at": "@ms:now-8m",
+                  "text": "I look for the hours in your mail and in Jira first, then I make the invoice from the template.",
+                  "sources": [
+                    {
+                      "kind": "mail",
+                      "title": "Re: Q3 hours",
+                      "id": "t-hours",
+                      "accountId": "acct-work"
+                    },
+                    {
+                      "kind": "jira",
+                      "title": "HD-214",
+                      "url": "https://harbordesign.example/browse/HD-214"
+                    }
+                  ]
+                },
+                {
+                  "id": "gm2",
+                  "at": "@ms:now-4m",
+                  "text": "Jira shows **36, 52, and 41 hours** for July, August, and September. No mail names the hours, so I use Jira.",
+                  "sources": [
+                    {
+                      "kind": "jira",
+                      "title": "HD-214 worklog",
+                      "url": "https://harbordesign.example/browse/HD-214?page=worklog"
+                    }
+                  ]
+                },
+                {
+                  "id": "gm3",
+                  "at": "@ms:now-1m",
+                  "text": "The W-9 comes from irs.gov. The tax ID stays sealed until you send.",
+                  "sources": [
+                    {
+                      "kind": "web",
+                      "title": "Form W-9",
+                      "url": "https://www.irs.gov/forms-pubs/about-form-w-9"
+                    }
+                  ]
+                }
+              ],
+              "checklist": [
+                {
+                  "id": "c1",
+                  "text": "Find the billing address",
+                  "state": "done"
+                },
+                {
+                  "id": "c2",
+                  "text": "Find the hours for each month",
+                  "state": "done"
+                },
+                {
+                  "id": "c3",
+                  "text": "Make the invoice",
+                  "state": "doing"
+                },
+                {
+                  "id": "c4",
+                  "text": "Get the W-9 from irs.gov",
+                  "state": "todo"
+                },
+                {
+                  "id": "c5",
+                  "text": "Sign the W-9",
+                  "state": "yours"
+                },
+                {
+                  "id": "c6",
+                  "text": "Write the mail to Priya Shah",
+                  "state": "todo"
+                }
+              ],
+              "items": [],
+              "unsure": [],
+              "browserSessionId": null,
+              "stoppedBy": null,
+              "error": null,
+              "createdAt": "@ms:now-9m",
+              "updatedAt": "@ms:now-1m",
+              "finishedAt": null,
+              "parentRunId": null,
+              "question": null
+            }
+          ]
+        },
+        "/api/chats": {
+          "ok": true,
+          "session": {
+            "id": "work-w-invoice-goal",
+            "updatedAt": "@ms:now-9m",
+            "messages": [
+              {
+                "id": "m-goal-1",
+                "role": "user",
+                "metadata": {
+                  "createdAt": "@ms:now-12m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "Bill Harbor Design for the quarter. Send Priya the invoice and the W-9 in one mail."
+                  }
+                ]
+              },
+              {
+                "id": "m-goal-2",
+                "role": "assistant",
+                "metadata": {
+                  "createdAt": "@ms:now-11m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "On it. I find the hours, make the invoice, get the W-9, and write the mail to Priya."
+                  },
+                  {
+                    "type": "tool-albatross_handle_step",
+                    "toolCallId": "call-goal-1",
+                    "state": "output-available",
+                    "input": {
+                      "workId": "w-invoice-goal"
+                    },
+                    "output": {
+                      "ok": true,
+                      "action": "started",
+                      "runId": "run-goal-1"
+                    }
+                  },
+                  {
+                    "type": "data-tool-shape",
+                    "id": "call-goal-1",
+                    "data": {
+                      "kind": "step_run",
+                      "runId": "run-goal-1",
+                      "workId": "w-invoice-goal",
+                      "action": "started"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "work-thread-goal-package": {
+      "paths": {
+        "/api/albatross/work/w-invoice-goal/runs": {
+          "ok": true,
+          "runs": [
+            {
+              "id": "run-goal-1",
+              "workId": "w-invoice-goal",
+              "stepKey": "goal",
+              "stepIdentity": "goal:w-invoice-goal",
+              "stepTitle": "Bill Harbor Design for the quarter",
+              "state": "handed_off",
+              "trigger": "user",
+              "outcome": "ready_for_you",
+              "summary": "The invoice, the W-9, and the mail to Priya Shah are ready. September and the rate are still empty on the invoice.",
+              "log": [
+                {
+                  "at": "@ms:now-9m",
+                  "text": "Read the Work and its contract"
+                },
+                {
+                  "at": "@ms:now-8m",
+                  "text": "Searched your mail for Harbor Design hours"
+                },
+                {
+                  "at": "@ms:now-7m",
+                  "text": "Read HD-214 in Jira"
+                },
+                {
+                  "at": "@ms:now-5m",
+                  "text": "Read the worklog of HD-214"
+                },
+                {
+                  "at": "@ms:now-2m",
+                  "text": "Made Invoice 2026-10 from the invoice template"
+                },
+                {
+                  "at": "@ms:now-1m",
+                  "text": "Saved Form W-9 from irs.gov"
+                },
+                {
+                  "at": "@ms:now-1m",
+                  "text": "Wrote the mail to Priya Shah"
+                }
+              ],
+              "next": {
+                "kind": "review_draft",
+                "label": "Read and send",
+                "detail": "Read the mail to Priya Shah. The invoice and the W-9 are attached.",
+                "target": {
+                  "kind": "draft",
+                  "id": "draft_7",
+                  "accountId": "acct-work"
+                }
+              },
+              "artifacts": [
+                {
+                  "kind": "draft",
+                  "id": "draft_7",
+                  "title": "Draft to Priya Shah",
+                  "accountId": "acct-work"
+                },
+                {
+                  "kind": "document",
+                  "id": "doc_inv",
+                  "title": "Invoice 2026-10 for Harbor Design",
+                  "url": "/?view=files&office=doc_inv"
+                },
+                {
+                  "kind": "file",
+                  "id": "file_w9",
+                  "title": "Form W-9",
+                  "url": "/?view=files&file=file_w9"
+                }
+              ],
+              "goal": true,
+              "messages": [
+                {
+                  "id": "gm1",
+                  "at": "@ms:now-8m",
+                  "text": "I look for the hours in your mail and in Jira first, then I make the invoice from the template.",
+                  "sources": [
+                    {
+                      "kind": "mail",
+                      "title": "Re: Q3 hours",
+                      "id": "t-hours",
+                      "accountId": "acct-work"
+                    },
+                    {
+                      "kind": "jira",
+                      "title": "HD-214",
+                      "url": "https://harbordesign.example/browse/HD-214"
+                    }
+                  ]
+                },
+                {
+                  "id": "gm2",
+                  "at": "@ms:now-4m",
+                  "text": "Jira shows **36, 52, and 41 hours** for July, August, and September. No mail names the hours, so I use Jira.",
+                  "sources": [
+                    {
+                      "kind": "jira",
+                      "title": "HD-214 worklog",
+                      "url": "https://harbordesign.example/browse/HD-214?page=worklog"
+                    }
+                  ]
+                },
+                {
+                  "id": "gm3",
+                  "at": "@ms:now-1m",
+                  "text": "The W-9 comes from irs.gov. The tax ID stays sealed until you send.",
+                  "sources": [
+                    {
+                      "kind": "web",
+                      "title": "Form W-9",
+                      "url": "https://www.irs.gov/forms-pubs/about-form-w-9"
+                    }
+                  ]
+                },
+                {
+                  "id": "gm4",
+                  "at": "@ms:now-1m",
+                  "text": "Everything is in the package. Fill in September and the rate on the invoice, then read the mail and send it.",
+                  "sources": []
+                }
+              ],
+              "checklist": [
+                {
+                  "id": "c1",
+                  "text": "Find the billing address",
+                  "state": "done"
+                },
+                {
+                  "id": "c2",
+                  "text": "Find the hours for each month",
+                  "state": "done"
+                },
+                {
+                  "id": "c3",
+                  "text": "Make the invoice",
+                  "state": "done"
+                },
+                {
+                  "id": "c4",
+                  "text": "Get the W-9 from irs.gov",
+                  "state": "done"
+                },
+                {
+                  "id": "c5",
+                  "text": "Sign the W-9",
+                  "state": "yours"
+                },
+                {
+                  "id": "c6",
+                  "text": "Write the mail to Priya Shah",
+                  "state": "done"
+                }
+              ],
+              "items": [
+                {
+                  "kind": "draft",
+                  "id": "draft_7",
+                  "accountId": "acct-work",
+                  "title": "Draft to Priya Shah",
+                  "state": "check",
+                  "note": "2 files attached"
+                },
+                {
+                  "kind": "document",
+                  "id": "doc_inv",
+                  "url": "/?view=files&office=doc_inv",
+                  "title": "Invoice 2026-10 for Harbor Design",
+                  "state": "blanks",
+                  "blanks": [
+                    "hours for September",
+                    "hourly rate"
+                  ]
+                },
+                {
+                  "kind": "file",
+                  "id": "file_w9",
+                  "url": "/?view=files&file=file_w9",
+                  "title": "Form W-9",
+                  "state": "check",
+                  "note": "The tax ID fills in when you send."
+                }
+              ],
+              "unsure": [
+                "I found no mail with the hours for July. I used 36 from the Jira worklog."
+              ],
+              "browserSessionId": null,
+              "stoppedBy": null,
+              "error": null,
+              "createdAt": "@ms:now-9m",
+              "updatedAt": "@ms:now-1m",
+              "finishedAt": "@ms:now-1m",
+              "parentRunId": null,
+              "question": null
+            }
+          ]
+        },
+        "/api/chats": {
+          "ok": true,
+          "session": {
+            "id": "work-w-invoice-goal",
+            "updatedAt": "@ms:now-9m",
+            "messages": [
+              {
+                "id": "m-goal-1",
+                "role": "user",
+                "metadata": {
+                  "createdAt": "@ms:now-12m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "Bill Harbor Design for the quarter. Send Priya the invoice and the W-9 in one mail."
+                  }
+                ]
+              },
+              {
+                "id": "m-goal-2",
+                "role": "assistant",
+                "metadata": {
+                  "createdAt": "@ms:now-11m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "On it. I find the hours, make the invoice, get the W-9, and write the mail to Priya."
+                  },
+                  {
+                    "type": "tool-albatross_handle_step",
+                    "toolCallId": "call-goal-1",
+                    "state": "output-available",
+                    "input": {
+                      "workId": "w-invoice-goal"
+                    },
+                    "output": {
+                      "ok": true,
+                      "action": "started",
+                      "runId": "run-goal-1"
+                    }
+                  },
+                  {
+                    "type": "data-tool-shape",
+                    "id": "call-goal-1",
+                    "data": {
+                      "kind": "step_run",
+                      "runId": "run-goal-1",
+                      "workId": "w-invoice-goal",
+                      "action": "started"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "work-thread-goal-stopped": {
+      "paths": {
+        "/api/albatross/work/w-invoice-goal/runs": {
+          "ok": true,
+          "runs": [
+            {
+              "id": "run-goal-1",
+              "workId": "w-invoice-goal",
+              "stepKey": "goal",
+              "stepIdentity": "goal:w-invoice-goal",
+              "stepTitle": "Bill Harbor Design for the quarter",
+              "state": "handed_off",
+              "trigger": "user",
+              "outcome": "stopped",
+              "summary": "I made the invoice. The W-9 and the mail are still open.",
+              "log": [
+                {
+                  "at": "@ms:now-9m",
+                  "text": "Read the Work and its contract"
+                },
+                {
+                  "at": "@ms:now-8m",
+                  "text": "Searched your mail for Harbor Design hours"
+                },
+                {
+                  "at": "@ms:now-7m",
+                  "text": "Read HD-214 in Jira"
+                },
+                {
+                  "at": "@ms:now-5m",
+                  "text": "Read the worklog of HD-214"
+                },
+                {
+                  "at": "@ms:now-2m",
+                  "text": "Made Invoice 2026-10 from the invoice template"
+                }
+              ],
+              "next": {
+                "kind": "continue",
+                "label": "Continue",
+                "detail": "Albatross goes on from the checklist."
+              },
+              "artifacts": [
+                {
+                  "kind": "document",
+                  "id": "doc_inv",
+                  "title": "Invoice 2026-10 for Harbor Design",
+                  "url": "/?view=files&office=doc_inv"
+                }
+              ],
+              "goal": true,
+              "messages": [
+                {
+                  "id": "gm1",
+                  "at": "@ms:now-8m",
+                  "text": "I look for the hours in your mail and in Jira first, then I make the invoice from the template.",
+                  "sources": [
+                    {
+                      "kind": "mail",
+                      "title": "Re: Q3 hours",
+                      "id": "t-hours",
+                      "accountId": "acct-work"
+                    },
+                    {
+                      "kind": "jira",
+                      "title": "HD-214",
+                      "url": "https://harbordesign.example/browse/HD-214"
+                    }
+                  ]
+                },
+                {
+                  "id": "gm2",
+                  "at": "@ms:now-4m",
+                  "text": "Jira shows **36, 52, and 41 hours** for July, August, and September. No mail names the hours, so I use Jira.",
+                  "sources": [
+                    {
+                      "kind": "jira",
+                      "title": "HD-214 worklog",
+                      "url": "https://harbordesign.example/browse/HD-214?page=worklog"
+                    }
+                  ]
+                }
+              ],
+              "checklist": [
+                {
+                  "id": "c1",
+                  "text": "Find the billing address",
+                  "state": "done"
+                },
+                {
+                  "id": "c2",
+                  "text": "Find the hours for each month",
+                  "state": "done"
+                },
+                {
+                  "id": "c3",
+                  "text": "Make the invoice",
+                  "state": "done"
+                },
+                {
+                  "id": "c4",
+                  "text": "Get the W-9 from irs.gov",
+                  "state": "doing"
+                },
+                {
+                  "id": "c5",
+                  "text": "Sign the W-9",
+                  "state": "yours"
+                },
+                {
+                  "id": "c6",
+                  "text": "Write the mail to Priya Shah",
+                  "state": "todo"
+                }
+              ],
+              "items": [],
+              "unsure": [],
+              "browserSessionId": null,
+              "stoppedBy": "time",
+              "error": null,
+              "createdAt": "@ms:now-9m",
+              "updatedAt": "@ms:now-1m",
+              "finishedAt": "@ms:now-1m",
+              "parentRunId": null,
+              "question": null
+            }
+          ]
+        },
+        "/api/chats": {
+          "ok": true,
+          "session": {
+            "id": "work-w-invoice-goal",
+            "updatedAt": "@ms:now-9m",
+            "messages": [
+              {
+                "id": "m-goal-1",
+                "role": "user",
+                "metadata": {
+                  "createdAt": "@ms:now-12m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "Bill Harbor Design for the quarter. Send Priya the invoice and the W-9 in one mail."
+                  }
+                ]
+              },
+              {
+                "id": "m-goal-2",
+                "role": "assistant",
+                "metadata": {
+                  "createdAt": "@ms:now-11m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "On it. I find the hours, make the invoice, get the W-9, and write the mail to Priya."
+                  },
+                  {
+                    "type": "tool-albatross_handle_step",
+                    "toolCallId": "call-goal-1",
+                    "state": "output-available",
+                    "input": {
+                      "workId": "w-invoice-goal"
+                    },
+                    "output": {
+                      "ok": true,
+                      "action": "started",
+                      "runId": "run-goal-1"
+                    }
+                  },
+                  {
+                    "type": "data-tool-shape",
+                    "id": "call-goal-1",
+                    "data": {
+                      "kind": "step_run",
+                      "runId": "run-goal-1",
+                      "workId": "w-invoice-goal",
+                      "action": "started"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "document-mode-package": {
+      "tools": {
+        "list_drafts": {
+          "drafts": [
+            {
+              "_id": "draft_7",
+              "to": "Priya Shah <priya@harbordesign.example>",
+              "cc": "",
+              "bcc": "",
+              "subject": "Invoice 2026-10 for Harbor Design",
+              "body": "Hi Priya,\n\nThe Q3 invoice is attached, with the W-9 for your records. The hours come from HD-214.\n\nSam",
+              "attachments": [
+                {
+                  "source": "file",
+                  "fileId": "file_inv",
+                  "provider": "office",
+                  "format": "pdf",
+                  "name": "Invoice 2026-10.pdf",
+                  "size": 86016,
+                  "contentType": "application/pdf"
+                },
+                {
+                  "source": "file",
+                  "fileId": "file_w9",
+                  "provider": "upload",
+                  "format": "native",
+                  "name": "Form W-9.pdf",
+                  "contentType": "application/pdf",
+                  "sealed": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "paths": {
+        "/api/albatross/work/w-invoice-goal/runs": {
+          "ok": true,
+          "runs": [
+            {
+              "id": "run-goal-1",
+              "workId": "w-invoice-goal",
+              "stepKey": "goal",
+              "stepIdentity": "goal:w-invoice-goal",
+              "stepTitle": "Bill Harbor Design for the quarter",
+              "state": "handed_off",
+              "trigger": "user",
+              "outcome": "ready_for_you",
+              "summary": "The invoice, the W-9, and the mail to Priya Shah are ready. September and the rate are still empty on the invoice.",
+              "log": [
+                {
+                  "at": "@ms:now-9m",
+                  "text": "Read the Work and its contract"
+                },
+                {
+                  "at": "@ms:now-8m",
+                  "text": "Searched your mail for Harbor Design hours"
+                },
+                {
+                  "at": "@ms:now-7m",
+                  "text": "Read HD-214 in Jira"
+                },
+                {
+                  "at": "@ms:now-5m",
+                  "text": "Read the worklog of HD-214"
+                },
+                {
+                  "at": "@ms:now-2m",
+                  "text": "Made Invoice 2026-10 from the invoice template"
+                },
+                {
+                  "at": "@ms:now-1m",
+                  "text": "Saved Form W-9 from irs.gov"
+                },
+                {
+                  "at": "@ms:now-1m",
+                  "text": "Wrote the mail to Priya Shah"
+                }
+              ],
+              "next": {
+                "kind": "review_draft",
+                "label": "Read and send",
+                "detail": "Read the mail to Priya Shah. The invoice and the W-9 are attached.",
+                "target": {
+                  "kind": "draft",
+                  "id": "draft_7",
+                  "accountId": "acct-work"
+                }
+              },
+              "artifacts": [
+                {
+                  "kind": "draft",
+                  "id": "draft_7",
+                  "title": "Draft to Priya Shah",
+                  "accountId": "acct-work"
+                },
+                {
+                  "kind": "document",
+                  "id": "doc_inv",
+                  "title": "Invoice 2026-10 for Harbor Design",
+                  "url": "/?view=files&office=doc_inv"
+                },
+                {
+                  "kind": "file",
+                  "id": "file_w9",
+                  "title": "Form W-9",
+                  "url": "/?view=files&file=file_w9"
+                }
+              ],
+              "goal": true,
+              "messages": [
+                {
+                  "id": "gm1",
+                  "at": "@ms:now-8m",
+                  "text": "I look for the hours in your mail and in Jira first, then I make the invoice from the template.",
+                  "sources": [
+                    {
+                      "kind": "mail",
+                      "title": "Re: Q3 hours",
+                      "id": "t-hours",
+                      "accountId": "acct-work"
+                    },
+                    {
+                      "kind": "jira",
+                      "title": "HD-214",
+                      "url": "https://harbordesign.example/browse/HD-214"
+                    }
+                  ]
+                },
+                {
+                  "id": "gm2",
+                  "at": "@ms:now-4m",
+                  "text": "Jira shows **36, 52, and 41 hours** for July, August, and September. No mail names the hours, so I use Jira.",
+                  "sources": [
+                    {
+                      "kind": "jira",
+                      "title": "HD-214 worklog",
+                      "url": "https://harbordesign.example/browse/HD-214?page=worklog"
+                    }
+                  ]
+                },
+                {
+                  "id": "gm3",
+                  "at": "@ms:now-1m",
+                  "text": "The W-9 comes from irs.gov. The tax ID stays sealed until you send.",
+                  "sources": [
+                    {
+                      "kind": "web",
+                      "title": "Form W-9",
+                      "url": "https://www.irs.gov/forms-pubs/about-form-w-9"
+                    }
+                  ]
+                },
+                {
+                  "id": "gm4",
+                  "at": "@ms:now-1m",
+                  "text": "Everything is in the package. Fill in September and the rate on the invoice, then read the mail and send it.",
+                  "sources": []
+                }
+              ],
+              "checklist": [
+                {
+                  "id": "c1",
+                  "text": "Find the billing address",
+                  "state": "done"
+                },
+                {
+                  "id": "c2",
+                  "text": "Find the hours for each month",
+                  "state": "done"
+                },
+                {
+                  "id": "c3",
+                  "text": "Make the invoice",
+                  "state": "done"
+                },
+                {
+                  "id": "c4",
+                  "text": "Get the W-9 from irs.gov",
+                  "state": "done"
+                },
+                {
+                  "id": "c5",
+                  "text": "Sign the W-9",
+                  "state": "yours"
+                },
+                {
+                  "id": "c6",
+                  "text": "Write the mail to Priya Shah",
+                  "state": "done"
+                }
+              ],
+              "items": [
+                {
+                  "kind": "draft",
+                  "id": "draft_7",
+                  "accountId": "acct-work",
+                  "title": "Draft to Priya Shah",
+                  "state": "check",
+                  "note": "2 files attached"
+                },
+                {
+                  "kind": "document",
+                  "id": "doc_inv",
+                  "url": "/?view=files&office=doc_inv",
+                  "title": "Invoice 2026-10 for Harbor Design",
+                  "state": "blanks",
+                  "blanks": [
+                    "hours for September",
+                    "hourly rate"
+                  ]
+                },
+                {
+                  "kind": "file",
+                  "id": "file_w9",
+                  "url": "/?view=files&file=file_w9",
+                  "title": "Form W-9",
+                  "state": "check",
+                  "note": "The tax ID fills in when you send."
+                }
+              ],
+              "unsure": [
+                "I found no mail with the hours for July. I used 36 from the Jira worklog."
+              ],
+              "browserSessionId": null,
+              "stoppedBy": null,
+              "error": null,
+              "createdAt": "@ms:now-9m",
+              "updatedAt": "@ms:now-1m",
+              "finishedAt": "@ms:now-1m",
+              "parentRunId": null,
+              "question": null
+            }
+          ]
+        },
+        "/api/chats": {
+          "ok": true,
+          "session": {
+            "id": "work-w-invoice-goal",
+            "updatedAt": "@ms:now-9m",
+            "messages": [
+              {
+                "id": "m-goal-1",
+                "role": "user",
+                "metadata": {
+                  "createdAt": "@ms:now-12m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "Bill Harbor Design for the quarter. Send Priya the invoice and the W-9 in one mail."
+                  }
+                ]
+              },
+              {
+                "id": "m-goal-2",
+                "role": "assistant",
+                "metadata": {
+                  "createdAt": "@ms:now-11m"
+                },
+                "parts": [
+                  {
+                    "type": "text",
+                    "text": "On it. I find the hours, make the invoice, get the W-9, and write the mail to Priya."
+                  },
+                  {
+                    "type": "tool-albatross_handle_step",
+                    "toolCallId": "call-goal-1",
+                    "state": "output-available",
+                    "input": {
+                      "workId": "w-invoice-goal"
+                    },
+                    "output": {
+                      "ok": true,
+                      "action": "started",
+                      "runId": "run-goal-1"
+                    }
+                  },
+                  {
+                    "type": "data-tool-shape",
+                    "id": "call-goal-1",
+                    "data": {
+                      "kind": "step_run",
+                      "runId": "run-goal-1",
+                      "workId": "w-invoice-goal",
+                      "action": "started"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
     }
   }
 }

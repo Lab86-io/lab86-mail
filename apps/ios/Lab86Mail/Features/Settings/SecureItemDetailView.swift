@@ -116,6 +116,18 @@ struct SecureItemDetailView: View {
             } footer: {
                 Text(SecureDetailsCopy.sitesFooter(item.kind))
             }
+            if !item.mailDomains.isEmpty {
+                // Read only this round: the grant changes on the web.
+                Section {
+                    ForEach(item.mailDomains, id: \.self) { domain in
+                        Text(SecureDetailsCopy.mailTo(domain))
+                    }
+                } header: {
+                    Text(SecureDetailsCopy.mailTitle)
+                } footer: {
+                    Text(SecureDetailsCopy.mailFooter)
+                }
+            }
             Section {
                 uses(item)
             } header: {

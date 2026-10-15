@@ -88,6 +88,7 @@ struct MacWorkThreadView: View {
                 hideBanner()
                 MacRequests.shared.threadPaneMode = .none
                 MacRequests.shared.threadDocumentOpen = false
+                MacRequests.shared.threadItemsOpen = false
                 restoreSidebar()
             }
     }
@@ -225,11 +226,18 @@ struct MacWorkThreadView: View {
             .environment(\.workThread, model)
             // Document mode (D5): the pane gives way, and the View menu
             // learns that a document is open.
-            .onChange(of: model.document) { _, document in
-                documentDidChange(open: document != nil, model: model)
+            .onChange(of: model.documentOpen) { _, open in
+                documentDidChange(open: open, model: model)
+            }
+            .onChange(of: model.documentSet?.count) { _, count in
+                MacRequests.shared.threadItemsOpen = (count ?? 0) > 1
             }
             .onChange(of: MacRequests.shared.closeDocumentToken) { _, _ in
                 model.closeDocument()
+            }
+            // "Next Item" and "Previous Item" (docs/albatross-goal-runs.md, G3).
+            .onChange(of: MacRequests.shared.itemMoveToken) { _, _ in
+                model.selectItem(step: MacRequests.shared.itemMoveStep)
             }
             .toolbar { toolbar(model, proxy: proxy) }
             .inspector(isPresented: paneShown(model)) {
@@ -307,13 +315,22 @@ struct MacWorkThreadView: View {
     /// and the transcript in a column on the right under the "your part"
     /// card (docs/albatross-document-handoff.md, D5).
     @ViewBuilder private func stage(_ model: WorkThreadModel, proxy: ScrollViewProxy) -> some View {
-        if let target = model.document {
+        if let set = model.documentSet {
             MacDocumentSplit(
-                target: target,
-                title: MacDocumentMode.title(runs: model.store.runs, target: target),
+                set: set,
+                selection: Binding(get: { set.selectedID }, set: { model.selectItem(id: $0) }),
                 reloadToken: model.documentReloadToken,
                 columnWidth: documentColumnWidth,
-                onClose: { model.closeDocument() }
+                showsList: MacDocumentModeLayout.showsList(
+                    itemCount: set.count,
+                    windowWidth: windowSize.width,
+                    sidebarShown: MacRequests.shared.sidebarShown
+                ),
+                onClose: { model.closeDocument() },
+                onOpenWeb: { if let url = model.webURL { openURL(url) } },
+                onEditDraft: { id, accountID in
+                    Task { _ = await StepRunActions.open(.openDraft(id: id, accountID: accountID), environment: environment, openURL: openURL) }
+                }
             ) {
                 documentColumn(model, proxy: proxy)
             }
@@ -416,7 +433,7 @@ struct MacWorkThreadView: View {
         case .outcome:
             // In document mode the "Your part" card names the step; the
             // plan stays in Details, as on the web.
-            if model.document == nil {
+            if !model.documentOpen {
                 OutcomeBlockView(
                     detail: model.detail,
                     routeTitle: route.title,
@@ -424,6 +441,7 @@ struct MacWorkThreadView: View {
                     runs: model.store.runs,
                     busy: model.store.busy || model.isMarkingDone,
                     onHandle: { step in Task { await model.handle(step: step) } },
+                    onHandleGoal: { Task { await model.handleGoal() } },
                     onOpenPlan: { showsPlan = true },
                     onOpenDetails: { request(.details, model: model) }
                 )
@@ -448,6 +466,7 @@ struct MacWorkThreadView: View {
                 continues: continues,
                 ownsWaitingShortcut: model.ownsWaitingShortcut(view),
                 hasContinuation: model.hasContinuation(view),
+                isNewest: model.store.newestRun?.id == view.id,
                 busy: model.store.busy || model.isMarkingDone,
                 pageShown: pageShown(view, model: model),
                 questionState: model.questionState(for: view),
@@ -488,7 +507,7 @@ struct MacWorkThreadView: View {
             Text(notice).font(.footnote).foregroundStyle(.red)
         }
         // A refused "Mark step done". In document mode the card shows it.
-        if let notice = model.stepNotice, model.document == nil {
+        if let notice = model.stepNotice, !model.documentOpen {
             Text(notice).font(.footnote).foregroundStyle(.red)
         }
         if let error = model.detailError, model.detail == nil {
@@ -545,7 +564,11 @@ struct MacWorkThreadView: View {
     /// The plan at a glance (S3): the shared list in a popover under the
     /// plan line. A click on a step scrolls the thread to its newest run.
     @ViewBuilder private func planPopover(_ model: WorkThreadModel, proxy: ScrollViewProxy) -> some View {
-        if let detail = model.detail {
+        if model.isGoalWork {
+            // A goal Work keeps a checklist, not a plan (docs/albatross-goal-runs.md, G1).
+            ChecklistBody(items: model.checklist)
+                .frame(width: MacThreadLayout.popoverWidth)
+        } else if let detail = model.detail {
             PlanListView(
                 detail: detail,
                 runs: model.store.runs,
@@ -607,7 +630,7 @@ struct MacWorkThreadView: View {
     /// The room for the pane. The document takes the column while it is
     /// open: a page is a sheet, and the details a popover.
     private var room: MacThreadLayout.Room {
-        guard model?.document == nil else { return .none }
+        guard model?.documentOpen != true else { return .none }
         return MacThreadLayout.room(windowWidth: windowSize.width, sidebarShown: MacRequests.shared.sidebarShown)
     }
 
@@ -629,6 +652,7 @@ struct MacWorkThreadView: View {
     /// The pane gives way, and the source list when the window needs it.
     private func documentDidChange(open: Bool, model: WorkThreadModel) {
         MacRequests.shared.threadDocumentOpen = open
+        MacRequests.shared.threadItemsOpen = open && (model.documentSet?.showsSwitcher ?? false)
         if open {
             if paneMode != .none { apply(.none, model: model) }
             let room = MacThreadLayout.documentRoom(windowWidth: windowSize.width, sidebarShown: MacRequests.shared.sidebarShown)
@@ -638,12 +662,13 @@ struct MacWorkThreadView: View {
         }
     }
 
-    /// A document handoff's primary button, or a click on a document
-    /// artifact: the document opens inside the thread, not in Files.
-    private func openDocument(_ target: DocumentTarget, model: WorkThreadModel) {
+    /// A document handoff's primary button, a package row, or a click on an
+    /// artifact: the item opens inside the thread, not in Files, with the
+    /// other items of its package (docs/albatross-goal-runs.md, G3).
+    private func openContent(_ content: DocumentModeItem.Content, title: String?, model: WorkThreadModel) {
         showsPlan = false
         showsDetailsPopover = false
-        model.openDocument(target)
+        model.openItem(content, title: title)
     }
 
     private func paneShown(_ model: WorkThreadModel) -> Binding<Bool> {
@@ -760,7 +785,7 @@ struct MacWorkThreadView: View {
         if next == .none {
             if paneMode == .page { model.pageRun = nil }
             // The source list stays away while a document has the column.
-            if model.document == nil { restoreSidebar() }
+            if !model.documentOpen { restoreSidebar() }
         }
         guard next != paneMode else { return }
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
@@ -959,6 +984,21 @@ struct MacWorkThreadView: View {
         // Albatross continues.
         actions.markDone = { view in Task { await model.markStepDone(view) } }
         actions.artifact = { artifact in Task { await openArtifact(artifact, model: model) } }
+        // A package row and a source capsule (docs/albatross-goal-runs.md, G2 to G4).
+        actions.openItem = { view, item in
+            Task {
+                await ThreadItemOpening.open(item, in: view, environment: environment, openURL: openURL) { content, title in
+                    openContent(content, title: title, model: model)
+                }
+            }
+        }
+        actions.openSource = { source in
+            Task {
+                await ThreadItemOpening.open(source, environment: environment, openURL: openURL) { content, title in
+                    openContent(content, title: title, model: model)
+                }
+            }
+        }
         actions.showPage = { view in showPage(view, model: model) }
         actions.hidePage = { view in if model.pageRun?.id == view.id { model.pageRun = nil } }
         actions.answer = { question, answer, _ in Task { await model.answer(question, form: answer) } }
@@ -995,7 +1035,7 @@ struct MacWorkThreadView: View {
             // The document opens inside the thread, not in Files (D5). An id
             // with no link takes the link of the run's own file.
             if let target = DocumentTarget.resolve(url: url, id: id, artifacts: view.run.artifacts) {
-                openDocument(target, model: model)
+                openContent(.document(target), title: nil, model: model)
             } else {
                 _ = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)
             }
@@ -1005,11 +1045,9 @@ struct MacWorkThreadView: View {
     }
 
     private func openArtifact(_ artifact: StepRunView.Artifact, model: WorkThreadModel) async {
-        if artifact.kind == .document, let target = DocumentTarget.of(url: artifact.url, id: artifact.referenceID) {
-            openDocument(target, model: model)
-            return
+        await ThreadItemOpening.open(artifact, environment: environment, openURL: openURL) { content, title in
+            openContent(content, title: title, model: model)
         }
-        _ = await StepRunActions.open(artifact, environment: environment, openURL: openURL)
     }
 
     private func applyIntent(_ intent: WorkRoute.Intent?) {
@@ -1029,7 +1067,7 @@ struct MacWorkThreadView: View {
         guard previous != next else { return }
         let line: String?
         switch next {
-        case .running: line = "Albatross started on \(model.currentStep?.title ?? "the step")."
+        case .running: line = "Albatross started on \(model.currentStep?.title ?? (model.isGoalWork ? "the goal" : "the step"))."
         case .yourTurn: line = "Your turn: \(model.store.newestRun?.run.next?.detail ?? model.currentStep?.title ?? "the step")."
         case .needsAnswer:
             let allowTitle = model.pendingAllow?.run.next?.allow.map(SecureAllowCopy.title)
