@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpCircle, Loader2 } from 'lucide-react';
+import { ArrowUpCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -109,9 +109,8 @@ export function ProductUpdateNotice() {
           <Button variant="outline" disabled={checking} onClick={() => setOpen(false)}>
             Later
           </Button>
-          <Button disabled={checking} onClick={applyUpdate}>
-            {checking ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
-            Reload to update
+          <Button disabled={checking} aria-busy={checking} onClick={applyUpdate}>
+            {checking ? 'Checking update…' : 'Reload to update'}
           </Button>
         </DialogFooter>
       </DialogContent>
