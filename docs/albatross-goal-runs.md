@@ -308,3 +308,41 @@ The runner records artifacts and sources from these results, so every builder us
   (the names of the content controls, in page order).
 - `document_export` with `format: 'pdf'` returns `{ ok: true, fileId, title, openPath, size }`
   for a new saved PDF (`agentUploads`), so the PDF can go into a package and onto a draft.
+
+## Lead decisions during the build (2026-10-15)
+
+These decisions change or add to the sections above. The code follows them.
+
+- Goal handoff buttons: the second button is "Done, continue", never "Mark done". It tells
+  Albatross that the user did their part. The server closes the handoff and queues a goal run
+  that checks the outcome contract first. The Work closes only when the proofs hold. With no
+  items and no `next`, the button is "Continue". Step runs keep "Mark step done".
+- Start: a goal Work starts with `POST /api/albatross/work/<id>/run` and `{ "action": "start" }`,
+  with no step key. "Done, continue" is `POST /api/albatross/work/<id>/step` with
+  `{ "stepKey": "goal", "continue": true }`.
+- Closing a goal Work: a goal run settles a contract proof only with evidence that the run
+  observed in its own tool results, its own files, or the open page. The words of the model never
+  count. The mail watch also watches goal Works against their open proofs. A contract that closes
+  `outcome_confirmed` still needs the user's confirmed word.
+- Sources: `RunSource.detail` is a short locator that the server computes: the host of a web
+  page, the sender and the date of a mail in the user's time zone, the Jira key, or the date of an
+  event. Clients show it after the title, with no dot, and hide it when the title already holds it.
+- Opening items: drafts, approvals, events, and cards open by kind and id with the existing in-app
+  handlers. The server `url` is the fallback for documents, saved files, and pages. A saved file
+  opens at `/?view=files&file=<id>`.
+- Packages in lists: a package of two or more items opens the thread in document mode, with one
+  tab for each item. A lone item opens in place. The Documents page lists each waiting document,
+  sheet, deck, or file item as its own row, and the row opens the thread on that item's tab.
+- Send permission: a sealed value goes into a mail only with a send grant: "Allow for this send"
+  (single use, 30 minutes at most) or "Always for mail to <domain>". Both need the identity check.
+  A send grant never lets a run type the value on a website, and a site grant never lets a mail
+  carry it.
+- Sealed previews: a preview of a sealed file shows the stored bytes, where the sealed field is
+  empty, with no check. Its sealed field names come in `x-sealed-fields`. Download and send fill
+  the value in memory after the check.
+- Documents: the templates are ink on white with one accent (216440, the app accent) on the
+  total rule and the blank underline. The sender shows once, in the masthead. "Subtotal" shows only
+  with an adjustment line.
+- Web: Browserbase sessions keep no logs (`logSession: false`). `secure_fetch` through a
+  Browserbase session stays behind `LAB86_SECURE_FETCH_BROWSERBASE`, off at deploy.
+- Copy: no new strings joined with middle dots. The current checklist item shows once.
