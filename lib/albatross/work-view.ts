@@ -8,6 +8,7 @@ import type { Milestone } from '../../components/albatross/shapes/MilestoneRail'
 import type { MetricEntry } from '../../components/albatross/shapes/PracticeBody';
 import type { BriefDocumentV2 } from '../shared/brief-document';
 import type { OutcomeContract } from './contract';
+import type { ChecklistItem } from './goal-run-contract';
 import type { WorkHorizon } from './horizon';
 import type { MetricLike, MetricSummary } from './practice-review';
 import type { EvidenceLike } from './proof';
@@ -97,7 +98,13 @@ export interface WorkDetailData {
     activeRun?: StepRunView | null;
     /** `enabled: false` hides every run control. */
     runner?: { enabled: boolean };
+    /** The newest goal run of the Work (docs/albatross-goal-runs.md), or null. */
+    goalRun?: StepRunView | null;
   };
+  /** The Work runs as one goal: "Handle it" needs no step (docs/albatross-goal-runs.md). */
+  goalRuns?: boolean;
+  /** The newest checklist of the newest goal run. */
+  checklist?: ChecklistItem[];
   contract: OutcomeContract | null;
   evidence: EvidenceLike[];
   application: null | {

@@ -24,6 +24,7 @@ export const HANDOFF_ITEM_NOTE_MAX = 200;
 export const HANDOFF_ITEM_BLANKS_MAX = 6;
 export const UNSURE_MAX = 4;
 export const UNSURE_TEXT_MAX = 200;
+export const RUN_SOURCE_DETAIL_MAX = 60;
 
 export const RUN_SOURCE_KINDS = ['web', 'mail', 'file', 'calendar', 'jira', 'document'] as const;
 export type RunSourceKind = (typeof RUN_SOURCE_KINDS)[number];
@@ -50,6 +51,12 @@ export interface RunSource {
   url?: string;
   id?: string;
   accountId?: string;
+  /**
+   * A short muted note after the title, written by the server: the host
+   * ("irs.gov"), the sender and the date ("Priya, Jul 30"), the issue key, or
+   * the date of an event. One line, at most 60 characters.
+   */
+  detail?: string;
 }
 
 /** Text the model wrote to the user between tool calls. */
@@ -172,12 +179,14 @@ export function cleanSources(sources: ReadonlyArray<Partial<RunSource>> | undefi
     const key = `${kind}:${url || id}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    const detail = source.detail ? oneLine(String(source.detail), RUN_SOURCE_DETAIL_MAX) : '';
     out.push({
       kind,
       title,
       ...(url ? { url } : {}),
       ...(id ? { id } : {}),
       ...(source.accountId ? { accountId: truncateText(String(source.accountId), 300) } : {}),
+      ...(detail ? { detail } : {}),
     });
     if (out.length === RUN_MESSAGE_SOURCES_MAX) break;
   }

@@ -38,6 +38,8 @@ describe('observedEvidence', () => {
       'secure_fetch',
       'list_accounts',
       'spreadsheet_capabilities',
+      'checklist_set',
+      'goal_update',
     ];
     const text = observedEvidence([
       {

@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { goalRunsEnabled } from '@/lib/albatross/goal-run-contract';
 import { resumeStepRun, StepRunStartError, startStepRun } from '@/lib/albatross/step-run-start';
 import { appendThreadNote } from '@/lib/albatross/thread-replies';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
@@ -17,6 +18,7 @@ interface StepRunRouteDependencies {
   startStepRun: typeof startStepRun;
   resumeStepRun: typeof resumeStepRun;
   appendThreadNote: typeof appendThreadNote;
+  goalRunsEnabled: (userId: string) => boolean;
 }
 
 const defaults: StepRunRouteDependencies = {
@@ -26,6 +28,7 @@ const defaults: StepRunRouteDependencies = {
   startStepRun,
   resumeStepRun,
   appendThreadNote,
+  goalRunsEnabled: (userId) => goalRunsEnabled(userId),
 };
 
 function text(value: unknown, max = 300) {
@@ -56,8 +59,16 @@ export function createStepRunPost(overrides: Partial<StepRunRouteDependencies> =
 
       if (action === 'start') {
         const stepKey = text(body?.stepKey);
-        if (!stepKey) return Response.json({ ok: false, error: 'stepKey is required.' }, { status: 400 });
-        const result = await deps.startStepRun({ userId, workId, stepKey, trigger: 'user' });
+        // A goal Work (docs/albatross-goal-runs.md) starts without a step; "goal" also works.
+        const goal = deps.goalRunsEnabled(userId);
+        if (!stepKey && !goal)
+          return Response.json({ ok: false, error: 'stepKey is required.' }, { status: 400 });
+        const result = await deps.startStepRun({
+          userId,
+          workId,
+          ...(stepKey && !goal ? { stepKey } : {}),
+          trigger: 'user',
+        });
         if (!result.created || !result.runId)
           return Response.json(
             { ok: false, error: 'Albatross could not start on this step now. Try again.' },

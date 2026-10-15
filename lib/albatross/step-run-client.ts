@@ -5,6 +5,7 @@
 // docs/albatross-step-runner.md. No React here; the components only render.
 
 import type { StepRunView } from '../../convex/albatrossStepRuns';
+import type { HandoffItem } from './goal-run-contract';
 
 export type { StepRunView };
 export type StepRunNext = NonNullable<StepRunView['next']>;
@@ -110,6 +111,8 @@ export type NextBehaviour =
   | { kind: 'open_url'; url: string }
   | { kind: 'show_artifacts' }
   | { kind: 'open_card'; id: string }
+  /** A saved file (a web download, a filled PDF, a PDF export) opens in Files by its app path. */
+  | { kind: 'open_file'; url: string; id: string | null }
   | { kind: 'resume' };
 
 export function nextBehaviour(next: StepRunNext | null | undefined): NextBehaviour | null {
@@ -324,6 +327,44 @@ export function artifactBehaviour(artifact: StepRunArtifact): NextBehaviour | nu
       return artifact.url ? { kind: 'open_url', url: artifact.url } : null;
     case 'card':
       return artifact.id ? { kind: 'open_card', id: artifact.id } : null;
+    case 'deck':
+      return artifact.url || artifact.id
+        ? { kind: 'open_document', url: artifact.url ?? null, id: artifact.id ?? null }
+        : null;
+    case 'file':
+      return filesPath(artifact.url)
+        ? { kind: 'open_file', url: artifact.url!, id: artifact.id ?? null }
+        : null;
+    default:
+      return null;
+  }
+}
+
+/** A path inside Files ("/?view=files&…"), the only place a saved file opens. */
+function filesPath(url: string | null | undefined): boolean {
+  return typeof url === 'string' && url.startsWith('/?view=files&');
+}
+
+/**
+ * What a click on one package item does (docs/albatross-goal-runs.md, G3).
+ * The server gives every item its path; this only picks the surface.
+ */
+export function itemBehaviour(item: HandoffItem): NextBehaviour | null {
+  switch (item.kind) {
+    case 'draft':
+      return item.id ? { kind: 'open_draft', id: item.id, accountId: item.accountId ?? null } : null;
+    case 'document':
+    case 'sheet':
+    case 'deck':
+      return item.url || item.id
+        ? { kind: 'open_document', url: item.url ?? null, id: item.id ?? null }
+        : null;
+    case 'file':
+      return filesPath(item.url) ? { kind: 'open_file', url: item.url!, id: item.id ?? null } : null;
+    case 'approval':
+      return { kind: 'open_approval', id: item.id ?? null };
+    case 'page':
+      return item.url && /^https?:\/\//i.test(item.url) ? { kind: 'open_url', url: item.url } : null;
     default:
       return null;
   }
@@ -350,6 +391,7 @@ const OPENS_IN_PLACE = new Set<NextBehaviour['kind']>([
   'open_approval',
   'open_url',
   'open_card',
+  'open_file',
   // Continue starts the next run from the Brief; the row then shows the work.
   'resume',
 ]);
@@ -375,7 +417,14 @@ export function readyForYouRows(items: readonly StepRunHandoffItem[]): ReadyForY
       continue;
     }
     if (!isOpenHandoff(run)) continue;
-    const behaviour = nextBehaviour(run.next);
+    // A goal handoff whose next action opens nothing here opens its first package item.
+    const next = nextBehaviour(run.next);
+    const fromItems =
+      next && OPENS_IN_PLACE.has(next.kind)
+        ? null
+        : ((run.items ?? []).map(itemBehaviour).find((found) => found && OPENS_IN_PLACE.has(found.kind)) ??
+          null);
+    const behaviour = fromItems ?? next;
     const label = primaryLabel(run.next) ?? 'Open';
     rows.push({
       runId: run.id,
@@ -398,6 +447,8 @@ export function readyForYouRows(items: readonly StepRunHandoffItem[]): ReadyForY
 // ---------------------------------------------------------------------------
 
 export interface DocumentWaitingRow {
+  /** Unique for each row: a goal handoff can have many documents (G3). */
+  key: string;
   runId: string;
   workId: string;
   workTitle: string;
@@ -409,11 +460,54 @@ export interface DocumentWaitingRow {
   row: ReadyForYouRow;
 }
 
-/** The open handoffs whose next action opens a document: the documents that wait for the user. */
+const DOCUMENT_ITEM_KINDS = new Set<HandoffItem['kind']>(['document', 'sheet', 'deck']);
+
+/**
+ * The open handoffs whose next action opens a document, and every document
+ * in the package of a goal handoff: the documents that wait for the user.
+ */
 export function documentsWaitingRows(items: readonly StepRunHandoffItem[]): DocumentWaitingRow[] {
   const rows: DocumentWaitingRow[] = [];
   for (const item of items) {
     const { run } = item;
+    const packaged = (run.items ?? []).filter(
+      (entry) => DOCUMENT_ITEM_KINDS.has(entry.kind) && entry.state !== 'ready',
+    );
+    if (
+      packaged.length &&
+      isOpenHandoff(run) &&
+      (run.outcome === 'ready_for_you' || run.outcome === 'your_turn')
+    ) {
+      packaged.forEach((entry, index) => {
+        const behaviour = itemBehaviour(entry);
+        if (!behaviour) return;
+        const isNext =
+          run.next?.target?.kind === 'document' &&
+          ((entry.id && run.next.target.id === entry.id) || (entry.url && run.next.target.url === entry.url));
+        rows.push({
+          key: `${run.id}:${entry.id || entry.url || index}`,
+          runId: run.id,
+          workId: item.workId,
+          workTitle: item.workTitle,
+          documentTitle: entry.title,
+          detail: entry.note?.trim() || run.next?.detail || handoffHeadline(run),
+          blanks: (entry.blanks || []).filter(Boolean),
+          row: {
+            runId: run.id,
+            workId: item.workId,
+            workTitle: item.workTitle,
+            stepTitle: run.stepTitle,
+            line: handoffLine(run),
+            working: false,
+            action: {
+              label: (isNext ? primaryLabel(run.next) : null) ?? 'Open the document',
+              behaviour,
+            },
+          },
+        });
+      });
+      continue;
+    }
     const target = run.next?.target;
     if (!isOpenHandoff(run) || !run.next || target?.kind !== 'document') continue;
     const row = readyForYouRows([item])[0];
@@ -421,6 +515,7 @@ export function documentsWaitingRows(items: readonly StepRunHandoffItem[]): Docu
     const documents = run.artifacts.filter((artifact) => artifact.kind === 'document');
     const made = documents.find((artifact) => artifact.id === target.id) ?? documents.at(-1);
     rows.push({
+      key: run.id,
       runId: run.id,
       workId: item.workId,
       workTitle: item.workTitle,

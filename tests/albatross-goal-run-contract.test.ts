@@ -18,6 +18,7 @@ import {
   RUN_MESSAGE_MAX,
   RUN_MESSAGE_SOURCES_MAX,
   RUN_MESSAGE_TEXT_MAX,
+  RUN_SOURCE_DETAIL_MAX,
   UNSURE_MAX,
   unsureInputSchema,
 } from '../lib/albatross/goal-run-contract';
@@ -93,6 +94,26 @@ describe('run messages and sources', () => {
       })),
     );
     expect(many).toHaveLength(RUN_MESSAGE_SOURCES_MAX);
+  });
+
+  test('a source keeps its detail on one line, at most 60 characters; an empty detail drops', () => {
+    expect(
+      cleanSources([
+        { kind: 'mail', title: 'July hours', id: 't1', detail: '  Priya,\n  Jul 30 ' },
+        { kind: 'web', title: 'Form', url: 'https://www.irs.gov/w9', detail: 'x'.repeat(80) },
+        { kind: 'jira', title: 'ABC-1 Report', id: 'ABC-1', detail: '   ' },
+      ]),
+    ).toEqual([
+      { kind: 'mail', title: 'July hours', id: 't1', detail: 'Priya, Jul 30' },
+      {
+        kind: 'web',
+        title: 'Form',
+        url: 'https://www.irs.gov/w9',
+        detail: 'x'.repeat(RUN_SOURCE_DETAIL_MAX),
+      },
+      { kind: 'jira', title: 'ABC-1 Report', id: 'ABC-1' },
+    ]);
+    expect(RUN_SOURCE_DETAIL_MAX).toBe(60);
   });
 
   test('a message is trimmed, empty text adds nothing, and the newest messages stay', () => {

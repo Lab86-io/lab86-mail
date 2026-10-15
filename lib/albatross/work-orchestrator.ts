@@ -6,7 +6,11 @@ import { albatrossApplyIntentPlan } from '../tools/albatross';
 import { invokeTool } from '../tools/registry';
 import type { generateAreaLivingBrief } from './area-living-brief';
 import { type AdvanceTrigger, conductorVerdict } from './conductor-quiet';
+import { goalRunsEnabled } from './goal-run-contract';
+import { goalContractFor, goalOutcomeText } from './goal-runs';
 import { generateIntentPlan } from './intent-plan';
+import { shapePlans } from './shape-policy';
+import { assertWorkOpen } from './work-lifecycle';
 import { appliedStepsFromApplyResult } from './work-model';
 import { unappliedActions } from './work-v2';
 
@@ -18,6 +22,8 @@ interface WorkOrchestratorDependencies {
   newOperationBatchId: typeof newOperationBatchId;
   generateAreaLivingBrief: (input: Parameters<typeof generateAreaLivingBrief>[0]) => Promise<unknown>;
   pausedRisks: (userId: string) => Promise<ReadonlySet<ToolRisk>>;
+  /** LAB86_GOAL_RUNS for this user (docs/albatross-goal-runs.md). */
+  goalRunsEnabled: (userId: string) => boolean;
 }
 
 const defaultWorkOrchestratorDependencies: WorkOrchestratorDependencies = {
@@ -28,6 +34,7 @@ const defaultWorkOrchestratorDependencies: WorkOrchestratorDependencies = {
   newOperationBatchId,
   // A failed read throws, so advanceWork takes its error path and applies nothing.
   pausedRisks: (userId) => pausedAssistantRisksStrict(userId),
+  goalRunsEnabled: (userId) => goalRunsEnabled(userId),
   generateAreaLivingBrief: async ({ userId, areaId }) => {
     const { enqueueBriefJob } = await import('../mail/brief-jobs');
     return enqueueBriefJob({ userId, kind: 'area', areaId, force: false });
@@ -73,6 +80,8 @@ export async function advanceWork(input: AdvanceWorkInput) {
       if (verdict !== 'move') return { status: verdict, workId: input.workId };
     }
   }
+  // Goal mode: no step plan. A run works on the whole goal (G1 Switch).
+  if (workOrchestratorDependencies.goalRunsEnabled(input.userId)) return advanceGoalWork(input);
   await workOrchestratorDependencies.convexMutation(api.albatrossWorkV2.setAgentState, {
     userId: input.userId,
     workId: input.workId,
@@ -239,6 +248,84 @@ export async function advanceWork(input: AdvanceWorkInput) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await workOrchestratorDependencies
+      .convexMutation(api.albatrossWorkV2.setAgentState, {
+        userId: input.userId,
+        workId: input.workId,
+        agentState: 'error',
+        error: message,
+      })
+      .catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * Goal mode (docs/albatross-goal-runs.md, G1): no plan model call. The Work
+ * gets one plan row with no actions, so it reads as planned and the
+ * scheduling conductor leaves it alone, plus a first outcome contract when it
+ * has none. Nothing is applied. A Work that already has an applied plan keeps
+ * it: its open steps become the first checklist of the first goal run.
+ */
+async function advanceGoalWork(input: AdvanceWorkInput) {
+  const deps = workOrchestratorDependencies;
+  try {
+    const workbench = await deps.convexQuery<any>(api.albatrossIntents.getIntentWorkbench, {
+      userId: input.userId,
+      intentId: input.workId,
+    });
+    const work = workbench?.intent;
+    if (!work) throw new Error('Albatross Work not found.');
+    assertWorkOpen(work);
+    const plan = workbench.plan;
+    const idle = () =>
+      deps.convexMutation(api.albatrossWorkV2.setAgentState, {
+        userId: input.userId,
+        workId: input.workId,
+        agentState: 'idle',
+        ...(work.primaryProjectId ? { primaryProjectId: work.primaryProjectId } : {}),
+      });
+    // A list, a practice, a monitor, or a routine has no plan, as before.
+    if (shapePlans(work.shape) === 'no') {
+      await deps.convexMutation(api.albatrossIntents.updateIntent, {
+        userId: input.userId,
+        intentId: input.workId,
+        status: 'ready',
+        planError: '',
+      });
+      await idle();
+      return { status: 'ready' as const, workId: input.workId, planId: undefined };
+    }
+    const hasActions = Boolean(plan?.digitalActions?.length || plan?.physicalActions?.length);
+    if (plan && (plan.status === 'applied' || !hasActions)) {
+      await idle();
+      return { status: 'ready' as const, workId: input.workId, planId: String(plan._id) };
+    }
+    const contract = goalContractFor(work);
+    const planId = await deps.convexMutation<string>(api.albatrossIntents.savePlan, {
+      userId: input.userId,
+      intentId: input.workId,
+      outcome: goalOutcomeText(work),
+      digitalActions: [],
+      physicalActions: [],
+      assumptions: [],
+      sourceRefs: [],
+      // A contract the user or an earlier run wrote stays.
+      ...(work.contract
+        ? {}
+        : {
+            contract: {
+              outcome: contract.outcome,
+              proofs: contract.proofs.map((proof) => ({ id: proof.id, what: proof.what })),
+              closeWhen: contract.closeWhen,
+              ...(contract.contradictions?.length ? { contradictions: contract.contradictions } : {}),
+            },
+          }),
+    });
+    await idle();
+    return { status: 'ready' as const, workId: input.workId, planId: String(planId) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await deps
       .convexMutation(api.albatrossWorkV2.setAgentState, {
         userId: input.userId,
         workId: input.workId,

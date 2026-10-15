@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from 'bun:test';
+import { getFunctionName } from 'convex/server';
 import { advanceWork, setWorkOrchestratorDependenciesForTest } from '../lib/albatross/work-orchestrator';
 import * as briefJobs from '../lib/mail/brief-jobs';
 
@@ -400,4 +401,165 @@ test('applying Work durably queues its area brief before returning', async () =>
     state.restore();
     enqueue.mockRestore();
   }
+});
+
+describe('advanceWork in goal mode (docs/albatross-goal-runs.md)', () => {
+  function goalHarness(workbench: any, options: { failSave?: boolean } = {}) {
+    const calls: Array<{ fn: string; args: any }> = [];
+    let planned = 0;
+    let applied = 0;
+    const restore = setWorkOrchestratorDependenciesForTest({
+      goalRunsEnabled: (userId) => userId === 'user_1',
+      convexMutation: (async (ref: any, args: any) => {
+        const fn = getFunctionName(ref);
+        calls.push({ fn, args });
+        if (fn === 'albatrossIntents:savePlan') {
+          if (options.failSave) throw new Error('save failed');
+          return 'plan_goal';
+        }
+        return undefined;
+      }) as any,
+      convexQuery: (async () => workbench) as any,
+      generateIntentPlan: (async () => {
+        planned += 1;
+      }) as any,
+      invokeTool: (async () => {
+        applied += 1;
+      }) as any,
+    });
+    return {
+      restore,
+      calls,
+      planned: () => planned,
+      applied: () => applied,
+      of: (fn: string) => calls.filter((call) => call.fn === fn).map((call) => call.args),
+    };
+  }
+
+  test('no plan model call: one plan row with no actions and a first contract; nothing applied', async () => {
+    const state = goalHarness({
+      intent: { _id: 'work_1', title: 'July invoice', rawText: 'Email the July invoice', questions: [] },
+      plan: null,
+    });
+    try {
+      await expect(advanceWork(input)).resolves.toEqual({
+        status: 'ready',
+        workId: 'work_1',
+        planId: 'plan_goal',
+      });
+      expect(state.planned()).toBe(0);
+      expect(state.applied()).toBe(0);
+      expect(state.of('albatrossIntents:savePlan')).toEqual([
+        {
+          userId: 'user_1',
+          intentId: 'work_1',
+          outcome: 'July invoice',
+          digitalActions: [],
+          physicalActions: [],
+          assumptions: [],
+          sourceRefs: [],
+          contract: {
+            outcome: 'July invoice',
+            proofs: [
+              { id: 'send-0', what: 'The message left your account' },
+              { id: 'send-1', what: 'The person acknowledged it' },
+            ],
+            closeWhen: 'outcome_likely',
+            contradictions: ['The message bounced', 'They said they never got it'],
+          },
+        },
+      ]);
+      expect(state.of('albatrossIntents:markPlanApplied')).toEqual([]);
+      expect(state.of('albatrossWorkV2:setAgentState').at(-1)).toMatchObject({ agentState: 'idle' });
+    } finally {
+      state.restore();
+    }
+  });
+
+  test('a contract the Work has stays; an unapplied step plan is replaced by the goal row', async () => {
+    const state = goalHarness({
+      intent: {
+        _id: 'work_1',
+        title: 'Learn tax forms',
+        rawText: 'x',
+        contract: { outcome: 'Mine', proofs: [], closeWhen: 'never_automatically' },
+        primaryProjectId: 'p_1',
+      },
+      plan: { _id: 'plan_old', status: 'ready', digitalActions: [{ kind: 'task', title: 'Old step' }] },
+    });
+    try {
+      await advanceWork(input);
+      const saved = state.of('albatrossIntents:savePlan')[0];
+      expect(saved).not.toHaveProperty('contract');
+      expect(saved.outcome).toBe('Learn tax forms');
+      expect(state.of('albatrossWorkV2:setAgentState').at(-1)).toMatchObject({ primaryProjectId: 'p_1' });
+    } finally {
+      state.restore();
+    }
+  });
+
+  test('an applied plan or an earlier goal row stays as it is', async () => {
+    for (const plan of [
+      { _id: 'plan_applied', status: 'applied', digitalActions: [{ kind: 'task', title: 'Step' }] },
+      { _id: 'plan_goal', status: 'ready', digitalActions: [], physicalActions: [] },
+    ]) {
+      const state = goalHarness({ intent: { _id: 'work_1', title: 'x', rawText: 'x' }, plan });
+      try {
+        await expect(advanceWork(input)).resolves.toEqual({
+          status: 'ready',
+          workId: 'work_1',
+          planId: plan._id,
+        });
+        expect(state.of('albatrossIntents:savePlan')).toEqual([]);
+      } finally {
+        state.restore();
+      }
+    }
+  });
+
+  test('a shape with no plan stays plan-less; a missing or closed Work is an error', async () => {
+    const shaped = goalHarness({
+      intent: { _id: 'work_1', title: 'Groceries', rawText: 'x', shape: 'monitor' },
+    });
+    try {
+      await expect(advanceWork(input)).resolves.toEqual({
+        status: 'ready',
+        workId: 'work_1',
+        planId: undefined,
+      });
+      expect(shaped.of('albatrossIntents:updateIntent')[0]).toMatchObject({ status: 'ready', planError: '' });
+      expect(shaped.of('albatrossIntents:savePlan')).toEqual([]);
+    } finally {
+      shaped.restore();
+    }
+    const gone = goalHarness(null);
+    try {
+      await expect(advanceWork(input)).rejects.toThrow('Albatross Work not found.');
+      expect(gone.of('albatrossWorkV2:setAgentState').at(-1)).toMatchObject({ agentState: 'error' });
+    } finally {
+      gone.restore();
+    }
+    const failed = goalHarness(
+      { intent: { _id: 'work_1', title: 'x', rawText: 'x' }, plan: null },
+      { failSave: true },
+    );
+    try {
+      await expect(advanceWork(input)).rejects.toThrow('save failed');
+    } finally {
+      failed.restore();
+    }
+  });
+
+  test('other users keep the step plan', async () => {
+    const state = goalHarness({
+      intent: { _id: 'work_2', title: 'x', rawText: 'x', questions: [] },
+      plan: null,
+    });
+    try {
+      await expect(advanceWork({ ...input, userId: 'user_2' })).rejects.toThrow('Planning returned no plan.');
+      expect(state.planned()).toBe(1);
+    } finally {
+      state.restore();
+    }
+  });
 });
