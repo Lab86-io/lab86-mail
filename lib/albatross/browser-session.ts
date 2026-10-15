@@ -119,9 +119,13 @@ export async function createBrowserSession(
       keepAlive: true,
       timeout: SESSION_TIMEOUT_SECONDS,
       browserSettings: {
-        // No recording: a run types personal details into forms, and the user
-        // signs in here. Proof is the page text the runner reads, not a replay.
+        // No recording and no logs: a run types personal details and saved
+        // passwords into forms, and the user signs in here. Browserbase keeps
+        // CDP logs by default, and a value typed with fill() shows in them
+        // (docs/research/browserbase-auth-files-2026-10-15.md). Proof is the
+        // page text the runner reads, not a replay.
         recordSession: false,
+        logSession: false,
         viewport: { width: 1280, height: 800 },
         ...(options.contextId
           ? { context: { id: options.contextId, persist: options.persist === true } }
