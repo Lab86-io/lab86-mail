@@ -38,6 +38,7 @@ export function __setSessionFetchDepsForTest(overrides: Partial<typeof defaults>
 
 export async function sessionFetch(input: SessionFetchInput): Promise<SessionFetchResult> {
   const url = new URL(input.url);
+  url.hash = '';
   return deps.withShortSession(
     { allowedDomains: [url.hostname], timeoutSeconds: 60, signal: input.signal },
     async (page) => {
