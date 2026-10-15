@@ -11,9 +11,11 @@
 import { tool as aiTool } from 'ai';
 import { z } from 'zod';
 import { approvalConditionMet } from '../ai/approval';
+import { getAiRequestContext } from '../ai/context';
 import { runSecureFetch } from '../secure/fetch';
 import { SecureLeak, SecureNeedsAllow, SecureRefused, type SecureRunAccess } from '../secure/runner-access';
 import { truncateText } from '../shared/text';
+import { saveBrowserDownload } from '../web/file-pull';
 import { type AgentBrowser, BrowserHandoffRequired, type PageView } from './browser-agent';
 import { formQuestionSchema } from './thread-contract';
 
@@ -570,6 +572,49 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
       () => 'Waiting for the page',
       (browser, input) => browser.wait(input.seconds),
     ),
+  });
+
+  // browser_download (lib/web/file-pull.ts saveBrowserDownload): a file from
+  // the shared browser into Files, through the Browserbase Downloads API.
+  tools.browser_download = aiTool({
+    description:
+      "Save a file from the shared browser in the user's Files (the user's saved sign-ins apply): PDF, Word (DOCX), Excel (XLSX), PowerPoint (PPTX), CSV, PNG, or JPEG, max 25 MB. Pass ref for a download link or button in the latest snapshot, or url for a file address. With neither, it saves the file the current page shows. Returns fileId, title, size, contentType, sourceUrl, and sha256, not the contents.",
+    inputSchema: z.object({
+      ref: z.string().min(1).max(20).optional(),
+      url: z.string().min(1).max(2000).optional(),
+      name: z.string().max(120).optional().describe('The file name to show in Files.'),
+    }),
+    execute: async (args: { ref?: string; url?: string; name?: string }) => {
+      try {
+        const userId = getAiRequestContext().userId;
+        if (!userId) return { ok: false, message: 'Sign in required to save a file.' };
+        const browser = await host.browser();
+        openBrowser = browser;
+        await host.browserStatus('Saving a file');
+        const saved = await saveBrowserDownload({ userId, browser, ...args });
+        await host.artifact({ kind: 'file', id: saved.fileId, title: saved.title, url: saved.openPath });
+        await host.log(
+          `Saved ${truncateText(saved.title, 90)}${saved.sourceUrl ? ` from ${hostOf(saved.sourceUrl)}` : ''}.`,
+        );
+        return {
+          ok: true,
+          fileId: saved.fileId,
+          title: saved.title,
+          openPath: saved.openPath,
+          size: saved.size,
+          contentType: saved.contentType,
+          ...(saved.sourceUrl ? { sourceUrl: saved.sourceUrl } : {}),
+          sha256: saved.sha256,
+        };
+      } catch (error) {
+        const clean = async (text: string) =>
+          openBrowser ? openBrowser.cleanMessage(text).catch(() => 'The download failed.') : text;
+        if (error instanceof BrowserHandoffRequired)
+          return { ...handoffResult(error), message: truncateText(await clean(error.message), 500) };
+        const message = error instanceof Error ? error.message : 'The download failed.';
+        return { ok: false, message: truncateText(await clean(message), 300) };
+      }
+    },
   });
   return tools;
 }
