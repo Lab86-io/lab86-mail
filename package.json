@@ -16,6 +16,7 @@
     "ios:verify-auth": "bun scripts/verify-ios-auth.ts",
     "eval:albatross-work": "bun --bun scripts/eval-albatross-work.ts",
     "test": "bun test",
+    "updates:check": "bun scripts/check-product-updates.ts",
     "test:coverage": "bun test --coverage --coverage-reporter=lcov --coverage-reporter=text --coverage-dir=coverage",
     "lint": "biome check .",
     "format": "biome format --write .",
