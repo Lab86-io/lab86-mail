@@ -1,11 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { hiringDeck, referenceDeck } from '../lib/documents/deck-fixtures';
 import { checkDeck, estimateTextLines, repairDeck, textFits } from '../lib/documents/deck-quality';
-import {
-  availableRenderBrowser,
-  RENDER_SESSION_SETTINGS,
-  renderDeckHtml,
-} from '../lib/documents/deck-render';
+import { availableRenderBrowser, renderDeckHtml, renderSessionBody } from '../lib/documents/deck-render';
 import { setProcessEnv } from './tools/env';
 
 describe('deck render page', () => {
