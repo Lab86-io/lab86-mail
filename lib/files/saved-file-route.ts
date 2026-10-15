@@ -9,7 +9,9 @@
 // After the check, the server fills the values in memory and sends the bytes.
 // Nothing is cached.
 //
-// `?preview=1` shows a PDF, PNG, or JPEG in the browser. Every other answer
+// `?preview=1` shows a PDF, PNG, or JPEG in the browser. For a sealed file the
+// preview is the stored file with its sealed fields empty (no check, no value),
+// and `x-sealed-fields` names those fields. Every other answer
 // is a download, with nosniff and a sandbox, so a file never runs script on
 // the app origin.
 
@@ -90,7 +92,11 @@ export function createSavedFileGet(overrides: Partial<typeof savedFileRouteDefau
       const preview = new URL(req.url).searchParams.get('preview') === '1';
       const row = await deps.getFile(user.userId, fileId);
       if (!row) return json({ ok: false, error: 'This file is not in Files.' }, 404);
-      if (!row.sealedFields?.length) {
+      const sealedNames = (row.sealedFields || []).map((entry) => entry.field);
+      // A preview shows the stored bytes. They never hold a sealed value, so a
+      // preview needs no check: the sealed fields show empty, and their names
+      // go in `x-sealed-fields` so the viewer can mark them.
+      if (!sealedNames.length || preview) {
         if (!row.url) return json({ ok: false, error: 'This file is not in storage any more.' }, 404);
         const upstream = await deps.fetch(row.url, {
           redirect: 'error',
@@ -98,14 +104,14 @@ export function createSavedFileGet(overrides: Partial<typeof savedFileRouteDefau
         });
         if (!upstream.ok || !upstream.body)
           return json({ ok: false, error: 'The file could not be read.' }, 502);
-        return new Response(upstream.body, {
-          headers: savedFileHeaders({
-            contentType: row.contentType,
-            name: row.name,
-            preview,
-            size: row.size,
-          }),
+        const headers = savedFileHeaders({
+          contentType: row.contentType,
+          name: row.name,
+          preview,
+          size: row.size,
         });
+        if (sealedNames.length) headers['x-sealed-fields'] = encodeURIComponent(JSON.stringify(sealedNames));
+        return new Response(upstream.body, { headers });
       }
       // A sealed file: the check comes before any value is opened.
       if (!(await deps.identityChecked())) return verifyIdentityResponse();

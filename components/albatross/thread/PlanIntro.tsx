@@ -5,8 +5,10 @@
 // step. While the plan is not ready it says so and the composer still works.
 // The same step rows serve the Details panel's Plan section (S3).
 
+import { useState } from 'react';
 import { ShimmerText } from '@/components/odysseyui/text-shimmer';
 import { Button } from '@/components/ui/button';
+import { GOAL_RUN_COPY } from '@/lib/albatross/goal-run-view';
 import { PLAN_STEP_STATE_LABEL, type PlanStepRow, type ThreadState } from '@/lib/albatross/thread-view';
 import { cn } from '@/lib/utils';
 
@@ -202,6 +204,67 @@ export function PlanStrip({
   );
 }
 
+/**
+ * The top of a goal Work (docs/albatross-goal-runs.md): no plan strip. The
+ * steps done before the change fold under "N steps done before this", and
+ * "Handle it" shows when no run is open and no handoff waits.
+ */
+export function GoalIntro({
+  earlierSteps,
+  showHandle,
+  busy,
+  onHandle,
+}: {
+  earlierSteps: readonly PlanStepRow[];
+  showHandle: boolean;
+  busy?: boolean;
+  onHandle?: () => void;
+}) {
+  const [earlierOpen, setEarlierOpen] = useState(false);
+  const done = earlierSteps.filter((step) => step.state === 'done');
+  if (!done.length && !showHandle) return null;
+  return (
+    <div data-slot="goal-intro" className="flex min-w-0 flex-col gap-3">
+      {done.length ? (
+        <div className="min-w-0">
+          <button
+            type="button"
+            aria-expanded={earlierOpen}
+            onClick={() => setEarlierOpen((value) => !value)}
+            className="group flex cursor-pointer items-center gap-1.5 text-left text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          >
+            <span>{GOAL_RUN_COPY.earlierSteps(done.length)}</span>
+            <span
+              aria-hidden
+              className={cn(
+                'ml-0.5 inline-block size-[7px] -translate-y-[1px] rotate-[-45deg] border-r border-b border-current',
+                earlierOpen && 'translate-y-[1px] rotate-45',
+              )}
+            />
+          </button>
+          {earlierOpen ? (
+            <div className="mt-2 border-l border-[var(--color-border)] pl-3">
+              <PlanSteps steps={done} dense />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {showHandle && onHandle ? (
+        <Button
+          type="button"
+          size="sm"
+          className="w-fit"
+          disabled={busy}
+          aria-busy={busy || undefined}
+          onClick={onHandle}
+        >
+          {busy ? 'Starting…' : GOAL_RUN_COPY.handleIt}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 /** The top of every thread: the outcome as the page title, and the plan strip under it. */
 export function PlanIntro({
   outcome,
@@ -211,6 +274,7 @@ export function PlanIntro({
   activeStepKey,
   busyStepKey,
   onHandle,
+  goal,
 }: {
   outcome: string;
   summary?: string | null;
@@ -219,6 +283,8 @@ export function PlanIntro({
   activeStepKey?: string | null;
   busyStepKey?: string | null;
   onHandle?: (stepKey: string) => void;
+  /** A goal Work: the earlier steps fold and "Handle it" replace the plan strip. */
+  goal?: { showHandle: boolean; busy?: boolean; onHandle?: () => void } | null;
 }) {
   return (
     <section
@@ -237,7 +303,14 @@ export function PlanIntro({
           </p>
         ) : null}
       </div>
-      {state === 'planning' ? (
+      {goal ? (
+        <GoalIntro
+          earlierSteps={steps}
+          showHandle={goal.showHandle}
+          busy={goal.busy}
+          onHandle={goal.onHandle}
+        />
+      ) : state === 'planning' ? (
         <p className="text-[12.5px]" aria-live="polite">
           <ShimmerText text={PLAN_COPY.making} duration={1.6} startOnView={false} />
         </p>

@@ -43,7 +43,13 @@ export interface WorkChatContextData {
         log?: Array<{ text?: string }>;
       } | null;
     }>;
+    /** The newest goal run (docs/albatross-goal-runs.md). */
+    goalRun?: GoalRunContext | null;
   } | null;
+  /** The Work runs as one goal: a run needs no step. */
+  goalRuns?: boolean;
+  /** The newest checklist of the newest goal run. */
+  checklist?: Array<{ text?: string; state?: string }>;
   evidence?: Array<{
     _id?: string;
     title?: string;
@@ -55,6 +61,96 @@ export interface WorkChatContextData {
     trust?: string;
     url?: string | null;
   }>;
+}
+
+/** What the chat reads of a goal run: its state, its talk, its checklist, and its package. */
+export interface GoalRunContext {
+  state?: string;
+  outcome?: string | null;
+  summary?: string | null;
+  stoppedBy?: string | null;
+  next?: { kind?: string; label?: string; detail?: string } | null;
+  log?: Array<{ text?: string }>;
+  messages?: Array<{
+    text?: string;
+    sources?: Array<{ kind?: string; title?: string; url?: string; id?: string }>;
+  }>;
+  items?: Array<{
+    kind?: string;
+    id?: string;
+    title?: string;
+    state?: string;
+    blanks?: string[];
+    note?: string;
+  }>;
+  unsure?: string[];
+}
+
+const GOAL_MESSAGES_SHOWN = 4;
+
+function goalRunState(run: GoalRunContext): string {
+  if (run.state === 'queued' || run.state === 'running') return 'a run works on the goal now';
+  if (run.state === 'handed_off') {
+    if (run.stoppedBy) return `stopped at its ${clean(run.stoppedBy, 20)} limit`;
+    return `waits on the user (${clean(run.next?.kind, 40)}: ${clean(run.next?.label, 60)})`;
+  }
+  if (run.state === 'done') return 'done';
+  if (run.state === 'failed') return 'did not finish';
+  if (run.state === 'cancelled') return 'stopped by the user';
+  return clean(run.state, 40) || 'unknown';
+}
+
+function sourceLine(source: { kind?: string; title?: string; url?: string; id?: string }): string {
+  const where = clean(source.url || source.id, 200);
+  return `${clean(source.kind, 20)} "${clean(source.title, 120)}"${where ? ` (${where})` : ''}`;
+}
+
+/** The goal section of the chat context. Empty for a Work without goal runs. */
+function goalRunLines(detail: WorkChatContextData): string[] {
+  const run = detail.execution?.goalRun;
+  const checklist = (detail.checklist || []).filter((item) => clean(item.text, 120));
+  if (!run && !checklist.length) return [];
+  const lines = ['', 'The goal run (one run works on the whole goal, not on one step):'];
+  if (run) {
+    lines.push(`- State: ${goalRunState(run)}`);
+    if (run.summary) lines.push(`- Summary: ${clean(run.summary, 400)}`);
+    if (run.state === 'queued' || run.state === 'running') {
+      const latest = (run.log || []).at(-1)?.text;
+      if (latest) lines.push(`- Now: ${clean(latest, 200)}`);
+    }
+    if (run.state === 'handed_off' && run.next?.detail)
+      lines.push(`- It asked: ${clean(run.next.detail, 400)}`);
+    const messages = (run.messages || [])
+      .filter((message) => clean(message.text, 10))
+      .slice(-GOAL_MESSAGES_SHOWN);
+    if (messages.length) {
+      lines.push('- Newest messages to the user:');
+      for (const message of messages) {
+        lines.push(`  - ${clean(message.text, 500)}`);
+        const sources = (message.sources || []).slice(0, 4).map(sourceLine);
+        if (sources.length) lines.push(`    Sources: ${sources.join('; ')}`);
+      }
+    }
+    const items = (run.items || []).filter((item) => clean(item.title, 120));
+    if (items.length) {
+      lines.push('- Package (the things it handed over):');
+      for (const item of items) {
+        const blanks = (item.blanks || []).map((blank) => clean(blank, 40)).filter(Boolean);
+        lines.push(
+          `  - ${clean(item.kind, 20)} "${clean(item.title, 120)}" — ${clean(item.state, 20)}${item.id ? ` [id: ${clean(item.id, 180)}]` : ''}${blanks.length ? `; blanks: ${blanks.join(', ')}` : ''}${item.note ? `; ${clean(item.note, 200)}` : ''}`,
+        );
+      }
+    }
+    const unsure = (run.unsure || []).map((line) => clean(line, 200)).filter(Boolean);
+    if (unsure.length) lines.push('- Not sure:', ...unsure.map((line) => `  - ${line}`));
+  }
+  if (checklist.length) {
+    lines.push('- Checklist:');
+    checklist.slice(0, 12).forEach((item, index) => {
+      lines.push(`  ${index + 1}. [${clean(item.state, 10) || 'todo'}] ${clean(item.text, 120)}`);
+    });
+  }
+  return lines;
 }
 
 export class WorkContextNotFoundError extends Error {
@@ -165,6 +261,8 @@ export function formatWorkChatContext(
         sections.push(`   It asked: ${clean(run.next.detail, 400)}`);
     });
   }
+  // The runner gets its own goal sections (lib/albatross/goal-run-prompt.ts).
+  if (forChat) sections.push(...goalRunLines(detail));
   if (pendingQuestions.length) {
     sections.push('', 'Open questions:');
     pendingQuestions.slice(0, 8).forEach((question) => {
@@ -206,6 +304,12 @@ export function formatWorkChatContext(
     `- When the user states a personal detail (name, phone, address, emergency contact), call personal_details_save as well, so the run can type it.`,
     `- While a run works, keep replies to one or two short sentences. The run block shows its own progress.`,
   );
+  if (detail.goalRuns)
+    sections.push(
+      `- This Work runs as one goal: a run works on the whole goal and needs no step. Call albatross_handle_step without stepKey.`,
+      `- When the user says they did their part of what the run handed over ("I sent it", "I filled in the hours"), call albatross_handle_step with done: true and their words in note. The next run checks the goal first.`,
+      `- Answer questions about the run's work from its messages, sources, package, and "Not sure" lines above. Say where a fact came from.`,
+    );
 
   return sections.join('\n');
 }

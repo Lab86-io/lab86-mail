@@ -12,6 +12,7 @@ import {
   type SecureItemKind,
   type SecureItemView,
   type SecureRequestInput,
+  type SecureSendUseOutcome,
   type SecureUseOutcome,
   type SecureUseView,
 } from '../secure/contract';
@@ -28,6 +29,10 @@ import { SECRET_SHAPE_NAMES, type SecretShapeKind, type SecretShapeMatch } from 
 // ---------------------------------------------------------------------------
 
 export const SECURE_COPY = {
+  mailTitle: 'Mail',
+  mailTo: (domain: string) => `Mail to ${domain}`,
+  mailAlways: 'Fills a sealed file at send time',
+  mailRemoved: (domain: string) => `Mail to ${domain} removed`,
   title: 'Passwords and IDs',
   blurb:
     'Albatross uses these on their sites: it signs in, fills a form, or calls a service for you. A saved value never appears again, not here and not in a conversation.',
@@ -306,7 +311,7 @@ export type SecureUseTone = 'did' | 'warn' | 'quiet';
 
 /** The outcome column of a use row. */
 export function secureUseLine(
-  use: Pick<SecureUseView, 'outcome' | 'field' | 'site'>,
+  use: Pick<SecureUseView, 'field' | 'site'> & { outcome: SecureUseView['outcome'] | SecureSendUseOutcome },
   kind: SecureItemKind,
 ): string {
   const site = use.site || 'the site';
@@ -334,6 +339,8 @@ export function secureUseLine(
       return `You allowed it in mail to ${site} from now on`;
     case 'denied':
       return `You did not allow it on ${site}`;
+    default:
+      return 'Used';
   }
 }
 

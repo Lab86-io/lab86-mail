@@ -47,10 +47,36 @@ import {
   releaseBrowserSession,
   sessionConnectUrl,
 } from './browser-session';
+import type { OutcomeContract } from './contract';
 import { evidenceSatisfies } from './evidence-gate';
-import { type ObservedStep, observedEvidence } from './run-evidence';
+import {
+  type ChecklistItem,
+  cleanChecklist,
+  cleanSources,
+  cleanUnsure,
+  type HandoffItem,
+  RUN_MESSAGE_TEXT_MAX,
+  type RunMessage,
+  type RunSource,
+} from './goal-run-contract';
+import { GOAL_RUNNER_RULES, goalRunnerContext, goalTaskMessage } from './goal-run-prompt';
+import {
+  applySealedNotes,
+  cleanGoalUpdate,
+  earlierRunArtifacts,
+  GOAL_PROOFS_MAX,
+  goalRequirement,
+  handoffItemsFromArtifacts,
+  isGoalRun,
+  redactRunText,
+  resolveHandoffItems,
+  withOpenPath,
+} from './goal-runs';
+import { localDateKey } from './local-time';
+import { MODEL_AUTHORED_TOOLS, type ObservedStep, observedEvidence } from './run-evidence';
 import { completeWorkStep } from './step-execution';
 import {
+  goalRunLimits,
   isAutomaticTrigger,
   STEP_RUN_MAX_MODEL_STEPS,
   STEP_RUN_NOTIFY_AFTER_MS,
@@ -71,6 +97,7 @@ import {
 } from './step-run-prompt';
 import { addSecureFetchTool, buildRunnerTools, type HandoffInput, type RunArtifact } from './step-run-tools';
 import { workThreadSessionId } from './thread-contract';
+import { isTerminalWork } from './work-lifecycle';
 
 const HEARTBEAT_MS = 30_000;
 
@@ -90,6 +117,10 @@ export interface ClaimedRun {
   log: Array<{ at: number; text: string }>;
   artifacts: RunArtifact[];
   budget?: { timeMs: number; costUsd: number; inputTokens: number; outputTokens: number; calls: number };
+  /** Goal runs (docs/albatross-goal-runs.md). */
+  goal?: boolean;
+  checklist?: ChecklistItem[];
+  messages?: RunMessage[];
 }
 
 export interface SettleInput {
@@ -106,6 +137,9 @@ export interface SettleInput {
     allow?: SecureAllowRequest;
     saveSignIn?: SecureSaveSignInOffer;
   };
+  /** Goal runs: the package (G3) and what the user must check (G2). */
+  items?: HandoffItem[];
+  unsure?: string[];
   budget?: {
     timeMs: number;
     costUsd: number;
@@ -259,8 +293,13 @@ export function steerPrepareStep(input: {
   };
 }
 
-/** The handoff when the run produced no step_handoff call. */
-export function fallbackHandoff(text: string, artifacts: RunArtifact[]): SettleInput {
+/** The handoff when the run produced no step_handoff call. A goal run hands off every thing it made. */
+export function fallbackHandoff(
+  text: string,
+  artifacts: RunArtifact[],
+  options: { goal?: boolean } = {},
+): SettleInput {
+  if (options.goal) return goalFallbackHandoff(text, artifacts);
   const summary =
     truncateText(text.replace(/\s+/g, ' ').trim(), 600) || 'I worked on the step but did not finish it.';
   const draft = artifacts.find((artifact) => artifact.kind === 'draft');
@@ -294,6 +333,60 @@ export function fallbackHandoff(text: string, artifacts: RunArtifact[]): SettleI
   };
 }
 
+/** The next action that opens one package item. */
+function nextForItem(item: HandoffItem | undefined): SettleInput['next'] | undefined {
+  if (!item) return undefined;
+  const blanks = item.blanks?.length ? { blanks: item.blanks } : {};
+  switch (item.kind) {
+    case 'draft':
+      return {
+        kind: 'review_draft',
+        label: 'Read the draft',
+        detail: 'I saved a draft. Read it and send it when it is right.',
+        ...blanks,
+        target: { kind: 'draft', id: item.id, accountId: item.accountId },
+      };
+    case 'document':
+    case 'sheet':
+    case 'deck':
+      return {
+        kind: 'review_document',
+        label: 'Open the document',
+        detail: 'I made a document. Check it before you use it.',
+        ...blanks,
+        target: { kind: 'document', id: item.id, url: item.url },
+      };
+    case 'approval':
+      return {
+        kind: 'approve',
+        label: 'Approve it',
+        detail: 'This reaches other people. It runs only after you approve it.',
+        target: { kind: 'approval', id: item.id },
+      };
+    default:
+      return {
+        kind: 'review',
+        label: 'Open',
+        detail: 'I saved it for you. Check it before you use it.',
+        ...(item.url ? { target: { kind: 'url', id: item.id, url: item.url } } : {}),
+      };
+  }
+}
+
+function goalFallbackHandoff(text: string, artifacts: RunArtifact[]): SettleInput {
+  const summary =
+    truncateText(text.replace(/\s+/g, ' ').trim(), 600) || 'I worked on the goal but did not finish it.';
+  const items = handoffItemsFromArtifacts(artifacts);
+  const next = nextForItem(items.find((item) => item.state !== 'ready'));
+  if (next) return { outcome: 'ready_for_you', summary, next, items };
+  return {
+    outcome: 'stopped',
+    summary,
+    next: { kind: 'continue', label: 'Continue', detail: 'Press Continue and I take the goal further.' },
+    ...(items.length ? { items } : {}),
+  };
+}
+
 /** A handoff whose next action points at a real thing the run made. */
 export function normalizeHandoff(
   handoff: HandoffInput,
@@ -305,6 +398,10 @@ export function normalizeHandoff(
     allow?: SecureAllowRequest | null;
     /** A sign-in page with no saved sign-in: the block offers to save one. */
     saveSignIn?: SecureSaveSignInOffer | null;
+    /** A goal run: the package and the doubts go with the handoff. */
+    goal?: boolean;
+    /** Things earlier runs of the Work made, for the links of items named by id. */
+    known?: RunArtifact[];
   },
 ): SettleInput {
   const next: SettleInput['next'] = handoff.next ? { ...handoff.next } : undefined;
@@ -328,7 +425,7 @@ export function normalizeHandoff(
       const draft = find('draft');
       if (draft) next.target = { kind: 'draft', id: draft.id, accountId: draft.accountId };
     } else if (next.kind === 'review_document') {
-      const document = find('document');
+      const document = find('document') ?? (context.goal ? find('deck') : undefined);
       if (document) next.target = { kind: 'document', id: document.id, url: document.url };
     } else if (next.kind === 'approve') {
       const approval = find('approval');
@@ -355,10 +452,46 @@ export function normalizeHandoff(
     }
   }
   if (next?.kind === 'sign_in' && context.saveSignIn) next.saveSignIn = context.saveSignIn;
+  if (!context.goal)
+    return {
+      outcome,
+      summary: handoff.summary,
+      ...(next ? { next } : {}),
+    };
+  const items = resolveHandoffItems(handoff.items, {
+    artifacts: context.artifacts,
+    known: context.known,
+    next,
+  });
+  const unsure = cleanUnsure(handoff.unsure);
   return {
     outcome,
     summary: handoff.summary,
     ...(next ? { next } : {}),
+    ...(items.length ? { items } : {}),
+    ...(unsure.length ? { unsure } : {}),
+  };
+}
+
+/** A goal handoff with every line the model wrote for the user cleaned of saved values. */
+export function redactGoalSettle(settled: SettleInput, secure?: SecureRunAccess | null): SettleInput {
+  const clean = (text: string) => redactRunText(text, secure);
+  return {
+    ...settled,
+    ...(settled.summary ? { summary: clean(settled.summary) } : {}),
+    ...(settled.next
+      ? { next: { ...settled.next, label: clean(settled.next.label), detail: clean(settled.next.detail) } }
+      : {}),
+    ...(settled.items
+      ? {
+          items: settled.items.map((item) => ({
+            ...item,
+            title: clean(item.title),
+            ...(item.note ? { note: clean(item.note) } : {}),
+          })),
+        }
+      : {}),
+    ...(settled.unsure ? { unsure: cleanUnsure(settled.unsure.map(clean)) } : {}),
   };
 }
 
@@ -382,7 +515,12 @@ export async function runStepRun(
   if (!run) return { state: null };
 
   const startedAt = deps.now();
-  const limits = stepRunLimits();
+  // A goal run works on the whole goal (docs/albatross-goal-runs.md): no plan
+  // step, its own limits, its own prompt, messages, a checklist, and a package.
+  const goal = isGoalRun(run);
+  const goalLimits = goal ? goalRunLimits() : null;
+  const limits = goalLimits ?? stepRunLimits();
+  const maxModelSteps = goalLimits?.maxModelSteps ?? STEP_RUN_MAX_MODEL_STEPS;
   const priorMs = Math.max(0, Number(run.budget?.timeMs) || 0);
   const remainingMs = Math.max(1_000, limits.timeBudgetMs - priorMs);
   const cancel = new AbortController();
@@ -412,14 +550,23 @@ export async function runStepRun(
   let sessionId: string | null = run.browserSessionId || null;
   let handoff: HandoffInput | null = null;
   let usedPage = false;
+  // Goal runs talk (G2): each model step's text becomes a run message with the
+  // sources of the tool calls since the last message. Writes go in order.
+  let talk: Promise<void> = Promise.resolve();
+  let spoke = false;
+  const pendingSources: RunSource[] = [];
+  // Filled PDFs whose ID numbers stay sealed: their items wait for a check (G5).
+  const sealedFiles = new Set<string>();
 
   const settle = async (input: SettleInput) => {
     stopTimer(heartbeat);
     heartbeat = null;
+    await talk;
     const record = meter.record(false);
     return deps.convexMutation<{ state: string | null }>(api.albatrossStepRuns.settle, {
       ...fence,
       ...input,
+      ...(input.items ? { items: applySealedNotes(input.items, sealedFiles) } : {}),
       ...(input.next?.target
         ? {
             next: {
@@ -463,15 +610,29 @@ export async function runStepRun(
       userId,
       workId: run.workId,
     });
-    const step: RunnerStep | undefined = (detail?.execution?.guideSteps || []).find(
-      (entry: RunnerStep) => entry.key === run.stepKey,
-    );
-    if (!detail?.work || !step) return await settle({ error: 'This step is no longer in the plan.' });
-    if (step.done) return await settle({ outcome: 'done', summary: 'The step was already done.' });
-    // The queue is server-only, but the step may have changed since: a run
-    // never works a step that stays with the user.
-    if (!stepAcceptsTrigger(step as any, run.trigger === 'resume' ? 'user' : run.trigger))
-      return await settle({ error: 'This step stays with you.' });
+    let step: RunnerStep | undefined;
+    if (goal) {
+      // A goal Work can close while its run waits (the mail watch settles the last proof).
+      if (!detail?.work || isTerminalWork(detail.work))
+        return await settle({ error: 'This Albatross is no longer open.' });
+    } else {
+      step = (detail?.execution?.guideSteps || []).find((entry: RunnerStep) => entry.key === run.stepKey);
+      if (!detail?.work || !step) return await settle({ error: 'This step is no longer in the plan.' });
+      if (step.done) return await settle({ outcome: 'done', summary: 'The step was already done.' });
+      // The queue is server-only, but the step may have changed since: a run
+      // never works a step that stays with the user.
+      if (!stepAcceptsTrigger(step as any, run.trigger === 'resume' ? 'user' : run.trigger))
+        return await settle({ error: 'This step stays with you.' });
+    }
+    // A goal run reads every earlier run of its Work: their messages, their
+    // packages, and the things they made (G3 "One document, not three").
+    const history: any[] = goal
+      ? ((await deps
+          .convexQuery<any[]>(api.albatrossStepRuns.runsForWorkHistory, { userId, workId: run.workId })
+          .catch(() => [])) ?? [])
+      : [];
+    const earlier = history.filter((entry) => entry?.id !== run._id);
+    const made = earlierRunArtifacts(earlier);
 
     const parent: PreviousRun | null = run.parentRunId
       ? await deps
@@ -502,10 +663,32 @@ export async function runStepRun(
     const browserAvailable = deps.browserConfigured();
     const timezone = await deps.resolveTimezone(userId, undefined).catch(() => 'UTC');
     const paused = await deps.pausedRisks(userId);
-    const lifted = deps.liftTools(runId, timezone, undefined, { clientPlatform: 'ios', pausedRisks: paused });
+    // A goal run decides a deck's choices itself: presentation_plan asks no pickers (G3).
+    const lifted = deps.liftTools(runId, timezone, goal ? { delegate: true } : undefined, {
+      clientPlatform: 'ios',
+      pausedRisks: paused,
+    });
     const profile = await deps.readUser(userId).catch(() => ({ name: null, email: null }));
     const secure = deps.secureAccess({ userId, runId, workId: run.workId, stepKey: run.stepKey, log });
     const secureItems = secure ? await deps.secureInventory(userId).catch(() => []) : null;
+    const say = (text: unknown) => {
+      if (!goal || typeof text !== 'string') return;
+      const clean = truncateText(redactRunText(text, secure).trim(), RUN_MESSAGE_TEXT_MAX);
+      if (!clean) return;
+      spoke = true;
+      const message = {
+        id: randomUUID(),
+        at: deps.now(),
+        text: clean,
+        sources: cleanSources(pendingSources.splice(0)),
+      };
+      talk = talk.then(() =>
+        deps.convexMutation(api.albatrossStepRuns.progress, { ...fence, message }).then(
+          () => undefined,
+          () => undefined,
+        ),
+      );
+    };
     const [aboutUser, threadNotes] = await Promise.all([
       deps
         .listDetails({ userId, name: profile.name, email: profile.email })
@@ -567,7 +750,9 @@ export async function runStepRun(
       browserAvailable,
       secure,
       log,
-      artifact: async (artifact) => {
+      artifact: async (made) => {
+        // A goal run's artifacts carry the app path that opens them.
+        const artifact = goal ? withOpenPath(made) : made;
         artifacts.push(artifact);
         await deps
           .convexMutation(api.albatrossStepRuns.progress, { ...fence, artifact })
@@ -581,7 +766,9 @@ export async function runStepRun(
             userId,
             kind: input.kind,
             title: input.title,
-            detail: `From the step "${truncateText(run.stepTitle, 160)}".`,
+            detail: goal
+              ? `From the goal "${truncateText(run.stepTitle, 160)}".`
+              : `From the step "${truncateText(run.stepTitle, 160)}".`,
             intentId: run.workId,
             operationBatchId: runId,
             artifactKind: 'step_run',
@@ -601,30 +788,115 @@ export async function runStepRun(
         leak = found;
         leakStop.abort(found);
       },
+      ...(goal
+        ? {
+            goal: true,
+            timezone,
+            checklist: async (items: Array<{ text: string; state: string }>) => {
+              const checklist = cleanChecklist(items);
+              if (checklist.length)
+                await deps
+                  .convexMutation(api.albatrossStepRuns.progress, { ...fence, checklist })
+                  .catch(() => undefined);
+              return checklist;
+            },
+            updateGoal: async (update: { outcome?: string; proofs?: string[] }) => {
+              const clean = cleanGoalUpdate(update);
+              if (!clean) return { ok: false, message: 'Send outcome, proofs, or both.' };
+              return deps
+                .convexMutation<{ ok: boolean; message?: string }>(api.albatrossStepRuns.updateGoal, {
+                  ...fence,
+                  ...clean,
+                })
+                .catch(() => ({ ok: false, message: 'The goal did not change. Try again.' }));
+            },
+            sources: (found: RunSource[]) => {
+              pendingSources.push(...found);
+            },
+            sealed: (fileId: string) => {
+              sealedFiles.add(fileId);
+            },
+            // An edit to an earlier run's draft or document puts that thing in this run's package.
+            touch: async (artifact: RunArtifact) => {
+              if (artifacts.some((entry) => entry.kind === artifact.kind && entry.id === artifact.id)) return;
+              const known = made.find((entry) => entry.kind === artifact.kind && entry.id === artifact.id);
+              const entry = withOpenPath(
+                known ? { ...known, ...(known.url || !artifact.url ? {} : { url: artifact.url }) } : artifact,
+              );
+              artifacts.push(entry);
+              await deps
+                .convexMutation(api.albatrossStepRuns.progress, { ...fence, artifact: entry })
+                .catch(() => undefined);
+            },
+          }
+        : {}),
     });
     addSecureFetchTool(tools, secure);
 
-    const system = [
-      STEP_RUNNER_RULES,
-      runnerContext({
-        detail,
-        step,
-        trigger: run.trigger,
-        previous,
-        resumeNote: run.resumeNote,
-        browserAvailable,
-        sessionOpen: Boolean(sessionId),
-        limits,
-        aboutUser,
-        threadNotes,
-        secureItems,
-      }),
-    ].join('\n\n');
-    const messages: ModelMessage[] = [{ role: 'user', content: runnerTaskMessage(step, Boolean(previous)) }];
+    // A retried attempt of a goal run keeps its messages and its artifacts on the row.
+    const retry =
+      goal && run.attempts > 1 ? { messages: run.messages || [], artifacts: run.artifacts || [] } : null;
+    const resuming = goal
+      ? Boolean(parent || retry?.messages.length || retry?.artifacts.length || run.trigger === 'resume')
+      : Boolean(previous);
+    const system = goal
+      ? [
+          GOAL_RUNNER_RULES,
+          goalRunnerContext({
+            detail,
+            title: run.stepTitle,
+            trigger: run.trigger,
+            checklist: run.checklist || [],
+            earlier,
+            made,
+            retry,
+            resumeNote: run.resumeNote,
+            browserAvailable,
+            sessionOpen: Boolean(sessionId),
+            limits,
+            today: {
+              date: localDateKey(timezone || 'UTC', new Date(deps.now())),
+              timezone: timezone || 'UTC',
+            },
+            aboutUser,
+            threadNotes,
+            secureItems,
+          }),
+        ].join('\n\n')
+      : [
+          STEP_RUNNER_RULES,
+          runnerContext({
+            detail,
+            step: step!,
+            trigger: run.trigger,
+            previous,
+            resumeNote: run.resumeNote,
+            browserAvailable,
+            sessionOpen: Boolean(sessionId),
+            limits,
+            aboutUser,
+            threadNotes,
+            secureItems,
+          }),
+        ].join('\n\n');
+    const messages: ModelMessage[] = [
+      {
+        role: 'user',
+        content: goal ? goalTaskMessage(run.stepTitle, resuming) : runnerTaskMessage(step!, resuming),
+      },
+    ];
     const feature = stepRunFeature(run.trigger);
     const runtimes = await deps.resolveAgentRuntimes({ userId, speed: 'primary', feature });
     const signal = AbortSignal.any([cancel.signal, deadline.signal, meter.signal, leakStop.signal]);
-    await log(previous ? 'Continued the step.' : 'Started on the step.');
+    await log(
+      goal
+        ? resuming
+          ? 'Continued the goal.'
+          : 'Started on the goal.'
+        : resuming
+          ? 'Continued the step.'
+          : 'Started on the step.',
+    );
 
     let result: Awaited<ReturnType<typeof generateText>> | null = null;
     let lastError: unknown;
@@ -671,12 +943,14 @@ export async function runStepRun(
                       .catch(() => []),
                   log,
                 }),
-                stopWhen: [hasToolCall('step_handoff'), stepCountIs(STEP_RUN_MAX_MODEL_STEPS)],
+                stopWhen: [hasToolCall('step_handoff'), stepCountIs(maxModelSteps)],
                 abortSignal: signal,
                 maxOutputTokens: maxOutputTokensForFeature(feature),
                 providerOptions: agentProviderOptions(runtime, `step-run:${userId}`),
                 onStepFinish: (stepResult: any) => {
                   meter.addStep(runtime, stepResult?.usage);
+                  // A goal run's text between tool calls is a message to the user (G2).
+                  say(stepResult?.text);
                 },
               }),
             ),
@@ -694,7 +968,7 @@ export async function runStepRun(
           )
           .catch(() => undefined);
         // Fail over only before the run did anything visible.
-        const madeNothing = artifacts.length === (run.artifacts || []).length && !handoff;
+        const madeNothing = artifacts.length === (run.artifacts || []).length && !handoff && !spoke;
         if (signal.aborted || !madeNothing || !canFailOverAgentRuntime(error, feature, runtime)) throw error;
       }
     }
@@ -710,7 +984,11 @@ export async function runStepRun(
           workId: run.workId,
           kind: 'clarification',
           prompt: form?.title || finalHandoff.question.prompt || 'Albatross needs an answer to continue.',
-          reason: form?.detail || `Needed to continue the step "${truncateText(run.stepTitle, 160)}".`,
+          reason:
+            form?.detail ||
+            (goal
+              ? `Needed to continue "${truncateText(run.stepTitle, 160)}".`
+              : `Needed to continue the step "${truncateText(run.stepTitle, 160)}".`),
           options: form
             ? undefined
             : (finalHandoff.question.options || []).map((option) => ({ id: option.id, label: option.label })),
@@ -725,21 +1003,29 @@ export async function runStepRun(
       finalHandoff?.next?.kind === 'sign_in' && secure && browser
         ? await secure.signInOffer((browser as AgentBrowser).currentUrl()).catch(() => null)
         : null;
+    const answerDetail = goal
+      ? 'Answer the question and I continue.'
+      : 'Answer the question and I continue the step.';
     let settled: SettleInput = finalHandoff
       ? normalizeHandoff(
           finalHandoff.outcome === 'needs_answer'
             ? {
                 ...finalHandoff,
-                next: finalHandoff.next ?? {
-                  kind: 'answer',
-                  label: 'Answer',
-                  detail: 'Answer the question and I continue the step.',
-                },
+                next: finalHandoff.next ?? { kind: 'answer', label: 'Answer', detail: answerDetail },
               }
             : finalHandoff,
-          { artifacts, sessionId, questionId, allow: secure?.pendingAllow() ?? null, saveSignIn },
+          {
+            artifacts,
+            sessionId,
+            questionId,
+            allow: secure?.pendingAllow() ?? null,
+            saveSignIn,
+            goal,
+            known: made,
+          },
         )
-      : fallbackHandoff(result.text || '', artifacts);
+      : fallbackHandoff(result.text || '', artifacts, { goal });
+    if (goal) settled = redactGoalSettle(settled, secure);
 
     // A cancel or a lost lease shows only at the next heartbeat. Ask now, before
     // anything checks the step off or tells the user about it.
@@ -758,8 +1044,12 @@ export async function runStepRun(
         next: {
           kind: 'review',
           label: 'Check the result',
-          detail: 'I think the step is done. Check it, then mark the step done.',
+          detail: goal
+            ? GOAL_CHECK_COPY.ownershipUnknown
+            : 'I think the step is done. Check it, then mark the step done.',
         },
+        ...(settled.items ? { items: settled.items } : {}),
+        ...(settled.unsure ? { unsure: settled.unsure } : {}),
       };
     }
     if (settled.outcome === 'done') {
@@ -768,6 +1058,7 @@ export async function runStepRun(
         userId,
         run,
         step,
+        goal,
         detail,
         handoff: finalHandoff,
         artifacts,
@@ -775,6 +1066,14 @@ export async function runStepRun(
         sessionId,
         settled,
         observed: observedEvidence((result as { steps?: ObservedStep[] }).steps),
+        // A goal proof reads no result whose words the model wrote (a draft, a document, a note).
+        ...(goal
+          ? {
+              facts: observedEvidence((result as { steps?: ObservedStep[] }).steps, {
+                skip: MODEL_AUTHORED_TOOLS,
+              }),
+            }
+          : {}),
       });
     }
     if (sessionId && usedPage) {
@@ -826,17 +1125,20 @@ export async function runStepRun(
     if (exhausted) {
       if (sessionId && usedPage)
         await setSessionStatus('user', 'Albatross stopped at its limit. You have the page.');
+      // A goal run at its limit still hands over what it made so far.
+      const madeSoFar = goal ? handoffItemsFromArtifacts(artifacts) : [];
       const stopped: SettleInput = {
         outcome: 'stopped',
         summary:
           exhausted === 'time'
-            ? 'I used the time for this run before I finished the step.'
-            : 'I used the cost limit for this run before I finished the step.',
+            ? `I used the time for this run before I finished the ${goal ? 'goal' : 'step'}.`
+            : `I used the cost limit for this run before I finished the ${goal ? 'goal' : 'step'}.`,
         next: {
           kind: 'continue',
           label: 'Continue',
           detail: 'Press Continue to start a new run that picks up from here.',
         },
+        ...(madeSoFar.length ? { items: madeSoFar } : {}),
         budget: { timeMs: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, calls: 0, exhausted },
       };
       const outcome = await settle(stopped);
@@ -897,7 +1199,9 @@ async function proveDone(input: {
   deps: StepRunnerDependencies;
   userId: string;
   run: ClaimedRun;
-  step: RunnerStep;
+  /** The plan step of a step run. A goal run has none. */
+  step?: RunnerStep;
+  goal?: boolean;
   detail: any;
   handoff: HandoffInput | null;
   artifacts: RunArtifact[];
@@ -906,11 +1210,31 @@ async function proveDone(input: {
   settled: SettleInput;
   /** The tool results this run recorded (lib/albatross/run-evidence.ts). */
   observed?: string;
+  /** Goal runs: the recorded results without the ones whose words the model wrote. */
+  facts?: string;
 }): Promise<SettleInput> {
   const { deps, userId, run, step } = input;
+  const copy = input.goal ? GOAL_CHECK_COPY : STEP_CHECK_COPY;
   // A step that only the user's word can carry never passes a check. It waits
   // for that word, and the copy does not call it a failed check.
-  if (step.evidenceKind === 'attestation') return checkResult(input, STEP_CHECK_COPY.needsYourWord);
+  if (!input.goal && step?.evidenceKind === 'attestation')
+    return checkResult(input, STEP_CHECK_COPY.needsYourWord);
+  // A goal run is done when the Work's contract holds (G1 Done). The run may
+  // have changed the contract (goal_update), so it is read again here.
+  const fresh = input.goal
+    ? await deps
+        .convexQuery<any>(api.albatrossWorkV2.workDetail, { userId, workId: run.workId })
+        .catch(() => null)
+    : null;
+  const contract = (fresh ?? input.detail)?.contract ?? null;
+  const title = input.goal ? run.stepTitle : step?.title || run.stepTitle;
+  const requirement = input.goal
+    ? goalRequirement(contract, title)
+    : step?.doneWhen || `"${title}" is complete.`;
+  const outcome = input.goal
+    ? (contract?.outcome ?? input.detail?.plan?.outcome ?? null)
+    : (input.detail?.plan?.outcome ?? null);
+  const workTitle = String(input.detail?.plan?.outcome || input.detail?.work?.title || '');
   const page = input.browser ? await input.browser.readText().catch(() => null) : null;
   const evidenceText = [
     run.resumeNote?.trim() ? `User said: ${truncateText(run.resumeNote.trim(), 600)}` : null,
@@ -925,20 +1249,23 @@ async function proveDone(input: {
     .filter(Boolean)
     .join('\n');
   const verdict = await deps
-    .evidenceSatisfies({
-      userId,
-      workTitle: String(input.detail?.plan?.outcome || input.detail?.work?.title || ''),
-      outcome: input.detail?.plan?.outcome ?? null,
-      requirement: step.doneWhen || `"${step.title}" is complete.`,
-      evidenceText,
-      source: 'run',
-    })
+    .evidenceSatisfies({ userId, workTitle, outcome, requirement, evidenceText, source: 'run' })
     .catch(() => ({ satisfies: false, reason: '', unavailable: true }));
   if (!verdict.satisfies || verdict.unavailable)
-    return checkResult(
-      input,
-      verdict.unavailable ? STEP_CHECK_COPY.checkDidNotRun : STEP_CHECK_COPY.notProved(verdict.reason),
-    );
+    return checkResult(input, verdict.unavailable ? copy.checkDidNotRun : copy.notProved(verdict.reason));
+  if (input.goal) {
+    await settleGoalProofs({ ...input, contract, title, outcome, workTitle, page, reason: verdict.reason });
+    // The model's claim never decides the run: it is done only when the Work
+    // closed by its contract, on proof that the run observed (G1 Done).
+    const after = await deps
+      .convexQuery<any>(api.albatrossWorkV2.workDetail, { userId, workId: run.workId })
+      .catch(() => null);
+    if (after?.work && isTerminalWork(after.work)) return input.settled;
+    const open = ((after ?? fresh ?? input.detail)?.contract?.proofs || []).filter(
+      (proof: { satisfiedAt?: number | null }) => !proof.satisfiedAt,
+    ) as Array<{ what: string }>;
+    return goalNotDone(input, open);
+  }
   // "Verified on the page" needs the page alone to show it. The combined
   // check above includes the agent's own words, so it proves less.
   const pageVerdict =
@@ -946,9 +1273,9 @@ async function proveDone(input: {
       ? await deps
           .evidenceSatisfies({
             userId,
-            workTitle: String(input.detail?.plan?.outcome || input.detail?.work?.title || ''),
-            outcome: input.detail?.plan?.outcome ?? null,
-            requirement: step.doneWhen || `"${step.title}" is complete.`,
+            workTitle,
+            outcome,
+            requirement,
             evidenceText: `Page: ${page.url}\nTitle: ${page.title}\n${page.text}`,
           })
           .catch(() => ({ satisfies: false, reason: '', unavailable: true }))
@@ -958,27 +1285,140 @@ async function proveDone(input: {
     .convexMutation(api.albatrossWorkV2.attachProof, {
       userId,
       workId: run.workId,
-      claim: truncateText(`${step.title}: ${verdict.reason || 'done'}`, 400),
+      claim: truncateText(`${title}: ${verdict.reason || 'done'}`, 400),
       title: onPage
         ? page!.title || 'Verified on the page'
-        : truncateText(input.artifacts.at(-1)?.title || step.title, 200),
+        : truncateText(input.artifacts.at(-1)?.title || title, 200),
       summary: truncateText(input.settled.summary || '', 600),
       ...(onPage ? { url: `https://browserbase.com/sessions/${input.sessionId}` } : {}),
       sourceKind: onPage ? 'browser_session' : 'step_run',
       sourceId: onPage ? input.sessionId! : run._id,
-      stepIdentity: run.stepIdentity,
+      // A goal run's proof is about the whole Work, not one step.
+      ...(input.goal ? {} : { stepIdentity: run.stepIdentity }),
       trust: onPage ? 'observed' : 'inferred',
       // Only proof the page shows may settle the Work's contract. The agent's
       // own account checks the step, but it never closes the Work.
       settleContract: onPage,
     })
     .catch((error) => deps.reportError('[step-runner] proof failed', run._id, describeModelError(error)));
-  await deps
-    .completeWorkStep({ userId, workId: run.workId, stepKey: run.stepKey, source: 'evidence' })
-    .catch((error) =>
-      deps.reportError('[step-runner] step check failed', run._id, describeModelError(error)),
-    );
+  // A goal run has no plan step to check off: the contract closes the Work.
+  if (!input.goal)
+    await deps
+      .completeWorkStep({ userId, workId: run.workId, stepKey: run.stepKey, source: 'evidence' })
+      .catch((error) =>
+        deps.reportError('[step-runner] step check failed', run._id, describeModelError(error)),
+      );
   return input.settled;
+}
+
+/**
+ * A goal run's done claim that did not close the Work. It waits for the user
+ * with what is still open; the mail watch stays armed for the rest.
+ */
+function goalNotDone(
+  input: { artifacts: RunArtifact[]; settled: SettleInput; goal?: boolean },
+  open: ReadonlyArray<{ what: string }>,
+): SettleInput {
+  const detail = open.length
+    ? GOAL_CHECK_COPY.notProved(`nothing shows "${truncateText(open[0].what, 160)}" yet`)
+    : GOAL_CHECK_COPY.needsYourWord;
+  const result = checkResult(input, detail);
+  // Nothing to open: the next part is the user's.
+  if (!input.artifacts.length && !result.items?.length) return { ...result, outcome: 'your_turn' };
+  return result;
+}
+
+/**
+ * A goal run's done claim passed the check. Each open proof of the contract
+ * is checked again against what the run observed (tool results, the things it
+ * made, the page), never against the run's own words or a note. A proof that
+ * the facts show attaches to the Work and settles; the contract then closes
+ * the Work by its closeWhen rule. With no proof settled, the claim is recorded
+ * as inferred proof that settles nothing.
+ */
+async function settleGoalProofs(input: {
+  deps: StepRunnerDependencies;
+  userId: string;
+  run: ClaimedRun;
+  artifacts: RunArtifact[];
+  settled: SettleInput;
+  observed?: string;
+  contract: OutcomeContract | null;
+  title: string;
+  outcome: string | null;
+  workTitle: string;
+  page: { url: string; title: string; text: string } | null;
+  /** The reason of the check that passed the done claim. */
+  reason: string;
+  /** The recorded results without the ones whose words the model wrote. */
+  facts?: string;
+}): Promise<number> {
+  const { deps, userId, run } = input;
+  // The things the run made count only as made, never as an outside result.
+  const facts = [
+    input.facts?.trim() || null,
+    input.artifacts.length
+      ? `Made: ${input.artifacts.map((artifact) => `${artifact.kind} "${artifact.title}"`).join('; ')}`
+      : null,
+    input.page ? `Page: ${input.page.url}\nTitle: ${input.page.title}\n${input.page.text}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const proofs = (input.contract?.proofs || [])
+    .filter((proof) => !proof.satisfiedAt)
+    .slice(0, GOAL_PROOFS_MAX);
+  const title = truncateText(input.artifacts.at(-1)?.title || input.title, 200);
+  const summary = truncateText(input.settled.summary || '', 600);
+  let settled = 0;
+  for (const proof of facts ? proofs : []) {
+    const verdict = await deps
+      .evidenceSatisfies({
+        userId,
+        workTitle: input.workTitle,
+        outcome: input.outcome,
+        requirement: proof.what,
+        evidenceText: facts,
+        source: 'run',
+      })
+      .catch(() => ({ satisfies: false, reason: '', unavailable: true }));
+    if (!verdict.satisfies || verdict.unavailable) continue;
+    const attached = await deps
+      .convexMutation(api.albatrossWorkV2.attachProof, {
+        userId,
+        workId: run.workId,
+        claim: truncateText(`${proof.what}: ${verdict.reason || 'shown by the run'}`, 400),
+        title,
+        summary,
+        sourceKind: 'step_run',
+        // One evidence row for each proof: the dedupe key holds the source id.
+        sourceId: `${run._id}:${proof.id}`,
+        trust: 'inferred',
+        proofId: proof.id,
+        settleContract: true,
+      })
+      .then(() => true)
+      .catch((error) => {
+        deps.reportError('[step-runner] proof failed', run._id, describeModelError(error));
+        return false;
+      });
+    if (attached) settled += 1;
+  }
+  if (settled) return settled;
+  await deps
+    .convexMutation(api.albatrossWorkV2.attachProof, {
+      userId,
+      workId: run.workId,
+      claim: truncateText(`${input.title}: ${input.reason || 'done'}`, 400),
+      title,
+      summary,
+      sourceKind: 'step_run',
+      sourceId: run._id,
+      trust: 'inferred',
+      // The run's own account settles nothing.
+      settleContract: false,
+    })
+    .catch((error) => deps.reportError('[step-runner] proof failed', run._id, describeModelError(error)));
+  return 0;
 }
 
 /** The words of a done claim that waits for the user. */
@@ -993,15 +1433,37 @@ export const STEP_CHECK_COPY = {
   },
 } as const;
 
-/** A done claim that waits for the user: open what the run made, then mark the step done. */
-function checkResult(input: { artifacts: RunArtifact[]; settled: SettleInput }, detail: string): SettleInput {
+/** The words of a goal run's done claim that waits for the user (G1 Done). */
+export const GOAL_CHECK_COPY = {
+  ownershipUnknown: 'I think the goal is done. Check it, then mark the Albatross done.',
+  needsYourWord: 'Everything that this goal needs is shown. Check it, then mark the Albatross done.',
+  checkDidNotRun:
+    'I think the goal is done, but the check did not run. Check it, then mark the Albatross done.',
+  notProved: (reason: string) => {
+    const why = reason.trim().replace(/[.\s]+$/, '');
+    return why
+      ? `I think the goal is done, but I could not prove it: ${truncateText(why, 220)}. Check it, then mark the Albatross done.`
+      : 'I think the goal is done, but I could not prove it. Check it, then mark the Albatross done.';
+  },
+} as const;
+
+/** A done claim that waits for the user: open what the run made, then mark it done. */
+function checkResult(
+  input: { artifacts: RunArtifact[]; settled: SettleInput; goal?: boolean },
+  detail: string,
+): SettleInput {
   const made = [...input.artifacts].reverse()[0];
+  const opensDocument = made?.kind === 'document' || (input.goal && made?.kind === 'deck');
+  const items = input.goal
+    ? input.settled.items?.length
+      ? input.settled.items
+      : handoffItemsFromArtifacts(input.artifacts)
+    : [];
   return {
     outcome: 'ready_for_you',
     summary: input.settled.summary,
     next: {
-      kind:
-        made?.kind === 'draft' ? 'review_draft' : made?.kind === 'document' ? 'review_document' : 'review',
+      kind: made?.kind === 'draft' ? 'review_draft' : opensDocument ? 'review_document' : 'review',
       label: 'Check the result',
       detail,
       ...(made
@@ -1009,13 +1471,43 @@ function checkResult(input: { artifacts: RunArtifact[]; settled: SettleInput }, 
             target:
               made.kind === 'draft'
                 ? { kind: 'draft', id: made.id, accountId: made.accountId }
-                : made.kind === 'document'
+                : opensDocument
                   ? { kind: 'document', id: made.id, url: made.url }
                   : { kind: made.kind === 'approval' ? 'approval' : 'url', id: made.id, url: made.url },
           }
         : {}),
     },
+    ...(items.length ? { items } : {}),
+    ...(input.settled.unsure?.length ? { unsure: input.settled.unsure } : {}),
   };
+}
+
+/**
+ * The lock-screen words of a handoff. A goal run's notice names the goal and,
+ * for a package, how many things wait (G3).
+ */
+export function handoffNotice(
+  run: Pick<ClaimedRun, 'stepTitle' | 'goal' | 'stepKey'>,
+  settled: SettleInput,
+): { title: string; body: string } {
+  const goal = isGoalRun(run);
+  const count = settled.items?.filter((item) => item.state !== 'ready').length ?? 0;
+  const title =
+    settled.outcome === 'done'
+      ? `Done: ${run.stepTitle}`
+      : goal && settled.outcome === 'ready_for_you' && count > 1
+        ? `Ready for you: ${run.stepTitle}`
+        : settled.next
+          ? `${settled.next.label}: ${run.stepTitle}`
+          : run.stepTitle;
+  // A lock screen never names a saved item or the site that asks for it.
+  const body =
+    settled.next?.kind === 'allow_secure'
+      ? 'A site asks to use one of your saved details.'
+      : goal && settled.outcome !== 'done' && count > 1
+        ? `${count} things wait for you. ${settled.next?.detail || settled.summary || ''}`.trim()
+        : settled.next?.detail || settled.summary || '';
+  return { title: truncateText(title, 180), body: truncateText(body, 400) };
 }
 
 async function notifyHandoff(
@@ -1026,28 +1518,11 @@ async function notifyHandoff(
   elapsedMs: number,
 ) {
   if (!isAutomaticTrigger(run.trigger) && elapsedMs < STEP_RUN_NOTIFY_AFTER_MS) return;
-  const title =
-    settled.outcome === 'done'
-      ? `Done: ${run.stepTitle}`
-      : settled.next
-        ? `${settled.next.label}: ${run.stepTitle}`
-        : run.stepTitle;
+  const notice = handoffNotice(run, settled);
   try {
     const queued = await deps.convexMutation<{ notificationId?: string; created?: boolean }>(
       api.albatrossNotifications.queueStepRunHandoff,
-      {
-        userId,
-        workId: run.workId,
-        runId: run._id,
-        title: truncateText(title, 180),
-        // A lock screen never names a saved item or the site that asks for it.
-        body: truncateText(
-          settled.next?.kind === 'allow_secure'
-            ? 'A site asks to use one of your saved details.'
-            : settled.next?.detail || settled.summary || '',
-          400,
-        ),
-      },
+      { userId, workId: run.workId, runId: run._id, title: notice.title, body: notice.body },
     );
     if (queued?.created && queued.notificationId) await deps.notify(userId, String(queued.notificationId));
   } catch (error) {

@@ -62,7 +62,12 @@ export interface ClientState {
   pendingOpenIntentId: string | null;
   pendingOpenWorkId: string | null;
   /** Open this Albatross in document mode on this document (the Documents page's "Waiting for you"). */
-  pendingThreadDocument: { workId: string; target: { provider: 'albatross' | 'office'; id: string } } | null;
+  /** The Documents page opens a thread on a document, or on one item of a package (`itemId`). */
+  pendingThreadDocument: {
+    workId: string;
+    target: { provider: 'albatross' | 'office'; id: string } | null;
+    itemId?: string | null;
+  } | null;
   /** A task card or board to open once the Tasks surface mounts (shape card actions). */
   pendingOpenCardId: string | null;
   pendingOpenBoardId: string | null;

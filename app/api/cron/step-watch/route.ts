@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { describeModelError } from '@/lib/ai/log-error';
+import { type ContractProof, outstandingProofs } from '@/lib/albatross/contract';
 import { evidenceSatisfies } from '@/lib/albatross/evidence-gate';
 import { proofMatchScore, proofOfferAllowed, threadPrimaryCategory } from '@/lib/albatross/proof-match';
 import { checkWaitingReplies } from '@/lib/albatross/reply-watch-runtime';
@@ -57,7 +58,27 @@ export interface RecentCorpusThread {
   account: string;
   subject?: string;
   snippet?: string;
+  fromAddress?: string;
+  lastDate?: number;
+  labels?: string[];
   smartCategory?: { primary?: unknown; model?: unknown } | null;
+}
+
+/**
+ * The evidence text of one thread for a goal proof. The folders say whether
+ * the user sent it (SENT) or got it, which a proof such as "The message left
+ * your account" needs.
+ */
+function goalWatchEvidence(thread: RecentCorpusThread): string {
+  return [
+    `Subject: ${thread.subject || '(no subject)'}`,
+    thread.fromAddress ? `From: ${thread.fromAddress}` : null,
+    thread.labels?.length ? `Folders: ${thread.labels.slice(0, 8).join(', ')}` : null,
+    thread.lastDate ? `Date: ${new Date(thread.lastDate).toISOString().slice(0, 10)}` : null,
+    thread.snippet ? `Text: ${thread.snippet}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 /**
@@ -98,7 +119,11 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
       const outstanding = steps.filter(
         (step) => stepNeedsCheck(step) && step.evidenceKind === 'mail_confirmation' && step.identity,
       );
-      if (!outstanding.length) {
+      // A goal Work (docs/albatross-goal-runs.md) has no mail steps: the watch
+      // reads mail against the open proofs of its contract instead.
+      const openProofs: ContractProof[] =
+        detail?.goalRuns && detail?.contract ? outstandingProofs(detail.contract) : [];
+      if (!outstanding.length && !openProofs.length) {
         await deps.convexMutation(api.albatrossWorkV2.completeMailWatch, {
           userId,
           workId,
@@ -160,16 +185,62 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
         }
       }
 
-      const stillWatching = outstanding.length - completedSteps > 0;
+      let settledProofs = 0;
+      const outcome = String(detail?.contract?.outcome || '');
+      // A goal proof can stay open for weeks. Each pass judges only threads
+      // newer than the last pass, so the cost does not grow with time.
+      const watchedAfter = Number(detail?.work?.goalWatchAfter) || 0;
+      const fresh = confirmable.filter((thread) => !watchedAfter || (thread.lastDate || 0) > watchedAfter);
+      const newestDate = threads.reduce((newest, thread) => Math.max(newest, thread.lastDate || 0), 0);
+      for (const proof of fresh.length ? openProofs : []) {
+        const needle = [outcome, workTitle, proof.what].filter(Boolean).join(' ');
+        const ranked = fresh
+          .map((thread) => ({ thread, text: `${thread.subject || ''} ${thread.snippet || ''}`.trim() }))
+          .map((row) => ({ ...row, score: proofMatchScore(needle, row.text) }))
+          .filter((row) => row.score >= WATCH_PREFILTER_FLOOR && row.text)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, WATCH_THREADS_PER_STEP);
+        for (const candidate of ranked) {
+          const verdict = await deps.evidenceSatisfies({
+            userId,
+            workTitle,
+            outcome: outcome || null,
+            requirement: proof.what,
+            evidenceText: goalWatchEvidence(candidate.thread),
+          });
+          if (!verdict.satisfies || verdict.unavailable) continue;
+          // The gate judged that this verified thread shows the named proof.
+          // The contract then closes the Work by its own closeWhen rule.
+          await deps.convexMutation(api.albatrossWorkV2.attachProof, {
+            userId,
+            workId,
+            claim: truncateText(`${proof.what}: ${verdict.reason || 'shown by mail'}`, 400),
+            title: truncateText(String(candidate.thread.subject || 'Mail'), 300),
+            summary: truncateText(String(candidate.thread.snippet || ''), 600) || undefined,
+            sourceKind: 'mail_thread',
+            sourceId: String(candidate.thread._id),
+            accountId: String(candidate.thread.account),
+            trust: 'inferred',
+            proofId: proof.id,
+            settleContract: true,
+          });
+          settledProofs += 1;
+          break;
+        }
+      }
+
+      const stillWatching = outstanding.length - completedSteps > 0 || openProofs.length - settledProofs > 0;
       await deps.convexMutation(api.albatrossWorkV2.completeMailWatch, {
         userId,
         workId,
         stillWatching,
+        ...(openProofs.length && newestDate > watchedAfter ? { goalWatchAfter: newestDate } : {}),
       });
       return NextResponse.json({
         ok: true,
         watched: outstanding.length,
         completedSteps,
+        ...(openProofs.length ? { watchedProofs: openProofs.length, settledProofs } : {}),
         stillWatching,
       });
     } catch (error) {

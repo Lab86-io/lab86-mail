@@ -32,6 +32,7 @@ import { shapeFinishes, shapeShowsPlan } from '@/components/albatross/shapes/Sha
 import { ShapePicker } from '@/components/albatross/shapes/ShapePicker';
 import { SecureItemSheet, type SecureSheetRequest } from '@/components/settings/SecureItemSheet';
 import { AssistantChat } from '@/components/shell/AIBar';
+import { type AllowSendFn, useAllowSend } from '@/components/thread/use-allow-send';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -51,6 +52,18 @@ import {
   documentHandoffFor,
   resolveDocumentTarget,
 } from '@/lib/albatross/document-handoff';
+import { postGoalContinue, postGoalStart } from '@/lib/albatross/goal-run-client';
+import { GOAL_STEP_KEY, type RunSource } from '@/lib/albatross/goal-run-contract';
+import {
+  type DocumentTab,
+  formatRunTime,
+  GOAL_RUN_COPY,
+  isGoalRun,
+  newestGoalRun,
+  newestPackageRun,
+  packageTabs,
+  type SourceBehaviour,
+} from '@/lib/albatross/goal-run-view';
 import { ALLOW_COPY, type AllowScope } from '@/lib/albatross/secure-view';
 import { shapeDetail } from '@/lib/albatross/shape-policy';
 import { type DocumentTarget, type NextBehaviour, runForStep } from '@/lib/albatross/step-run-client';
@@ -62,7 +75,14 @@ import {
   workThreadSessionId,
 } from '@/lib/albatross/thread-contract';
 import { hopDirection, isTextFieldTarget } from '@/lib/albatross/thread-list-view';
-import { setThreadDraft, setThreadScroll, threadDraft, threadScroll } from '@/lib/albatross/thread-memory';
+import {
+  setThreadDraft,
+  setThreadScroll,
+  setThreadTab,
+  threadDraft,
+  threadScroll,
+  threadTab,
+} from '@/lib/albatross/thread-memory';
 import {
   composerPlaceholder,
   openWorkQuestions,
@@ -90,11 +110,21 @@ import { ThreadAnswerInPlace } from './ThreadAnswerInPlace';
 import { ThreadRail } from './ThreadRail';
 import type { AllowSecureNote } from './thread/AllowSecureBlock';
 import { DetailsPanel } from './thread/DetailsPanel';
-import { DocumentSplit, ThreadDocumentEditor, YourPartBar, YourPartCard } from './thread/DocumentPane';
+import {
+  DocumentSplit,
+  ItemPartCard,
+  TabPaneView,
+  ThreadDocumentEditor,
+  YourPartBar,
+  YourPartCard,
+} from './thread/DocumentPane';
+import { DocumentTabs } from './thread/DocumentTabs';
+import { openPackageBehaviour } from './thread/PackageRows';
 import { PagePane, type PageSession } from './thread/PagePane';
 import { PlanIntro, PlanLine, PlanOutro } from './thread/PlanIntro';
 import { RunBlock } from './thread/RunBlock';
 import { ThreadJumpPill } from './thread/ThreadJumpPill';
+import { useSavedFileLoader } from './thread/use-saved-file';
 import { useWorkShape, type WorkShapeState } from './thread/use-work-shape';
 import { WorkQuestions } from './thread/WorkQuestions';
 import { useThreadActions, useThreadDraftIds } from './use-thread-actions';
@@ -169,6 +199,12 @@ export interface ThreadModel {
   replyInProgress?: boolean;
   /** The document open in document mode (docs/albatross-document-handoff.md, D5). */
   document?: DocumentTarget | null;
+  /** Document mode with a package: one tab per item (docs/albatross-goal-runs.md G3). */
+  documentTabs?: { runId: string; tabs: DocumentTab[]; activeKey: string } | null;
+  /** The drafts this client knows went out, by draft id, with the time to show. */
+  sentDrafts?: Readonly<Record<string, string>>;
+  /** The sealed field names of saved files, by file id, from the saved file's record. */
+  sealedFields?: Readonly<Record<string, readonly string[]>>;
   /** "Done, continue" is in flight, or failed with this line. */
   documentDone?: { busy: boolean; error: string | null };
   /** A Work question (no run owns it) whose answer is in flight, or the line of a failed answer. */
@@ -211,6 +247,20 @@ export interface ThreadHandlers {
   /** Open the add sheet for a sign-in on this handoff's site (V13). */
   onSaveSignIn?: (run: ThreadRunView, site: string) => void;
   onOpenSecureSettings?: () => void;
+  /** Goal runs (docs/albatross-goal-runs.md): "Handle it" with no step, the package, the sources. */
+  onHandleGoal?: () => void;
+  onOpenPackage?: (run: ThreadRunView, activeKey: string | null) => void;
+  onOpenItem?: (run: ThreadRunView, key: string) => void;
+  onSelectTab?: (key: string) => void;
+  /** "Done, continue" on a goal handoff: the user did their part. */
+  onDoneContinue?: (run: ThreadRunView) => void;
+  onOpenSource?: (behaviour: SourceBehaviour, source: RunSource, run: ThreadRunView) => void;
+  /** The draft tab sent its mail: the row and the tab say "Sent". */
+  onDraftSent?: (draftId: string) => void;
+  /** Loads a saved file's bytes through the identity check. The harness passes none. */
+  loadFile?: (url: string) => Promise<ArrayBuffer>;
+  /** The send permission of a sealed file, through the identity check. The harness passes none. */
+  allowSend?: AllowSendFn;
   /** The dev harness: a fixture transport, preview mode, and the messages to show. */
   chat?: { transport?: ChatTransport<UIMessage>; preview?: boolean; initialMessages?: UIMessage[] };
 }
@@ -228,6 +278,9 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
   const stepRows = useMemo(() => planStepRows(steps, { runnerEnabled, runs }), [steps, runnerEnabled, runs]);
   const workQuestions = useMemo(() => openWorkQuestions(detail, runs), [detail, runs]);
   const activeRun = stateInput.activeRun;
+  const goal = Boolean(stateInput.goal);
+  const goalRun = useMemo(() => newestGoalRun(runs), [runs]);
+  const packageRun = useMemo(() => newestPackageRun(runs), [runs]);
   const open = workIsOpen(detail.work);
   const showsPlan = shapeShowsPlan(shape.shape);
   const finishes = shapeFinishes(shape.shape);
@@ -255,10 +308,20 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
   }, [activeRun, runs]);
   const pageStep = steps.find((step) => step.key === (session?.stepKey ?? pageRun?.stepKey));
 
-  // Document mode: the document in the center, the thread on the right.
-  const documentTarget = region === 'document' ? (model.document ?? null) : null;
-  const documentRun = documentTarget ? documentHandoffFor(runs, documentTarget) : null;
+  // Document mode: the document in the center, the thread on the right. A
+  // package opens one tab per item; a single target opens as before.
+  const documentTabs = region === 'document' ? (model.documentTabs ?? null) : null;
+  const documentTarget = region === 'document' && !documentTabs ? (model.document ?? null) : null;
+  const documentRun = documentTabs
+    ? (runs.find((run) => run.id === documentTabs.runId) ?? null)
+    : documentTarget
+      ? documentHandoffFor(runs, documentTarget)
+      : null;
   const documentRunId = documentRun?.id ?? null;
+  const activeTab = documentTabs
+    ? (documentTabs.tabs.find((tab) => tab.key === documentTabs.activeKey) ?? documentTabs.tabs[0] ?? null)
+    : null;
+  const documentOpen = Boolean(documentTabs || documentTarget);
   const latestByStep = useMemo(() => {
     const map = new Map<string, string>();
     for (const run of runs) map.set(run.stepKey, run.id);
@@ -269,14 +332,19 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
     (run: ThreadRunView, continues: boolean) => {
       const step = steps.find((row) => row.key === run.stepKey);
       const newest = latestByStep.get(run.stepKey) === run.id;
+      const goalRunRow = isGoalRun(run);
       const startable =
-        newest && runnerEnabled && Boolean(step && !step.done && step.runnable) && !activeRun && open;
+        newest &&
+        runnerEnabled &&
+        (goalRunRow || Boolean(step && !step.done && step.runnable)) &&
+        !activeRun &&
+        open;
       const busy = model.busy.runId === run.id ? model.busy.action : null;
       return (
         <RunBlock
           run={run}
           continues={continues}
-          stepNumber={stepNumberFor(steps, run.stepKey)}
+          stepNumber={goalRunRow ? null : stepNumberFor(steps, run.stepKey)}
           startable={startable}
           pageOpen={region === 'page'}
           handoffShownElsewhere={documentRunId === run.id}
@@ -288,9 +356,16 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
           onStop={handlers.onStop}
           onResume={handlers.onResume}
           onDismiss={handlers.onDismiss}
-          onStart={(target) => handlers.onHandle(target.stepKey)}
+          onStart={(target) =>
+            isGoalRun(target) ? handlers.onHandleGoal?.() : handlers.onHandle(target.stepKey)
+          }
           onMarkDone={(target) => handlers.onMarkDone(target.stepKey, { continue: true })}
           onNext={handlers.onNext}
+          sentDrafts={model.sentDrafts}
+          onOpenPackage={handlers.onOpenPackage}
+          onOpenItem={handlers.onOpenItem}
+          onDoneContinue={handlers.onDoneContinue}
+          onOpenSource={handlers.onOpenSource}
           onAnswer={handlers.onAnswer}
           onOpenPage={liveSession ? () => handlers.onRegionChange('page') : undefined}
           onUndoSave={handlers.onUndoSave}
@@ -329,6 +404,7 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
             id: activeRun.id,
             stepTitle: activeRun.stepTitle,
             stepNumber: stepNumberFor(steps, activeRun.stepKey),
+            goal: isGoalRun(activeRun),
           }
         : null,
     [activeRun, steps],
@@ -371,6 +447,16 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
         activeStepKey={activeRun?.stepKey ?? null}
         busyStepKey={model.busy.action === 'start' ? model.busy.stepKey : null}
         onHandle={open && runnerEnabled ? handlers.onHandle : undefined}
+        goal={
+          goal
+            ? {
+                showHandle:
+                  open && runnerEnabled && !activeRun && !stateInput.handoff && !stateInput.pendingQuestion,
+                busy: model.busy.action === 'start' && model.busy.stepKey === GOAL_STEP_KEY,
+                onHandle: handlers.onHandleGoal,
+              }
+            : null
+        }
       />
     </>
   );
@@ -415,7 +501,7 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
             runs,
             renderRun,
             // The "Your part" card names the step; the plan stays in Details.
-            intro: documentTarget ? undefined : intro,
+            intro: documentOpen ? undefined : intro,
             outro: (
               <>
                 {handlers.onAnswerWorkQuestion ? (
@@ -430,10 +516,16 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
                 <PlanOutro state={line.state} />
               </>
             ),
-            placeholder: documentTarget ? DOCUMENT_HANDOFF_COPY.placeholder : composerPlaceholder(line.state),
+            placeholder: documentOpen
+              ? activeTab?.pane.kind === 'draft'
+                ? GOAL_RUN_COPY.draftPlaceholder
+                : DOCUMENT_HANDOFF_COPY.placeholder
+              : composerPlaceholder(line.state),
             document: documentTarget
               ? { kind: 'document', id: documentTarget.id, provider: documentTarget.provider }
-              : null,
+              : activeTab?.pane.kind === 'document'
+                ? { kind: 'document', id: activeTab.pane.target.id, provider: activeTab.pane.target.provider }
+                : null,
             scrollButton: <ThreadJumpPill hasPendingForm={pendingForm} />,
             initialMessages: handlers.chat?.initialMessages,
             steer,
@@ -447,11 +539,19 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
 
   const documentDone = model.documentDone ?? { busy: false, error: null };
   const yourPart =
-    // Blanks alone are enough: a handoff can name its fields with an empty detail.
+    documentTabs && activeTab && documentRun?.state === 'handed_off' && handlers.onDoneContinue ? (
+      <ItemPartCard
+        item={activeTab.item}
+        busy={documentDone.busy}
+        error={documentDone.error}
+        onDone={() => handlers.onDoneContinue?.(documentRun)}
+        onBack={() => handlers.onCloseDocument?.()}
+      />
+    ) : // Blanks alone are enough: a handoff can name its fields with an empty detail.
     documentTarget &&
-    documentRun &&
-    (documentDetail || handoffBlanks(documentRun.next).length) &&
-    handlers.onDocumentDone ? (
+      documentRun &&
+      (documentDetail || handoffBlanks(documentRun.next).length) &&
+      handlers.onDocumentDone ? (
       <YourPartCard
         stepLabel={
           documentStepNumber ? `Step ${documentStepNumber}: ${documentRun.stepTitle}` : documentRun.stepTitle
@@ -464,7 +564,53 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
         onBack={() => handlers.onCloseDocument?.()}
       />
     ) : null;
-  const documentNode = documentTarget ? (
+  const documentNode = documentTabs ? (
+    <div className="flex h-full min-h-0 flex-col">
+      <DocumentTabs
+        tabs={documentTabs.tabs}
+        activeKey={documentTabs.activeKey}
+        sent={model.sentDrafts}
+        onSelect={(key) => handlers.onSelectTab?.(key)}
+        onClose={() => handlers.onCloseDocument?.()}
+      />
+      <div
+        id="document-tab-panel"
+        role="tabpanel"
+        aria-labelledby={`document-tab-${documentTabs.activeKey}`}
+        className="min-h-0 flex-1"
+      >
+        {activeTab ? (
+          <TabPaneView
+            key={activeTab.key}
+            tab={activeTab}
+            sealedFields={
+              activeTab.pane.kind === 'file' && activeTab.pane.id
+                ? model.sealedFields?.[activeTab.pane.id]
+                : undefined
+            }
+            loadFile={handlers.loadFile}
+            allowSend={handlers.allowSend}
+            onClose={() => handlers.onCloseDocument?.()}
+            onChat={wide ? undefined : () => setDocumentChatOpen(true)}
+            onOpenInFiles={
+              documentRun
+                ? (path) =>
+                    handlers.onNext(
+                      {
+                        kind: 'open_file',
+                        url: path,
+                        id: activeTab.pane.kind === 'file' ? activeTab.pane.id : null,
+                      },
+                      documentRun,
+                    )
+                : undefined
+            }
+            onSent={handlers.onDraftSent}
+          />
+        ) : null}
+      </div>
+    </div>
+  ) : documentTarget ? (
     <ThreadDocumentEditor
       target={documentTarget}
       onClose={() => handlers.onCloseDocument?.()}
@@ -505,6 +651,17 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
         onUndo={handlers.onUndoArtifact}
         onError={handlers.onError}
         onClose={wide ? undefined : () => handlers.onRegionChange(null)}
+        goal={
+          goal
+            ? {
+                run: goalRun,
+                packageRun,
+                sentDrafts: model.sentDrafts,
+                onOpenItem: (run, behaviour) => openPackageBehaviour(behaviour, run, handlers),
+                onOpenSource: handlers.onOpenSource,
+              }
+            : null
+        }
       />
     ) : null;
 
@@ -625,11 +782,20 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
           <div className="flex h-full min-h-0 flex-col">
             <div className="min-h-0 flex-1">{documentNode}</div>
             <YourPartBar
-              detail={yourPart ? documentDetail : null}
-              blanks={yourPart ? handoffBlanks(documentRun?.next) : []}
+              detail={yourPart ? (activeTab ? (activeTab.item.note ?? null) : documentDetail) : null}
+              blanks={
+                yourPart ? (activeTab ? (activeTab.item.blanks ?? []) : handoffBlanks(documentRun?.next)) : []
+              }
               busy={documentDone.busy}
               error={documentDone.error}
-              onDone={yourPart && documentRun ? () => handlers.onDocumentDone?.(documentRun) : null}
+              onDone={
+                yourPart && documentRun
+                  ? () =>
+                      activeTab
+                        ? handlers.onDoneContinue?.(documentRun)
+                        : handlers.onDocumentDone?.(documentRun)
+                  : null
+              }
               onChat={() => setDocumentChatOpen(true)}
             />
             <Sheet open={documentChatOpen} onOpenChange={setDocumentChatOpen}>
@@ -953,6 +1119,11 @@ export function WorkThread({ workId }: { workId: string }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [region, setRegionState] = useState<ThreadRegion>(null);
   const [openDocument, setOpenDocument] = useState<DocumentTarget | null>(null);
+  // Document mode with a package (goal runs): the tabs and the one in view.
+  const [openTabs, setOpenTabs] = useState<NonNullable<ThreadModel['documentTabs']> | null>(null);
+  const [sentDrafts, setSentDrafts] = useState<Record<string, string>>({});
+  const loadFile = useSavedFileLoader();
+  const allowSend = useAllowSend();
   const [workQuestion, setWorkQuestion] = useState<NonNullable<ThreadModel['workQuestion']>>({
     busyId: null,
     error: null,
@@ -1006,11 +1177,25 @@ export function WorkThread({ workId }: { workId: string }) {
   const pendingDocument = useClientStore((state) => state.pendingThreadDocument);
   useEffect(() => {
     if (!pendingDocument || pendingDocument.workId !== workId) return;
+    if (pendingDocument.itemId) {
+      // A package item: wait for the live runs, then open its tab.
+      if (!liveRuns) return;
+      const run = newestPackageRun(liveRuns);
+      const tab = run ? packageTabs(run).find((entry) => entry.item.id === pendingDocument.itemId) : null;
+      useClientStore.getState().setPendingThreadDocument(null);
+      if (!run || !tab) return;
+      setOpenDocument(null);
+      setOpenTabs({ runId: run.id, tabs: packageTabs(run), activeKey: tab.key });
+      setDocumentDone({ busy: false, error: null });
+      setRegion('document');
+      return;
+    }
     useClientStore.getState().setPendingThreadDocument(null);
     setOpenDocument(pendingDocument.target);
+    setOpenTabs(null);
     setDocumentDone({ busy: false, error: null });
     setRegion('document');
-  }, [pendingDocument, workId, setRegion]);
+  }, [pendingDocument, workId, setRegion, liveRuns]);
 
   // The page pane opens by itself only for a run the user started from this
   // view (lead review decision 13), and closes again when that session ends.
@@ -1238,13 +1423,113 @@ export function WorkThread({ workId }: { workId: string }) {
       },
       onOpenDocument: (target) => {
         setOpenDocument(target);
+        setOpenTabs(null);
         setDocumentDone({ busy: false, error: null });
         setRegion('document');
       },
       onCloseDocument: () => {
         setRegion(null);
         setOpenDocument(null);
+        setOpenTabs(null);
       },
+      // Goal runs (docs/albatross-goal-runs.md). The route calls sit behind
+      // goal-run-client.ts, so the server owner can change their bodies.
+      onHandleGoal: () => {
+        setBusy({ runId: null, action: 'start', stepKey: GOAL_STEP_KEY });
+        setRunError(null);
+        void postGoalStart(workId)
+          .then((result) => {
+            if (result.runId) startedHere.current.add(result.runId);
+          })
+          .catch((cause) => setError(cause instanceof Error ? cause.message : THREAD_COPY.startFailed))
+          .finally(() => setBusy({ runId: null, action: null, stepKey: null }));
+      },
+      onOpenPackage: (run, activeKey) => {
+        const tabs = packageTabs(run);
+        if (!tabs.length) return;
+        const remembered = threadTab(workId);
+        const key =
+          activeKey && tabs.some((tab) => tab.key === activeKey)
+            ? activeKey
+            : remembered && tabs.some((tab) => tab.key === remembered)
+              ? remembered
+              : tabs[0].key;
+        setOpenDocument(null);
+        setOpenTabs({ runId: run.id, tabs, activeKey: key });
+        setThreadTab(workId, key);
+        setDocumentDone({ busy: false, error: null });
+        setRegion('document');
+      },
+      onOpenItem: (run, key) => {
+        const tabs = packageTabs(run);
+        if (!tabs.some((tab) => tab.key === key)) return;
+        setOpenDocument(null);
+        setOpenTabs({ runId: run.id, tabs, activeKey: key });
+        setThreadTab(workId, key);
+        setDocumentDone({ busy: false, error: null });
+        setRegion('document');
+      },
+      onSelectTab: (key) => {
+        setOpenTabs((current) =>
+          current?.tabs.some((tab) => tab.key === key) ? { ...current, activeKey: key } : current,
+        );
+        setThreadTab(workId, key);
+      },
+      onDoneContinue: (run) => {
+        setBusy({ runId: run.id, action: 'mark_done', stepKey: run.stepKey });
+        setRunError(null);
+        setDocumentDone({ busy: true, error: null });
+        void postGoalContinue(workId)
+          .then((result) => {
+            if (result.nextRunId) startedHere.current.add(result.nextRunId);
+            setDocumentDone({ busy: false, error: null });
+            setRegion(null);
+            setOpenDocument(null);
+            setOpenTabs(null);
+          })
+          .catch((cause) => {
+            const text = cause instanceof Error ? cause.message : DOCUMENT_HANDOFF_COPY.failed;
+            setDocumentDone({ busy: false, error: text });
+            setRunError(text);
+          })
+          .finally(() =>
+            setBusy((current) =>
+              current.action === 'mark_done' ? { runId: null, action: null, stepKey: null } : current,
+            ),
+          );
+      },
+      onOpenSource: (behaviour, _source, run) => {
+        switch (behaviour.kind) {
+          case 'open_url':
+            navDeps.openWindow(behaviour.url);
+            return;
+          case 'open_mail': {
+            const state = useClientStore.getState();
+            state.setSelectedThread(behaviour.threadId);
+            state.setPrimaryView('mail');
+            return;
+          }
+          case 'open_tab':
+            handlers.onOpenItem?.(run, behaviour.key);
+            return;
+          case 'open_document':
+            handlers.onNext({ kind: 'open_document', url: behaviour.url, id: behaviour.id }, run);
+            return;
+          case 'open_file':
+            handlers.onNext({ kind: 'open_file', url: behaviour.url, id: behaviour.id }, run);
+            return;
+          case 'open_calendar':
+            // The source carries an id and no date: the calendar opens; the Day view needs the date (open item).
+            useClientStore.getState().setPrimaryView('calendar');
+            return;
+          default:
+            return;
+        }
+      },
+      onDraftSent: (draftId) =>
+        setSentDrafts((current) => ({ ...current, [draftId]: formatRunTime(Date.now()) })),
+      loadFile,
+      allowSend,
       onDocumentDone: (run) => {
         setDocumentDone({ busy: true, error: null });
         setOptimisticDone((current) => new Set([...current, run.stepKey]));
@@ -1358,6 +1643,8 @@ export function WorkThread({ workId }: { workId: string }) {
       activeRun,
       allowWithCheck,
       detail,
+      allowSend,
+      loadFile,
       navDeps,
       queryClient,
       runAction,
@@ -1432,6 +1719,8 @@ export function WorkThread({ workId }: { workId: string }) {
     signInSaved,
     replyInProgress: row?.status === 'answering',
     document: openDocument,
+    documentTabs: openTabs,
+    sentDrafts,
     documentDone,
     workQuestion,
   };

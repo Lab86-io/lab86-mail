@@ -1046,6 +1046,22 @@ export const albatrossSplitWork = defineTool({
   },
 });
 
+/**
+ * The words the user reads when plan steps could not be made (G6,
+ * docs/albatross-goal-runs.md). The provider detail stays in the server log.
+ */
+export function planApplyFailureMessage(made: number, failed: number): string {
+  if (!made) return 'Albatross could not make the steps of the plan. Try again.';
+  const total = made + failed;
+  const left = failed === 1 ? '1 step did not work' : `${failed} steps did not work`;
+  return `Albatross made ${made} of the ${total} steps of the plan. ${left}. Try again to make the rest.`;
+}
+
+/** The log line of failed plan steps: titles and errors, cut short. Never user copy. */
+function planFailureDetail(failures: ReadonlyArray<{ title: string; error: string }>): string {
+  return truncateText(failures.map((failure) => `${failure.title} (${failure.error})`).join('; '), 400);
+}
+
 export const albatrossApplyIntentPlan = defineTool({
   name: 'albatross_apply_intent_plan',
   description:
@@ -1256,7 +1272,9 @@ export const albatrossApplyIntentPlan = defineTool({
           unresolved: plan.unresolved,
         });
     if (failures.length && !artifacts.length) {
-      throw new Error(`Could not apply the plan: ${failures[0].error}`);
+      // The provider detail goes to the server log only; the user reads plain words.
+      console.error('[albatross-apply] no plan step was made', args.intentId, planFailureDetail(failures));
+      throw new Error(planApplyFailureMessage(0, failures.length));
     }
     const applicationId = await deps.convexMutation<string>(albatrossApi().recordPlanApplication, {
       userId,
@@ -1278,12 +1296,8 @@ export const albatrossApplyIntentPlan = defineTool({
     if (failures.length) {
       // The created artifacts are recorded. The caller sees the failure and
       // does not mark the plan applied, so a retry creates only what is missing.
-      throw new Error(
-        `Applied ${artifacts.length} of the plan's actions. ${failures.length} failed: ${truncateText(
-          failures.map((failure) => `${failure.title} (${failure.error})`).join('; '),
-          400,
-        )}`,
-      );
+      console.error('[albatross-apply] plan steps failed', args.intentId, planFailureDetail(failures));
+      throw new Error(planApplyFailureMessage(artifacts.length, failures.length));
     }
 
     return {

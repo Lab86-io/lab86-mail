@@ -96,7 +96,14 @@ export function SecureDetailsSection() {
 
   const handlers: Pick<
     SecureDetailsListProps,
-    'onReplace' | 'onRename' | 'onRemoveSite' | 'onAddSite' | 'onDelete' | 'onAdd' | 'onToggle'
+    | 'onReplace'
+    | 'onRename'
+    | 'onRemoveSite'
+    | 'onAddSite'
+    | 'onRemoveMailDomain'
+    | 'onDelete'
+    | 'onAdd'
+    | 'onToggle'
   > = {
     onToggle: (id) => {
       setOpenId(id);
@@ -137,6 +144,23 @@ export function SecureDetailsSection() {
           if (!('item' in result)) return false;
           setItems((current) => current.map((row) => (row.id === item.id ? result.item : row)));
           toast.success(SECURE_COPY.siteRemoved(site));
+          return true;
+        },
+        SECURE_COPY.couldNotSave,
+      );
+    },
+    // A mail domain allowed from "Always for mail to {domain}": removing one needs no check.
+    onRemoveMailDomain: (item, domain) => {
+      void run(
+        item,
+        'remove_mail',
+        async () => {
+          const result = await updateSecureItem(item.id, {
+            mailDomains: (item.mailDomains ?? []).filter((own) => own !== domain),
+          });
+          if (!('item' in result)) return false;
+          setItems((current) => current.map((row) => (row.id === item.id ? result.item : row)));
+          toast.success(SECURE_COPY.mailRemoved(domain));
           return true;
         },
         SECURE_COPY.couldNotSave,

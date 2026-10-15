@@ -6,6 +6,8 @@ import {
 import { mayCloseAutomatically } from '../lib/albatross/contract';
 import { type ExecutionWorkRow, selectExecutionSnapshot } from '../lib/albatross/execution';
 import { isStale } from '../lib/albatross/forgiveness';
+import { goalRunsEnabled } from '../lib/albatross/goal-run-contract';
+import { goalContractWatch, isGoalRun } from '../lib/albatross/goal-runs';
 import { isDormant, wakeIsDue, wokenHorizon } from '../lib/albatross/horizon';
 import { bindFrontierQuestionId } from '../lib/albatross/plan-frontier';
 import { metricSummary } from '../lib/albatross/practice-review';
@@ -918,8 +920,11 @@ export const completeStep = mutation({
         !(step.cardId && completedCardIds.has(step.cardId)),
     );
     // An armed reply watch keeps the watcher on even when no mail step is
-    // left (WRK-10).
-    const watching = outstandingMailStep || Boolean(work.replyWatch && work.workState === 'waiting');
+    // left (WRK-10). A goal Work keeps it while its contract has open proofs.
+    const watching =
+      outstandingMailStep ||
+      Boolean(work.replyWatch && work.workState === 'waiting') ||
+      goalContractWatch(work);
     if (Boolean(work.mailWatchAt) !== watching) {
       await ctx.db.patch(args.workId, {
         mailWatchAt: watching ? ts : undefined,
@@ -1025,7 +1030,11 @@ export const attachProof = mutation({
         )
         .unique();
       if (!thread) throw new Error('Mail proof could not be verified.');
-      trust = 'observed';
+      // A thread in the user's corpus is observed evidence. Only the server's
+      // own mail watch, after the evidence gate judged that the thread shows
+      // a named proof, may record that judgement as inferred (a goal Work's
+      // watch, docs/albatross-goal-runs.md). Nothing makes mail confirmed.
+      trust = args.internalSecret && args.trust === 'inferred' ? 'inferred' : 'observed';
     }
     const sourceScope = [bounded(args.accountId, 320), bounded(args.connectionId, 180)]
       .filter(Boolean)
@@ -2109,9 +2118,11 @@ const MAIL_WATCH_LEASE_MS = 10 * 60 * 1000;
 
 /**
  * True while the applied plan holds a mail-confirmation step that is neither
- * done nor already confirmed. A confirmed step is final and never watched again.
+ * done nor already confirmed, or while a goal Work has an open contract proof.
+ * A confirmed step is final and never watched again.
  */
 async function openMailStepRemains(ctx: QueryCtx, work: Doc<'albatrossIntents'>) {
+  if (goalContractWatch(work)) return true;
   if (!work.latestPlanId) return false;
   const plan = await ctx.db.get(work.latestPlanId);
   if (!plan || plan.userId !== work.userId) return false;
@@ -2232,7 +2243,13 @@ export const beginMailWatch = internalMutation({
 
 /** The watch pass finished: either keep polling later or stand down. */
 export const completeMailWatch = mutation({
-  args: { ...callerArgs, workId: v.id('albatrossIntents'), stillWatching: v.boolean() },
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    stillWatching: v.boolean(),
+    /** A goal Work: the newest mail date this pass read. It only moves forward. */
+    goalWatchAfter: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
@@ -2241,9 +2258,12 @@ export const completeMailWatch = mutation({
       ['active', 'waiting', 'blocked'].includes(workLifecycle(work)) &&
       (Boolean(work.replyWatch && work.workState === 'waiting') ||
         (args.stillWatching && (await openMailStepRemains(ctx, work))));
+    const goalWatchAfter =
+      args.goalWatchAfter && args.goalWatchAfter > (work.goalWatchAfter ?? 0) ? args.goalWatchAfter : null;
     await ctx.db.patch(args.workId, {
       mailWatchAt: stillWatching ? ts : undefined,
       mailWatchClaimedAt: undefined,
+      ...(goalWatchAfter ? { goalWatchAfter } : {}),
       updatedAt: ts,
     });
     return { stillWatching };
@@ -2519,6 +2539,12 @@ export const workDetail = query({
       latestRunPerStep(runRows).map((row) => [row.stepKey, stepRunView(row)] as const),
     );
     const activeRunRow = runRows.find((row) => row.active);
+    // Goal runs (docs/albatross-goal-runs.md): the newest goal run and the
+    // newest checklist. A Work is a goal Work when the switch is on for the
+    // user or a goal run already worked on it.
+    const goalRows = runRows.filter((row) => isGoalRun(row));
+    const goalRunRow = goalRows[0] ?? null;
+    const checklistRow = goalRows.find((row) => row.checklist?.length);
     const runnerEnabled =
       (process.env.LAB86_STEP_RUNS || '').trim().toLowerCase() !== 'off' && !isTerminalWork(work);
     const guideSteps = projectedSteps.map((step) => ({
@@ -2554,7 +2580,10 @@ export const workDetail = query({
         scheduledEndAt,
         activeRun: activeRunRow ? stepRunView(activeRunRow) : null,
         runner: { enabled: runnerEnabled },
+        goalRun: goalRunRow ? stepRunView(goalRunRow) : null,
       },
+      goalRuns: goalRunsEnabled(userId) || goalRows.length > 0,
+      checklist: checklistRow?.checklist ?? [],
       lapses,
       contract: work.contract ?? null,
       evidence: evidence.map((row) => ({

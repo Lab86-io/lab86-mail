@@ -105,6 +105,9 @@ export type SecureUseOutcome =
   | 'allowed_send_always'
   | 'denied';
 
+/** The use outcomes of a sealed file, written by the server: one send, mail to a domain from now on, a download. */
+export type SecureSendUseOutcome = 'allowed_send_once' | 'allowed_send_always' | 'downloaded';
+
 export interface SecureUseView {
   id: string;
   itemId: string;

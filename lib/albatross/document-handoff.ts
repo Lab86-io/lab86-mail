@@ -44,11 +44,17 @@ export function documentHandoffFor(
         : null;
     if (named && named.id === target.id) return run;
     const made = run.artifacts.some((artifact) => {
-      if (artifact.kind !== 'document') return false;
+      if (artifact.kind !== 'document' && artifact.kind !== 'deck') return false;
       const found = documentTargetOf(artifact.url ?? null, artifact.id ?? null);
       return found?.id === target.id;
     });
     if (made) return run;
+    // A goal handoff names its documents in its package (docs/albatross-goal-runs.md, G3).
+    const packaged = (run.items ?? []).some((item) => {
+      if (item.kind !== 'document' && item.kind !== 'sheet' && item.kind !== 'deck') return false;
+      return documentTargetOf(item.url ?? null, item.id ?? null)?.id === target.id;
+    });
+    if (packaged) return run;
   }
   return null;
 }

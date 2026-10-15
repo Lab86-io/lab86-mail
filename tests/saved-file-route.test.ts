@@ -76,6 +76,22 @@ describe('GET /api/files/saved/[fileId]', () => {
     expect(checked.materialize).toHaveBeenCalledWith('u1', 'upload_1', { kind: 'download', checked: true });
   });
 
+  test('a sealed preview shows the stored file with no check and names its sealed fields', async () => {
+    const sealed = row({ sealedFields: [{ field: 'tin', ref: '{{secure:si_x.number}}' }] });
+    const d = deps({ getFile: async () => sealed, identityChecked: mock(async () => false) });
+    const res = await get(d, '?preview=1');
+    expect(res.status).toBe(200);
+    // The stored bytes, never the filled ones: no check, no value opened.
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([1, 2, 3]);
+    expect(d.identityChecked).not.toHaveBeenCalled();
+    expect(d.materialize).not.toHaveBeenCalled();
+    expect(JSON.parse(decodeURIComponent(res.headers.get('x-sealed-fields') || ''))).toEqual(['tin']);
+    // The reference never leaves the server.
+    expect(res.headers.get('x-sealed-fields')).not.toContain('secure');
+    // A plain file has no sealed header.
+    expect((await get(deps(), '?preview=1')).headers.get('x-sealed-fields')).toBeNull();
+  });
+
   test('not found, gone from storage, store errors, rate limits, and no session', async () => {
     expect((await get(deps({ getFile: async () => null }))).status).toBe(404);
     expect((await get(deps({ getFile: async () => row({ url: null }) }))).status).toBe(404);

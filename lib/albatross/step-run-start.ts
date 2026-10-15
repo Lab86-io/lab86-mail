@@ -6,7 +6,11 @@
 
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { isStandingOrderPaused } from '../hosted/standing-orders';
+import { resolveBriefTimezone } from '../mail/brief-timezone';
 import { truncateText } from '../shared/text';
+import { GOAL_STEP_KEY, goalAutoIdentity, goalRunsEnabled, goalStepIdentity } from './goal-run-contract';
+import { goalAutoVerdict, isGoalRun, seedChecklist, userDidPartNote } from './goal-runs';
+import { localDateKey } from './local-time';
 import { normalizeStepMode, stepModeRunsAlone } from './step-contract';
 import { completeWorkStep } from './step-execution';
 import {
@@ -33,6 +37,8 @@ export interface StepRunStartDependencies {
   convexMutation: typeof convexMutation;
   runsPaused: (userId: string) => Promise<boolean>;
   completeWorkStep: typeof completeWorkStep;
+  /** The user's time zone, for the day key of automatic goal runs. */
+  timezone: (userId: string) => Promise<string | undefined>;
 }
 
 const defaults: StepRunStartDependencies = {
@@ -40,6 +46,7 @@ const defaults: StepRunStartDependencies = {
   convexMutation,
   runsPaused: (userId) => isStandingOrderPaused(userId, 'runs'),
   completeWorkStep: (input) => completeWorkStep(input),
+  timezone: (userId) => resolveBriefTimezone(userId, undefined),
 };
 
 type EnqueueResult = { runId: string | null; created: boolean; reason: string | null };
@@ -59,6 +66,182 @@ async function loadStep(deps: StepRunStartDependencies, userId: string, workId: 
     detail,
     step: (step || null) as (RunnableStepLike & { identity?: string }) | null,
     missingWork: false,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Goal runs (docs/albatross-goal-runs.md): a run works on the whole goal, so
+// it needs no step. For a user in LAB86_GOAL_RUNS every run is a goal run.
+// ---------------------------------------------------------------------------
+
+type HistoryRun = {
+  id: string;
+  state: string;
+  goal?: boolean;
+  stepKey?: string;
+  outcome?: string | null;
+  stoppedBy?: string | null;
+  browserSessionId?: string | null;
+  checklist?: Array<{ text: string; state: string }>;
+  next?: { label?: string; target?: { kind?: string; id?: string } | null } | null;
+  question?: { status?: string } | null;
+};
+
+async function loadGoalWork(deps: StepRunStartDependencies, userId: string, workId: string) {
+  const detail = await deps.convexQuery<any>(api.albatrossWorkV2.workDetail, { userId, workId });
+  if (!detail?.work) return null;
+  const runs = await deps
+    .convexQuery<HistoryRun[]>(api.albatrossStepRuns.runsForWorkHistory, { userId, workId })
+    .then((rows) => rows || [])
+    .catch(() => [] as HistoryRun[]);
+  return { detail, runs };
+}
+
+/** The run title of a goal: the Work's title. */
+function goalTitle(detail: any): string {
+  return (
+    truncateText(
+      String(detail?.work?.title || detail?.work?.rawText || '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+      200,
+    ) || 'Albatross'
+  );
+}
+
+/** The user's local date for the automatic day key. A bad time zone counts as UTC. */
+function localDate(timezone: string | undefined, at = new Date()): string {
+  try {
+    return localDateKey(timezone || 'UTC', at);
+  } catch {
+    return localDateKey('UTC', at);
+  }
+}
+
+function enqueueRefusal(result: EnqueueResult, fallback: string): never {
+  if (result.reason === 'active') throw new StepRunStartError('Albatross is already working on this.', 409);
+  if (result.reason === 'busy')
+    throw new StepRunStartError('Albatross has 30 steps open or waiting now. Try again when one ends.', 409);
+  if (result.reason === 'closed') throw new StepRunStartError('This Albatross is closed.', 409);
+  throw new StepRunStartError(fallback, 409);
+}
+
+/**
+ * Start a goal run. The user starts one at any time ("Handle it"). An
+ * automatic trigger starts one only for a Work with no run yet, or whose
+ * newest run stopped at its limit, at most once a day for each Work (G1).
+ */
+async function startGoalRun(
+  input: { userId: string; workId: string; trigger: 'user' | 'brief' | 'conductor'; note?: string },
+  deps: StepRunStartDependencies,
+): Promise<StartResult> {
+  const automatic = isAutomaticTrigger(input.trigger);
+  const loaded = await loadGoalWork(deps, input.userId, input.workId);
+  if (!loaded) {
+    if (automatic) return { runId: null, created: false, reason: 'no_work' };
+    throw new StepRunStartError('Albatross Work not found.', 404);
+  }
+  const { detail, runs } = loaded;
+  let stepIdentity = goalStepIdentity(input.workId);
+  let parent: HistoryRun | undefined;
+  if (automatic) {
+    const verdict = goalAutoVerdict({
+      runs,
+      pendingQuestions: (detail.questions || []).filter((question: any) => question?.status === 'pending')
+        .length,
+    });
+    if (!verdict.start) return { runId: null, created: false, reason: verdict.reason };
+    const timezone = await deps.timezone(input.userId).catch(() => undefined);
+    stepIdentity = goalAutoIdentity(input.workId, localDate(timezone));
+    parent = verdict.continueFrom ? runs.find((run) => run.id === verdict.continueFrom) : undefined;
+  }
+  const result = await deps.convexMutation<EnqueueResult>(api.albatrossStepRuns.enqueue, {
+    userId: input.userId,
+    workId: input.workId,
+    stepKey: GOAL_STEP_KEY,
+    stepIdentity,
+    stepTitle: goalTitle(detail),
+    trigger: input.trigger,
+    goal: true,
+    checklist: seedChecklist({ runs, steps: detail.execution?.guideSteps }),
+    ...(parent ? { parentRunId: parent.id } : {}),
+    ...(parent?.browserSessionId ? { browserSessionId: parent.browserSessionId } : {}),
+    ...(!automatic && input.note?.trim() ? { resumeNote: input.note.trim() } : {}),
+  });
+  if (!automatic && !result.created) enqueueRefusal(result, 'The run did not start. Try again.');
+  return result;
+}
+
+/** Continue a goal (or, in goal mode, any) handoff as a goal run. */
+async function resumeGoalRun(
+  input: { userId: string; workId: string; parent: HistoryRun; note?: string },
+  deps: StepRunStartDependencies,
+): Promise<StartResult> {
+  const loaded = await loadGoalWork(deps, input.userId, input.workId);
+  if (!loaded) throw new StepRunStartError('Albatross Work not found.', 404);
+  const result = await deps.convexMutation<EnqueueResult>(api.albatrossStepRuns.enqueue, {
+    userId: input.userId,
+    workId: input.workId,
+    stepKey: GOAL_STEP_KEY,
+    stepIdentity: goalStepIdentity(input.workId),
+    stepTitle: goalTitle(loaded.detail),
+    trigger: 'resume',
+    goal: true,
+    checklist: seedChecklist({
+      runs: [...loaded.runs.filter((run) => run.id !== input.parent.id), input.parent],
+      steps: loaded.detail.execution?.guideSteps,
+    }),
+    parentRunId: input.parent.id,
+    ...(input.note?.trim() ? { resumeNote: input.note.trim() } : {}),
+    ...(input.parent.browserSessionId ? { browserSessionId: input.parent.browserSessionId } : {}),
+  });
+  if (!result.created) enqueueRefusal(result, 'The run could not continue now. Try again.');
+  return result;
+}
+
+/**
+ * "Done, continue" on a goal handoff: the user did their part. The handoff
+ * closes, and a new goal run checks the contract first. The Work closes only
+ * by its contract, never by this tap. The result has the shape of a step
+ * check, so the clients read one shape.
+ */
+export async function continueGoalRun(
+  input: { userId: string; workId: string; note?: string },
+  overrides: Partial<StepRunStartDependencies> = {},
+): Promise<StepCheckResult> {
+  const deps = { ...defaults, ...overrides };
+  if (!stepRunsEnabled()) throw new StepRunStartError('Step runs are off.', 403);
+  const runs = await deps
+    .convexQuery<HistoryRun[]>(api.albatrossStepRuns.runsForWorkHistory, {
+      userId: input.userId,
+      workId: input.workId,
+    })
+    .then((rows) => rows || []);
+  const newest = runs.at(-1);
+  if (
+    !newest ||
+    newest.state !== 'handed_off' ||
+    !isGoalRun(newest) ||
+    (newest.outcome !== 'ready_for_you' && newest.outcome !== 'your_turn')
+  )
+    throw new StepRunStartError('Nothing waits for you on this Albatross.', 409);
+  const started = await resumeGoalRun(
+    {
+      userId: input.userId,
+      workId: input.workId,
+      parent: newest,
+      note: userDidPartNote(newest.next?.label, input.note),
+    },
+    deps,
+  );
+  await deps
+    .convexMutation(api.albatrossStepRuns.dismissHandoff, { userId: input.userId, id: newest.id })
+    .catch(() => undefined);
+  return {
+    stepKey: GOAL_STEP_KEY,
+    allStepsComplete: false,
+    nextRunId: started.runId,
+    nextStepKey: GOAL_STEP_KEY,
   };
 }
 
@@ -86,6 +269,8 @@ export async function startStepRun(
     if (await deps.runsPaused(input.userId).catch(() => false))
       return { runId: null, created: false, reason: 'paused' };
   }
+  // Goal mode: the run works on the whole goal; a step key, if any, is ignored.
+  if (goalRunsEnabled(input.userId)) return startGoalRun(input, deps);
   const { step, missingWork } = await loadStep(deps, input.userId, input.workId, input.stepKey);
   if (missingWork) {
     if (automatic) return { runId: null, created: false, reason: 'no_work' };
@@ -135,6 +320,9 @@ export async function resumeStepRun(
     id: input.runId,
   });
   if (!parent || parent.workId !== input.workId) throw new StepRunStartError('Run not found.', 404);
+  // A goal handoff continues as a goal run; in goal mode, so does a step handoff.
+  if (isGoalRun(parent) || goalRunsEnabled(input.userId))
+    return resumeGoalRun({ userId: input.userId, workId: input.workId, parent, note: input.note }, deps);
   const { step, missingWork } = await loadStep(deps, input.userId, input.workId, parent.stepKey);
   if (missingWork) throw new StepRunStartError('Albatross Work not found.', 404);
   if (!step) throw new StepRunStartError('This step is no longer in the plan.', 404);
@@ -238,9 +426,13 @@ export type HandleStepAction = 'started' | 'resumed' | 'steered' | 'working' | '
 export async function handleStepFromThread(
   input: { userId: string; workId: string; stepKey?: string; note?: string; done?: boolean },
   overrides: Partial<StepRunStartDependencies> = {},
-): Promise<{ action: HandleStepAction; runId: string | null; check?: StepCheckResult }> {
+): Promise<{ action: HandleStepAction; runId: string | null; check?: StepCheckResult; goal?: boolean }> {
   const deps = { ...defaults, ...overrides };
   const note = input.note?.trim() || '';
+  if (goalRunsEnabled(input.userId)) {
+    const handled = await handleGoalFromThread({ ...input, note }, deps);
+    if (handled) return handled;
+  }
   // The user says the step is done: their word checks it. A run never does the
   // step again to prove what the user already said.
   if (input.done) {
@@ -305,6 +497,76 @@ export async function handleStepFromThread(
   return { action: 'started', runId: started.runId };
 }
 
+/**
+ * The thread control in goal mode. With a run open, the note goes to it. A
+ * handoff that waits continues as a goal run ("done" is "Done, continue").
+ * Otherwise a goal run starts. Null: the user marks an old plan step done
+ * and no goal handoff waits, which the step path handles.
+ */
+async function handleGoalFromThread(
+  input: { userId: string; workId: string; note: string; done?: boolean },
+  deps: StepRunStartDependencies,
+): Promise<{ action: HandleStepAction; runId: string | null; check?: StepCheckResult; goal: true } | null> {
+  if (!stepRunsEnabled()) throw new StepRunStartError('Step runs are off.', 403);
+  const runs =
+    (await deps.convexQuery<HistoryRun[]>(api.albatrossStepRuns.runsForWorkHistory, {
+      userId: input.userId,
+      workId: input.workId,
+    })) || [];
+  const newest = runs.at(-1);
+  const open = [...runs].reverse().find((run) => run.state === 'queued' || run.state === 'running');
+  if (open) {
+    const text = input.done
+      ? `The user says this part is done.${input.note ? ` ${input.note}` : ''}`
+      : input.note;
+    if (!text) return { action: 'working', runId: open.id, goal: true };
+    const steered = await deps.convexMutation<boolean>(api.albatrossStepRuns.steer, {
+      userId: input.userId,
+      id: open.id,
+      text,
+    });
+    if (steered) return { action: 'steered', runId: open.id, goal: true };
+  }
+  const waiting = newest?.state === 'handed_off' ? newest : undefined;
+  let note = input.note;
+  if (input.done) {
+    if (!waiting || !isGoalRun(waiting)) return null;
+    // "Done, continue" fits a handoff that waits on the user's part.
+    if (waiting.outcome === 'ready_for_you' || waiting.outcome === 'your_turn') {
+      const check = await continueGoalRun(
+        { userId: input.userId, workId: input.workId, note: input.note },
+        deps,
+      );
+      return { action: 'resumed', runId: check.nextRunId, check, goal: true };
+    }
+    // A question or a stop at the limit: the run continues with the user's word.
+    note = `The user says this part is done.${input.note ? ` ${input.note}` : ''}`;
+  }
+  if (waiting) {
+    const questionId = waiting.next?.target?.kind === 'question' ? waiting.next.target.id : null;
+    if (!input.done && questionId && input.note && waiting.question?.status === 'pending') {
+      await deps
+        .convexMutation(api.albatrossWorkV2.answerQuestion, {
+          userId: input.userId,
+          questionId,
+          expectedWorkId: input.workId,
+          answer: truncateText(`${CHAT_ANSWER_PREFIX}${input.note}`, 2_000),
+        })
+        .catch(() => undefined);
+    }
+    const resumed = await resumeGoalRun(
+      { userId: input.userId, workId: input.workId, parent: waiting, note: note || undefined },
+      deps,
+    );
+    return { action: 'resumed', runId: resumed.runId, goal: true };
+  }
+  const started = await startGoalRun(
+    { userId: input.userId, workId: input.workId, trigger: 'user', note: input.note || undefined },
+    deps,
+  );
+  return { action: 'started', runId: started.runId, goal: true };
+}
+
 export interface StepCheckResult {
   stepKey: string;
   allStepsComplete: boolean;
@@ -348,7 +610,18 @@ export async function completeStepAndContinue(
     nextRunId: null,
     nextStepKey: null,
   };
-  if (completed.allStepsComplete || completed.closed || !stepRunsEnabled()) return result;
+  if (completed.closed || !stepRunsEnabled()) return result;
+  // Goal mode: Albatross goes on with the whole goal, not with the next step.
+  if (goalRunsEnabled(input.userId)) {
+    const started = await startGoalRun(
+      { userId: input.userId, workId: input.workId, trigger: 'user' },
+      deps,
+    ).catch(() => null);
+    result.nextRunId = started?.runId ?? null;
+    result.nextStepKey = started?.runId ? GOAL_STEP_KEY : null;
+    return result;
+  }
+  if (completed.allStepsComplete) return result;
   const { step } = await loadStep(deps, input.userId, input.workId).catch(() => ({ step: null }));
   if (!step || step.done) return result;
   result.nextStepKey = step.key;

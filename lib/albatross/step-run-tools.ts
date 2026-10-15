@@ -17,6 +17,19 @@ import { SecureLeak, SecureNeedsAllow, SecureRefused, type SecureRunAccess } fro
 import { truncateText } from '../shared/text';
 import { saveBrowserDownload } from '../web/file-pull';
 import { type AgentBrowser, BrowserHandoffRequired, type PageView } from './browser-agent';
+import {
+  type ChecklistItem,
+  checklistInputSchema,
+  handoffItemsInputSchema,
+  type RunSource,
+  unsureInputSchema,
+} from './goal-run-contract';
+import {
+  type GoalUpdateInput,
+  goalUpdateInputSchema,
+  sealedFileId,
+  sourcesFromToolResult,
+} from './goal-runs';
 import { formQuestionSchema } from './thread-contract';
 
 /** Registry tools a step run may use. Nothing here sends mail, deletes, or reaches a person alone. */
@@ -97,7 +110,25 @@ export const RUNNER_REGISTRY_TOOLS = [
   'jira_read_issue',
   'narrative_search',
   'narrative_read',
+  // Goal runs only (GOAL_RUN_ONLY_TOOLS). A name that the registry does not
+  // have yet is skipped, so these can ship before their tools do.
+  'presentation_plan',
+  'document_review_slides',
+  'web_research',
+  'web_file_save',
+  'pdf_form_fields',
+  'pdf_form_fill',
 ] as const;
+
+/** Registry tools that only a goal run gets (docs/albatross-goal-runs.md). A step run keeps its old set. */
+export const GOAL_RUN_ONLY_TOOLS: ReadonlySet<string> = new Set([
+  'presentation_plan',
+  'document_review_slides',
+  'web_research',
+  'web_file_save',
+  'pdf_form_fields',
+  'pdf_form_fill',
+]);
 
 /** Calls that the queue holds for the user instead of running. */
 const QUEUED_FOR_APPROVAL: Record<
@@ -123,6 +154,12 @@ export type RunArtifact = {
   accountId?: string;
 };
 
+const OUTCOME_DESCRIPTION =
+  'done: the step is complete and you have proof. ready_for_you: a draft, document, or approval waits for the user. your_turn: only the user can do the next part (sign in, sign, pay, call, visit). needs_answer: one fact only the user knows blocks you.';
+
+const GOAL_OUTCOME_DESCRIPTION =
+  'done: the outcome of the goal is true now and you have proof. ready_for_you: things you made wait for the user (drafts, documents, files, approvals). your_turn: only the user can do the next part (sign in, sign, pay, call, visit). needs_answer: facts or a choice that only the user has block you.';
+
 const NEXT_KINDS = [
   'review_draft',
   'review_document',
@@ -137,11 +174,7 @@ const NEXT_KINDS = [
 ] as const;
 
 export const handoffInputSchema = z.object({
-  outcome: z
-    .enum(['done', 'ready_for_you', 'your_turn', 'needs_answer'])
-    .describe(
-      'done: the step is complete and you have proof. ready_for_you: a draft, document, or approval waits for the user. your_turn: only the user can do the next part (sign in, sign, pay, call, visit). needs_answer: one fact only the user knows blocks you.',
-    ),
+  outcome: z.enum(['done', 'ready_for_you', 'your_turn', 'needs_answer']).describe(OUTCOME_DESCRIPTION),
   summary: z
     .string()
     .min(1)
@@ -227,8 +260,19 @@ export const handoffInputSchema = z.object({
     .describe(
       'For done: what proves the step is complete (a confirmation number, the file you made, the page text).',
     ),
+  // Goal runs (docs/albatross-goal-runs.md, G3): the package and the doubts.
+  items: handoffItemsInputSchema.optional(),
+  unsure: unsureInputSchema.optional(),
 });
 export type HandoffInput = z.infer<typeof handoffInputSchema>;
+
+/** The handoff of a run on one step: no package (the old contract). */
+export const stepHandoffInputSchema = handoffInputSchema.omit({ items: true, unsure: true });
+
+/** The handoff of a goal run: the outcome is about the goal, and the package is part of it. */
+export const goalHandoffInputSchema = handoffInputSchema.extend({
+  outcome: z.enum(['done', 'ready_for_you', 'your_turn', 'needs_answer']).describe(GOAL_OUTCOME_DESCRIPTION),
+});
 
 export interface RunnerToolHost {
   /** One line of the live log. */
@@ -254,6 +298,20 @@ export interface RunnerToolHost {
    * showed on a page outside its sites (lib/secure/runner-access.ts SecureLeak).
    */
   stopForLeak?: (leak: SecureLeak) => void;
+  /** A goal run (docs/albatross-goal-runs.md): the goal tools, the package, and the sources. */
+  goal?: boolean;
+  /** Goal runs: store the full checklist. Returns the clean list. */
+  checklist?(items: Array<{ text: string; state: string }>): Promise<ChecklistItem[]>;
+  /** Goal runs: change the outcome or the proofs of the Work's contract. */
+  updateGoal?(update: GoalUpdateInput): Promise<{ ok: boolean; message?: string }>;
+  /** Goal runs: what a finished tool call read, for the next run message. */
+  sources?(sources: RunSource[]): void;
+  /** Goal runs: a thing that an edit tool changed, so it goes into the package. */
+  touch?(artifact: RunArtifact): Promise<void>;
+  /** Goal runs: a filled PDF whose ID numbers stay sealed until send or download. */
+  sealed?(fileId: string): void;
+  /** The user's time zone: the dates in source details are the user's days. */
+  timezone?: string;
 }
 
 function str(value: unknown, max = 160): string {
@@ -308,13 +366,54 @@ export function describeToolCall(name: string, args: any, result: any): string |
       return 'Searched your files.';
     case 'remember':
       return 'Saved a note for later.';
+    // Goal runs (docs/albatross-goal-runs.md).
+    case 'goal_update':
+      return str(args?.outcome)
+        ? `Changed the goal: “${str(args.outcome, 90)}”.`
+        : 'Changed what proves the goal.';
+    case 'presentation_plan':
+      return 'Planned the presentation.';
+    case 'document_review_slides':
+      return 'Checked the slides.';
+    case 'web_research':
+      return str(args?.question) ? `Researched “${str(args.question, 80)}”.` : 'Researched on the web.';
+    case 'web_file_save': {
+      const from = str(result?.sourceUrl || args?.url, 2_000);
+      const name = str(result?.title || args?.name, 90);
+      return `Saved ${name ? `“${name}”` : 'a file'}${from ? ` from ${hostOf(from)}` : ''}.`;
+    }
+    case 'pdf_form_fields':
+      return 'Read the fields of the form.';
+    case 'pdf_form_fill':
+      return `Filled in ${str(result?.title || args?.title, 90) ? `“${str(result?.title || args?.title, 90)}”` : 'the form'}.`;
+    case 'document_export':
+      return result?.fileId ? `Made a PDF: “${str(result.title, 90) || 'document'}”.` : null;
     default:
       return null;
   }
 }
 
-/** The artifact a finished tool call made, if any. */
-export function artifactFromToolResult(name: string, args: any, result: any): RunArtifact | null {
+/** The artifact of a saved file result (web_file_save, pdf_form_fill, document_export as PDF). */
+function fileArtifact(result: any): RunArtifact | null {
+  if (!result?.fileId) return null;
+  return {
+    kind: 'file',
+    id: String(result.fileId),
+    title: str(result.title, 200) || 'File',
+    ...(result.openPath ? { url: String(result.openPath) } : {}),
+  };
+}
+
+/**
+ * The artifact a finished tool call made, if any. A goal run also records a
+ * deck as a deck (a step run keeps it as a document, as before).
+ */
+export function artifactFromToolResult(
+  name: string,
+  args: any,
+  result: any,
+  options: { goal?: boolean } = {},
+): RunArtifact | null {
   if (!result || result.ok === false) return null;
   switch (name) {
     case 'save_draft': {
@@ -333,7 +432,10 @@ export function artifactFromToolResult(name: string, args: any, result: any): Ru
     case 'word_document_create':
       return result.documentId
         ? {
-            kind: 'document',
+            kind:
+              options.goal && name === 'document_create' && (result.kind || args?.kind) === 'deck'
+                ? 'deck'
+                : 'document',
             id: String(result.documentId),
             title: str(result.title || args?.title, 200) || 'Document',
             ...(result.openPath ? { url: String(result.openPath) } : {}),
@@ -353,6 +455,41 @@ export function artifactFromToolResult(name: string, args: any, result: any): Ru
       return result.cardId
         ? { kind: 'card', id: String(result.cardId), title: str(args?.title, 200) || 'Task' }
         : null;
+    case 'web_file_save':
+    case 'pdf_form_fill':
+    case 'document_export':
+      return fileArtifact(result);
+    default:
+      return null;
+  }
+}
+
+/**
+ * The thing an edit tool changed (goal runs): an earlier run's draft or
+ * document that this run worked on goes into the package as well.
+ */
+export function touchedArtifact(name: string, args: any, result: any): RunArtifact | null {
+  if (!result || result.ok === false) return null;
+  switch (name) {
+    case 'update_draft': {
+      const id = str(args?.id, 300);
+      return id ? { kind: 'draft', id, title: str(args?.patch?.subject, 200) || 'Draft' } : null;
+    }
+    case 'document_edit':
+    case 'document_apply_instruction':
+    case 'word_document_edit':
+    case 'document_review_slides': {
+      if (result.status && result.status !== 'applied') return null;
+      const id = str(result.documentId || args?.documentId, 300);
+      if (!id) return null;
+      const deck = name === 'document_review_slides' || result.kind === 'deck';
+      return {
+        kind: deck ? 'deck' : 'document',
+        id,
+        title: str(result.title, 200) || (deck ? 'Presentation' : 'Document'),
+        ...(result.openPath ? { url: String(result.openPath) } : {}),
+      };
+    }
     default:
       return null;
   }
@@ -376,13 +513,45 @@ function pageResultWith(view: PageView) {
   return { ...pageResult(view), ...(view.secure ? { secure: view.secure } : {}) };
 }
 
+/** The goal tools (docs/albatross-goal-runs.md): the checklist and the goal itself. */
+function addGoalTools(tools: Record<string, any>, host: RunnerToolHost) {
+  tools.checklist_set = aiTool({
+    description:
+      'Set your checklist for the goal: the full list, in order, each time. The user reads it in the thread. Mark the part you work on now as doing, and a part only the user can do as yours.',
+    inputSchema: checklistInputSchema,
+    execute: async ({ items }: { items: Array<{ text: string; state: string }> }) => {
+      const saved = host.checklist ? await host.checklist(items) : [];
+      return { ok: true, items: saved.length };
+    },
+  });
+  tools.goal_update = aiTool({
+    description:
+      'Change what done means for this goal: the outcome sentence, or the full list of things that prove it. Use it only when the goal is wrong or vague, not for progress.',
+    inputSchema: goalUpdateInputSchema,
+    execute: async (input: GoalUpdateInput) => {
+      if (!input.outcome && !input.proofs?.length)
+        return { ok: false, message: 'Send outcome, proofs, or both.' };
+      const result = host.updateGoal
+        ? await host.updateGoal(input)
+        : { ok: false, message: 'The goal cannot change now.' };
+      if (result.ok) {
+        const line = describeToolCall('goal_update', input, result);
+        if (line) await host.log(line);
+      }
+      return result;
+    },
+  });
+}
+
 /**
  * The tool set of one run. `lifted` is the output of liftToolsForAgent for
  * this run; only the chosen registry tools are kept.
  */
 export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHost): Record<string, any> {
   const tools: Record<string, any> = {};
+  const goal = host.goal === true;
   for (const name of RUNNER_REGISTRY_TOOLS) {
+    if (!goal && GOAL_RUN_ONLY_TOOLS.has(name)) continue;
     const base = lifted[name];
     if (!base?.execute) continue;
     const queued = QUEUED_FOR_APPROVAL[name];
@@ -414,28 +583,39 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
         const result = await base.execute(args, options);
         const line = describeToolCall(name, args, result);
         if (line) await host.log(line);
-        const artifact = artifactFromToolResult(name, args, result);
+        const artifact = artifactFromToolResult(name, args, result, { goal });
         if (artifact) await host.artifact(artifact);
+        if (goal) {
+          const sources = sourcesFromToolResult(name, args, result, { timezone: host.timezone });
+          if (sources.length) host.sources?.(sources);
+          const touched = artifact ? null : touchedArtifact(name, args, result);
+          if (touched) await host.touch?.(touched);
+          const sealed = sealedFileId(name, result);
+          if (sealed) host.sealed?.(sealed);
+        }
         return result;
       },
     });
   }
 
-  tools.step_note = aiTool({
-    description:
-      'Add one short line to the live log the user sees, for a real milestone ("Found the dispute form."). Do not narrate every call.',
-    inputSchema: z.object({ line: z.string().min(1).max(160) }),
-    execute: async ({ line }: { line: string }) => {
-      await host.log(line);
-      return { ok: true };
-    },
-  });
+  if (goal) addGoalTools(tools, host);
+  else
+    tools.step_note = aiTool({
+      description:
+        'Add one short line to the live log the user sees, for a real milestone ("Found the dispute form."). Do not narrate every call.',
+      inputSchema: z.object({ line: z.string().min(1).max(160) }),
+      execute: async ({ line }: { line: string }) => {
+        await host.log(line);
+        return { ok: true };
+      },
+    });
 
   let finished = false;
   tools.step_handoff = aiTool({
-    description:
-      'End the run. Call it exactly once, as your last call, with the outcome, what you did, and the one next action for the user.',
-    inputSchema: handoffInputSchema,
+    description: goal
+      ? 'End the run. Call it exactly once, as your last call, with the outcome, what you did, every thing you made or changed (items), what the user must check (unsure), and the one main next action.'
+      : 'End the run. Call it exactly once, as your last call, with the outcome, what you did, and the one next action for the user.',
+    inputSchema: goal ? goalHandoffInputSchema : stepHandoffInputSchema,
     execute: async (input: HandoffInput) => {
       if (finished) return { ok: false, message: 'The run already ended.' };
       if (input.outcome !== 'done' && !input.next)

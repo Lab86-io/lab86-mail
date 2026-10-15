@@ -288,3 +288,169 @@ describe('step watch conductor route', () => {
     expect(mutations[0]?.stillWatching).toBe(false);
   });
 });
+
+describe('the mail watch of a goal Work (docs/albatross-goal-runs.md)', () => {
+  const goalDetail = {
+    work: { _id: 'work-g', title: 'July invoice', workState: 'active' },
+    plan: { outcome: 'July invoice', digitalActions: [], physicalActions: [] },
+    execution: { guideSteps: [] },
+    goalRuns: true,
+    contract: {
+      outcome: 'The client has the July invoice',
+      proofs: [
+        { id: 'send-0', what: 'The message left your account' },
+        { id: 'send-1', what: 'The person acknowledged it' },
+        { id: 'done', what: 'Settled before', satisfiedAt: 5 },
+      ],
+      closeWhen: 'outcome_likely',
+    },
+  };
+  const sentThread = {
+    _id: 'thread-sent',
+    account: 'work',
+    subject: 'July invoice',
+    snippet: 'Attached is the July invoice and the W-9.',
+    fromAddress: 'me@example.com',
+    lastDate: Date.UTC(2026, 9, 15),
+    labels: ['SENT'],
+  };
+
+  function goalPost(options: { detail?: any; threads?: any[]; gate?: (input: any) => any } = {}) {
+    const mutations: any[] = [];
+    const gate = mock(
+      options.gate ??
+        (async (input: any) => ({
+          satisfies:
+            input.requirement === 'The message left your account' && input.evidenceText.includes('SENT'),
+          reason: 'The sent folder has it.',
+        })),
+    );
+    const completeWorkStep = mock(async () => ({ ok: true }));
+    const post = createStepWatchPost({
+      isInternalCronRequest: () => true,
+      convexQuery: mock(async (_fn: any, args: any) =>
+        args.workId ? (options.detail ?? goalDetail) : (options.threads ?? [sentThread, marketingThread]),
+      ) as any,
+      convexMutation: mock(async (_fn: any, args: any) => {
+        mutations.push(args);
+        return undefined;
+      }) as any,
+      completeWorkStep: completeWorkStep as any,
+      evidenceSatisfies: gate as any,
+      reportError: mock(() => undefined),
+      watchesPaused: async () => false,
+    });
+    return { post, mutations, gate, completeWorkStep };
+  }
+
+  test('a sent message settles its contract proof, and the watch goes on for the reply', async () => {
+    const { post, mutations, gate, completeWorkStep } = goalPost();
+    const response = await post(watchRequest({ userId: 'user-1', workId: 'work-g' }));
+    expect(await response.json()).toEqual({
+      ok: true,
+      watched: 0,
+      completedSteps: 0,
+      watchedProofs: 2,
+      settledProofs: 1,
+      stillWatching: true,
+    });
+    const input = gate.mock.calls[0][0] as any;
+    expect(input.requirement).toBe('The message left your account');
+    expect(input.outcome).toBe('The client has the July invoice');
+    expect(input.evidenceText).toBe(
+      'Subject: July invoice\nFrom: me@example.com\nFolders: SENT\nDate: 2026-10-15\nText: Attached is the July invoice and the W-9.',
+    );
+    expect(input.source).toBeUndefined();
+    expect(mutations.find((args) => args.sourceKind === 'mail_thread')).toEqual({
+      userId: 'user-1',
+      workId: 'work-g',
+      claim: 'The message left your account: The sent folder has it.',
+      title: 'July invoice',
+      summary: 'Attached is the July invoice and the W-9.',
+      sourceKind: 'mail_thread',
+      sourceId: 'thread-sent',
+      accountId: 'work',
+      trust: 'inferred',
+      proofId: 'send-0',
+      settleContract: true,
+    });
+    expect(completeWorkStep).not.toHaveBeenCalled();
+    expect(mutations.at(-1)).toMatchObject({ workId: 'work-g', stillWatching: true });
+  });
+
+  test('every proof settled ends the watch; nothing shown keeps it', async () => {
+    const all = goalPost({ gate: async () => ({ satisfies: true, reason: 'Shown.' }) });
+    expect(await (await all.post(watchRequest({ userId: 'user-1', workId: 'work-g' }))).json()).toMatchObject(
+      {
+        settledProofs: 2,
+        stillWatching: false,
+      },
+    );
+    const none = goalPost({ gate: async () => ({ satisfies: false, reason: 'No.' }) });
+    expect(
+      await (await none.post(watchRequest({ userId: 'user-1', workId: 'work-g' }))).json(),
+    ).toMatchObject({
+      settledProofs: 0,
+      stillWatching: true,
+    });
+    expect(none.mutations.some((args) => args.sourceKind === 'mail_thread')).toBe(false);
+    // An unavailable gate settles nothing.
+    const down = goalPost({ gate: async () => ({ satisfies: true, reason: '', unavailable: true }) });
+    await down.post(watchRequest({ userId: 'user-1', workId: 'work-g' }));
+    expect(down.mutations.some((args) => args.sourceKind === 'mail_thread')).toBe(false);
+  });
+
+  test('a Work that is not a goal Work, or has no open proof, is not watched against its contract', async () => {
+    for (const detail of [
+      { ...goalDetail, goalRuns: false },
+      {
+        ...goalDetail,
+        contract: { ...goalDetail.contract, proofs: [{ id: 'x', what: 'Done', satisfiedAt: 1 }] },
+      },
+      { ...goalDetail, contract: null },
+    ]) {
+      const { post, gate, mutations } = goalPost({ detail });
+      expect(await (await post(watchRequest({ userId: 'user-1', workId: 'work-g' }))).json()).toEqual({
+        ok: true,
+        watched: 0,
+        completedSteps: 0,
+      });
+      expect(gate).not.toHaveBeenCalled();
+      expect(mutations.at(-1)).toMatchObject({ stillWatching: false });
+    }
+  });
+
+  test('each pass judges only threads newer than the last pass, and moves the mark forward', async () => {
+    const older = { ...sentThread, _id: 'old', lastDate: Date.UTC(2026, 9, 10) };
+    const newer = { ...sentThread, _id: 'new', lastDate: Date.UTC(2026, 9, 16) };
+    const marked = { ...goalDetail, work: { ...goalDetail.work, goalWatchAfter: Date.UTC(2026, 9, 12) } };
+    const { post, gate, mutations } = goalPost({
+      detail: marked,
+      threads: [older, newer],
+      gate: async () => ({ satisfies: false, reason: 'No.' }),
+    });
+    await post(watchRequest({ userId: 'user-1', workId: 'work-g' }));
+    expect(gate.mock.calls.length).toBeGreaterThan(0);
+    for (const call of gate.mock.calls) expect((call[0] as any).evidenceText).toContain('Date: 2026-10-16');
+    expect(mutations.at(-1)).toMatchObject({ stillWatching: true, goalWatchAfter: Date.UTC(2026, 9, 16) });
+
+    // Nothing new: no gate call at all, and the mark stays.
+    const quiet = goalPost({
+      detail: { ...goalDetail, work: { ...goalDetail.work, goalWatchAfter: Date.UTC(2026, 9, 16) } },
+      threads: [older, newer],
+    });
+    const response = await quiet.post(watchRequest({ userId: 'user-1', workId: 'work-g' }));
+    expect(await response.json()).toMatchObject({ settledProofs: 0, stillWatching: true });
+    expect(quiet.gate).not.toHaveBeenCalled();
+    expect(quiet.mutations.at(-1)).not.toHaveProperty('goalWatchAfter');
+  });
+
+  test('a thread with only a subject still reads as evidence', async () => {
+    const { post, gate } = goalPost({
+      threads: [{ _id: 't', account: 'work', subject: 'July invoice', snippet: '' }],
+      gate: async () => ({ satisfies: false, reason: 'No.' }),
+    });
+    await post(watchRequest({ userId: 'user-1', workId: 'work-g' }));
+    expect((gate.mock.calls[0][0] as any).evidenceText).toBe('Subject: July invoice');
+  });
+});

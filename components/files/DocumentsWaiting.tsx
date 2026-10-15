@@ -31,7 +31,14 @@ export function openWaitingDocument(row: DocumentWaitingRow) {
   const target =
     next && next.kind === 'open_document' ? documentTargetOf(next.url ?? null, next.id ?? null) : null;
   // Always replace the request, so an older one never opens a document later.
-  state.setPendingThreadDocument(target ? { workId: row.workId, target } : null);
+  // A package item names itself: the thread opens document mode on its tab.
+  state.setPendingThreadDocument(
+    target
+      ? { workId: row.workId, target }
+      : row.itemId
+        ? { workId: row.workId, target: null, itemId: row.itemId }
+        : null,
+  );
   openWorkPage({ getState: () => state }, row.workId);
 }
 

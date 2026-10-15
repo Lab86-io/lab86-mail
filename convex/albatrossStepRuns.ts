@@ -1,5 +1,12 @@
 import { v } from 'convex/values';
 import { conductorMayMove } from '../lib/albatross/conductor-quiet';
+import {
+  appendRunMessage,
+  cleanChecklist,
+  cleanHandoffItems,
+  cleanUnsure,
+} from '../lib/albatross/goal-run-contract';
+import { cleanGoalUpdate, goalContractWatch, mergeGoalContract } from '../lib/albatross/goal-runs';
 import { shapePlans } from '../lib/albatross/shape-policy';
 import { CHAT_ANSWER_PREFIX } from '../lib/albatross/thread-contract';
 import { isTerminalWork } from '../lib/albatross/work-lifecycle';
@@ -8,7 +15,12 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
-import { runArtifactKindValidator } from './goalRunSchema';
+import {
+  checklistItemValidator,
+  handoffItemValidator,
+  runArtifactKindValidator,
+  runMessageValidator,
+} from './goalRunSchema';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 // Step runs. The agent works one plan step as far as it can and stops with
@@ -276,6 +288,9 @@ export const enqueue = mutation({
     parentRunId: v.optional(v.id('albatrossStepRuns')),
     resumeNote: v.optional(v.string()),
     browserSessionId: v.optional(v.string()),
+    // A goal run (docs/albatross-goal-runs.md) and the checklist it starts with.
+    goal: v.optional(v.boolean()),
+    checklist: v.optional(v.array(checklistItemValidator)),
   },
   handler: async (ctx, args) => {
     // Only the server queues runs: the app route checks the switches, the
@@ -314,6 +329,7 @@ export const enqueue = mutation({
       carried = unreadNotes(parent);
     }
     const ts = now();
+    const checklist = args.goal ? cleanChecklist(args.checklist) : [];
     const runId = await ctx.db.insert('albatrossStepRuns', {
       userId,
       workId: args.workId,
@@ -329,6 +345,8 @@ export const enqueue = mutation({
       ...(args.resumeNote?.trim() ? { resumeNote: truncateText(args.resumeNote.trim(), 2_000) } : {}),
       ...(args.browserSessionId ? { browserSessionId: args.browserSessionId } : {}),
       ...(carried.length ? { steer: carried.slice(-STEER_MAX) } : {}),
+      ...(args.goal ? { goal: true } : {}),
+      ...(checklist.length ? { checklist } : {}),
       log: [],
       artifacts: [],
       createdAt: ts,
@@ -409,13 +427,18 @@ export const heartbeat = mutation({
   },
 });
 
-/** One line of the live log, and optionally one artifact or the shared browser. */
+/**
+ * One line of the live log, and optionally one artifact or the shared browser.
+ * A goal run also writes its messages and its checklist here.
+ */
 export const progress = mutation({
   args: {
     ...fenceArgs,
     line: v.optional(v.string()),
     artifact: v.optional(artifactValidator),
     browserSessionId: v.optional(v.string()),
+    message: v.optional(runMessageValidator),
+    checklist: v.optional(v.array(checklistItemValidator)),
   },
   handler: async (ctx, args) => {
     const run = await ownedRun(ctx, args);
@@ -436,14 +459,46 @@ export const progress = mutation({
         entry,
       ].slice(-ARTIFACT_MAX);
     }
+    const checklist = args.checklist ? cleanChecklist(args.checklist) : null;
     await ctx.db.patch(run._id, {
       log,
       artifacts,
       ...(args.browserSessionId ? { browserSessionId: args.browserSessionId } : {}),
+      ...(args.message ? { messages: appendRunMessage(run.messages || [], args.message) } : {}),
+      ...(checklist?.length ? { checklist } : {}),
       availableAt: ts + STEP_RUN_LEASE_MS,
       updatedAt: ts,
     });
     return true;
+  },
+});
+
+/**
+ * A goal run changes what done means for its Work (goal_update): the outcome,
+ * the proofs, or both. A proof with the same words keeps its settled state.
+ */
+export const updateGoal = mutation({
+  args: {
+    ...fenceArgs,
+    outcome: v.optional(v.string()),
+    proofs: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const run = await ownedRun(ctx, args);
+    if (!run || !(run.goal || run.stepKey === 'goal')) return { ok: false, message: 'The run is not open.' };
+    const work = await workRow(ctx, run.userId, run.workId);
+    if (!work || isTerminalWork(work)) return { ok: false, message: 'This Albatross is closed.' };
+    const update = cleanGoalUpdate({ outcome: args.outcome, proofs: args.proofs });
+    if (!update) return { ok: false, message: 'Send outcome, proofs, or both.' };
+    const ts = now();
+    const contract = mergeGoalContract(work.contract, update, work, ts);
+    await ctx.db.patch(work._id, { contract, updatedAt: ts });
+    await ctx.db.patch(run._id, { availableAt: ts + STEP_RUN_LEASE_MS, updatedAt: ts });
+    return {
+      ok: true,
+      outcome: contract.outcome,
+      proofs: contract.proofs.map((proof) => ({ what: proof.what, settled: Boolean(proof.satisfiedAt) })),
+    };
   },
 });
 
@@ -460,12 +515,17 @@ export const settle = mutation({
     budget: v.optional(budgetValidator),
     error: v.optional(v.string()),
     retryable: v.optional(v.boolean()),
+    // Goal runs (docs/albatross-goal-runs.md, G3): the package and the doubts.
+    items: v.optional(v.array(handoffItemValidator)),
+    unsure: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const run = await ownedRun(ctx, args);
     if (!run) return { state: null };
     const ts = now();
     const blanks = cleanBlanks(args.next?.blanks);
+    const items = cleanHandoffItems(args.items);
+    const unsure = cleanUnsure(args.unsure);
     if (args.error && args.retryable && run.attempts < STEP_RUN_MAX_ATTEMPTS) {
       const retryAt = ts + 15_000 * run.attempts;
       await ctx.db.patch(run._id, {
@@ -528,11 +588,20 @@ export const settle = mutation({
             },
           }
         : {}),
+      ...(items.length ? { items } : {}),
+      ...(unsure.length ? { unsure } : {}),
       ...(args.budget ? { budget: args.budget } : {}),
       ...(args.error ? { error: truncateText(args.error, 300) } : { error: undefined }),
       finishedAt: ts,
       updatedAt: ts,
     });
+    // A goal Work is watched against its contract from its first handoff on,
+    // so it closes when the user sends the mail, with no other run.
+    if (run.goal || run.stepKey === 'goal') {
+      const work = await workRow(ctx, run.userId, run.workId);
+      if (work && !work.mailWatchAt && !isTerminalWork(work) && goalContractWatch(work))
+        await ctx.db.patch(work._id, { mailWatchAt: ts });
+    }
     // A slot is free: a run that waits for one starts now.
     await startNextWaiting(ctx, run.userId);
     return { state };
