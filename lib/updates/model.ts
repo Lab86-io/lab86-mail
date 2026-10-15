@@ -75,12 +75,6 @@ export function shouldSummarizeUpdate(update: Pick<ProductUpdate, 'changes'>): b
   return update.changes.length > UPDATE_SUMMARY_THRESHOLD;
 }
 
-/** The feed is newest first. An unknown or removed receipt leaves the feed unread. */
-export function unseenUpdateCount(updates: readonly Pick<ProductUpdate, 'id'>[], lastSeenId: string | null) {
-  const index = updates.findIndex((update) => update.id === lastSeenId);
-  return index < 0 ? updates.length : index;
-}
-
 export function formatUpdateDate(date: string): string {
   // Release dates are calendar dates, independent of the reader's time zone.
   return new Intl.DateTimeFormat('en-US', {

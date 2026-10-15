@@ -6,7 +6,6 @@ import {
   type ProductUpdate,
   parseProductUpdates,
   shouldSummarizeUpdate,
-  unseenUpdateCount,
 } from '../lib/updates/model';
 import { buildUpdatePreview } from '../lib/updates/preview';
 
@@ -139,23 +138,6 @@ describe('product update batches', () => {
 
   test('release dates do not shift to the previous day in western time zones', () => {
     expect(formatUpdateDate('2026-10-15')).toBe('October 15, 2026');
-  });
-});
-
-describe('unread updates', () => {
-  const updates = [{ id: 'newest' }, { id: 'middle' }, { id: 'oldest' }];
-
-  test('counts only releases newer than the last viewed update', () => {
-    expect(unseenUpdateCount(updates, null)).toBe(3);
-    expect(unseenUpdateCount(updates, 'oldest')).toBe(2);
-    expect(unseenUpdateCount(updates, 'middle')).toBe(1);
-    expect(unseenUpdateCount(updates, 'newest')).toBe(0);
-  });
-
-  test('handles removed receipts and empty feeds', () => {
-    expect(unseenUpdateCount(updates, 'removed')).toBe(3);
-    expect(unseenUpdateCount([], null)).toBe(0);
-    expect(unseenUpdateCount([], 'newest')).toBe(0);
   });
 });
 
