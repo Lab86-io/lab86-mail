@@ -166,7 +166,7 @@ interface PageText {
 
 function thinPage(content: string) {
   const text = plainText(content).replace(/\s+/g, ' ').trim();
-  return text.length < 400 || JS_SHELL.test(text.slice(0, 2_000));
+  return text.length < 400 || JS_SHELL.test(truncateText(text, 2_000));
 }
 
 function reason(error: unknown): string {
@@ -291,7 +291,7 @@ export async function runWebResearch(input: ResearchInput): Promise<ResearchResu
           signal: AbortSignal.any([signal, AbortSignal.timeout(RESEARCH_LIMITS.pageTimeoutMs)]),
         });
         const walled =
-          page.status === 401 || page.status === 403 || SIGN_IN_WALL.test(page.content.slice(0, 3_000));
+          page.status === 401 || page.status === 403 || SIGN_IN_WALL.test(truncateText(page.content, 3_000));
         if (site && walled) browserSignedIn.push(hit.url);
         else if (page.status && page.status >= 400) failed.set(hit.url, `the site answered ${page.status}`);
         else if (thinPage(page.content)) browserPlain.push(hit.url);
