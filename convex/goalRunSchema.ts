@@ -27,6 +27,7 @@ export const runSourceValidator = v.object({
   url: v.optional(v.string()),
   id: v.optional(v.string()),
   accountId: v.optional(v.string()),
+  detail: v.optional(v.string()),
 });
 
 export const runMessageValidator = v.object({

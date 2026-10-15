@@ -22,6 +22,8 @@ import {
   SEALED_FILE_NOTE,
   sealedFileId,
   seedChecklist,
+  senderShortName,
+  shortDate,
   sourcesFromToolResult,
   userDidPartNote,
   withOpenPath,
@@ -243,10 +245,10 @@ describe('goal_update', () => {
 });
 
 describe('sources from tool results', () => {
-  test('web reads, research, and saved files are web sources', () => {
+  test('web reads, research, and saved files are web sources with the host as detail', () => {
     expect(
       sourcesFromToolResult('browserbase_fetch', { url: 'https://www.irs.gov/forms' }, { content: 'x' }),
-    ).toEqual([{ kind: 'web', title: 'irs.gov', url: 'https://www.irs.gov/forms' }]);
+    ).toEqual([{ kind: 'web', title: 'irs.gov', url: 'https://www.irs.gov/forms', detail: 'irs.gov' }]);
     expect(
       sourcesFromToolResult(
         'web_research',
@@ -262,8 +264,13 @@ describe('sources from tool results', () => {
         },
       ),
     ).toEqual([
-      { kind: 'web', title: 'Form W-9', url: 'https://www.irs.gov/w9' },
-      { kind: 'web', title: 'docs.example.com', url: 'https://docs.example.com/b' },
+      { kind: 'web', title: 'Form W-9', url: 'https://www.irs.gov/w9', detail: 'irs.gov' },
+      {
+        kind: 'web',
+        title: 'docs.example.com',
+        url: 'https://docs.example.com/b',
+        detail: 'docs.example.com',
+      },
     ]);
     for (const name of ['web_file_save', 'pdf_form_fill'])
       expect(
@@ -272,11 +279,18 @@ describe('sources from tool results', () => {
           {},
           { ok: true, fileId: 'f1', title: 'fw9.pdf', sourceUrl: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf' },
         ),
-      ).toEqual([{ kind: 'web', title: 'fw9.pdf', url: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf' }]);
+      ).toEqual([
+        { kind: 'web', title: 'fw9.pdf', url: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf', detail: 'irs.gov' },
+      ]);
     expect(sourcesFromToolResult('pdf_form_fill', {}, { ok: true, fileId: 'f2', title: 'x' })).toEqual([]);
+    // A link with no host has no detail.
+    expect(sourcesFromToolResult('browserbase_fetch', { url: 'not a link' }, { content: 'x' })).toEqual([
+      { kind: 'web', title: 'not a link', url: 'not a link' },
+    ]);
   });
 
-  test('mail threads and messages are mail sources with the sender and the account', () => {
+  test('mail threads and messages carry the sender and the account; the detail is the first name and the date', () => {
+    const july30 = Date.UTC(2026, 6, 30, 12);
     expect(
       sourcesFromToolResult(
         'read_thread',
@@ -285,29 +299,54 @@ describe('sources from tool results', () => {
           account: 'acct-1',
           threadId: 't1',
           subject: 'July hours',
-          messages: [{ from: 'lead@example.com', body: '78 hours' }],
+          messages: [{ from: 'Priya Shah <lead@example.com>', date: july30, body: '78 hours' }],
         },
       ),
-    ).toEqual([{ kind: 'mail', title: 'July hours (lead@example.com)', id: 't1', accountId: 'acct-1' }]);
+    ).toEqual([
+      {
+        kind: 'mail',
+        title: 'July hours (Priya Shah <lead@example.com>)',
+        id: 't1',
+        accountId: 'acct-1',
+        detail: 'Priya, Jul 30',
+      },
+    ]);
     expect(
       sourcesFromToolResult(
         'get_thread',
         { account: 'acct-1', threadId: 't2' },
-        { subject: '', messages: [{ from: [{ email: 'a@example.com' }] }] },
+        {
+          subject: '',
+          messages: [{ from: [{ email: 'a@example.com' }], fromName: 'Ana Ruiz', date: july30 / 1000 }],
+        },
       ),
-    ).toEqual([{ kind: 'mail', title: '(no subject) (a@example.com)', id: 't2', accountId: 'acct-1' }]);
+    ).toEqual([
+      {
+        kind: 'mail',
+        title: '(no subject) (a@example.com)',
+        id: 't2',
+        accountId: 'acct-1',
+        detail: 'Ana, Jul 30',
+      },
+    ]);
     expect(
       sourcesFromToolResult(
         'get_message',
         { account: 'acct-2', id: 'm1' },
         { threadId: 't3', subject: 'Rate', from: [{ email: 'b@example.com' }] },
       ),
-    ).toEqual([{ kind: 'mail', title: 'Rate (b@example.com)', id: 't3', accountId: 'acct-2' }]);
+    ).toEqual([
+      { kind: 'mail', title: 'Rate (b@example.com)', id: 't3', accountId: 'acct-2', detail: 'b@example.com' },
+    ]);
     expect(sourcesFromToolResult('get_message', {}, { subject: 'x' })).toEqual([]);
     expect(sourcesFromToolResult('read_thread', {}, { subject: 'x' })).toEqual([]);
+    // No sender and no date: no detail.
+    expect(sourcesFromToolResult('read_thread', { threadId: 't4' }, { subject: 'x', messages: [] })).toEqual([
+      { kind: 'mail', title: 'x', id: 't4' },
+    ]);
   });
 
-  test('Jira issues, search hits, files, and events', () => {
+  test('Jira issues and search hits carry the key; files carry their kind; events carry the date', () => {
     expect(
       sourcesFromToolResult(
         'jira_read_issue',
@@ -318,7 +357,13 @@ describe('sources from tool results', () => {
         },
       ),
     ).toEqual([
-      { kind: 'jira', title: 'ABC-1 Build the report', url: 'https://x.example/browse/ABC-1', id: 'ABC-1' },
+      {
+        kind: 'jira',
+        title: 'ABC-1 Build the report',
+        url: 'https://x.example/browse/ABC-1',
+        id: 'ABC-1',
+        detail: 'ABC-1',
+      },
     ]);
     expect(sourcesFromToolResult('jira_read_issue', {}, { ok: true, issue: {} })).toEqual([]);
     const hits = sourcesFromToolResult(
@@ -334,33 +379,70 @@ describe('sources from tool results', () => {
       },
     );
     expect(hits).toEqual([
-      { kind: 'jira', title: 'ABC-2 One', url: 'https://x.example/browse/ABC-2', id: 'ABC-2' },
-      { kind: 'document', title: 'Runbook', url: 'https://x.example/wiki/1' },
+      {
+        kind: 'jira',
+        title: 'ABC-2 One',
+        url: 'https://x.example/browse/ABC-2',
+        id: 'ABC-2',
+        detail: 'ABC-2',
+      },
+      { kind: 'document', title: 'Runbook', url: 'https://x.example/wiki/1', detail: 'Confluence' },
     ]);
     expect(
       sourcesFromToolResult(
         'document_get',
         { documentId: 'd1' },
-        { document: { documentId: 'd1', title: 'Rates' } },
+        { document: { documentId: 'd1', title: 'Rates', kind: 'sheet' } },
       ),
-    ).toEqual([{ kind: 'file', title: 'Rates', id: 'd1', url: '/?view=files&document=d1' }]);
+    ).toEqual([{ kind: 'file', title: 'Rates', id: 'd1', url: '/?view=files&document=d1', detail: 'Sheet' }]);
+    // The kind is in the title already: no detail.
+    expect(
+      sourcesFromToolResult(
+        'document_get',
+        {},
+        { document: { documentId: 'd2', title: 'Rate sheet', kind: 'sheet' } },
+      )[0],
+    ).not.toHaveProperty('detail');
+    expect(
+      sourcesFromToolResult('document_get', {}, { document: { documentId: 'd3', title: 'Plan' } })[0],
+    ).not.toHaveProperty('detail');
     expect(
       sourcesFromToolResult(
         'word_document_get',
         { documentId: 'w1' },
         { ok: true, documentId: 'w1', title: 'Invoice 7', openPath: '/?view=files&office=w1' },
       ),
-    ).toEqual([{ kind: 'file', title: 'Invoice 7', id: 'w1', url: '/?view=files&office=w1' }]);
-    expect(sourcesFromToolResult('google_document_get', { fileId: 'g1' }, { title: 'Budget' })).toEqual([
-      { kind: 'file', title: 'Budget', id: 'g1' },
+    ).toEqual([
+      { kind: 'file', title: 'Invoice 7', id: 'w1', url: '/?view=files&office=w1', detail: 'Word' },
+    ]);
+    expect(
+      sourcesFromToolResult('google_document_get', { fileId: 'g1' }, { title: 'Budget', kind: 'sheet' }),
+    ).toEqual([{ kind: 'file', title: 'Budget', id: 'g1', detail: 'Google Sheet' }]);
+    expect(sourcesFromToolResult('google_document_get', { fileId: 'g2' }, { title: 'Budget' })).toEqual([
+      { kind: 'file', title: 'Budget', id: 'g2' },
     ]);
     expect(
       sourcesFromToolResult(
         'calendar_event_detail',
         { account: 'acct-1', eventId: 'e1' },
-        { event: { title: 'Review' } },
+        { event: { title: 'Review', startIso: '2026-07-30T15:00:00.000Z' } },
       ),
-    ).toEqual([{ kind: 'calendar', title: 'Review', id: 'e1', accountId: 'acct-1' }]);
+    ).toEqual([{ kind: 'calendar', title: 'Review', id: 'e1', accountId: 'acct-1', detail: 'Jul 30' }]);
+  });
+
+  test('the short date and the short sender name', () => {
+    expect(shortDate(Date.UTC(2026, 6, 30))).toBe('Jul 30');
+    expect(shortDate(Date.UTC(2026, 6, 30) / 1000)).toBe('Jul 30');
+    expect(shortDate('2026-01-02T00:00:00Z')).toBe('Jan 2');
+    expect(shortDate('not a date')).toBe('');
+    expect(shortDate(0)).toBe('');
+    expect(senderShortName('Priya Shah <p@example.com>')).toBe('Priya');
+    expect(senderShortName('"Shah, Priya" <p@example.com>')).toBe('Shah');
+    expect(senderShortName('p@example.com')).toBe('p@example.com');
+    expect(senderShortName('<p@example.com>')).toBe('p@example.com');
+    expect(senderShortName([{ name: 'Ana Ruiz', email: 'a@example.com' }])).toBe('Ana');
+    expect(senderShortName([{ email: 'a@example.com' }])).toBe('a@example.com');
+    expect(senderShortName(null)).toBe('');
   });
 
   test('failed calls, searches without content, and other tools read nothing', () => {

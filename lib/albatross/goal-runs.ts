@@ -11,11 +11,13 @@ import {
   type ChecklistItem,
   cleanChecklist,
   cleanHandoffItems,
+  goalRunsEnabled,
   type HandoffItem,
   type HandoffItemKind,
   isGoalStepKey,
   type RunSource,
 } from './goal-run-contract';
+import { shapeAllows } from './shape-policy';
 import type { RunArtifact } from './step-run-tools';
 
 const oneLine = (value: unknown, max: number) =>
@@ -81,6 +83,26 @@ export function seedChecklist(input: {
   const newest = runs.find((run) => run.checklist?.length);
   if (newest?.checklist) return cleanChecklist(newest.checklist);
   return checklistFromSteps(input.steps);
+}
+
+// ---------------------------------------------------------------------------
+// The mail watch of a goal Work: it reads mail against the contract.
+// ---------------------------------------------------------------------------
+
+/**
+ * A goal Work has no mail steps. The mail watch reads new mail against its
+ * contract instead, while a proof is still open and the shape lets it watch.
+ */
+export function goalContractWatch(
+  work: {
+    userId: string;
+    shape?: string | null;
+    contract?: { proofs: ReadonlyArray<{ satisfiedAt?: number | null }> } | null;
+  },
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (!goalRunsEnabled(work.userId, env) || !shapeAllows(work.shape, 'mailWatch')) return false;
+  return Boolean(work.contract?.proofs.some((proof) => !proof.satisfiedAt));
 }
 
 // ---------------------------------------------------------------------------
@@ -244,26 +266,81 @@ function hostOf(url: string) {
 
 const ATLASSIAN_SEARCH_SOURCES = 3;
 
+/** "Jul 30": the short date of a time in ms (a time in seconds also reads). UTC. */
+export function shortDate(at: unknown): string {
+  const raw = typeof at === 'string' ? Date.parse(at) : Number(at);
+  if (!Number.isFinite(raw) || raw <= 0) return '';
+  const ms = raw < 1e12 ? raw * 1000 : raw;
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(
+    new Date(ms),
+  );
+}
+
+/** "Priya" from "Priya Shah <priya@example.com>"; the address when there is no name. */
+export function senderShortName(from: unknown): string {
+  const header =
+    typeof from === 'string'
+      ? from
+      : Array.isArray(from)
+        ? [from[0]?.name, from[0]?.email && `<${from[0].email}>`].filter(Boolean).join(' ')
+        : '';
+  const text = header.replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  const name = text
+    .replace(/<[^>]*>/g, '')
+    .replace(/["']/g, '')
+    .trim();
+  if (name && !name.includes('@')) return name.split(' ')[0].replace(/,$/, '');
+  return (text.match(/[^\s<>]+@[^\s<>]+/)?.[0] || name).trim();
+}
+
+/** "Priya, Jul 30": the sender and the date of a mail source. */
+function mailDetail(from: unknown, date: unknown): string {
+  return [senderShortName(from), shortDate(date)].filter(Boolean).join(', ');
+}
+
+/** The kind word of a file source, only when the title does not say it already. */
+function kindDetail(title: string, kind: string): string {
+  return title.toLowerCase().includes(kind.toLowerCase()) ? '' : kind;
+}
+
+const DOCUMENT_KIND_WORD: Record<string, string> = { doc: 'Document', sheet: 'Sheet', deck: 'Presentation' };
+const GOOGLE_KIND_WORD: Record<string, string> = {
+  doc: 'Google Doc',
+  sheet: 'Google Sheet',
+  deck: 'Google Slides',
+};
+
+const withDetail = (source: RunSource, detail: string): RunSource =>
+  detail ? { ...source, detail } : source;
+
 /** The things a finished tool call read, as run sources. Unknown tools read nothing. */
 export function sourcesFromToolResult(name: string, args: any, result: any): RunSource[] {
   if (!result || result.ok === false) return [];
   switch (name) {
     case 'browserbase_fetch': {
       const url = oneLine(result.url || args?.url, 2_000);
-      return url ? [{ kind: 'web', title: oneLine(result.title, 160) || hostOf(url) || url, url }] : [];
+      if (!url) return [];
+      const host = hostOf(url);
+      return [withDetail({ kind: 'web', title: oneLine(result.title, 160) || host || url, url }, host)];
     }
     case 'web_research':
       return (Array.isArray(result.sources) ? result.sources : [])
         .filter((source: any) => oneLine(source?.passage, 10) && oneLine(source?.url, 2_000))
-        .map((source: any) => ({
-          kind: 'web' as const,
-          title: oneLine(source.title, 160) || hostOf(source.url),
-          url: oneLine(source.url, 2_000),
-        }));
+        .map((source: any) => {
+          const url = oneLine(source.url, 2_000);
+          return withDetail(
+            { kind: 'web' as const, title: oneLine(source.title, 160) || hostOf(url), url },
+            hostOf(url),
+          );
+        });
     case 'web_file_save':
     case 'pdf_form_fill': {
       const url = oneLine(result.sourceUrl, 2_000);
-      return url ? [{ kind: 'web', title: oneLine(result.title, 160) || hostOf(url), url }] : [];
+      if (!url) return [];
+      return [
+        withDetail({ kind: 'web', title: oneLine(result.title, 160) || hostOf(url), url }, hostOf(url)),
+      ];
     }
     case 'read_thread':
     case 'get_thread': {
@@ -271,18 +348,19 @@ export function sourcesFromToolResult(name: string, args: any, result: any): Run
       if (!threadId) return [];
       const subject = oneLine(result.subject, 140) || '(no subject)';
       const messages: any[] = Array.isArray(result.messages) ? result.messages : [];
-      const sender = oneLine(
-        typeof messages[0]?.from === 'string' ? messages[0].from : messages[0]?.from?.[0]?.email,
-        80,
-      );
+      const first = messages[0] || {};
+      const sender = oneLine(typeof first.from === 'string' ? first.from : first.from?.[0]?.email, 80);
       const accountId = oneLine(result.account || args?.account, 300);
       return [
-        {
-          kind: 'mail',
-          title: sender ? `${subject} (${sender})` : subject,
-          id: threadId,
-          ...(accountId ? { accountId } : {}),
-        },
+        withDetail(
+          {
+            kind: 'mail',
+            title: sender ? `${subject} (${sender})` : subject,
+            id: threadId,
+            ...(accountId ? { accountId } : {}),
+          },
+          mailDetail(first.fromName ? `${first.fromName}` : first.from, first.date),
+        ),
       ];
     }
     case 'get_message': {
@@ -293,12 +371,15 @@ export function sourcesFromToolResult(name: string, args: any, result: any): Run
       const sender = oneLine(typeof from === 'string' ? from : '', 80);
       const accountId = oneLine(args?.account, 300);
       return [
-        {
-          kind: 'mail',
-          title: sender ? `${subject} (${sender})` : subject,
-          id,
-          ...(accountId ? { accountId } : {}),
-        },
+        withDetail(
+          {
+            kind: 'mail',
+            title: sender ? `${subject} (${sender})` : subject,
+            id,
+            ...(accountId ? { accountId } : {}),
+          },
+          mailDetail(result.from, result.date),
+        ),
       ];
     }
     case 'jira_read_issue': {
@@ -307,12 +388,15 @@ export function sourcesFromToolResult(name: string, args: any, result: any): Run
       const url = oneLine(issue.url, 2_000);
       if (!key && !url) return [];
       return [
-        {
-          kind: 'jira',
-          title: [key, oneLine(issue.title, 140)].filter(Boolean).join(' '),
-          ...(url ? { url } : {}),
-          ...(key ? { id: key } : {}),
-        },
+        withDetail(
+          {
+            kind: 'jira',
+            title: [key, oneLine(issue.title, 140)].filter(Boolean).join(' '),
+            ...(url ? { url } : {}),
+            ...(key ? { id: key } : {}),
+          },
+          key,
+        ),
       ];
     }
     case 'atlassian_search':
@@ -324,35 +408,44 @@ export function sourcesFromToolResult(name: string, args: any, result: any): Run
           const key = oneLine(item?.key, 60);
           if (!url && !key) return null;
           const page = item?.kind === 'page';
-          return {
-            kind: page ? 'document' : 'jira',
-            title: [page ? '' : key, oneLine(item?.title, 140)].filter(Boolean).join(' ') || key || url,
-            ...(url ? { url } : {}),
-            ...(key && !page ? { id: key } : {}),
-          };
+          const title = [page ? '' : key, oneLine(item?.title, 140)].filter(Boolean).join(' ') || key || url;
+          return withDetail(
+            {
+              kind: page ? 'document' : 'jira',
+              title,
+              ...(url ? { url } : {}),
+              ...(key && !page ? { id: key } : {}),
+            },
+            page ? kindDetail(title, 'Confluence') : key,
+          );
         })
         .filter((source: RunSource | null): source is RunSource => Boolean(source));
     case 'document_get': {
       const id = oneLine(result.document?.documentId || args?.documentId, 300);
       if (!id) return [];
+      const title = oneLine(result.document?.title, 160) || 'Document';
+      const word =
+        DOCUMENT_KIND_WORD[String(result.document?.kind || result.document?.model?.kind || '')] || '';
       return [
-        {
-          kind: 'file',
-          title: oneLine(result.document?.title, 160) || 'Document',
-          id,
-          url: `/?view=files&document=${encodeURIComponent(id)}`,
-        },
+        withDetail(
+          { kind: 'file', title, id, url: `/?view=files&document=${encodeURIComponent(id)}` },
+          word ? kindDetail(title, word) : '',
+        ),
       ];
     }
     case 'word_document_get': {
       const id = oneLine(result.documentId || args?.documentId, 300);
       if (!id) return [];
       const url = oneLine(result.openPath, 2_000);
-      return [{ kind: 'file', title: oneLine(result.title, 160) || 'Document', id, ...(url ? { url } : {}) }];
+      const title = oneLine(result.title, 160) || 'Document';
+      return [withDetail({ kind: 'file', title, id, ...(url ? { url } : {}) }, kindDetail(title, 'Word'))];
     }
     case 'google_document_get': {
       const id = oneLine(args?.fileId, 300);
-      return id ? [{ kind: 'file', title: oneLine(result.title, 160) || 'Google file', id }] : [];
+      if (!id) return [];
+      const title = oneLine(result.title, 160) || 'Google file';
+      const word = GOOGLE_KIND_WORD[String(result.kind || '')] || '';
+      return [withDetail({ kind: 'file', title, id }, word ? kindDetail(title, word) : '')];
     }
     case 'calendar_event_detail': {
       const event = result.event || {};
@@ -360,12 +453,15 @@ export function sourcesFromToolResult(name: string, args: any, result: any): Run
       if (!id) return [];
       const accountId = oneLine(args?.account, 300);
       return [
-        {
-          kind: 'calendar',
-          title: oneLine(event.title || event.summary, 160) || 'Calendar event',
-          id,
-          ...(accountId ? { accountId } : {}),
-        },
+        withDetail(
+          {
+            kind: 'calendar',
+            title: oneLine(event.title || event.summary, 160) || 'Calendar event',
+            id,
+            ...(accountId ? { accountId } : {}),
+          },
+          shortDate(event.startIso || event.startAt || event.start),
+        ),
       ];
     }
     default:

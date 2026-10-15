@@ -1012,3 +1012,212 @@ describe('goal runs (docs/albatross-goal-runs.md)', () => {
     ]);
   });
 });
+
+describe('a goal Work closes by its contract (docs/albatross-goal-runs.md)', () => {
+  const contract = {
+    outcome: 'Dana has the proposal',
+    proofs: [
+      { id: 'send-0', what: 'The message left your account' },
+      { id: 'send-1', what: 'The person acknowledged it' },
+    ],
+    closeWhen: 'outcome_likely' as const,
+    updatedAt: 1,
+  };
+  let previousGoal: string | undefined;
+  beforeAll(() => {
+    previousGoal = process.env.LAB86_GOAL_RUNS;
+  });
+  afterEach(() => {
+    if (previousGoal === undefined) delete process.env.LAB86_GOAL_RUNS;
+    else process.env.LAB86_GOAL_RUNS = previousGoal;
+  });
+
+  async function seedThread(t: Harness, threadId: string) {
+    await t.run((ctx) =>
+      ctx.db.insert('mailCorpusThreads', {
+        userId,
+        accountId: 'acct-1',
+        grantId: 'grant-1',
+        provider: 'google',
+        providerThreadId: threadId,
+        subject: 'The proposal',
+        fromAddress: 'me@example.com',
+        lastDate: 10,
+        snippet: 'Attached.',
+        labels: ['SENT'],
+        unread: false,
+        yearMonth: '2026-10',
+        createdAt: 10,
+        updatedAt: 10,
+      } as any),
+    );
+  }
+
+  function mailProof(workId: Id<'albatrossIntents'>, threadId: string, proofId: string) {
+    return {
+      ...caller,
+      workId,
+      claim: 'Shown by mail.',
+      title: 'The proposal',
+      sourceKind: 'mail_thread' as const,
+      sourceId: threadId,
+      accountId: 'acct-1',
+      trust: 'inferred' as const,
+      proofId,
+      settleContract: true,
+    };
+  }
+
+  test('the server watch records gate-judged mail as inferred; the Work closes when every proof holds', async () => {
+    const t = harness();
+    const workId = await seedWork(t, { contract });
+    await seedThread(t, 'sent-1');
+    await seedThread(t, 'reply-1');
+    await t.mutation(api.albatrossWorkV2.attachProof, mailProof(workId, 'sent-1', 'send-0'));
+    let work = await t.run((ctx) => ctx.db.get(workId));
+    expect(work!.workState).toBe('active');
+    expect(work!.contract!.proofs[0].satisfiedAt).toBeNumber();
+    await t.mutation(api.albatrossWorkV2.attachProof, mailProof(workId, 'reply-1', 'send-1'));
+    work = await t.run((ctx) => ctx.db.get(workId));
+    expect(work!.workState).toBe('done');
+    const evidence = await t.run((ctx) => ctx.db.query('albatrossEvidence').collect());
+    expect(evidence.map((row) => row.trust)).toEqual(['inferred', 'inferred']);
+  });
+
+  test('a user cannot raise mail proof above observed, and observed mail alone does not close', async () => {
+    const t = harness();
+    const workId = await seedWork(t, { contract });
+    await seedThread(t, 'sent-1');
+    await seedThread(t, 'reply-1');
+    const asUser = t.withIdentity({ subject: userId });
+    const { internalSecret: _secret, userId: _user, ...userArgs } = mailProof(workId, 'sent-1', 'send-0');
+    await asUser.mutation(api.albatrossWorkV2.attachProof, userArgs);
+    await t.mutation(api.albatrossWorkV2.attachProof, {
+      ...mailProof(workId, 'reply-1', 'send-1'),
+      trust: 'observed',
+    });
+    const work = await t.run((ctx) => ctx.db.get(workId));
+    // Both proofs hold, but observed mail is "something happened", not "looks done".
+    expect(work!.contract!.proofs.every((proof) => proof.satisfiedAt)).toBe(true);
+    expect(work!.workState).toBe('active');
+    const evidence = await t.run((ctx) => ctx.db.query('albatrossEvidence').collect());
+    expect(evidence.map((row) => row.trust)).toEqual(['observed', 'observed']);
+  });
+
+  test('a goal run proof from observed results settles its named proof', async () => {
+    const t = harness();
+    const workId = await seedWork(t, { contract });
+    await t.mutation(api.albatrossWorkV2.attachProof, {
+      ...caller,
+      workId,
+      claim: 'The message left your account: the sent folder has it.',
+      title: 'The proposal',
+      sourceKind: 'step_run',
+      sourceId: 'run-1:send-0',
+      trust: 'inferred',
+      proofId: 'send-0',
+      settleContract: true,
+    });
+    const work = await t.run((ctx) => ctx.db.get(workId));
+    expect(work!.contract!.proofs.map((proof) => Boolean(proof.satisfiedAt))).toEqual([true, false]);
+  });
+
+  test('the mail watch arms for a goal Work at its plan row and at a goal handoff, and stays while proofs are open', async () => {
+    process.env.LAB86_GOAL_RUNS = userId;
+    const t = harness();
+    const now = Date.now();
+    const planned = await seedWork(t, { lastUserTouchAt: now, createdAt: now });
+    await t.mutation(api.albatrossIntents.savePlan, {
+      ...caller,
+      intentId: planned,
+      outcome: 'Proposal',
+      digitalActions: [],
+      physicalActions: [],
+      assumptions: [],
+      sourceRefs: [],
+      contract: {
+        outcome: 'Proposal',
+        proofs: [{ id: 'p', what: 'Dana replied' }],
+        closeWhen: 'outcome_likely',
+      },
+    });
+    expect((await t.run((ctx) => ctx.db.get(planned)))!.mailWatchAt).toBeNumber();
+    expect(await t.query(internal.albatrossWorkV2.mailWatchCandidates, {})).toEqual([
+      { userId, workId: String(planned) },
+    ]);
+    const kept = await t.mutation(api.albatrossWorkV2.completeMailWatch, {
+      ...caller,
+      workId: planned,
+      stillWatching: true,
+    });
+    expect(kept).toEqual({ stillWatching: true });
+
+    // An older Work with no watch: a goal handoff arms it.
+    const older = await seedWork(t, { contract });
+    const { runId } = await t.mutation(api.albatrossStepRuns.enqueue, {
+      ...enqueueArgs(String(older)),
+      stepKey: 'goal',
+      stepIdentity: `goal:${older}`,
+      goal: true,
+    });
+    await claimRun(t, runId!);
+    await t.mutation(api.albatrossStepRuns.settle, {
+      ...caller,
+      id: runId as Id<'albatrossStepRuns'>,
+      token: 'token-1',
+      outcome: 'ready_for_you',
+      summary: 'I saved the draft.',
+      next: { kind: 'review_draft', label: 'Read and send', detail: 'Read it.' },
+    });
+    expect((await t.run((ctx) => ctx.db.get(older)))!.mailWatchAt).toBeNumber();
+
+    // Outside the switch, nothing arms.
+    process.env.LAB86_GOAL_RUNS = 'someone-else';
+    const other = await seedWork(t);
+    await t.mutation(api.albatrossIntents.savePlan, {
+      ...caller,
+      intentId: other,
+      outcome: 'Proposal',
+      digitalActions: [],
+      physicalActions: [],
+      assumptions: [],
+      sourceRefs: [],
+      contract: {
+        outcome: 'Proposal',
+        proofs: [{ id: 'p', what: 'Dana replied' }],
+        closeWhen: 'outcome_likely',
+      },
+    });
+    expect((await t.run((ctx) => ctx.db.get(other)))!.mailWatchAt).toBeUndefined();
+  });
+});
+
+describe('a run source keeps its detail (docs/albatross-goal-runs.md)', () => {
+  test('progress stores the muted detail of a source', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const { runId } = await t.mutation(
+      api.albatrossStepRuns.enqueue,
+      enqueueArgs(workId, { stepKey: 'goal', stepIdentity: `goal:${workId}`, goal: true }),
+    );
+    await claimRun(t, runId!);
+    await t.mutation(api.albatrossStepRuns.progress, {
+      ...caller,
+      id: runId as Id<'albatrossStepRuns'>,
+      token: 'token-1',
+      message: {
+        id: 'm1',
+        at: 1,
+        text: 'The lead wrote the hours.',
+        sources: [{ kind: 'mail', title: 'July hours', id: 't1', detail: 'Priya, Jul 30' }],
+      },
+    });
+    const view = await t.query(api.albatrossStepRuns.get, {
+      ...caller,
+      id: runId as Id<'albatrossStepRuns'>,
+    });
+    expect(view!.messages[0].sources).toEqual([
+      { kind: 'mail', title: 'July hours', id: 't1', detail: 'Priya, Jul 30' },
+    ]);
+  });
+});

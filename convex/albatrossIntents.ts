@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { conductorMayMove } from '../lib/albatross/conductor-quiet';
 import { planNeedsConductor } from '../lib/albatross/execution';
+import { goalContractWatch } from '../lib/albatross/goal-runs';
 import { bindPlanDocumentSteps } from '../lib/albatross/plan-frontier';
 import { shapePlans } from '../lib/albatross/shape-policy';
 import { normalizeDigitalStepContract } from '../lib/albatross/step-contract';
@@ -543,9 +544,12 @@ export const savePlan = mutation({
 
     // A plan with an expected mail receipt arms the mail watcher; a revision
     // without one disarms it.
-    const hasMailStep = [...args.digitalActions, ...args.physicalActions].some(
-      (action: any) => action?.evidence?.kind === 'mail_confirmation',
-    );
+    const hasMailStep =
+      [...args.digitalActions, ...args.physicalActions].some(
+        (action: any) => action?.evidence?.kind === 'mail_confirmation',
+      ) ||
+      // A goal Work (docs/albatross-goal-runs.md) is watched against its contract.
+      goalContractWatch({ userId, shape: args.shape ?? intent.shape, contract: nextContract });
     await ctx.db.patch(args.intentId, {
       status: planStatus,
       mailWatchAt: hasMailStep || intent.replyWatch ? (intent.mailWatchAt ?? ts) : undefined,

@@ -6,7 +6,7 @@ import {
   cleanHandoffItems,
   cleanUnsure,
 } from '../lib/albatross/goal-run-contract';
-import { cleanGoalUpdate, mergeGoalContract } from '../lib/albatross/goal-runs';
+import { cleanGoalUpdate, goalContractWatch, mergeGoalContract } from '../lib/albatross/goal-runs';
 import { shapePlans } from '../lib/albatross/shape-policy';
 import { CHAT_ANSWER_PREFIX } from '../lib/albatross/thread-contract';
 import { isTerminalWork } from '../lib/albatross/work-lifecycle';
@@ -595,6 +595,13 @@ export const settle = mutation({
       finishedAt: ts,
       updatedAt: ts,
     });
+    // A goal Work is watched against its contract from its first handoff on,
+    // so it closes when the user sends the mail, with no other run.
+    if (run.goal || run.stepKey === 'goal') {
+      const work = await workRow(ctx, run.userId, run.workId);
+      if (work && !work.mailWatchAt && !isTerminalWork(work) && goalContractWatch(work))
+        await ctx.db.patch(work._id, { mailWatchAt: ts });
+    }
     // A slot is free: a run that waits for one starts now.
     await startNextWaiting(ctx, run.userId);
     return { state };

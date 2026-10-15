@@ -345,8 +345,14 @@ describe('a goal run', () => {
       'The draft is ready.',
     ]);
     expect(messages[0].sources).toEqual([
-      { kind: 'mail', title: 'July hours (lead@example.com)', id: 't1', accountId: 'acct-1' },
-      { kind: 'web', title: 'fw9.pdf', url: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf' },
+      {
+        kind: 'mail',
+        title: 'July hours (lead@example.com)',
+        id: 't1',
+        accountId: 'acct-1',
+        detail: 'lead@example.com',
+      },
+      { kind: 'web', title: 'fw9.pdf', url: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf', detail: 'irs.gov' },
     ]);
     expect(messages[1].sources).toEqual([]);
     expect(typeof messages[0].id).toBe('string');
@@ -505,40 +511,142 @@ describe('a goal run', () => {
     ]);
   });
 
-  test('done is checked against the contract, attaches to the Work, and checks no step', async () => {
+  test('done is checked against the contract; an observed result settles its proof on the Work', async () => {
     const fresh = {
       ...detail,
-      contract: { ...contract, outcome: 'The client replied', proofs: [{ id: 'g', what: 'A reply came' }] },
+      contract: {
+        ...contract,
+        outcome: 'The client has the invoice',
+        proofs: [
+          { id: 'sent', what: 'The message left your account' },
+          { id: 'reply', what: 'A reply came' },
+          { id: 'old', what: 'Settled before', satisfiedAt: 5 },
+        ],
+      },
+    };
+    const sentThread = {
+      account: 'acct-1',
+      threadId: 't9',
+      subject: 'July invoice',
+      messages: [{ from: 'me@example.com', body: 'Attached is the July invoice.', labels: ['SENT'] }],
     };
     const h = harness(
       async (opts) => {
-        await opts.tools.save_draft.execute({ subject: 'July invoice' });
         await opts.tools.step_handoff.execute({
           outcome: 'done',
-          summary: 'The client replied.',
-          evidence: 'The reply says thanks.',
+          summary: 'The client has the invoice.',
+          evidence: 'I am sure the reply came.',
         });
-        return { text: '', usage };
+        return {
+          text: '',
+          usage,
+          steps: [{ toolResults: [{ toolName: 'read_thread', output: sentThread }] }],
+        };
       },
-      { freshDetail: fresh },
+      { freshDetail: fresh, run: { resumeNote: 'The user did their part: Read and send.' } },
     );
+    const gate = mock(async (input: any) =>
+      input.requirement === 'A reply came'
+        ? { satisfies: false, reason: 'No reply in the results.' }
+        : { satisfies: true, reason: 'The sent folder has the invoice mail.' },
+    );
+    h.deps.evidenceSatisfies = gate as any;
     await runStepRun('user-1', 'run-2', h.deps);
-    const verdictInput = (h.deps.evidenceSatisfies as any).mock.calls[0][0];
-    expect(verdictInput.requirement).toBe('The client replied\nWhat proves it:\n- A reply came');
-    expect(verdictInput.outcome).toBe('The client replied');
-    expect(verdictInput.source).toBe('run');
-    const proof = h.calls('albatrossWorkV2:attachProof')[0];
-    expect(proof).toMatchObject({
-      workId: 'work-1',
-      claim: 'July invoice: The draft was sent.',
-      sourceKind: 'step_run',
-      sourceId: 'run-2',
-      trust: 'inferred',
-      settleContract: false,
-    });
-    expect(proof).not.toHaveProperty('stepIdentity');
+    const [combined, sent, reply] = gate.mock.calls.map((call: any[]) => call[0]);
+    expect(combined.requirement).toBe(
+      'The client has the invoice\nWhat proves it:\n- The message left your account\n- A reply came',
+    );
+    expect(combined.evidenceText).toContain('Agent evidence: I am sure the reply came.');
+    // The settle checks read only what the run observed: no claim, no note.
+    for (const input of [sent, reply]) {
+      expect(input.source).toBe('run');
+      expect(input.outcome).toBe('The client has the invoice');
+      expect(input.evidenceText).toContain('Observed read_thread:');
+      expect(input.evidenceText).not.toContain('Agent');
+      expect(input.evidenceText).not.toContain('User said');
+    }
+    expect(sent.requirement).toBe('The message left your account');
+    expect(reply.requirement).toBe('A reply came');
+    expect(gate.mock.calls).toHaveLength(3);
+    expect(h.calls('albatrossWorkV2:attachProof')).toEqual([
+      {
+        userId: 'user-1',
+        workId: 'work-1',
+        claim: 'The message left your account: The sent folder has the invoice mail.',
+        title: 'July invoice',
+        summary: 'The client has the invoice.',
+        sourceKind: 'step_run',
+        sourceId: 'run-2:sent',
+        trust: 'inferred',
+        proofId: 'sent',
+        settleContract: true,
+      },
+    ]);
     expect(h.deps.completeWorkStep).not.toHaveBeenCalled();
     expect(h.settled()).toMatchObject({ outcome: 'done' });
+  });
+
+  test('a model claim with no observed result does not settle', async () => {
+    const h = harness(async (opts) => {
+      await opts.tools.step_handoff.execute({
+        outcome: 'done',
+        summary: 'The client replied.',
+        evidence: 'The reply says thanks.',
+      });
+      return { text: '', usage };
+    });
+    await runStepRun('user-1', 'run-2', h.deps);
+    // Only the combined check ran: with no observed fact there is nothing to settle on.
+    expect((h.deps.evidenceSatisfies as any).mock.calls).toHaveLength(1);
+    const proofs = h.calls('albatrossWorkV2:attachProof');
+    expect(proofs).toEqual([
+      {
+        userId: 'user-1',
+        workId: 'work-1',
+        claim: 'July invoice: The draft was sent.',
+        title: 'July invoice',
+        summary: 'The client replied.',
+        sourceKind: 'step_run',
+        sourceId: 'run-2',
+        trust: 'inferred',
+        settleContract: false,
+      },
+    ]);
+    expect(proofs[0]).not.toHaveProperty('proofId');
+    expect(proofs[0]).not.toHaveProperty('stepIdentity');
+  });
+
+  test('observed facts that show no proof settle nothing; a failed attach is reported', async () => {
+    const h = harness(async (opts) => {
+      await opts.tools.save_draft.execute({ subject: 'July invoice' });
+      await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'Done.' });
+      return { text: '', usage };
+    });
+    let call = 0;
+    h.deps.evidenceSatisfies = (async () => {
+      call += 1;
+      return call === 1
+        ? { satisfies: true, reason: 'ok' }
+        : { satisfies: false, reason: 'A draft is not sent.' };
+    }) as any;
+    await runStepRun('user-1', 'run-2', h.deps);
+    expect(call).toBe(3);
+    expect(h.calls('albatrossWorkV2:attachProof').map((args) => args.settleContract)).toEqual([false]);
+
+    const failing = harness(async (opts) => {
+      await opts.tools.save_draft.execute({ subject: 'July invoice' });
+      await opts.tools.step_handoff.execute({ outcome: 'done', summary: 'Done.' });
+      return { text: '', usage };
+    });
+    const mutate = failing.deps.convexMutation!;
+    failing.deps.convexMutation = (async (fn: any, args: any) => {
+      if (name(fn) === 'albatrossWorkV2:attachProof' && args.proofId) throw new Error('down');
+      return mutate(fn, args);
+    }) as any;
+    await runStepRun('user-1', 'run-2', failing.deps);
+    expect(failing.deps.reportError).toHaveBeenCalled();
+    // Both proof attaches failed, so the claim is recorded and settles nothing.
+    expect(failing.calls('albatrossWorkV2:attachProof').at(-1)).toMatchObject({ settleContract: false });
   });
 
   test('a done claim that the check refuses waits for the user with the goal copy and the package', async () => {

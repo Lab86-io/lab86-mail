@@ -47,6 +47,7 @@ import {
   releaseBrowserSession,
   sessionConnectUrl,
 } from './browser-session';
+import type { OutcomeContract } from './contract';
 import { evidenceSatisfies } from './evidence-gate';
 import {
   type ChecklistItem,
@@ -63,6 +64,7 @@ import {
   applySealedNotes,
   cleanGoalUpdate,
   earlierRunArtifacts,
+  GOAL_PROOFS_MAX,
   goalRequirement,
   handoffItemsFromArtifacts,
   isGoalRun,
@@ -1240,6 +1242,10 @@ async function proveDone(input: {
     .catch(() => ({ satisfies: false, reason: '', unavailable: true }));
   if (!verdict.satisfies || verdict.unavailable)
     return checkResult(input, verdict.unavailable ? copy.checkDidNotRun : copy.notProved(verdict.reason));
+  if (input.goal) {
+    await settleGoalProofs({ ...input, contract, title, outcome, workTitle, page, reason: verdict.reason });
+    return input.settled;
+  }
   // "Verified on the page" needs the page alone to show it. The combined
   // check above includes the agent's own words, so it proves less.
   const pageVerdict =
@@ -1283,6 +1289,95 @@ async function proveDone(input: {
         deps.reportError('[step-runner] step check failed', run._id, describeModelError(error)),
       );
   return input.settled;
+}
+
+/**
+ * A goal run's done claim passed the check. Each open proof of the contract
+ * is checked again against what the run observed (tool results, the things it
+ * made, the page), never against the run's own words or a note. A proof that
+ * the facts show attaches to the Work and settles; the contract then closes
+ * the Work by its closeWhen rule. With no proof settled, the claim is recorded
+ * as inferred proof that settles nothing.
+ */
+async function settleGoalProofs(input: {
+  deps: StepRunnerDependencies;
+  userId: string;
+  run: ClaimedRun;
+  artifacts: RunArtifact[];
+  settled: SettleInput;
+  observed?: string;
+  contract: OutcomeContract | null;
+  title: string;
+  outcome: string | null;
+  workTitle: string;
+  page: { url: string; title: string; text: string } | null;
+  /** The reason of the check that passed the done claim. */
+  reason: string;
+}) {
+  const { deps, userId, run } = input;
+  const facts = [
+    input.observed?.trim() || null,
+    input.artifacts.length
+      ? `Made: ${input.artifacts.map((artifact) => `${artifact.kind} "${artifact.title}"`).join('; ')}`
+      : null,
+    input.page ? `Page: ${input.page.url}\nTitle: ${input.page.title}\n${input.page.text}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const proofs = (input.contract?.proofs || [])
+    .filter((proof) => !proof.satisfiedAt)
+    .slice(0, GOAL_PROOFS_MAX);
+  const title = truncateText(input.artifacts.at(-1)?.title || input.title, 200);
+  const summary = truncateText(input.settled.summary || '', 600);
+  let settled = 0;
+  for (const proof of facts ? proofs : []) {
+    const verdict = await deps
+      .evidenceSatisfies({
+        userId,
+        workTitle: input.workTitle,
+        outcome: input.outcome,
+        requirement: proof.what,
+        evidenceText: facts,
+        source: 'run',
+      })
+      .catch(() => ({ satisfies: false, reason: '', unavailable: true }));
+    if (!verdict.satisfies || verdict.unavailable) continue;
+    const attached = await deps
+      .convexMutation(api.albatrossWorkV2.attachProof, {
+        userId,
+        workId: run.workId,
+        claim: truncateText(`${proof.what}: ${verdict.reason || 'shown by the run'}`, 400),
+        title,
+        summary,
+        sourceKind: 'step_run',
+        // One evidence row for each proof: the dedupe key holds the source id.
+        sourceId: `${run._id}:${proof.id}`,
+        trust: 'inferred',
+        proofId: proof.id,
+        settleContract: true,
+      })
+      .then(() => true)
+      .catch((error) => {
+        deps.reportError('[step-runner] proof failed', run._id, describeModelError(error));
+        return false;
+      });
+    if (attached) settled += 1;
+  }
+  if (settled) return;
+  await deps
+    .convexMutation(api.albatrossWorkV2.attachProof, {
+      userId,
+      workId: run.workId,
+      claim: truncateText(`${input.title}: ${input.reason || 'done'}`, 400),
+      title,
+      summary,
+      sourceKind: 'step_run',
+      sourceId: run._id,
+      trust: 'inferred',
+      // The run's own account settles nothing.
+      settleContract: false,
+    })
+    .catch((error) => deps.reportError('[step-runner] proof failed', run._id, describeModelError(error)));
 }
 
 /** The words of a done claim that waits for the user. */
