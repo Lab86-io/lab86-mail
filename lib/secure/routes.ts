@@ -6,6 +6,7 @@
 //   DELETE /api/secure-details/[itemId]         delete the item and its history
 //   GET    /api/secure-details/[itemId]/uses    the use history
 //   POST   /api/secure-details/allow            answer an allow_secure handoff
+//   POST   /api/secure-details/allow-send       let a mail carry a saved value (send grant)
 //
 // No response holds a value, and no response is cached. Every write takes
 // JSON only, so a cross-site form post cannot reach it. A new place for a
@@ -22,6 +23,7 @@ import { ALLOW_SECURE_NEXT_KIND, SECURE_ITEM_KINDS, type SecureDetailsResponse }
 import { SecureKeyError } from './crypto';
 import { identityRecentlyChecked, verifyIdentityResponse } from './identity';
 import { SecurePolicyError } from './policy';
+import { allowSecureSend } from './send-grants';
 import {
   createSecureItem,
   deleteSecureItem,
@@ -45,7 +47,21 @@ const createBody = z.object({
 const updateBody = z.object({
   label: z.string().max(80).optional(),
   sites: z.array(z.string().max(2_000)).max(20).optional(),
+  mailDomains: z.array(z.string().max(253)).max(20).optional(),
   values: z.record(z.string().max(32), z.union([z.string().max(4_000), z.null()])).optional(),
+});
+const allowSendBody = z.object({
+  sendId: z.string().regex(/^outbox:[a-f0-9-]{36}$/),
+  scope: z.enum(['once', 'always']),
+  items: z
+    .array(
+      z.object({
+        itemId: z.string().min(1).max(64),
+        domains: z.array(z.string().min(1).max(253)).min(1).max(10),
+      }),
+    )
+    .min(1)
+    .max(10),
 });
 const allowBody = z.object({
   runId: z.string().min(1).max(64),
@@ -120,6 +136,7 @@ export const secureRouteDefaults = {
   addSite: (input: { userId: string; itemId: string; site: string }) =>
     convexMutation<{ added: boolean }>(api.secureDetails.addSite, input),
   resumeStepRun,
+  allowSecureSend,
 };
 
 /** The note a resumed run reads after the user's answer. */
@@ -172,8 +189,8 @@ export function createSecureDetailsRoutes(deps = secureRouteDefaults) {
       try {
         const user = await caller('secure-details-write', 30);
         const body = updateBody.parse(await readJson(req));
-        // The check costs a token read; ask for it only when sites change.
-        const identityChecked = body.sites ? await deps.identityChecked() : false;
+        // The check costs a token read; ask for it only when sites or mail domains change.
+        const identityChecked = body.sites || body.mailDomains ? await deps.identityChecked() : false;
         const item = await deps.updateSecureItem(user.userId, itemId, body, { identityChecked });
         return json({ ok: true, item });
       } catch (error) {
@@ -198,6 +215,23 @@ export function createSecureDetailsRoutes(deps = secureRouteDefaults) {
         return json({ ok: true, uses });
       } catch (error) {
         return failure(error, 'The history did not load.');
+      }
+    },
+
+    /**
+     * A send grant: "Allow for this send" (scope once, answers `allowToken`)
+     * or "Always for mail to <domain>" (scope always). Both need the check.
+     */
+    async allowSend(req: Request) {
+      try {
+        const user = await caller('secure-details-allow', 30);
+        const body = allowSendBody.parse(await readJson(req));
+        if (!deps.enabled(user.userId))
+          throw new SecureStoreError('off', 'Passwords and IDs is not available for this account.');
+        if (!(await deps.identityChecked())) return verifyIdentityResponse();
+        return json(await deps.allowSecureSend(user.userId, body));
+      } catch (error) {
+        return failure(error, 'The answer was not saved.');
       }
     },
 

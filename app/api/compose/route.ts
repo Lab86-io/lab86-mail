@@ -3,10 +3,19 @@ import { NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { describeModelError } from '@/lib/ai/log-error';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import {
+  checkDraftAttachments,
+  DraftAttachmentError,
+  draftAttachmentsInputSchema,
+  hasSealedAttachment,
+  resolveDraftAttachments,
+} from '@/lib/files/draft-attachments';
+import { SealedFileError, SealedFileNeedsAllow } from '@/lib/files/materialize';
 import { resolveComposeFrom, SendAsUnavailableError } from '@/lib/mail/send-as';
 import { withAccountSignature } from '@/lib/mail/signature';
 import { sendNylasMessage } from '@/lib/nylas/provider';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { sendTokenValid } from '@/lib/secure/send-grants';
 import { errorAnswerMessage } from '@/lib/security/error-answer';
 import {
   buildForwardMessagePayload,
@@ -19,7 +28,7 @@ import { sanitizeFilename } from '@/lib/shared/files';
 import { isSendAsError } from '@/lib/shared/send-as';
 import { DEFAULT_UNDO_SEND_SECONDS, normalizeUndoSendSeconds } from '@/lib/shared/sending';
 import { truncateText } from '@/lib/shared/text';
-import type { Message } from '@/lib/shared/types';
+import type { DraftAttachment, Message } from '@/lib/shared/types';
 import { writeAudit } from '@/lib/store/audit';
 import { upsertMessage as upsertMessageRecord } from '@/lib/store/messages';
 import { getPref } from '@/lib/store/prefs';
@@ -47,6 +56,9 @@ type NylasAttachment = NonNullable<Parameters<typeof sendNylasMessage>[0]['attac
 const defaults = {
   requireCurrentUser,
   enforceUserRateLimit,
+  checkDraftAttachments,
+  resolveDraftAttachments,
+  sendTokenValid,
   enqueueOutbox,
   getPref,
   writeAudit,
@@ -115,6 +127,22 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
         { status: 413 },
       );
     }
+    // Files from Files (draft attachments): references only. The server reads
+    // their bytes below; it never fetches an address from the request.
+    let draftInputs: ReturnType<typeof draftAttachmentsInputSchema.parse> = [];
+    const rawDraftAttachments = form.get('draftAttachments');
+    if (typeof rawDraftAttachments === 'string' && rawDraftAttachments.trim()) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawDraftAttachments);
+      } catch {
+        parsed = null;
+      }
+      const checked = draftAttachmentsInputSchema.safeParse(parsed);
+      if (!checked.success)
+        return NextResponse.json({ ok: false, error: 'Invalid draft attachments.' }, { status: 400 });
+      draftInputs = checked.data;
+    }
 
     try {
       const user = await deps.requireCurrentUser();
@@ -124,6 +152,22 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
         limit: 30,
         windowMs: 60_000,
       });
+      const draftAttachments: DraftAttachment[] = draftInputs.length
+        ? await deps.checkDraftAttachments(user.userId, draftInputs)
+        : [];
+      // "Allow for this send": the token from POST /api/secure-details/allow-send,
+      // for this send key (pendingId) only. Without a valid token, only
+      // "Always for mail to" grants count.
+      const allowToken = String(form.get('allowToken') || '').trim();
+      if (allowToken && !(await deps.sendTokenValid(user.userId, allowToken, pendingId)))
+        throw new SealedFileError('allow_ended', 'This permission ended. Allow the send again.');
+      const sendKey = allowToken ? pendingId : undefined;
+      // A scheduled send waits outside Albatross (Nylas, or the outbox for a
+      // Google mailbox) for days. A saved detail never waits there.
+      if (sendAt && hasSealedAttachment(draftAttachments))
+        throw new ComposeRequestError(
+          'A file with saved details from Passwords and IDs cannot go in a scheduled send. Send it now.',
+        );
       const attachments: NylasAttachment[] = [];
       for (const file of files) {
         attachments.push({
@@ -150,6 +194,9 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
         threadId,
         messageId,
         attachments: files.map((file) => file.name),
+        ...(draftAttachments.length
+          ? { draftAttachments: draftAttachments.map((attachment) => attachment.name) }
+          : {}),
       };
       // Reply/forward targets are resolved NOW, while the user is watching —
       // a missing anchor must fail the request, not a timer five minutes later.
@@ -175,9 +222,31 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
         }),
       );
 
+      // The draft files, read now (and filled now for a sealed file) for the
+      // final recipients. A held send keeps a sealed file as a reference.
+      const withDraftFiles = async (hold: boolean) => {
+        if (!draftAttachments.length) return { prepared, held: [] };
+        const resolved = await runWithAiRequestContext(requestContext, () =>
+          deps.resolveDraftAttachments(user.userId, draftAttachments, {
+            recipients: [prepared.to, prepared.cc, prepared.bcc],
+            hold,
+            usedBytes: total,
+            ...(sendKey ? { sendKey } : {}),
+          }),
+        );
+        return {
+          prepared: {
+            ...prepared,
+            attachments: [...(prepared.attachments ?? []), ...(resolved.attachments as NylasAttachment[])],
+          },
+          held: resolved.held,
+        };
+      };
+
       if (sendAt) {
+        const ready = await withDraftFiles(false);
         const sent = await runWithAiRequestContext(requestContext, async () => {
-          const message = await deps.sendPrepared(user.userId, prepared, sendAt);
+          const message = await deps.sendPrepared(user.userId, ready.prepared, sendAt);
           await deps.cacheSentMessage(account, message);
           return message;
         });
@@ -204,8 +273,10 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
           return raw === null ? DEFAULT_UNDO_SEND_SECONDS : normalizeUndoSendSeconds(raw);
         }));
       if (undoSeconds > 0) {
+        const ready = await withDraftFiles(true);
         const pending = await deps.enqueueOutbox(user.userId, pendingId, undoSeconds, {
-          ...prepared,
+          ...ready.prepared,
+          ...(ready.held.length ? { sealedAttachments: ready.held } : {}),
           userId: user.userId,
         });
         await deps
@@ -221,8 +292,9 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
         return NextResponse.json({ ok: true, pending: { ...pending, account, threadId: threadId || null } });
       }
 
+      const ready = await withDraftFiles(false);
       const sent = await runWithAiRequestContext(requestContext, async () => {
-        const message = await deps.sendPrepared(user.userId, prepared);
+        const message = await deps.sendPrepared(user.userId, ready.prepared);
         await deps.cacheSentMessage(account, message);
         return message;
       });
@@ -248,10 +320,26 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
       });
     } catch (err: any) {
       if (err instanceof RateLimitError) return rateLimitJson(err);
+      // A file with saved details needs a send grant for each recipient
+      // domain first. `allow` names the items, their fields, and the domains;
+      // the client asks POST /api/secure-details/allow-send, then sends again.
+      if (err instanceof SealedFileError)
+        return NextResponse.json(
+          {
+            ok: false,
+            code: err.code,
+            error: err.message,
+            // The send key to allow, and to send again with: the same pendingId.
+            ...(err instanceof SealedFileNeedsAllow
+              ? { grant: err.grant, sendId: pendingId, domains: err.domains, allow: err.needs }
+              : {}),
+          },
+          { status: err.code === 'not_found' ? 404 : 409 },
+        );
       const status =
         err instanceof AuthRequiredError
           ? 401
-          : err instanceof ComposeRequestError
+          : err instanceof ComposeRequestError || err instanceof DraftAttachmentError
             ? err.status
             : isSendAsError(err) || err instanceof SendAsUnavailableError
               ? err.statusCode

@@ -1220,6 +1220,11 @@ export default defineSchema({
     label: v.string(),
     // Registrable domains (sign-ins, IDs) or API hosts (keys).
     sites: v.array(v.string()),
+    // "Always for mail to <domain>": registrable mail domains that a filled PDF
+    // with this item may go to (docs/albatross-goal-runs.md G5). A separate
+    // permission: a mail domain never lets a run type the value on a site,
+    // and a site never lets a mail carry it.
+    mailDomains: v.optional(v.array(v.string())),
     // Masked hints ("ends 4821") and plain facts (ID type, region). No value.
     hints: v.array(v.object({ field: v.string(), hint: v.string() })),
     facts: v.array(v.object({ name: v.string(), value: v.string() })),
@@ -1248,6 +1253,26 @@ export default defineSchema({
     .index('by_user_item', ['userId', 'itemId'])
     .index('by_expires', ['expiresAt']),
 
+  // "Allow for this send": one item to one mail domain for one send (the
+  // outbox key), used one time, 30 minutes at most. The client holds the
+  // token; the row keeps its SHA-256 only. "Always for mail to" adds the
+  // domain to secureItems.mailDomains instead.
+  secureSendGrants: defineTable({
+    userId: v.string(),
+    itemId: v.string(),
+    domain: v.string(),
+    sendKey: v.string(),
+    tokenHash: v.string(),
+    expiresAt: v.number(),
+    usedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_item', ['userId', 'itemId'])
+    .index('by_user_token', ['userId', 'tokenHash'])
+    .index('by_user_send', ['userId', 'sendKey'])
+    .index('by_expires', ['expiresAt']),
+
   // Use history: when an item was used or refused, where, and by which run.
   // Never a value. Kept 90 days (convex/secureDetails.ts pruneUses).
   secureUses: defineTable({
@@ -1261,10 +1286,13 @@ export default defineSchema({
     outcome: v.union(
       v.literal('typed'),
       v.literal('sent'),
+      v.literal('downloaded'),
       v.literal('refused_site'),
       v.literal('asked'),
       v.literal('allowed_once'),
       v.literal('allowed_always'),
+      v.literal('allowed_send_once'),
+      v.literal('allowed_send_always'),
       v.literal('denied'),
     ),
     at: v.number(),

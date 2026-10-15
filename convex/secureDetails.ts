@@ -21,11 +21,17 @@ export const SECURE_USE_RETENTION_MS = 90 * 24 * 60 * 60_000;
 export const PRUNE_BATCH = 500;
 /** "Allow once" lasts this long at most. */
 export const SECURE_GRANT_MAX_MS = 2 * 60 * 60_000;
+/** "Allow for this send" lasts this long at most. */
+export const SECURE_SEND_GRANT_MAX_MS = 30 * 60_000;
+/** An item goes to at most this many mail domains ("Always for mail to"). */
+export const SECURE_MAIL_DOMAINS_MAX = 20;
 
 const ITEM_ID = /^si_[A-Za-z0-9_-]{16,40}$/;
 const SEALED = /^sv1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const KEK_ID = /^[A-Za-z0-9_-]{1,32}$/;
 const SITE = /^[a-z0-9.-]{1,253}$/;
+const SEND_KEY = /^outbox:[a-f0-9-]{36}$/;
+const TOKEN_HASH = /^[a-f0-9]{64}$/;
 
 const serverArgs = { internalSecret: v.optional(v.string()), userId: v.string() };
 const kindValidator = v.union(
@@ -44,10 +50,13 @@ const sealedValidator = v.object({
 const outcomeValidator = v.union(
   v.literal('typed'),
   v.literal('sent'),
+  v.literal('downloaded'),
   v.literal('refused_site'),
   v.literal('asked'),
   v.literal('allowed_once'),
   v.literal('allowed_always'),
+  v.literal('allowed_send_once'),
+  v.literal('allowed_send_always'),
   v.literal('denied'),
 );
 
@@ -62,8 +71,8 @@ function checkSealed(sealed: { payloadSealed: string; dataKeyWrapped: string; ke
     throw new Error('The value must be sealed.');
 }
 
-function checkSites(sites: readonly string[]) {
-  if (sites.length > SECURE_SITES_MAX) throw new Error('Too many sites.');
+function checkSites(sites: readonly string[], max = SECURE_SITES_MAX) {
+  if (sites.length > max) throw new Error('Too many sites.');
   for (const site of sites) if (!SITE.test(site) || !site.includes('.')) throw new Error('Invalid site.');
 }
 
@@ -80,6 +89,7 @@ function itemView(row: {
   kind: string;
   label: string;
   sites: string[];
+  mailDomains?: string[];
   hints: Array<{ field: string; hint: string }>;
   facts: Array<{ name: string; value: string }>;
   createdAt: number;
@@ -91,6 +101,7 @@ function itemView(row: {
     kind: row.kind,
     label: row.label,
     sites: row.sites,
+    mailDomains: row.mailDomains ?? [],
     hints: row.hints,
     facts: row.facts,
     createdAt: row.createdAt,
@@ -193,6 +204,7 @@ export const updateItem = mutation({
     itemId: v.string(),
     label: v.optional(v.string()),
     sites: v.optional(v.array(v.string())),
+    mailDomains: v.optional(v.array(v.string())),
     hints: v.optional(hintsValidator),
     facts: v.optional(factsValidator),
     sealed: v.optional(sealedValidator),
@@ -210,6 +222,10 @@ export const updateItem = mutation({
     if (args.sites) {
       checkSites(args.sites);
       patch.sites = args.sites;
+    }
+    if (args.mailDomains) {
+      checkSites(args.mailDomains, SECURE_MAIL_DOMAINS_MAX);
+      patch.mailDomains = args.mailDomains;
     }
     if (args.hints) {
       checkShown(args.hints);
@@ -232,6 +248,8 @@ export const updateItem = mutation({
         .take(200);
       for (const grant of grants) await ctx.db.delete(grant._id);
     }
+    // A new value ends every "Allow for this send" too.
+    if (args.sealed) await deleteSendGrants(ctx, args.userId, args.itemId);
     return { updated: true };
   },
 });
@@ -251,6 +269,121 @@ export const addSite = mutation({
   },
 });
 
+async function deleteSendGrants(ctx: any, userId: string, itemId: string) {
+  const grants = await ctx.db
+    .query('secureSendGrants')
+    .withIndex('by_user_item', (q: any) => q.eq('userId', userId).eq('itemId', itemId))
+    .take(500);
+  for (const grant of grants) await ctx.db.delete(grant._id);
+}
+
+/** "Always for mail to <domain>": add mail domains to an item. */
+export const addMailDomains = mutation({
+  args: { ...serverArgs, itemId: v.string(), domains: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ownedItem(ctx, args.userId, args.itemId);
+    if (!row) return { added: 0 };
+    const current = row.mailDomains ?? [];
+    const added = args.domains.filter(
+      (domain, index) => !current.includes(domain) && args.domains.indexOf(domain) === index,
+    );
+    if (!added.length) return { added: 0 };
+    const mailDomains = [...current, ...added];
+    checkSites(mailDomains, SECURE_MAIL_DOMAINS_MAX);
+    await ctx.db.patch(row._id, { mailDomains, updatedAt: now() });
+    return { added: added.length };
+  },
+});
+
+/** "Allow for this send": each item to its domains, for one send key, single use. */
+export const grantSendOnce = mutation({
+  args: {
+    ...serverArgs,
+    sendKey: v.string(),
+    tokenHash: v.string(),
+    grants: v.array(v.object({ itemId: v.string(), domain: v.string() })),
+    ttlMs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    if (!SEND_KEY.test(args.sendKey)) throw new Error('Invalid send key.');
+    if (!TOKEN_HASH.test(args.tokenHash)) throw new Error('Invalid token.');
+    if (!args.grants.length || args.grants.length > 100) throw new Error('Invalid grants.');
+    const ts = now();
+    const expiresAt = ts + Math.min(Math.max(args.ttlMs, 60_000), SECURE_SEND_GRANT_MAX_MS);
+    for (const grant of args.grants) {
+      if (!(await ownedItem(ctx, args.userId, grant.itemId))) return { granted: false };
+      checkSites([grant.domain]);
+    }
+    for (const grant of args.grants)
+      await ctx.db.insert('secureSendGrants', {
+        userId: args.userId,
+        itemId: grant.itemId,
+        domain: grant.domain,
+        sendKey: args.sendKey,
+        tokenHash: args.tokenHash,
+        expiresAt,
+        createdAt: ts,
+      });
+    return { granted: true, expiresAt };
+  },
+});
+
+/** True when the token belongs to this user and this send, and is not used or ended. */
+export const sendTokenValid = query({
+  args: { ...serverArgs, tokenHash: v.string(), sendKey: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    if (!TOKEN_HASH.test(args.tokenHash)) return false;
+    const ts = now();
+    const rows = await ctx.db
+      .query('secureSendGrants')
+      .withIndex('by_user_token', (q) => q.eq('userId', args.userId).eq('tokenHash', args.tokenHash))
+      .take(100);
+    return (
+      rows.length > 0 &&
+      rows.every((row) => row.sendKey === args.sendKey && !row.usedAt && row.expiresAt > ts)
+    );
+  },
+});
+
+/** True when an unused "Allow for this send" covers this item, domain, and send now. */
+export const sendGrantCovers = query({
+  args: { ...serverArgs, itemId: v.string(), domain: v.string(), sendKey: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const ts = now();
+    const rows = await ctx.db
+      .query('secureSendGrants')
+      .withIndex('by_user_send', (q) => q.eq('userId', args.userId).eq('sendKey', args.sendKey))
+      .take(100);
+    return rows.some(
+      (row) => row.itemId === args.itemId && row.domain === args.domain && !row.usedAt && row.expiresAt > ts,
+    );
+  },
+});
+
+/** The send went with the filled file: its "Allow for this send" grants are used. */
+export const consumeSendGrants = mutation({
+  args: { ...serverArgs, sendKey: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const ts = now();
+    const rows = await ctx.db
+      .query('secureSendGrants')
+      .withIndex('by_user_send', (q) => q.eq('userId', args.userId).eq('sendKey', args.sendKey))
+      .take(100);
+    let used = 0;
+    for (const row of rows)
+      if (!row.usedAt) {
+        await ctx.db.patch(row._id, { usedAt: ts });
+        used += 1;
+      }
+    return { used };
+  },
+});
+
 /** Delete an item with its grants and its use history. */
 export const deleteItem = mutation({
   args: { ...serverArgs, itemId: v.string() },
@@ -264,6 +397,7 @@ export const deleteItem = mutation({
       .withIndex('by_user_item', (q) => q.eq('userId', args.userId).eq('itemId', args.itemId))
       .take(500);
     for (const grant of grants) await ctx.db.delete(grant._id);
+    await deleteSendGrants(ctx, args.userId, args.itemId);
     const uses = await ctx.db
       .query('secureUses')
       .withIndex('by_user_item_at', (q) => q.eq('userId', args.userId).eq('itemId', args.itemId))
@@ -350,7 +484,8 @@ export const recordUse = mutation({
       outcome: args.outcome,
       at: ts,
     });
-    if (args.outcome === 'typed' || args.outcome === 'sent') await ctx.db.patch(row._id, { lastUsedAt: ts });
+    if (args.outcome === 'typed' || args.outcome === 'sent' || args.outcome === 'downloaded')
+      await ctx.db.patch(row._id, { lastUsedAt: ts });
     return { recorded: true };
   },
 });
@@ -408,10 +543,15 @@ export const prune = internalMutation({
       .withIndex('by_expires', (q) => q.lt('expiresAt', ts))
       .take(PRUNE_BATCH);
     for (const grant of grants) await ctx.db.delete(grant._id);
+    const sendGrants = await ctx.db
+      .query('secureSendGrants')
+      .withIndex('by_expires', (q) => q.lt('expiresAt', ts))
+      .take(PRUNE_BATCH);
+    for (const grant of sendGrants) await ctx.db.delete(grant._id);
     // The 90-day promise holds however many rows expire: a full batch schedules the next one now.
-    if (uses.length === PRUNE_BATCH || grants.length === PRUNE_BATCH)
+    if (uses.length === PRUNE_BATCH || grants.length === PRUNE_BATCH || sendGrants.length === PRUNE_BATCH)
       await ctx.scheduler.runAfter(0, internal.secureDetails.prune, {});
-    return { uses: uses.length, grants: grants.length };
+    return { uses: uses.length, grants: grants.length, sendGrants: sendGrants.length };
   },
 });
 

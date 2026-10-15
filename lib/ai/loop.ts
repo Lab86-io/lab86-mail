@@ -152,6 +152,8 @@ export const AGENT_TOOL_NAMES = new Set([
   'personal_details_get',
   'personal_details_save',
   'secure_details_list',
+  'pdf_form_fields',
+  'pdf_form_fill',
   'forget',
   'list_memories',
   'calendar_free_busy',

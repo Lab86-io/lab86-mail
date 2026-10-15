@@ -25,6 +25,7 @@ const TABLE_SECRETS: Record<string, readonly string[]> = {
   officeSessions: ['key'],
   webPushSubscriptions: ['endpoint', 'auth'],
   albatrossBrowserSessions: ['liveViewUrl'],
+  secureSendGrants: ['tokenHash'],
 };
 
 function clean(value: unknown, depth: number): unknown {

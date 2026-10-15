@@ -186,6 +186,11 @@ export const TOOL_GROUPS = {
     label: 'Passwords and IDs: what is saved (never a value), and a card that asks the user to add one',
     tools: ['secure_details_list', 'ask_secure_detail'],
   },
+  pdf_forms: {
+    label:
+      'PDF forms in Files: read the fillable fields, and fill them into a new PDF (a W-9, an application)',
+    tools: ['pdf_form_fields', 'pdf_form_fill'],
+  },
 } as const satisfies Record<string, { label: string; tools: readonly string[] }>;
 
 export type ToolGroupName = keyof typeof TOOL_GROUPS;
