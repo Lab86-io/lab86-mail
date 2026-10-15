@@ -119,6 +119,8 @@ export interface FileRow {
   mimeType?: string;
   webUrl?: string;
   modifiedIso?: string;
+  /** Bytes, for a saved file. */
+  size?: number;
   actions: ShapeAction[];
 }
 
@@ -531,6 +533,48 @@ function sourcesShape(
     items,
     actions: [],
   };
+}
+
+function hostOfUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+/** The label (and icon) of a saved web file, from its type. */
+function savedFileKind(contentType: string): string | undefined {
+  if (contentType.includes('wordprocessingml')) return 'doc';
+  if (contentType.includes('spreadsheetml')) return 'sheet';
+  if (contentType.includes('presentationml')) return 'deck';
+  if (contentType === 'application/pdf') return 'PDF';
+  if (contentType === 'text/csv') return 'CSV';
+  if (contentType === 'text/plain') return 'Text';
+  if (contentType.startsWith('image/')) return 'Image';
+  return undefined;
+}
+
+/** web_file_save and browser_download: one file row that opens the file in Files. */
+function savedFileShape(toolName: string, input: Rec, output: Rec): ToolShape | null {
+  const fileId = str(output.fileId);
+  if (output.ok === false || !fileId) return null;
+  const path = str(output.openPath);
+  const host = hostOfUrl(str(output.sourceUrl));
+  const contentType = str(output.contentType).toLowerCase();
+  const size = num(output.size);
+  const row: FileRow = {
+    connectionId: 'files',
+    fileId,
+    name: str(output.title) || 'File',
+    ...(savedFileKind(contentType) ? { kind: savedFileKind(contentType) } : {}),
+    ...(host ? { source: host } : {}),
+    ...(contentType ? { mimeType: contentType } : {}),
+    ...(size !== undefined ? { size } : {}),
+    // The Files view opens it (open_document with a /?view=files path).
+    actions: path ? [{ kind: 'open_document', documentId: fileId, path }] : [],
+  };
+  return { kind: 'files', ...base(toolName, input, output, 'Saved in Files'), items: [row], actions: [] };
 }
 
 const mailMutationTarget = (input: Rec): Rec => ({
@@ -1380,6 +1424,19 @@ const MAPPERS: Record<string, Mapper> = {
       asArray(output.results),
       `Web results for “${clip(str(input.query), 60)}”`,
     ),
+  // Numbered sources: the title with its number, the host, and a link. The passages stay with the model.
+  web_research: (input, output, tool) =>
+    sourcesShape(
+      tool,
+      input,
+      output,
+      asArray(output.sources).map((row, index) => ({
+        title: `${num(row.n) ?? index + 1}. ${str(row.title) || hostOfUrl(str(row.url)) || 'Source'}`,
+        url: str(row.url),
+      })),
+      `Sources for “${clip(str(input.question), 60)}”`,
+    ),
+  web_file_save: (input, output, tool) => savedFileShape(tool, input, output),
   // --- Operations ---
   undo_operation: (input, output, tool) =>
     receipt(
@@ -1428,15 +1485,24 @@ function genericShape(toolName: string, input: Rec, output: Rec): ToolShape | nu
 // personal_details_get has no card: its values stay off the screen and out of saved chats.
 const NO_SHAPE_NAMES = new Set(['enable_tools', 'personal_details_get', 'secure_details_list']);
 
+/**
+ * Step-runner tools that are not registry tools (lib/albatross/step-run-tools.ts).
+ * They give the same result shape as a registry tool, so they get the same card.
+ */
+const RUNNER_MAPPERS: Record<string, Mapper> = {
+  browser_download: (input, output, tool) => savedFileShape(tool, input, output),
+};
+
 export function resolveToolShape(toolName: string, input: unknown, output: unknown): ToolShape | null {
   if (NO_SHAPE_NAMES.has(toolName) || NO_SHAPE_PREFIXES.some((prefix) => toolName.startsWith(prefix)))
     return null;
   const out = asRecord(output);
   if (out.ok === false) return null;
   const args = asRecord(input);
-  const mapper = MAPPERS[toolName];
+  const mapper = MAPPERS[toolName] ?? RUNNER_MAPPERS[toolName];
   const shape = mapper ? mapper(args, out, toolName) : null;
   return shape ?? genericShape(toolName, args, out);
 }
 
 export const SHAPED_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(MAPPERS));
+export const RUNNER_SHAPED_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(RUNNER_MAPPERS));

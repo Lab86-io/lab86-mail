@@ -814,6 +814,34 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
       failed: 'Reading the page failed',
     };
   },
+  web_research: (a, r) => {
+    const question = clip(str(a.question), 80);
+    const count = Array.isArray(r.sources) ? r.sources.length : null;
+    return {
+      running: question ? `Researching “${question}”` : 'Researching on the web',
+      done:
+        count != null
+          ? `Read ${count} source${count === 1 ? '' : 's'}${question ? ` for “${question}”` : ''}`
+          : 'Researched on the web',
+      failed: 'Web research failed',
+    };
+  },
+  web_file_save: (_a, r) => {
+    const title = clip(str(r.title), 80);
+    return {
+      running: 'Saving the file in Files',
+      done: title ? `Saved ${title} in Files` : 'Saved the file in Files',
+      failed: 'Saving the file failed',
+    };
+  },
+  browser_download: (_a, r) => {
+    const title = clip(str(r.title), 80);
+    return {
+      running: 'Saving the file from the page',
+      done: title ? `Saved ${title} in Files` : 'Saved the file in Files',
+      failed: 'Saving the file failed',
+    };
+  },
 
   // --- UI actions ---
   ui_focus_thread: fixed(

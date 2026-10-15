@@ -2,7 +2,9 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import './tools/harness';
 import { AGENT_TOOL_NAMES } from '../lib/ai/loop';
 import { TOOL_GROUPS } from '../lib/ai/tool-groups';
+import { RUNNER_SHAPED_TOOL_NAMES, resolveToolShape, SHAPED_TOOL_NAMES } from '../lib/ai/tool-shapes';
 import { __setFetchWebFileDepsForTest, fetchWebFile } from '../lib/attachments/fetch-store';
+import { formatFileSize } from '../lib/chat/shape-format';
 import { runSecureFetch } from '../lib/secure/fetch';
 import { SecureRefused, type SecureRunAccess } from '../lib/secure/runner-access';
 import { SecureScrubber } from '../lib/secure/scrub';
@@ -346,5 +348,111 @@ describe('secure_fetch through Browserbase', () => {
       (await sessionFetch({ url: 'https://api.example/v1', method: 'GET', headers: {}, maxBytes: 10 }))
         .redirectHost,
     ).toBe('');
+  });
+});
+
+describe('web tool shapes', () => {
+  const saved = {
+    ok: true,
+    fileId: 'f1',
+    title: 'Form W-9.pdf',
+    openPath: '/?view=files&file=f1',
+    size: 140815,
+    contentType: 'application/pdf',
+    sourceUrl: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf',
+    sha256: 'abc',
+  };
+
+  test('web_research: numbered sources with the host and a link; no passages', () => {
+    const shape = resolveToolShape(
+      'web_research',
+      { question: 'Which W-9 revision is current?', queries: ['w9'] },
+      {
+        ok: true,
+        sources: [
+          { n: 1, title: 'About Form W-9', url: 'https://www.irs.gov/w9', passage: 'Rev. March 2024' },
+          { title: '', url: 'https://blog.example/w9', passage: 'x' },
+        ],
+        failed: [],
+      },
+    );
+    expect(shape).toMatchObject({ kind: 'sources', title: 'Sources for “Which W-9 revision is current?”' });
+    if (shape?.kind !== 'sources') throw new Error('sources expected');
+    expect(shape.items).toEqual([
+      {
+        title: '1. About Form W-9',
+        url: 'https://www.irs.gov/w9',
+        snippet: undefined,
+        source: undefined,
+        actions: [{ kind: 'open_url', url: 'https://www.irs.gov/w9' }],
+      },
+      {
+        title: '2. blog.example',
+        url: 'https://blog.example/w9',
+        snippet: undefined,
+        source: undefined,
+        actions: [{ kind: 'open_url', url: 'https://blog.example/w9' }],
+      },
+    ]);
+    expect(shape.activity.done).toBe('Read 2 sources for “Which W-9 revision is current?”');
+    expect(
+      resolveToolShape('web_research', { question: 'q' }, { ok: true, sources: [], failed: ['x'] }),
+    ).toBeNull();
+  });
+
+  test('web_file_save and browser_download: one file row that opens the file in Files', () => {
+    const shape = resolveToolShape('web_file_save', { url: saved.sourceUrl }, saved);
+    expect(shape).toMatchObject({ kind: 'files', title: 'Saved in Files', actions: [] });
+    if (shape?.kind !== 'files') throw new Error('files expected');
+    expect(shape.items).toEqual([
+      {
+        connectionId: 'files',
+        fileId: 'f1',
+        name: 'Form W-9.pdf',
+        kind: 'PDF',
+        source: 'irs.gov',
+        mimeType: 'application/pdf',
+        size: 140815,
+        actions: [{ kind: 'open_document', documentId: 'f1', path: '/?view=files&file=f1' }],
+      },
+    ]);
+    expect(shape.activity.done).toBe('Saved Form W-9.pdf in Files');
+    expect(RUNNER_SHAPED_TOOL_NAMES.has('browser_download')).toBe(true);
+    expect(SHAPED_TOOL_NAMES.has('browser_download')).toBe(false);
+    const download = resolveToolShape(
+      'browser_download',
+      { ref: 'e4' },
+      { ...saved, sourceUrl: undefined, contentType: 'text/csv' },
+    );
+    if (download?.kind !== 'files') throw new Error('files expected');
+    expect(download.items[0]).toMatchObject({ kind: 'CSV', fileId: 'f1' });
+    expect(download.items[0].source).toBeUndefined();
+    expect(download.activity.running).toBe('Saving the file from the page');
+    const kinds = [
+      ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'doc'],
+      ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'sheet'],
+      ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'deck'],
+      ['image/png', 'Image'],
+      ['text/plain', 'Text'],
+      ['application/zip', undefined],
+    ];
+    for (const [contentType, kind] of kinds) {
+      const row = resolveToolShape('web_file_save', {}, { ...saved, contentType });
+      if (row?.kind !== 'files') throw new Error('files expected');
+      expect(row.items[0].kind).toBe(kind);
+    }
+    const bare = resolveToolShape('web_file_save', {}, { ok: true, fileId: 'f2' });
+    if (bare?.kind !== 'files') throw new Error('files expected');
+    expect(bare.items[0]).toEqual({ connectionId: 'files', fileId: 'f2', name: 'File', actions: [] });
+    expect(resolveToolShape('web_file_save', {}, { ok: true })).toBeNull();
+    expect(resolveToolShape('browser_download', {}, { ok: false, message: 'x' })).toBeNull();
+  });
+
+  test('file sizes read as bytes, KB, or MB', () => {
+    expect(formatFileSize(undefined)).toBe('');
+    expect(formatFileSize(-1)).toBe('');
+    expect(formatFileSize(812)).toBe('812 bytes');
+    expect(formatFileSize(140815)).toBe('138 KB');
+    expect(formatFileSize(4.2 * 1024 * 1024)).toBe('4.2 MB');
   });
 });

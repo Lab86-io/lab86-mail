@@ -106,6 +106,14 @@ export function formatProgress(progress?: { done: number; total: number }): stri
   return `${progress.done} of ${progress.total} steps`;
 }
 
+/** A file size for a file row: 812 bytes, 137 KB, 4.2 MB. */
+export function formatFileSize(bytes?: number): string {
+  if (bytes === undefined || !Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${Math.round(bytes)} bytes`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** The host of a URL, without "www.", for source rows. */
 export function hostOf(url?: string): string {
   if (!url) return '';

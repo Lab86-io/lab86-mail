@@ -1,7 +1,7 @@
 'use client';
 
 import type { ToolShape } from '@/lib/ai/tool-shapes';
-import { fileKindLabel, formatShortDate } from '@/lib/chat/shape-format';
+import { fileKindLabel, formatFileSize, formatShortDate } from '@/lib/chat/shape-format';
 import { FileResult } from './file-result';
 import { ActionBar, ShapeList, ShapeShell } from './shape-shell';
 
@@ -20,6 +20,7 @@ export function FilesCard({ shape }: { shape: Extract<ToolShape, { kind: 'files'
               documentId={item.documentId}
               detail={[
                 fileKindLabel(item.kind, item.mimeType),
+                formatFileSize(item.size),
                 item.source,
                 formatShortDate(item.modifiedIso),
               ]
