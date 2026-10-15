@@ -146,7 +146,25 @@ export interface Draft {
   body: string;
   html?: string;
   scheduledFor?: number;
+  /** Files that go with the draft (docs/albatross-goal-runs.md G3). */
+  attachments?: DraftAttachment[];
   updatedAt: number;
+}
+
+/**
+ * A saved file that goes with a draft. The server reads the bytes from storage
+ * at send time; it never fetches a URL for a draft attachment.
+ */
+export interface DraftAttachment {
+  source: 'file';
+  fileId: string;
+  /** office: a Word, Excel, or PowerPoint file. upload: a saved file (a PDF). albatross: an Albatross document. */
+  provider: 'office' | 'upload' | 'albatross';
+  /** pdf converts through the document server at send time. */
+  format: 'pdf' | 'native';
+  name: string;
+  size?: number;
+  contentType?: string;
 }
 
 export interface LabelRecord {

@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { contentTables } from './contentSchema';
+import { goalRunFields, runArtifactKindValidator } from './goalRunSchema';
 import { googlePushTables } from './googlePushSchema';
 import { narrativeTables } from './narrativeSchema';
 
@@ -987,8 +988,9 @@ export default defineSchema({
     .index('by_user_session', ['userId', 'sessionId'])
     .index('by_status_created', ['status', 'createdAt']),
 
-  // Step runs: the agent works one plan step as far as it can, then hands the
-  // user one next action (convex/albatrossStepRuns.ts). The row is both the
+  // Step runs: the agent works one plan step, or the whole goal (stepKey
+  // 'goal', docs/albatross-goal-runs.md), as far as it can, then hands the
+  // user the next action (convex/albatrossStepRuns.ts). The row is both the
   // job (lease, attempts) and the handoff record every client reads.
   albatrossStepRuns: defineTable({
     userId: v.string(),
@@ -1093,20 +1095,15 @@ export default defineSchema({
     ),
     artifacts: v.array(
       v.object({
-        kind: v.union(
-          v.literal('document'),
-          v.literal('draft'),
-          v.literal('event'),
-          v.literal('card'),
-          v.literal('approval'),
-          v.literal('page'),
-        ),
+        kind: runArtifactKindValidator,
         id: v.optional(v.string()),
         title: v.string(),
         url: v.optional(v.string()),
         accountId: v.optional(v.string()),
       }),
     ),
+    // Goal runs (docs/albatross-goal-runs.md): messages, checklist, package.
+    ...goalRunFields,
     browserSessionId: v.optional(v.string()),
     // Notes from the user while the run works (docs/albatross-thread.md). The
     // runner reads each note once between model steps and sets readAt.

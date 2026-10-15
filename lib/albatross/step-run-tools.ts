@@ -114,7 +114,7 @@ const QUEUED_FOR_APPROVAL: Record<
 };
 
 export type RunArtifact = {
-  kind: 'document' | 'draft' | 'event' | 'card' | 'approval' | 'page';
+  kind: 'document' | 'draft' | 'event' | 'card' | 'approval' | 'page' | 'deck' | 'file';
   id?: string;
   title: string;
   url?: string;

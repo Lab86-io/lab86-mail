@@ -299,6 +299,8 @@ const ARTIFACT_KIND_LABEL: Record<StepRunArtifact['kind'], string> = {
   card: 'Task',
   approval: 'Approval',
   page: 'Page',
+  deck: 'Presentation',
+  file: 'File',
 };
 
 export function artifactKindLabel(artifact: Pick<StepRunArtifact, 'kind'>): string {
