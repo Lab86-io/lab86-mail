@@ -1201,7 +1201,7 @@ const MAPPERS: Record<string, Mapper> = {
     const shape = documentShape(
       tool,
       input,
-      { ...output, title: str(input.title) || 'Export' },
+      { ...output, title: str(output.title) || str(input.title) || 'Export' },
       str(output.fidelity) || undefined,
     );
     if (!shape || shape.kind !== 'document') return shape;
