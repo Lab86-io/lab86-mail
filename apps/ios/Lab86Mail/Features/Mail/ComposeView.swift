@@ -18,6 +18,7 @@ struct ComposeView: View {
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @State private var accountID = ""
     @State private var to = ""
     @State private var cc = ""
@@ -32,6 +33,11 @@ struct ComposeView: View {
     @State private var replyAll = false
     @State private var attachments: [ComposeAttachment] = []
     @State private var attachmentsKey: String?
+    // The saved files that go with the draft, as removable rows
+    // (docs/albatross-goal-runs.md, G3). The server reads the bytes at send time.
+    @State private var fileAttachments: [DraftAttachment] = []
+    // The last send needed a permission for a sealed file: "Open on the web".
+    @State private var sendNeedsWeb = false
     @State private var draftID: String?
     @State private var showsCopyFields = false
     @State private var isImporting = false
@@ -84,10 +90,20 @@ struct ComposeView: View {
                     if !attachments.isEmpty {
                         attachmentRows
                     }
+                    if !fileAttachments.isEmpty {
+                        fileAttachmentRows
+                    }
                     if let errorMessage {
-                        Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(errorMessage)
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                            if sendNeedsWeb {
+                                Button(GoalRunCopy.openOnWeb) { openSendPermissionOnWeb() }
+                                    .buttonStyle(.borderless)
+                                    .font(.footnote.weight(.medium))
+                            }
+                        }
                             .padding(.horizontal, 20)
                             .padding(.top, 10)
                     }
@@ -150,6 +166,7 @@ struct ComposeView: View {
                     showsCopyFields = !pending.cc.isEmpty || !pending.bcc.isEmpty
                     if let pendingAccount = pending.accountID { accountID = pendingAccount }
                     fromAddress = pending.fromAddress?.nilIfBlank
+                    fileAttachments = pending.fileAttachments
                     environment.navigation.pendingCompose = nil
                     if let key = pending.attachmentsKey {
                         Task { await loadAttachments(key: key) }
@@ -555,6 +572,30 @@ struct ComposeView: View {
         }
     }
 
+    /// The saved files that go with the draft: the name, then the format,
+    /// the size, and "From Albatross", or the sealed line. Remove takes the
+    /// row out of the draft; the next save writes the new list.
+    private var fileAttachmentRows: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            hairline
+            ForEach(fileAttachments) { attachment in
+                DraftAttachmentRow(attachment: attachment) {
+                    fileAttachments.removeAll { $0.id == attachment.id }
+                }
+                hairline
+            }
+        }
+    }
+
+    /// The send permission for a sealed file lives on the web this round.
+    private func openSendPermissionOnWeb() {
+        guard let base = environment.configuration.apiBaseURL,
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return }
+        components.path = "/"
+        components.queryItems = nil
+        if let url = components.url { openURL(url) }
+    }
+
     private var attachmentRows: some View {
         VStack(alignment: .leading, spacing: 0) {
             hairline
@@ -680,6 +721,7 @@ struct ComposeView: View {
             || !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !attachments.isEmpty
+            || !fileAttachments.isEmpty
     }
 
     private var isDirty: Bool {
@@ -697,6 +739,7 @@ struct ComposeView: View {
             bodyText,
             sendsLater ? String(Int(sendLaterDate.timeIntervalSince1970)) : "",
             attachments.map { "\($0.filename):\($0.data.count)" }.joined(separator: "|"),
+            fileAttachments.map(\.fileID).joined(separator: "|"),
         ].joined(separator: "\u{1F}")
     }
 
@@ -706,6 +749,7 @@ struct ComposeView: View {
             return
         }
         isSending = true
+        sendNeedsWeb = false
         defer { isSending = false }
         // The request, the held-send record, and a refusal all use the
         // mailbox of this send, even when the selection changes later.
@@ -733,7 +777,8 @@ struct ComposeView: View {
                 sendAt: sendsLater ? sendLaterDate : nil,
                 undoSeconds: sendsLater ? 0 : undoSendSeconds,
                 includeSignature: includeSignature,
-                fromAddress: from
+                fromAddress: from,
+                draftAttachments: fileAttachments
             )
             switch submission {
             case .pending(let receipt):
@@ -753,7 +798,8 @@ struct ComposeView: View {
                     replyAll: replyAll,
                     attachmentsKey: attachmentKey,
                     draftID: draftID,
-                    fromAddress: from
+                    fromAddress: from,
+                    fileAttachments: fileAttachments
                 )
                 environment.pendingSends.register(receipt: receipt, ownerID: ownerID, snapshot: snapshot)
             case .scheduled, .sent:
@@ -777,6 +823,11 @@ struct ComposeView: View {
             sendAsPages[submittedAccountID] = nil
             environment.sendAs.invalidate(accountID: submittedAccountID)
             await loadSendAs()
+        } catch let refusal as DraftAttachmentRefusal {
+            // The draft stays open with its rows. A sealed file that needs a
+            // send permission sends the user to the web for it.
+            errorMessage = refusal.localizedDescription
+            sendNeedsWeb = refusal.code.offersWeb
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -816,7 +867,8 @@ struct ComposeView: View {
                 bcc: bcc,
                 subject: subject,
                 body: bodyText,
-                scheduledFor: sendsLater ? sendLaterDate : nil
+                scheduledFor: sendsLater ? sendLaterDate : nil,
+                attachments: fileAttachments
             )
             errorMessage = nil
         } catch {

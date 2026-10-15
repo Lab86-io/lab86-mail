@@ -1856,7 +1856,7 @@ final class ProductStore {
             for row in result["drafts"]?.arrayValue ?? [] {
                 let rowID = row["_id"]?.stringValue ?? row["id"]?.stringValue
                 guard rowID == draftID else { continue }
-                return ComposePrefill(
+                var prefill = ComposePrefill(
                     recipient: row["to"]?.stringValue ?? "",
                     cc: row["cc"]?.stringValue ?? "",
                     bcc: row["bcc"]?.stringValue ?? "",
@@ -1870,6 +1870,9 @@ final class ProductStore {
                     attachmentsKey: nil,
                     draftID: draftID
                 )
+                // The saved files that go with the draft (docs/albatross-goal-runs.md, G3).
+                prefill.fileAttachments = DraftAttachmentClient.rows(of: row)
+                return prefill
             }
         }
         return nil
@@ -2506,7 +2509,8 @@ final class ProductStore {
         sendAt: Date?,
         undoSeconds: Int,
         includeSignature: Bool,
-        fromAddress: String? = nil
+        fromAddress: String? = nil,
+        draftAttachments: [DraftAttachment] = []
     ) async throws -> ComposeSubmission {
         var fields = Self.composeFields(
             mode: mode,
@@ -2521,6 +2525,9 @@ final class ProductStore {
         )
         if let threadID { fields["threadId"] = threadID }
         if let messageID { fields["messageId"] = messageID }
+        // The saved files that go with the draft; the server reads their
+        // bytes at send time (docs/albatross-goal-runs.md, G3).
+        if let draftField = DraftAttachmentClient.sendField(draftAttachments) { fields["draftAttachments"] = draftField }
         if let sendAt { fields["sendAt"] = String(Int(sendAt.timeIntervalSince1970 * 1_000)) }
         if sendAt == nil, undoSeconds > 0 {
             fields["undoSeconds"] = String(min(max(undoSeconds, 0), 300))
@@ -2586,7 +2593,8 @@ final class ProductStore {
         bcc: String,
         subject: String,
         body: String,
-        scheduledFor: Date?
+        scheduledFor: Date?,
+        attachments: [DraftAttachment]? = nil
     ) async throws -> String {
         if let id {
             var patch: [String: JSONValue] = [
@@ -2599,6 +2607,8 @@ final class ProductStore {
             if let scheduledFor {
                 patch["scheduledFor"] = .number(scheduledFor.timeIntervalSince1970 * 1_000)
             }
+            // The full list replaces the rows; `[]` removes them; nil keeps them.
+            if let rows = DraftAttachmentClient.toolsField(attachments) { patch["attachments"] = rows }
             _ = try await tools.invoke(
                 "update_draft",
                 arguments: ["id": .string(id), "patch": .object(patch)]
@@ -2618,6 +2628,9 @@ final class ProductStore {
         if let messageID { arguments["inReplyToMessageId"] = .string(messageID) }
         if let scheduledFor {
             arguments["scheduledFor"] = .number(scheduledFor.timeIntervalSince1970 * 1_000)
+        }
+        if let rows = DraftAttachmentClient.toolsField(attachments), !(attachments?.isEmpty ?? true) {
+            arguments["attachments"] = rows
         }
         let result = try await tools.invoke("save_draft", arguments: arguments)
         guard let savedID = result["draft"]?["_id"]?.stringValue

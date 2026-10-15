@@ -185,6 +185,9 @@ struct ComposePrefill: Hashable, Sendable {
     let draftID: String?
     // The send-as address of a restored draft. Nil uses the mailbox default.
     var fromAddress: String? = nil
+    // The saved files that go with the draft, as removable rows
+    // (docs/albatross-goal-runs.md, G3). The server reads the bytes at send time.
+    var fileAttachments: [DraftAttachment] = []
 }
 
 enum SheetDestination: Identifiable, Sendable {

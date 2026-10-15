@@ -334,14 +334,20 @@ struct DraftAttachment: Identifiable, Hashable, Codable, Sendable {
         }
     }
 
+    /// The most attachments one draft carries.
+    static let limit = 10
+
     let fileID: String
     let provider: Provider
     let format: Format
     let name: String
     let size: Int?
     let contentType: String?
-    /// A field that fills in at send time ("The tax ID fills in when you
-    /// send."). Client side only: the package item's note names it.
+    /// A field of this file fills in only at send or download time, from
+    /// the secure store (docs/albatross-goal-runs.md, G5).
+    let sealed: Bool
+    /// The line that names the sealed field ("The tax ID fills in when you
+    /// send."). Client side only: the package item's note gives it.
     var sealedLine: String?
 
     var id: String { fileID }
@@ -353,6 +359,7 @@ struct DraftAttachment: Identifiable, Hashable, Codable, Sendable {
         name: String,
         size: Int? = nil,
         contentType: String? = nil,
+        sealed: Bool = false,
         sealedLine: String? = nil
     ) {
         self.fileID = fileID
@@ -361,6 +368,7 @@ struct DraftAttachment: Identifiable, Hashable, Codable, Sendable {
         self.name = name
         self.size = size
         self.contentType = contentType
+        self.sealed = sealed || sealedLine?.nilIfBlank != nil
         self.sealedLine = sealedLine?.nilIfBlank
     }
 
@@ -373,10 +381,12 @@ struct DraftAttachment: Identifiable, Hashable, Codable, Sendable {
         self.name = name
         size = json["size"]?.doubleValue.map { Int($0) }
         contentType = json["contentType"]?.stringValue?.nilIfBlank
+        sealed = json["sealed"]?.boolValue ?? false
         sealedLine = nil
     }
 
-    /// The wire shape, for a draft save and a send.
+    /// The wire shape of a draft row (`attachments` on `save_draft`,
+    /// `update_draft`, and `list_drafts`).
     var json: JSONValue {
         var object: [String: JSONValue] = [
             "source": .string("file"),
@@ -387,7 +397,31 @@ struct DraftAttachment: Identifiable, Hashable, Codable, Sendable {
         ]
         if let size { object["size"] = .number(Double(size)) }
         if let contentType { object["contentType"] = .string(contentType) }
+        if sealed { object["sealed"] = .bool(true) }
         return .object(object)
+    }
+
+    /// The wire shape of the `draftAttachments` field of `POST /api/compose`:
+    /// `{ fileId, provider, format, name }`.
+    var sendJSON: JSONValue {
+        .object([
+            "fileId": .string(fileID),
+            "provider": .string(provider.rawValue),
+            "format": .string(format.rawValue),
+            "name": .string(name),
+        ])
+    }
+
+    /// The line under the name on a composer row.
+    var composerLine: String {
+        if let sealedLine { return "\(format.word) · \(sealedLine)" }
+        if sealed { return "\(format.word) · \(GoalRunCopy.sealedGenericComposerLine)" }
+        var parts = [format.word]
+        if let size, size > 0 {
+            parts.append(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+        }
+        parts.append(GoalRunCopy.fromAlbatross)
+        return parts.joined(separator: " · ")
     }
 
     /// The rows of a draft, from `attachments` on a draft row.

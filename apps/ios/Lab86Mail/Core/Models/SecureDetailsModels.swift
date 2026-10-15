@@ -280,6 +280,9 @@ enum SecureUseOutcome: String, Hashable, Sendable {
     case allowedOnce = "allowed_once"
     case allowedAlways = "allowed_always"
     case denied
+    /// The user downloaded a saved file with the value filled in
+    /// (docs/albatross-goal-runs.md, G5).
+    case downloaded
     case unknown
 
     static func from(_ raw: String?) -> SecureUseOutcome {
@@ -385,6 +388,7 @@ struct SecureUseRow: Identifiable, Hashable, Sendable {
         case .allowedOnce: verb = "Allowed once"
         case .allowedAlways: verb = "Always allowed"
         case .denied: verb = "Not allowed"
+        case .downloaded: verb = "Downloaded"
         case .unknown: verb = "Used"
         }
         var text = verb
