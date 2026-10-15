@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { z } from 'zod';
-import { GOAL_CHECK_FIRST, GOAL_RUNNER_RULES } from '../lib/albatross/goal-run-prompt';
+import { GOAL_CHECK_FIRST, GOAL_RUNNER_RULES, goalRunnerContext } from '../lib/albatross/goal-run-prompt';
 import { SEALED_FILE_NOTE } from '../lib/albatross/goal-runs';
 import {
+  fallbackHandoff,
   GOAL_CHECK_COPY,
   handoffNotice,
   normalizeHandoff,
@@ -806,5 +807,106 @@ describe('goal handoff helpers', () => {
     expect(JSON.stringify(settled)).not.toContain('{{secure');
     expect(settled.items?.[0].note).toBe('Tax ID [saved value]');
     expect(redactGoalSettle({ outcome: 'stopped' })).toEqual({ outcome: 'stopped' });
+  });
+});
+
+describe('the goal context and the fallback, piece by piece', () => {
+  test('every earlier run state reads in plain words, with the user facts and the browser line', () => {
+    const base = {
+      detail: { work: { _id: 'w', rawText: 'x' }, contract: null },
+      title: 'July invoice',
+      checklist: [],
+      made: [],
+      limits: { timeBudgetMs: 30 * 60_000, costBudgetUsd: 8 },
+    };
+    const context = goalRunnerContext({
+      ...base,
+      trigger: 'conductor',
+      earlier: [
+        { id: 'a', state: 'running' },
+        { id: 'b', state: 'done', goal: true },
+        { id: 'c', state: 'failed', stepTitle: 'Old step' },
+        { id: 'd', state: 'cancelled', goal: true },
+        { id: 'e', state: 'closed', goal: true },
+        { id: 'f', state: 'handed_off', stoppedBy: 'cost', goal: true },
+        { id: 'g', state: 'handed_off', goal: true },
+      ],
+      browserAvailable: true,
+      sessionOpen: true,
+      aboutUser: '## About the user\nName: Sam Rivera',
+      threadNotes: ['Use the July hours', '  '],
+      secureItems: [],
+      resumeNote: 'Keep it short.',
+    });
+    // Only the newest six earlier runs show.
+    expect(context).not.toContain('works now');
+    for (const line of [
+      'goal run · done',
+      'step "Old step" · did not finish',
+      'goal run · stopped by the user',
+      'goal run · closed',
+      'goal run · stopped at its cost limit',
+      'goal run · handed_off',
+      'What proves it: nothing named yet. Name it with goal_update.',
+      '(Empty. Make one with checklist_set.)',
+      'Started by: the conductor, while the user is away.',
+      'The shared browser is open from the earlier run.',
+      'Name: Sam Rivera',
+      '## Passwords and IDs',
+      '- Use the July hours',
+      '## The user says\nKeep it short.',
+    ])
+      expect(context).toContain(line);
+    expect(context).not.toContain(GOAL_CHECK_FIRST);
+    expect(
+      goalRunnerContext({
+        ...base,
+        trigger: 'user',
+        earlier: [],
+        browserAvailable: true,
+        sessionOpen: false,
+      }),
+    ).toContain('The shared browser is available (browser_open).');
+    expect(
+      goalRunnerContext({
+        ...base,
+        detail: {
+          ...base.detail,
+          contract: {
+            outcome: 'Sent',
+            proofs: [{ id: 'p', what: 'Mail left', satisfiedAt: 1 }],
+            closeWhen: 'outcome_confirmed',
+          },
+        },
+        trigger: 'user',
+        earlier: [],
+        browserAvailable: false,
+        sessionOpen: false,
+      }),
+    ).toContain('- [settled] Mail left\nIt closes: Only when something confirms it.');
+  });
+
+  test('with no handoff, the first thing that waits decides the main action', () => {
+    expect(
+      fallbackHandoff('', [{ kind: 'approval', id: 'ap', title: 'Send the invite' }], { goal: true }).next,
+    ).toMatchObject({ kind: 'approve', target: { kind: 'approval', id: 'ap' } });
+    expect(
+      fallbackHandoff(
+        '',
+        [
+          { kind: 'event', id: 'e', title: 'Hold' },
+          { kind: 'document', id: 'w1', title: 'Invoice', url: '/?view=files&office=w1' },
+        ],
+        { goal: true },
+      ).next,
+    ).toMatchObject({ kind: 'review_document', target: { kind: 'document', id: 'w1' } });
+    expect(
+      fallbackHandoff('', [{ kind: 'draft', id: 'd', title: 'Mail', accountId: 'a' }], { goal: true }).next,
+    ).toMatchObject({ kind: 'review_draft', target: { kind: 'draft', id: 'd', accountId: 'a' } });
+    // Only a ready event: the run stops with Continue and still lists what it made.
+    expect(fallbackHandoff('', [{ kind: 'event', id: 'e', title: 'Hold' }], { goal: true })).toMatchObject({
+      outcome: 'stopped',
+      items: [{ kind: 'event', state: 'ready' }],
+    });
   });
 });
