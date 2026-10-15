@@ -79,8 +79,10 @@ describe('the goal harness fixtures', () => {
     const now = Date.UTC(2026, 9, 15, 18);
     const invoice = goalInvoiceDocumentFixture(now);
     const hours = goalHoursDocumentFixture(now);
-    expect(invoice.model.blocks.length).toBeGreaterThan(0);
-    expect(hours.model.blocks.length).toBeGreaterThan(0);
+    expect(invoice.model.kind).toBe('doc');
+    expect(hours.model.kind).toBe('doc');
+    expect(invoice.model.kind === 'doc' && invoice.model.blocks.length).toBeGreaterThan(0);
+    expect(hours.model.kind === 'doc' && hours.model.blocks.length).toBeGreaterThan(0);
     expect(invoice.documentId).not.toBe(hours.documentId);
     const messages = goalMessagesFixture(now, 'run_goal_running');
     expect(messages.length).toBeGreaterThan(0);
