@@ -20,6 +20,9 @@ import { RecipientInput } from '@/components/compose/RecipientInput';
 import { NarrativeDraftAssistant } from '@/components/narrative/NarrativeDraftAssistant';
 import { useSavedReplies } from '@/components/settings/SavedRepliesSettings';
 import { useSignatures } from '@/components/settings/SignatureSettings';
+import { AllowSendChoice } from '@/components/thread/allow-send-choice';
+import { ATTACHMENT_COPY, AttachmentRows, attachmentSealedNote } from '@/components/thread/attachment-rows';
+import { type AllowSendFn, allowSendWithoutCheck } from '@/components/thread/use-allow-send';
 import { Avatar } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -27,6 +30,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { callTool } from '@/lib/api-client';
 import { type ComposeMode, useClientStore } from '@/lib/client-state';
 import { fireSendEffect } from '@/lib/effects/send-effect';
+import {
+  type AllowSendRefusal,
+  type AllowSendScope,
+  allowSendBody,
+  parseAllowSendRefusal,
+  sendRetryFields,
+} from '@/lib/mail/allow-send';
 import { sanitizeOutgoingHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
 import {
@@ -36,6 +46,7 @@ import {
   selectedFromChoice,
 } from '@/lib/shared/send-as';
 import { DEFAULT_UNDO_SEND_SECONDS } from '@/lib/shared/sending';
+import type { DraftAttachment } from '@/lib/shared/types';
 import { applyDraftReply } from '@/lib/shell/draft-reply';
 import { cn } from '@/lib/utils';
 import { AttachmentIcon } from './attachment-chip';
@@ -64,6 +75,8 @@ interface InlineComposerProps {
     fromAddress?: string;
     // A saved draft reopened by id (the step runner's handoff): saves update it.
     draftId?: string;
+    // The saved files that go with a reopened draft (docs/albatross-goal-runs.md G3).
+    attachments?: DraftAttachment[];
   };
   // Optional bump value: when the parent supplies a new nonce, we re-seed
   // the body field from initialPrefill.body. Lets the agent's draft_reply
@@ -74,6 +87,10 @@ interface InlineComposerProps {
   // Optional visual variant: the always-open top reply box uses 'dashed';
   // the new-message pane and forward use 'card' for a heavier frame.
   framed?: boolean;
+  // 'thread': the draft tab of an Albatross thread, where the tab bar is the way out.
+  host?: 'mail' | 'thread';
+  // The send permission of a sealed file, through the identity check (use-allow-send.ts).
+  allowSend?: AllowSendFn;
 }
 
 type Phase = 'draft' | 'sending' | 'sent';
@@ -96,6 +113,8 @@ export function InlineComposer({
   onSent,
   onClose,
   framed = true,
+  host = 'mail',
+  allowSend,
 }: InlineComposerProps) {
   const isReply = mode === 'reply' || mode === 'reply_all';
 
@@ -108,6 +127,16 @@ export function InlineComposer({
   const [tab, setTab] = useState<'write' | 'preview'>('write');
   const [phase, setPhase] = useState<Phase>('draft');
   const [files, setFiles] = useState<File[]>([]);
+  // The saved files on a reopened draft: rows the user can remove. The server
+  // reads their bytes at send time; the composer never fetches them.
+  const [savedAttachments, setSavedAttachments] = useState<DraftAttachment[]>(
+    () => initialPrefill?.attachments ?? [],
+  );
+  // A sealed file needs a send permission: the compose route refused, and the
+  // choice shows in the send area until an answer lets the same send through.
+  const [allowRequest, setAllowRequest] = useState<AllowSendRefusal | null>(null);
+  const [allowBusy, setAllowBusy] = useState<AllowSendScope | null>(null);
+  const [allowError, setAllowError] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [composerMode, setComposerMode] = useState<ComposeMode>(mode);
   const [fromAccount, setFromAccount] = useState<string>(account);
@@ -241,7 +270,7 @@ export function InlineComposer({
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const composeRecoveredFiles = useClientStore((s) => s.composeRecoveredFiles);
   const setComposeRecoveredFiles = useClientStore((s) => s.setComposeRecoveredFiles);
-  const { registerPendingSend, cancelPendingSend } = usePendingSend();
+  const { registerPendingSend, cancelPendingSend, dropPendingSend } = usePendingSend();
   const pendingSendId = useRef<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -324,7 +353,13 @@ export function InlineComposer({
   );
   const isDirty = draftFingerprint !== baselineFingerprint;
   const hasMeaningfulDraft = Boolean(
-    to.trim() || cc.trim() || bcc.trim() || subject.trim() || body.trim() || files.length,
+    to.trim() ||
+      cc.trim() ||
+      bcc.trim() ||
+      subject.trim() ||
+      body.trim() ||
+      files.length ||
+      savedAttachments.length,
   );
 
   const persistDraft = useCallback(async () => {
@@ -339,12 +374,13 @@ export function InlineComposer({
       bcc: bcc || undefined,
       subject,
       body,
+      ...(savedAttachments.length ? { attachments: savedAttachments } : {}),
     };
     try {
       if (draftIdRef.current) {
         await callTool('update_draft', {
           id: draftIdRef.current,
-          patch: { to, cc, bcc, subject, body },
+          patch: { to, cc, bcc, subject, body, attachments: savedAttachments },
         });
       } else {
         const result = await callTool<{ draft: { _id?: string; id?: string } }>('save_draft', args);
@@ -359,7 +395,19 @@ export function InlineComposer({
       setDraftSaveState('failed');
       throw new Error('Could not save this draft.');
     }
-  }, [account, anchorMessageId, bcc, body, cc, fromAccount, hasMeaningfulDraft, subject, threadId, to]);
+  }, [
+    account,
+    anchorMessageId,
+    bcc,
+    body,
+    cc,
+    fromAccount,
+    hasMeaningfulDraft,
+    savedAttachments,
+    subject,
+    threadId,
+    to,
+  ]);
 
   useEffect(() => {
     if (!isDirty || !hasMeaningfulDraft || phase !== 'draft') return;
@@ -383,7 +431,7 @@ export function InlineComposer({
   }, [composeRecoveredFiles, setComposeRecoveredFiles]);
 
   const send = useMutation({
-    mutationFn: async ({ sendAt }: { sendAt?: number } = {}) => {
+    mutationFn: async ({ sendAt, allowToken }: { sendAt?: number; allowToken?: string } = {}) => {
       if (sendAt !== undefined && sendAt <= Date.now()) {
         throw new Error('Choose a future send time.');
       }
@@ -427,10 +475,14 @@ export function InlineComposer({
       fd.set('body', body);
       if (sendFromAddress) fd.set('fromAddress', sendFromAddress);
       if (!includeSignature) fd.set('signature', '0');
+      // One id for the send and its retry after a send permission: the server
+      // keys the permission on it (lib/mail/allow-send.ts).
+      const sendId = allowRequest?.sendId || `outbox:${crypto.randomUUID()}`;
+      fd.set('pendingId', sendId);
+      if (allowToken) fd.set('allowToken', allowToken);
       if (!sendAt && undoSendSeconds > 0) {
-        const id = `outbox:${crypto.randomUUID()}`;
+        const id = sendId;
         pendingSendId.current = id;
-        fd.set('pendingId', id);
         await registerPendingSend(
           {
             id,
@@ -452,12 +504,27 @@ export function InlineComposer({
       if (threadId) fd.set('threadId', threadId);
       if (anchorMessageId) fd.set('messageId', anchorMessageId);
       for (const f of files) fd.append('attachments', f, f.name);
+      // The saved files go by reference; the server reads their bytes (docs/albatross-goal-runs.md G3).
+      if (savedAttachments.length)
+        fd.set(
+          'draftAttachments',
+          JSON.stringify(
+            savedAttachments.map((item) => ({
+              fileId: item.fileId,
+              provider: item.provider,
+              format: item.format,
+              name: item.name,
+            })),
+          ),
+        );
 
       const res = await fetch('/api/compose', { method: 'POST', body: fd });
       let data: any = null;
       try {
         data = await res.json();
       } catch {}
+      const refusal = parseAllowSendRefusal(res.status, data);
+      if (refusal) return { refused: refusal };
       if (!res.ok || data?.ok === false) {
         throw new Error(data?.error || `Send failed (${res.status})`);
       }
@@ -465,6 +532,19 @@ export function InlineComposer({
     },
     onMutate: () => setPhase('sending'),
     onSuccess: async (data) => {
+      if (data?.refused) {
+        // The choice shows in the send area; the draft stays as it is.
+        setAllowRequest(data.refused as AllowSendRefusal);
+        setAllowError(null);
+        setPhase('draft');
+        // The server refused before it kept anything: drop the undo record here.
+        if (pendingSendId.current) {
+          dropPendingSend(pendingSendId.current);
+          pendingSendId.current = null;
+        }
+        return;
+      }
+      setAllowRequest(null);
       if (data?.pending) {
         const pending = data.pending as { id: string; fireAt: number; undoSeconds: number };
         const snapshot = sendSnapshot.current;
@@ -656,6 +736,7 @@ export function InlineComposer({
     <motion.section
       layout
       transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      data-composer-host={host}
       className={cn(
         'overflow-hidden rounded-xl border bg-[var(--color-bg-elevated)] transition-colors duration-300',
         borderClass,
@@ -870,6 +951,25 @@ export function InlineComposer({
         onApply={setBody}
       />
 
+      <AttachmentRows
+        attachments={savedAttachments}
+        disabled={phase !== 'draft'}
+        className="px-2 pt-1"
+        onRemove={(attachment) => {
+          setSavedAttachments((current) => current.filter((item) => item.fileId !== attachment.fileId));
+          toast(ATTACHMENT_COPY.removed(attachment.name), {
+            action: {
+              label: ATTACHMENT_COPY.undo,
+              onClick: () =>
+                setSavedAttachments((current) =>
+                  current.some((item) => item.fileId === attachment.fileId)
+                    ? current
+                    : [...current, attachment],
+                ),
+            },
+          });
+        }}
+      />
       {files.length > 0 ? (
         <div className="flex flex-wrap gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
           {files.map((f) => (
@@ -883,6 +983,30 @@ export function InlineComposer({
         </div>
       ) : null}
 
+      {allowRequest ? (
+        <AllowSendChoice
+          refusal={allowRequest}
+          sealedFileNames={savedAttachments
+            .filter((item) => attachmentSealedNote(item))
+            .map((item) => item.name)}
+          busy={allowBusy}
+          error={allowError}
+          onChoose={(scope) => {
+            setAllowBusy(scope);
+            setAllowError(null);
+            void (allowSend ?? allowSendWithoutCheck)(allowSendBody(allowRequest, scope))
+              .then((answer) => {
+                const retry = sendRetryFields(allowRequest, answer);
+                setAllowRequest(null);
+                send.mutate({ allowToken: retry.allowToken });
+              })
+              .catch((cause: Error) =>
+                setAllowError(cause?.message || 'The permission did not save. Try again.'),
+              )
+              .finally(() => setAllowBusy(null));
+          }}
+        />
+      ) : null}
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">
         <div className="flex items-center gap-1">
           <button

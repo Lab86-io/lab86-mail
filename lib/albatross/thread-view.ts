@@ -5,7 +5,7 @@
 // details, the answered receipt, and the timeline readers. No React here.
 
 import { phoneDisplay } from '../personal-details/format';
-import { isGoalRun } from './goal-runs';
+import { activeTabKey, GOAL_RUN_COPY, isGoalRun, isGoalWork, packageTabs } from './goal-run-view';
 import { type NextBehaviour, nextBehaviour, primaryLabel, type StepRunNext } from './step-run-client';
 import {
   type FormField,
@@ -42,6 +42,8 @@ export const RUN_STATE_COPY = {
   openPage: 'Open the page',
   continueButton: 'Continue',
   markDone: 'Mark step done',
+  doneContinue: 'Done, continue',
+  openPackage: 'Open the package',
   stoppedTime: 'Albatross stopped at its time limit.',
   stoppedCost: 'Albatross stopped at its cost limit.',
   failedLine: 'This run did not finish.',
@@ -99,11 +101,17 @@ export function runStateLine(
   }
 }
 
-/** "Albatross stopped at its time limit." for a limit stop, else null. */
-export function stoppedReason(run: Pick<ThreadRunView, 'outcome' | 'stoppedBy'>): string | null {
+/**
+ * "Albatross stopped at its time limit." for a limit stop, else null. A goal
+ * run adds that the next run starts from the checklist.
+ */
+export function stoppedReason(
+  run: Pick<ThreadRunView, 'outcome' | 'stoppedBy'>,
+  options: { goal?: boolean } = {},
+): string | null {
   if (run.outcome !== 'stopped') return null;
-  if (run.stoppedBy === 'time') return RUN_STATE_COPY.stoppedTime;
-  if (run.stoppedBy === 'cost') return RUN_STATE_COPY.stoppedCost;
+  if (run.stoppedBy === 'time') return options.goal ? GOAL_RUN_COPY.stoppedTime : RUN_STATE_COPY.stoppedTime;
+  if (run.stoppedBy === 'cost') return options.goal ? GOAL_RUN_COPY.stoppedCost : RUN_STATE_COPY.stoppedCost;
   return null;
 }
 
@@ -121,6 +129,10 @@ export type RunBlockAction =
   | { kind: 'resume'; label: string }
   | { kind: 'next'; label: string; behaviour: NextBehaviour }
   | { kind: 'mark_done'; label: string }
+  /** A goal handoff with a package: opens document mode with one tab per item. */
+  | { kind: 'package'; label: string; activeKey: string | null }
+  /** A goal handoff with nothing to open: the user did their part. */
+  | { kind: 'done_continue'; label: string }
   | { kind: 'start'; label: string }
   | { kind: 'none' };
 
@@ -139,7 +151,8 @@ const OPENS_RESULT = new Set<NextBehaviour['kind']>([
  * restart or a continue.
  */
 export function runBlockAction(
-  run: Pick<ThreadRunView, 'state' | 'outcome' | 'next' | 'question'>,
+  run: Pick<ThreadRunView, 'state' | 'outcome' | 'next' | 'question'> &
+    Partial<Pick<ThreadRunView, 'goal' | 'messages' | 'checklist' | 'items'>>,
   options: { startable?: boolean } = {},
 ): RunBlockAction {
   switch (run.state) {
@@ -150,6 +163,7 @@ export function runBlockAction(
       const next = run.next as StepRunNext | null;
       if (run.outcome === 'needs_answer') return { kind: 'none' };
       if (run.outcome === 'stopped') return { kind: 'resume', label: RUN_STATE_COPY.continueButton };
+      if (isGoalRun(goalFields(run))) return goalHandoffAction(run, next);
       if (!next) return { kind: 'resume', label: RUN_STATE_COPY.continueButton };
       if (next.kind === 'sign_in' || next.kind === 'finish_on_page')
         return { kind: 'resume', label: next.doneLabel?.trim() || RUN_STATE_COPY.continueButton };
@@ -175,16 +189,74 @@ export function runBlockAction(
   }
 }
 
+function goalFields(
+  run: Partial<Pick<ThreadRunView, 'goal' | 'messages' | 'checklist' | 'items' | 'stepKey'>>,
+): Pick<ThreadRunView, 'goal' | 'messages' | 'checklist' | 'items'> & { stepKey: string | null } {
+  return {
+    stepKey: run.stepKey ?? null,
+    goal: run.goal ?? false,
+    messages: run.messages ?? [],
+    checklist: run.checklist ?? [],
+    items: run.items ?? [],
+  };
+}
+
+/**
+ * The primary button of a goal handoff (lead review, 2026-10-15). A package
+ * opens document mode with its tabs. A page handoff keeps its done label.
+ * With nothing to open and no `next`, the run continues. Otherwise the user
+ * did their part: "Done, continue".
+ */
+function goalHandoffAction(
+  run: Pick<ThreadRunView, 'outcome'> & Partial<Pick<ThreadRunView, 'items'>>,
+  next: StepRunNext | null,
+): RunBlockAction {
+  const items = run.items ?? [];
+  const tabs = packageTabs({ items });
+  if (!next && !items.length) return { kind: 'resume', label: RUN_STATE_COPY.continueButton };
+  if (next?.kind === 'sign_in' || next?.kind === 'finish_on_page')
+    return { kind: 'resume', label: next.doneLabel?.trim() || RUN_STATE_COPY.continueButton };
+  if (next?.kind === 'continue') return { kind: 'resume', label: RUN_STATE_COPY.continueButton };
+  if (next?.kind === 'allow_secure') return { kind: 'none' };
+  if (tabs.length) {
+    const label = next ? (primaryLabel(next) ?? RUN_STATE_COPY.openPackage) : RUN_STATE_COPY.openPackage;
+    return { kind: 'package', label, activeKey: activeTabKey(tabs, next) };
+  }
+  const behaviour = next ? nextBehaviour(next) : null;
+  const label = next ? primaryLabel(next) : null;
+  if (behaviour && label && OPENS_RESULT.has(behaviour.kind)) return { kind: 'next', label, behaviour };
+  return { kind: 'done_continue', label: RUN_STATE_COPY.doneContinue };
+}
+
 /**
  * "Mark step done" as a second button: a result that waits for the user's
- * check, where the primary button opens the result.
+ * check, where the primary button opens the result. Step runs only; a goal
+ * run offers "Done, continue" instead (runBlockDoneContinue).
  */
 export function runBlockMarksDone(
-  run: Pick<ThreadRunView, 'state' | 'outcome' | 'next' | 'question'>,
+  run: Pick<ThreadRunView, 'state' | 'outcome' | 'next' | 'question'> &
+    Partial<Pick<ThreadRunView, 'goal' | 'messages' | 'checklist' | 'items'>>,
   options: { startable?: boolean } = {},
 ): boolean {
   if (run.state !== 'handed_off' || run.outcome !== 'ready_for_you') return false;
+  if (isGoalRun(goalFields(run))) return false;
   return runBlockAction(run, options).kind === 'next';
+}
+
+/**
+ * "Done, continue" as a second button on a goal handoff whose primary button
+ * opens something (the package, a page, a draft). It tells Albatross the user
+ * did their part.
+ */
+export function runBlockDoneContinue(
+  run: Pick<ThreadRunView, 'state' | 'outcome' | 'next' | 'question'> &
+    Partial<Pick<ThreadRunView, 'goal' | 'messages' | 'checklist' | 'items'>>,
+): boolean {
+  if (run.state !== 'handed_off') return false;
+  if (run.outcome !== 'ready_for_you' && run.outcome !== 'your_turn') return false;
+  if (!isGoalRun(goalFields(run))) return false;
+  const action = runBlockAction(run);
+  return action.kind === 'package' || action.kind === 'next';
 }
 
 /**
@@ -225,6 +297,8 @@ export interface ThreadStateInput {
   /** The newest open handoff of the current step, if any. */
   handoff: ThreadRunView | null;
   pendingQuestion: boolean;
+  /** A Work on goal runs: no step plan, the state word alone in the header. */
+  goal?: boolean;
 }
 
 export function threadState(input: ThreadStateInput): ThreadState {
@@ -258,6 +332,7 @@ export function planLine(input: ThreadStateInput): { text: string; state: Thread
   if (state === 'planning') return { text: PLAN_LINE_COPY.planning, state };
   if (state === 'done') return { text: PLAN_LINE_COPY.done, state };
   if (state === 'released') return { text: PLAN_LINE_COPY.released, state };
+  if (input.goal) return { text: goalPlanWord(input, state), state };
   if (input.totalSteps === 0) return { text: PLAN_LINE_COPY.yourMove, state };
   if (input.currentIndex === null) return { text: `${input.totalSteps} of ${input.totalSteps} done`, state };
   const step = `Step ${input.currentIndex + 1} of ${input.totalSteps}`;
@@ -277,6 +352,24 @@ export function planLine(input: ThreadStateInput): { text: string; state: Thread
       word = PLAN_LINE_COPY.yourMove;
   }
   return { text: `${step} · ${word}`, state };
+}
+
+/** The header word of a goal Work: the state alone, no step count. */
+function goalPlanWord(input: ThreadStateInput, state: ThreadState): string {
+  switch (state) {
+    case 'needs_answer':
+      return PLAN_LINE_COPY.needsAnswer;
+    case 'running':
+      return input.activeRun?.state === 'queued' ? RUN_STATE_COPY.queued : PLAN_LINE_COPY.working;
+    case 'waiting': {
+      const handoff = input.handoff;
+      if (handoff?.outcome === 'ready_for_you') return PLAN_LINE_COPY.readyForYou;
+      if (handoff?.outcome === 'stopped') return RUN_STATE_COPY.stopped;
+      return PLAN_LINE_COPY.yourTurn;
+    }
+    default:
+      return PLAN_LINE_COPY.yourMove;
+  }
 }
 
 /** The composer placeholder by state (decision 11). */
@@ -438,16 +531,18 @@ export function threadStateInput(
   runs: readonly ThreadRunView[],
 ): ThreadStateInput {
   const steps = detail?.execution.guideSteps ?? [];
+  const goal = isGoalWork(detail as { goalRuns?: boolean | null } | null, runs);
   const currentIndex = steps.findIndex((step) => !step.done);
   const current = currentIndex === -1 ? null : steps[currentIndex];
   const activeRun = runs.find((run) => run.state === 'queued' || run.state === 'running') ?? null;
   // An answered question is a closed handoff: the run continued as a new run.
+  // A goal run belongs to the whole Work, not to a step.
   const handoff =
     [...runs].reverse().find(
       (run) =>
         run.state === 'handed_off' &&
         // A goal run's handoff waits on the whole goal, not on one step.
-        (!current || run.stepKey === current.key || isGoalRun(run)) &&
+        (!current || goal || run.stepKey === current.key || isGoalRun(goalFields(run))) &&
         !runQuestionAnswered(run),
     ) ?? null;
   const pendingQuestion =
@@ -462,6 +557,7 @@ export function threadStateInput(
     activeRun,
     handoff,
     pendingQuestion,
+    goal,
   };
 }
 

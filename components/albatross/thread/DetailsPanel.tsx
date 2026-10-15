@@ -11,10 +11,23 @@ import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import type { RunSource } from '@/lib/albatross/goal-run-contract';
+import {
+  checklistCount,
+  GOAL_RUN_COPY,
+  type PackageBehaviour,
+  packageRows,
+  runSources,
+  type SourceBehaviour,
+  sourceChip,
+} from '@/lib/albatross/goal-run-view';
+import type { ThreadRunView } from '@/lib/albatross/thread-contract';
 import type { PlanStepRow } from '@/lib/albatross/thread-view';
 import { postJson, type WorkDetailData } from '@/lib/albatross/work-view';
 import { cn } from '@/lib/utils';
+import { PackageRows } from './PackageRows';
 import { PlanSteps } from './PlanIntro';
+import { ChecklistRows } from './RunChecklist';
 
 export const DETAILS_COPY = {
   title: 'Details',
@@ -44,6 +57,17 @@ export interface DetailsArtifact {
   operationId?: string;
 }
 
+/** The goal-run sections of the panel: the newest run's checklist, package, and sources. */
+export interface DetailsGoal {
+  /** The newest goal run, for the checklist and the sources. */
+  run: ThreadRunView | null;
+  /** The newest handoff with a package, for the package rows. */
+  packageRun: ThreadRunView | null;
+  sentDrafts?: Readonly<Record<string, string>>;
+  onOpenItem?: (run: ThreadRunView, behaviour: PackageBehaviour) => void;
+  onOpenSource?: (behaviour: SourceBehaviour, source: RunSource, run: ThreadRunView) => void;
+}
+
 export function DetailsPanel({
   detail,
   steps,
@@ -57,6 +81,7 @@ export function DetailsPanel({
   onUndo,
   onError,
   onClose,
+  goal,
   className,
 }: {
   detail: WorkDetailData;
@@ -73,12 +98,17 @@ export function DetailsPanel({
   onError: (message: string) => void;
   /** The sheet on a narrow screen offers Close. */
   onClose?: () => void;
+  /** A goal Work: Checklist, Package, and Sources replace the Plan section. */
+  goal?: DetailsGoal | null;
   className?: string;
 }) {
   const { plan } = detail;
   const document = plan?.artifactSource === 'document-v2' ? plan.document : undefined;
   const legacyPlan = Boolean(plan && !document && plan.artifactHtml);
   const artifacts = detail.application?.artifacts ?? [];
+  const checklist = goal ? (goal.run?.checklist ?? detail.checklist ?? []) : [];
+  const sources = goal?.run ? runSources(goal.run) : [];
+  const rows = goal?.packageRun ? packageRows(goal.packageRun, { sent: goal.sentDrafts }) : [];
   return (
     <aside
       data-slot="details-panel"
@@ -97,19 +127,61 @@ export function DetailsPanel({
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8">
         {shapeBody ? <section className="py-4">{shapeBody}</section> : null}
 
-        <Section title={DETAILS_COPY.plan}>
-          {steps.length ? (
-            <PlanSteps
-              steps={steps}
-              activeStepKey={activeStepKey}
-              busyStepKey={busyStepKey}
-              onHandle={onHandle}
-              dense
-            />
-          ) : (
-            <p className="text-[12.5px] text-[var(--color-text-muted)]">{DETAILS_COPY.planNotReady}</p>
-          )}
-        </Section>
+        {goal ? (
+          <>
+            <Section
+              title={GOAL_RUN_COPY.detailsChecklist}
+              count={checklist.length ? checklistCount(checklist).text : undefined}
+            >
+              {checklist.length ? (
+                <ChecklistRows items={checklist} />
+              ) : (
+                <p className="text-[12.5px] text-[var(--color-text-muted)]">{GOAL_RUN_COPY.noChecklist}</p>
+              )}
+            </Section>
+            <Section
+              title={GOAL_RUN_COPY.detailsPackage}
+              count={rows.length ? String(rows.length) : undefined}
+            >
+              {rows.length && goal.packageRun ? (
+                <PackageRows
+                  rows={rows}
+                  onOpen={
+                    goal.onOpenItem
+                      ? (behaviour) => goal.onOpenItem?.(goal.packageRun!, behaviour)
+                      : undefined
+                  }
+                />
+              ) : (
+                <p className="text-[12.5px] text-[var(--color-text-muted)]">{GOAL_RUN_COPY.noPackage}</p>
+              )}
+            </Section>
+            <Section
+              title={GOAL_RUN_COPY.detailsSources}
+              count={sources.length ? String(sources.length) : undefined}
+            >
+              {sources.length && goal.run ? (
+                <SourceList run={goal.run} sources={sources} onOpen={goal.onOpenSource} />
+              ) : (
+                <p className="text-[12.5px] text-[var(--color-text-muted)]">{GOAL_RUN_COPY.noSources}</p>
+              )}
+            </Section>
+          </>
+        ) : (
+          <Section title={DETAILS_COPY.plan}>
+            {steps.length ? (
+              <PlanSteps
+                steps={steps}
+                activeStepKey={activeStepKey}
+                busyStepKey={busyStepKey}
+                onHandle={onHandle}
+                dense
+              />
+            ) : (
+              <p className="text-[12.5px] text-[var(--color-text-muted)]">{DETAILS_COPY.planNotReady}</p>
+            )}
+          </Section>
+        )}
 
         <Section title={DETAILS_COPY.files} blurb={artifacts.length ? DETAILS_COPY.filesBlurb : undefined}>
           {artifacts.length ? (
@@ -188,7 +260,7 @@ export function DetailsPanel({
           </Section>
         ) : null}
 
-        {document ? (
+        {document && !goal ? (
           <Section title={DETAILS_COPY.readPlan} collapsible>
             <BriefCanvas value={document} embedded />
             <p className="mt-4 text-[11.5px] text-[var(--color-text-faint)]">{DETAILS_COPY.planGuess}</p>
@@ -203,14 +275,66 @@ export function DetailsPanel({
   );
 }
 
+/** Every source of the newest goal run, once, numbered: the title and its locator. */
+function SourceList({
+  run,
+  sources,
+  onOpen,
+}: {
+  run: ThreadRunView;
+  sources: readonly RunSource[];
+  onOpen?: DetailsGoal['onOpenSource'];
+}) {
+  return (
+    <ol data-slot="details-sources" className="flex flex-col">
+      {sources.map((source, index) => {
+        const chip = sourceChip(source);
+        const body = (
+          <>
+            <span className="w-[18px] shrink-0 pt-[2px] text-[11px] tabular-nums text-[var(--color-text-faint)]">
+              {index + 1}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[12.5px]">{source.title}</span>
+              {chip.locator ? (
+                <span className="block text-[11px] text-[var(--color-text-faint)]">{chip.locator}</span>
+              ) : null}
+            </span>
+          </>
+        );
+        const behaviour = chip.behaviour;
+        return (
+          <li key={chip.key} className="border-t border-[var(--color-list-divider)] first:border-t-0">
+            {behaviour && onOpen ? (
+              <button
+                type="button"
+                title={chip.title}
+                onClick={() => onOpen(behaviour, source, run)}
+                className="flex w-full items-start gap-2 py-1.5 text-left hover:text-[var(--color-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              >
+                {body}
+              </button>
+            ) : (
+              <div className="flex items-start gap-2 py-1.5">{body}</div>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function Section({
   title,
   blurb,
+  count,
   collapsible = false,
   children,
 }: {
   title?: string;
   blurb?: string;
+  /** A quiet count after the title: "6 of 7", "4". */
+  count?: string;
   collapsible?: boolean;
   children: ReactNode;
 }) {
@@ -235,7 +359,16 @@ function Section({
   }
   return (
     <section className="border-t border-[var(--color-border)] py-3.5 first:border-t-0">
-      {title ? <h2 className="text-[13px] font-semibold">{title}</h2> : null}
+      {title ? (
+        <h2 className="flex items-baseline gap-2 text-[13px] font-semibold">
+          <span>{title}</span>
+          {count ? (
+            <span className="text-[11.5px] font-normal tabular-nums text-[var(--color-text-faint)]">
+              {count}
+            </span>
+          ) : null}
+        </h2>
+      ) : null}
       {blurb ? <p className="mt-0.5 text-[11.5px] text-[var(--color-text-faint)]">{blurb}</p> : null}
       <div className={cn(title ? 'mt-2' : '')}>{children}</div>
     </section>

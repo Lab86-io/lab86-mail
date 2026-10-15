@@ -90,6 +90,31 @@ export function openDocumentPath(
 }
 
 /**
+ * A saved file opens in Files from the link the server wrote
+ * (`/?view=files&file=<id>`). Another origin, or a link without a file id,
+ * never reaches pushState.
+ */
+export function openSavedFilePath(
+  deps: Pick<StepRunNavigatorDeps, 'getState' | 'pushPath' | 'dispatch'>,
+  url: string | null | undefined,
+): boolean {
+  const raw = url?.trim();
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw, 'https://app.invalid');
+    if (parsed.origin !== 'https://app.invalid' || parsed.pathname !== '/') return false;
+    const fileId = parsed.searchParams.get('file')?.trim();
+    if (!fileId) return false;
+    deps.pushPath(`/?view=files&file=${encodeURIComponent(fileId)}`);
+    deps.getState().setPrimaryView('files');
+    deps.dispatch('lab86-mail:files-navigate');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Runs one behaviour. Returns false when nothing could open, so the caller
  * can say so instead of staying silent.
  */
@@ -124,6 +149,8 @@ export async function performNextBehaviour(
       deps.getState().setPendingOpenCardId(behaviour.id);
       deps.getState().setPrimaryView('tasks');
       return true;
+    case 'open_file':
+      return openSavedFilePath(deps, behaviour.url);
     case 'show_browser':
       surface.showBrowser?.();
       return Boolean(surface.showBrowser);

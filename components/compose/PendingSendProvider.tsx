@@ -49,6 +49,8 @@ export type DurablePendingSend = Omit<PendingReceipt, 'status'> & {
 type PendingSendContextValue = {
   registerPendingSend: (receipt: PendingReceipt, draft: DurableComposeDraft) => Promise<boolean>;
   cancelPendingSend: (id: string) => Promise<boolean>;
+  /** Drops a record the server never saw (a refused send): no undo call, no toast. */
+  dropPendingSend: (id: string) => void;
 };
 
 const PendingSendContext = createContext<PendingSendContextValue | null>(null);
@@ -268,9 +270,15 @@ export function PendingSendProvider({ children }: { children: ReactNode }) {
     },
     [undo, publish],
   );
+  const dropPendingSend = useCallback(
+    (id: string) => {
+      if (recordsRef.current.has(id)) remove(id);
+    },
+    [remove],
+  );
   const value = useMemo(
-    () => ({ registerPendingSend, cancelPendingSend }),
-    [registerPendingSend, cancelPendingSend],
+    () => ({ registerPendingSend, cancelPendingSend, dropPendingSend }),
+    [registerPendingSend, cancelPendingSend, dropPendingSend],
   );
   return (
     <PendingSendContext.Provider value={value}>

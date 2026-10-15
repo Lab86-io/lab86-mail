@@ -6,6 +6,7 @@
 
 import type { StepRunView } from '../../convex/albatrossStepRuns';
 import type { HandoffItem } from './goal-run-contract';
+import { packageLine } from './goal-run-view';
 
 export type { StepRunView };
 export type StepRunNext = NonNullable<StepRunView['next']>;
@@ -417,25 +418,31 @@ export function readyForYouRows(items: readonly StepRunHandoffItem[]): ReadyForY
       continue;
     }
     if (!isOpenHandoff(run)) continue;
-    // A goal handoff whose next action opens nothing here opens its first package item.
+    const items = run.items ?? [];
+    // A package (docs/albatross-goal-runs.md G3) opens the thread in document
+    // mode, where every item has a tab. A lone item opens in place when the
+    // next action opens nothing here.
+    const packageHandoff = items.length > 1;
     const next = nextBehaviour(run.next);
-    const fromItems =
-      next && OPENS_IN_PLACE.has(next.kind)
-        ? null
-        : ((run.items ?? []).map(itemBehaviour).find((found) => found && OPENS_IN_PLACE.has(found.kind)) ??
-          null);
-    const behaviour = fromItems ?? next;
-    const label = primaryLabel(run.next) ?? 'Open';
+    const lone =
+      !packageHandoff && items.length === 1 && !(next && OPENS_IN_PLACE.has(next.kind))
+        ? itemBehaviour(items[0])
+        : null;
+    const behaviour = lone ?? next;
+    const label = primaryLabel(run.next) ?? (packageHandoff ? 'Open the package' : 'Open');
     rows.push({
       runId: run.id,
       workId: item.workId,
       workTitle: item.workTitle,
       stepTitle: run.stepTitle,
-      line: handoffLine(run),
+      line: packageHandoff ? packageLine(items) : handoffLine(run),
       working: false,
       action: {
         label,
-        behaviour: behaviour && OPENS_IN_PLACE.has(behaviour.kind) ? behaviour : { kind: 'open_work' },
+        behaviour:
+          !packageHandoff && behaviour && OPENS_IN_PLACE.has(behaviour.kind)
+            ? behaviour
+            : { kind: 'open_work' },
       },
     });
   }
@@ -458,58 +465,48 @@ export interface DocumentWaitingRow {
   blanks: string[];
   /** The same row and button as the Brief's list, so both open the document the same way. */
   row: ReadyForYouRow;
+  /** The package item this row is for, so the thread opens on its tab. Null for a step handoff. */
+  itemId?: string | null;
 }
 
-const DOCUMENT_ITEM_KINDS = new Set<HandoffItem['kind']>(['document', 'sheet', 'deck']);
+const DOCUMENT_ITEM_KINDS = new Set<HandoffItem['kind']>(['document', 'sheet', 'deck', 'file']);
 
 /**
- * The open handoffs whose next action opens a document, and every document
- * in the package of a goal handoff: the documents that wait for the user.
+ * The open handoffs whose next action opens a document: the documents that
+ * wait for the user. A goal package lists one row for each document, sheet,
+ * deck, or file item that still needs the user, each with its own blanks; the
+ * row opens the thread on that item's tab.
  */
 export function documentsWaitingRows(items: readonly StepRunHandoffItem[]): DocumentWaitingRow[] {
   const rows: DocumentWaitingRow[] = [];
   for (const item of items) {
     const { run } = item;
+    if (!isOpenHandoff(run) || !run.next) continue;
     const packaged = (run.items ?? []).filter(
       (entry) => DOCUMENT_ITEM_KINDS.has(entry.kind) && entry.state !== 'ready',
     );
-    if (
-      packaged.length &&
-      isOpenHandoff(run) &&
-      (run.outcome === 'ready_for_you' || run.outcome === 'your_turn')
-    ) {
+    if (packaged.length && (run.outcome === 'ready_for_you' || run.outcome === 'your_turn')) {
+      const row = readyForYouRows([item])[0];
+      if (!row) continue;
       packaged.forEach((entry, index) => {
-        const behaviour = itemBehaviour(entry);
-        if (!behaviour) return;
-        const isNext =
-          run.next?.target?.kind === 'document' &&
-          ((entry.id && run.next.target.id === entry.id) || (entry.url && run.next.target.url === entry.url));
         rows.push({
           key: `${run.id}:${entry.id || entry.url || index}`,
           runId: run.id,
           workId: item.workId,
           workTitle: item.workTitle,
           documentTitle: entry.title,
-          detail: entry.note?.trim() || run.next?.detail || handoffHeadline(run),
+          detail:
+            entry.note?.trim() ||
+            (entry.state === 'check' ? 'Check it.' : run.next?.detail || handoffHeadline(run)),
           blanks: (entry.blanks || []).filter(Boolean),
-          row: {
-            runId: run.id,
-            workId: item.workId,
-            workTitle: item.workTitle,
-            stepTitle: run.stepTitle,
-            line: handoffLine(run),
-            working: false,
-            action: {
-              label: (isNext ? primaryLabel(run.next) : null) ?? 'Open the document',
-              behaviour,
-            },
-          },
+          row: { ...row, action: { label: row.action?.label ?? 'Open', behaviour: { kind: 'open_work' } } },
+          itemId: entry.id ?? null,
         });
       });
       continue;
     }
     const target = run.next?.target;
-    if (!isOpenHandoff(run) || !run.next || target?.kind !== 'document') continue;
+    if (target?.kind !== 'document') continue;
     const row = readyForYouRows([item])[0];
     if (!row) continue;
     const documents = run.artifacts.filter((artifact) => artifact.kind === 'document');
