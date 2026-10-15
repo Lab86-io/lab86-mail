@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PathnameContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -22,7 +22,11 @@ function setup() {
   const persistent = store();
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
-    value: Object.assign(new EventTarget(), { sessionStorage: session, localStorage: persistent }),
+    value: Object.assign(new EventTarget(), {
+      sessionStorage: session,
+      localStorage: persistent,
+      document: { visibilityState: 'visible' },
+    }),
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   client.setQueryData(['product-release'], CURRENT_PRODUCT_RELEASE);
@@ -46,6 +50,29 @@ afterEach(async () => {
 });
 
 describe('the global update flow', () => {
+  test('window focus rechecks even a fresh manifest, only while visible, and stops on unmount', async () => {
+    setup();
+    const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(CURRENT_PRODUCT_RELEASE));
+    try {
+      await act(async () => {
+        renderer = create(view('/updates'));
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      Object.defineProperty(window.document, 'visibilityState', { value: 'hidden', configurable: true });
+      await act(async () => window.dispatchEvent(new Event('focus')));
+      expect(fetchSpy).not.toHaveBeenCalled();
+      Object.defineProperty(window.document, 'visibilityState', { value: 'visible', configurable: true });
+      await act(async () => window.dispatchEvent(new Event('focus')));
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      await act(async () => renderer!.unmount());
+      renderer = undefined;
+      await act(async () => window.dispatchEvent(new Event('focus')));
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   test('a first app visit quietly establishes its baseline', async () => {
     const stores = setup();
     await act(async () => {

@@ -55,6 +55,17 @@ function ProductUpdateFlow() {
     retry: false,
   });
   const available = query.data && query.data.id !== CURRENT_PRODUCT_RELEASE.id ? query.data : null;
+  const refetchRelease = query.refetch;
+
+  useEffect(() => {
+    const check = () => {
+      if (window.document.visibilityState === 'visible') {
+        void refetchRelease({ cancelRefetch: false });
+      }
+    };
+    window.addEventListener('focus', check);
+    return () => window.removeEventListener('focus', check);
+  }, [refetchRelease]);
 
   useEffect(() => {
     const previous = prepareReleaseArrival(CURRENT_PRODUCT_RELEASE, releaseHistoryStores());
