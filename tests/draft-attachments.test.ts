@@ -351,6 +351,13 @@ describe('resolving draft attachments at send time', () => {
       fetchSpy.mockRestore();
     }
     await expect(exportOfficePdf('u1', 'office_1')).rejects.toThrow('PDF export is not ready.');
+    // The default send-grant hooks reach the store; with no Convex here, the file is not found.
+    await expect(original.checkSend('u1', 'upload_1', ['ap@example.com'])).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    await expect(
+      original.consumeSendGrants('u1', 'outbox:00000000-0000-4000-8000-000000000001'),
+    ).rejects.toThrow();
   });
 });
 
