@@ -2069,10 +2069,15 @@ struct WorkDetail: Hashable, Codable, Sendable {
     // Shape-owned data for the detail body. Entries are newest first.
     let metricEntries: [WorkMetricEntry]
     let metricSummary: WorkMetricSummary?
+    // Goal runs (docs/albatross-goal-runs.md): the Work has no step plan, and
+    // the newest run's checklist. Both optional so cached details and older
+    // servers keep decoding.
+    var goalRuns: Bool?
+    var checklist: [ChecklistItem]?
 
     private enum CodingKeys: String, CodingKey {
         case work, plan, project, questions, application, execution, contract, evidence
-        case metricEntries, metricSummary
+        case metricEntries, metricSummary, goalRuns, checklist
     }
 
     private init(
@@ -2085,7 +2090,9 @@ struct WorkDetail: Hashable, Codable, Sendable {
         contract: Contract?,
         evidence: [Evidence],
         metricEntries: [WorkMetricEntry],
-        metricSummary: WorkMetricSummary?
+        metricSummary: WorkMetricSummary?,
+        goalRuns: Bool? = nil,
+        checklist: [ChecklistItem]? = nil
     ) {
         self.work = work
         self.plan = plan
@@ -2097,7 +2104,12 @@ struct WorkDetail: Hashable, Codable, Sendable {
         self.evidence = evidence
         self.metricEntries = metricEntries
         self.metricSummary = metricSummary
+        self.goalRuns = goalRuns
+        self.checklist = checklist
     }
+
+    /// The server says the Work works as one goal, with no step plan.
+    var isGoalWork: Bool { goalRuns ?? false }
 
     private func copy(
         work: Work? = nil,
@@ -2115,7 +2127,9 @@ struct WorkDetail: Hashable, Codable, Sendable {
             contract: contract,
             evidence: evidence,
             metricEntries: metricEntries ?? self.metricEntries,
-            metricSummary: metricSummary ?? self.metricSummary
+            metricSummary: metricSummary ?? self.metricSummary,
+            goalRuns: goalRuns,
+            checklist: checklist
         )
     }
 
@@ -2256,6 +2270,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
             .compactMap(WorkMetricEntry.init)
             .sorted { $0.at > $1.at }
         metricSummary = WorkMetricSummary(json: json["metricSummary"])
+        goalRuns = json["goalRuns"]?.boolValue
+        checklist = json["checklist"]?.arrayValue.map { $0.compactMap(ChecklistItem.init(json:)) }
 
         if let planJSON = json["plan"], planJSON.objectValue != nil,
            let planID = planJSON["_id"]?.stringValue ?? planJSON["id"]?.stringValue {
