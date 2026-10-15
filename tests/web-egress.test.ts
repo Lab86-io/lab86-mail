@@ -70,6 +70,27 @@ const REVIEWED_SITES: Record<string, Review> = {
     kind: 'browserbase',
     why: 'Runs inside page.evaluate, in the Browserbase browser, not on our server.',
   },
+  // --- Goal runs: saved files, draft attachments, and PDF export ---
+  'lib/documents/office-pdf.ts :: endpoint': {
+    kind: 'first_party',
+    why: 'The document server convert-to endpoint (OFFICE_CONVERT_URL or OFFICE_DOCUMENT_SERVER_URL); bytes go to our own Collabora.',
+  },
+  'lib/documents/office-pdf.ts :: file.version.url': {
+    kind: 'convex',
+    why: 'A Convex storage URL for the saved revision of the user Word file.',
+  },
+  'lib/files/saved-files.ts :: row.url': {
+    kind: 'convex',
+    why: 'A Convex storage URL from the agentUploads row (ctx.storage.getUrl).',
+  },
+  'lib/files/saved-file-route.ts :: row.url': {
+    kind: 'convex',
+    why: 'A Convex storage URL from the agentUploads row; the route streams the user own saved file.',
+  },
+  'lib/files/draft-attachments.ts :: url': {
+    kind: 'convex',
+    why: 'A Convex storage URL of an office file revision; draft attachments never fetch a URL from a request.',
+  },
   // --- Own origin (browser code that calls our /api routes) ---
   'lib/api-client.ts :: url': { kind: 'own', why: 'Browser code; the caller passes /api/narrative.' },
   'lib/files/library-client.ts :: url': {
