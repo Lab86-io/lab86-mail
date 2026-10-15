@@ -27,6 +27,7 @@ function files(dir: string, keep: (file: string) => boolean, out: string[] = [])
 // snake_case words in the prompt that are not tool names.
 const PROMPT_WORDS_THAT_ARE_NOT_TOOLS = new Set([
   ...TOOL_GROUP_NAMES,
+  'fill_blank',
   'google_meet',
   'needs_input',
   'needs_review',

@@ -4,12 +4,20 @@ import { exportDocument } from './export';
 import { OfficeError, readOfficeResponse, validateOfficeArchive } from './office-security';
 import { createOfficeFile, getOfficeFile, requireOffice, storeOfficeBytes } from './office-service';
 import { getDocument } from './service';
-import { createWordPackage, editWordPackage, readWordPackage, type WordEdit } from './word-package';
+import { type DocumentTemplate, renderTemplate } from './templates';
+import {
+  createWordPackage,
+  editWordPackage,
+  readWordBlanks,
+  readWordPackage,
+  type WordEdit,
+} from './word-package';
 
 const defaults = {
   requireOffice,
   getDocument,
   exportDocument,
+  renderTemplate,
   getOfficeFile,
   createOfficeFile,
   storeOfficeBytes,
@@ -34,12 +42,23 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
   return {
     async create(
       userId: string,
-      input: { title: string; edits?: WordEdit[]; sourceDocumentId?: string; expectedRevision?: number },
+      input: {
+        title: string;
+        edits?: WordEdit[];
+        sourceDocumentId?: string;
+        expectedRevision?: number;
+        template?: DocumentTemplate;
+        data?: unknown;
+      },
     ) {
       deps.requireOffice();
       let title = input.title.trim() || 'Untitled document';
       let bytes: Uint8Array;
-      if (input.sourceDocumentId) {
+      if (input.template) {
+        if (input.sourceDocumentId) throw new OfficeError('Use a template or a source document, not both.');
+        bytes = (await deps.renderTemplate(input.template, input.data ?? {}, { title })).bytes;
+        if (input.edits?.length) bytes = await editWordPackage(bytes, input.edits);
+      } else if (input.sourceDocumentId) {
         const source = await deps.getDocument(userId, input.sourceDocumentId);
         if (!source || source.kind !== 'doc') throw new OfficeError('Source document not found.', 404);
         if (source.currentRevision !== input.expectedRevision)
@@ -49,6 +68,10 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
         if (input.edits?.length) bytes = await editWordPackage(bytes, input.edits);
       } else bytes = await createWordPackage(title, input.edits);
       const sha256 = validateOfficeArchive(bytes, 'docx');
+      // The blanks still empty after any edits, in page order (the package item `blanks`).
+      const blanks = input.template
+        ? (await readWordBlanks(bytes)).filter((blank) => !blank.filled).map((blank) => blank.name)
+        : undefined;
       const storageId = await deps.storeOfficeBytes(userId, bytes, 'docx');
       const file = await deps.createOfficeFile({
         userId,
@@ -64,6 +87,7 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
         title: file.title,
         revision: file.currentRevision,
         openPath: `/?view=files&office=${encodeURIComponent(file.documentId)}`,
+        ...(input.template ? { template: input.template, blanks: blanks ?? [] } : {}),
       };
     },
     async read(userId: string, documentId: string) {
