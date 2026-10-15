@@ -205,7 +205,10 @@ struct WorkThreadView: View {
             .environment(\.workThread, model)
             .toolbar { toolbar(model) }
             .sheet(isPresented: $showsPlan) {
-                if let detail = model.detail {
+                if model.isGoalWork {
+                    // A goal Work keeps a checklist, not a plan (docs/albatross-goal-runs.md, G1).
+                    ChecklistSheet(items: model.checklist)
+                } else if let detail = model.detail {
                     PlanSheet(
                         detail: detail,
                         runs: model.store.runs,
@@ -289,6 +292,7 @@ struct WorkThreadView: View {
                 runs: model.store.runs,
                 busy: model.store.busy || model.isMarkingDone,
                 onHandle: { step in Task { await model.handle(step: step) } },
+                onHandleGoal: { Task { await model.handleGoal() } },
                 onOpenPlan: { showsPlan = true },
                 onOpenDetails: { showsDetails = true }
             )
@@ -312,6 +316,7 @@ struct WorkThreadView: View {
                 continues: continues,
                 ownsWaitingShortcut: model.ownsWaitingShortcut(view),
                 hasContinuation: model.hasContinuation(view),
+                isNewest: model.store.newestRun?.id == view.id,
                 busy: model.store.busy || model.isMarkingDone,
                 pageShown: model.pageRun?.id == view.id,
                 questionState: model.questionState(for: view),
@@ -557,6 +562,21 @@ struct WorkThreadView: View {
         actions.primary = { view, behaviour in Task { await performNext(behaviour, view: view, model: model) } }
         actions.markDone = { view in Task { await model.markStepDone(view) } }
         actions.artifact = { artifact in Task { await openArtifact(artifact, model: model) } }
+        // A package row and a source capsule (docs/albatross-goal-runs.md, G2 to G4).
+        actions.openItem = { view, item in
+            Task {
+                await ThreadItemOpening.open(item, in: view, environment: environment, openURL: openURL) { content, title in
+                    await openContent(content, title: title, model: model)
+                }
+            }
+        }
+        actions.openSource = { source in
+            Task {
+                await ThreadItemOpening.open(source, environment: environment, openURL: openURL) { content, title in
+                    await openContent(content, title: title, model: model)
+                }
+            }
+        }
         actions.showPage = { view in model.pageRun = view }
         actions.hidePage = { view in if model.pageRun?.id == view.id { model.pageRun = nil } }
         actions.answer = { question, answer, _ in Task { await model.answer(question, form: answer) } }
@@ -591,7 +611,7 @@ struct WorkThreadView: View {
             // The document opens inside the thread, not in Files (D5). An id
             // with no link takes the link of the run's own file.
             if let target = DocumentTarget.resolve(url: url, id: id, artifacts: view.run.artifacts) {
-                await openDocument(target, model: model)
+                await openContent(.document(target), title: nil, model: model)
             } else {
                 _ = await StepRunActions.open(behaviour, environment: environment, openURL: openURL)
             }
@@ -601,22 +621,21 @@ struct WorkThreadView: View {
     }
 
     private func openArtifact(_ artifact: StepRunView.Artifact, model: WorkThreadModel) async {
-        if artifact.kind == .document, let target = DocumentTarget.of(url: artifact.url, id: artifact.referenceID) {
-            await openDocument(target, model: model)
-            return
+        await ThreadItemOpening.open(artifact, environment: environment, openURL: openURL) { content, title in
+            await openContent(content, title: title, model: model)
         }
-        _ = await StepRunActions.open(artifact, environment: environment, openURL: openURL)
     }
 
-    /// Document mode (docs/albatross-document-handoff.md, D5). A sheet that
-    /// is up (Details, the plan) closes first, so the cover can present.
-    private func openDocument(_ target: DocumentTarget, model: WorkThreadModel) async {
+    /// Document mode (docs/albatross-document-handoff.md, D5), with the other
+    /// items of the same package (docs/albatross-goal-runs.md, G3). A sheet
+    /// that is up (Details, the plan) closes first, so the cover can present.
+    private func openContent(_ content: DocumentModeItem.Content, title: String?, model: WorkThreadModel) async {
         if showsDetails || showsPlan {
             showsDetails = false
             showsPlan = false
             try? await Task.sleep(for: .milliseconds(400))
         }
-        model.openDocument(target)
+        model.openItem(content, title: title)
     }
 
     private func applyIntent(_ intent: WorkRoute.Intent?) {
@@ -636,7 +655,7 @@ struct WorkThreadView: View {
         guard previous != next else { return }
         let line: String?
         switch next {
-        case .running: line = "Albatross started on \(model.currentStep?.title ?? "the step")."
+        case .running: line = "Albatross started on \(model.currentStep?.title ?? (model.isGoalWork ? "the goal" : "the step"))."
         case .yourTurn: line = "Your turn: \(model.store.newestRun?.run.next?.detail ?? model.currentStep?.title ?? "the step")."
         case .needsAnswer:
             let allowTitle = model.pendingAllow?.run.next?.allow.map(SecureAllowCopy.title)
@@ -654,16 +673,18 @@ struct WorkThreadView: View {
 // MARK: - Document mode
 
 private extension View {
-    /// The document open in the thread, as a full-screen cover on iOS
-    /// (docs/albatross-document-handoff.md, D5). The Mac has its own layout.
+    /// The items open in the thread, as a full-screen cover on iOS
+    /// (docs/albatross-document-handoff.md, D5). The set's identity does
+    /// not change when the selection moves, so the cover stays up. The Mac
+    /// has its own layout.
     func documentMode(_ model: WorkThreadModel?, route: WorkRoute, enabled: Bool) -> some View {
         #if os(iOS)
         fullScreenCover(item: Binding(
-            get: { enabled ? model?.document : nil },
+            get: { enabled ? model?.documentSet : nil },
             set: { if $0 == nil { model?.closeDocument() } }
-        )) { target in
+        )) { set in
             if let model {
-                DocumentModeView(route: route, model: model, target: target)
+                DocumentModeView(route: route, model: model, set: set)
             }
         }
         #else

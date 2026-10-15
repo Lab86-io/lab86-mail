@@ -87,7 +87,7 @@ struct DocumentModeItem: Identifiable, Hashable, Sendable {
 }
 
 /// The items open in document mode and the selected one.
-struct DocumentModeSet: Hashable, Sendable {
+struct DocumentModeSet: Hashable, Sendable, Identifiable {
     /// The handoff the items belong to, when a handoff owns them.
     let runID: String?
     let items: [DocumentModeItem]
@@ -116,6 +116,10 @@ struct DocumentModeSet: Hashable, Sendable {
         guard items.contains(where: { $0.id == id }) else { return }
         selectedID = id
     }
+
+    /// The identity of the set as a whole, for a cover that must not present
+    /// again when the selection moves.
+    var id: String { items.map(\.id).joined(separator: "|") }
 
     /// "Next Item" (+1) and "Previous Item" (-1), with wrap.
     mutating func select(step: Int) {

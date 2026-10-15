@@ -21,6 +21,8 @@ enum MacThreadCommandState {
     static let markRead = "Mark as Read"
     static let stopAndRedirect = "Stop and Redirect…"
     static let closeDocument = "Close Document"
+    static let nextItem = "Next Item"
+    static let previousItem = "Previous Item"
 
     static func pageTitle(mode: MacThreadPaneMode) -> String {
         mode == .page ? hidePage : showPage
@@ -39,6 +41,12 @@ enum MacThreadCommandState {
     /// (docs/albatross-document-handoff.md, D5).
     static func closeDocumentEnabled(threadOpen: Bool, documentOpen: Bool) -> Bool {
         threadOpen && documentOpen
+    }
+
+    /// "Next Item" and "Previous Item" work only while document mode shows
+    /// more than one item (docs/albatross-goal-runs.md, G3).
+    static func itemMoveEnabled(threadOpen: Bool, itemsOpen: Bool) -> Bool {
+        threadOpen && itemsOpen
     }
 
     /// The disclosure item of the Albatrosses section.
@@ -99,6 +107,23 @@ struct MacThreadCommands: Commands {
             .disabled(!MacThreadCommandState.closeDocumentEnabled(
                 threadOpen: environment.navigation.showsWorkThread,
                 documentOpen: requests.threadDocumentOpen
+            ))
+
+            // Plain buttons, not a second inline Picker in this group.
+            Button(MacThreadCommandState.nextItem) {
+                requests.requestItemMove(1)
+            }
+            .disabled(!MacThreadCommandState.itemMoveEnabled(
+                threadOpen: environment.navigation.showsWorkThread,
+                itemsOpen: requests.threadItemsOpen
+            ))
+
+            Button(MacThreadCommandState.previousItem) {
+                requests.requestItemMove(-1)
+            }
+            .disabled(!MacThreadCommandState.itemMoveEnabled(
+                threadOpen: environment.navigation.showsWorkThread,
+                itemsOpen: requests.threadItemsOpen
             ))
 
             Divider()
