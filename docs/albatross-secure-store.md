@@ -87,7 +87,19 @@ Platforms: W (web), I (iOS), M (macOS).
    A Playwright error from a fill is replaced with a fixed message, because it quotes the value.
 5. **Nothing else holds a value.** Tool arguments hold references. Run logs, chat transcripts,
    audit lines, errors, and use-history rows never hold a value.
-6. **Asking for a missing item.** In the chat, `ask_secure_detail({ kind, label?, site?, reason })`
+6. **A PDF form (goal runs, 2026-10-15).** `pdf_form_fill` takes a reference as the whole value
+   of a text field, for an ID number or a date of birth only (a sign-in or a key is refused). The
+   tool checks the item, the saved field, and the format against the item list, without a value.
+   The field stays empty in the saved PDF, and the file keeps `sealedFields: [{ field, ref }]`.
+   The value goes in only in memory (`lib/files/materialize.ts`):
+   - **Send:** each recipient domain must be one of the item's sites. Else the send stops with
+     `409 { code: 'needs_allow', allow: [{ itemId, itemLabel, fieldLabels, sites }] }`, and the
+     user adds the site to the item (that needs the identity check). A send that waits for Undo
+     keeps the reference and fills when it goes. A scheduled send refuses the file.
+   - **Download:** `GET /api/files/saved/[fileId]` needs the identity check (403
+     `verify_identity`, "One more check"). The native apps offer "Open on the web".
+   - Each fill records a use: `sent` (with the recipient site) or `downloaded`.
+7. **Asking for a missing item.** In the chat, `ask_secure_detail({ kind, label?, site?, reason })`
    shows a card that waits (V12, decision 12). It holds no value and saves nothing: the user adds
    the item in the sheet, through the normal route, and the answer is
    `{ saved: true, itemId } | { skipped: true }`. A run hands off with `next.kind === 'sign_in'`

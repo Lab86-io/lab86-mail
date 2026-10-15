@@ -216,6 +216,16 @@ content has no second, app-level encryption.
   another site stops the run (`lib/secure/runner-access.ts cleanPage`,
   `lib/albatross/browser-agent.ts`). Tool arguments, run logs, transcripts, and use history hold
   references and labels, never a value.
+- **Passwords and IDs in a PDF form (2026-10-15).** `pdf_form_fill` takes a reference for an ID
+  number or a date of birth. It checks the reference against the item list, which holds no value,
+  and leaves that field empty in the stored PDF. The file keeps the reference only
+  (`agentUploads.sealedFields`). The Next server fills the value in memory at one of two moments:
+  a mail send to recipient domains that the item is saved for, or a download after a Clerk
+  first-factor check in the last 10 minutes (`lib/files/materialize.ts`,
+  `GET /api/files/saved/[fileId]`). The filled bytes go to Nylas or Gmail, or to the user's
+  browser. They are not stored, not logged, and not given to a model. A send that waits for Undo
+  stores the file reference, not the filled file. A password or an API key never goes into a
+  PDF. Each fill is a line in the item's use history (`sent` or `downloaded`).
 - **Secrets that the user writes in the chat.** A Social Security number, a card number, or an
   API key in a user message, a form answer, or a note to a run is replaced with
   "[removed: looks like …]" before a model or the saved chat gets it (`lib/secure/redact.ts`,
