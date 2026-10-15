@@ -314,6 +314,12 @@ export function houseStyles() {
         run: { font: SANS, size: SIZE.footer, color: MUTED },
       },
       {
+        id: 'Heading',
+        name: 'Heading',
+        basedOn: 'Normal',
+        run: { font: SERIF, size: SIZE.heading, color: INK },
+      },
+      {
         id: 'Heading1',
         name: 'Heading 1',
         basedOn: 'Normal',
