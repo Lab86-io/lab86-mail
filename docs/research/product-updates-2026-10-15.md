@@ -51,7 +51,7 @@ changes. Jakob confirmed that batches with **more than three changes** should
 start with an expandable summary; one to three changes stay visible.
 
 Inspected the existing Albatross `Rail`, Settings, NotificationCenter, app shell,
-theme tokens, version module, and release workflow. A quiet entry beside Settings
+theme tokens, version module, and release workflow. A quiet entry in the lower sidebar
 fits the current navigation density. A dedicated narrow feed gives previews room
 without mixing product announcements into notifications about the user’s work.
 Use the existing forest accent, semantic surface colors, display font, and compact
@@ -129,7 +129,7 @@ and the unavailable research sources.
 - The interactive static preview is published on the Mac mini at
   [files.lab86.io](https://files.lab86.io/albatross-updates-2026-10-15/index.html).
   HTTPS returns 200; Chromium verified its expansion and appearance controls.
-  The preview has no app runtime or data connections. This work is not deployed.
+  The preview has no app runtime or data connections.
 - The visual follow-up adds a screenshot format with required alt text and
   dimensions, checks asset existence, and explicitly opts HTML demos into pointer
   and keyboard interaction while keeping scripts disabled. The new entry’s three
@@ -148,3 +148,12 @@ and the unavailable research sources.
   line coverage. The corrected standalone artifact uses the actual rendered
   summary component and is published at
   [the summary with its own demo](https://files.lab86.io/albatross-summary-demo-2026-10-15/index.html).
+
+## Integration with current main
+
+The original checkout was 963 commits behind current main. Applied this feature
+to `953b33b9` (v0.16.38) in an isolated checkout without production credentials.
+Preserved the newer Settings footer and placed the update controls with Activity
+in the lower sidebar. The validation above records the original implementation;
+the PR also runs current-main CI, including the separate test typecheck and
+production CSP/browser verification.

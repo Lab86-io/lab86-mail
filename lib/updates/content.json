@@ -20,7 +20,7 @@
         "id": "keyboard-demos",
         "kind": "improved",
         "title": "Explore with your keyboard",
-        "description": "Interactive demonstrations accept keyboard focus. Use the arrow keys to switch the example between its summary and full details."
+        "description": "Interactive demonstrations accept keyboard focus. Use Tab and Enter to explore the example and open its full details."
       }
     ],
     "preview": {
@@ -47,7 +47,7 @@
         "id": "update-history",
         "kind": "new",
         "title": "Updates have a home",
-        "description": "Open What’s new beside Settings to find a dated history of changes to Albatross."
+        "description": "Open What’s new in the sidebar to find a dated history of changes to Albatross."
       },
       {
         "id": "batch-summaries",
