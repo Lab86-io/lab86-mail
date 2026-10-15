@@ -190,6 +190,7 @@ struct GoalRunModelsTests {
         #expect(SavedFileLink.fileID(in: "https://other.example/?view=files&file=file_1") == nil)
         #expect(SavedFileLink.fileID(in: "") == nil)
         #expect(SavedFileLink.bytesPath(fileID: "file_1") == "/api/files/saved/file_1")
+        #expect(SavedFileLink.previewPath(fileID: "file_1") == "/api/files/saved/file_1?preview=1")
         #expect(HandoffItem(kind: .file, referenceID: "file_2", title: "W-9").savedFileID == "file_2")
         #expect(HandoffItem(kind: .file, referenceID: "file_2", url: "/?view=files&file=file_3", title: "W-9").savedFileID == "file_3")
     }

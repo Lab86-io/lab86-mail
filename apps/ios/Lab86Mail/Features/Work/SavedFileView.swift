@@ -42,7 +42,7 @@ final class SavedFileLoader {
         self.fileID = fileID
         state = .inProgress
         do {
-            let file = try await backend.download(path: DraftAttachmentClient.bytesPath(fileID: fileID))
+            let file = try await backend.download(path: SavedFileLink.previewPath(fileID: fileID))
             guard !Task.isCancelled, self.fileID == fileID else { return }
             state = .loaded(file.url, contentType: file.contentType)
         } catch BackendError.server(let status, _) where status == 403 {

@@ -17,10 +17,10 @@ struct SavedFileLoaderTests {
             return
         }
         #expect(FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
-        #expect(server.requests.contains("/api/files/saved/file_w9"))
+        #expect(server.requests.contains("/api/files/saved/file_w9?preview=1"))
         // A second load of the same file does not ask again.
         await loader.load(fileID: "file_w9", backend: server.backend)
-        #expect(server.requests.filter { $0 == "/api/files/saved/file_w9" }.count == 1)
+        #expect(server.requests.filter { $0 == "/api/files/saved/file_w9?preview=1" }.count == 1)
         loader.reset()
         #expect(loader.state == .idle)
         #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))

@@ -293,6 +293,12 @@ enum SavedFileLink {
     static func bytesPath(fileID: String) -> String {
         "/api/files/saved/\(fileID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileID)"
     }
+
+    /// The preview of a saved file: the stored bytes, so a sealed field shows
+    /// empty and the viewer needs no identity check.
+    static func previewPath(fileID: String) -> String {
+        bytesPath(fileID: fileID) + "?preview=1"
+    }
 }
 
 /// A saved file that goes with a draft (lib/shared/types.ts `DraftAttachment`).
