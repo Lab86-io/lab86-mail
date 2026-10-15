@@ -27,6 +27,7 @@ import { cloudFileSearch } from '@/lib/tools/files';
 import { githubSearch, mcpConnectionStatus, mcpListItems, mcpSearch } from '@/lib/tools/mcp';
 import { type AnyTool, invokeTool } from '@/lib/tools/registry';
 import { browserbaseFetch, browserbaseSearch } from '@/lib/tools/web';
+import { browserbaseFetch as browserbaseFetchRaw } from '@/lib/web/browserbase-client';
 import { type OutcomeContract, proposeContract } from './contract';
 import { shapePlans } from './shape-policy';
 import { assertWorkOpen } from './work-lifecycle';
@@ -35,12 +36,18 @@ import { assignStableActionKeys, shouldComposeWorkBrief } from './work-v2';
 
 // Dependency seam mirroring lib/tools/albatross.ts: tests swap the network
 // edges (Convex, gateway, tool invocation) and exercise the real orchestration.
+// A JSON GET goes through Browserbase Fetch (raw), never from our server (D2).
 async function httpGetJson(url: string): Promise<any> {
-  const response = await fetch(url, {
-    headers: { 'user-agent': 'lab86-mail/0.9 (albatross planner)' },
-  });
-  if (!response.ok) throw new Error(`GET ${url} failed (${response.status})`);
-  return response.json();
+  const response = await browserbaseFetchRaw(
+    { url, format: 'raw', allowRedirects: true },
+    { timeoutMs: 10_000 },
+  );
+  if (response.statusCode >= 400) throw new Error(`GET ${url} failed (${response.statusCode})`);
+  const text =
+    response.encoding === 'base64'
+      ? Buffer.from(response.content, 'base64').toString('utf8')
+      : response.content;
+  return JSON.parse(text);
 }
 
 const defaultDeps = {
