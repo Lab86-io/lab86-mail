@@ -825,6 +825,24 @@ to the web; (5) the client never builds open paths, every item carries `url`; (6
 attachment kind for chat context; (7) the thread-list preview is server side; (8) PDFs are
 read-only on device.
 
+Design critique applied (frontend-design review): no new strings joined with middle dots. A
+source capsule shows the title, then one locator in the secondary style (a web host, a Jira
+key; a mail or an event shows its kind word until the server sends a sender or a date). The
+checklist label is "Checklist" with "2 of 6 done, 1 for you" beside it. A package row says
+"Check it." with the note on its own line. "Now: {item}" shows only while the checklist is
+folded. The package card is the one raised surface of the block. Motion: a new message's
+arrival (none under Reduce Motion) and the live dot. Run messages render as Markdown through the
+chat's renderer; images keep their alt text and HTML tags drop out.
+
+Wire shapes from the files builder (2026-10-15): `DraftAttachment` gains `sealed`; the draft
+tools carry `attachments` (the full list replaces, `[]` removes, omit keeps); `POST /api/compose`
+takes the text field `draftAttachments`; a 409 `needs_allow` carries `allow` rows and `domains`,
+and the composer reads "{item} goes in {file} for mail to {domain}. Allow it on the web, then send
+again." with "Open on the web"; `allow_ended`, `gone`, `off`, and `invalid` show the server's
+sentence; a 403 `verify_identity` on the file bytes shows "Open on the web". `SecureUseOutcome`
+gains `downloaded`, `allowed_send_once`, and `allowed_send_always`; `SecureItemView` gains
+`mailDomains`, shown as read-only "Mail to {domain}" rows.
+
 ## 11. Open questions for the lead
 
 1. The start route: does `POST /run { action: "start" }` with no `stepKey` start a goal run for a

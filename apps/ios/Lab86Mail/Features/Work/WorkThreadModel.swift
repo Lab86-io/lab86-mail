@@ -431,7 +431,9 @@ final class WorkThreadModel {
         }
         guard let result else {
             detail = previous
-            stepNotice = DocumentHandoffCopy.failed
+            // A refused "Done, continue" (409: no goal handoff waits) shows
+            // the server's sentence.
+            stepNotice = (view.run.isGoal ? productStore.workError?.nilIfBlank : nil) ?? DocumentHandoffCopy.failed
             return false
         }
         if let runID = result.nextRunID { autoOpenRunID = runID }

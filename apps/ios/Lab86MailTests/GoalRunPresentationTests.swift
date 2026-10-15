@@ -113,6 +113,18 @@ struct GoalRunPresentationTests {
         #expect(!ThreadGoal.isGoalWork(detail: older, runs: [Self.run(state: .done, goal: false)]))
     }
 
+    @Test func theOpenGoalRunOnTheDetailMeansRunning() throws {
+        let detail = try #require(WorkDetail(json: .object([
+            "work": .object(["_id": .string("work_invoice"), "title": .string("Bill Harbor Design for the quarter"), "workState": .string("active")]),
+            "goalRuns": .bool(true),
+            "execution": .object([
+                "guideSteps": .array([]),
+                "goalRun": .object(["id": .string("run_goal_1"), "stepKey": .string("goal"), "stepTitle": .string("Bill"), "state": .string("queued")]),
+            ]),
+        ])))
+        #expect(ThreadState.resolve(detail: detail, runs: []) == .running)
+    }
+
     @Test func aStepWorkWithZeroStepsStillPlans() throws {
         #expect(ThreadState.resolve(detail: try Self.detail(goal: false), runs: []) == .planning)
         #expect(ThreadState.resolve(detail: try Self.detail(goal: false, steps: 2), runs: []) == .ready)
@@ -317,6 +329,12 @@ struct GoalRunPresentationTests {
         let goal = ThreadRow(workID: "work_invoice", title: title, status: .inProgress, stepTitle: title, working: true)
         let goalLine = ThreadRowPresentation.statusLine(ThreadListRow(item: item, live: goal))
         #expect(!goalLine.contains(title))
+        // The server's `goal` flag alone keeps the step title out too.
+        let flagged = ThreadRow(workID: "work_invoice", title: title, status: .inProgress, stepTitle: "Anything", working: true, goal: true)
+        #expect(ThreadRowPresentation.statusLine(ThreadListRow(item: item, live: flagged)) == "In progress")
+        // The newest message is the preview when the server sends it.
+        let previewed = ThreadRow(workID: "work_invoice", title: title, status: .inProgress, preview: "Jira shows 36, 52, and 41 hours.", working: true, goal: true)
+        #expect(ThreadRowPresentation.statusLine(ThreadListRow(item: item, live: previewed)).hasSuffix("Jira shows 36, 52, and 41 hours."))
         let step = ThreadRow(workID: "work_invoice", title: title, status: .inProgress, stepTitle: "Find the hours", working: true)
         #expect(ThreadRowPresentation.statusLine(ThreadListRow(item: item, live: step)).hasSuffix("Find the hours"))
     }

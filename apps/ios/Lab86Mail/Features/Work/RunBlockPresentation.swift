@@ -231,7 +231,9 @@ enum ThreadState: Equatable, Sendable {
         // question that some other part of the Work left open
         // (docs/albatross-document-handoff.md).
         if pendingQuestion, let newest, RunBlockState.from(newest) == .handedOff(.needsAnswer) { return .needsAnswer }
-        if runs.contains(where: { $0.run.state.isOpen }) || detail.execution.activeRun?.state.isOpen == true { return .running }
+        if runs.contains(where: { $0.run.state.isOpen })
+            || detail.execution.activeRun?.state.isOpen == true
+            || detail.execution.goalRun?.state.isOpen == true { return .running }
         if pendingQuestion { return .needsAnswer }
         if let newest {
             switch RunBlockState.from(newest) {

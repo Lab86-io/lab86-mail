@@ -1868,6 +1868,9 @@ struct WorkDetail: Hashable, Codable, Sendable {
         // snapshots and older servers keep decoding.
         let activeRun: StepRunView?
         let runnerEnabled: Bool?
+        /// The newest goal run of the Work (docs/albatross-goal-runs.md).
+        /// Optional so cached snapshots and older servers keep decoding.
+        var goalRun: StepRunView?
 
         var runnerIsEnabled: Bool { runnerEnabled ?? false }
 
@@ -1879,7 +1882,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
             scheduledStartAt: Date?,
             scheduledEndAt: Date?,
             activeRun: StepRunView?,
-            runnerEnabled: Bool?
+            runnerEnabled: Bool?,
+            goalRun: StepRunView? = nil
         ) {
             self.currentStep = currentStep
             self.guideSteps = guideSteps
@@ -1889,6 +1893,7 @@ struct WorkDetail: Hashable, Codable, Sendable {
             self.scheduledEndAt = scheduledEndAt
             self.activeRun = activeRun
             self.runnerEnabled = runnerEnabled
+            self.goalRun = goalRun
         }
 
         init(json: JSONValue?) {
@@ -1900,6 +1905,7 @@ struct WorkDetail: Hashable, Codable, Sendable {
             scheduledEndAt = CalendarDateParser.date(json?["scheduledEndAt"])
             activeRun = json?["activeRun"].flatMap { StepRunView(json: $0) }
             runnerEnabled = json?["runner"]?["enabled"]?.boolValue
+            goalRun = json?["goalRun"].flatMap { StepRunView(json: $0) }
         }
 
         func completing(stepID: String) -> Execution {
@@ -1914,7 +1920,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
                 scheduledStartAt: scheduledStartAt,
                 scheduledEndAt: scheduledEndAt,
                 activeRun: activeRun,
-                runnerEnabled: runnerEnabled
+                runnerEnabled: runnerEnabled,
+                goalRun: goalRun
             )
         }
 
@@ -1943,7 +1950,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
                 scheduledStartAt: scheduledStartAt,
                 scheduledEndAt: scheduledEndAt,
                 activeRun: nextActive,
-                runnerEnabled: runnerEnabled
+                runnerEnabled: runnerEnabled,
+                goalRun: run.isGoal ? run : goalRun
             )
         }
     }

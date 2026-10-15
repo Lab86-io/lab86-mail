@@ -125,7 +125,7 @@ enum ThreadRowPresentation {
         // A goal run's step title is the Work title: it never repeats as the
         // preview (docs/albatross-goal-runs.md).
         let stepTitle = row.live?.stepTitle?.nilIfBlank
-        let fallback = row.working && stepTitle != row.title ? stepTitle : nil
+        let fallback = row.working && row.live?.goal != true && stepTitle != row.title ? stepTitle : nil
         let preview = row.live?.preview?.nilIfBlank ?? fallback
         switch (word(row), preview) {
         case (let word?, let preview?): return "\(word) · \(preview)"

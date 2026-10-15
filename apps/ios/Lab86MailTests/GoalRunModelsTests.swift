@@ -247,6 +247,41 @@ struct GoalRunModelsTests {
         #expect(decoded.checklist?.count == 1)
     }
 
+    @Test func theExecutionReadsTheGoalRun() throws {
+        let detail = try #require(WorkDetail(json: .object([
+            "work": .object(["_id": .string("work_invoice"), "title": .string("Bill Harbor Design for the quarter")]),
+            "goalRuns": .bool(true),
+            "execution": .object([
+                "guideSteps": .array([]),
+                "goalRun": .object([
+                    "id": .string("run_goal_1"), "stepKey": .string("goal"), "stepTitle": .string("Bill Harbor Design for the quarter"),
+                    "state": .string("running"), "goal": .bool(true),
+                ]),
+            ]),
+        ])))
+        #expect(detail.execution.goalRun?.id == "run_goal_1")
+        #expect(detail.execution.goalRun?.isGoal == true)
+        #expect(detail.execution.activeRun == nil)
+        // The optimistic writes keep it.
+        #expect(detail.completing(stepID: "x").execution.goalRun?.id == "run_goal_1")
+        let cached = try JSONDecoder().decode(WorkDetail.self, from: try JSONEncoder().encode(detail))
+        #expect(cached.execution.goalRun?.id == "run_goal_1")
+    }
+
+    @Test func theThreadRowReadsGoalAndItemCount() throws {
+        let row = try #require(ThreadRow(json: .object([
+            "workId": .string("work_invoice"), "title": .string("Bill Harbor Design for the quarter"),
+            "status": .string("ready_for_you"), "goal": .bool(true), "itemCount": .number(3),
+        ])))
+        #expect(row.goal)
+        #expect(row.itemCount == 3)
+        #expect(row.with(unread: true).goal)
+        #expect(row.with(unread: true).itemCount == 3)
+        let older = try #require(ThreadRow(json: .object(["workId": .string("w"), "title": .string("Renew")])))
+        #expect(!older.goal)
+        #expect(older.itemCount == 0)
+    }
+
     @Test func anOlderDetailIsNotAGoalWork() throws {
         let detail = try #require(WorkDetail(json: .object([
             "work": .object(["_id": .string("work_1"), "title": .string("Send the letter")]),
