@@ -14,6 +14,9 @@ const NOT_EVIDENCE = new Set([
   'secure_fetch',
   'list_accounts',
   'spreadsheet_capabilities',
+  // Goal runs: the run's own notes about its work are not proof of it.
+  'checklist_set',
+  'goal_update',
 ]);
 
 /** One tool result, as the AI SDK step reports it. */

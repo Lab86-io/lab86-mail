@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import * as albatross from '../lib/tools/albatross';
 import { invokeTool } from '../lib/tools/registry';
 import { runTool } from './tools/harness';
@@ -299,6 +299,27 @@ afterAll(() => {
 });
 
 describe('Albatross plan apply failures (WRK-4, WRK-1)', () => {
+  let loggedErrors: unknown[][] = [];
+  let errorSpy: ReturnType<typeof spyOn>;
+  beforeEach(() => {
+    loggedErrors = [];
+    errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      loggedErrors.push(args);
+    });
+  });
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  test('the failure words are plain and never carry the provider detail', () => {
+    expect(albatross.planApplyFailureMessage(0, 2)).toBe(
+      'Albatross could not make the steps of the plan. Try again.',
+    );
+    expect(albatross.planApplyFailureMessage(1, 2)).toBe(
+      'Albatross made 1 of the 3 steps of the plan. 2 steps did not work. Try again to make the rest.',
+    );
+  });
+
   const plan = {
     id: 'plan_partial',
     outcome: 'Moved in',
@@ -324,7 +345,15 @@ describe('Albatross plan apply failures (WRK-4, WRK-1)', () => {
         projectMode: 'task_only',
         plan,
       }),
-    ).rejects.toThrow('1 failed: Pack the kitchen (Board write failed)');
+    ).rejects.toThrow(
+      'Albatross made 2 of the 3 steps of the plan. 1 step did not work. Try again to make the rest.',
+    );
+    // The provider detail goes to the server log, never to the user (G6).
+    expect(loggedErrors.at(-1)).toEqual([
+      '[albatross-apply] plan steps failed',
+      'intent_move',
+      'Pack the kitchen (Board write failed)',
+    ]);
     const recorded = mutationCalls.find((call) => call.fn === apiMock.albatrossWork.recordPlanApplication);
     expect(recorded?.args.status).toBe('partially_applied');
     expect(recorded?.args.artifacts.map((artifact: any) => artifact.actionKey)).toEqual(['a1', 'a3']);
@@ -343,7 +372,8 @@ describe('Albatross plan apply failures (WRK-4, WRK-1)', () => {
         projectMode: 'task_only',
         plan: { ...plan, digitalActions: [plan.digitalActions[0]] },
       }),
-    ).rejects.toThrow('Could not apply the plan: Board write failed');
+    ).rejects.toThrow('Albatross could not make the steps of the plan. Try again.');
+    expect(loggedErrors.at(-1)?.[0]).toBe('[albatross-apply] no plan step was made');
     expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWork.recordPlanApplication)).toBe(false);
   });
 
