@@ -14,6 +14,14 @@ export const STEP_RUN_MAX_MODEL_STEPS = 60;
 /** A user run that takes longer than this notifies the user at its handoff. */
 export const STEP_RUN_NOTIFY_AFTER_MS = 60_000;
 
+/**
+ * Goal runs (docs/albatross-goal-runs.md, G1 Budget) work on the whole goal,
+ * so they get more time, cost, and model steps than a run on one step.
+ */
+export const DEFAULT_GOAL_RUN_TIME_BUDGET_MS = 30 * 60_000;
+export const DEFAULT_GOAL_RUN_COST_BUDGET_USD = 8;
+export const GOAL_RUN_MAX_MODEL_STEPS = 120;
+
 type Env = Record<string, string | undefined>;
 
 function positiveNumber(value: string | undefined, fallback: number) {
@@ -41,6 +49,15 @@ export function stepRunLimits(env: Env = process.env) {
   return {
     timeBudgetMs: positiveNumber(env.LAB86_STEP_RUN_TIME_BUDGET_MS, DEFAULT_STEP_RUN_TIME_BUDGET_MS),
     costBudgetUsd: positiveNumber(env.LAB86_STEP_RUN_COST_BUDGET_USD, DEFAULT_STEP_RUN_COST_BUDGET_USD),
+  };
+}
+
+/** The limits of a goal run. LAB86_GOAL_RUN_* override each default. */
+export function goalRunLimits(env: Env = process.env) {
+  return {
+    timeBudgetMs: positiveNumber(env.LAB86_GOAL_RUN_TIME_BUDGET_MS, DEFAULT_GOAL_RUN_TIME_BUDGET_MS),
+    costBudgetUsd: positiveNumber(env.LAB86_GOAL_RUN_COST_BUDGET_USD, DEFAULT_GOAL_RUN_COST_BUDGET_USD),
+    maxModelSteps: Math.floor(positiveNumber(env.LAB86_GOAL_RUN_MAX_MODEL_STEPS, GOAL_RUN_MAX_MODEL_STEPS)),
   };
 }
 

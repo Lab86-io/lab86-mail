@@ -1,14 +1,19 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 import { AgentBrowser, type AgentPage } from '../lib/albatross/browser-agent';
+import type { RunSource } from '../lib/albatross/goal-run-contract';
 import {
   artifactFromToolResult,
   buildRunnerTools,
   describeToolCall,
+  GOAL_RUN_ONLY_TOOLS,
+  goalHandoffInputSchema,
   handoffInputSchema,
   RUNNER_REGISTRY_TOOLS,
   type RunArtifact,
   type RunnerToolHost,
+  stepHandoffInputSchema,
+  touchedArtifact,
 } from '../lib/albatross/step-run-tools';
 
 const SNAPSHOT = [
@@ -538,5 +543,244 @@ describe('buildRunnerTools', () => {
     const found = await tools.browser_snapshot.execute({ find: '999' });
     expect(found.truncated).toBeUndefined();
     expect(found.snapshot).toContain('[ref=e999]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Goal runs (docs/albatross-goal-runs.md).
+// ---------------------------------------------------------------------------
+
+const GOAL_ONLY = [
+  'presentation_plan',
+  'document_review_slides',
+  'web_research',
+  'web_file_save',
+  'pdf_form_fields',
+  'pdf_form_fill',
+];
+
+function goalHost(overrides: Partial<RunnerToolHost> = {}) {
+  const sources: RunSource[] = [];
+  const touched: RunArtifact[] = [];
+  const checklists: Array<Array<{ text: string; state: string }>> = [];
+  const updates: any[] = [];
+  const made = makeHost({
+    goal: true,
+    sources: (found) => {
+      sources.push(...found);
+    },
+    touch: async (artifact) => {
+      touched.push(artifact);
+    },
+    checklist: async (items) => {
+      checklists.push(items);
+      return items.map((item, index) => ({ id: `c${index + 1}`, text: item.text, state: item.state as any }));
+    },
+    updateGoal: async (update) => {
+      updates.push(update);
+      return { ok: true };
+    },
+    ...overrides,
+  });
+  return { ...made, sources, touched, checklists, updates };
+}
+
+describe('goal run tools', () => {
+  test('the registry list names the goal tools, and only goal runs get them', () => {
+    for (const name of GOAL_ONLY) {
+      expect(RUNNER_REGISTRY_TOOLS).toContain(name as any);
+      expect(GOAL_RUN_ONLY_TOOLS.has(name)).toBe(true);
+    }
+    const lifted = Object.fromEntries(
+      ['save_draft', 'presentation_plan', 'document_review_slides'].map((name) => [
+        name,
+        baseTool({ ok: true }),
+      ]),
+    );
+    const step = buildRunnerTools(lifted, makeHost().host);
+    expect(Object.keys(step).sort()).toEqual(['save_draft', 'step_handoff', 'step_note']);
+    // A goal tool that the registry does not have yet is skipped without an error.
+    const goal = buildRunnerTools(lifted, goalHost().host);
+    expect(Object.keys(goal).sort()).toEqual([
+      'checklist_set',
+      'document_review_slides',
+      'goal_update',
+      'presentation_plan',
+      'save_draft',
+      'step_handoff',
+    ]);
+  });
+
+  test('a goal handoff takes items and unsure; a step handoff does not offer them', () => {
+    const valid = {
+      outcome: 'ready_for_you',
+      summary: 'I made the invoice and the draft.',
+      next: { kind: 'review_draft', label: 'Read and send', detail: 'Read the draft.' },
+      items: [
+        { kind: 'draft', id: 'd1', title: 'July invoice', state: 'check' },
+        { kind: 'document', id: 'w1', title: 'Invoice 7', state: 'blanks', blanks: ['hourly rate'] },
+      ],
+      unsure: ['I used 78 hours from the Jira worklog.'],
+    };
+    expect(handoffInputSchema.safeParse(valid).success).toBe(true);
+    expect(goalHandoffInputSchema.safeParse(valid).success).toBe(true);
+    expect(goalHandoffInputSchema.safeParse({ ...valid, unsure: ['a', 'b', 'c', 'd', 'e'] }).success).toBe(
+      false,
+    );
+    expect(
+      goalHandoffInputSchema.safeParse({ ...valid, items: [{ ...valid.items[0], kind: 'card' }] }).success,
+    ).toBe(false);
+    expect(Object.keys(stepHandoffInputSchema.shape)).not.toContain('items');
+    expect(Object.keys(stepHandoffInputSchema.shape)).not.toContain('unsure');
+    expect(goalHandoffInputSchema.shape.outcome.description).toContain('outcome of the goal');
+    // Model-facing schemas never carry a pattern.
+    expect(JSON.stringify(z.toJSONSchema(goalHandoffInputSchema))).not.toContain('"pattern"');
+  });
+
+  test('log lines for the goal tools', () => {
+    expect(describeToolCall('goal_update', { outcome: 'The client has the invoice' }, {})).toBe(
+      'Changed the goal: “The client has the invoice”.',
+    );
+    expect(describeToolCall('goal_update', { proofs: ['x'] }, {})).toBe('Changed what proves the goal.');
+    expect(describeToolCall('presentation_plan', {}, {})).toBe('Planned the presentation.');
+    expect(describeToolCall('document_review_slides', {}, {})).toBe('Checked the slides.');
+    expect(describeToolCall('web_research', { question: 'W-9 rules' }, {})).toBe('Researched “W-9 rules”.');
+    expect(describeToolCall('web_research', {}, {})).toBe('Researched on the web.');
+    expect(
+      describeToolCall(
+        'web_file_save',
+        { url: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf' },
+        { title: 'fw9.pdf', sourceUrl: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf' },
+      ),
+    ).toBe('Saved “fw9.pdf” from irs.gov.');
+    expect(describeToolCall('web_file_save', {}, {})).toBe('Saved a file.');
+    expect(describeToolCall('pdf_form_fields', {}, {})).toBe('Read the fields of the form.');
+    expect(describeToolCall('pdf_form_fill', {}, { title: 'W-9 filled' })).toBe('Filled in “W-9 filled”.');
+    expect(describeToolCall('pdf_form_fill', {}, {})).toBe('Filled in the form.');
+    expect(describeToolCall('document_export', {}, { fileId: 'f1', title: 'Invoice 7.pdf' })).toBe(
+      'Made a PDF: “Invoice 7.pdf”.',
+    );
+    expect(describeToolCall('document_export', {}, { downloadPath: '/x' })).toBeNull();
+  });
+
+  test('a deck is a deck in a goal run and a document in a step run; saved files are files', () => {
+    const deck = {
+      ok: true,
+      documentId: 'deck-1',
+      title: 'Plan',
+      kind: 'deck',
+      openPath: '/?document=deck-1',
+    };
+    expect(artifactFromToolResult('document_create', { kind: 'deck' }, deck, { goal: true })?.kind).toBe(
+      'deck',
+    );
+    expect(artifactFromToolResult('document_create', { kind: 'deck' }, deck)?.kind).toBe('document');
+    expect(
+      artifactFromToolResult('document_create', { kind: 'doc' }, { ...deck, kind: 'doc' }, { goal: true })
+        ?.kind,
+    ).toBe('document');
+    const saved = { ok: true, fileId: 'file-1', title: 'fw9.pdf', openPath: '/?view=files&file=file-1' };
+    for (const name of ['web_file_save', 'pdf_form_fill', 'document_export'])
+      expect(artifactFromToolResult(name, {}, saved)).toEqual({
+        kind: 'file',
+        id: 'file-1',
+        title: 'fw9.pdf',
+        url: '/?view=files&file=file-1',
+      });
+    expect(artifactFromToolResult('document_export', {}, { ok: true, downloadPath: '/x' })).toBeNull();
+    expect(artifactFromToolResult('web_file_save', {}, { ok: true, fileId: 'f2' })?.title).toBe('File');
+  });
+
+  test('edits name the thing they changed', () => {
+    expect(
+      touchedArtifact('update_draft', { id: 'd1', patch: { subject: 'July invoice' } }, { ok: true }),
+    ).toEqual({ kind: 'draft', id: 'd1', title: 'July invoice' });
+    expect(touchedArtifact('update_draft', { id: 'd1', patch: {} }, { ok: true })?.title).toBe('Draft');
+    expect(touchedArtifact('update_draft', {}, { ok: true })).toBeNull();
+    expect(
+      touchedArtifact(
+        'word_document_edit',
+        { documentId: 'w1' },
+        { ok: true, documentId: 'w1', title: 'Invoice 7', openPath: '/?view=files&office=w1' },
+      ),
+    ).toEqual({ kind: 'document', id: 'w1', title: 'Invoice 7', url: '/?view=files&office=w1' });
+    expect(
+      touchedArtifact(
+        'document_edit',
+        {},
+        { ok: true, status: 'applied', documentId: 'deck-1', kind: 'deck' },
+      ),
+    ).toEqual({ kind: 'deck', id: 'deck-1', title: 'Presentation' });
+    expect(
+      touchedArtifact('document_edit', {}, { ok: false, status: 'conflict', documentId: 'x' }),
+    ).toBeNull();
+    expect(
+      touchedArtifact('document_edit', {}, { ok: true, status: 'proposed', documentId: 'x' }),
+    ).toBeNull();
+    expect(touchedArtifact('document_review_slides', { documentId: 'deck-2' }, { ok: true })?.kind).toBe(
+      'deck',
+    );
+    expect(touchedArtifact('document_edit', {}, { ok: true })).toBeNull();
+    expect(touchedArtifact('save_draft', {}, { ok: true })).toBeNull();
+    expect(touchedArtifact('update_draft', { id: 'd1' }, null)).toBeNull();
+  });
+
+  test('a goal call reports its sources and the thing an edit changed', async () => {
+    const lifted = {
+      read_thread: baseTool({ account: 'acct-1', threadId: 't1', subject: 'July hours', messages: [] }),
+      update_draft: baseTool({ ok: true }),
+      save_draft: baseTool({ ok: true, draft: { id: 'd2', subject: 'New' } }),
+    };
+    const state = goalHost();
+    const tools = buildRunnerTools(lifted, state.host);
+    await tools.read_thread.execute({ account: 'acct-1', threadId: 't1' });
+    await tools.update_draft.execute({ id: 'd1', patch: { subject: 'July invoice' } });
+    await tools.save_draft.execute({ subject: 'New' });
+    expect(state.sources).toEqual([{ kind: 'mail', title: 'July hours', id: 't1', accountId: 'acct-1' }]);
+    expect(state.touched).toEqual([{ kind: 'draft', id: 'd1', title: 'July invoice' }]);
+    // A made thing is an artifact, not a touch.
+    expect(state.artifacts).toEqual([{ kind: 'draft', id: 'd2', title: 'New' }]);
+
+    // A step run reports neither.
+    const step = makeHost({ sources: state.host.sources, touch: state.host.touch });
+    const stepTools = buildRunnerTools(lifted, step.host);
+    await stepTools.update_draft.execute({ id: 'd9', patch: {} });
+    expect(state.touched).toHaveLength(1);
+  });
+
+  test('checklist_set stores the full list; goal_update checks its input and logs', async () => {
+    const state = goalHost();
+    const tools = buildRunnerTools({}, state.host);
+    expect(
+      await tools.checklist_set.execute({
+        items: [
+          { text: 'Find the July hours', state: 'doing' },
+          { text: 'Sign the W-9', state: 'yours' },
+        ],
+      }),
+    ).toEqual({ ok: true, items: 2 });
+    expect(state.checklists).toHaveLength(1);
+    expect(await tools.goal_update.execute({})).toEqual({
+      ok: false,
+      message: 'Send outcome, proofs, or both.',
+    });
+    expect(await tools.goal_update.execute({ outcome: 'The client has the invoice' })).toEqual({ ok: true });
+    expect(state.updates).toEqual([{ outcome: 'The client has the invoice' }]);
+    expect(state.logs).toEqual(['Changed the goal: “The client has the invoice”.']);
+
+    const refused = goalHost({
+      updateGoal: async () => ({ ok: false, message: 'This Albatross is closed.' }),
+    });
+    const refusedTools = buildRunnerTools({}, refused.host);
+    expect((await refusedTools.goal_update.execute({ proofs: ['A reply came'] })).ok).toBe(false);
+    expect(refused.logs).toEqual([]);
+
+    const bare = makeHost({ goal: true });
+    const bareTools = buildRunnerTools({}, bare.host);
+    expect(await bareTools.checklist_set.execute({ items: [{ text: 'x', state: 'todo' }] })).toEqual({
+      ok: true,
+      items: 0,
+    });
+    expect((await bareTools.goal_update.execute({ outcome: 'x' })).ok).toBe(false);
   });
 });
