@@ -176,7 +176,8 @@ struct DraftAttachmentTests {
         #expect(SecureUseOutcome.from("allowed_send_later") == .unknown)
         for (outcome, verb) in [(SecureUseOutcome.downloaded, "Downloaded"), (.allowedSendOnce, "Allowed for one send"), (.allowedSendAlways, "Allowed for mail")] {
             let use = SecureUseView(id: "u1", itemID: "sec-tax", field: nil, site: nil, workID: nil, workTitle: nil, outcome: outcome, at: nil)
-            #expect(use.title.hasPrefix(verb), "\(outcome)")
+            let title = SecureUseRow.rows(from: [use]).first?.title ?? ""
+            #expect(title.hasPrefix(verb), "\(outcome)")
         }
     }
 }
