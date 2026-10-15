@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { hiringDeck, referenceDeck } from '../lib/documents/deck-fixtures';
 import { checkDeck, estimateTextLines, repairDeck, textFits } from '../lib/documents/deck-quality';
-import { availableRenderBrowser, renderDeckHtml } from '../lib/documents/deck-render';
+import { availableRenderBrowser, renderDeckHtml, renderSessionBody } from '../lib/documents/deck-render';
 import { setProcessEnv } from './tools/env';
 
 describe('deck render page', () => {
@@ -117,6 +117,13 @@ describe('deck render page', () => {
   });
   test('reports a browser outside production without configuration', () => {
     expect(['local', 'browserbase']).toContain<unknown>(availableRenderBrowser());
+    // A Browserbase render session keeps no logs or video of the user's slides.
+    expect(renderSessionBody('project-1')).toEqual({
+      projectId: 'project-1',
+      timeout: 180,
+      keepAlive: false,
+      browserSettings: { recordSession: false, logSession: false },
+    });
   });
 });
 

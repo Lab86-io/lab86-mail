@@ -59,8 +59,9 @@ describe('browser session REST client', () => {
     expect(body).toMatchObject({
       keepAlive: true,
       timeout: 3_600,
-      // Runs type personal details and users sign in here: no recording.
-      browserSettings: { recordSession: false },
+      // Runs type personal details and saved passwords, and users sign in
+      // here: no recording and no CDP logs (Browserbase logs by default).
+      browserSettings: { recordSession: false, logSession: false },
     });
     expect((createCall.init?.headers as any)['x-bb-api-key']).toBe('bb-test-key');
     expect(calls[1].url).toBe('https://api.browserbase.com/v1/sessions/bb-1/debug');
