@@ -182,6 +182,11 @@ export const TOOL_GROUPS = {
     label: 'Structured asks: sliders, preference panels, and multi-step question flows',
     tools: ['ask_parameters', 'ask_preferences', 'ask_question_flow'],
   },
+  web: {
+    label:
+      'Web research with numbered sources and passages, and saving a web file (PDF, Word, Excel, PowerPoint, CSV, PNG, JPEG) in Files',
+    tools: ['web_research', 'web_file_save'],
+  },
   secure_details: {
     label: 'Passwords and IDs: what is saved (never a value), and a card that asks the user to add one',
     tools: ['secure_details_list', 'ask_secure_detail'],
@@ -347,5 +352,5 @@ export function enableToolsResult(
 
 /** The prompt paragraph that tells the model which groups exist. */
 export function toolGroupsPromptLine(groups: readonly ToolGroupName[] = TOOL_GROUP_NAMES): string {
-  return `- A core tool set is always loaded. These groups load on demand through enable_tools: ${groups.join(', ')}. When a request needs one (smart labels, board or column admin, project routines, Area facts, document publishing or export, Drive or Google document files, media cards, structured asks), call enable_tools with the group first, in the same step as any independent lookups, then use the loaded tools.`;
+  return `- A core tool set is always loaded. These groups load on demand through enable_tools: ${groups.join(', ')}. When a request needs one (smart labels, board or column admin, project routines, Area facts, document publishing or export, Drive or Google document files, web research or a web file to save, media cards, structured asks), call enable_tools with the group first, in the same step as any independent lookups, then use the loaded tools.`;
 }

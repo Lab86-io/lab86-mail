@@ -211,7 +211,7 @@ import {
   uiSwitchAccount,
   uiToast,
 } from './ui-tools';
-import { browserbaseFetch, browserbaseSearch } from './web';
+import { browserbaseFetch, browserbaseSearch, webFileSave, webResearch } from './web';
 import { wordDocumentCreate, wordDocumentEdit, wordDocumentGet } from './word-documents';
 
 const allTools: AnyTool[] = [
@@ -359,6 +359,8 @@ const allTools: AnyTool[] = [
   resolvePhotos,
   browserbaseSearch,
   browserbaseFetch,
+  webResearch,
+  webFileSave,
   listRecentOperationsTool,
   undoOperationTool,
   tasksListBoards,
