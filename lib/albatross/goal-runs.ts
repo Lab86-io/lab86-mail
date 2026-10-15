@@ -266,14 +266,21 @@ function hostOf(url: string) {
 
 const ATLASSIAN_SEARCH_SOURCES = 3;
 
-/** "Jul 30": the short date of a time in ms (a time in seconds also reads). UTC. */
-export function shortDate(at: unknown): string {
+/**
+ * "Jul 30": the short date of a time in ms (a time in seconds also reads), on
+ * the user's own day. A missing or unknown time zone reads as UTC.
+ */
+export function shortDate(at: unknown, timezone?: string | null): string {
   const raw = typeof at === 'string' ? Date.parse(at) : Number(at);
   if (!Number.isFinite(raw) || raw <= 0) return '';
   const ms = raw < 1e12 ? raw * 1000 : raw;
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(
-    new Date(ms),
-  );
+  const format = (timeZone: string) =>
+    new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone }).format(new Date(ms));
+  try {
+    return format(timezone?.trim() || 'UTC');
+  } catch {
+    return format('UTC');
+  }
 }
 
 /** "Priya" from "Priya Shah <priya@example.com>"; the address when there is no name. */
@@ -294,9 +301,9 @@ export function senderShortName(from: unknown): string {
   return (text.match(/[^\s<>]+@[^\s<>]+/)?.[0] || name).trim();
 }
 
-/** "Priya, Jul 30": the sender and the date of a mail source. */
-function mailDetail(from: unknown, date: unknown): string {
-  return [senderShortName(from), shortDate(date)].filter(Boolean).join(', ');
+/** "Priya, Jul 30": the sender and the date of a mail source, on the user's day. */
+function mailDetail(from: unknown, date: unknown, timezone?: string | null): string {
+  return [senderShortName(from), shortDate(date, timezone)].filter(Boolean).join(', ');
 }
 
 /** The kind word of a file source, only when the title does not say it already. */
@@ -314,8 +321,17 @@ const GOOGLE_KIND_WORD: Record<string, string> = {
 const withDetail = (source: RunSource, detail: string): RunSource =>
   detail ? { ...source, detail } : source;
 
-/** The things a finished tool call read, as run sources. Unknown tools read nothing. */
-export function sourcesFromToolResult(name: string, args: any, result: any): RunSource[] {
+/**
+ * The things a finished tool call read, as run sources. Unknown tools read
+ * nothing. `timezone` is the user's zone: a date in a detail is the user's day.
+ */
+export function sourcesFromToolResult(
+  name: string,
+  args: any,
+  result: any,
+  options: { timezone?: string | null } = {},
+): RunSource[] {
+  const timezone = options.timezone;
   if (!result || result.ok === false) return [];
   switch (name) {
     case 'browserbase_fetch': {
@@ -359,7 +375,7 @@ export function sourcesFromToolResult(name: string, args: any, result: any): Run
             id: threadId,
             ...(accountId ? { accountId } : {}),
           },
-          mailDetail(first.fromName ? `${first.fromName}` : first.from, first.date),
+          mailDetail(first.fromName ? `${first.fromName}` : first.from, first.date, timezone),
         ),
       ];
     }
@@ -378,7 +394,7 @@ export function sourcesFromToolResult(name: string, args: any, result: any): Run
             id,
             ...(accountId ? { accountId } : {}),
           },
-          mailDetail(result.from, result.date),
+          mailDetail(result.from, result.date, timezone),
         ),
       ];
     }
@@ -460,7 +476,7 @@ export function sourcesFromToolResult(name: string, args: any, result: any): Run
             id,
             ...(accountId ? { accountId } : {}),
           },
-          shortDate(event.startIso || event.startAt || event.start),
+          shortDate(event.startIso || event.startAt || event.start, timezone),
         ),
       ];
     }

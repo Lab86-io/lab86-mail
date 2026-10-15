@@ -430,6 +430,42 @@ describe('sources from tool results', () => {
     ).toEqual([{ kind: 'calendar', title: 'Review', id: 'e1', accountId: 'acct-1', detail: 'Jul 30' }]);
   });
 
+  test("a date in a detail is the user's day, across a day boundary", () => {
+    // 02:00 UTC on Jul 31 is still Jul 30 in New York.
+    const late = Date.UTC(2026, 6, 31, 2, 0);
+    expect(shortDate(late)).toBe('Jul 31');
+    expect(shortDate(late, 'America/New_York')).toBe('Jul 30');
+    expect(shortDate(late, 'Asia/Tokyo')).toBe('Jul 31');
+    expect(shortDate(late, 'Not/AZone')).toBe('Jul 31');
+    expect(shortDate(late, '  ')).toBe('Jul 31');
+    const thread = {
+      account: 'acct-1',
+      threadId: 't1',
+      subject: 'July hours',
+      messages: [{ from: 'Priya Shah <lead@example.com>', date: late }],
+    };
+    expect(sourcesFromToolResult('read_thread', {}, thread, { timezone: 'America/New_York' })[0].detail).toBe(
+      'Priya, Jul 30',
+    );
+    expect(sourcesFromToolResult('read_thread', {}, thread)[0].detail).toBe('Priya, Jul 31');
+    expect(
+      sourcesFromToolResult(
+        'get_message',
+        { id: 'm1' },
+        { threadId: 't2', subject: 'x', from: [{ name: 'Ana', email: 'a@example.com' }], date: late / 1000 },
+        { timezone: 'America/New_York' },
+      )[0].detail,
+    ).toBe('Ana, Jul 30');
+    expect(
+      sourcesFromToolResult(
+        'calendar_event_detail',
+        { eventId: 'e1' },
+        { event: { title: 'Review', startIso: new Date(late).toISOString() } },
+        { timezone: 'America/Los_Angeles' },
+      )[0].detail,
+    ).toBe('Jul 30');
+  });
+
   test('the short date and the short sender name', () => {
     expect(shortDate(Date.UTC(2026, 6, 30))).toBe('Jul 30');
     expect(shortDate(Date.UTC(2026, 6, 30) / 1000)).toBe('Jul 30');

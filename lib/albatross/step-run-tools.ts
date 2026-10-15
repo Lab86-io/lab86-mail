@@ -308,6 +308,8 @@ export interface RunnerToolHost {
   touch?(artifact: RunArtifact): Promise<void>;
   /** Goal runs: a filled PDF whose ID numbers stay sealed until send or download. */
   sealed?(fileId: string): void;
+  /** The user's time zone: the dates in source details are the user's days. */
+  timezone?: string;
 }
 
 function str(value: unknown, max = 160): string {
@@ -582,7 +584,7 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
         const artifact = artifactFromToolResult(name, args, result, { goal });
         if (artifact) await host.artifact(artifact);
         if (goal) {
-          const sources = sourcesFromToolResult(name, args, result);
+          const sources = sourcesFromToolResult(name, args, result, { timezone: host.timezone });
           if (sources.length) host.sources?.(sources);
           const touched = artifact ? null : touchedArtifact(name, args, result);
           if (touched) await host.touch?.(touched);

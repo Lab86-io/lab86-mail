@@ -788,6 +788,7 @@ export async function runStepRun(
       ...(goal
         ? {
             goal: true,
+            timezone,
             checklist: async (items: Array<{ text: string; state: string }>) => {
               const checklist = cleanChecklist(items);
               if (checklist.length)

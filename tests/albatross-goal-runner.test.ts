@@ -111,7 +111,8 @@ function harness(
         account: args.account,
         threadId: args.threadId,
         subject: 'July hours',
-        messages: [{ from: 'lead@example.com', body: '78 hours' }],
+        // 02:00 UTC on Jul 31: the user in New York got it on Jul 30.
+        messages: [{ from: 'lead@example.com', body: '78 hours', date: Date.UTC(2026, 6, 31, 2, 0) }],
       }),
     },
     web_file_save: {
@@ -350,7 +351,7 @@ describe('a goal run', () => {
         title: 'July hours (lead@example.com)',
         id: 't1',
         accountId: 'acct-1',
-        detail: 'lead@example.com',
+        detail: 'lead@example.com, Jul 30',
       },
       { kind: 'web', title: 'fw9.pdf', url: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf', detail: 'irs.gov' },
     ]);
