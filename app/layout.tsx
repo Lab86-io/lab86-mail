@@ -8,6 +8,7 @@ import type { CSSProperties } from 'react';
 import { Toaster } from 'sonner';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { ThemeProvider } from '@/components/shell/ThemeProvider';
+import { ProductUpdateNotice } from '@/components/updates/ProductUpdateNotice';
 import { isDevelopmentRuntime } from '@/lib/hosted/controls';
 import { isClerkConfigured } from '@/lib/hosted/env';
 import { CSP_NONCE_HEADER } from '@/lib/security/csp';
@@ -96,6 +97,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       >
         <QueryProvider clerkEnabled={clerkEnabled}>
           {children}
+          <ProductUpdateNotice />
           <Toaster position="bottom-center" theme="system" closeButton richColors />
         </QueryProvider>
       </ThemeProvider>
