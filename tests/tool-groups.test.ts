@@ -72,6 +72,28 @@ describe('tool groups', () => {
     );
   });
 
+  test('a request for a template document or a form loads its tool group first', () => {
+    expect(initialToolGroups({ latestUserText: 'lets generate the invoice and the w9' })).toEqual([
+      'documents_more',
+      'pdf_forms',
+    ]);
+    expect(initialToolGroups({ latestUserText: 'Fill in the W-9 from his attachment' })).toEqual([
+      'pdf_forms',
+    ]);
+    expect(initialToolGroups({ latestUserText: 'Write a cover letter for Dana' })).toContain(
+      'documents_more',
+    );
+    expect(initialToolGroups({ latestUserText: 'Draft two memos' })).toContain('documents_more');
+    expect(
+      initialToolGroups({ latestUserText: 'Find the invoices from June', hasWorkContext: true }),
+    ).toEqual(['projects_routines', 'documents_more']);
+    // Other words that only contain the names do not load it.
+    expect(
+      initialToolGroups({ latestUserText: 'Read the newsletter and the memorandum, then inform Dana' }),
+    ).toEqual([]);
+    expect(initialToolGroups({})).toEqual([]);
+  });
+
   test('scope groups are never unloaded, and the result reports what was dropped', async () => {
     // Work and Area chats start with their scope groups loaded.
     for (const scope of [

@@ -556,6 +556,7 @@ const GOAL_ONLY = [
   'document_review_slides',
   'web_research',
   'web_file_save',
+  'mail_attachment_save',
   'pdf_form_fields',
   'pdf_form_fill',
 ];
@@ -655,6 +656,10 @@ describe('goal run tools', () => {
       ),
     ).toBe('Saved “fw9.pdf” from irs.gov.');
     expect(describeToolCall('web_file_save', {}, {})).toBe('Saved a file.');
+    expect(describeToolCall('mail_attachment_save', {}, { title: 'Direct deposit.pdf' })).toBe(
+      'Saved “Direct deposit.pdf” from mail.',
+    );
+    expect(describeToolCall('mail_attachment_save', {}, {})).toBe('Saved an attachment from mail.');
     expect(describeToolCall('pdf_form_fields', {}, {})).toBe('Read the fields of the form.');
     expect(describeToolCall('pdf_form_fill', {}, { title: 'W-9 filled' })).toBe('Filled in “W-9 filled”.');
     expect(describeToolCall('pdf_form_fill', {}, {})).toBe('Filled in the form.');
@@ -681,7 +686,7 @@ describe('goal run tools', () => {
         ?.kind,
     ).toBe('document');
     const saved = { ok: true, fileId: 'file-1', title: 'fw9.pdf', openPath: '/?view=files&file=file-1' };
-    for (const name of ['web_file_save', 'pdf_form_fill', 'document_export'])
+    for (const name of ['web_file_save', 'mail_attachment_save', 'pdf_form_fill', 'document_export'])
       expect(artifactFromToolResult(name, {}, saved)).toEqual({
         kind: 'file',
         id: 'file-1',

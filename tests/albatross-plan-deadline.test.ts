@@ -183,7 +183,9 @@ test('fast repeated research is forced to write before the step limit', async ()
 });
 
 test('a stalled research tool is cancelled and the plan uses only available sources', async () => {
-  const harness = replay({ researchMs: 1, stuckTool: true });
+  // At 1 ms for each second, the whole plan has about 144 ms of real time, and
+  // a busy runner can pass it. The wider scale keeps the tool stall the subject.
+  const harness = replay({ researchMs: 1, stuckTool: true, timerScale: 100 });
   expect(await harness.run()).toMatchObject({ planId: 'plan_1' });
   expect(harness.toolSignals.length).toBeGreaterThan(0);
   expect(harness.toolSignals.every((signal) => signal.aborted)).toBe(true);

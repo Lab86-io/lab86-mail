@@ -113,6 +113,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'get_message',
   'list_labels',
   'list_attachments',
+  'mail_attachment_save',
   'archive_thread',
   'trash_thread',
   'bulk_move_threads',

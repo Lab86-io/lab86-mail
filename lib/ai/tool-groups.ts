@@ -158,16 +158,17 @@ export const TOOL_GROUPS = {
     tools: ['atlassian_search', 'jira_read_issue'],
   },
   ui_extras: {
-    label: 'Web app toast notices and mailbox account switch',
-    tools: ['ui_toast', 'ui_switch_account'],
+    label: 'Web app toast notices, mailbox account switch, and closing the assistant bar',
+    tools: ['ui_toast', 'ui_switch_account', 'ui_close_bar'],
+  },
+  display_code: {
+    label: 'Code cards: a code block, a code diff, and terminal output',
+    tools: ['show_code', 'show_code_diff', 'show_terminal'],
   },
   display_media: {
-    label:
-      'Media and place cards: weather, code diff, terminal, images, video, audio, map, carousel, order summary, social post',
+    label: 'Media and place cards: weather, images, video, audio, map, carousel, order summary, social post',
     tools: [
       'show_weather',
-      'show_code_diff',
-      'show_terminal',
       'show_image',
       'show_image_gallery',
       'show_video',
@@ -182,19 +183,14 @@ export const TOOL_GROUPS = {
     label: 'Structured asks: sliders, preference panels, and multi-step question flows',
     tools: ['ask_parameters', 'ask_preferences', 'ask_question_flow'],
   },
-  web: {
-    label:
-      'Web research with numbered sources and passages, and saving a web file (PDF, Word, Excel, PowerPoint, CSV, PNG, JPEG) in Files',
-    tools: ['web_research', 'web_file_save'],
-  },
   secure_details: {
     label: 'Passwords and IDs: what is saved (never a value), and a card that asks the user to add one',
     tools: ['secure_details_list', 'ask_secure_detail'],
   },
   pdf_forms: {
     label:
-      'PDF forms in Files: read the fillable fields, and fill them into a new PDF (a W-9, an application)',
-    tools: ['pdf_form_fields', 'pdf_form_fill'],
+      'PDF forms in Files: save a mail attachment in Files, read the fillable fields, and fill them into a new PDF (a W-9, an application)',
+    tools: ['mail_attachment_save', 'pdf_form_fields', 'pdf_form_fill'],
   },
 } as const satisfies Record<string, { label: string; tools: readonly string[] }>;
 
@@ -272,16 +268,30 @@ function dedupe(names: ToolGroupName[]): ToolGroupName[] {
   return out;
 }
 
-/** Groups the chat scope turns on before the first step. */
+/** A request for a Word file that a house template makes (lib/documents/templates). */
+const TEMPLATE_DOCUMENT_REQUEST = /\b(?:invoice|letter|memo)s?\b/i;
+/** A request about a form, a PDF, or a mail attachment. */
+const FORM_REQUEST = /\b(?:w-?9|w-?4|forms?|pdfs?|attachments?)\b/i;
+
+/**
+ * Groups the chat scope turns on before the first step. A request for an
+ * invoice, a letter, or a memo also loads documents_more, and a request about
+ * a form, a PDF, or an attachment loads pdf_forms. So these tools are there
+ * even when the model does not call enable_tools.
+ */
 export function initialToolGroups(scope: {
   hasWorkContext?: boolean;
   hasAreaContext?: boolean;
   narrativeEnabled?: boolean;
+  latestUserText?: string;
 }): ToolGroupName[] {
   const groups: ToolGroupName[] = [];
   if (scope.narrativeEnabled) groups.push('narrative');
   if (scope.hasAreaContext) groups.push('areas');
   if (scope.hasWorkContext) groups.push('projects_routines');
+  const text = scope.latestUserText || '';
+  if (TEMPLATE_DOCUMENT_REQUEST.test(text)) groups.push('documents_more');
+  if (FORM_REQUEST.test(text)) groups.push('pdf_forms');
   return groups;
 }
 
@@ -357,5 +367,5 @@ export function enableToolsResult(
 
 /** The prompt paragraph that tells the model which groups exist. */
 export function toolGroupsPromptLine(groups: readonly ToolGroupName[] = TOOL_GROUP_NAMES): string {
-  return `- A core tool set is always loaded. These groups load on demand through enable_tools: ${groups.join(', ')}. When a request needs one (smart labels, board or column admin, project routines, Area facts, document publishing or export, Drive or Google document files, web research or a web file to save, media cards, structured asks), call enable_tools with the group first, in the same step as any independent lookups, then use the loaded tools.`;
+  return `- A core tool set is always loaded. These groups load on demand through enable_tools: ${groups.join(', ')}. When a request needs one (smart labels, board or column admin, project routines, Area facts, a Word invoice, letter, memo, or report from a template, a PDF form to fill or a mail attachment to save in Files, document publishing or export, Drive or Google document files, code or media cards, structured asks, a toast or closing the bar), call enable_tools with the group first, in the same step as any independent lookups, then use the loaded tools.`;
 }

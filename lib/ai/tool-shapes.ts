@@ -315,8 +315,13 @@ function singleThreadShape(
   const account = str(output.account) || str(input.account);
   const threadId = str(output.threadId) || str(input.threadId);
   if (!account || !threadId) return null;
-  const latest = messages.at(-1) ?? {};
-  const first = messages[0] ?? {};
+  // get_thread lists the oldest message first, read_thread the newest first:
+  // the date decides which is the latest, and the order breaks a tie.
+  const byDate = messages
+    .map((message, index) => ({ message, index, date: num(message.date) ?? 0 }))
+    .sort((a, b) => a.date - b.date || a.index - b.index);
+  const latest = byDate.at(-1)?.message ?? {};
+  const first = byDate[0]?.message ?? {};
   const sender = parseSender(latest.from ?? first.from);
   const attachments = messages.reduce(
     (count, message) => count + (Array.isArray(message.attachments) ? message.attachments.length : 0),
@@ -326,7 +331,7 @@ function singleThreadShape(
   const item: ThreadRow = {
     account,
     threadId,
-    messageId: str(latest._id) || undefined,
+    messageId: str(latest._id) || str(latest.messageId) || undefined,
     subject,
     from: sender.name,
     fromEmail: str(latest.fromEmail) || sender.email,
@@ -338,7 +343,12 @@ function singleThreadShape(
       { kind: 'open_thread', account, threadId },
       { kind: 'reply_thread', account, threadId },
       { kind: 'archive_thread', account, threadId },
-      { kind: 'snooze_thread', account, threadId, messageId: str(latest._id) || undefined },
+      {
+        kind: 'snooze_thread',
+        account,
+        threadId,
+        messageId: str(latest._id) || str(latest.messageId) || undefined,
+      },
     ],
   };
   const excerptSource = excerptText ?? str(latest.body) ?? str(latest.textBody) ?? str(latest.snippet);
@@ -555,7 +565,10 @@ function savedFileKind(contentType: string): string | undefined {
   return undefined;
 }
 
-/** web_file_save and browser_download: one file row that opens the file in Files. */
+/**
+ * web_file_save, browser_download, pdf_form_fill, and mail_attachment_save:
+ * one file row that opens the file in Files.
+ */
 function savedFileShape(toolName: string, input: Rec, output: Rec): ToolShape | null {
   const fileId = str(output.fileId);
   if (output.ok === false || !fileId) return null;
@@ -1437,6 +1450,8 @@ const MAPPERS: Record<string, Mapper> = {
       `Sources for “${clip(str(input.question), 60)}”`,
     ),
   web_file_save: (input, output, tool) => savedFileShape(tool, input, output),
+  pdf_form_fill: (input, output, tool) => savedFileShape(tool, input, output),
+  mail_attachment_save: (input, output, tool) => savedFileShape(tool, input, output),
   // --- Operations ---
   undo_operation: (input, output, tool) =>
     receipt(

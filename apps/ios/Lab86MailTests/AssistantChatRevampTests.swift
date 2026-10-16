@@ -121,6 +121,35 @@ final class AssistantChatRevampTests: XCTestCase {
         XCTAssertTrue(model.isStreaming)
     }
 
+    func testFileAndFormToolsReadAsSentences() throws {
+        let saved = AssistantToolGrammar.sentences(
+            toolName: "mail_attachment_save",
+            input: try json(#"{"messageId":"m1","attachmentId":"a1"}"#),
+            output: try json(#"{"ok":true,"title":"Direct deposit.pdf"}"#)
+        )
+        XCTAssertEqual(saved.running, "Saving the attachment in Files")
+        XCTAssertEqual(saved.done, "Saved Direct deposit.pdf in Files")
+        let pending = AssistantToolGrammar.sentences(toolName: "web_file_save", input: nil, output: nil)
+        XCTAssertEqual(pending.done, "Saved the file in Files")
+        let research = AssistantToolGrammar.sentences(
+            toolName: "web_research",
+            input: try json(#"{"question":"W-9 line 3a"}"#),
+            output: try json(#"{"sources":[{"n":1},{"n":2}]}"#)
+        )
+        XCTAssertEqual(research.running, "Researching “W-9 line 3a”")
+        XCTAssertEqual(research.done, "Read 2 sources for “W-9 line 3a”")
+        let filled = AssistantToolGrammar.sentences(
+            toolName: "pdf_form_fill",
+            input: nil,
+            output: try json(#"{"title":"fw9 (filled).pdf"}"#)
+        )
+        XCTAssertEqual(filled.done, "Filled the form: fw9 (filled).pdf")
+        XCTAssertEqual(
+            AssistantToolGrammar.sentences(toolName: "pdf_form_fields", input: nil, output: nil).failed,
+            "Reading the form fields failed"
+        )
+    }
+
     func testWorkLogGroupingAndCollapse() {
         let done = AssistantToolRow(callID: "a", toolName: "search_threads", state: .done)
         let failed = AssistantToolRow(callID: "b", toolName: "get_thread", state: .failed, errorText: "Unavailable")

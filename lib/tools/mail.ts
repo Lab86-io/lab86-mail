@@ -326,13 +326,76 @@ async function accountHasCorpusRows(userId: string, accountId: string) {
 }
 
 // Plaintext reader the agent reaches for when it needs the actual CONTENT of
-// an email (not just subjects/snippets). Returns each message's sender, date,
-// and a clean, capped plaintext body — HTML stripped — so the model can read
-// and reason over what the email says.
+// an email (not just subjects/snippets). Returns each message's provider id,
+// sender, date, a clean, capped plaintext body (HTML stripped), and its
+// attachments with the ids that list_attachments and mail_attachment_save take.
+const ReadThreadAttachment = z.object({
+  attachmentId: z.string(),
+  filename: z.string(),
+  mimeType: z.string().optional(),
+  size: z.number().optional(),
+});
+
+const ReadThreadMessage = z.object({
+  messageId: z.string(),
+  from: z.string(),
+  to: z.string().optional(),
+  date: z.number().optional(),
+  body: z.string(),
+  attachments: z.array(ReadThreadAttachment).optional(),
+});
+
+/** One attachment as read_thread gives it: the normalized fields (lib/nylas/normalize.ts), else the raw provider ones. */
+function readThreadAttachment(raw: any): z.infer<typeof ReadThreadAttachment> {
+  const mimeType = String(raw?.mimeType || raw?.contentType || raw?.content_type || '');
+  const size = Number(raw?.size);
+  return {
+    attachmentId: String(raw?.attachmentId || raw?.id || raw?.attachment_id || ''),
+    filename: String(raw?.filename || raw?.name || 'attachment'),
+    ...(mimeType ? { mimeType } : {}),
+    ...(Number.isFinite(size) && size > 0 ? { size } : {}),
+  };
+}
+
+/** The read_thread result for a fetched thread: newest message first, at most `maxMessages`. */
+export function readThreadOutput(
+  thread: { subject?: string; messages?: any[] },
+  options: { account: string; threadId: string; maxCharsPerMessage: number; maxMessages: number },
+) {
+  // Newest-first, capped: a 200-message thread otherwise dumps megabytes into
+  // a single tool result and blows the downstream prompt/latency budget.
+  const ordered = [...(thread.messages || [])].sort((a: any, b: any) => (b.date || 0) - (a.date || 0));
+  const messages = ordered.slice(0, options.maxMessages).map((message: any) => {
+    const text = bodyToPlainText(message);
+    const attachments = (Array.isArray(message.attachments) ? message.attachments : []).map(
+      readThreadAttachment,
+    );
+    return {
+      messageId: String(message._id || message.id || ''),
+      from: message.from || '',
+      to: message.to || undefined,
+      date: message.date,
+      body:
+        text.length > options.maxCharsPerMessage
+          ? `${truncateText(text, options.maxCharsPerMessage)}…`
+          : text,
+      ...(attachments.length ? { attachments } : {}),
+    };
+  });
+  return {
+    account: options.account,
+    threadId: options.threadId,
+    subject: thread.subject || '(no subject)',
+    messageCount: ordered.length,
+    truncated: ordered.length > messages.length,
+    messages,
+  };
+}
+
 export const readThread = defineTool({
   name: 'read_thread',
   description:
-    'Read the full plaintext bodies of an email thread (every message: from, date, and clean body text). Use this whenever you need what an email actually SAYS — answering questions about its content, extracting details, drafting an informed reply.',
+    'Read the full plaintext bodies of an email thread, newest message first. Each message has messageId, from, date, clean body text, and its attachments (attachmentId, filename, mimeType, size). Use it when you need the words of an email: to answer a question about it, to get details, or to write an informed reply. To save an attachment in Files, call mail_attachment_save with the messageId and attachmentId.',
   category: 'mail',
   mutating: false,
   input: z.object({
@@ -353,45 +416,11 @@ export const readThread = defineTool({
     subject: z.string(),
     messageCount: z.number().optional(),
     truncated: z.boolean().optional(),
-    messages: z.array(
-      z.object({
-        from: z.string(),
-        to: z.string().optional(),
-        date: z.number().optional(),
-        body: z.string(),
-        attachments: z.array(z.any()).optional(),
-      }),
-    ),
+    messages: z.array(ReadThreadMessage),
   }),
   async handler({ account, threadId, maxCharsPerMessage, maxMessages }, ctx) {
     const thread = await getThread.handler({ account, threadId }, ctx);
-    // Newest-first, capped: a 200-message thread otherwise dumps megabytes into
-    // a single tool result and blows the downstream prompt/latency budget.
-    const ordered = [...((thread as any).messages || [])].sort(
-      (a: any, b: any) => (b.date || 0) - (a.date || 0),
-    );
-    const messages = ordered.slice(0, maxMessages).map((message: any) => {
-      const text = bodyToPlainText(message);
-      return {
-        from: message.from || '',
-        to: message.to || undefined,
-        date: message.date,
-        body: text.length > maxCharsPerMessage ? `${truncateText(text, maxCharsPerMessage)}…` : text,
-        attachments: (message.attachments || []).map((a: any) => ({
-          id: a.id || a.attachmentId,
-          name: a.filename || a.name,
-          contentType: a.contentType || a.content_type,
-        })),
-      };
-    });
-    return {
-      account,
-      threadId,
-      subject: (thread as any).subject || '(no subject)',
-      messageCount: ordered.length,
-      truncated: ordered.length > messages.length,
-      messages,
-    };
+    return readThreadOutput(thread, { account, threadId, maxCharsPerMessage, maxMessages });
   },
 });
 
@@ -535,7 +564,8 @@ export const listLabels = defineTool({
 
 export const listAttachments = defineTool({
   name: 'list_attachments',
-  description: 'List attachments on a message (filename, mime, size).',
+  description:
+    'List the attachments of one message: attachmentId, filename, mimeType, and size. messageId comes from read_thread. To save an attachment in Files, call mail_attachment_save.',
   category: 'mail',
   mutating: false,
   input: z.object({ account: z.string(), messageId: z.string() }),

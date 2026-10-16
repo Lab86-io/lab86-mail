@@ -478,6 +478,14 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
   ),
   list_labels: fixed('Listing your labels', 'Listed your labels', 'Listing labels failed'),
   list_attachments: fixed('Listing attachments', 'Listed the attachments', 'Listing attachments failed'),
+  mail_attachment_save: (_a, r) => {
+    const title = clip(str(r.title), 80);
+    return {
+      running: 'Saving the attachment in Files',
+      done: title ? `Saved ${title} in Files` : 'Saved the attachment in Files',
+      failed: 'Saving the attachment failed',
+    };
+  },
 
   // --- Mail mutations ---
   archive_thread: fixed('Archiving the thread', 'Archived the thread', 'Archiving the thread failed'),

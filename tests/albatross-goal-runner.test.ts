@@ -423,6 +423,7 @@ describe('a goal run', () => {
       'When the user gives a value, read word_document_get, then call word_document_edit with op fill_blank.',
       "To attach the file as a PDF, fill the blanks, then call document_export with format pdf, and put the fileId on the draft (save_draft/update_draft attachments: { fileId, provider: 'upload', format: 'native' }).",
       'web_file_save',
+      'mail_attachment_save',
       'pdf_form_fields',
       'Change the existing draft or document with the edit tools',
       'Make a new one only when the user asks for a new one.',

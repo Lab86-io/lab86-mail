@@ -934,6 +934,38 @@ describe('runner helpers', () => {
     });
   });
 
+  test('a resumed run that hands off a document an earlier run made gets its link', () => {
+    // The id alone opens nothing: the client reads a bare id as an Albatross document.
+    const known = [
+      {
+        kind: 'document' as const,
+        id: 'office-1',
+        title: 'Invoice.docx',
+        url: '/?view=files&office=office-1',
+      },
+    ];
+    const handoff: Parameters<typeof normalizeHandoff>[0] = {
+      outcome: 'ready_for_you',
+      summary: 's',
+      next: {
+        kind: 'review_document',
+        label: 'Open the invoice',
+        detail: 'd',
+        target: { kind: 'document', id: 'office-1' },
+      },
+    };
+    expect(normalizeHandoff(handoff, { artifacts: [], known }).next?.target).toEqual({
+      kind: 'document',
+      id: 'office-1',
+      url: '/?view=files&office=office-1',
+    });
+    // An id that no run made keeps its id only.
+    expect(normalizeHandoff(handoff, { artifacts: [], known: [] }).next?.target).toEqual({
+      kind: 'document',
+      id: 'office-1',
+    });
+  });
+
   test('isRetryableRunError keeps retries for transient failures only', () => {
     expect(isRetryableRunError(Object.assign(new Error('x'), { statusCode: 429 }))).toBe(true);
     expect(isRetryableRunError(new Error('socket hang up'))).toBe(true);

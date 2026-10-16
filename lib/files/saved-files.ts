@@ -7,7 +7,8 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 
 export const SAVED_FILE_MAX_BYTES = 25 * 1024 * 1024;
 
-export type SavedFileOrigin = 'web' | 'filled' | 'export';
+/** web: a web download. filled: a filled PDF. export: a document export. mail: an attachment of a received message. */
+export type SavedFileOrigin = 'web' | 'filled' | 'export' | 'mail';
 
 /** A form field whose value comes from the secure store at send or download time, never stored. */
 export interface SealedField {

@@ -414,8 +414,11 @@ export function normalizeHandoff(
   }
   // A target the model named by id gets the link of the artifact with that id:
   // a document opens by its own link (a Word file opens in the Word editor).
+  // A resumed run often hands off a document that an earlier run made.
   if (next?.target?.id && !next.target.url) {
-    const made = context.artifacts.find((artifact) => artifact.id === next.target?.id && artifact.url);
+    const made = [...context.artifacts, ...(context.known ?? [])].find(
+      (artifact) => artifact.id === next.target?.id && artifact.url,
+    );
     if (made) next.target = { ...next.target, url: made.url };
   }
   if (next && !next.target) {

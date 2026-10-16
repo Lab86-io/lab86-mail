@@ -314,6 +314,7 @@ export async function POST(req: NextRequest) {
         hasWorkContext: contextAttachments.some((attachment) => attachment.kind === 'work'),
         hasAreaContext: Boolean(body.areaDiscovery),
         narrativeEnabled: narrativeEnabled(user.userId),
+        latestUserText: latestUser ? messageText(latestUser) : '',
       }),
       signal: replyAbort ? replyAbort.signal : req.signal,
     });

@@ -116,6 +116,7 @@ export const RUNNER_REGISTRY_TOOLS = [
   'document_review_slides',
   'web_research',
   'web_file_save',
+  'mail_attachment_save',
   'pdf_form_fields',
   'pdf_form_fill',
 ] as const;
@@ -126,6 +127,7 @@ export const GOAL_RUN_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'document_review_slides',
   'web_research',
   'web_file_save',
+  'mail_attachment_save',
   'pdf_form_fields',
   'pdf_form_fill',
 ]);
@@ -382,6 +384,10 @@ export function describeToolCall(name: string, args: any, result: any): string |
       const name = str(result?.title || args?.name, 90);
       return `Saved ${name ? `“${name}”` : 'a file'}${from ? ` from ${hostOf(from)}` : ''}.`;
     }
+    case 'mail_attachment_save': {
+      const name = str(result?.title || args?.name, 90);
+      return `Saved ${name ? `“${name}”` : 'an attachment'} from mail.`;
+    }
     case 'pdf_form_fields':
       return 'Read the fields of the form.';
     case 'pdf_form_fill':
@@ -393,7 +399,7 @@ export function describeToolCall(name: string, args: any, result: any): string |
   }
 }
 
-/** The artifact of a saved file result (web_file_save, pdf_form_fill, document_export as PDF). */
+/** The artifact of a saved file result (web_file_save, mail_attachment_save, pdf_form_fill, document_export as PDF). */
 function fileArtifact(result: any): RunArtifact | null {
   if (!result?.fileId) return null;
   return {
@@ -456,6 +462,7 @@ export function artifactFromToolResult(
         ? { kind: 'card', id: String(result.cardId), title: str(args?.title, 200) || 'Task' }
         : null;
     case 'web_file_save':
+    case 'mail_attachment_save':
     case 'pdf_form_fill':
     case 'document_export':
       return fileArtifact(result);

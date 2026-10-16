@@ -34,12 +34,13 @@ afterEach(() => {
 const PDF = new Uint8Array(Buffer.from('%PDF-1.7 test'));
 
 describe('web tools', () => {
-  test('registered, given to the chat agent, and in the web group', () => {
+  test('registered, given to the chat agent, and core (no group to load first)', () => {
     for (const name of ['browserbase_search', 'browserbase_fetch', 'web_research', 'web_file_save']) {
       expect(getTool(name)).toBeTruthy();
       expect(AGENT_TOOL_NAMES.has(name)).toBe(true);
     }
-    expect([...TOOL_GROUPS.web.tools]).toEqual(['web_research', 'web_file_save']);
+    const grouped = new Set<string>(Object.values(TOOL_GROUPS).flatMap((group) => [...group.tools]));
+    for (const name of ['web_research', 'web_file_save']) expect(grouped.has(name)).toBe(false);
     expect(browserbaseSearch.description).toContain('no snippets');
     expect(webFileSave.description).toContain('irs.gov');
     expect(webResearch.description).toContain('6 searches');

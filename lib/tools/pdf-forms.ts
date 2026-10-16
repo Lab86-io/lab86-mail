@@ -182,12 +182,14 @@ const SavedOut = z.object({
   sourceUrl: z.string().optional(),
   sha256: z.string(),
   sealedFields: z.array(z.object({ field: z.string(), ref: z.string() })).optional(),
+  /** The fields this fill wrote a value in (pdf_fill only). */
+  filled: z.array(z.string()).optional(),
 });
 
 export const pdfFormFill = defineTool({
   name: 'pdf_form_fill',
   description:
-    'Fill the fields of a PDF in Files and save the result as a new PDF in Files. The form stays fillable, so the user can change any value. Read the names with pdf_form_fields first. Never fill a signature field: Albatross never signs, and the user signs. For an ID number or a date of birth, send a {{secure:<id>.<field>}} reference, never the number: that field stays empty in the saved file and fills only when the user sends the mail (to a site the item is saved for) or downloads the file. A Social Security number in three boxes takes AREA, GROUP, and SERIAL formats. Attach the new file to a draft with save_draft or update_draft (provider upload). The result lists the sealed fields.',
+    'Fill the fields of a PDF in Files and save the result as a new PDF in Files. The form stays fillable, so the user can change any value. Read the names with pdf_form_fields first. Never fill a signature field: Albatross never signs, and the user signs. For an ID number or a date of birth, send a {{secure:<id>.<field>}} reference, never the number: that field stays empty in the saved file and fills only when the user sends the mail (to a site the item is saved for) or downloads the file. A Social Security number in three boxes takes AREA, GROUP, and SERIAL formats. Attach the new file to a draft with save_draft or update_draft (provider upload). The result lists the fields it filled and the sealed fields. Give the user the openPath as a Markdown link.',
   category: 'documents',
   risk: 'write_self',
   mutating: true,
@@ -284,6 +286,11 @@ export const pdfFormFill = defineTool({
       ...(sealedFields.length ? { sealedFields } : {}),
       ...(row.workId ? { workId: row.workId } : {}),
     });
-    return { ok: true as const, ...saved, ...(sealedFields.length ? { sealedFields } : {}) };
+    return {
+      ok: true as const,
+      ...saved,
+      ...(sealedFields.length ? { sealedFields } : {}),
+      filled: filled.filled,
+    };
   },
 });
