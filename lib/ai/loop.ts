@@ -337,6 +337,8 @@ export function stripPatterns<T>(value: T): T {
 export interface AgentToolOptions {
   /** Tool groups the chat scope turns on. They are never unloaded. */
   scopeGroups?: readonly string[];
+  /** Groups the request text asks for (requestToolGroups). The cap may drop them first. */
+  preloadGroups?: readonly string[];
   /** The client that renders this chat. Native clients get no web-only UI tools. */
   clientPlatform?: ClientPlatform;
   /** Risk classes the user paused in Settings, Standing orders. Those calls change nothing. */
@@ -721,7 +723,7 @@ export function liftToolsForAgent(
       const result = enableToolsResult(groups, {
         allToolNames: Object.keys(lifted),
         scopeGroups: options.scopeGroups ?? [],
-        earlier: [...requestedGroups],
+        earlier: [...(options.preloadGroups ?? []), ...requestedGroups],
       });
       requestedGroups.push(...groups);
       return result;
@@ -931,6 +933,8 @@ interface AgentStreamOptions {
   tools: Record<string, any>;
   /** Tool groups active from the first step (from the chat scope). */
   toolGroups?: string[];
+  /** Groups the request text asks for. They count as the oldest enable_tools request. */
+  preloadGroups?: string[];
   presentationSession?: PresentationSession;
   timezone?: string;
   signal?: AbortSignal;
@@ -938,16 +942,20 @@ interface AgentStreamOptions {
 
 /**
  * The active tool names for a step: core tools plus the scope groups plus any
- * group the model enabled in an earlier step of this turn.
+ * group the model enabled in an earlier step of this turn. Preloaded groups
+ * count as the oldest request, so the cap drops them before a group that the
+ * model asked for.
  */
 export function activeToolsForStep(
   toolNames: Iterable<string>,
   initialGroups: readonly string[],
   steps: ReadonlyArray<{ content?: unknown }>,
   presentationSession?: PresentationSession,
+  preloadGroups: readonly string[] = [],
 ): string[] {
   const next = presentationSession ? nextPresentationCheckpoint(presentationSession) : 'brief';
-  return activeToolNames(toolNames, enabledGroupsFromSteps(steps), initialGroups).filter(
+  const requested = [...preloadGroups, ...enabledGroupsFromSteps(steps)];
+  return activeToolNames(toolNames, requested, initialGroups).filter(
     (name) =>
       name !== PRESENTATION_CHOICE_TOOL ||
       (!!next && next !== 'cancelled' && !hasPendingPresentationQuestion(steps)),
@@ -1003,9 +1011,21 @@ async function streamAgentTurn(
         system: options.system,
         messages: options.messages,
         tools: options.tools,
-        activeTools: activeToolsForStep(toolNames, initialGroups, [], options.presentationSession),
+        activeTools: activeToolsForStep(
+          toolNames,
+          initialGroups,
+          [],
+          options.presentationSession,
+          options.preloadGroups,
+        ),
         prepareStep: ({ steps }) => ({
-          activeTools: activeToolsForStep(toolNames, initialGroups, steps, options.presentationSession),
+          activeTools: activeToolsForStep(
+            toolNames,
+            initialGroups,
+            steps,
+            options.presentationSession,
+            options.preloadGroups,
+          ),
         }),
         abortSignal: options.signal,
         // Multi-step flows (fetch a file → store → attach → send) need headroom
@@ -1132,6 +1152,8 @@ export interface AgentRunOpts {
   narrativeTopics?: string[];
   /** Tool groups active from the first step (lib/ai/tool-groups.ts). */
   toolGroups?: string[];
+  /** Groups the request text asks for (requestToolGroups). Unlike toolGroups, the cap can drop them. */
+  preloadGroups?: string[];
   /** The client that renders this chat (default web). */
   clientPlatform?: ClientPlatform;
   /** What the client can render beyond the base set (normalizeClientCapabilities). */
@@ -1197,6 +1219,7 @@ export async function runAgent({
   userTimezone,
   narrativeTopics,
   toolGroups,
+  preloadGroups,
   clientPlatform = 'web',
   clientCapabilities,
   signal,
@@ -1222,6 +1245,7 @@ export async function runAgent({
   const pausedRisks = userId ? await pausedAssistantRisks(userId) : undefined;
   const tools = liftToolsForAgent(operationBatchId, timezone, presentationSession, {
     scopeGroups: toolGroups,
+    preloadGroups,
     clientPlatform,
     pausedRisks,
     askForm,
@@ -1321,6 +1345,7 @@ export async function runAgent({
                   messages,
                   tools,
                   toolGroups,
+                  preloadGroups,
                   presentationSession,
                   timezone,
                   signal,

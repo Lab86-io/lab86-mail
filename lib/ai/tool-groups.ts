@@ -268,30 +268,39 @@ function dedupe(names: ToolGroupName[]): ToolGroupName[] {
   return out;
 }
 
-/** A request for a Word file that a house template makes (lib/documents/templates). */
-const TEMPLATE_DOCUMENT_REQUEST = /\b(?:invoice|letter|memo)s?\b/i;
-/** A request about a form, a PDF, or a mail attachment. */
-const FORM_REQUEST = /\b(?:w-?9|w-?4|forms?|pdfs?|attachments?)\b/i;
-
-/**
- * Groups the chat scope turns on before the first step. A request for an
- * invoice, a letter, or a memo also loads documents_more, and a request about
- * a form, a PDF, or an attachment loads pdf_forms. So these tools are there
- * even when the model does not call enable_tools.
- */
+/** Groups the chat scope turns on before the first step. They are never unloaded. */
 export function initialToolGroups(scope: {
   hasWorkContext?: boolean;
   hasAreaContext?: boolean;
   narrativeEnabled?: boolean;
-  latestUserText?: string;
 }): ToolGroupName[] {
   const groups: ToolGroupName[] = [];
   if (scope.narrativeEnabled) groups.push('narrative');
   if (scope.hasAreaContext) groups.push('areas');
   if (scope.hasWorkContext) groups.push('projects_routines');
-  const text = scope.latestUserText || '';
-  if (TEMPLATE_DOCUMENT_REQUEST.test(text)) groups.push('documents_more');
-  if (FORM_REQUEST.test(text)) groups.push('pdf_forms');
+  return groups;
+}
+
+/** A request for a Word file that a house template makes (lib/documents/templates). */
+const TEMPLATE_DOCUMENT_REQUEST = /\b(?:invoice|letter|memo)s?\b/i;
+/** A tax form by name. */
+const TAX_FORM = /\b(?:w-?9|w-?4|1099)s?\b/i;
+/** An action on a form, a PDF, or a mail attachment: fill one in, sign one, or save one. */
+const FORM_ACTION =
+  /\b(?:fill|fills|filled|complete|sign|save|pull|get)\b[^.?!\n]{0,40}\b(?:forms?|pdfs?|applications?|attachments?)\b/i;
+
+/**
+ * Groups that the request text asks for, before the first step: an invoice, a
+ * letter, or a memo loads documents_more; a tax form, or a form, a PDF, or an
+ * attachment to fill, sign, or save loads pdf_forms. So these tools are there
+ * even when the model does not call enable_tools. The loop treats them as the
+ * oldest enable_tools request, so the tool cap drops them first.
+ */
+export function requestToolGroups(text: string | null | undefined): ToolGroupName[] {
+  const value = text || '';
+  const groups: ToolGroupName[] = [];
+  if (TEMPLATE_DOCUMENT_REQUEST.test(value)) groups.push('documents_more');
+  if (TAX_FORM.test(value) || FORM_ACTION.test(value)) groups.push('pdf_forms');
   return groups;
 }
 

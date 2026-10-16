@@ -17,6 +17,7 @@ import {
   initialToolGroups,
   MAX_ACTIVE_TOOLS,
   planToolGroups,
+  requestToolGroups,
   TOOL_GROUP_NAMES,
   TOOL_GROUPS,
 } from '../lib/ai/tool-groups';
@@ -72,26 +73,50 @@ describe('tool groups', () => {
     );
   });
 
-  test('a request for a template document or a form loads its tool group first', () => {
-    expect(initialToolGroups({ latestUserText: 'lets generate the invoice and the w9' })).toEqual([
+  test('a request for a template document or a form preloads its tool group', () => {
+    expect(requestToolGroups('lets generate the invoice and the w9')).toEqual([
       'documents_more',
       'pdf_forms',
     ]);
-    expect(initialToolGroups({ latestUserText: 'Fill in the W-9 from his attachment' })).toEqual([
-      'pdf_forms',
-    ]);
-    expect(initialToolGroups({ latestUserText: 'Write a cover letter for Dana' })).toContain(
-      'documents_more',
-    );
-    expect(initialToolGroups({ latestUserText: 'Draft two memos' })).toContain('documents_more');
-    expect(
-      initialToolGroups({ latestUserText: 'Find the invoices from June', hasWorkContext: true }),
-    ).toEqual(['projects_routines', 'documents_more']);
-    // Other words that only contain the names do not load it.
-    expect(
-      initialToolGroups({ latestUserText: 'Read the newsletter and the memorandum, then inform Dana' }),
-    ).toEqual([]);
-    expect(initialToolGroups({})).toEqual([]);
+    expect(requestToolGroups('Fill in the direct deposit form from his attachment')).toEqual(['pdf_forms']);
+    expect(requestToolGroups('Save the attachments from Max')).toEqual(['pdf_forms']);
+    expect(requestToolGroups('Write a cover letter for Dana')).toEqual(['documents_more']);
+    expect(requestToolGroups('Draft two memos')).toEqual(['documents_more']);
+    expect(requestToolGroups('Send me the 1099 numbers')).toEqual(['pdf_forms']);
+    // Ordinary uses of the words do not preload it.
+    for (const text of [
+      'Summarize the attachment',
+      'What form of payment do they take?',
+      'Is the PDF long?',
+      'Read the newsletter and the memorandum, then inform Dana',
+      '',
+    ])
+      expect(requestToolGroups(text)).toEqual([]);
+    expect(requestToolGroups(null)).toEqual([]);
+    // The scope groups never come from the text.
+    expect(initialToolGroups({ hasWorkContext: true })).toEqual(['projects_routines']);
+  });
+
+  test('preloaded groups never push a Work chat with an Area over the cap', () => {
+    const scope = initialToolGroups({ hasWorkContext: true, hasAreaContext: true, narrativeEnabled: true });
+    const preload = requestToolGroups('Make the invoice and fill in the W-9');
+    const first = activeToolsForStep(allNames, scope, [], undefined, preload);
+    expect(first.length).toBeLessThanOrEqual(MAX_ACTIVE_TOOLS);
+    for (const group of scope) for (const tool of TOOL_GROUPS[group].tools) expect(first).toContain(tool);
+    // The newest preload that fits stays: the PDF form tools.
+    expect(first).toContain('pdf_form_fill');
+    // A group the model asks for later wins over a preload when the slots run out.
+    const steps = [
+      {
+        content: [
+          { type: 'tool-call', toolName: 'enable_tools', input: { groups: ['slack'] } },
+          { type: 'tool-result', toolName: 'enable_tools', output: { ok: true } },
+        ],
+      },
+    ];
+    const later = activeToolsForStep(allNames, scope, steps, undefined, preload);
+    expect(later.length).toBeLessThanOrEqual(MAX_ACTIVE_TOOLS);
+    for (const tool of TOOL_GROUPS.slack.tools) expect(later).toContain(tool);
   });
 
   test('scope groups are never unloaded, and the result reports what was dropped', async () => {

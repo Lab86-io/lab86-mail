@@ -367,9 +367,10 @@ export function readThreadOutput(
   const ordered = [...(thread.messages || [])].sort((a: any, b: any) => (b.date || 0) - (a.date || 0));
   const messages = ordered.slice(0, options.maxMessages).map((message: any) => {
     const text = bodyToPlainText(message);
-    const attachments = (Array.isArray(message.attachments) ? message.attachments : []).map(
-      readThreadAttachment,
-    );
+    // An attachment with no id cannot be listed or saved, so the model does not get it.
+    const attachments = (Array.isArray(message.attachments) ? message.attachments : [])
+      .map(readThreadAttachment)
+      .filter((attachment: z.infer<typeof ReadThreadAttachment>) => attachment.attachmentId);
     return {
       messageId: String(message._id || message.id || ''),
       from: message.from || '',

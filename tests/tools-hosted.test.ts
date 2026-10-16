@@ -236,8 +236,8 @@ describe('read_thread formatting', () => {
     expect(out.messages[0].body.length).toBeLessThanOrEqual(201);
     expect(out.messages[0].body.endsWith('…')).toBe(true);
     expect(out.messages[0].attachments).toEqual([
+      // The attachment with no id is left out: mail_attachment_save could not take it.
       { attachmentId: 'att-raw', filename: 'scan.png', mimeType: 'image/png' },
-      { attachmentId: '', filename: 'attachment' },
     ]);
     expect(readThreadOutput({}, options).messages).toEqual([]);
   });
