@@ -1227,7 +1227,10 @@ export const pageRecentCorpusThreads = query({
 // The goal mail watch (app/api/cron/step-watch) reads the threads newer than
 // its mark, oldest first, so each pass moves the mark forward even after a
 // burst of mail. A page never ends inside a group of threads with the same
-// time: it grows to hold the group, so `after` on the next page skips nothing.
+// time: it grows to hold the WHOLE group, so `after` on the next page skips
+// nothing. The group read has no count cap on purpose: a group past the
+// Convex read limit fails the query, and the watch tries again, instead of a
+// silent skip.
 export const pageCorpusThreadsAfter = query({
   args: {
     internalSecret: v.optional(v.string()),
@@ -1258,7 +1261,7 @@ export const pageCorpusThreadsAfter = query({
       const group = await ctx.db
         .query('mailCorpusThreads')
         .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId).eq('lastDate', boundary))
-        .take(200);
+        .collect();
       page = [...rows.filter((row) => dateOf(row) < boundary), ...group];
     }
     return { items: page.map(normalizeCorpusThread), lastDate: boundary, more: true };
