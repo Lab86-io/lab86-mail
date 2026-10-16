@@ -73,32 +73,47 @@ interface RecentCorpusThreadPage {
   nextBefore?: number | null;
 }
 
+/** One page of `mailCorpus.pageCorpusThreadsAfter`, oldest first. */
+interface CorpusThreadsAfterPage {
+  items: RecentCorpusThread[];
+  /** Every thread at or before this time is read. */
+  lastDate: number;
+  more: boolean;
+}
+
 /**
- * The threads newer than the mark, newest first. The first pass (no mark)
- * reads one page. `complete` is false when the page cap stopped the read
- * before it got to the mark.
+ * The threads to judge in one pass, and the new mark. The first pass (no
+ * mark) reads the newest page only and marks its newest thread. A later pass
+ * reads upward from the mark, oldest first, at most 10 pages, and the mark
+ * moves to the last thread it read. So a burst of mail never stops the
+ * watch: the next pass goes on where this one stopped.
  */
 export async function goalThreadsSince(
   query: typeof convexQuery,
   userId: string,
   after: number,
-): Promise<{ threads: RecentCorpusThread[]; complete: boolean }> {
-  const threads: RecentCorpusThread[] = [];
-  let before: number | undefined;
-  for (let page = 0; page < (after ? GOAL_WATCH_PAGES : 1); page += 1) {
-    const result = await query<RecentCorpusThreadPage>(api.mailCorpus.pageRecentCorpusThreads, {
+): Promise<{ threads: RecentCorpusThread[]; mark: number }> {
+  if (!after) {
+    const page = await query<RecentCorpusThreadPage>(api.mailCorpus.pageRecentCorpusThreads, {
       userId,
       limit: GOAL_WATCH_PAGE,
-      ...(before === undefined ? {} : { before }),
     });
-    const items = result?.items || [];
-    const newer = after ? items.filter((thread) => (thread.lastDate || 0) > after) : items;
-    threads.push(...newer);
-    // A page that gets to the mark, or the last page, ends the read.
-    if (!after || newer.length < items.length || !result?.nextBefore) return { threads, complete: true };
-    before = result.nextBefore;
+    const threads = page?.items || [];
+    return { threads, mark: threads.reduce((newest, thread) => Math.max(newest, thread.lastDate || 0), 0) };
   }
-  return { threads, complete: false };
+  const threads: RecentCorpusThread[] = [];
+  let mark = after;
+  for (let page = 0; page < GOAL_WATCH_PAGES; page += 1) {
+    const result = await query<CorpusThreadsAfterPage>(api.mailCorpus.pageCorpusThreadsAfter, {
+      userId,
+      after: mark,
+      limit: GOAL_WATCH_PAGE,
+    });
+    threads.push(...(result?.items || []));
+    if (result && result.lastDate > mark) mark = result.lastDate;
+    if (!result?.more) break;
+  }
+  return { threads, mark };
 }
 
 /**
@@ -230,13 +245,9 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
       const watchedAfter = Number(detail?.work?.goalWatchAfter) || 0;
       const read = openProofs.length
         ? await goalThreadsSince(deps.convexQuery, userId, watchedAfter)
-        : { threads: [], complete: true };
+        : { threads: [], mark: watchedAfter };
       const fresh = read.threads.filter((thread) => proofOfferAllowed(threadPrimaryCategory(thread)));
-      // The mark moves only after a full read. After a cap hit, the next pass
-      // reads the same span again, so no thread is skipped.
-      const newestDate = read.complete
-        ? read.threads.reduce((newest, thread) => Math.max(newest, thread.lastDate || 0), 0)
-        : 0;
+      const newestDate = read.mark;
       for (const proof of fresh.length ? openProofs : []) {
         const needle = [outcome, workTitle, proof.what].filter(Boolean).join(' ');
         const ranked = fresh

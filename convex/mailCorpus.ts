@@ -1224,6 +1224,47 @@ export const pageRecentCorpusThreads = query({
   },
 });
 
+// The goal mail watch (app/api/cron/step-watch) reads the threads newer than
+// its mark, oldest first, so each pass moves the mark forward even after a
+// burst of mail. A page never ends inside a group of threads with the same
+// time: it grows to hold the group, so `after` on the next page skips nothing.
+export const pageCorpusThreadsAfter = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    after: v.number(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = clampLimit(args.limit, 50, 100);
+    const dateOf = (row: any) => Number(row.lastDate ?? 0);
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId).gt('lastDate', args.after))
+      .order('asc')
+      .take(limit + 1);
+    if (rows.length <= limit) {
+      const last = rows.at(-1);
+      return {
+        items: rows.map(normalizeCorpusThread),
+        lastDate: last ? dateOf(last) : args.after,
+        more: false,
+      };
+    }
+    const boundary = dateOf(rows[limit - 1]);
+    let page = rows.slice(0, limit);
+    if (dateOf(rows[limit]) === boundary) {
+      const group = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId).eq('lastDate', boundary))
+        .take(200);
+      page = [...rows.filter((row) => dateOf(row) < boundary), ...group];
+    }
+    return { items: page.map(normalizeCorpusThread), lastDate: boundary, more: true };
+  },
+});
+
 function yearMonth(ts: unknown) {
   const value = Number(ts);
   const date = new Date(Number.isFinite(value) && value > 0 ? value : now());

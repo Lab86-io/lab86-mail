@@ -60,6 +60,6 @@ export async function runLlmClassificationSweep(
     // Drain the rest: rows left by the per-kick cap, or a kick that arrived
     // while we were running. A short delay yields the event loop and re-debounces.
     const replay = rerunRequested.delete(userId) || result?.moreRemaining;
-    if (replay) kickLlmClassification(userId, 1_000);
+    if (replay) kickLlmClassification(userId, 1_000, sweep);
   }
 }
