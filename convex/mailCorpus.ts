@@ -1199,20 +1199,23 @@ export const pageRecentCorpusThreads = query({
     let candidates = rows;
     if (pageEndsInTie(rows, limit, dateOf)) {
       const boundary = dateOf(rows[limit - 1]);
-      const byTime = (range: (q: any) => any, take: number) =>
-        (args.accountId
-          ? ctx.db
-              .query('mailCorpusThreads')
-              .withIndex('by_user_account_updated', (q) =>
-                range(q.eq('userId', args.userId).eq('accountId', args.accountId as string)),
-              )
-          : ctx.db
-              .query('mailCorpusThreads')
-              .withIndex('by_user_lastDate', (q) => range(q.eq('userId', args.userId)))
-        )
-          .order('desc')
-          .take(take);
-      const group = await byTime((q) => q.eq('lastDate', boundary), 200);
+      const byTime = (range: (q: any) => any, take?: number) => {
+        const ordered = (
+          args.accountId
+            ? ctx.db
+                .query('mailCorpusThreads')
+                .withIndex('by_user_account_updated', (q) =>
+                  range(q.eq('userId', args.userId).eq('accountId', args.accountId as string)),
+                )
+            : ctx.db
+                .query('mailCorpusThreads')
+                .withIndex('by_user_lastDate', (q) => range(q.eq('userId', args.userId)))
+        ).order('desc');
+        return take === undefined ? ordered.collect() : ordered.take(take);
+      };
+      // The WHOLE group: a capped group with `lt` on the next page would skip
+      // the rest. A group past the Convex read limit fails the query instead.
+      const group = await byTime((q) => q.eq('lastDate', boundary));
       // One older row tells the helper whether another page exists.
       const older = await byTime((q) => q.lt('lastDate', boundary), 1);
       candidates = [...rows.filter((row) => dateOf(row) > boundary), ...group, ...older];
