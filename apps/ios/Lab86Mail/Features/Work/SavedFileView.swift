@@ -39,11 +39,18 @@ final class SavedFileLoader {
 
     func load(fileID: String, backend: BackendClient) async {
         if self.fileID == fileID, case .loaded = state { return }
+        // The file of the last load leaves the disk before the state forgets it.
+        removeLoadedFile()
         self.fileID = fileID
         state = .inProgress
         do {
             let file = try await backend.download(path: SavedFileLink.previewPath(fileID: fileID))
-            guard !Task.isCancelled, self.fileID == fileID else { return }
+            guard !Task.isCancelled, self.fileID == fileID else {
+                // Nobody shows this download any more: remove it now.
+                Self.remove(file.url)
+                return
+            }
+            removeLoadedFile()
             state = .loaded(file.url, contentType: file.contentType)
         } catch BackendError.server(let status, _) where status == 403 {
             guard !Task.isCancelled, self.fileID == fileID else { return }
@@ -55,11 +62,18 @@ final class SavedFileLoader {
     }
 
     func reset() {
-        if case .loaded(let url, _) = state {
-            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
-        }
+        removeLoadedFile()
         state = .idle
         fileID = nil
+    }
+
+    private func removeLoadedFile() {
+        if case .loaded(let url, _) = state { Self.remove(url) }
+    }
+
+    /// Each download has its own temporary folder (BackendClient.download).
+    private static func remove(_ url: URL) {
+        try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
     }
 }
 

@@ -26,6 +26,27 @@ struct SavedFileLoaderTests {
         #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
     }
 
+    @Test func aNewFileRemovesTheDownloadOfTheLastOne() async throws {
+        let server = StubBackendServer()
+        server.routes["/api/files/saved/file_a"] = .object(["ok": .bool(true)])
+        server.routes["/api/files/saved/file_b"] = .object(["ok": .bool(true)])
+        let loader = SavedFileLoader()
+        await loader.load(fileID: "file_a", backend: server.backend)
+        guard case .loaded(let first, _) = loader.state else {
+            Issue.record("expected a loaded file, got \(loader.state)")
+            return
+        }
+        await loader.load(fileID: "file_b", backend: server.backend)
+        guard case .loaded(let second, _) = loader.state else {
+            Issue.record("expected a loaded file, got \(loader.state)")
+            return
+        }
+        #expect(!FileManager.default.fileExists(atPath: first.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: second.path(percentEncoded: false)))
+        loader.reset()
+        #expect(!FileManager.default.fileExists(atPath: second.path(percentEncoded: false)))
+    }
+
     @Test func aSealedFileNeedsTheIdentityCheck() async {
         let server = StubBackendServer()
         server.routes["/api/files/saved/file_w9"] = .object(["ok": .bool(false), "error": .string("Verify your identity."), "code": .string("verify_identity")])
