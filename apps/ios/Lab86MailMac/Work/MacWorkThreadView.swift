@@ -229,8 +229,8 @@ struct MacWorkThreadView: View {
             .onChange(of: model.documentOpen) { _, open in
                 documentDidChange(open: open, model: model)
             }
-            .onChange(of: model.documentSet?.count) { _, count in
-                MacRequests.shared.threadItemsOpen = (count ?? 0) > 1
+            .onChange(of: model.documentSet?.count) { _, _ in
+                MacRequests.shared.threadItemsOpen = itemsOpen(model)
             }
             .onChange(of: MacRequests.shared.closeDocumentToken) { _, _ in
                 model.closeDocument()
@@ -650,9 +650,14 @@ struct MacWorkThreadView: View {
 
     /// A document opened or closed (docs/albatross-document-handoff.md, D5).
     /// The pane gives way, and the source list when the window needs it.
+    /// "Next Item" and "Previous Item" work when an open document has more than one item.
+    private func itemsOpen(_ model: WorkThreadModel) -> Bool {
+        model.documentOpen && (model.documentSet?.showsSwitcher ?? false)
+    }
+
     private func documentDidChange(open: Bool, model: WorkThreadModel) {
         MacRequests.shared.threadDocumentOpen = open
-        MacRequests.shared.threadItemsOpen = open && (model.documentSet?.showsSwitcher ?? false)
+        MacRequests.shared.threadItemsOpen = itemsOpen(model)
         if open {
             if paneMode != .none { apply(.none, model: model) }
             let room = MacThreadLayout.documentRoom(windowWidth: windowSize.width, sidebarShown: MacRequests.shared.sidebarShown)

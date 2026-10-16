@@ -852,8 +852,8 @@ gains `downloaded`, `allowed_send_once`, and `allowed_send_always`; `SecureItemV
 3. The compose route: this note sends the server references as one multipart text part
    `fileAttachments` (a JSON array of `DraftAttachment`). The web builder must read it, and the
    draft save route must accept and return `attachments`. `list_drafts` rows must carry them.
-4. The bytes of a saved file: this note reads `GET /api/agent/uploads/<fileId>` with the Clerk
-   session. Confirm that saved files (`agentUploads`) are served by that route, or name the route.
+4. Answered: the bytes of a saved file come from `GET /api/files/saved/<fileId>` with the Clerk
+   session (sections 6.2 and 12). The viewer reads `?preview=1`, which needs no identity check.
 5. A deck item: confirm that its `id` is an Albatross document id that `?document=<id>` opens.
 6. The chat context on a file or draft tab: the contract has only `{ kind: "document" }`. This
    note sends nothing on those tabs. Say if a `{ kind: "file", id }` attachment should exist.

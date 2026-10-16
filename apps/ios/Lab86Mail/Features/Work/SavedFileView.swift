@@ -46,7 +46,7 @@ final class SavedFileLoader {
             guard !Task.isCancelled, self.fileID == fileID else { return }
             state = .loaded(file.url, contentType: file.contentType)
         } catch BackendError.server(let status, _) where status == 403 {
-            guard self.fileID == fileID else { return }
+            guard !Task.isCancelled, self.fileID == fileID else { return }
             state = .needsIdentity
         } catch {
             guard !Task.isCancelled, self.fileID == fileID else { return }

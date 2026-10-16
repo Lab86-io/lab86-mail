@@ -116,7 +116,6 @@ enum ShapeAction: Equatable, Sendable, Identifiable {
         }
     }
 
-    /// Navigation actions leave the chat for a destination; mutations change
     /// The saved file an `open_document` names by its path
     /// (`/?view=files&file=<id>`, docs/albatross-goal-runs.md), else nil: an
     /// Albatross document opens by id.
@@ -125,6 +124,7 @@ enum ShapeAction: Equatable, Sendable, Identifiable {
         return SavedFileLink.fileID(in: path)
     }
 
+    /// Navigation actions leave the chat for a destination; mutations change
     /// data and show their outcome in place.
     var isMutation: Bool {
         switch self {
