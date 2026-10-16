@@ -69,6 +69,179 @@ describe('tie-safe paging (PAGE-1)', () => {
     expect(pageThroughTies([{ d: 0 }, { d: 0 }, { d: -1 }], 1, date).nextBefore).toBeUndefined();
   });
 
+  test('pageCorpusThreadsAfter reads every newer thread oldest first across same-second groups', async () => {
+    const SECRET = 'page-after-secret';
+    const previous = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = SECRET;
+    try {
+      const t = convexTest(schema, {
+        '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
+        '../convex/mailCorpus.ts': () => import('../convex/mailCorpus'),
+        '../convex/albatross.ts': () => import('../convex/albatross'),
+      });
+      const same = Date.UTC(2026, 8, 1, 12, 0, 0);
+      const times = [same - 10_000, same - 5_000, same, same, same, same + 5_000];
+      await t.mutation(api.mailCorpus.upsertCorpusBatch, {
+        internalSecret: SECRET,
+        userId: 'u1',
+        accountId: 'a1',
+        grantId: 'g1',
+        provider: 'google',
+        threads: [],
+        messages: times.map((receivedAt, i) => ({
+          providerMessageId: `m${i}`,
+          providerThreadId: `t${i}`,
+          subject: `S${i}`,
+          from: 'x@example.com',
+          to: 'me@example.com',
+          receivedAt,
+          snippet: '',
+          searchText: '',
+          labels: ['INBOX'],
+        })) as never,
+      });
+      const seen: string[] = [];
+      const marks: number[] = [];
+      // The mark sits on the first thread: the read starts after it.
+      let after = same - 10_000;
+      for (let guard = 0; guard < 10; guard += 1) {
+        const page = await t.query(api.mailCorpus.pageCorpusThreadsAfter, {
+          internalSecret: SECRET,
+          userId: 'u1',
+          after,
+          limit: 2,
+        });
+        seen.push(...page.items.map((item: any) => item._id));
+        marks.push(page.lastDate);
+        after = page.lastDate;
+        if (!page.more) break;
+      }
+      expect(seen).toEqual(['t1', 't2', 't3', 't4', 't5']);
+      // The second page grew to hold the whole same-second group.
+      expect(marks).toEqual([same, same + 5_000]);
+      const empty = await t.query(api.mailCorpus.pageCorpusThreadsAfter, {
+        internalSecret: SECRET,
+        userId: 'u1',
+        after: same + 5_000,
+      });
+      expect(empty).toEqual({ items: [], lastDate: same + 5_000, more: false });
+    } finally {
+      if (previous === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previous;
+    }
+  });
+
+  test('pageCorpusThreadsAfter keeps a same-second group larger than 200 on one page', async () => {
+    const SECRET = 'page-after-group-secret';
+    const previous = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = SECRET;
+    try {
+      const t = convexTest(schema, {
+        '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
+        '../convex/mailCorpus.ts': () => import('../convex/mailCorpus'),
+        '../convex/albatross.ts': () => import('../convex/albatross'),
+      });
+      const same = Date.UTC(2026, 8, 1, 12, 0, 0);
+      const times = [same - 5_000, ...Array.from({ length: 205 }, () => same), same + 5_000];
+      await t.mutation(api.mailCorpus.upsertCorpusBatch, {
+        internalSecret: SECRET,
+        userId: 'u1',
+        accountId: 'a1',
+        grantId: 'g1',
+        provider: 'google',
+        threads: [],
+        messages: times.map((receivedAt, i) => ({
+          providerMessageId: `m${i}`,
+          providerThreadId: `t${i}`,
+          subject: `S${i}`,
+          from: 'x@example.com',
+          to: 'me@example.com',
+          receivedAt,
+          snippet: '',
+          searchText: '',
+          labels: ['INBOX'],
+        })) as never,
+      });
+      const first = await t.query(api.mailCorpus.pageCorpusThreadsAfter, {
+        internalSecret: SECRET,
+        userId: 'u1',
+        after: same - 10_000,
+        limit: 2,
+      });
+      // The first thread and the whole group of 205: the next page starts after the group.
+      expect(first.items).toHaveLength(206);
+      expect(first).toMatchObject({ lastDate: same, more: true });
+      const second = await t.query(api.mailCorpus.pageCorpusThreadsAfter, {
+        internalSecret: SECRET,
+        userId: 'u1',
+        after: first.lastDate,
+        limit: 2,
+      });
+      expect(second.items.map((item: any) => item._id)).toEqual(['t206']);
+      expect(second.more).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previous;
+    }
+  });
+
+  test('pageRecentCorpusThreads keeps a same-second group larger than 200 on one page', async () => {
+    const SECRET = 'page-recent-group-secret';
+    const previous = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = SECRET;
+    try {
+      const t = convexTest(schema, {
+        '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
+        '../convex/mailCorpus.ts': () => import('../convex/mailCorpus'),
+        '../convex/albatross.ts': () => import('../convex/albatross'),
+      });
+      const same = Date.UTC(2026, 8, 1, 12, 0, 0);
+      const times = [same + 5_000, ...Array.from({ length: 205 }, () => same), same - 5_000];
+      await t.mutation(api.mailCorpus.upsertCorpusBatch, {
+        internalSecret: SECRET,
+        userId: 'u1',
+        accountId: 'a1',
+        grantId: 'g1',
+        provider: 'google',
+        threads: [],
+        messages: times.map((receivedAt, i) => ({
+          providerMessageId: `m${i}`,
+          providerThreadId: `t${i}`,
+          subject: `S${i}`,
+          from: 'x@example.com',
+          to: 'me@example.com',
+          receivedAt,
+          snippet: '',
+          searchText: '',
+          labels: ['INBOX'],
+        })) as never,
+      });
+      for (const accountId of [undefined, 'a1']) {
+        const first = await t.query(api.mailCorpus.pageRecentCorpusThreads, {
+          internalSecret: SECRET,
+          userId: 'u1',
+          accountId,
+          limit: 2,
+        });
+        // The newest thread and the whole group of 205.
+        expect(first.items).toHaveLength(206);
+        expect(first.nextBefore).toBe(same);
+        const second = await t.query(api.mailCorpus.pageRecentCorpusThreads, {
+          internalSecret: SECRET,
+          userId: 'u1',
+          accountId,
+          limit: 2,
+          before: first.nextBefore,
+        });
+        expect(second.items.map((item: any) => item._id)).toEqual(['t206']);
+        expect(second.nextBefore).toBeUndefined();
+      }
+    } finally {
+      if (previous === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previous;
+    }
+  });
+
   test('pageRecentCorpusThreads returns every thread across same-second boundaries', async () => {
     const SECRET = 'page-ties-secret';
     const previous = process.env.LAB86_CONVEX_INTERNAL_SECRET;

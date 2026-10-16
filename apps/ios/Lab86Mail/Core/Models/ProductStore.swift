@@ -1606,6 +1606,14 @@ final class ProductStore {
         await postWorkStep(workID, stepKey: stepKey, note: nil, continues: true)
     }
 
+    /// "Done, continue" on a goal handoff (docs/albatross-goal-runs.md): the
+    /// user did their part. The server records it and queues a goal run that
+    /// checks the outcome contract. The one place that builds this request,
+    /// so the body is easy to change when the server shape settles.
+    func completeGoalAndContinue(_ workID: String) async -> WorkStepContinuation? {
+        await postWorkStep(workID, stepKey: GoalRun.stepKey, note: nil, continues: true)
+    }
+
     private func postWorkStep(_ workID: String, stepKey: String?, note: String?, continues: Bool) async -> WorkStepContinuation? {
         let previous = workDetails[workID]
         let optimistic = stepKey.flatMap { previous?.completing(stepID: $0) }
@@ -1848,7 +1856,7 @@ final class ProductStore {
             for row in result["drafts"]?.arrayValue ?? [] {
                 let rowID = row["_id"]?.stringValue ?? row["id"]?.stringValue
                 guard rowID == draftID else { continue }
-                return ComposePrefill(
+                var prefill = ComposePrefill(
                     recipient: row["to"]?.stringValue ?? "",
                     cc: row["cc"]?.stringValue ?? "",
                     bcc: row["bcc"]?.stringValue ?? "",
@@ -1862,6 +1870,9 @@ final class ProductStore {
                     attachmentsKey: nil,
                     draftID: draftID
                 )
+                // The saved files that go with the draft (docs/albatross-goal-runs.md, G3).
+                prefill.fileAttachments = DraftAttachmentClient.rows(of: row)
+                return prefill
             }
         }
         return nil
@@ -2498,7 +2509,8 @@ final class ProductStore {
         sendAt: Date?,
         undoSeconds: Int,
         includeSignature: Bool,
-        fromAddress: String? = nil
+        fromAddress: String? = nil,
+        draftAttachments: [DraftAttachment] = []
     ) async throws -> ComposeSubmission {
         var fields = Self.composeFields(
             mode: mode,
@@ -2513,6 +2525,9 @@ final class ProductStore {
         )
         if let threadID { fields["threadId"] = threadID }
         if let messageID { fields["messageId"] = messageID }
+        // The saved files that go with the draft; the server reads their
+        // bytes at send time (docs/albatross-goal-runs.md, G3).
+        if let draftField = DraftAttachmentClient.sendField(draftAttachments) { fields["draftAttachments"] = draftField }
         if let sendAt { fields["sendAt"] = String(Int(sendAt.timeIntervalSince1970 * 1_000)) }
         if sendAt == nil, undoSeconds > 0 {
             fields["undoSeconds"] = String(min(max(undoSeconds, 0), 300))
@@ -2580,6 +2595,36 @@ final class ProductStore {
         body: String,
         scheduledFor: Date?
     ) async throws -> String {
+        try await saveDraft(
+            id: id,
+            accountID: accountID,
+            threadID: threadID,
+            messageID: messageID,
+            to: to,
+            cc: cc,
+            bcc: bcc,
+            subject: subject,
+            body: body,
+            scheduledFor: scheduledFor,
+            attachments: nil
+        )
+    }
+
+    /// The same save with the draft's saved files (docs/albatross-goal-runs.md,
+    /// G3): the full list replaces the rows, `[]` removes them, nil keeps them.
+    func saveDraft(
+        id: String?,
+        accountID: String,
+        threadID: String?,
+        messageID: String?,
+        to: String,
+        cc: String,
+        bcc: String,
+        subject: String,
+        body: String,
+        scheduledFor: Date?,
+        attachments: [DraftAttachment]?
+    ) async throws -> String {
         if let id {
             var patch: [String: JSONValue] = [
                 "to": .string(to),
@@ -2591,6 +2636,8 @@ final class ProductStore {
             if let scheduledFor {
                 patch["scheduledFor"] = .number(scheduledFor.timeIntervalSince1970 * 1_000)
             }
+            // The full list replaces the rows; `[]` removes them; nil keeps them.
+            if let rows = DraftAttachmentClient.toolsField(attachments) { patch["attachments"] = rows }
             _ = try await tools.invoke(
                 "update_draft",
                 arguments: ["id": .string(id), "patch": .object(patch)]
@@ -2610,6 +2657,9 @@ final class ProductStore {
         if let messageID { arguments["inReplyToMessageId"] = .string(messageID) }
         if let scheduledFor {
             arguments["scheduledFor"] = .number(scheduledFor.timeIntervalSince1970 * 1_000)
+        }
+        if let rows = DraftAttachmentClient.toolsField(attachments), !(attachments?.isEmpty ?? true) {
+            arguments["attachments"] = rows
         }
         let result = try await tools.invoke("save_draft", arguments: arguments)
         guard let savedID = result["draft"]?["_id"]?.stringValue

@@ -20,9 +20,12 @@ struct ComposeDraftSnapshot: Codable, Hashable, Sendable {
     // The send-as address the message was going out from. Optional so a
     // record saved before send-as still decodes.
     var fromAddress: String? = nil
+    // The saved files that went with the draft (docs/albatross-goal-runs.md,
+    // G3). Optional so a record saved before them still decodes.
+    var fileAttachments: [DraftAttachment]? = nil
 
     var composePrefill: ComposePrefill {
-        ComposePrefill(
+        var prefill = ComposePrefill(
             recipient: recipient,
             cc: cc,
             bcc: bcc,
@@ -37,6 +40,8 @@ struct ComposeDraftSnapshot: Codable, Hashable, Sendable {
             draftID: draftID,
             fromAddress: fromAddress
         )
+        prefill.fileAttachments = fileAttachments ?? []
+        return prefill
     }
 }
 

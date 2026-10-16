@@ -20,6 +20,9 @@ const WATCH_PREFILTER_FLOOR = 0.08;
 const WATCH_STEP_LIMIT = 3;
 const WATCH_THREADS_PER_STEP = 2;
 const WATCH_RECENT_THREADS = 40;
+/** The goal watch reads new threads in pages of 50, at most 10 pages in one pass. */
+const GOAL_WATCH_PAGE = 50;
+const GOAL_WATCH_PAGES = 10;
 
 interface StepWatchDependencies {
   isInternalCronRequest: typeof isInternalCronRequest;
@@ -62,6 +65,55 @@ export interface RecentCorpusThread {
   lastDate?: number;
   labels?: string[];
   smartCategory?: { primary?: unknown; model?: unknown } | null;
+}
+
+/** One page of `mailCorpus.pageRecentCorpusThreads`, newest first. */
+interface RecentCorpusThreadPage {
+  items: RecentCorpusThread[];
+  nextBefore?: number | null;
+}
+
+/** One page of `mailCorpus.pageCorpusThreadsAfter`, oldest first. */
+interface CorpusThreadsAfterPage {
+  items: RecentCorpusThread[];
+  /** Every thread at or before this time is read. */
+  lastDate: number;
+  more: boolean;
+}
+
+/**
+ * The threads to judge in one pass, and the new mark. The first pass (no
+ * mark) reads the newest page only and marks its newest thread. A later pass
+ * reads upward from the mark, oldest first, at most 10 pages, and the mark
+ * moves to the last thread it read. So a burst of mail never stops the
+ * watch: the next pass goes on where this one stopped.
+ */
+export async function goalThreadsSince(
+  query: typeof convexQuery,
+  userId: string,
+  after: number,
+): Promise<{ threads: RecentCorpusThread[]; mark: number }> {
+  if (!after) {
+    const page = await query<RecentCorpusThreadPage>(api.mailCorpus.pageRecentCorpusThreads, {
+      userId,
+      limit: GOAL_WATCH_PAGE,
+    });
+    const threads = page?.items || [];
+    return { threads, mark: threads.reduce((newest, thread) => Math.max(newest, thread.lastDate || 0), 0) };
+  }
+  const threads: RecentCorpusThread[] = [];
+  let mark = after;
+  for (let page = 0; page < GOAL_WATCH_PAGES; page += 1) {
+    const result = await query<CorpusThreadsAfterPage>(api.mailCorpus.pageCorpusThreadsAfter, {
+      userId,
+      after: mark,
+      limit: GOAL_WATCH_PAGE,
+    });
+    threads.push(...(result?.items || []));
+    if (result && result.lastDate > mark) mark = result.lastDate;
+    if (!result?.more) break;
+  }
+  return { threads, mark };
 }
 
 /**
@@ -132,11 +184,12 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
         return NextResponse.json({ ok: true, watched: 0, completedSteps: 0 });
       }
 
-      const threads =
-        (await deps.convexQuery<RecentCorpusThread[]>(api.mailCorpus.listRecentCorpusThreads, {
-          userId,
-          limit: WATCH_RECENT_THREADS,
-        })) || [];
+      const threads = outstanding.length
+        ? (await deps.convexQuery<RecentCorpusThread[]>(api.mailCorpus.listRecentCorpusThreads, {
+            userId,
+            limit: WATCH_RECENT_THREADS,
+          })) || []
+        : [];
       const confirmable = threads.filter((thread) => proofOfferAllowed(threadPrimaryCategory(thread)));
       const workTitle = String(detail?.plan?.outcome || detail?.work?.title || '');
 
@@ -190,8 +243,11 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
       // A goal proof can stay open for weeks. Each pass judges only threads
       // newer than the last pass, so the cost does not grow with time.
       const watchedAfter = Number(detail?.work?.goalWatchAfter) || 0;
-      const fresh = confirmable.filter((thread) => !watchedAfter || (thread.lastDate || 0) > watchedAfter);
-      const newestDate = threads.reduce((newest, thread) => Math.max(newest, thread.lastDate || 0), 0);
+      const read = openProofs.length
+        ? await goalThreadsSince(deps.convexQuery, userId, watchedAfter)
+        : { threads: [], mark: watchedAfter };
+      const fresh = read.threads.filter((thread) => proofOfferAllowed(threadPrimaryCategory(thread)));
+      const newestDate = read.mark;
       for (const proof of fresh.length ? openProofs : []) {
         const needle = [outcome, workTitle, proof.what].filter(Boolean).join(' ');
         const ranked = fresh
@@ -234,7 +290,7 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
         userId,
         workId,
         stillWatching,
-        ...(openProofs.length && newestDate > watchedAfter ? { goalWatchAfter: newestDate } : {}),
+        ...(newestDate > watchedAfter ? { goalWatchAfter: newestDate } : {}),
       });
       return NextResponse.json({
         ok: true,

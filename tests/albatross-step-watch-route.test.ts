@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
+import { getFunctionName } from 'convex/server';
 import { NextRequest } from 'next/server';
 import { createStepWatchPost } from '../app/api/cron/step-watch/route';
 
@@ -315,8 +316,20 @@ describe('the mail watch of a goal Work (docs/albatross-goal-runs.md)', () => {
     labels: ['SENT'],
   };
 
-  function goalPost(options: { detail?: any; threads?: any[]; gate?: (input: any) => any } = {}) {
+  function goalPost(
+    options: {
+      detail?: any;
+      threads?: any[];
+      /** The first-pass page (no mark), newest first. */
+      firstPage?: { items: any[]; nextBefore?: number };
+      /** The pages after the mark, oldest first. Default: the threads newer than `after`. */
+      afterPages?: Array<{ items: any[]; lastDate: number; more: boolean }>;
+      gate?: (input: any) => any;
+    } = {},
+  ) {
     const mutations: any[] = [];
+    const pageCalls: Array<{ name: string; args: any }> = [];
+    const threads = options.threads ?? [sentThread, marketingThread];
     const gate = mock(
       options.gate ??
         (async (input: any) => ({
@@ -326,11 +339,24 @@ describe('the mail watch of a goal Work (docs/albatross-goal-runs.md)', () => {
         })),
     );
     const completeWorkStep = mock(async () => ({ ok: true }));
+    let afterCall = 0;
     const post = createStepWatchPost({
       isInternalCronRequest: () => true,
-      convexQuery: mock(async (_fn: any, args: any) =>
-        args.workId ? (options.detail ?? goalDetail) : (options.threads ?? [sentThread, marketingThread]),
-      ) as any,
+      convexQuery: mock(async (fn: any, args: any) => {
+        if (args.workId) return options.detail ?? goalDetail;
+        const name = getFunctionName(fn);
+        pageCalls.push({ name, args });
+        if (name === 'mailCorpus:pageRecentCorpusThreads') return options.firstPage ?? { items: threads };
+        expect(name).toBe('mailCorpus:pageCorpusThreadsAfter');
+        if (options.afterPages)
+          return afterCall < options.afterPages.length
+            ? options.afterPages[afterCall++]
+            : { items: [], lastDate: args.after, more: false };
+        const items = threads
+          .filter((thread) => (thread.lastDate || 0) > args.after)
+          .sort((a, b) => (a.lastDate || 0) - (b.lastDate || 0));
+        return { items, lastDate: items.at(-1)?.lastDate ?? args.after, more: false };
+      }) as any,
       convexMutation: mock(async (_fn: any, args: any) => {
         mutations.push(args);
         return undefined;
@@ -340,7 +366,7 @@ describe('the mail watch of a goal Work (docs/albatross-goal-runs.md)', () => {
       reportError: mock(() => undefined),
       watchesPaused: async () => false,
     });
-    return { post, mutations, gate, completeWorkStep };
+    return { post, mutations, gate, completeWorkStep, pageCalls };
   }
 
   test('a sent message settles its contract proof, and the watch goes on for the reply', async () => {
@@ -443,6 +469,83 @@ describe('the mail watch of a goal Work (docs/albatross-goal-runs.md)', () => {
     expect(await response.json()).toMatchObject({ settledProofs: 0, stillWatching: true });
     expect(quiet.gate).not.toHaveBeenCalled();
     expect(quiet.mutations.at(-1)).not.toHaveProperty('goalWatchAfter');
+  });
+
+  test('the first pass reads one page and sets the mark to its newest thread', async () => {
+    const { post, pageCalls, mutations } = goalPost({
+      firstPage: { items: [sentThread], nextBefore: Date.UTC(2026, 9, 15) },
+      gate: async () => ({ satisfies: false, reason: 'No.' }),
+    });
+    await post(watchRequest({ userId: 'user-1', workId: 'work-g' }));
+    expect(pageCalls).toEqual([
+      { name: 'mailCorpus:pageRecentCorpusThreads', args: { userId: 'user-1', limit: 50 } },
+    ]);
+    expect(mutations.at(-1)).toMatchObject({ goalWatchAfter: Date.UTC(2026, 9, 15) });
+  });
+
+  test('a burst of new mail is read upward from the mark, and the mark moves to the last thread read', async () => {
+    const mark = Date.UTC(2026, 9, 1);
+    const day = (date: number, id: string) => ({
+      ...sentThread,
+      _id: id,
+      subject: 'Lunch on Friday',
+      snippet: 'See you at noon.',
+      lastDate: Date.UTC(2026, 9, date),
+    });
+    const { post, gate, mutations, pageCalls } = goalPost({
+      detail: { ...goalDetail, work: { ...goalDetail.work, goalWatchAfter: mark } },
+      afterPages: [
+        { items: [day(2, 'p1-a'), day(3, 'p1-b')], lastDate: Date.UTC(2026, 9, 3), more: true },
+        // The later page holds the only thread that shows the proof.
+        {
+          items: [{ ...sentThread, _id: 'p2-a', lastDate: Date.UTC(2026, 9, 5) }, day(20, 'p2-b')],
+          lastDate: Date.UTC(2026, 9, 20),
+          more: false,
+        },
+      ],
+      gate: async (input: any) => ({
+        satisfies:
+          input.requirement === 'The message left your account' && input.evidenceText.includes('2026-10-05'),
+        reason: 'Shown.',
+      }),
+    });
+    const response = await post(watchRequest({ userId: 'user-1', workId: 'work-g' }));
+    expect(await response.json()).toMatchObject({ settledProofs: 1 });
+    expect(pageCalls.map((call) => call.args)).toEqual([
+      { userId: 'user-1', after: mark, limit: 50 },
+      { userId: 'user-1', after: Date.UTC(2026, 9, 3), limit: 50 },
+    ]);
+    expect(gate).toHaveBeenCalled();
+    expect(mutations.find((args) => args.sourceKind === 'mail_thread')?.sourceId).toBe('p2-a');
+    expect(mutations.at(-1)).toMatchObject({ goalWatchAfter: Date.UTC(2026, 9, 20) });
+  });
+
+  test('a pass that hits the page cap moves the mark to the last thread read, so the next pass goes on', async () => {
+    const mark = Date.UTC(2026, 0, 1);
+    const pages = Array.from({ length: 12 }, (_, index) => {
+      const date = mark + (index + 1) * 86_400_000;
+      return { items: [{ ...sentThread, _id: `t${index}`, lastDate: date }], lastDate: date, more: true };
+    });
+    const { post, gate, mutations, pageCalls } = goalPost({
+      detail: { ...goalDetail, work: { ...goalDetail.work, goalWatchAfter: mark } },
+      afterPages: pages,
+      gate: async () => ({ satisfies: false, reason: 'No.' }),
+    });
+    await post(watchRequest({ userId: 'user-1', workId: 'work-g' }));
+    expect(pageCalls).toHaveLength(10);
+    expect(gate).toHaveBeenCalled();
+    expect(mutations.at(-1)).toMatchObject({ stillWatching: true, goalWatchAfter: pages[9].lastDate });
+  });
+
+  test('a page that gives no answer ends the read and keeps the mark', async () => {
+    const mark = Date.UTC(2026, 9, 1);
+    const { post, gate, mutations } = goalPost({
+      detail: { ...goalDetail, work: { ...goalDetail.work, goalWatchAfter: mark } },
+      afterPages: [null as any],
+    });
+    await post(watchRequest({ userId: 'user-1', workId: 'work-g' }));
+    expect(gate).not.toHaveBeenCalled();
+    expect(mutations.at(-1)).not.toHaveProperty('goalWatchAfter');
   });
 
   test('a thread with only a subject still reads as evidence', async () => {

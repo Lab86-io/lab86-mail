@@ -76,6 +76,22 @@ enum RunBlockCopy {
         run.state.isOpen ? "In progress: \(run.stepTitle)" : run.stepTitle
     }
 
+    /// The second line of the header. A step run shows its step title. A
+    /// goal run never repeats the Work title: at work, while the checklist
+    /// is folded, it shows "Now: {the doing item}"; with the checklist open
+    /// the live row says it once; after the run ended, nothing.
+    static func subtitle(_ run: StepRunView, checklistOpen: Bool = false) -> String? {
+        guard run.isGoal else { return run.stepTitle }
+        guard run.state.isOpen, !checklistOpen, let doing = run.doingItem else { return nil }
+        return GoalRunCopy.now(doing.text)
+    }
+
+    /// The second button of a result that waits for the user: "Done,
+    /// continue" on a goal run, "Mark step done" on a step run.
+    static func secondButtonLabel(_ run: StepRunView) -> String {
+        run.isGoal ? GoalRunCopy.doneContinue : markStepDone
+    }
+
     /// The line that names the limit a stopped run hit.
     static func limitLine(_ stoppedBy: StepRunView.StoppedBy?) -> String? {
         switch stoppedBy {
@@ -176,6 +192,8 @@ enum RunBlockBlanks {
         guard case .handedOff(let outcome) = RunBlockState.from(run),
               outcome == .readyForYou || outcome == .yourTurn,
               let next = run.next, next.kind != .allowSecure else { return false }
+        // With a package, the rows carry the blanks (docs/albatross-goal-runs.md).
+        if !run.items.isEmpty { return false }
         return !next.blanks.isEmpty || next.detail?.nilIfBlank != nil
     }
 }
@@ -203,7 +221,9 @@ enum ThreadState: Equatable, Sendable {
         if detail.work.workState == "paused" || detail.work.horizon?.isDormant(at: .now) == true { return .putDown }
         if detail.work.workState == "done" { return .done }
         let steps = detail.execution.guideSteps
-        if steps.isEmpty { return .planning }
+        // A goal Work has zero steps and no plan to wait for
+        // (docs/albatross-goal-runs.md, G1).
+        if steps.isEmpty, !ThreadGoal.isGoalWork(detail: detail, runs: runs) { return .planning }
         if !steps.isEmpty, steps.allSatisfy(\.done) { return .done }
         let newest = runs.last?.run ?? detail.execution.activeRun
         let pendingQuestion = detail.questions.contains(where: { $0.status == "pending" })
@@ -211,7 +231,9 @@ enum ThreadState: Equatable, Sendable {
         // question that some other part of the Work left open
         // (docs/albatross-document-handoff.md).
         if pendingQuestion, let newest, RunBlockState.from(newest) == .handedOff(.needsAnswer) { return .needsAnswer }
-        if runs.contains(where: { $0.run.state.isOpen }) || detail.execution.activeRun?.state.isOpen == true { return .running }
+        if runs.contains(where: { $0.run.state.isOpen })
+            || detail.execution.activeRun?.state.isOpen == true
+            || detail.execution.goalRun?.state.isOpen == true { return .running }
         if pendingQuestion { return .needsAnswer }
         if let newest {
             switch RunBlockState.from(newest) {
@@ -230,10 +252,11 @@ enum ThreadState: Equatable, Sendable {
         return .ready
     }
 
-    /// The plan line under the title: "Step 1 of 2 · Your turn".
-    func planLine(stepNumber: Int?, total: Int) -> String {
+    /// The plan line under the title: "Step 1 of 2 · Your turn". A goal Work
+    /// has no position, and at work it reads "Albatross works on it".
+    func planLine(stepNumber: Int?, total: Int, goal: Bool = false) -> String {
         let position: String? = {
-            guard let stepNumber, total > 0 else { return nil }
+            guard !goal, let stepNumber, total > 0 else { return nil }
             return "Step \(stepNumber) of \(total)"
         }()
         switch self {
@@ -241,7 +264,7 @@ enum ThreadState: Equatable, Sendable {
         case .done: return "Done"
         case .putDown: return "Put down"
         case .ready: return position ?? "Ready"
-        case .running: return Self.join(position, "Albatross works")
+        case .running: return goal ? GoalRunCopy.worksOnIt : Self.join(position, "Albatross works")
         case .yourTurn: return Self.join(position, "Your turn")
         case .needsAnswer: return Self.join(position, "Needs your answer")
         case .readyForYou: return Self.join(position, "Ready for you")

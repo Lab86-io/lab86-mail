@@ -44,6 +44,14 @@ final class MacRequests {
     // The thread writes it and clears it when it leaves the screen.
     var threadDocumentOpen = false
 
+    // "Next Item" and "Previous Item" in document mode with a package
+    // (docs/albatross-goal-runs.md, G3). The open thread moves its selection.
+    private(set) var itemMoveToken = 0
+    private(set) var itemMoveStep = 1
+
+    // True while the open thread shows more than one item, for the View menu.
+    var threadItemsOpen = false
+
     // ⌥⌘↑, ⌥⌘↓, and ⌥⌘↩ from the Go menu (docs/albatross-threads.md, T3).
     // The shell opens the row named by `threadMoveTarget`.
     private(set) var threadMoveToken = 0
@@ -99,6 +107,12 @@ final class MacRequests {
 
     func requestCloseDocument() {
         closeDocumentToken += 1
+    }
+
+    /// +1 for the next item, -1 for the previous one.
+    func requestItemMove(_ step: Int) {
+        itemMoveStep = step
+        itemMoveToken += 1
     }
 
     func requestThreadMove(_ move: MacThreadListLayout.Move) {

@@ -1199,20 +1199,23 @@ export const pageRecentCorpusThreads = query({
     let candidates = rows;
     if (pageEndsInTie(rows, limit, dateOf)) {
       const boundary = dateOf(rows[limit - 1]);
-      const byTime = (range: (q: any) => any, take: number) =>
-        (args.accountId
-          ? ctx.db
-              .query('mailCorpusThreads')
-              .withIndex('by_user_account_updated', (q) =>
-                range(q.eq('userId', args.userId).eq('accountId', args.accountId as string)),
-              )
-          : ctx.db
-              .query('mailCorpusThreads')
-              .withIndex('by_user_lastDate', (q) => range(q.eq('userId', args.userId)))
-        )
-          .order('desc')
-          .take(take);
-      const group = await byTime((q) => q.eq('lastDate', boundary), 200);
+      const byTime = (range: (q: any) => any, take?: number) => {
+        const ordered = (
+          args.accountId
+            ? ctx.db
+                .query('mailCorpusThreads')
+                .withIndex('by_user_account_updated', (q) =>
+                  range(q.eq('userId', args.userId).eq('accountId', args.accountId as string)),
+                )
+            : ctx.db
+                .query('mailCorpusThreads')
+                .withIndex('by_user_lastDate', (q) => range(q.eq('userId', args.userId)))
+        ).order('desc');
+        return take === undefined ? ordered.collect() : ordered.take(take);
+      };
+      // The WHOLE group: a capped group with `lt` on the next page would skip
+      // the rest. A group past the Convex read limit fails the query instead.
+      const group = await byTime((q) => q.eq('lastDate', boundary));
       // One older row tells the helper whether another page exists.
       const older = await byTime((q) => q.lt('lastDate', boundary), 1);
       candidates = [...rows.filter((row) => dateOf(row) > boundary), ...group, ...older];
@@ -1221,6 +1224,50 @@ export const pageRecentCorpusThreads = query({
     // helper reports that page as the last one.
     const { page, nextBefore } = pageThroughTies(candidates, limit, dateOf);
     return { items: page.map(normalizeCorpusThread), nextBefore };
+  },
+});
+
+// The goal mail watch (app/api/cron/step-watch) reads the threads newer than
+// its mark, oldest first, so each pass moves the mark forward even after a
+// burst of mail. A page never ends inside a group of threads with the same
+// time: it grows to hold the WHOLE group, so `after` on the next page skips
+// nothing. The group read has no count cap on purpose: a group past the
+// Convex read limit fails the query, and the watch tries again, instead of a
+// silent skip.
+export const pageCorpusThreadsAfter = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    after: v.number(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = clampLimit(args.limit, 50, 100);
+    const dateOf = (row: any) => Number(row.lastDate ?? 0);
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId).gt('lastDate', args.after))
+      .order('asc')
+      .take(limit + 1);
+    if (rows.length <= limit) {
+      const last = rows.at(-1);
+      return {
+        items: rows.map(normalizeCorpusThread),
+        lastDate: last ? dateOf(last) : args.after,
+        more: false,
+      };
+    }
+    const boundary = dateOf(rows[limit - 1]);
+    let page = rows.slice(0, limit);
+    if (dateOf(rows[limit]) === boundary) {
+      const group = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId).eq('lastDate', boundary))
+        .collect();
+      page = [...rows.filter((row) => dateOf(row) < boundary), ...group];
+    }
+    return { items: page.map(normalizeCorpusThread), lastDate: boundary, more: true };
   },
 });
 

@@ -18,6 +18,8 @@ struct AssistantShapeActions: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.assistantShapeActionScope) private var actionScope
     let actions: [ShapeAction]
+    /// The name of the file a `files` row names, for the saved-file viewer.
+    var fileName: String? = nil
     @State private var pending: ShapeAction?
     @State private var busy: String?
     @State private var completed: Set<String> = []
@@ -175,7 +177,14 @@ struct AssistantShapeActions: View {
             environment.navigation.sheet = .compose
         case .openWork(let id): environment.navigation.openWork(id: id, title: nil)
         case .openArea(let id): environment.navigation.openArea(id: id, name: nil)
-        case .openDocument(let id, _): environment.navigation.openDocument(id: id)
+        case .openDocument(let id, _):
+            // A saved file (`/?view=files&file=<id>`) opens in the native
+            // viewer; an Albatross document opens by id, as today.
+            if let fileID = action.savedFileID {
+                environment.navigation.openSavedFile(id: fileID, title: fileName)
+            } else {
+                environment.navigation.openDocument(id: id)
+            }
         case .openBoard(let boardID):
             await environment.store.switchBoard(to: boardID)
             environment.navigation.selectPrimary(.tasks)

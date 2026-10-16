@@ -86,8 +86,11 @@ final class WorkThreadStore {
 
     /// "Handle it". The queued run appears at once; the next read settles it.
     /// A `note` goes to the new run first ("Send again" with no run open).
-    func start(stepKey: String, stepTitle: String, note: String? = nil, transport: any BackendExchanging) async -> String? {
-        var body: [String: JSONValue] = ["action": .string("start"), "stepKey": .string(stepKey)]
+    /// A goal run sends no `stepKey` (docs/albatross-goal-runs.md, G1): the
+    /// server treats a missing key on a goal Work as a goal run.
+    func start(stepKey: String?, stepTitle: String, note: String? = nil, transport: any BackendExchanging) async -> String? {
+        var body: [String: JSONValue] = ["action": .string("start")]
+        if let stepKey, stepKey != GoalRun.stepKey { body["stepKey"] = .string(stepKey) }
         if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank {
             body["note"] = .string(String(note.prefix(2_000)))
         }
@@ -99,7 +102,8 @@ final class WorkThreadStore {
             return nil
         }
         if run(id: runID) == nil {
-            runs.append(ThreadRunView(run: StepRunView.queued(id: runID, workID: workID, stepKey: stepKey, stepTitle: stepTitle)))
+            let key = stepKey ?? GoalRun.stepKey
+            runs.append(ThreadRunView(run: StepRunView.queued(id: runID, workID: workID, stepKey: key, stepTitle: stepTitle)))
         }
         await load(transport)
         return runID

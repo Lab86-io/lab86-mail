@@ -15,6 +15,8 @@ enum MacDocumentModeCopy {
     static let document = "Document"
     /// The VoiceOver name of the card. The card shows no label above it.
     static let yourPart = "Your part"
+    /// The VoiceOver name of the package list.
+    static let package = "Package"
 }
 
 /// What the "your part" card shows: the fields to fill in, else the
@@ -50,12 +52,18 @@ enum MacDocumentMode {
         return MacDocumentYourPart(blanks: blanks, detail: detail)
     }
 
+    /// The header title of document mode with a package: the selected item.
+    static func title(set: DocumentModeSet) -> String {
+        set.selected.title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank ?? MacDocumentModeCopy.document
+    }
+
     /// The step line of the "your part" card: "Step 2: Make the hours
     /// summary", or the title alone when the plan has no position for it.
     /// The web rule is the `stepLabel` of `YourPartCard` in WorkThread.tsx.
-    /// No middle dot joins the parts (docs/albatross-blank-design.md).
+    /// No middle dot joins the parts (docs/albatross-blank-design.md). A
+    /// goal run has no step, and its title is the Work title: no line.
     static func stepLabel(detail: WorkDetail?, run: ThreadRunView?) -> String? {
-        guard let run else { return nil }
+        guard let run, !run.run.isGoal else { return nil }
         let title = run.run.stepTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let index = detail?.execution.guideSteps.firstIndex(where: { $0.id == run.run.stepKey }) else {
             return title.nilIfBlank
@@ -64,21 +72,37 @@ enum MacDocumentMode {
     }
 }
 
-/// The docked split: the document in the center, the thread column on the
-/// right. The divider drags, within the column's band.
+/// The docked split: the package list on the left when the set has several
+/// items and the window has room, the selected item in the center, the
+/// thread column on the right. The dividers drag, within their bands.
 struct MacDocumentSplit<Column: View>: View {
     @Environment(AppEnvironment.self) private var environment
-    let target: DocumentTarget
-    let title: String
+    let set: DocumentModeSet
+    @Binding var selection: String
     let reloadToken: Int
     /// The column's width for this window (`MacThreadLayout.documentColumnWidth`).
     let columnWidth: CGFloat
+    /// The list fits beside the editor (`MacDocumentModeLayout.showsList`).
+    let showsList: Bool
     let onClose: () -> Void
+    /// "Open on the web" under a sealed file.
+    var onOpenWeb: () -> Void = {}
+    /// "Edit and send" on the draft item.
+    var onEditDraft: (String, String?) -> Void = { _, _ in }
     @ViewBuilder let column: () -> Column
 
     var body: some View {
         HSplitView {
-            document
+            if showsList {
+                MacPackageList(set: set, selection: $selection)
+                    .frame(
+                        minWidth: MacDocumentModeLayout.listMinWidth,
+                        idealWidth: MacDocumentModeLayout.listIdealWidth,
+                        maxWidth: MacDocumentModeLayout.listMaxWidth,
+                        maxHeight: .infinity
+                    )
+            }
+            stage
                 .frame(minWidth: MacThreadLayout.documentMinWidth, maxWidth: .infinity, maxHeight: .infinity)
             column()
                 .frame(
@@ -92,15 +116,25 @@ struct MacDocumentSplit<Column: View>: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// The web editor, docked. A new document is a new browser; a change of
+    /// The selected item, docked. With several items and no room for the
+    /// list, the capsules sit over it. A new item is a new view; a change of
     /// the token loads the saved document again.
-    private var document: some View {
-        NativeWorkspaceView(
-            destination: target.workspaceDestination,
-            reloadToken: reloadToken,
-            dock: NativeWorkspaceDock(title: title, onClose: onClose)
-        )
-        .id(target)
+    private var stage: some View {
+        VStack(spacing: 0) {
+            if set.showsSwitcher, !showsList {
+                DocumentModeItemBar(set: set, selection: $selection)
+                    .padding(.vertical, 8)
+                Divider()
+            }
+            DocumentItemContentView(
+                item: set.selected,
+                reloadToken: reloadToken,
+                dock: NativeWorkspaceDock(title: MacDocumentMode.title(set: set), onClose: onClose),
+                onOpenWeb: onOpenWeb,
+                onEditDraft: onEditDraft
+            )
+            .id(set.selected.id)
+        }
     }
 }
 

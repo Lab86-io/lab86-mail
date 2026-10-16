@@ -53,16 +53,50 @@ describe('Jev classification sweep runner', () => {
   });
 
   test('a kick during a sweep replays after it ends', async () => {
-    const result = await runLlmClassificationSweep('sweep-rerun', async () => {
+    let calls = 0;
+    const sweep = async () => {
+      calls += 1;
       // The user is mid-sweep, so this kick is held for a replay.
-      kickLlmClassification('sweep-rerun', 0);
-      return { classified: 1 };
-    });
-    expect(result).toEqual({ classified: 1 });
-    // The replay fires after one second. With Convex off by then, it returns
-    // without a sweep, so the test makes no network call.
-    configure(false);
+      if (calls === 1) kickLlmClassification('sweep-held', 0);
+      return { classified: 0 };
+    };
+    expect(await runLlmClassificationSweep('sweep-held', sweep)).toEqual({ classified: 0 });
     await tick(1_100);
+    expect(calls).toBe(2);
+  });
+
+  test('a sweep with rows left replays with the same sweep', async () => {
+    let calls = 0;
+    const sweep = async () => {
+      calls += 1;
+      // The first pass leaves rows; the replay finishes them.
+      return calls === 1 ? { classified: 1, moreRemaining: true } : { classified: 0 };
+    };
+    expect(await runLlmClassificationSweep('sweep-rerun', sweep, async () => undefined)).toEqual({
+      classified: 1,
+      moreRemaining: true,
+    });
+    // The replay fires after one second and runs the supplied sweep, not the default.
+    await tick(1_100);
+    expect(calls).toBe(2);
+  });
+
+  test('a kicked sweep that fails logs a short summary and does not throw', async () => {
+    const logged: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    try {
+      kickLlmClassification('sweep-fails', 0, async () => {
+        throw new Error('Provider down');
+      });
+      await tick(20);
+    } finally {
+      console.error = original;
+    }
+    expect(logged).toHaveLength(1);
+    expect(logged[0][0]).toBe('[llm-classify] sweep failed:');
   });
 
   test('a debounced kick fires once and needs a user', async () => {
