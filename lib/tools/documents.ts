@@ -155,17 +155,19 @@ export const documentCreate = defineTool({
           abortSignal: ctx.abortSignal,
         })
       : args.instructions
-        ? await dependencies.generateDocumentProposal({
-            userId,
-            userEmail: ctx.userEmail || undefined,
-            userName: ctx.userName || undefined,
-            kind: args.kind,
-            instruction: args.instructions,
-            sourceContext: args.sourceContext,
-            abortSignal: ctx.abortSignal,
-            ...(assets ? { assets } : {}),
-            ...(args.artwork ? { artwork: args.artwork } : {}),
-          })
+        ? await dependencies
+            .generateDocumentProposal({
+              userId,
+              userEmail: ctx.userEmail || undefined,
+              userName: ctx.userName || undefined,
+              kind: args.kind,
+              instruction: args.instructions,
+              sourceContext: args.sourceContext,
+              abortSignal: ctx.abortSignal,
+              ...(assets ? { assets } : {}),
+              ...(args.artwork ? { artwork: args.artwork } : {}),
+            })
+            .catch(unreadableProposal)
         : null;
     ctx.abortSignal?.throwIfAborted();
     if (args.kind === 'deck' && proposal?.summary) notes.push(proposal.summary);
@@ -488,6 +490,17 @@ export const documentPublishGoogle = defineTool({
     return { ok: true, fileId: google.fileId, webUrl: google.webUrl, syncedRevision: google.syncedRevision };
   },
 });
+
+/** The words the model sees when the reply that writes the document cannot be read. */
+export const UNREADABLE_PROPOSAL_COPY =
+  'The model that writes the document sent a reply that could not be read. Do not send the same request again. For an invoice, a letter, a memo, or a report, use word_document_create with a template (enable documents_more). Otherwise make the instructions shorter.';
+
+/** A provider reply that is not JSON (the AI SDK says "Invalid JSON response") gets plain words. */
+function unreadableProposal(error: unknown): never {
+  if (error instanceof Error && error.message === 'Invalid JSON response')
+    throw new Error(UNREADABLE_PROPOSAL_COPY, { cause: error });
+  throw error;
+}
 
 /** A Word file converts as saved; a text document converts from its DOCX export. */
 async function exportPdf(userId: string, documentId: string) {

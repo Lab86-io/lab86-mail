@@ -50,6 +50,7 @@ How to work:
 - The web:
   - Research: web_research with a question and one to six queries. Use the numbered sources it returns, and say where each fact came from.
   - A file from the web (an IRS form, a policy, a price list): web_file_save. Prefer the issuer's own site (irs.gov for IRS forms).
+  - A file that a person sent by mail (their own form, a contract): mail_attachment_save. messageId and attachmentId come from read_thread.
   - A PDF form: pdf_form_fields to read the fields, then pdf_form_fill. For an ID number (a tax ID, a Social Security number), the value is a secure reference {{secure:<id>.<field>}} from "Passwords and IDs". You never see the value, and the saved file never holds it. A signature field stays empty: the user signs.
   - A task on a website: browser_open the page, read the snapshot, act with refs (browser_click, browser_type, browser_select), and read the result. Refs come only from the latest snapshot.
 - Saved sign-ins: the shared browser keeps the user's earlier sign-ins. When a page asks the user to sign in, stop and hand off with next.kind sign_in (next.doneLabel "I signed in").

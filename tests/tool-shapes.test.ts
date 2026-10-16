@@ -186,6 +186,27 @@ describe('resolveToolShape', () => {
     expect(result.item.actions.map((action) => action.kind)).toContain('reply_thread');
   });
 
+  test('read_thread lists the newest message first: the card still shows the latest one and its id', () => {
+    const result = shape(
+      'read_thread',
+      { account: 'acct_1', threadId: 't9' },
+      {
+        account: 'acct_1',
+        threadId: 't9',
+        subject: 'Forms',
+        messages: [
+          { messageId: 'm2', from: 'B <b@x.test>', date: 1_789_000_100_000, body: 'Forms attached.' },
+          { messageId: 'm1', from: 'A <a@x.test>', date: 1_789_000_000_000, body: 'Welcome.' },
+        ],
+      },
+    );
+    expect(result.kind).toBe('thread');
+    if (result.kind !== 'thread') return;
+    expect(result.item.from).toBe('B');
+    expect(result.item.messageId).toBe('m2');
+    expect(result.excerpt).toBe('Forms attached.');
+  });
+
   test('sender_profile → contact with a remember action', () => {
     const result = shape(
       'sender_profile',

@@ -11,7 +11,7 @@ import { describeModelError } from '@/lib/ai/log-error';
 import { normalizeClientCapabilities, runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { normalizeClientPlatform } from '@/lib/ai/system-prompt';
-import { initialToolGroups } from '@/lib/ai/tool-groups';
+import { initialToolGroups, requestToolGroups } from '@/lib/ai/tool-groups';
 import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import {
   type DocumentContextAttachment,
@@ -315,6 +315,7 @@ export async function POST(req: NextRequest) {
         hasAreaContext: Boolean(body.areaDiscovery),
         narrativeEnabled: narrativeEnabled(user.userId),
       }),
+      preloadGroups: requestToolGroups(latestUser ? messageText(latestUser) : ''),
       signal: replyAbort ? replyAbort.signal : req.signal,
     });
     after(async () => {

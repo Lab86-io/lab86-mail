@@ -126,6 +126,7 @@ import {
   readThread,
   searchThreads,
 } from './mail';
+import { mailAttachmentSave } from './mail-attachments';
 import {
   addLabel,
   applySmartLabels,
@@ -238,6 +239,7 @@ const allTools: AnyTool[] = [
   getMessage,
   listLabels,
   listAttachments,
+  mailAttachmentSave,
   listAccountThreads,
   archiveThread,
   trashThread,

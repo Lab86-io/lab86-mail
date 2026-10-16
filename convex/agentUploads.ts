@@ -53,7 +53,9 @@ export const registerUpload = mutation({
     name: v.string(),
     contentType: v.optional(v.string()),
     size: v.number(),
-    origin: v.optional(v.union(v.literal('web'), v.literal('filled'), v.literal('export'))),
+    origin: v.optional(
+      v.union(v.literal('web'), v.literal('filled'), v.literal('export'), v.literal('mail')),
+    ),
     sourceUrl: v.optional(v.string()),
     sha256: v.optional(v.string()),
     sealedFields: v.optional(v.array(v.object({ field: v.string(), ref: v.string() }))),

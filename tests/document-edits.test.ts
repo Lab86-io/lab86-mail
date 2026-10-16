@@ -12,9 +12,11 @@ import {
 import { TOOLS } from '../lib/tools';
 import {
   __setDocumentToolDepsForTest,
+  documentCreate,
   documentEdit,
   documentExport,
   spreadsheetCapabilitiesTool,
+  UNREADABLE_PROPOSAL_COPY,
 } from '../lib/tools/documents';
 import { poolArtworks } from './fixtures/presentation-briefs';
 import { toolContext, withToolContext } from './tools/harness';
@@ -352,6 +354,35 @@ describe('document editing through the agent AI SDK toolset', () => {
     summary: 'Clarify the introduction',
     operations: [{ op: 'block_update' as const, blockId: 'intro', patch: { text: 'Clear plan' } }],
   });
+  test('document_create gives plain words for a proposal reply that cannot be read, and creates nothing', async () => {
+    const create = mock(async () => {
+      throw new Error('Must not create');
+    });
+    __setDocumentToolDepsForTest({
+      generateDocumentProposal: mock(async () => {
+        throw new Error('Invalid JSON response');
+      }),
+      createDocument: create as any,
+    });
+    await expect(
+      documentCreate.handler(
+        { kind: 'doc', title: 'Invoice', instructions: 'Make an invoice for 10 hours.' } as any,
+        toolContext(),
+      ),
+    ).rejects.toThrow(UNREADABLE_PROPOSAL_COPY);
+    expect(create).not.toHaveBeenCalled();
+    // Other errors pass through as they are.
+    __setDocumentToolDepsForTest({
+      generateDocumentProposal: mock(async () => {
+        throw new Error('Rate limited.');
+      }),
+      createDocument: create as any,
+    });
+    await expect(
+      documentCreate.handler({ kind: 'doc', instructions: 'Make a memo.' } as any, toolContext()),
+    ).rejects.toThrow('Rate limited.');
+  });
+
   test('registered and lifted tool executes under the authenticated chat owner with CAS', async () => {
     const update = mock(async (input: any) => ({
       ok: true as const,

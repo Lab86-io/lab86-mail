@@ -223,6 +223,13 @@ describe('pdf_form_fill', () => {
       sourceUrl: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf',
       sha256: 'abc',
       sealedFields,
+      // The result names the fields it wrote; sealed fields are not in it.
+      filled: [
+        `${P}f1_01[0]`,
+        `${P}Boxes3a-b_ReadOrder[0].c1_1[0]`,
+        `${P}Address_ReadOrder[0].f1_07[0]`,
+        `${P}Address_ReadOrder[0].f1_08[0]`,
+      ],
     });
     expect(saved[0]).toMatchObject({
       userId: 'test_user_tools',
@@ -335,7 +342,11 @@ describe('pdf_form_fill', () => {
       expect(TOOLS[name]).toBeTruthy();
       expect(typeof lifted[name]?.execute).toBe('function');
     }
-    expect(TOOL_GROUPS.pdf_forms.tools).toEqual(['pdf_form_fields', 'pdf_form_fill']);
+    expect([...TOOL_GROUPS.pdf_forms.tools]).toEqual([
+      'mail_attachment_save',
+      'pdf_form_fields',
+      'pdf_form_fill',
+    ]);
     expect(pdfFormFill.risk).toBe('write_self');
     expect(pdfFormFields.mutating).toBe(false);
   });

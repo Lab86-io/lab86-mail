@@ -102,6 +102,18 @@ enum AssistantToolGrammar {
         }
     }
 
+    /// A file saved in Files: "Saved <title> in Files" once the result names it.
+    private static func savedFile(running: String, fallback: String, failed: String) -> Builder {
+        { _, out in
+            let title = clip(str(out["title"]), max: 80)
+            return ShapeActivity(
+                running: running,
+                done: title.isEmpty ? fallback : "Saved \(title) in Files",
+                failed: failed
+            )
+        }
+    }
+
     private static func compose(_ running: String) -> Builder {
         { args, _ in
             let to = str(args["to"])
@@ -129,6 +141,7 @@ enum AssistantToolGrammar {
         "list_accounts": fixed("Checking connected accounts", "Checked your connected accounts", "Checking accounts failed"),
         "list_labels": fixed("Listing your labels", "Listed your labels", "Listing labels failed"),
         "list_attachments": fixed("Listing attachments", "Listed the attachments", "Listing attachments failed"),
+        "mail_attachment_save": savedFile(running: "Saving the attachment in Files", fallback: "Saved the attachment in Files", failed: "Saving the attachment failed"),
         "sender_profile": { args, _ in
             let who = str(args["email"])
             return ShapeActivity(
@@ -314,6 +327,34 @@ enum AssistantToolGrammar {
                 running: url.isEmpty ? "Fetching a web page" : "Reading \(clip(url, max: 80))",
                 done: url.isEmpty ? "Read a web page" : "Read \(clip(url, max: 80))",
                 failed: "Reading the page failed"
+            )
+        },
+
+        "web_research": { args, out in
+            let question = clip(str(args["question"]), max: 80)
+            let count = out["sources"]?.arrayValue?.count
+            let done: String
+            if let count {
+                done = "Read \(plural(count, "source"))" + (question.isEmpty ? "" : " for “\(question)”")
+            } else {
+                done = "Researched on the web"
+            }
+            return ShapeActivity(
+                running: question.isEmpty ? "Researching on the web" : "Researching “\(question)”",
+                done: done,
+                failed: "Web research failed"
+            )
+        },
+        "web_file_save": savedFile(running: "Saving the file in Files", fallback: "Saved the file in Files", failed: "Saving the file failed"),
+
+        // PDF forms
+        "pdf_form_fields": fixed("Reading the form fields", "Read the form fields", "Reading the form fields failed"),
+        "pdf_form_fill": { _, out in
+            let title = str(out["title"])
+            return ShapeActivity(
+                running: "Filling the form",
+                done: title.isEmpty ? "Filled the form" : "Filled the form: \(title)",
+                failed: "Filling the form failed"
             )
         },
 

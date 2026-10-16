@@ -2444,7 +2444,9 @@ export default defineSchema({
     size: v.number(),
     createdAt: v.number(),
     // Saved files (docs/albatross-goal-runs.md, lib/files/saved-files.ts).
-    origin: v.optional(v.union(v.literal('web'), v.literal('filled'), v.literal('export'))),
+    origin: v.optional(
+      v.union(v.literal('web'), v.literal('filled'), v.literal('export'), v.literal('mail')),
+    ),
     sourceUrl: v.optional(v.string()),
     sha256: v.optional(v.string()),
     // Fields that fill from the secure store at send or download time. The bytes never hold them.
