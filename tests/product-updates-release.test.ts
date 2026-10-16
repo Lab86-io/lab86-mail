@@ -28,8 +28,18 @@ describe('live product releases', () => {
       id: 'next',
       updates: [{ ...current.updates[0], id: 'a-new-note' }, ...current.updates],
     };
-    expect(newReleaseUpdates(next, current).map((note) => note.id)).toEqual(['a-new-note']);
-    expect(newReleaseUpdates(current, next)).toEqual([]);
+    expect(
+      newReleaseUpdates(
+        next,
+        current.updates.map((note) => note.id),
+      ).map((note) => note.id),
+    ).toEqual(['a-new-note']);
+    expect(
+      newReleaseUpdates(
+        current,
+        next.updates.map((note) => note.id),
+      ),
+    ).toEqual([]);
   });
 
   test('validates release identity, schema, and note contents', () => {

@@ -25,8 +25,11 @@ export function parseProductRelease(value: unknown): ProductRelease {
   return { ...release, updates: parseProductUpdates(release.updates) };
 }
 
-export function newReleaseUpdates(release: ProductRelease, current: ProductRelease): ProductUpdate[] {
-  const known = new Set(current.updates.map((update) => update.id));
+export function newReleaseUpdates(
+  release: ProductRelease,
+  knownEntryIds: readonly string[],
+): ProductUpdate[] {
+  const known = new Set(knownEntryIds);
   return release.updates.filter((update) => !known.has(update.id));
 }
 
