@@ -408,7 +408,8 @@ struct ShapeFileRow: Decodable, Equatable, Sendable, Identifiable {
         mimeType = try values.decodeIfPresent(String.self, forKey: .mimeType)
         webUrl = try values.decodeIfPresent(String.self, forKey: .webUrl)
         modifiedIso = try values.decodeIfPresent(String.self, forKey: .modifiedIso)
-        size = (try? values.decodeIfPresent(Double.self, forKey: .size)).flatMap { $0 }.map { Int($0) }
+        // Range-checked: a size such as 1e20 decodes as nil instead of a crash.
+        size = ShapeDecoding.int(values, .size)
         actions = ShapeDecoding.actions(values, .actions)
     }
 

@@ -20,6 +20,11 @@ struct SavedFileShapeTests {
         #expect(row.size == 86_016)
         #expect(row.sizeText?.contains("KB") == true)
         #expect(row.actions == [.openDocument(documentID: "file_w9", path: "/?view=files&file=file_w9")])
+        // A size outside the Int range reads as unknown, not as a crash.
+        let huge = try Self.decode(ShapeFileRow.self, """
+        {"fileId":"file_3","name":"Huge.pdf","size":1e20,"actions":[]}
+        """)
+        #expect(huge.size == nil)
         let older = try Self.decode(ShapeFileRow.self, """
         {"fileId":"file_1","name":"Lease.pdf","actions":[]}
         """)
