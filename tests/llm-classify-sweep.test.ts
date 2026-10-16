@@ -65,6 +65,24 @@ describe('Jev classification sweep runner', () => {
     await tick(1_100);
   });
 
+  test('a kicked sweep that fails logs a short summary and does not throw', async () => {
+    const logged: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    try {
+      kickLlmClassification('sweep-fails', 0, async () => {
+        throw new Error('Provider down');
+      });
+      await tick(20);
+    } finally {
+      console.error = original;
+    }
+    expect(logged).toHaveLength(1);
+    expect(logged[0][0]).toBe('[llm-classify] sweep failed:');
+  });
+
   test('a debounced kick fires once and needs a user', async () => {
     kickLlmClassification('sweep-kick', 5);
     // A second kick inside the debounce window is ignored.

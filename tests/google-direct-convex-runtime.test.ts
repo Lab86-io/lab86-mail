@@ -772,6 +772,33 @@ describe('scheduled sends', () => {
     ).toBe('cancelled');
   });
 
+  test('the last failed dispatch marks a pending send failed and leaves other rows alone', async () => {
+    const t = newHarness();
+    const payloadId = await t.run(async (ctx) => ctx.storage.store(new Blob(['{}'])));
+    const pending = 'outbox:00000000-0000-4000-8000-000000000011';
+    const cancelled = 'outbox:00000000-0000-4000-8000-000000000012';
+    for (const key of [pending, cancelled])
+      await t.mutation(api.mailOutbox.enqueue, {
+        internalSecret: SECRET,
+        userId: USER,
+        key,
+        payloadId,
+        undoSeconds: 5,
+      });
+    expect(
+      await t.mutation(api.mailOutbox.cancel, { internalSecret: SECRET, userId: USER, key: cancelled }),
+    ).toBe(true);
+    for (const key of [pending, cancelled])
+      await t.mutation(internal.mailOutbox.dispatchFailed, { userId: USER, key });
+    const status = async (key: string) =>
+      t.run(async (ctx) => {
+        const rows = await ctx.db.query('mailOutbox').collect();
+        return rows.find((row: any) => row.key === key)?.status;
+      });
+    expect(await status(pending)).toBe('failed');
+    expect(await status(cancelled)).toBe('cancelled');
+  });
+
   test('bad keys, far times, and undo rows are refused or hidden', async () => {
     const t = newHarness();
     const payloadId = await t.run(async (ctx) => ctx.storage.store(new Blob(['{}'])));

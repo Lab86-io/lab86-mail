@@ -16,7 +16,11 @@ const pendingKicks = new Map<string, ReturnType<typeof setTimeout>>();
 // once the current sweep finishes, so the backlog always drains.
 const rerunRequested = new Set<string>();
 
-export function kickLlmClassification(userId?: string | null, delayMs = KICK_DEBOUNCE_MS) {
+export function kickLlmClassification(
+  userId?: string | null,
+  delayMs = KICK_DEBOUNCE_MS,
+  sweep: (userId: string) => Promise<SweepResult> = runJevSweep,
+) {
   const uid = userId || getAiRequestContext().userId;
   if (!uid || !isConvexConfigured()) return;
   if (sweeping.has(uid)) {
@@ -28,7 +32,7 @@ export function kickLlmClassification(userId?: string | null, delayMs = KICK_DEB
     uid,
     setTimeout(() => {
       pendingKicks.delete(uid);
-      void runLlmClassificationSweep(uid).catch((err: any) => {
+      void runLlmClassificationSweep(uid, sweep).catch((err: any) => {
         console.error('[llm-classify] sweep failed:', describeModelError(err));
       });
     }, delayMs),
