@@ -297,6 +297,9 @@ private struct SourceList: View {
 
     @State private var measurementSequence = SidebarMeasurementSequence()
     @State private var wheelFrame: CGRect = .zero
+    // The row glyph column grows with the text, so a large text size cannot
+    // push the glyph into its label.
+    @ScaledMetric(relativeTo: .body) private var glyphWidth: CGFloat = 20
 
     private var primaries: [PrimaryTab] { PrimaryTab.sourceList(showsFiles: environment.trust.showsFiles) }
     private var areas: [AreaSummary] { environment.store.areas }
@@ -313,7 +316,7 @@ private struct SourceList: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 10)
-            .padding(.bottom, 14)
+            .padding(.bottom, 4)
 
             wheel
 
@@ -367,6 +370,9 @@ private struct SourceList: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.horizontal, 8)
         .clipped()
+        // Rows that run past either edge fade out, so a cut row reads as
+        // more list rather than as a broken one.
+        .mask { SidebarWheelEdgeFade() }
         .coordinateSpace(name: SidebarWheelSpace.name)
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .global)
@@ -397,6 +403,12 @@ private struct SourceList: View {
     @ViewBuilder private var rows: some View {
         let engagement = model.engagement
         let focus = model.focusY
+
+        // Room above the first row, so the top fade only touches rows that
+        // the list has scrolled past.
+        Color.clear
+            .frame(height: SidebarWheelEdgeFade.top)
+            .accessibilityHidden(true)
 
         ForEach(Array(primaries.enumerated()), id: \.element) { offset, destination in
             sourceButton(destination)
@@ -442,6 +454,11 @@ private struct SourceList: View {
         newAreaButton
             .sidebarPage(engagement: engagement, focusY: focus)
 
+        // Room under the last row, so a list scrolled to its end lifts that
+        // row clear of the bottom fade.
+        Color.clear
+            .frame(height: SidebarWheelEdgeFade.bottom)
+            .accessibilityHidden(true)
     }
 
     private func sectionHeader(_ title: String) -> some View {
@@ -473,56 +490,92 @@ private struct SourceList: View {
             return SidebarDestination.index(of: currentDestination, in: model.destinations)
         }
         model.onCommit = { destination in
-            commit(destination)
+            tap(destination)
+        }
+        model.onPreview = { destination in
+            load(destination)
         }
     }
 
+    // The page that shows beside the sidebar now.
     private var currentDestination: SidebarDestination? {
-        if let route = environment.navigation.areaRoute {
+        let navigation = environment.navigation
+        if let route = navigation.areaRoute {
             return .area(id: route.areaID, name: route.name ?? "")
         }
-        switch environment.navigation.selectedTab {
+        switch navigation.selectedTab {
         case .chat: return nil
+        case .mail:
+            if let labelID = navigation.mailLabelID {
+                let name = labels.first { $0.id == labelID }?.name ?? ""
+                return .mailLabel(id: labelID, name: name)
+            }
+            return .primary(.mail)
         case let tab: return .primary(tab)
         }
     }
 
-    // Where a tap on a row goes. Rows reach it only through the wheel model's
-    // `activate`, which refuses a tap while the wheel is held or travelling.
-    private func commit(_ destination: SidebarDestination) {
+    // A tap on a row. A first tap loads the row's page beside the sidebar and
+    // the sidebar stays open; a tap on the row whose page already shows goes
+    // to it. Rows reach this only through the wheel model's `activate`, which
+    // refuses a tap while the wheel is held or travelling.
+    private func tap(_ destination: SidebarDestination) {
+        switch SidebarRowTap.outcome(
+            for: destination,
+            showing: currentDestination,
+            voiceOver: UIAccessibility.isVoiceOverRunning
+        ) {
+        case .load:
+            load(destination)
+        case .open:
+            show(destination)
+            onSelect()
+        }
+    }
+
+    // The riffle's resting pick and a first tap: the page beside the sidebar
+    // changes, and the sidebar stays open.
+    private func load(_ destination: SidebarDestination) {
+        guard currentDestination?.id != destination.id else { return }
+        show(destination)
+        SidebarPageLoadFeedback.play()
+    }
+
+    private func show(_ destination: SidebarDestination) {
+        let navigation = environment.navigation
         switch destination {
         case .primary(let tab):
-            environment.navigation.selectPrimary(tab)
-            onSelect()
+            // Mail from a label goes back to Main, as on the Mac. Without it
+            // the Mail row would load a page that still shows the label.
+            let leavesLabel = tab == .mail && navigation.mailLabelID != nil
+            navigation.selectPrimary(tab)
+            if leavesLabel {
+                navigation.pendingMailCategory = MailCategoryScope.main.rawValue
+            }
         case .mail(let scope):
-            environment.navigation.selectPrimary(.mail)
-            environment.navigation.pendingMailCategory = scope.rawValue
-            onSelect()
+            navigation.selectPrimary(.mail)
+            navigation.pendingMailCategory = scope.rawValue
         case .mailLabel(let id, _):
-            environment.navigation.selectPrimary(.mail)
-            environment.navigation.pendingMailCategory = "custom:\(id)"
-            onSelect()
+            navigation.selectPrimary(.mail)
+            navigation.pendingMailCategory = "custom:\(id)"
         case .area(let id, let name):
-            environment.navigation.openArea(id: id, name: name)
-            onSelect()
+            navigation.openArea(id: id, name: name)
         case .settings:
-            environment.navigation.sheet = .settings
-            onSelect()
+            navigation.sheet = .settings
         }
     }
 
     // MARK: - Rows
 
     private func sourceButton(_ destination: PrimaryTab) -> some View {
-        let selected = environment.navigation.selectedTab == destination
-            && (destination != .work || environment.navigation.areaRoute == nil)
+        let selected = currentDestination == .primary(destination)
         return Button {
             model.activate(.primary(destination))
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: destination.symbol)
                     .font(.body)
-                    .frame(width: 20)
+                    .frame(width: glyphWidth)
                 SidebarRowTitle(
                     text: destination.title,
                     font: .body,
@@ -546,13 +599,14 @@ private struct SourceList: View {
 
     private func labelButton(_ label: MailLabelSummary) -> some View {
         let destination = SidebarDestination.mailLabel(id: label.id, name: label.name)
+        let selected = currentDestination?.id == destination.id
         return Button {
             model.activate(destination)
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "tag")
                     .font(.body)
-                    .frame(width: 20)
+                    .frame(width: glyphWidth)
                 SidebarRowTitle(
                     text: label.name,
                     font: .body,
@@ -567,10 +621,11 @@ private struct SourceList: View {
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(.rect)
             .background {
-                SidebarRowBackground(selected: false, model: model)
+                SidebarRowBackground(selected: selected, model: model)
             }
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     // NAT-9: an Area can be created from the sidebar, as on the web.
@@ -780,6 +835,35 @@ private struct SidebarRowBackground: View {
                     SidebarSelectionMark.opacity(selected: true, engagement: model.engagement)
                 ))
         }
+    }
+}
+
+// MARK: - Sidebar edges and feedback
+
+// The wheel's viewport fades at its top and bottom edges. A row cut by an
+// edge then reads as more list, not as a broken one.
+private struct SidebarWheelEdgeFade: View {
+    static let top: CGFloat = 10
+    static let bottom: CGFloat = 28
+
+    var body: some View {
+        VStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: Self.top)
+            Rectangle()
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: Self.bottom)
+        }
+    }
+}
+
+// One soft tap as a page loads beside the sidebar. The wheel's own ticks
+// mark the rows; this marks the page.
+@MainActor
+private enum SidebarPageLoadFeedback {
+    static func play() {
+        let generator = UIImpactFeedbackGenerator(style: .soft)
+        generator.impactOccurred(intensity: 0.7)
     }
 }
 
