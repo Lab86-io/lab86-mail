@@ -96,7 +96,7 @@ struct ChatCrashAuditTests {
         #expect(AssistantInlineApproval.destructiveGatedTools.contains("forget"))
         for tool in server {
             let title = AssistantInlineApproval.gatedTitle(toolName: tool, input: .object([:]))
-            #expect(!title.isEmpty && title != "Approve this step", tool)
+            #expect(!title.isEmpty && title != "Approve this step", "\(tool)")
         }
         #expect(AssistantInlineApproval.gatedTitle(toolName: "delete_smart_label", input: .object(["name": .string("Receipts")])) == "Delete the label “Receipts”")
         #expect(AssistantInlineApproval.gatedTitle(toolName: "unsubscribe_sender", input: .object(["email": .string("news@example.com")])) == "Unsubscribe from news@example.com")
