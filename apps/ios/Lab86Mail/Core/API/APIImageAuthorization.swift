@@ -34,21 +34,14 @@ final class APIImageRequestModifier: AsyncImageDownloadRequestModifier, Sendable
         self.tokenProvider = tokenProvider
     }
 
-    func modified(for request: URLRequest, reportModified: @escaping @Sendable (URLRequest?) -> Void) {
+    func modified(for request: URLRequest) async -> URLRequest? {
         guard APIImageAuthorization.shouldAuthorize(request.url, apiBaseURL: apiBaseURL) else {
-            reportModified(request)
-            return
+            return request
         }
-        let tokenProvider = self.tokenProvider
-        Task.detached {
-            // Without a token the request still goes out; the server answers
-            // with its redirect and the view shows its initials fallback.
-            guard let token = try? await tokenProvider() else {
-                reportModified(request)
-                return
-            }
-            reportModified(APIImageAuthorization.authorized(request, token: token))
-        }
+        // Without a token the request still goes out; the server answers with
+        // its redirect and the view shows its initials fallback.
+        guard let token = try? await tokenProvider() else { return request }
+        return APIImageAuthorization.authorized(request, token: token)
     }
 
     var onDownloadTaskStarted: (@Sendable (DownloadTask?) -> Void)? { nil }
