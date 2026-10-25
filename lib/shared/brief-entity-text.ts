@@ -15,9 +15,18 @@ export function cutAtWord(value: string, max: number): string {
   const text = stripLoneSurrogates(value);
   if (text.length <= max) return text;
   const head = safeSlice(text, 0, max);
-  const space = head.lastIndexOf(' ');
-  const cut = space >= Math.floor(max / 2) ? safeSlice(head, 0, space) : head;
+  const boundary = lastWhitespace(head);
+  const cut = boundary >= Math.floor(max / 2) ? safeSlice(head, 0, boundary) : head;
   return cut.trimEnd();
+}
+
+// Any whitespace is a word boundary: a subject or a description can break
+// on a newline or a tab as well as a space.
+function lastWhitespace(text: string): number {
+  for (let index = text.length - 1; index >= 0; index -= 1) {
+    if (/\s/.test(text[index] ?? '')) return index;
+  }
+  return -1;
 }
 
 /** The title of a hydrated brief entity: the value, or the fallback when the

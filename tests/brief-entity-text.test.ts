@@ -20,6 +20,11 @@ describe('cutAtWord', () => {
     expect(cut.length).toBeLessThanOrEqual(18);
   });
 
+  test('a newline or a tab is a word boundary too', () => {
+    expect(cutAtWord('alpha beta gamma\ndelta epsilon', 20)).toBe('alpha beta gamma');
+    expect(cutAtWord('alpha beta gamma\tdelta epsilon', 20)).toBe('alpha beta gamma');
+  });
+
   test('cuts at the limit when the only word boundary is early', () => {
     const text = `a ${'b'.repeat(40)}`;
     const cut = cutAtWord(text, 20);

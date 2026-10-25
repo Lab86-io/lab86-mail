@@ -55,6 +55,7 @@ values.
 | Ink accent | `#216440` | `#84B595` | `accentColor`. Ask, links, the selected state. |
 | Hold accent | `#853E19` | `#D6977B` | `accent2Color`. Hold and the run voice. Nothing else. |
 | User turn | accent at 10 % (light), 16 % (dark) | | `accentSoftColor`. The user's own words. |
+| Failure | system red | system red | `Color.red`. A failed work line and error text. Not a palette color, so a failure reads the same in every palette. |
 
 ### Type
 
@@ -119,7 +120,9 @@ of the round. Everything else in the chat stays quiet.
   "Friday evening".
 - The sentence comes from live store data, in this order: mail that waits on
   a reply (up to two names), the next event today, Work that needs the user.
-  When no data is loaded, the sentence is "What should Albatross take on?".
+  When the loaded data names no mail, event, or Work, the sentence is "What
+  should Albatross take on?". A failed load does not change the desk; the
+  page that failed shows its own error and Retry.
 - Up to four rows. Each row is one real item and its source line. When there
   are fewer than four real items, fixed asks fill the list ("What needs my
   reply today?", "Walk me through my afternoon").
@@ -150,7 +153,7 @@ Copy   Hold this                             footnote, last reply only
 - The work line replaces "Did 1 thing · 1s". It is one sentence that names
   what Albatross did, from the tool rows ("Read 3 threads and the
   calendar"). A tap opens the rows. A failed row makes the line read "Could
-  not read the calendar" in red.
+  not read the calendar" in the Failure red.
 - While a turn runs, the work line shows the current action in the present
   tense with three dots that pulse ("Reading Priya's thread"). There is no
   shimmer.
@@ -173,8 +176,9 @@ Copy   Hold this                             footnote, last reply only
 - Two rows. The field has the full width, so the placeholder fits at AX3.
 - The route control shows both words. The selected word has a filled
   segment. A tap on either word selects it. Tab still flips it.
-- The send circle is accent for Ask and Hold accent for Hold. This is the
-  only filled color in the chat.
+- The send circle is accent for Ask and Hold accent for Hold. It is the
+  only solid, saturated fill in the chat. Tints at 10 to 16 % (the user
+  turn, the selected route word) are not fills in this sense.
 - Stop replaces send while a reply runs.
 - Placeholder: "Ask Albatross" on Ask, "Hand this to Albatross" on Hold.
 
@@ -253,7 +257,8 @@ audits, the feature gaps from the feature audit, and the shared rules below.
 1. Albatross speaks in upright text. The machine narrates in italic. Each
    voice has one face.
 2. Evidence is inset, not raised. No shadows in the transcript.
-3. One filled color for each screen: the send control.
+3. One solid, saturated fill for each screen: the send control. Soft tints
+   of the accent do not count.
 4. Actions show where the eye already is: the latest reply only.
 5. The empty chat starts from the user's real day.
 6. Text lines stay under 80 characters. Controls do not cut at AX3.
