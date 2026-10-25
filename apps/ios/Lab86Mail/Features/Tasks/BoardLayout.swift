@@ -76,13 +76,20 @@ enum TaskMeta {
 
     // "Today, 5:00 PM", "Tomorrow", "Oct 18". A past day keeps its date.
     static func dueText(_ due: Date, now: Date = .now, calendar: Calendar = .autoupdatingCurrent) -> String {
+        // Formatted in the calendar's own zone and locale, the same calendar
+        // that decides which day "today" is.
+        let style = Date.FormatStyle(
+            locale: calendar.locale ?? .autoupdatingCurrent,
+            calendar: calendar,
+            timeZone: calendar.timeZone
+        )
         if calendar.isDate(due, inSameDayAs: now) {
-            return "Today, \(due.formatted(date: .omitted, time: .shortened))"
+            return "Today, \(due.formatted(style.hour().minute()))"
         }
         if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
            calendar.isDate(due, inSameDayAs: tomorrow) {
             return "Tomorrow"
         }
-        return due.formatted(.dateTime.month(.abbreviated).day())
+        return due.formatted(style.month(.abbreviated).day())
     }
 }

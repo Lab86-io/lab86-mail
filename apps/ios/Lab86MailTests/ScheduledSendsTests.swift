@@ -76,7 +76,9 @@ struct ScheduledSendsTests {
 
     @Test
     func statusWordsFollowTheWebRegexes() {
-        #expect(ScheduledSendRow.status(from: "succeeded") == .sent)
+        // The web's rule is /succ?ess|sent/: "success" is sent, "succeeded" is not.
+        #expect(ScheduledSendRow.status(from: "success") == .sent)
+        #expect(ScheduledSendRow.status(from: "succeeded") == .pending)
         #expect(ScheduledSendRow.status(from: "SENT") == .sent)
         #expect(ScheduledSendRow.status(from: "failed") == .failed)
         #expect(ScheduledSendRow.status(from: "error") == .failed)

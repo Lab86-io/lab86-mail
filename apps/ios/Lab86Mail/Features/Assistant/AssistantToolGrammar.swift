@@ -56,8 +56,10 @@ enum AssistantToolGrammar {
     }
 
     /// True for the fallback line, which names the tool instead of the work.
+    // The fallback has both of these. One alone is not enough: the web's own
+    // sentence for document_review_slides is "Finished the slide check".
     static func isGeneric(_ activity: ShapeActivity) -> Bool {
-        activity.running.hasPrefix("Running ") || activity.done.hasPrefix("Finished ")
+        activity.running.hasPrefix("Running ") && activity.done.hasPrefix("Finished ")
     }
 
     /// The old native line, kept as the last fallback so a tool never renders

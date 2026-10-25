@@ -63,11 +63,11 @@ struct ScheduledSendRow: Identifiable, Hashable, Sendable {
     }
 
     private static func identifier(_ value: JSONValue?) -> String? {
-        if let text = value?.stringValue?.nilIfBlank { return text }
-        if let number = value?.doubleValue {
+        // A number first: its string form would read "42.0".
+        if case .number(let number)? = value, number.isFinite, abs(number) < 1e15 {
             return number == number.rounded() ? String(Int64(number)) : String(number)
         }
-        return nil
+        return value?.stringValue?.nilIfBlank
     }
 
     /// The sends that still wait, soonest first; a send with no time last.

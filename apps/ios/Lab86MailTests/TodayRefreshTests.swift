@@ -7,6 +7,7 @@ import Testing
 // The iOS refresh round on Today (2026-10-24): the load states, the plate,
 // the one sources line, the shared section rule, the reading column, the
 // time styles, and the contract fixes the crash audit asked for.
+@MainActor
 struct TodayRefreshTests {
     private let english = Locale(identifier: "en_US")
 
