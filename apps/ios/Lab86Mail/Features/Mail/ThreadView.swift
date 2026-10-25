@@ -177,7 +177,7 @@ struct ThreadView: View {
     private func threadLead(_ detail: MailThreadDetail) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(pageTitle)
-                .font(environment.theme.displayType.displayFont(size: min(scaledHeadline, 40)))
+                .font(environment.theme.displayType.fixedDisplayFont(size: min(scaledHeadline, 40)))
                 .lineLimit(5)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)

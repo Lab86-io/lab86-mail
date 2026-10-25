@@ -118,11 +118,14 @@ enum DayRibbon {
         calendar: Calendar = .current,
         formatter: DateFormatter? = nil
     ) -> [Block] {
+        // The locale's own hour cycle, as the rail's tick labels use: "9:30 AM"
+        // in English, "09:30" where the clock runs to 24.
         let time = formatter ?? {
             let made = DateFormatter()
             made.calendar = calendar
             made.timeZone = calendar.timeZone
-            made.dateFormat = "h:mm a"
+            made.locale = calendar.locale ?? .current
+            made.setLocalizedDateFormatFromTemplate("jmm")
             return made
         }()
         return events
@@ -136,7 +139,7 @@ enum DayRibbon {
                     title: event.title,
                     top: top,
                     height: max(bottom - top, minimumBlockHeight),
-                    label: "\(time.string(from: event.start)) – \(time.string(from: event.end))",
+                    label: "\(plainTime(time, event.start)) – \(plainTime(time, event.end))",
                     location: event.location
                 )
             }
@@ -222,6 +225,12 @@ enum DayRibbon {
             hour += step
         }
         return made
+    }
+
+    /// A time with a plain space before AM or PM. Foundation writes a narrow
+    /// no-break space; the rail's labels and the rows agree on a plain one.
+    static func plainTime(_ formatter: DateFormatter, _ date: Date) -> String {
+        formatter.string(from: date).replacingOccurrences(of: "\u{202F}", with: " ")
     }
 
     /// The hour as the rows write their times: "10 AM" where the rows say

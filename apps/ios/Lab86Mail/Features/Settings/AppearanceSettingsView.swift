@@ -157,6 +157,14 @@ enum PaletteWheelGeometry {
     static let dotSize: CGFloat = 18
     /// One dot spacing of radial pull changes brilliance by about 0.45.
     static let brilliancePerPoint = 0.011
+    /// The paper disc in the middle: the sample, not a control.
+    static let innerRadius: CGFloat = ringRadius - dotSize - 5
+
+    /// Whether a touch at this distance from the center starts a scrub. A
+    /// touch on the paper disc does not; a touch on or near the ring does.
+    static func startsScrub(radius: Double) -> Bool {
+        radius >= Double(innerRadius)
+    }
 
     /// The center of stop `index`, with stop 0 at twelve o'clock.
     static func position(of index: Int, in size: CGFloat = size, radius: CGFloat = ringRadius) -> CGPoint {
@@ -195,6 +203,8 @@ struct PaletteWheelControl: View {
     let onScrub: (Int, Double) -> Void
 
     @State private var dragStart: (radius: Double, brilliance: Double)?
+    // True for a drag that began on the paper disc: it never scrubs.
+    @State private var ignoresDrag = false
 
     private var current: PaletteWheel.Stop { PaletteWheel.stop(stopIndex, brilliance: brilliance) }
 
@@ -236,7 +246,7 @@ struct PaletteWheelControl: View {
                     .font(environment.theme.displayType.displayFont(size: 26))
                     .foregroundStyle(ink)
             )
-            .frame(width: PaletteWheelGeometry.ringRadius * 2 - PaletteWheelGeometry.dotSize * 2 - 10)
+            .frame(width: PaletteWheelGeometry.innerRadius * 2)
             .accessibilityHidden(true)
     }
 
@@ -244,7 +254,12 @@ struct PaletteWheelControl: View {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 let read = PaletteWheelGeometry.read(point: value.location)
+                if ignoresDrag { return }
                 if dragStart == nil {
+                    guard PaletteWheelGeometry.startsScrub(radius: read.radius) else {
+                        ignoresDrag = true
+                        return
+                    }
                     dragStart = (read.radius, brilliance)
                     onScrub(read.index, brilliance)
                     return
@@ -253,7 +268,10 @@ struct PaletteWheelControl: View {
                 let moved = PaletteWheelGeometry.brilliance(start: start.brilliance, startRadius: start.radius, radius: read.radius)
                 onScrub(read.index, moved)
             }
-            .onEnded { _ in dragStart = nil }
+            .onEnded { _ in
+                dragStart = nil
+                ignoresDrag = false
+            }
     }
 }
 

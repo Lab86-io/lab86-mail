@@ -560,4 +560,11 @@ struct CalendarLayoutTests {
         #expect(MacMonthGridView.month(atOffset: 100_000, months: months, calendar: calendar) == months[2])
     }
     #endif
+
+    @Test
+    func theColourKeyChangesWhenACalendarChangesColour() {
+        #expect(CalendarColors.key(["cal-a": "#ff0000"]) != CalendarColors.key(["cal-a": "#00ff00"]))
+        #expect(CalendarColors.key(["cal-b": "#111111", "cal-a": "#222222"]) == "cal-a=#222222,cal-b=#111111")
+        #expect(CalendarColors.key([:]).isEmpty)
+    }
 }

@@ -80,8 +80,26 @@ struct DeepLinkRoutingTests {
         #expect(NavigationModel.isAppLink("?view=mail"))
         #expect(NavigationModel.isAppLink("lab86://mail/thread?account=a&id=t"))
         #expect(NavigationModel.isAppLink("https://mail.lab86.io/?view=tasks"))
+        #expect(NavigationModel.isAppLink("https://lab86.io/?view=tasks"))
         #expect(NavigationModel.isAppLink("mailto:a@example.com"))
         #expect(!NavigationModel.isAppLink("https://example.com/invoice.pdf"))
         #expect(!NavigationModel.isAppLink(""))
+        // Near misses: the text inside another host is not the app.
+        #expect(!NavigationModel.isAppLink("https://lab86.io.example.com/?view=tasks"))
+        #expect(!NavigationModel.isAppLink("https://notlab86.io/?view=tasks"))
+        #expect(!NavigationModel.isAppHost("lab86.io.example.com"))
+        #expect(!NavigationModel.isAppHost("notlab86.io"))
+        #expect(NavigationModel.isAppHost("Files.LAB86.io"))
+        #expect(!NavigationModel.isAppHost(nil))
+    }
+
+    @Test
+    func aLinkIntoAnotherHostDoesNotRoute() {
+        let navigation = NavigationModel()
+        navigation.selectPrimary(.mail)
+        navigation.open(URL(string: "https://lab86.io.example.com/?view=tasks")!)
+        navigation.open(URL(string: "https://notlab86.io/?view=calendar")!)
+        #expect(navigation.selectedTab == .mail)
+        #expect(navigation.sheet == nil)
     }
 }

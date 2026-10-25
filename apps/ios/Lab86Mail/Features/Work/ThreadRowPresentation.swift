@@ -230,7 +230,22 @@ enum ThreadRowPresentation {
         if let time { parts.append(time) }
         if let area { parts.append(area) }
         if row.unread { parts.append("Unread") }
-        return parts.joined(separator: ". ")
+        return spokenJoin(parts)
+    }
+
+    /// Parts joined as sentences: a full stop after a part only when it does
+    /// not already end in one, so a question reads "…want? 4 min", not
+    /// "…want?. 4 min".
+    static func spokenJoin(_ parts: [String]) -> String {
+        var joined = ""
+        for (index, part) in parts.enumerated() {
+            if index > 0 {
+                let ended = joined.last.map { ".!?".contains($0) } ?? false
+                joined += ended ? " " : ". "
+            }
+            joined += part
+        }
+        return joined
     }
 
     /// The trailing swipe buttons, from the edge inward. Two at most.

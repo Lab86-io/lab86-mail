@@ -250,6 +250,19 @@ struct DayRibbonTests {
         }
     }
 
+    @Test func defaultLabelsFollowTheLocaleHourCycle() {
+        let meeting = event("a", from: at(9, 15), to: at(9, 25))
+        var german = calendar
+        german.locale = Locale(identifier: "de_DE")
+        var english = calendar
+        english.locale = Locale(identifier: "en_US")
+        let window = DayRibbon.window(events: [meeting], now: at(12), calendar: german)
+        let rows24 = DayRibbon.blocks(events: [meeting], window: window, now: at(12), calendar: german)
+        #expect(rows24[0].label == "09:15 – 09:25")
+        let rows12 = DayRibbon.blocks(events: [meeting], window: window, now: at(12), calendar: english)
+        #expect(rows12[0].label == "9:15 AM – 9:25 AM")
+    }
+
     @Test func anExplicitLabelFormatterIsPreserved() {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")

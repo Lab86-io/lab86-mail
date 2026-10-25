@@ -15,22 +15,31 @@ import SwiftUI
 struct CalendarColors {
     private let theme: ThemeStore
     private let byKey: [String: Color]
+    // The provider hex of each calendar, kept for `key`.
+    private let hexByKey: [String: String]
 
     init(choices: [CalendarChoice], theme: ThemeStore) {
         self.theme = theme
         var map: [String: Color] = [:]
+        var hexes: [String: String] = [:]
         for choice in choices {
-            if let rgb = CalendarPalette.rgb(hex: choice.hexColor) {
+            if let hex = choice.hexColor, let rgb = CalendarPalette.rgb(hex: hex) {
                 map[choice.id] = Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+                hexes[choice.id] = hex
             }
         }
         byKey = map
+        hexByKey = hexes
     }
 
     // A stable identity for HorizonCalendar's data dependency: it changes
-    // exactly when the set of provider colours changes.
+    // when a calendar gains or loses a colour, and when its colour changes.
     var key: String {
-        byKey.keys.sorted().joined(separator: ",")
+        Self.key(hexByKey)
+    }
+
+    nonisolated static func key(_ hexByKey: [String: String]) -> String {
+        hexByKey.keys.sorted().map { "\($0)=\(hexByKey[$0] ?? "")" }.joined(separator: ",")
     }
 
     func color(forKey key: String?, seed: String) -> Color {
@@ -185,13 +194,13 @@ struct CalendarBarTitle: View {
         VStack(spacing: 0) {
             if !title.isEmpty {
                 Text(title)
-                    .font(environment.theme.displayType.displayFont(size: min(titleSize, 22)))
+                    .font(environment.theme.displayType.fixedDisplayFont(size: min(titleSize, 22)))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
             Text(dateline)
-                .font(environment.theme.displayType.displayItalicFont(size: min(datelineSize, 16)))
+                .font(environment.theme.displayType.fixedDisplayItalicFont(size: min(datelineSize, 16)))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)

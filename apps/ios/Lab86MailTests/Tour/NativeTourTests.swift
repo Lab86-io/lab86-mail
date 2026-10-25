@@ -363,8 +363,9 @@ final class NativeTourTests: XCTestCase {
     }
 
     func testTour36SettingsWhatsNew() async throws {
-        // Settings, What's new: two dated batches of notes, one with a
-        // picture, their changes with the quiet kind word, and the web link.
+        // Settings, What's new: two dated batches of notes, their changes
+        // with the quiet kind word, the demo link of the second batch, and
+        // the web link.
         // The release is given to the page, so no request is made.
         let release = ProductRelease(
             id: "0.16.43:2026-10-20-area-pills,2026-10-15-update-notice",

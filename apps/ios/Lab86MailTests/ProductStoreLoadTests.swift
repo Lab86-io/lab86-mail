@@ -79,6 +79,48 @@ struct ProductStoreLoadTests {
         }
     }
 
+    // Holds one call of a named tool open until the test releases it; every
+    // other call answers from the responder. Orders a sign-out against a
+    // read in flight.
+    private actor HeldTools: ToolInvoking {
+        private let heldName: String
+        private let heldCall: Int
+        private let responder: ScriptedTools.Responder
+        private var calls = 0
+        private var held: CheckedContinuation<JSONValue, any Error>?
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        init(holding heldName: String, call heldCall: Int = 1, _ responder: @escaping ScriptedTools.Responder) {
+            self.heldName = heldName
+            self.heldCall = heldCall
+            self.responder = responder
+        }
+
+        func invoke(_ name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
+            if name == heldName {
+                calls += 1
+                if calls == heldCall {
+                    return try await withCheckedThrowingContinuation { continuation in
+                        held = continuation
+                        for waiter in waiters { waiter.resume() }
+                        waiters = []
+                    }
+                }
+            }
+            return try responder(name, arguments, calls)
+        }
+
+        func waitUntilHeld() async {
+            if held != nil { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        func release(_ value: JSONValue) {
+            held?.resume(returning: value)
+            held = nil
+        }
+    }
+
     nonisolated private static let accountJSON: JSONValue = .object([
         "accounts": .array([
             .object([
@@ -266,6 +308,48 @@ struct ProductStoreLoadTests {
         #expect(!store.mailDidLoad)
         #expect(!store.briefDidLoad)
         #expect(store.threads.isEmpty)
+    }
+
+    @Test
+    func aSignOutDuringAMailRefreshLeavesTheClearedStoreClear() async throws {
+        let cache = ProductCache(directory: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString))
+        let tools = HeldTools(holding: "list_accounts", call: 2) { name, _, _ in
+            name == "list_accounts" ? Self.accountJSON : .object([:])
+        }
+        let pages = PagedMail(pages: [page([thread("t1", epoch: 300)]), page([thread("t2", epoch: 200)])])
+        let store = makeStore(tools: tools, cache: cache, mailPages: pages)
+        await store.bootstrap(cacheOwner: "user-1")
+        #expect(store.threads.map(\.id) == ["t1"])
+        #expect(try await cache.load(owner: "user-1") != nil)
+
+        let late = Task { await store.refreshMail() }
+        await tools.waitUntilHeld()
+        await store.clearForSignOut()
+        await tools.release(Self.accountJSON)
+        await late.value
+
+        #expect(store.threads.isEmpty)
+        #expect(!store.mailDidLoad)
+        #expect(store.mailErrorMessage == nil)
+        await store.flushCacheWrite()
+        #expect(try await cache.load(owner: "user-1") == nil)
+    }
+
+    @Test
+    func aSignOutDuringABriefReadLeavesTheClearedStoreClear() async {
+        let tools = HeldTools(holding: "get_latest_daily_report") { _, _, _ in .object([:]) }
+        let store = makeStore(tools: tools)
+
+        let late = Task { await store.refreshBrief() }
+        await tools.waitUntilHeld()
+        await store.clearForSignOut()
+        await tools.release(Self.report("late", generatedAt: 1_000, status: "ready"))
+        await late.value
+
+        #expect(store.dailyReport == nil)
+        #expect(store.latestDailyReportID == nil)
+        #expect(!store.briefDidLoad)
+        #expect(store.briefError == nil)
     }
 
     @Test

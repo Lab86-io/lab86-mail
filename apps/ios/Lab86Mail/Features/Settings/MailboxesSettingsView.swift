@@ -323,6 +323,7 @@ struct MailboxesSettingsView: View {
                 body: .object(["accountId": .string(mailbox.id)])
             )
             await load()
+            await refreshMailAfterChange()
         } catch {
             errorMessage = error.localizedDescription
         }

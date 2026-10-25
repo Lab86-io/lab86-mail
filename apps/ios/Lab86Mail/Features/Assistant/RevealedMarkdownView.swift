@@ -25,6 +25,7 @@ struct RevealedMarkdownView: View {
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var meter = RevealMeter()
     @State private var revealed = ""
     @State private var split = RevealSplit.Result(head: "", tail: "")
@@ -35,7 +36,10 @@ struct RevealedMarkdownView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if !split.head.isEmpty {
-                MarkdownView(text: split.head, config: ChatMarkdownStyle.config(for: environment.theme.displayType))
+                MarkdownView(
+                    text: split.head,
+                    config: ChatMarkdownStyle.config(for: environment.theme.displayType, dynamicTypeSize: dynamicTypeSize)
+                )
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if !split.tail.isEmpty || showsDot {

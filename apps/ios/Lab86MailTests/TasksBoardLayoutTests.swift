@@ -8,6 +8,9 @@ struct TasksBoardLayoutTests {
     private var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "America/New_York") ?? .gmt
+        // The due text formats in the calendar's locale; fixed here so the
+        // device locale cannot change the words.
+        calendar.locale = Locale(identifier: "en_US")
         return calendar
     }
 
