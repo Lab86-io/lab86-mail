@@ -680,7 +680,6 @@ extension AssistantToolGrammar {
             )
         },
         "expand_alias": fixed("Expanding the alias", "Expanded the alias", "Expanding the alias failed"),
-        "browser_download": savedFile(running: "Saving the file from the page", fallback: "Saved the file in Files", failed: "Saving the file failed"),
         "ui_focus_thread": fixed("Opening the thread", "Opened that thread in your reader", "Opening the thread failed"),
         "ui_set_query": { args, _ in
             let query = str(args["query"])
