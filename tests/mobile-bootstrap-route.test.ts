@@ -55,7 +55,7 @@ describe('mobile bootstrap route', () => {
     expect(body.accounts[0].sync.error.startsWith('Provider refused: ')).toBe(true);
   });
 
-  test('an empty or non-string sync error reads as no error', async () => {
+  test('an empty sync error is left out and a non-string one is read as text', async () => {
     const empty = await createMobileBootstrapGet(dependencies(undefined, '') as any)(
       new Request('http://localhost/api/mobile/v1/bootstrap'),
     );
