@@ -3,7 +3,7 @@ import { withContactNames } from '@/lib/contacts/names';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { MailThreadPageSchema } from '@/lib/mobile/v1/contract';
 import { MobileInputError, mobileErrorResponse, mobileJSON, mobileRequestID } from '@/lib/mobile/v1/http';
-import { mailListCursor, mailListLimit, mailThreadSummaryFromCorpus } from '@/lib/mobile/v1/mail-reads';
+import { mailListCursor, mailListLimit, mailThreadSummariesFromCorpus } from '@/lib/mobile/v1/mail-reads';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -66,7 +66,14 @@ export function createMobileMailThreadsGet(deps: MobileMailThreadsDependencies =
         ? await deps.senderNames(user.userId, page.items || [])
         : page.items || [];
       const payload = MailThreadPageSchema.parse({
-        items: items.map(mailThreadSummaryFromCorpus),
+        // A malformed row is skipped and logged, never a 500 for the page.
+        items: mailThreadSummariesFromCorpus(items, (error, index) => {
+          console.warn(
+            `[mobile/v1/mail/threads] skipped row ${index} for ${user.userId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }),
         nextCursor: nextBefore !== undefined ? String(nextBefore) : undefined,
         hasMore: nextBefore !== undefined,
         serverTime: new Date().toISOString(),

@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { isTerminalWork } from '../lib/albatross/work-lifecycle';
+import { briefEntitySubtitle, briefEntityTitle } from '../lib/shared/brief-entity-text';
 import { truncateText } from '../lib/shared/text';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -132,8 +133,8 @@ export const resolveBriefRefs = query({
                 kind: 'thread',
                 id: ref.id,
                 account: thread.accountId,
-                title: thread.subject || '(no subject)',
-                subtitle: thread.fromAddress || thread.snippet || undefined,
+                title: briefEntityTitle(thread.subject, '(no subject)'),
+                subtitle: briefEntitySubtitle(thread.fromAddress || thread.snippet),
                 status: thread.labels.includes('TRASH')
                   ? 'trashed'
                   : thread.labels.includes('ARCHIVE')
@@ -170,8 +171,8 @@ export const resolveBriefRefs = query({
                 kind: 'event',
                 id: ref.id,
                 account: event.accountId,
-                title: event.title || 'Untitled event',
-                subtitle: event.location || undefined,
+                title: briefEntityTitle(event.title, 'Untitled event'),
+                subtitle: briefEntitySubtitle(event.location),
                 status: event.status || 'confirmed',
                 startAt: event.startAt,
                 endAt: event.endAt,
@@ -191,8 +192,8 @@ export const resolveBriefRefs = query({
             ? {
                 kind: 'work',
                 id: ref.id,
-                title: work.title || truncateText(work.rawText, 160) || 'Untitled work',
-                subtitle: work.rawText || undefined,
+                title: briefEntityTitle(work.title || truncateText(work.rawText, 160), 'Untitled work'),
+                subtitle: briefEntitySubtitle(work.rawText),
                 status: work.agentState || work.workState || work.status,
                 updatedAt: work.updatedAt,
                 gone: false,
@@ -209,8 +210,8 @@ export const resolveBriefRefs = query({
           ? {
               kind: ref.kind,
               id: ref.id,
-              title: card.title || 'Untitled task',
-              subtitle: card.description || undefined,
+              title: briefEntityTitle(card.title, 'Untitled task'),
+              subtitle: briefEntitySubtitle(card.description),
               status: card.completedAt ? 'completed' : 'open',
               dueAt: card.dueAt,
               completed: Boolean(card.completedAt),
@@ -263,8 +264,8 @@ export const queryBriefCatalog = query({
         .map((card) => ({
           kind: 'task',
           id: String(card._id),
-          title: card.title,
-          subtitle: card.description || undefined,
+          title: briefEntityTitle(card.title, 'Untitled task'),
+          subtitle: briefEntitySubtitle(card.description),
           status: 'open',
           dueAt: card.dueAt,
           completed: false,
@@ -284,8 +285,8 @@ export const queryBriefCatalog = query({
         kind: 'event',
         id: event.providerEventId,
         account: event.accountId,
-        title: event.title || 'Untitled event',
-        subtitle: event.location || undefined,
+        title: briefEntityTitle(event.title, 'Untitled event'),
+        subtitle: briefEntitySubtitle(event.location),
         status: event.status || 'confirmed',
         startAt: event.startAt,
         endAt: event.endAt,
@@ -308,8 +309,8 @@ export const queryBriefCatalog = query({
           kind: 'thread',
           id: String(thread.threadId || thread._id),
           account: thread.account ? String(thread.account) : undefined,
-          title: String(thread.subject || '(no subject)'),
-          subtitle: thread.reason ? String(thread.reason) : undefined,
+          title: briefEntityTitle(thread.subject == null ? '' : String(thread.subject), '(no subject)'),
+          subtitle: briefEntitySubtitle(thread.reason == null ? undefined : String(thread.reason)),
           status: String(thread.status || 'open'),
           dueAt: typeof thread.dueAt === 'number' ? thread.dueAt : undefined,
           updatedAt: typeof thread.updatedAt === 'number' ? thread.updatedAt : undefined,
@@ -330,8 +331,8 @@ export const queryBriefCatalog = query({
       .map((item) => ({
         kind: 'work',
         id: String(item._id),
-        title: item.title || truncateText(item.rawText, 160) || 'Untitled work',
-        subtitle: item.rawText || undefined,
+        title: briefEntityTitle(item.title || truncateText(item.rawText, 160), 'Untitled work'),
+        subtitle: briefEntitySubtitle(item.rawText),
         status: item.agentState || item.workState || item.status,
         updatedAt: item.updatedAt,
         gone: false,

@@ -1,6 +1,42 @@
 import { describe, expect, test } from 'bun:test';
 import { MobileInputError } from '../lib/mobile/v1/http';
-import { mailListCursor, mailListLimit } from '../lib/mobile/v1/mail-reads';
+import { mailListCursor, mailListLimit, mailThreadSummariesFromCorpus } from '../lib/mobile/v1/mail-reads';
+
+describe('mailThreadSummariesFromCorpus', () => {
+  const good = {
+    _id: 'thread-1',
+    account: 'account-1',
+    subject: 'Quarterly invoice',
+    fromAddress: 'billing@vendor.com',
+    lastDate: 1_755_000_000_000,
+    snippet: 'Attached.',
+    labels: ['INBOX'],
+    unread: true,
+    starred: false,
+    messageCount: 1,
+  };
+
+  test('skips a row the schema rejects and keeps the rest of the page', () => {
+    const skipped: number[] = [];
+    const summaries = mailThreadSummariesFromCorpus(
+      [good, { account: 'account-1', subject: 'No id at all' }, { ...good, _id: 'thread-3' }],
+      (_error, index) => skipped.push(index),
+    );
+    expect(summaries.map((row) => row.id)).toEqual(['thread-1', 'thread-3']);
+    expect(skipped).toEqual([1]);
+  });
+
+  test('maps a clean page without reporting anything', () => {
+    const skipped: number[] = [];
+    const summaries = mailThreadSummariesFromCorpus([good], (_error, index) => skipped.push(index));
+    expect(summaries).toHaveLength(1);
+    expect(skipped).toEqual([]);
+  });
+
+  test('works without a skip reporter', () => {
+    expect(mailThreadSummariesFromCorpus([{ account: 'account-1' }])).toEqual([]);
+  });
+});
 
 describe('mailListCursor', () => {
   test('absent cursors mean the first page', () => {

@@ -100,10 +100,13 @@ export function createWorkRecoveryPost(deps: WorkRecoveryDependencies = defaults
         return Response.json({ ok: true, recovery, state: recoveryState, replanned: false, revisedStep });
       }
       if (recoveryState === 'released') {
+        // The person's own words when they gave some (the native Put it
+        // down sheet); otherwise the reason of the missed-block flow.
+        const ownReason = typeof body.reason === 'string' ? body.reason.trim() : '';
         await deps.convexMutation(api.albatrossWorkV2.releaseWork, {
           userId: user.userId,
           workId,
-          reason: 'This no longer deserves space after its planned block passed.',
+          reason: ownReason || 'This no longer deserves space after its planned block passed.',
         });
         return Response.json({ ok: true, recovery, state: 'released', replanned: false, revisedStep });
       }

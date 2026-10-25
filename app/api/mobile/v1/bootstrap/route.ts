@@ -3,6 +3,7 @@ import { api, convexQuery } from '@/lib/hosted/convex';
 import { capabilitiesForProvider } from '@/lib/mobile/v1/capabilities';
 import { MobileBootstrapSchema, type MobileDomain } from '@/lib/mobile/v1/contract';
 import { mobileErrorResponse, mobileJSON, mobileRequestID } from '@/lib/mobile/v1/http';
+import { stripLoneSurrogates, truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,6 +18,17 @@ const domains: MobileDomain[] = [
   'assistant',
   'activity',
 ];
+
+// The contract caps a sync error at 500 characters. A raw provider error can
+// run far past that, and one such row failed the whole bootstrap for the
+// native apps (feature audit, item 8).
+const SYNC_ERROR_MAX = 500;
+
+function syncErrorText(value: unknown) {
+  if (value == null || value === '') return undefined;
+  const text = stripLoneSurrogates(typeof value === 'string' ? value : String(value)).trim();
+  return text ? truncateText(text, SYNC_ERROR_MAX) : undefined;
+}
 
 function safeImageURL(value: string | undefined) {
   if (!value) return undefined;
@@ -71,7 +83,7 @@ export function createMobileBootstrapGet(deps: MobileBootstrapDependencies = def
               corpusReady: Boolean(sync?.corpusReady),
               itemsSynced: typeof sync?.messagesSynced === 'number' ? sync.messagesSynced : undefined,
               lastSyncedAt: sync?.lastIncrementalSyncAt ?? sync?.lastBackfillAt ?? undefined,
-              error: sync?.error || undefined,
+              error: syncErrorText(sync?.error),
             },
           };
         }),
