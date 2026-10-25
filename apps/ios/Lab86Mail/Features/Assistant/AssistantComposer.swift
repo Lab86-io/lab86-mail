@@ -22,7 +22,8 @@ struct AssistantComposer: View {
     /// A reply runs on the server: an Ask waits until it ends.
     var sendDisabled = false
     let onSubmit: () -> Void
-    let onAttach: () -> Void
+    /// The host presents the picker for the source the person chose.
+    let onAttach: (ComposerAttachSource) -> Void
 
     // The secret notice (docs/albatross-secure-store.md, V9): the values in
     // the draft that look like a Social Security number, a card number, or
@@ -174,17 +175,24 @@ struct AssistantComposer: View {
         .padding(.horizontal, 8)
     }
 
+    /// Files, Photos, and the camera on iOS, behind one glyph.
     private var attachButton: some View {
-        Button(action: onAttach) {
+        Menu {
+            ForEach(ComposerAttachSource.available) { source in
+                Button(source.label) { onAttach(source) }
+            }
+        } label: {
             Image(systemName: "paperclip")
                 .frame(width: 34, height: 34)
                 .contentShape(.rect)
         }
-        // Plain everywhere: AppKit's default bordered button painted a
+        // Plain everywhere: AppKit's default bordered control painted a
         // grey field behind every glyph in the composer.
+        .menuStyle(.button)
         .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .disabled(model.isStreaming || model.isUploading || pendingFiles.count >= AssistantComposerFiles.limit)
-        .accessibilityLabel("Attach files")
+        .accessibilityLabel("Attach")
     }
 
     private var stopButton: some View {
@@ -357,16 +365,25 @@ enum AssistantComposerFiles {
             let secured = url.startAccessingSecurityScopedResource()
             defer { if secured { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { continue }
-            let total = pending.reduce(0) { $0 + $1.data.count } + data.count
-            guard total <= byteLimit else { continue }
             let values = try? url.resourceValues(forKeys: [.contentTypeKey, .nameKey])
-            pending.append(
-                ComposeAttachment(
-                    filename: values?.name ?? url.lastPathComponent,
-                    contentType: values?.contentType?.preferredMIMEType ?? "application/octet-stream",
-                    data: data
-                )
+            let filename = values?.name ?? url.lastPathComponent
+            // The type the server takes for this file, when it takes one.
+            let declared = values?.contentType?.preferredMIMEType
+            let attachment = ComposeAttachment(
+                filename: filename,
+                contentType: ChatAttachmentRules.mediaType(filename: filename, declared: declared)
+                    ?? declared ?? ChatAttachmentRules.defaultMediaType,
+                data: data
             )
+            guard fits(attachment, with: pending) else { continue }
+            pending.append(attachment)
         }
+    }
+
+    /// True when one more file stays inside the count and the byte limits.
+    static func fits(_ attachment: ComposeAttachment, with pending: [ComposeAttachment]) -> Bool {
+        guard pending.count < limit else { return false }
+        let total = pending.reduce(0) { $0 + $1.data.count } + attachment.data.count
+        return total <= byteLimit
     }
 }

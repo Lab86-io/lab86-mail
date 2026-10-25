@@ -723,7 +723,7 @@ struct MailView: View {
             if let count {
                 Text(count)
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(selected ? environment.theme.accentColor.opacity(0.8) : .tertiary)
+                    .foregroundStyle(selected ? AnyShapeStyle(environment.theme.accentColor.opacity(0.8)) : AnyShapeStyle(.tertiary))
             }
             if let trailingSymbol {
                 Image(systemName: trailingSymbol)

@@ -49,6 +49,8 @@
 	<string>$(LAB86_INFO_API_BASE_URL)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Albatross opens the camera only when you choose Camera to attach a photo to a chat.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Albatross records only when you tap Record, so it can transcribe a Work capture.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

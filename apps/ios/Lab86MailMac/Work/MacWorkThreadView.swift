@@ -25,7 +25,7 @@ struct MacWorkThreadView: View {
     @State private var keepUnread = false
     @State private var draft = ""
     @State private var pendingFiles: [ComposeAttachment] = []
-    @State private var showsFileImporter = false
+    @State private var attachRequest: ComposerAttachSource?
     @State private var showsPlan = false
     @State private var showsDetailsPopover = false
     @State private var showsHorizonSheet = false
@@ -107,10 +107,7 @@ struct MacWorkThreadView: View {
                 guard let model, let previous, let next else { return }
                 announce(previous: previous, next: next, model: model)
             }
-            .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-                guard case .success(let urls) = result else { return }
-                AssistantComposerFiles.importing(urls, into: &pendingFiles)
-            }
+            .composerAttachmentSources(request: $attachRequest, files: $pendingFiles)
     }
 
     /// The thread, its title, its window, and the tasks that load and follow it.
@@ -863,7 +860,7 @@ struct MacWorkThreadView: View {
             // A redirect note is text only: an attached file holds the send.
             sendDisabled: model.sendsAreHeld || (model.redirectArmed != nil && !pendingFiles.isEmpty),
             onSubmit: { submitDraft(model) },
-            onAttach: { showsFileImporter = true }
+            onAttach: { attachRequest = $0 }
         )
         .frame(maxWidth: MacThreadLayout.readingMeasure + 40)
         .frame(maxWidth: .infinity)

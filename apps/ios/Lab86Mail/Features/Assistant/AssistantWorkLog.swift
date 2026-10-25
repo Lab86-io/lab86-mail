@@ -123,11 +123,12 @@ struct AssistantReasoningPart: Identifiable, Equatable, Sendable {
 
     var isStreaming: Bool { endedAt == nil }
 
-    /// `Thought` while streaming, `Thought for 3s` once done.
+    /// `Thought` while streaming, `Thought for 3s` or `Thought for 1m 15s`
+    /// once done, as the web's `reasoningLabel`.
     var label: String {
         guard let startedAt, let endedAt else { return "Thought" }
         let seconds = max(1, Int(endedAt.timeIntervalSince(startedAt).rounded()))
-        return "Thought for \(seconds)s"
+        return "Thought for \(AssistantWorkLog.durationText(seconds: seconds))"
     }
 }
 
@@ -239,9 +240,21 @@ enum AssistantWorkLog {
                 blocks.append(.approval(approval))
             case .question(let question):
                 blocks.append(.question(question))
+            case .file:
+                // The user's turn draws its files; a reply has none.
+                continue
             }
         }
         return blocks
+    }
+
+    /// "3s", "1m", "1m 15s": the web's `formatDuration`, never under a second.
+    static func durationText(seconds: Int) -> String {
+        let total = max(1, seconds)
+        if total < 60 { return "\(total)s" }
+        let minutes = total / 60
+        let rest = total % 60
+        return rest == 0 ? "\(minutes)m" : "\(minutes)m \(rest)s"
     }
 
     enum HeaderState: Equatable, Sendable {

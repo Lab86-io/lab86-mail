@@ -26,7 +26,7 @@ struct WorkThreadView: View {
     @State private var bannerTask: Task<Void, Never>?
     @State private var draft = ""
     @State private var pendingFiles: [ComposeAttachment] = []
-    @State private var showsFileImporter = false
+    @State private var attachRequest: ComposerAttachSource?
     @State private var showsPlan = false
     @State private var showsDetails = false
     @State private var showsHorizonSheet = false
@@ -67,10 +67,7 @@ struct WorkThreadView: View {
             }
             .onAppear { environment.threads.beginFollowing(environment.backend) }
             .onDisappear { environment.threads.endFollowing() }
-            .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-                guard case .success(let urls) = result else { return }
-                AssistantComposerFiles.importing(urls, into: &pendingFiles)
-            }
+            .composerAttachmentSources(request: $attachRequest, files: $pendingFiles)
     }
 
     /// The thread, its title, and the tasks that load and follow it.
@@ -490,7 +487,7 @@ struct WorkThreadView: View {
             // A redirect note is text only: an attached file holds the send.
             sendDisabled: model.sendsAreHeld || (model.redirectArmed != nil && !pendingFiles.isEmpty),
             onSubmit: { submitDraft(model) },
-            onAttach: { showsFileImporter = true }
+            onAttach: { attachRequest = $0 }
         )
     }
 

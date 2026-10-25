@@ -196,6 +196,7 @@ struct AssistantReasoningLine: View {
 
 /// The sources the reply cited, as one footnote line of links that wraps.
 struct AssistantSourcesLine: View {
+    @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
     let sources: [AssistantSourceLink]
 
@@ -228,7 +229,9 @@ struct AssistantSourcesLine: View {
         source.title?.nilIfBlank ?? URL(string: source.url)?.host() ?? source.url
     }
 
+    /// A source inside the app opens in the app; a web source opens outside.
     private func open(_ source: AssistantSourceLink) {
+        if AppLinks.open(source.url, navigation: environment.navigation) { return }
         guard let url = URL(string: source.url),
               ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return }
         openURL(url)

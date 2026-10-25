@@ -1,3 +1,4 @@
+import QuickLook
 import SwiftUI
 
 // One message of an Albatross conversation: the user's words in the
@@ -37,21 +38,40 @@ struct AssistantMessageRow: View {
     private var userTurn: some View {
         VStack(alignment: .trailing, spacing: 4) {
             TrailingBubbleLayout(fraction: 0.8) {
-                Text(message.text)
-                    .font(.body)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(
-                        environment.theme.accentSoftColor,
-                        in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    )
-                    .textSelection(.enabled)
+                userBubble
             }
             if let thread = workThread, let receipt = thread.receipt(for: message) {
                 noteReceipt(receipt, thread: thread)
             }
         }
+    }
+
+    /// The user's words, and under a hairline the files that went with them.
+    private var userBubble: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if hasText {
+                Text(message.text)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            if !message.files.isEmpty {
+                if hasText {
+                    Rectangle()
+                        .fill(environment.theme.hairlineColor)
+                        .frame(height: 1)
+                }
+                ForEach(message.files) { file in
+                    UserFileRow(file: file)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(
+            environment.theme.accentSoftColor,
+            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
     }
 
     /// The receipt under a note to a run, with "Send again" once.
@@ -71,6 +91,11 @@ struct AssistantMessageRow: View {
         } else {
             reply
         }
+    }
+
+    /// A link in the reply that leads into the app opens in the app.
+    private var linkAction: OpenURLAction {
+        AppLinks.action(navigation: environment.navigation)
     }
 
     private var reply: some View {
@@ -93,6 +118,7 @@ struct AssistantMessageRow: View {
                 )
             }
         }
+        .environment(\.openURL, linkAction)
     }
 
     @ViewBuilder private func blockView(_ block: AssistantTranscriptBlock) -> some View {
@@ -209,6 +235,75 @@ struct ReplyActions: View {
         .font(.footnote)
         .foregroundStyle(.secondary)
         .padding(.top, 2)
+    }
+}
+
+/// One file in the user's turn: the name and its size, as text. A tap opens
+/// the file in the viewer, from this device's copy or a download.
+struct UserFileRow: View {
+    @Environment(AppEnvironment.self) private var environment
+    let file: AssistantFilePart
+    @State private var previewURL: URL?
+    @State private var isLoading = false
+    @State private var failed = false
+
+    static let openHint = "Opens the file"
+    static let unavailableText = "Could not open the file."
+
+    var body: some View {
+        Button {
+            open()
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(file.filename)
+                    .font(.footnote.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let size = file.size {
+                    Text(ChatAttachmentRules.sizeText(size))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if isLoading {
+                    ProgressView().controlSize(.mini)
+                } else if failed {
+                    Text(Self.unavailableText)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(!canOpen || isLoading)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(canOpen ? Self.openHint : "")
+        .quickLookPreview($previewURL)
+    }
+
+    private var canOpen: Bool { file.uploadID != nil }
+
+    private var accessibilityLabel: String {
+        file.size.map { "\(file.filename), \(ChatAttachmentRules.sizeText($0))" } ?? file.filename
+    }
+
+    private func open() {
+        guard canOpen, !isLoading else { return }
+        isLoading = true
+        failed = false
+        let backend = environment.backend
+        Task {
+            defer { isLoading = false }
+            do {
+                previewURL = try await ChatAttachmentCache.shared.localURL(for: file) { path in
+                    try await backend.download(path: path)
+                }
+                failed = previewURL == nil
+            } catch {
+                guard !error.isCancellation else { return }
+                failed = true
+            }
+        }
     }
 }
 

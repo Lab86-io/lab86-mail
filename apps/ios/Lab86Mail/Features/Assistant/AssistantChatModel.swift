@@ -20,6 +20,9 @@ enum AssistantChatPart: Identifiable, Equatable, Sendable {
     case card(id: String, AssistantToolCard, source: AssistantToolCardSource?)
     case approval(AssistantInlineApproval)
     case question(AssistantQuestionPart)
+    /// A file the user sent (a UIMessage `file` part). The user's turn
+    /// draws it; the model reads it.
+    case file(AssistantFilePart)
 
     var id: String {
         switch self {
@@ -29,6 +32,7 @@ enum AssistantChatPart: Identifiable, Equatable, Sendable {
         case .card(let id, _, _): id
         case .approval(let approval): approval.id
         case .question(let question): question.id
+        case .file(let file): file.id
         }
     }
 }
@@ -331,6 +335,11 @@ final class AssistantChatModel {
     static let stalledErrorText = "Albatross stopped answering. Retry to continue."
     static let detachedReplyText = "This reply finishes on the server. It shows here when you come back."
     static let attachedFilesText = "Use the attached file(s)."
+    /// An empty completion (no tokens, no error) is a model hiccup. The web
+    /// retries it without a word; here once, then the person decides.
+    static let emptyReplyRetryLimit = 1
+    static let emptyReplyText = "Albatross did not answer. Try again."
+    private(set) var emptyReplyRetries = 0
 
     static func uploadErrorText(count: Int, detail: String) -> String {
         "Could not upload \(count == 1 ? "the file" : "the \(count) files"): \(detail)"
@@ -388,14 +397,16 @@ final class AssistantChatModel {
         return await stageAndSend(text: text, attachments: attachments)
     }
 
-    private func beginSend(_ text: String) {
+    private func beginSend(_ text: String, files: [AssistantFilePart] = []) {
         errorMessage = nil
         lastFailedUserText = nil
         lastFailedApprovalID = nil
         currentApprovalContinuationID = nil
         resumesLastTurn = false
         canContinue = false
+        emptyReplyRetries = 0
         var userMessage = AssistantChatMessage(id: Self.newMessageID(), role: .user, text: text)
+        userMessage.parts.append(contentsOf: files.map { AssistantChatPart.file($0) })
         userMessage.createdAt = clock()
         messages.append(userMessage)
         let replyID = appendAssistantReply()
@@ -586,11 +597,38 @@ final class AssistantChatModel {
         let replyID = currentReplyID(localReplyID)
         renamedReplyIDs[localReplyID] = nil
         guard activeReplyID == replyID else { return }
+        let approvalID = currentApprovalContinuationID
+        let endedEmpty = errorMessage == nil && !canContinue && !needsServerCopy
+            && messages.first(where: { $0.id == replyID })?.isVisuallyEmpty == true
         finishStreaming()
         activeReplyID = nil
         // A detached thread reply is the server's to save.
         guard !needsServerCopy else { return }
+        if endedEmpty, !retryEmptyReply(approvalID: approvalID) {
+            errorMessage = Self.emptyReplyText
+            if let approvalID {
+                lastFailedApprovalID = approvalID
+            } else {
+                lastFailedUserText = messages.last(where: { $0.role == .user })?.text
+            }
+        } else if endedEmpty {
+            return
+        }
         await persistTranscript()
+    }
+
+    /// Runs the same turn again after an empty completion, once. False when
+    /// the retry is spent or there is nothing to resume.
+    private func retryEmptyReply(approvalID: String?) -> Bool {
+        guard emptyReplyRetries < Self.emptyReplyRetryLimit,
+              messages.contains(where: { $0.role == .user }) else { return false }
+        emptyReplyRetries += 1
+        if let approvalID {
+            beginApprovalContinuation(approvalID: approvalID)
+        } else {
+            beginContinuation()
+        }
+        return true
     }
 
     private struct StreamStalledError: Error {}
@@ -1076,6 +1114,9 @@ final class AssistantChatModel {
                     }
                 case .question(let question):
                     parts.append(Self.questionPartJSON(question))
+                case .file(let file):
+                    // The model reads the file through this part, as on the web.
+                    parts.append(file.json)
                 case .card(_, _, let source):
                     // Cards travel with the transcript so reopening the chat
                     // brings them back, in the same tool-part shape the web
@@ -1654,15 +1695,26 @@ final class AssistantChatModel {
             )
             let rows = result["uploads"]?.arrayValue ?? []
             guard rows.count == attachments.count else { throw BackendError.invalidResponse }
-            uploadContext = [
-                "Files uploaded in this user turn. Use these exact chatUploadId values when a tool needs the file:",
-                rows.compactMap { row in
-                    guard let id = row["uploadId"]?.stringValue,
-                          let name = row["name"]?.stringValue else { return nil }
-                    return "- \(name): chatUploadId=\(id)"
-                }.joined(separator: "\n"),
-            ].joined(separator: "\n")
-            beginSend(text.isEmpty ? Self.attachedFilesText : text)
+            var lines: [String] = []
+            var files: [AssistantFilePart] = []
+            for (row, attachment) in zip(rows, attachments) {
+                guard let uploadID = row["uploadId"]?.stringValue?.nilIfBlank else { throw BackendError.invalidResponse }
+                let name = row["name"]?.stringValue?.nilIfBlank ?? attachment.filename
+                let contentType = row["contentType"]?.stringValue?.nilIfBlank ?? attachment.contentType
+                let size = row["size"]?.doubleValue.map(Int.init) ?? attachment.data.count
+                lines.append(ChatAttachmentRules.uploadContextLine(name: name, contentType: contentType, size: size, uploadID: uploadID))
+                files.append(AssistantFilePart(
+                    id: "file-\(uploadID)",
+                    filename: name,
+                    mediaType: contentType,
+                    url: ChatAttachmentRules.uploadPath(uploadID),
+                    size: size
+                ))
+                // The bytes stay on this device for the viewer.
+                ChatAttachmentCache.shared.store(attachment.data, uploadID: uploadID, filename: name)
+            }
+            uploadContext = ([ChatAttachmentRules.uploadContextLead] + lines).joined(separator: "\n")
+            beginSend(text.isEmpty ? Self.attachedFilesText : text, files: files)
             return true
         } catch {
             guard !error.isCancellation else { return false }
@@ -1705,6 +1757,9 @@ final class AssistantChatModel {
                 } else {
                     parts.append(.text(id: "\(id)-t\(offset)", text))
                 }
+            case "file":
+                guard let file = AssistantFilePart.decode(part, id: "\(id)-file-\(offset)") else { continue }
+                parts.append(.file(file))
             case "reasoning":
                 guard let text = (part["text"] ?? part["reasoning"])?.stringValue?.nilIfBlank else { continue }
                 parts.append(.reasoning(AssistantReasoningPart(

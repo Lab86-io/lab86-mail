@@ -13,7 +13,51 @@ enum AssistantToolGrammar {
         if let builder = table[toolName] {
             return builder(args, out)
         }
+        if let connector = connectorSentences(toolName: toolName) {
+            return connector
+        }
         return generic(toolName: toolName, output: out)
+    }
+
+    /// The connected services (Slack, Jira, Confluence, Bitbucket, GitHub)
+    /// register tools by prefix. The verb comes from the tool's own name, so
+    /// a new connector tool still reads as a sentence.
+    static func connectorSentences(toolName: String) -> ShapeActivity? {
+        let families: [(prefix: String, name: String)] = [
+            ("slack_", "Slack"), ("jira_", "Jira"), ("confluence_", "Confluence"),
+            ("atlassian_confluence_", "Confluence"), ("atlassian_jira_", "Jira"), ("atlassian_", "Atlassian"),
+            ("bitbucket_", "Bitbucket"), ("github_", "GitHub"), ("linear_", "Linear"), ("notion_", "Notion"),
+        ]
+        // The longest prefix wins: `atlassian_jira_` before `atlassian_`.
+        guard let family = families
+            .filter({ toolName.hasPrefix($0.prefix) })
+            .max(by: { $0.prefix.count < $1.prefix.count }) else { return nil }
+        let action = toolName.dropFirst(family.prefix.count)
+        let service = family.name
+        if action.contains("search") || action.contains("find") {
+            return ShapeActivity(running: "Searching \(service)", done: "Searched \(service)", failed: "Searching \(service) failed")
+        }
+        if action.contains("list") {
+            return ShapeActivity(running: "Loading \(service) items", done: "Loaded \(service) items", failed: "Loading \(service) items failed")
+        }
+        if action.contains("comment") {
+            return ShapeActivity(running: "Commenting in \(service)", done: "Commented in \(service)", failed: "Commenting in \(service) failed")
+        }
+        if action.contains("create") || action.contains("post") || action.contains("send") {
+            return ShapeActivity(running: "Posting to \(service)", done: "Posted to \(service)", failed: "Posting to \(service) failed")
+        }
+        if action.contains("update") || action.contains("edit") || action.contains("transition") {
+            return ShapeActivity(running: "Updating \(service)", done: "Updated \(service)", failed: "Updating \(service) failed")
+        }
+        if action.contains("get") || action.contains("read") || action.contains("fetch") || action.contains("status") {
+            return ShapeActivity(running: "Reading \(service)", done: "Read \(service)", failed: "Reading \(service) failed")
+        }
+        return ShapeActivity(running: "Working in \(service)", done: "Worked in \(service)", failed: "Working in \(service) failed")
+    }
+
+    /// True for the fallback line, which names the tool instead of the work.
+    static func isGeneric(_ activity: ShapeActivity) -> Bool {
+        activity.running.hasPrefix("Running ") || activity.done.hasPrefix("Finished ")
     }
 
     /// The old native line, kept as the last fallback so a tool never renders
@@ -180,8 +224,36 @@ extension AssistantToolGrammar {
     private static let table: [String: Builder] = [
         // Mail reads
         "search_threads": search("your mail", failed: "Mail search failed"),
-        "corpus_search": search("your mail", failed: "Mail search failed"),
+        "corpus_search": { args, out in
+            // Mail and the connected sources, counted apart, as on the web.
+            let what = args["includeConnectedTools"]?.boolValue == false ? "your mail" : "mail and connected sources"
+            let base = search(what, failed: "Search failed")(args, out)
+            guard let items = out["items"]?.arrayValue else { return base }
+            let mail = items.filter { $0["source"]?.stringValue != "mcp" }.count
+            let connected = items.count - mail
+            let query = str(args["query"])
+            let scope = query.isEmpty ? "" : " for “\(query)”"
+            let failures = out["errors"]?.arrayValue?.count ?? 0
+            return ShapeActivity(
+                running: base.running,
+                done: "Searched\(scope) — \(plural(mail, "mail result")), \(plural(connected, "connected result"))\(failures > 0 ? "; some searches failed" : "")",
+                failed: base.failed
+            )
+        },
         "nl_search": search("your mail", failed: "Mail search failed"),
+        "mcp_search": { args, out in
+            search(str(args["server"]).nilIfBlank ?? "connected sources", failed: "Connected search failed")(args, out)
+        },
+        "mcp_list_items": { args, out in
+            let source = str(args["server"]).nilIfBlank ?? "connected sources"
+            let count = resultCount(out)
+            return ShapeActivity(
+                running: "Loading recent items from \(source)",
+                done: "Loaded recent items from \(source)" + (count.map { " — \(plural($0, "result"))" } ?? ""),
+                failed: "Loading items from \(source) failed"
+            )
+        },
+        "mcp_connection_status": fixed("Checking connection sync status", "Checked connection sync status", "Connection status check failed"),
         "corpus_count": fixed("Counting matching mail", "Counted the matching mail", "Mail count failed"),
         "get_thread": fixed("Loading the thread", "Read the thread", "Loading the thread failed"),
         "read_thread": fixed("Reading the thread", "Read the thread", "Reading the thread failed"),
@@ -325,8 +397,32 @@ extension AssistantToolGrammar {
             }
         },
         "personal_details_get": fixed("Reading your personal details", "Read your personal details", "Reading your personal details failed"),
-        "personal_details_save": fixed("Saving to your details", "Saved to your details", "Saving to your details failed"),
+        "personal_details_save": { _, out in
+            let labels = (out["saved"]?.arrayValue ?? []).compactMap { str($0["label"]).nilIfBlank }
+            return ShapeActivity(
+                running: "Saving to your details",
+                done: labels.isEmpty ? "Saved nothing to your details" : "Saved to your details: \(labels.joined(separator: ", "))",
+                failed: "Saving to your details failed"
+            )
+        },
+        "secure_details_list": fixed("Checking Passwords and IDs", "Checked what is in Passwords and IDs", "Checking Passwords and IDs failed"),
         "ask_form": fixed("Asking you a question", "You answered", "The question failed"),
+        "ask_secure_detail": { args, _ in
+            let site = str(args["site"])
+            let what: String
+            switch str(args["kind"]) {
+            case "sign_in": what = site.isEmpty ? "a sign-in" : "a sign-in for \(site)"
+            case "api_key": what = site.isEmpty ? "an API key" : "an API key for \(site)"
+            case "date_of_birth": what = "your date of birth"
+            default: what = "an ID number"
+            }
+            return ShapeActivity(
+                running: "Asking you to add \(what)",
+                done: "Asked you to add \(what)",
+                failed: "Asking you to add \(what) failed"
+            )
+        },
+        "ask_presentation_choices": fixed("Choosing your presentation direction", "Your presentation choices", "Loading the presentation choices failed"),
 
         // Albatross work and areas
         "albatross_record_progress": fixed("Recording progress", "Recorded progress", "Recording progress failed"),
@@ -457,5 +553,159 @@ extension AssistantToolGrammar {
         "show_map": fixed("Placing the map markers", "Placed the map markers", "Placing the map markers failed"),
         "show_message_draft": fixed("Preparing the draft", "Prepared the draft for review", "Preparing the draft failed"),
         "show_email_preview": fixed("Pulling up the email", "Showed the email", "Pulling up the email failed"),
+        "show_video": fixed("Preparing the video", "Showed the video", "Preparing the video failed"),
+        "show_audio": fixed("Preparing the audio", "Showed the audio", "Preparing the audio failed"),
+        "show_carousel": fixed("Laying out the collection", "Laid out the collection", "Laying out the collection failed"),
+        "show_order_summary": fixed("Itemizing the order", "Itemized the order", "Itemizing the order failed"),
+        "show_social_post": fixed("Rendering the post", "Rendered the post", "Rendering the post failed"),
+
+        // The rest of the web table (lib/albatross/teach-ui.ts), so no
+        // registered tool falls back to the generic line.
+        "area_domain_activity": { args, _ in
+            let scope = str(args["domain"]).nilIfBlank ?? str(args["senderEmail"])
+            return ShapeActivity(
+                running: scope.isEmpty ? "Checking recent senders" : "Checking recent senders for \(scope)",
+                done: scope.isEmpty ? "Checked recent senders" : "Checked recent senders for \(scope)",
+                failed: "Checking recent senders failed"
+            )
+        },
+        "area_discover_context": fixed("Searching connected context for Areas", "Searched connected context for Areas", "Area context search failed"),
+        "area_artifact_set_status": fixed("Saving your answer about this relationship", "Saved your answer about this relationship", "Saving the relationship answer failed"),
+        "area_archive": { args, _ in
+            let reason = str(args["reason"])
+            return ShapeActivity(
+                running: "Archiving the area",
+                done: reason.isEmpty ? "Area archived — history kept" : "Area archived — \(reason)",
+                failed: "Archiving the area failed"
+            )
+        },
+        "area_add_fact": { args, out in
+            let value = str(args["value"])
+            let status = out["status"] ?? .null
+            let verified = str(status) == "verified" || (status == .null && args["confirmedByUser"]?.boolValue == true)
+            return ShapeActivity(
+                running: value.isEmpty ? "Recording a fact" : "Recording \(clip(value, max: 80))",
+                done: verified ? "Recorded fact — verified" : "Recorded fact — to confirm",
+                failed: "Recording the fact failed"
+            )
+        },
+        "area_fact_set_status": { args, _ in
+            switch str(args["status"]) {
+            case "verified": return ShapeActivity(running: "Verifying the fact", done: "Fact verified", failed: "Verifying the fact failed")
+            case "rejected": return ShapeActivity(running: "Rejecting the fact", done: "Fact rejected", failed: "Rejecting the fact failed")
+            case "superseded": return ShapeActivity(running: "Retiring the fact", done: "Fact superseded", failed: "Retiring the fact failed")
+            default: return ShapeActivity(running: "Updating the fact", done: "Fact updated", failed: "Updating the fact failed")
+            }
+        },
+        "salvage_context": fixed("Recovering earlier context", "Recovered earlier context", "Recovering earlier context failed"),
+        "restore_from_trash": fixed("Restoring from trash", "Restored from trash", "Restoring from trash failed"),
+        "star": fixed("Starring the thread", "Starred the thread", "Starring the thread failed"),
+        "unstar": fixed("Unstarring the thread", "Unstarred the thread", "Unstarring the thread failed"),
+        "add_label": { args, _ in
+            let label = str(args["label"])
+            return ShapeActivity(
+                running: label.isEmpty ? "Adding a label" : "Adding the “\(label)” label",
+                done: label.isEmpty ? "Added a label" : "Added the “\(label)” label",
+                failed: label.isEmpty ? "Adding the label failed" : "Adding the “\(label)” label failed"
+            )
+        },
+        "remove_label": { args, _ in
+            let label = str(args["label"])
+            return ShapeActivity(
+                running: label.isEmpty ? "Removing a label" : "Removing the “\(label)” label",
+                done: label.isEmpty ? "Removed a label" : "Removed the “\(label)” label",
+                failed: "Removing the label failed"
+            )
+        },
+        "create_label": { args, _ in
+            let name = str(args["name"]).nilIfBlank ?? str(args["label"])
+            return ShapeActivity(
+                running: name.isEmpty ? "Creating a label" : "Creating the “\(name)” label",
+                done: name.isEmpty ? "Created a label" : "Created the “\(name)” label",
+                failed: "Creating the label failed"
+            )
+        },
+        "save_draft": fixed("Saving the draft", "Saved the draft", "Saving the draft failed"),
+        "update_draft": fixed("Updating the draft", "Updated the draft", "Updating the draft failed"),
+        "delete_draft": fixed("Deleting the draft", "Deleted the draft", "Deleting the draft failed"),
+        "list_drafts": fixed("Listing your drafts", "Listed your drafts", "Listing drafts failed"),
+        "schedule_send": fixed("Scheduling the send", "Scheduled the send", "Scheduling the send failed"),
+        "cancel_scheduled": fixed("Canceling the scheduled send", "Canceled the scheduled send", "Canceling the scheduled send failed"),
+        "undo_send": fixed("Undoing the send", "Undid the send", "Undoing the send failed"),
+        "triage_thread": { _, out in
+            let reason = str(out["reason"])
+            return ShapeActivity(
+                running: "Triaging the thread",
+                done: reason.isEmpty ? "Triaged the thread" : "Triaged — \(clip(reason))",
+                failed: "Triaging the thread failed"
+            )
+        },
+        "bulk_triage": fixed("Triaging the batch", "Triaged the batch", "Triaging the batch failed"),
+        "extract_action_items": fixed("Pulling out action items", "Pulled out the action items", "Pulling action items failed"),
+        "translate_thread": fixed("Translating the thread", "Translated the thread", "Translating failed"),
+        "pre_send_critique": fixed("Reviewing the draft", "Reviewed the draft", "Reviewing the draft failed"),
+        "presentation_plan": fixed("Planning the evidence and visuals for every slide", "Planned the presentation slides", "Presentation planning failed; retrying needs the gathered evidence"),
+        "document_review_slides": fixed("Checking every slide visually", "Finished the slide check", "Slide check failed"),
+        "word_document_create": fixed("Creating the Word document", "Created the Word document", "Creating the Word document failed"),
+        "word_document_get": fixed("Reading the Word document", "Read the Word document", "Reading the Word document failed"),
+        "word_document_edit": fixed("Editing the Word document", "Saved a new Word revision", "Editing the Word document failed"),
+        "forget": fixed("Forgetting that note", "Forgot that note", "Forgetting the note failed"),
+        "list_memories": fixed("Listing saved notes", "Listed the saved notes", "Listing notes failed"),
+        "calendar_delete_recurring_series": fixed("Deleting the recurring series", "Deleted the recurring series", "Deleting the series failed"),
+        "calendar_unsubscribe_calendar": fixed("Unsubscribing the calendar", "Unsubscribed the calendar", "Unsubscribing the calendar failed"),
+        "tasks_attach_link": { args, _ in
+            let url = str(args["url"])
+            return ShapeActivity(
+                running: "Attaching a link to the task",
+                done: url.isEmpty ? "Attached a link to the task" : "Attached \(clip(url, max: 80)) to the task",
+                failed: "Attaching the link failed"
+            )
+        },
+        "tasks_attach_file": { _, out in
+            let name = str(out["name"])
+            return ShapeActivity(
+                running: "Attaching a file to the task",
+                done: name.isEmpty ? "Attached a file to the task" : "Attached \(name) to the task",
+                failed: "Attaching the file failed"
+            )
+        },
+        "tasks_attach_calendar_event_link": { _, out in
+            let name = str(out["name"])
+            return ShapeActivity(
+                running: "Attaching a calendar link to the task",
+                done: name.isEmpty ? "Attached a calendar link to the task" : "Attached calendar link “\(name)” to the task",
+                failed: "Attaching the calendar link failed"
+            )
+        },
+        "expand_alias": fixed("Expanding the alias", "Expanded the alias", "Expanding the alias failed"),
+        "browser_download": savedFile(running: "Saving the file from the page", fallback: "Saved the file in Files", failed: "Saving the file failed"),
+        "ui_focus_thread": fixed("Opening the thread", "Opened that thread in your reader", "Opening the thread failed"),
+        "ui_set_query": { args, _ in
+            let query = str(args["query"])
+            return ShapeActivity(
+                running: "Filtering your inbox",
+                done: query.isEmpty ? "Filtered your inbox" : "Filtered your inbox to “\(query)”",
+                failed: "Filtering the inbox failed"
+            )
+        },
+        "ui_open_compose": { args, _ in
+            let to = str(args["to"])
+            return ShapeActivity(
+                running: "Opening the composer",
+                done: to.isEmpty ? "Opened the composer" : "Opened the composer to \(to)",
+                failed: "Opening the composer failed"
+            )
+        },
+        "ui_open_reply": fixed("Opening a reply", "Opened a reply for you to review", "Opening the reply failed"),
+        "ui_toast": fixed("Sending a notification", "Notified you", "Sending the notification failed"),
+        "ui_close_bar": fixed("Closing the assistant", "Closed the assistant", "Closing the assistant failed"),
+        "ui_switch_account": { args, _ in
+            let account = str(args["account"])
+            return ShapeActivity(
+                running: account.isEmpty ? "Switching accounts" : "Switching to \(account)",
+                done: account.isEmpty ? "Switched accounts" : "Switched to \(account)",
+                failed: "Switching accounts failed"
+            )
+        },
     ]
 }

@@ -116,7 +116,9 @@ struct ChatLoadAuditTests {
         #expect(sent)
         try await waitUntilIdle(chat)
         #expect(chat.messages.first?.text == "Read this")
-        #expect(chat.errorMessage == nil)
+        #expect(chat.messages.first?.files.map(\.url) == ["/api/agent/uploads/u1"])
+        // The stub answers with no tokens: the turn retries once, then says so.
+        #expect(chat.errorMessage == AssistantChatModel.emptyReplyText)
     }
 
     @Test

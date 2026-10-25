@@ -18,7 +18,7 @@ struct AssistantChatView: View {
     @Bindable var model: AssistantChatModel
     @State private var draft = ""
     @State private var pendingFiles: [ComposeAttachment] = []
-    @State private var showsFileImporter = false
+    @State private var attachRequest: ComposerAttachSource?
     @State private var showsHistory = false
     @FocusState private var composerFocused: Bool
 
@@ -44,14 +44,7 @@ struct AssistantChatView: View {
                     showsHistory = false
                 }
             }
-            .fileImporter(
-                isPresented: $showsFileImporter,
-                allowedContentTypes: [.item],
-                allowsMultipleSelection: true
-            ) { result in
-                guard case .success(let urls) = result else { return }
-                AssistantComposerFiles.importing(urls, into: &pendingFiles)
-            }
+            .composerAttachmentSources(request: $attachRequest, files: $pendingFiles)
     }
 
     private var page: some View {
@@ -178,7 +171,7 @@ struct AssistantChatView: View {
             pendingFiles: $pendingFiles,
             focus: $composerFocused,
             onSubmit: submitDraft,
-            onAttach: { showsFileImporter = true }
+            onAttach: { attachRequest = $0 }
         )
     }
 
