@@ -280,9 +280,15 @@ struct ThemedInitialsAvatar: View {
             .fill(theme.avatarColor(seed: seed ?? name).gradient)
             .frame(width: size, height: size)
             .overlay(
+                // A custom font scales with Dynamic Type, so at the largest
+                // sizes the initials outgrow the circle and read "…" (D3).
+                // They shrink to fit the circle instead.
                 Text(initials)
                     .font(theme.displayType.displayFont(size: size * 0.4))
                     .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.3)
+                    .padding(size * 0.1)
             )
             .accessibilityHidden(true)
     }

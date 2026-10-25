@@ -5,6 +5,10 @@ import SwiftUI
 /// 24 pt margins, inside the chat measure.
 struct ChatDeskView: View {
     @Environment(AppEnvironment.self) private var environment
+    // The sentence grows with the text, to a ceiling: uncapped, it filled the
+    // whole screen at the largest sizes and hid the asks under the composer.
+    @ScaledMetric(relativeTo: .title) private var scaledSentence: CGFloat = 30
+    private var sentenceSize: CGFloat { min(scaledSentence, 40) }
     let desk: ChatDesk
     let onAsk: (String) -> Void
 
@@ -30,7 +34,7 @@ struct ChatDeskView: View {
                 .font(environment.theme.displayType.displayItalicFont(size: 17))
                 .foregroundStyle(.secondary)
             Text(desk.sentence)
-                .font(environment.theme.displayType.displayFont(size: 30))
+                .font(environment.theme.displayType.displayFont(size: sentenceSize))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)

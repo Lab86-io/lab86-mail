@@ -12,6 +12,7 @@ import SwiftUI
 // the title or runs the dateline into it (D4).
 struct DailyBriefMasthead: View {
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .largeTitle) private var scaledTitleSize: CGFloat = 40
     @ScaledMetric(relativeTo: .subheadline) private var scaledDatelineSize: CGFloat = 15
     let generatedAt: Date
@@ -159,8 +160,11 @@ struct DailyBriefMasthead: View {
         .padding(.horizontal, 24)
     }
 
+    // At accessibility sizes the title fills the plate, and the credit ran
+    // over it. The credit is a footnote to the art, so it steps aside there.
     @ViewBuilder private var creditText: some View {
-        if let credit = Self.creditLine(credit: art?.credit, source: art?.source) {
+        if !dynamicTypeSize.isAccessibilitySize,
+           let credit = Self.creditLine(credit: art?.credit, source: art?.source) {
             Text(credit)
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.75))
