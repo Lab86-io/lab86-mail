@@ -130,7 +130,7 @@ struct HorizonMonthView: View {
         let date = calendar.date(from: DateComponents(year: month.year, month: month.month, day: 1))
         HStack(spacing: 8) {
             Text(title(for: month))
-                .font(environment.theme.displayType.displayFont(size: min(headingSize, 36), weight: .bold))
+                .font(environment.theme.displayType.fixedDisplayFont(size: min(headingSize, 36), weight: .bold))
                 .foregroundStyle(
                     date.map { calendar.isDate($0, equalTo: .now, toGranularity: .month) } ?? false
                         ? environment.theme.accentColor

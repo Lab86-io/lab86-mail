@@ -60,7 +60,7 @@ struct PracticeBody: View {
             if let latest {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(PracticeReview.formatValue(latest.value))
-                        .font(environment.theme.displayType.displayFont(size: valueSize))
+                        .font(environment.theme.displayType.fixedDisplayFont(size: valueSize))
                         .monospacedDigit()
                         .contentTransition(.numericText())
                         .animation(WorkMotion.cross, value: latest.value)
@@ -79,7 +79,7 @@ struct PracticeBody: View {
                 }
             } else {
                 Text("No logs yet")
-                    .font(environment.theme.displayType.displayFont(size: valueSize * 0.6))
+                    .font(environment.theme.displayType.fixedDisplayFont(size: valueSize * 0.6))
                 if let metric {
                     Text(metric.name)
                         .font(.subheadline)

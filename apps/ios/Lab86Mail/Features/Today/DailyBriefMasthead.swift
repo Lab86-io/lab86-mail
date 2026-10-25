@@ -181,14 +181,14 @@ extension DisplayTypeChoice {
     /// The display face at a size the caller sets. `Font.custom(_:size:)`
     /// scales again with Dynamic Type; the plate scales its type itself, with
     /// a cap, so it asks for a fixed size.
-    func fixedDisplayFont(size: CGFloat) -> Font {
+    func fixedDisplayFont(size: CGFloat, weight: Font.Weight = .semibold) -> Font {
         switch self {
         case .serif:
             Font.custom("Fraunces-SemiBold", fixedSize: size)
         case .sans:
-            Font.custom("Geist-SemiBold", fixedSize: size)
+            Font.custom(weight == .regular ? "Geist-Regular" : "Geist-SemiBold", fixedSize: size)
         case .rounded:
-            Font.system(size: size, weight: .semibold, design: .rounded)
+            Font.system(size: size, weight: weight, design: .rounded)
         }
     }
 

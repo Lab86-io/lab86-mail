@@ -21,7 +21,10 @@ struct PageTitle: View {
 
     var body: some View {
         Text(text)
-            .font(environment.theme.displayType.displayFont(size: size))
+            // A fixed-size face: `size` already follows Dynamic Type, and the
+            // custom font would scale it a second time. Capped for the
+            // largest accessibility sizes.
+            .font(environment.theme.displayType.fixedDisplayFont(size: min(size, 52)))
             .foregroundStyle(.primary)
             .lineLimit(2)
             .fixedSize(horizontal: false, vertical: true)

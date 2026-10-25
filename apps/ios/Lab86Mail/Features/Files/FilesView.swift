@@ -19,6 +19,9 @@ struct FilesView: View {
     @State private var cloudItems: [CloudFileItem] = []
     @State private var folderStack: [CloudFolderRoute] = []
     @State private var isLoadingCloud = false
+    // Each drive read takes a number. Only the newest read may clear the
+    // spinner, so an older or cancelled read cannot end a newer one early.
+    @State private var cloudLoadGeneration = 0
     @State private var isConnecting = false
     @State private var showsDriveMenu = false
     @State private var showsFileImporter = false
@@ -449,8 +452,12 @@ struct FilesView: View {
     }
 
     private func loadCloudItems(debounceSearch: Bool = false) async {
+        cloudLoadGeneration += 1
+        let generation = cloudLoadGeneration
         isLoadingCloud = true
-        defer { isLoadingCloud = false }
+        defer {
+            if generation == cloudLoadGeneration { isLoadingCloud = false }
+        }
         do {
             if debounceSearch, !query.isEmpty {
                 try await Task.sleep(for: .milliseconds(350))

@@ -350,7 +350,8 @@ final class ProductStore {
         mailRefreshGeneration += 1
         let generation = mailRefreshGeneration
         mailErrorMessage = nil
-        defer { mailDidLoad = true }
+        // A stale refresh (a newer one, or a sign-out) leaves the flag alone.
+        defer { if generation == mailRefreshGeneration { mailDidLoad = true } }
         do {
             let result = try await tools.invoke("list_accounts")
             guard generation == mailRefreshGeneration else { return }
@@ -428,6 +429,7 @@ final class ProductStore {
             syncMailIndex()
             if let firstFailure { recordMail(firstFailure) }
         } catch {
+            guard generation == mailRefreshGeneration else { return }
             recordMail(error)
         }
     }
@@ -604,22 +606,27 @@ final class ProductStore {
     /// Approvals, suggestions, the check-in, and the open questions: what
     /// Activity and Today show. A failure stays on `todayError`.
     func refreshActivity() async {
+        // A sign-out during the read: the cleared store stays clear.
+        let session = accountSessionGeneration
         var failure: Error?
         do {
             let result = try await tools.invoke(
                 "albatross_list_approval_queue",
                 arguments: ["status": .string("pending"), "limit": .number(50)]
             )
+            guard session == accountSessionGeneration else { return }
             approvals = (result["approvals"]?.arrayValue ?? []).compactMap(ApprovalSummary.init)
         } catch { failure = error }
 
         do {
             let result = try await backend.post(path: "/api/mobile/activity", body: .object([:]))
+            guard session == accountSessionGeneration else { return }
             suggestions = (result["suggestions"]?.arrayValue ?? []).compactMap(SuggestionSummary.init)
             checkin = result["checkin"].flatMap(CheckinSummary.init)
             pendingQuestions = (result["questions"]?.arrayValue ?? []).compactMap(PendingWorkQuestionSummary.init)
         } catch { failure = failure ?? error }
 
+        guard session == accountSessionGeneration else { return }
         if let failure {
             recordToday(failure)
         } else {
@@ -635,6 +642,8 @@ final class ProductStore {
     // app-wide alert. Invalid required dates reject their event rather than
     // becoming 1970, and that rejection surfaces as a local decode note.
     func refreshCalendar(sync: Bool = false) async {
+        // A sign-out during the read: the cleared store stays clear.
+        let session = accountSessionGeneration
         isSyncingCalendar = true
         defer { isSyncingCalendar = false }
         var syncFailure: String?
@@ -663,6 +672,7 @@ final class ProductStore {
                     "limit": .number(500),
                 ]
             )
+            guard session == accountSessionGeneration else { return }
             let rows = result["events"]?.arrayValue ?? []
             let decoded = rows.compactMap(CalendarEventSummary.init).sorted { $0.start < $1.start }
             events = decoded
@@ -674,10 +684,12 @@ final class ProductStore {
                         "endAt": .number(end.timeIntervalSince1970 * 1_000),
                     ]
                 )
+                guard session == accountSessionGeneration else { return }
                 dueCalendarTasks = (dueResult["cards"]?.arrayValue ?? []).compactMap { value in
                     TaskSummary(json: value)
                 }
             } catch {
+                guard session == accountSessionGeneration else { return }
                 recordTask(error)
             }
             calendarDidLoad = true
@@ -692,6 +704,7 @@ final class ProductStore {
             }
             scheduleCacheWrite()
         } catch {
+            guard session == accountSessionGeneration else { return }
             recordCalendar(error)
         }
     }
@@ -850,13 +863,17 @@ final class ProductStore {
     /// The newest edition. While the server still composes it, the Today
     /// page calls this every 5 s (B1); the store keeps no poll of its own.
     func refreshBrief() async {
+        // A sign-out during the read: the cleared store stays clear, and the
+        // loaded flag stays reset.
+        let session = accountSessionGeneration
         briefError = nil
-        defer { briefDidLoad = true }
+        defer { if session == accountSessionGeneration { briefDidLoad = true } }
         do {
             let result = try await tools.invoke("get_latest_daily_report")
             // An edition can hold a large document; it decodes off the main
             // actor (K9).
             let report = await Self.decodeReport(result["report"])
+            guard session == accountSessionGeneration else { return }
             dailyReport = report
             latestDailyReportID = report?.id
             latestDailyReportGeneratedAt = report?.generatedAt
@@ -864,8 +881,10 @@ final class ProductStore {
             noteRefreshed(.brief)
             scheduleCacheWrite()
         } catch {
+            guard session == accountSessionGeneration else { return }
             recordBrief(error)
         }
+        guard session == accountSessionGeneration else { return }
         await refreshBriefSources()
     }
 
@@ -1505,12 +1524,15 @@ final class ProductStore {
 
     // Board-only reload — cheaper than refreshToday after a card mutation.
     private func refreshTasks() async {
+        // A sign-out during the read: the cleared store stays clear.
+        let session = accountSessionGeneration
         isLoadingTasks = true
         defer { isLoadingTasks = false }
         do {
             var arguments: [String: JSONValue] = [:]
             if let activeBoardID { arguments["boardId"] = .string(activeBoardID) }
             let result = try await tools.invoke("tasks_get_board", arguments: arguments)
+            guard session == accountSessionGeneration else { return }
             let board = result["board"]
             var columnNames: [String: String] = [:]
             var orderedColumns: [String] = []
@@ -1534,6 +1556,7 @@ final class ProductStore {
             noteRefreshed(.tasks)
             scheduleCacheWrite()
         } catch {
+            guard session == accountSessionGeneration else { return }
             // The saved board is gone (deleted, or shared access ended):
             // forget it and read the default board (feature audit, item 7).
             if activeBoardID != nil, TaskBoardRecovery.isBoardGone(error) {
@@ -3549,14 +3572,18 @@ final class ProductStore {
         for task in areaBriefMonitoringTasks.values { task.cancel() }
         areaBriefMonitoringTasks = [:]
         areaRefreshStates = [:]
-        if let cacheOwner {
+        // The owner goes before the first await: a loader that resumes
+        // during the cleanup must not queue a cache write or an index
+        // update for the signed-out account.
+        let signedOutOwner = cacheOwner
+        cacheOwner = nil
+        if let signedOutOwner {
             // The index update in flight lands first, so the removal is last.
             await spotlightTask?.value
             spotlightTask = nil
-            await spotlight.remove(owner: cacheOwner)
-            try? await cache.remove(owner: cacheOwner)
+            await spotlight.remove(owner: signedOutOwner)
+            try? await cache.remove(owner: signedOutOwner)
         }
-        cacheOwner = nil
         todayError = nil
         historyError = nil
         historyDidLoad = false

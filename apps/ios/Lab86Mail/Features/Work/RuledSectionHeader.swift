@@ -52,7 +52,7 @@ struct RuledSectionHeader: View {
             Text(title)
                 // Capped: at the largest text sizes an uncapped heading ran
                 // to two lines of about 50 pt and pushed the rows away.
-                .font(environment.theme.displayType.displayFont(size: min(headingSize, 28)))
+                .font(environment.theme.displayType.fixedDisplayFont(size: min(headingSize, 28)))
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }

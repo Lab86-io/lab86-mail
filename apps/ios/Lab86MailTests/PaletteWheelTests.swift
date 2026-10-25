@@ -224,3 +224,13 @@ struct ThemeStoreMigrationTests {
         #expect(reloaded.brilliance == 1)
     }
 }
+
+struct PaletteWheelTouchTests {
+    @Test
+    func aTouchOnThePaperDiscDoesNotScrub() {
+        #expect(!PaletteWheelGeometry.startsScrub(radius: 0))
+        #expect(!PaletteWheelGeometry.startsScrub(radius: Double(PaletteWheelGeometry.innerRadius) - 1))
+        #expect(PaletteWheelGeometry.startsScrub(radius: Double(PaletteWheelGeometry.innerRadius)))
+        #expect(PaletteWheelGeometry.startsScrub(radius: Double(PaletteWheelGeometry.ringRadius)))
+    }
+}

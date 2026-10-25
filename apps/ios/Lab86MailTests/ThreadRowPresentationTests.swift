@@ -341,7 +341,9 @@ struct ThreadRowPresentationTests {
     func accessibilityLabel() {
         let row = Self.row(Self.live("w", status: .needsAnswer, preview: "Which renewal term do you want?", unread: true))
         let label = ThreadRowPresentation.accessibilityLabel(row, time: "4 min", area: "Household")
-        #expect(label == "Renew the car registration. Needs your answer. Which renewal term do you want?. 4 min. Household. Unread")
+        #expect(label == "Renew the car registration. Needs your answer. Which renewal term do you want? 4 min. Household. Unread")
+        #expect(ThreadRowPresentation.spokenJoin(["Done.", "Paid!", "Now"]) == "Done. Paid! Now")
+        #expect(ThreadRowPresentation.spokenJoin([]) == "")
         let seen = Self.row(Self.live("w", status: .done))
         #expect(ThreadRowPresentation.accessibilityLabel(seen, time: nil, area: nil) == "Renew the car registration. Done")
     }

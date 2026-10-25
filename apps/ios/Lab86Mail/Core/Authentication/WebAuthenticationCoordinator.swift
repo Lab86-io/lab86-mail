@@ -10,6 +10,9 @@ enum WebAuthenticationError: LocalizedError {
     case couldNotStart
     case invalidCallback
     case provider(String)
+    // A second sign-in asked while one browser sheet is open. The open one
+    // keeps its session and its continuation.
+    case alreadyOpen
 
     var errorDescription: String? {
         switch self {
@@ -19,6 +22,8 @@ enum WebAuthenticationError: LocalizedError {
             "The provider returned an unreadable authorization result."
         case .provider(let message):
             message
+        case .alreadyOpen:
+            "A sign-in is already open. Finish it first."
         }
     }
 }
@@ -59,6 +64,13 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         guard let continuation else { return }
         self.continuation = nil
         continuation.resume(with: result)
+    }
+
+    /// One browser flow at a time. A second call while one waits must not
+    /// replace the stored continuation: the first would never resume, and
+    /// the first session's completion would resume the second one.
+    nonisolated static func canStart(isAuthorizing: Bool, hasContinuation: Bool) -> Bool {
+        !isAuthorizing && !hasContinuation
     }
 
     /// The connect path for a mailbox sign-in. A reconnect names its account,
@@ -118,6 +130,10 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         guard let value = response["authorizationUrl"]?.stringValue,
               let authorizationURL = URL(string: value) else {
             throw BackendError.invalidResponse
+        }
+        // Before any state changes: the open flow keeps its session.
+        guard Self.canStart(isAuthorizing: isAuthorizing, hasContinuation: continuation != nil) else {
+            throw WebAuthenticationError.alreadyOpen
         }
         #if canImport(UIKit)
         // The browser must be anchored to a window the user can see; without

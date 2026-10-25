@@ -155,7 +155,7 @@ struct TodayView: View {
             // The sheet closes first; only the brief re-reads, in the
             // background (B7).
             ArtifactActionReviewSheet(request: request) {
-                await store.refreshBrief()
+                await readBrief()
             }
         }
         .shellToolbar()
@@ -171,7 +171,7 @@ struct TodayView: View {
             guard Self.pollsBrief(report: store.dailyReport, scenePhase: scenePhase) else { return }
             while !Task.isCancelled {
                 do { try await Task.sleep(for: Self.briefPollInterval) } catch { return }
-                await store.refreshBrief()
+                await readBrief()
             }
         }
         // A `brief_ready` notification names its edition. Open that one, not
@@ -213,6 +213,18 @@ struct TodayView: View {
         }
     }
 
+    // A read replaces the last write as the request "Try again" repeats, so
+    // a failed read never retries an old write.
+    private func readBrief() async {
+        lastBriefRequest = .read
+        await store.refreshBrief()
+    }
+
+    private func refreshTodayPage() async {
+        lastBriefRequest = .read
+        await store.refreshToday()
+    }
+
     // "Try again" repeats what failed: the write, or the plain read.
     private func retryBrief() async {
         switch lastBriefRequest {
@@ -221,7 +233,7 @@ struct TodayView: View {
             await regenerateBrief()
             isRegenerating = false
         case .read:
-            await store.refreshBrief()
+            await readBrief()
         }
     }
 
@@ -321,7 +333,7 @@ struct TodayView: View {
             showsInlineDate = crossed
         }
         .refreshable {
-            await store.refreshToday()
+            await refreshTodayPage()
             await store.refreshExecution()
             await reloadNarrative()
             await environment.refreshTodayWidget()
@@ -417,7 +429,7 @@ struct TodayView: View {
             showsInlineDate = crossed
         }
         .refreshable {
-            await store.refreshToday()
+            await refreshTodayPage()
             await reloadNarrative()
         }
     }
@@ -519,7 +531,7 @@ struct TodayView: View {
     @ViewBuilder private func scheduleBody(now: Date) -> some View {
         if let error = store.calendarError, !store.calendarDidLoad {
             TodayProblemLine(message: "Your calendar did not load.", detail: error) {
-                await store.refreshToday()
+                await refreshTodayPage()
             }
         } else if !store.calendarDidLoad {
             BriefPlaceholderBars()

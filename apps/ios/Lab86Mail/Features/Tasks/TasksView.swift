@@ -368,9 +368,11 @@ struct TasksView: View {
                     ForEach(cards(in: column)) { task in
                         listRow(task)
                     }
-                    .onMove { offsets, destination in
+                    // A viewer reads the board; only an editor moves rows, as
+                    // in board mode. A nil action turns the move off.
+                    .onMove(perform: canEdit ? { offsets, destination in
                         Task { await store.reorderTasks(in: column, from: offsets, to: destination) }
-                    }
+                    } : nil)
                 }
             }
         }

@@ -102,4 +102,13 @@ struct CoreReliabilityTests {
         if case .couldNotStart? = mappedOther { keptCouldNotStart = true }
         #expect(keptCouldNotStart)
     }
+
+    @Test
+    func aSecondSignInWaitsForTheOpenOne() {
+        #expect(WebAuthenticationCoordinator.canStart(isAuthorizing: false, hasContinuation: false))
+        #expect(!WebAuthenticationCoordinator.canStart(isAuthorizing: true, hasContinuation: false))
+        #expect(!WebAuthenticationCoordinator.canStart(isAuthorizing: false, hasContinuation: true))
+        #expect(!WebAuthenticationCoordinator.canStart(isAuthorizing: true, hasContinuation: true))
+        #expect(WebAuthenticationError.alreadyOpen.errorDescription == "A sign-in is already open. Finish it first.")
+    }
 }

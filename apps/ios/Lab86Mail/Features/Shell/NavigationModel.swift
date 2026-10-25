@@ -449,7 +449,14 @@ final class NavigationModel {
         guard !trimmed.isEmpty else { return false }
         if trimmed.hasPrefix("/") || trimmed.hasPrefix("?") { return true }
         guard let url = URL(string: trimmed) else { return false }
-        return url.scheme == "lab86" || url.scheme == "mailto" || url.host?.contains("lab86.io") == true
+        return url.scheme == "lab86" || url.scheme == "mailto" || isAppHost(url.host)
+    }
+
+    /// The app's own site: `lab86.io` or one of its subdomains. A host that
+    /// only contains the text (`lab86.io.example.com`) is not.
+    nonisolated static func isAppHost(_ host: String?) -> Bool {
+        guard let host = host?.lowercased(), !host.isEmpty else { return false }
+        return host == "lab86.io" || host.hasSuffix(".lab86.io")
     }
 
     /// An app path from a chat reply (`/?view=files&file=<id>`) goes through
@@ -541,7 +548,7 @@ final class NavigationModel {
             sheet = .compose
             return
         }
-        guard url.scheme == "lab86" || url.host?.contains("lab86.io") == true else { return }
+        guard url.scheme == "lab86" || Self.isAppHost(url.host) else { return }
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         var query: [String: String] = [:]
         for item in components?.queryItems ?? [] {

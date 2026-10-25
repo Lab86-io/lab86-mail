@@ -33,8 +33,9 @@ struct ChatDeskView: View {
             Text(desk.dateline)
                 .font(environment.theme.displayType.displayItalicFont(size: 17))
                 .foregroundStyle(.secondary)
+            // The metric already scaled the size; a fixed font keeps it once.
             Text(desk.sentence)
-                .font(environment.theme.displayType.displayFont(size: sentenceSize))
+                .font(environment.theme.displayType.fixedDisplayFont(size: sentenceSize))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)

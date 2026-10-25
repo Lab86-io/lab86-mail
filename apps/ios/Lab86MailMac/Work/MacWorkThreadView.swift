@@ -918,9 +918,25 @@ struct MacWorkThreadView: View {
             Task { await model.chat.hold(text) }
             return
         }
-        model.send(draft, attachments: pendingFiles)
-        clearDraft()
-        model.chat.clearRoute()
+        // The draft and the files leave once the turn has started; a failed
+        // upload keeps both, so the send control is the retry (C10).
+        let text = draft
+        let files = pendingFiles
+        guard !files.isEmpty else {
+            model.send(text, attachments: [])
+            clearDraft()
+            model.chat.clearRoute()
+            return
+        }
+        Task {
+            guard await model.chat.sendDraft(text, attachments: files) else { return }
+            if draft == text {
+                clearDraft()
+            } else {
+                pendingFiles = []
+            }
+            model.chat.clearRoute()
+        }
     }
 
     private func clearDraft() {

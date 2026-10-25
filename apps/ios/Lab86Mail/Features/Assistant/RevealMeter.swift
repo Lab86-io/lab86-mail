@@ -162,11 +162,12 @@ enum RevealSplit {
         init() {}
 
         mutating func split(_ text: String) -> Result {
-            if !scanned.isEmpty, text.hasPrefix(scanned) {
-                // Two characters of overlap, so a fence cut by the seam counts once.
-                let seam = String(scanned.suffix(2))
+            // The tail alone is enough when no backtick run can cross the
+            // seam. A scan that ends in a backtick recounts the whole text,
+            // so a fence split by the seam counts once.
+            if !scanned.isEmpty, text.hasPrefix(scanned), scanned.last != "`" {
                 let tailStart = text.utf8.index(text.utf8.startIndex, offsetBy: scanned.utf8.count)
-                fences += RevealSplit.fenceCount(in: seam + text[tailStart...]) - RevealSplit.fenceCount(in: seam)
+                fences += RevealSplit.fenceCount(in: text[tailStart...])
             } else {
                 fences = RevealSplit.fenceCount(in: text)
             }

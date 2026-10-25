@@ -181,5 +181,31 @@ struct ChatLoadAuditTests {
         let fresh = cache.split("Brand new ```code")
         #expect(fresh == RevealSplit.split("Brand new ```code"))
         #expect(RevealSplit.fenceCount(in: "a```b```c") == 2)
+
+        // A scan that ends in a closed fence, then one more backtick: the
+        // four backticks are one fence, not two.
+        var seam = RevealSplit.Cache()
+        let closed = "Intro\n\n```\ncode\n```"
+        #expect(seam.split(closed) == RevealSplit.split(closed))
+        let extra = closed + "`\n\nAfter"
+        #expect(seam.split(extra) == RevealSplit.split(extra))
+        let more = extra + " words"
+        #expect(seam.split(more) == RevealSplit.split(more))
+    }
+
+    @Test
+    func theHeadingStyleScalesWithTheTextSize() {
+        let base = ChatMarkdownStyle.config(for: .serif, dynamicTypeSize: .large)
+        let large = ChatMarkdownStyle.config(for: .serif, dynamicTypeSize: .accessibility3)
+        #expect(ChatMarkdownStyle.config(for: .serif, dynamicTypeSize: .large) == base)
+        #if os(iOS)
+        #expect(large.headingStyle.h1Font.normal.pointSize > base.headingStyle.h1Font.normal.pointSize)
+        #expect(ChatMarkdownStyle.headingScale(for: .accessibility3, size: 28) > 1)
+        #expect(ChatMarkdownStyle.contentSizeCategory(for: .accessibility3) == .accessibilityExtraLarge)
+        #expect(ChatMarkdownStyle.contentSizeCategory(for: .large) == .large)
+        #else
+        #expect(large == base)
+        #endif
+        #expect(ChatMarkdownStyle.headingScale(for: .large, size: 28) == 1)
     }
 }

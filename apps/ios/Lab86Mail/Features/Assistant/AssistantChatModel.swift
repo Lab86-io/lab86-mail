@@ -405,6 +405,7 @@ final class AssistantChatModel {
         resumesLastTurn = false
         canContinue = false
         emptyReplyRetries = 0
+        needsServerCopy = false
         var userMessage = AssistantChatMessage(id: Self.newMessageID(), role: .user, text: text)
         userMessage.parts.append(contentsOf: files.map { AssistantChatPart.file($0) })
         userMessage.createdAt = clock()
@@ -441,6 +442,7 @@ final class AssistantChatModel {
         currentApprovalContinuationID = nil
         resumesLastTurn = true
         canContinue = false
+        needsServerCopy = false
         let replyID = appendAssistantReply()
         streamTask = Task { [weak self] in
             await self?.streamReply(into: replyID)
@@ -485,6 +487,7 @@ final class AssistantChatModel {
         resumesLastTurn = false
         currentApprovalContinuationID = approvalID
         canContinue = false
+        needsServerCopy = false
         let replyID = appendAssistantReply()
         streamTask = Task { [weak self] in
             await self?.streamReply(into: replyID)
