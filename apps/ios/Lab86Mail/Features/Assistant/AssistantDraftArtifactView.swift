@@ -153,7 +153,7 @@ struct AssistantDraftArtifactContent: View {
             footer(record)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .surfaceCard(theme: theme, cornerRadius: 16)
+        .insetPanel(theme: theme, cornerRadius: 12)
     }
 
     private var hairline: some View {
@@ -569,7 +569,7 @@ struct AssistantDraftArtifactContent: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .surfaceCard(theme: theme, cornerRadius: 14)
+        .insetPanel(theme: theme, cornerRadius: 12)
     }
 
     // MARK: - Helpers

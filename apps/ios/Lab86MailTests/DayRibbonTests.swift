@@ -340,10 +340,14 @@ struct DayRibbonTests {
         #expect(long.count <= short.count + 2)
     }
 
-    @Test func hoursReadAsAPersonSaysThem() {
-        let labels = DayRibbon.ticks(DayRibbon.Window(startHour: 11, endHour: 14)).map(\.label)
-        #expect(labels.contains("11am"))
-        #expect(labels.contains("12pm"))
-        #expect(!labels.contains("0pm"))
+    @Test func hoursReadAsTheRowsWriteThem() {
+        // One time style on the ribbon (D16): the rail says "11 AM" where
+        // the rows say "11:30 AM".
+        let english = Locale(identifier: "en_US")
+        let labels = DayRibbon.ticks(DayRibbon.Window(startHour: 11, endHour: 14), locale: english).map(\.label)
+        #expect(labels.contains("11 AM"))
+        #expect(labels.contains("12 PM"))
+        #expect(!labels.contains("0 PM"))
+        #expect(!labels.contains("11am"))
     }
 }

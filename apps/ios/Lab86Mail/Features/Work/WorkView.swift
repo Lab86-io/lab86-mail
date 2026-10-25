@@ -15,11 +15,14 @@ struct WorkView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #endif
     @State private var filter: WorkFilter = .all
+    /// One Area the list narrows to, from the area pills. Nil is every Area.
+    @State private var areaID: String?
     @State private var showsClosed = false
     @State private var horizonTarget: WorkListItem?
     @State private var steerTarget: SteerTarget?
     @State private var answerTarget: ThreadListRow?
     @State private var archiveTarget: ThreadListRow?
+    @State private var releaseTarget: ThreadListRow?
     @State private var width: CGFloat = 0
     @State private var clock: Date = .now
     @State private var lastAnnouncedAt: Date = .distantPast
@@ -48,8 +51,12 @@ struct WorkView: View {
         ThreadListGrouping.rows(items: store.allWork, live: threads.rows)
     }
 
+    private var areaChoices: [ThreadListAreaChoice] {
+        ThreadListGrouping.areaChoices(allRows)
+    }
+
     private var filteredRows: [ThreadListRow] {
-        ThreadListGrouping.filter(allRows, by: filter, areaID: nil)
+        ThreadListGrouping.filter(allRows, by: filter, areaID: areaID)
     }
 
     /// Dormant Work leaves the sections for the "Later" shelf.
@@ -204,6 +211,13 @@ struct WorkView: View {
                 clock = .now
             }
         }
+        .task {
+            // Work made in chat or on the web shows on the next visit (W2).
+            // The read updates the long-lived store, so it runs outside the
+            // view's task: a read cancelled by a push would show as a false
+            // "couldn't refresh".
+            Task { await store.refreshWork() }
+        }
         .onAppear {
             threads.listVisible = true
             threads.beginFollowing(environment.backend)
@@ -215,6 +229,7 @@ struct WorkView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 threads.resumeFollowing(environment.backend)
+                Task { await store.refreshWork() }
             } else {
                 threads.pauseFollowing()
             }
@@ -247,6 +262,11 @@ struct WorkView: View {
                 onOpen: { open(row) }
             )
         }
+        .sheet(item: $releaseTarget) { row in
+            ReleaseSheet(workID: row.id, title: row.title) {
+                await refreshAll()
+            }
+        }
         .confirmationDialog(
             WorkViewCopy.archiveTitle,
             isPresented: Binding(
@@ -278,8 +298,7 @@ struct WorkView: View {
     private var headerRow: some View {
         plainRow {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("Albatrosses")
-                    .font(.largeTitle.weight(.bold))
+                PageTitle("Albatrosses")
                 Spacer(minLength: 8)
                 if !closedRows.isEmpty {
                     finishedToggle
@@ -290,32 +309,54 @@ struct WorkView: View {
         }
     }
 
-    /// Filters as a glass capsule row: the material Apple uses for controls that
-    /// float over content, so the list reads as the page and these read as the
-    /// handles on it.
+    /// Filters as glass capsules: the material Apple uses for controls that
+    /// float over content, so the list reads as the page and these read as
+    /// the handles on it. A second row narrows to one Area when the rows
+    /// belong to more than one.
     private var filterRow: some View {
         plainRow {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    filterPill(.all)
-                    filterPill(.needsYou)
-                    filterPill(.inProgress)
-                    if unhomedCount > 0 { filterPill(.unhomed) }
+            VStack(alignment: .leading, spacing: 0) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        filterPill(.all)
+                        filterPill(.needsYou)
+                        filterPill(.inProgress)
+                        if unhomedCount > 0 { filterPill(.unhomed) }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
+                if areaChoices.count > 1 {
+                    areaPills
+                }
             }
         }
     }
 
+    private var areaPills: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                pill(WorkViewCopy.allAreas, active: areaID == nil) { areaID = nil }
+                ForEach(areaChoices) { choice in
+                    pill(choice.name, active: areaID == choice.id) { areaID = choice.id }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 10)
+        }
+        .accessibilityLabel(WorkViewCopy.areaPillsLabel)
+    }
+
     private func filterPill(_ value: WorkFilter) -> some View {
-        let active = filter == value
-        return Button {
-            filter = value
-        } label: {
-            Text(value.label)
+        pill(value.label, active: filter == value) { filter = value }
+    }
+
+    private func pill(_ label: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
                 .font(.footnote.weight(active ? .semibold : .regular))
                 .foregroundStyle(active ? Color.accentColor : Color.secondary)
+                .lineLimit(1)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
         }
@@ -351,37 +392,21 @@ struct WorkView: View {
                 threadRow(row, showsSelection: showsSelection)
             }
         } header: {
-            sectionHeader(label, hint: hint, accent: accent)
+            RuledSectionHeader(title: label, hint: hint, accent: accent)
         }
-    }
-
-    private func sectionHeader(_ label: String, hint: String, accent: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Rectangle()
-                .fill(accent ? Color.accentColor : Color.secondary.opacity(0.45))
-                .frame(width: 18, height: 1)
-            Text(label)
-                .font(.system(.subheadline, design: .serif).weight(.semibold))
-                .foregroundStyle(.primary)
-            Text(hint)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-            Spacer(minLength: 0)
-        }
-        // Grouped lists set section headers in capitals. Ours stay sentence case.
-        .textCase(nil)
-        .padding(.bottom, 2)
     }
 
     private func threadRow(_ row: ThreadListRow, showsSelection: Bool) -> some View {
         let selected = showsSelection && environment.navigation.workRoute?.workID == row.id
+        let hasDraft = !environment.composerDrafts.draft(for: row.id).isEmpty
         return Button {
             open(row)
         } label: {
-            ThreadListRowView(row: row, now: clock, stale: threads.isStale)
+            ThreadListRowView(row: row, now: clock, stale: threads.isStale, hasDraft: hasDraft)
         }
         .buttonStyle(.plain)
-        .listRowBackground(selected ? environment.theme.accentSoftColor : environment.theme.elevatedColor)
+        // A flat insert: the inset fill, no raised card.
+        .listRowBackground(selected ? environment.theme.accentSoftColor : environment.theme.subtleColor)
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             if row.live != nil {
                 Button(row.unread ? WorkViewCopy.markRead : WorkViewCopy.markUnread) {
@@ -412,10 +437,10 @@ struct WorkView: View {
             }
         }
         Divider()
-        if row.item.workState == "paused" {
-            Button("Pick it up") { Task { await setWorkState(row, "active") } }
+        if WorkViewCopy.isPutDown(row.item.workState) {
+            Button(WorkViewCopy.pickUp) { Task { await setWorkState(row, "active") } }
         } else {
-            Button("Put it down") { Task { await setWorkState(row, "paused") } }
+            Button(WorkViewCopy.putDown) { releaseTarget = row }
         }
         Button("Set horizon…") { horizonTarget = row.item }
         Divider()
@@ -486,10 +511,10 @@ struct WorkView: View {
                     AreaListRow(area: area)
                 }
                 .buttonStyle(.plain)
-                .listRowBackground(environment.theme.elevatedColor)
+                .listRowBackground(environment.theme.subtleColor)
             }
         } header: {
-            sectionHeader("Areas", hint: "The parts of life these belong to.", accent: false)
+            RuledSectionHeader(title: "Areas", hint: "The parts of life these belong to.")
         }
     }
 
@@ -520,27 +545,30 @@ struct WorkView: View {
             .padding(.vertical, 40)
         } else if let error = store.workError {
             VStack(alignment: .leading, spacing: 8) {
-                Label("Couldn’t load your Albatrosses", systemImage: "exclamationmark.triangle")
+                Text("Could not load your Albatrosses")
                     .font(.subheadline.weight(.medium))
                 Text(error).font(.caption).foregroundStyle(.secondary)
-                Button("Try Again") { retryWork() }.buttonStyle(.bordered)
+                Button("Try again") { retryWork() }.buttonStyle(.bordered)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 24)
         } else {
             ContentUnavailableView {
-                Label(WorkViewCopy.emptyTitle(filter), systemImage: "checkmark.circle")
+                Text(WorkViewCopy.emptyTitle(filter))
             } description: {
                 Text(WorkViewCopy.emptyDescription(filter))
             } actions: {
-                if filter == .all {
+                if filter == .all, areaID == nil {
                     Button("Get something out of your head") {
                         environment.navigation.sheet = .assistant
                     }
                     .buttonStyle(.borderedProminent)
                 } else {
-                    Button(WorkFilter.all.label) { filter = .all }
-                        .buttonStyle(.bordered)
+                    Button(WorkFilter.all.label) {
+                        filter = .all
+                        areaID = nil
+                    }
+                    .buttonStyle(.bordered)
                 }
             }
             .padding(.vertical, 20)
@@ -623,6 +651,16 @@ enum WorkViewCopy {
     static let markUnread = "Mark as unread"
     static let archiveTitle = "Archive this Albatross?"
     static let archiveMessage = "An archived Albatross leaves its Area. It stays in history."
+    static let allAreas = "All areas"
+    static let areaPillsLabel = "Narrow to one Area"
+    static let putDown = "Put it down"
+    static let pickUp = "Pick it up"
+
+    /// Work that was paused or released shows "Pick it up" in place of
+    /// "Put it down".
+    static func isPutDown(_ workState: String?) -> Bool {
+        workState == "paused" || workState == "released"
+    }
 
     static func emptyTitle(_ filter: WorkFilter) -> String {
         switch filter {
@@ -660,12 +698,9 @@ private struct WorkRefreshWarning: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
             // Keep the message and the Retry control as separate accessibility
             // elements so VoiceOver can still activate the button.
-            Text("Showing what was saved — couldn’t refresh.")
+            Text("Showing what was saved. The refresh did not finish.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)

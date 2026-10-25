@@ -75,33 +75,88 @@ struct MailSpotlightRecord: Hashable, Sendable {
     }
 }
 
+/// What one update writes (K8): deletions for the rows that left and index
+/// writes for the rows that are new or changed. Equal lists write nothing.
+/// Before, every live-mail tick deleted and rebuilt the whole index.
+struct MailSpotlightDelta: Equatable, Sendable {
+    var clearsDomain: Bool
+    var removedIdentifiers: [String]
+    var changed: [MailSpotlightRecord]
+
+    var isEmpty: Bool { !clearsDomain && removedIdentifiers.isEmpty && changed.isEmpty }
+
+    /// `previous` nil means this process has not indexed the owner yet: the
+    /// owner's domain is cleared first, so rows from an older launch go.
+    static func plan(
+        previous: [String: MailSpotlightRecord]?,
+        next: [String: MailSpotlightRecord]
+    ) -> MailSpotlightDelta {
+        guard let previous else {
+            return MailSpotlightDelta(
+                clearsDomain: true,
+                removedIdentifiers: [],
+                changed: next.values.sorted { $0.date > $1.date }
+            )
+        }
+        let removed = previous.keys.filter { next[$0] == nil }.sorted()
+        let changed = next.values
+            .filter { previous[$0.uniqueIdentifier] != $0 }
+            .sorted { $0.date > $1.date }
+        return MailSpotlightDelta(clearsDomain: false, removedIdentifiers: removed, changed: changed)
+    }
+
+    /// The rows to index, by identifier. A thread whose account is not
+    /// listed has no row.
+    static func records(
+        owner: String,
+        accounts: [AccountSummary],
+        threads: [MailThreadSummary]
+    ) -> [String: MailSpotlightRecord] {
+        let accountsByID = Dictionary(accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var records: [String: MailSpotlightRecord] = [:]
+        for thread in threads {
+            guard let account = accountsByID[thread.accountID],
+                  let record = MailSpotlightRecord(owner: owner, account: account, thread: thread) else { continue }
+            records[record.uniqueIdentifier] = record
+        }
+        return records
+    }
+}
+
 actor MailSpotlightIndexer: MailSpotlightIndexing {
     static let shared = MailSpotlightIndexer()
 
     private let index = CSSearchableIndex(name: "AlbatrossMail", protectionClass: .complete)
     private let logger = Logger(subsystem: "io.lab86.mail", category: "Spotlight")
+    // The rows each owner has in the index, by identifier, in this process.
+    private var indexed: [String: [String: MailSpotlightRecord]] = [:]
 
     func replace(owner: String, accounts: [AccountSummary], threads: [MailThreadSummary]) async {
-        let accountsByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
-        let records = threads.compactMap { thread in
-            accountsByID[thread.accountID].flatMap {
-                MailSpotlightRecord(owner: owner, account: $0, thread: thread)
-            }
-        }
-        let domain = MailSpotlightRecord.ownerDomain(owner)
-
+        let next = MailSpotlightDelta.records(owner: owner, accounts: accounts, threads: threads)
+        let delta = MailSpotlightDelta.plan(previous: indexed[owner], next: next)
+        guard !delta.isEmpty else { return }
         do {
-            // Replacing the small, bounded native mailbox snapshot prevents
-            // archived or trashed threads from lingering across app launches.
-            try await index.deleteSearchableItems(withDomainIdentifiers: [domain])
-            guard !records.isEmpty else { return }
-            try await index.indexSearchableItems(records.map { searchableItem(from: $0) })
+            if delta.clearsDomain {
+                // The first write of a launch clears the owner's domain, so
+                // archived or trashed threads from an older launch go.
+                try await index.deleteSearchableItems(withDomainIdentifiers: [MailSpotlightRecord.ownerDomain(owner)])
+            }
+            if !delta.removedIdentifiers.isEmpty {
+                try await index.deleteSearchableItems(withIdentifiers: delta.removedIdentifiers)
+            }
+            if !delta.changed.isEmpty {
+                try await index.indexSearchableItems(delta.changed.map { searchableItem(from: $0) })
+            }
+            indexed[owner] = next
         } catch {
+            // The next update starts over from the domain.
+            indexed[owner] = nil
             logger.error("Mail Spotlight refresh failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
     func remove(owner: String) async {
+        indexed[owner] = nil
         do {
             try await index.deleteSearchableItems(
                 withDomainIdentifiers: [MailSpotlightRecord.ownerDomain(owner)]

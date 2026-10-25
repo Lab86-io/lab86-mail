@@ -26,24 +26,19 @@ struct AppShellView: View {
         // The wake nudge sits under the navigation bar, at the trailing edge.
         .shellWakeNudge(topInset: windowSafeAreaInsets.top + 52)
         .task {
-            BackgroundRefreshCoordinator.shared.install {
-                let ownerID = environment.sessionStore.ownerID
-                let outboxSucceeded = await environment.flushCommandOutbox(ownerID: ownerID)
-                let accountsSucceeded = if let ownerID {
-                    await environment.refreshAccounts(ownerID: ownerID)
-                } else {
-                    true
-                }
-                await environment.store.bootstrap(cacheOwner: ownerID)
-                await environment.refreshTodayWidget()
-                return outboxSucceeded && accountsSucceeded && environment.store.errorMessage == nil
+            BackgroundRefreshCoordinator.shared.install { wake in
+                await refresh(for: wake)
             }
+            // Locals, not the view, cross into the child tasks.
+            let environment = self.environment
             let ownerID = environment.sessionStore.ownerID
-            _ = await environment.flushCommandOutbox(ownerID: ownerID)
-            if let ownerID {
-                _ = await environment.refreshAccounts(ownerID: ownerID)
-            }
+            // The outbox drain and the account read run beside the
+            // bootstrap, not ahead of it (K4). The bootstrap itself reads
+            // its domains at once and paints the brief first.
+            async let outbox: Bool = environment.flushCommandOutbox(ownerID: ownerID)
+            async let accounts: Bool = Self.refreshAccounts(environment, ownerID: ownerID)
             await environment.store.bootstrap(cacheOwner: ownerID)
+            _ = await (outbox, accounts)
             await environment.refreshTodayWidget()
             await environment.notifications.refreshAuthorizationStatus()
             await environment.notifications.retryPendingTextResponses()
@@ -55,12 +50,19 @@ struct AppShellView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             environment.navigation.consumeAppIntentRequests()
             BackgroundRefreshCoordinator.shared.schedule()
+            // The thread list poll comes back with the app (K3).
+            environment.threads.resumeFollowing(environment.backend)
             Task {
                 // Mail actions saved while offline go out on return (NAT-10).
                 _ = await environment.flushCommandOutbox(ownerID: environment.sessionStore.ownerID)
                 await environment.notifications.retryPendingTextResponses()
                 await consumeMailNotificationAction()
                 await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
+                // Data older than five minutes, or from another day, reads
+                // again (K3). The domains read at once.
+                if await environment.store.refreshIfStale() {
+                    await environment.refreshTodayWidget()
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .lab86MailNotificationAction)) { _ in
@@ -279,6 +281,38 @@ struct AppShellView: View {
     private func consumeMailNotificationAction() async {
         await ShellNotificationActions.consumePendingMailAction(environment: environment)
     }
+
+    private static func refreshAccounts(_ environment: AppEnvironment, ownerID: String?) async -> Bool {
+        guard let ownerID else { return true }
+        return await environment.refreshAccounts(ownerID: ownerID)
+    }
+
+    // The one handler for a background refresh and for a push with
+    // `content-available`. A background refresh reads everything; a push
+    // drains the outbox and refreshes only the domain it names, and skips a
+    // domain the app read a moment ago while active (K2).
+    private func refresh(for wake: RemoteWake) async -> Bool {
+        let ownerID = environment.sessionStore.ownerID
+        let outboxSucceeded = await environment.flushCommandOutbox(ownerID: ownerID)
+        switch wake {
+        case .backgroundRefresh:
+            let accountsSucceeded = await Self.refreshAccounts(environment, ownerID: ownerID)
+            await environment.store.bootstrap(cacheOwner: ownerID)
+            await environment.refreshTodayWidget()
+            return outboxSucceeded && accountsSucceeded && environment.store.errorMessage == nil
+        case .push(let payload):
+            let plan = RemoteRefreshPlan.make(payload)
+            let appIsActive = UIApplication.shared.applicationState == .active
+            await environment.store.refresh(for: plan, appIsActive: appIsActive)
+            if plan.isUnspecific || !plan.domains.isDisjoint(with: [.mail, .brief, .tasks, .calendar]) {
+                await environment.refreshTodayWidget()
+            }
+            if plan.domains.contains(.work) {
+                environment.navigation.refreshOpenWork()
+            }
+            return outboxSucceeded && environment.store.errorMessage == nil
+        }
+    }
 }
 
 private struct SourceList: View {
@@ -294,9 +328,13 @@ private struct SourceList: View {
     @State private var showsNewArea = false
     @State private var newAreaName = ""
     @State private var isCreatingArea = false
+    @State private var showsWhatsNew = false
 
     @State private var measurementSequence = SidebarMeasurementSequence()
     @State private var wheelFrame: CGRect = .zero
+    // The row glyph column grows with the text, so a large text size cannot
+    // push the glyph into its label.
+    @ScaledMetric(relativeTo: .body) private var glyphWidth: CGFloat = 20
 
     private var primaries: [PrimaryTab] { PrimaryTab.sourceList(showsFiles: environment.trust.showsFiles) }
     private var areas: [AreaSummary] { environment.store.areas }
@@ -313,11 +351,15 @@ private struct SourceList: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 10)
-            .padding(.bottom, 14)
+            .padding(.bottom, 4)
 
             wheel
 
             Divider()
+
+            // After an update, one quiet row above Settings until the notes
+            // are read. The sidebar holds it so nothing covers a page.
+            whatsNewRow
 
             // Settings is outside the wheel deliberately — see SidebarDestination.
             Button {
@@ -336,10 +378,48 @@ private struct SourceList: View {
             .accessibilityHint("Opens account and app settings")
         }
         .background(environment.theme.railColor)
+        .task { await ProductReleaseStore.shared.load(backend: environment.backend) }
+        .sheet(isPresented: $showsWhatsNew) {
+            NavigationStack {
+                WhatsNewView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showsWhatsNew = false }
+                        }
+                    }
+            }
+        }
         .onAppear { refresh() }
         .onChange(of: areaIdentity) { _, _ in refresh() }
         .onChange(of: reduceMotion) { _, value in model.reduceMotion = value }
         .onDisappear { model.stop() }
+    }
+
+    // MARK: - What's new
+
+    @ViewBuilder private var whatsNewRow: some View {
+        let releases = ProductReleaseStore.shared
+        if releases.hasUnseenRelease, let release = releases.release {
+            Button {
+                showsWhatsNew = true
+            } label: {
+                HStack(spacing: 8) {
+                    Text("What’s new in \(release.version)")
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Circle()
+                        .fill(environment.theme.accentColor)
+                        .frame(width: 7, height: 7)
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(.rect)
+                .padding(.horizontal, 16)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the notes for this version")
+        }
     }
 
     // MARK: - The wheel
@@ -367,6 +447,9 @@ private struct SourceList: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.horizontal, 8)
         .clipped()
+        // Rows that run past either edge fade out, so a cut row reads as
+        // more list rather than as a broken one.
+        .mask { SidebarWheelEdgeFade() }
         .coordinateSpace(name: SidebarWheelSpace.name)
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .global)
@@ -397,6 +480,12 @@ private struct SourceList: View {
     @ViewBuilder private var rows: some View {
         let engagement = model.engagement
         let focus = model.focusY
+
+        // Room above the first row, so the top fade only touches rows that
+        // the list has scrolled past.
+        Color.clear
+            .frame(height: SidebarWheelEdgeFade.top)
+            .accessibilityHidden(true)
 
         ForEach(Array(primaries.enumerated()), id: \.element) { offset, destination in
             sourceButton(destination)
@@ -442,6 +531,11 @@ private struct SourceList: View {
         newAreaButton
             .sidebarPage(engagement: engagement, focusY: focus)
 
+        // Room under the last row, so a list scrolled to its end lifts that
+        // row clear of the bottom fade.
+        Color.clear
+            .frame(height: SidebarWheelEdgeFade.bottom)
+            .accessibilityHidden(true)
     }
 
     private func sectionHeader(_ title: String) -> some View {
@@ -473,56 +567,92 @@ private struct SourceList: View {
             return SidebarDestination.index(of: currentDestination, in: model.destinations)
         }
         model.onCommit = { destination in
-            commit(destination)
+            tap(destination)
+        }
+        model.onPreview = { destination in
+            load(destination)
         }
     }
 
+    // The page that shows beside the sidebar now.
     private var currentDestination: SidebarDestination? {
-        if let route = environment.navigation.areaRoute {
+        let navigation = environment.navigation
+        if let route = navigation.areaRoute {
             return .area(id: route.areaID, name: route.name ?? "")
         }
-        switch environment.navigation.selectedTab {
+        switch navigation.selectedTab {
         case .chat: return nil
+        case .mail:
+            if let labelID = navigation.mailLabelID {
+                let name = labels.first { $0.id == labelID }?.name ?? ""
+                return .mailLabel(id: labelID, name: name)
+            }
+            return .primary(.mail)
         case let tab: return .primary(tab)
         }
     }
 
-    // Where a tap on a row goes. Rows reach it only through the wheel model's
-    // `activate`, which refuses a tap while the wheel is held or travelling.
-    private func commit(_ destination: SidebarDestination) {
+    // A tap on a row. A first tap loads the row's page beside the sidebar and
+    // the sidebar stays open; a tap on the row whose page already shows goes
+    // to it. Rows reach this only through the wheel model's `activate`, which
+    // refuses a tap while the wheel is held or travelling.
+    private func tap(_ destination: SidebarDestination) {
+        switch SidebarRowTap.outcome(
+            for: destination,
+            showing: currentDestination,
+            voiceOver: UIAccessibility.isVoiceOverRunning
+        ) {
+        case .load:
+            load(destination)
+        case .open:
+            show(destination)
+            onSelect()
+        }
+    }
+
+    // The riffle's resting pick and a first tap: the page beside the sidebar
+    // changes, and the sidebar stays open.
+    private func load(_ destination: SidebarDestination) {
+        guard currentDestination?.id != destination.id else { return }
+        show(destination)
+        SidebarPageLoadFeedback.play()
+    }
+
+    private func show(_ destination: SidebarDestination) {
+        let navigation = environment.navigation
         switch destination {
         case .primary(let tab):
-            environment.navigation.selectPrimary(tab)
-            onSelect()
+            // Mail from a label goes back to Main, as on the Mac. Without it
+            // the Mail row would load a page that still shows the label.
+            let leavesLabel = tab == .mail && navigation.mailLabelID != nil
+            navigation.selectPrimary(tab)
+            if leavesLabel {
+                navigation.pendingMailCategory = MailCategoryScope.main.rawValue
+            }
         case .mail(let scope):
-            environment.navigation.selectPrimary(.mail)
-            environment.navigation.pendingMailCategory = scope.rawValue
-            onSelect()
+            navigation.selectPrimary(.mail)
+            navigation.pendingMailCategory = scope.rawValue
         case .mailLabel(let id, _):
-            environment.navigation.selectPrimary(.mail)
-            environment.navigation.pendingMailCategory = "custom:\(id)"
-            onSelect()
+            navigation.selectPrimary(.mail)
+            navigation.pendingMailCategory = "custom:\(id)"
         case .area(let id, let name):
-            environment.navigation.openArea(id: id, name: name)
-            onSelect()
+            navigation.openArea(id: id, name: name)
         case .settings:
-            environment.navigation.sheet = .settings
-            onSelect()
+            navigation.sheet = .settings
         }
     }
 
     // MARK: - Rows
 
     private func sourceButton(_ destination: PrimaryTab) -> some View {
-        let selected = environment.navigation.selectedTab == destination
-            && (destination != .work || environment.navigation.areaRoute == nil)
+        let selected = currentDestination == .primary(destination)
         return Button {
             model.activate(.primary(destination))
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: destination.symbol)
                     .font(.body)
-                    .frame(width: 20)
+                    .frame(width: glyphWidth)
                 SidebarRowTitle(
                     text: destination.title,
                     font: .body,
@@ -546,13 +676,14 @@ private struct SourceList: View {
 
     private func labelButton(_ label: MailLabelSummary) -> some View {
         let destination = SidebarDestination.mailLabel(id: label.id, name: label.name)
+        let selected = currentDestination?.id == destination.id
         return Button {
             model.activate(destination)
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "tag")
                     .font(.body)
-                    .frame(width: 20)
+                    .frame(width: glyphWidth)
                 SidebarRowTitle(
                     text: label.name,
                     font: .body,
@@ -567,10 +698,11 @@ private struct SourceList: View {
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(.rect)
             .background {
-                SidebarRowBackground(selected: false, model: model)
+                SidebarRowBackground(selected: selected, model: model)
             }
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     // NAT-9: an Area can be created from the sidebar, as on the web.
@@ -664,7 +796,13 @@ private struct SourceList: View {
     }
 
     @ViewBuilder private var areaState: some View {
-        if environment.store.isLoadingWork || !environment.store.workDidLoad {
+        let store = environment.store
+        switch AreaListState.resolve(
+            isLoading: store.isLoadingWork,
+            didLoad: store.workDidLoad,
+            hasError: store.workError != nil
+        ) {
+        case .loading:
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Loading areas…")
@@ -673,13 +811,15 @@ private struct SourceList: View {
             }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        } else if environment.store.workError != nil {
-            Button("Retry loading Areas") {
-                Task { await environment.store.refreshWork() }
+        case .failed:
+            // A failed first load leaves `workDidLoad` false. The old check
+            // for loading first kept "Loading areas…" up for good.
+            Button("Load areas again") {
+                Task { await store.refreshWork() }
             }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        } else {
+        case .empty:
             Text("No active areas")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -780,6 +920,35 @@ private struct SidebarRowBackground: View {
                     SidebarSelectionMark.opacity(selected: true, engagement: model.engagement)
                 ))
         }
+    }
+}
+
+// MARK: - Sidebar edges and feedback
+
+// The wheel's viewport fades at its top and bottom edges. A row cut by an
+// edge then reads as more list, not as a broken one.
+private struct SidebarWheelEdgeFade: View {
+    static let top: CGFloat = 10
+    static let bottom: CGFloat = 28
+
+    var body: some View {
+        VStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: Self.top)
+            Rectangle()
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: Self.bottom)
+        }
+    }
+}
+
+// One soft tap as a page loads beside the sidebar. The wheel's own ticks
+// mark the rows; this marks the page.
+@MainActor
+private enum SidebarPageLoadFeedback {
+    static func play() {
+        let generator = UIImpactFeedbackGenerator(style: .soft)
+        generator.impactOccurred(intensity: 0.7)
     }
 }
 

@@ -48,4 +48,28 @@ enum SidebarDestination: Hashable, Identifiable {
         }
     }
 }
+
+// MARK: - A tap on a row
+
+// What a tap on a sidebar row does. The riffle never selects, and neither
+// does a first tap: both load the row's page in the strip of page beside the
+// sidebar, and the sidebar stays open. A tap on the row whose page already
+// shows goes to that page. VoiceOver goes in one step, because the strip
+// beside the sidebar is hidden from it. Settings is a sheet, so it opens.
+enum SidebarRowTap: Equatable {
+    case load
+    case open
+
+    static func outcome(
+        for destination: SidebarDestination,
+        showing: SidebarDestination?,
+        voiceOver: Bool
+    ) -> SidebarRowTap {
+        if voiceOver { return .open }
+        if case .settings = destination { return .open }
+        // `id` matches an area on its id alone, so a route with a stale name
+        // still counts as the page that shows.
+        return showing?.id == destination.id ? .open : .load
+    }
+}
 #endif

@@ -1,6 +1,15 @@
+import Kingfisher
 import SwiftUI
 import QuickLook
 import UniformTypeIdentifiers
+
+/// The key that starts a drive read. It includes the connection ids, so the
+/// first read runs again when the connections arrive after the page (F1).
+enum FilesCloudLoadKey {
+    static func make(locationID: String, folderID: String?, query: String, connectionIDs: [String]) -> String {
+        "\(locationID)|\(folderID ?? "root")|\(query)|\(connectionIDs.joined(separator: ","))"
+    }
+}
 
 struct FilesView: View {
     @Environment(AppEnvironment.self) private var environment
@@ -9,6 +18,7 @@ struct FilesView: View {
     @State private var locationID = "all"
     @State private var cloudItems: [CloudFileItem] = []
     @State private var folderStack: [CloudFolderRoute] = []
+    @State private var isLoadingCloud = false
     @State private var isConnecting = false
     @State private var showsDriveMenu = false
     @State private var showsFileImporter = false
@@ -23,6 +33,10 @@ struct FilesView: View {
         Group {
             if store.isLoading && store.documents.isEmpty && store.uploads.isEmpty {
                 ProgressView("Loading files…")
+            } else if isLoadingCloud && visibleDocuments.isEmpty && visibleUploads.isEmpty && visibleCloudItems.isEmpty {
+                // A drive that is still reading shows its spinner, not an
+                // empty state (F3).
+                ProgressView(locationID == "all" ? "Loading your drives…" : "Loading \(locationTitle)…")
             } else if visibleDocuments.isEmpty && visibleUploads.isEmpty && visibleCloudItems.isEmpty {
                 ContentUnavailableView {
                     Label(emptyTitle, systemImage: "folder")
@@ -363,7 +377,12 @@ struct FilesView: View {
     }
 
     private var cloudLoadKey: String {
-        "\(locationID)|\(folderStack.last?.id ?? "root")|\(query)"
+        FilesCloudLoadKey.make(
+            locationID: locationID,
+            folderID: folderStack.last?.id,
+            query: query,
+            connectionIDs: store.connections.map(\.id)
+        )
     }
 
     private var visibleDocuments: [AlbatrossDocument] {
@@ -423,11 +442,15 @@ struct FilesView: View {
                 selectLocation(connection.id)
             }
         } catch {
+            // A closed sign-in sheet is the person's choice, not a failure.
+            guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
         }
     }
 
     private func loadCloudItems(debounceSearch: Bool = false) async {
+        isLoadingCloud = true
+        defer { isLoadingCloud = false }
         do {
             if debounceSearch, !query.isEmpty {
                 try await Task.sleep(for: .milliseconds(350))
@@ -455,7 +478,7 @@ struct FilesView: View {
                                         query: searchQuery
                                     )
                                 )
-                            } catch is CancellationError {
+                            } catch let error where error.isCancellation {
                                 return .cancelled
                             } catch {
                                 return .failure(connection.label, error.localizedDescription)
@@ -487,9 +510,10 @@ struct FilesView: View {
                 cloudItems = []
                 errorMessage = nil
             }
-        } catch is CancellationError {
-            return
         } catch {
+            // A search keystroke or a fast folder tap cancels the read in
+            // flight; that is not an error to show (F2).
+            guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -529,14 +553,14 @@ struct FilesView: View {
             document.updatedAt.formatted(.relative(presentation: .named)),
         ]
         if document.google != nil { parts.append("Google synced") }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
     }
 
     private func fileDetail(_ item: CloudFileItem) -> String {
         var parts: [String] = []
         if let size = item.size { parts.append(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)) }
         if let date = item.modifiedAt { parts.append(date.formatted(.relative(presentation: .named))) }
-        return parts.isEmpty ? (item.isFolder ? "Folder" : "File") : parts.joined(separator: " · ")
+        return parts.isEmpty ? (item.isFolder ? "Folder" : "File") : parts.joined(separator: ", ")
     }
 
     private func cloudSymbol(_ item: CloudFileItem) -> String {
@@ -707,21 +731,25 @@ private struct FileGridTile: View {
     let tint: Color
     let isFolder: Bool
     var thumbnailURL: URL? = nil
+    /// A thumbnail that failed shows the file's icon instead of a spinner
+    /// that never ends (F5).
+    @State private var thumbnailFailed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(tint.opacity(isFolder ? 0.16 : 0.08))
-                if let thumbnailURL {
-                    AsyncImage(url: thumbnailURL) { image in
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    } placeholder: {
-                        ProgressView()
-                    }
-                    .clipShape(.rect(cornerRadius: 12))
+                if let thumbnailURL, !thumbnailFailed {
+                    // Kingfisher keeps the image in its cache, so a scroll
+                    // does not read it again.
+                    KFImage(thumbnailURL)
+                        .onFailure { _ in thumbnailFailed = true }
+                        .placeholder { ProgressView() }
+                        .fade(duration: 0.15)
+                        .resizable()
+                        .scaledToFill()
+                        .clipShape(.rect(cornerRadius: 12))
                 } else {
                     Image(systemName: symbol)
                         .font(.system(size: isFolder ? 34 : 30, weight: .regular))
@@ -729,6 +757,7 @@ private struct FileGridTile: View {
                 }
             }
             .aspectRatio(1.45, contentMode: .fit)
+            .clipped()
             Text(title)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.primary)

@@ -212,6 +212,218 @@ struct CalendarLayoutTests {
         #expect(DayChips.seed(for: unlabelled) == "acct")
     }
 
+    @Test
+    func chipsCarryTheirCalendarKeyAndTasksCarryNone() {
+        let chips = DayChips.make(
+            events: [event("a", from: date(2026, 7, 28, 9), to: date(2026, 7, 28, 10), calendarID: "work")],
+            tasks: [task("t1", due: date(2026, 7, 28, 15))],
+            limit: 5
+        )
+        #expect(chips.chips.first?.calendarKey == "acct:work")
+        #expect(chips.chips.last?.kind == .task)
+        #expect(chips.chips.last?.calendarKey == nil)
+    }
+
+    // MARK: - Hour axis
+
+    @Test
+    func theWidestHourLabelIsTheLongestOne() {
+        let day = date(2026, 7, 28)
+        let widest = HourAxis.widestLabel(on: day, calendar: calendar)
+        let labels = HourAxis.labels(on: day, calendar: calendar)
+        #expect(labels.count == 24)
+        #expect(labels.contains(widest))
+        #expect(labels.allSatisfy { $0.count <= widest.count })
+    }
+
+    @Test
+    func theTimelineOpensBeforeNowOnceTodayIsUnderWay() {
+        let now = date(2026, 7, 28, 14, 10)
+        let first = date(2026, 7, 28, 9, 30)
+        #expect(HourAxis.openingHour(now: now, isToday: true, firstStart: first, calendar: calendar) == 13)
+        // No entries at all: an hour before now.
+        #expect(HourAxis.openingHour(now: now, isToday: true, firstStart: nil, calendar: calendar) == 13)
+    }
+
+    @Test
+    func theTimelineOpensOnTheFirstEntryBeforeTheDayStarts() {
+        // Two in the morning with a half-past-nine standup: the morning, not
+        // seven hours of empty grid (D12).
+        let now = date(2026, 7, 28, 2, 5)
+        let first = date(2026, 7, 28, 9, 30)
+        #expect(HourAxis.openingHour(now: now, isToday: true, firstStart: first, calendar: calendar) == 8)
+        // Another day opens on its first entry, or on eight when it has none.
+        #expect(HourAxis.openingHour(now: now, isToday: false, firstStart: first, calendar: calendar) == 8)
+        #expect(HourAxis.openingHour(now: now, isToday: false, firstStart: date(2026, 7, 29, 0, 15), calendar: calendar) == 0)
+        #expect(HourAxis.openingHour(now: now, isToday: false, firstStart: nil, calendar: calendar) == 8)
+    }
+
+    @Test
+    func axisAndNumeralFontsGrowToACeiling() {
+        #expect(HourAxis.labelFontSize(scaled: 11) == 11)
+        #expect(HourAxis.labelFontSize(scaled: 15) == 15)
+        // AX3 scales caption2 to about 40 points; the axis stops at 20.
+        #expect(HourAxis.labelFontSize(scaled: 40) == HourAxis.maximumLabelFontSize)
+        #expect(DayNumeralSize.accessibleFontSize(scaled: 17) == 17)
+        #expect(DayNumeralSize.accessibleFontSize(scaled: 53) == DayNumeralSize.maximumAccessibleFontSize)
+        #expect(DayNumeralSize.accessibleFontSize(scaled: 0) == 1)
+    }
+
+    @Test
+    func theHourRowGrowsWithTheTextButSlower() {
+        #expect(HourAxis.hourHeight(base: 58, textScale: 1) == 58)
+        // The text doubled; the row grew by six tenths of that.
+        #expect(HourAxis.hourHeight(base: 58, textScale: 2) == 93)
+        // A smaller text size never shrinks the row below its base.
+        #expect(HourAxis.hourHeight(base: 58, textScale: 0.8) == 58)
+    }
+
+    // MARK: - Block text
+
+    @Test
+    func aNarrowBlockShowsOneLineAndATinyOneShowsNone() {
+        // A phone's week column at the default size: one line, cut at the
+        // end, never a word broken in the middle (D11).
+        #expect(BlockText.plan(width: 50, height: 40, fontSize: 11) == BlockText.Plan(lines: 1))
+        // A quarter-hour block has no room for a line of text.
+        #expect(BlockText.plan(width: 50, height: 12, fontSize: 11).showsText == false)
+        // Too narrow for four characters: colour only.
+        #expect(BlockText.plan(width: 20, height: 60, fontSize: 11).showsText == false)
+    }
+
+    @Test
+    func aWideBlockShowsAsManyLinesAsItHoldsToALimit() {
+        #expect(BlockText.plan(width: 300, height: 60, fontSize: 15, maxLines: 2) == BlockText.Plan(lines: 2))
+        #expect(BlockText.plan(width: 300, height: 28, fontSize: 15, maxLines: 2) == BlockText.Plan(lines: 1))
+        #expect(BlockText.plan(width: 200, height: 200, fontSize: 11) == BlockText.Plan(lines: 3))
+    }
+
+    @Test
+    func accessibilityTextHidesTitlesInTheWeekColumns() {
+        // At AX3 the caption is about 29 points; a 50 point column holds too
+        // few characters, so the block carries only its colour (D7).
+        #expect(BlockText.plan(width: 50, height: 80, fontSize: 29).showsText == false)
+        // An iPad column at the same size still reads.
+        #expect(BlockText.plan(width: 160, height: 80, fontSize: 29).lines >= 1)
+    }
+
+    // MARK: - Slots
+
+    @Test
+    func aHoldOnTheGridSnapsToTheHalfHour() {
+        #expect(TimelineSlot.minutes(forY: 0, hourHeight: 60) == 0)
+        #expect(TimelineSlot.minutes(forY: 95, hourHeight: 60) == 90)
+        #expect(TimelineSlot.minutes(forY: 119, hourHeight: 60) == 90)
+        #expect(TimelineSlot.minutes(forY: 120, hourHeight: 60) == 120)
+        // Past the end of the day the slot stays inside it.
+        #expect(TimelineSlot.minutes(forY: 10_000, hourHeight: 60) == 24 * 60 - 30)
+        #expect(TimelineSlot.minutes(forY: -40, hourHeight: 60) == 0)
+    }
+
+    @Test
+    func aSlotStartIsADateOnThatDay() {
+        let day = date(2026, 7, 28)
+        let start = TimelineSlot.start(forY: 9.5 * 58, hourHeight: 58, on: day, calendar: calendar)
+        #expect(start == date(2026, 7, 28, 9, 30))
+    }
+
+    @Test
+    func theWeekColumnUnderAPointIsFound() {
+        #expect(TimelineSlot.column(forX: 10, gutter: 40, columnWidth: 50) == nil)
+        #expect(TimelineSlot.column(forX: 40, gutter: 40, columnWidth: 50) == 0)
+        #expect(TimelineSlot.column(forX: 389, gutter: 40, columnWidth: 50) == 6)
+        #expect(TimelineSlot.column(forX: 390, gutter: 40, columnWidth: 50) == nil)
+    }
+
+    // MARK: - Calendar colours
+
+    @Test
+    func providerHexColoursParseAndJunkDoesNot() {
+        #expect(CalendarPalette.rgb(hex: "#3B6E8F") == CalendarPalette.RGB(red: 59 / 255, green: 110 / 255, blue: 143 / 255))
+        #expect(CalendarPalette.rgb(hex: "b5502f") == CalendarPalette.RGB(red: 181 / 255, green: 80 / 255, blue: 47 / 255))
+        #expect(CalendarPalette.rgb(hex: "#FFF") == CalendarPalette.RGB(red: 1, green: 1, blue: 1))
+        #expect(CalendarPalette.rgb(hex: "#3B6E8F80") == CalendarPalette.RGB(red: 59 / 255, green: 110 / 255, blue: 143 / 255))
+        #expect(CalendarPalette.rgb(hex: nil) == nil)
+        #expect(CalendarPalette.rgb(hex: "") == nil)
+        #expect(CalendarPalette.rgb(hex: "blue") == nil)
+        #expect(CalendarPalette.rgb(hex: "#12345") == nil)
+    }
+
+    // MARK: - Visibility
+
+    @Test
+    func hiddenCalendarsStayOutAndEventsWithoutACalendarStayIn() {
+        let work = event("a", from: date(2026, 7, 28, 9), to: date(2026, 7, 28, 10), calendarID: "work")
+        let home = event("b", from: date(2026, 7, 28, 9), to: date(2026, 7, 28, 10), calendarID: "home")
+        let loose = event("c", from: date(2026, 7, 28, 9), to: date(2026, 7, 28, 10), calendarID: nil)
+        let hidden: Set<String> = [CalendarVisibility.key(accountID: "acct", calendarID: "home")]
+        #expect(CalendarVisibility.visible([work, home, loose], hiddenKeys: hidden).map(\.id) == ["a", "c"])
+        #expect(CalendarVisibility.visible([work, home], hiddenKeys: []).map(\.id) == ["a", "b"])
+        #expect(CalendarVisibility.key(for: loose) == nil)
+        #expect(CalendarVisibility.key(for: work) == "acct:work")
+    }
+
+    // MARK: - Reconnect
+
+    @Test
+    func theReconnectBannerListsOnlyTheUnauthorizedAccountsInOrder() {
+        let accounts = [
+            AccountSummary(json: .object(["accountId": .string("b"), "email": .string("zed@example.com")]))!,
+            AccountSummary(json: .object(["accountId": .string("a"), "email": .string("amy@example.com")]))!,
+            AccountSummary(json: .object(["accountId": .string("c"), "email": .string("ok@example.com")]))!,
+        ]
+        let rows = CalendarReconnect.accounts(unauthorizedIDs: ["a", "b"], accounts: accounts)
+        #expect(rows.map(\.id) == ["a", "b"])
+        #expect(CalendarReconnect.accounts(unauthorizedIDs: [], accounts: accounts).isEmpty)
+        #expect(CalendarReconnect.message(for: accounts[1]).hasPrefix("amy@example.com stopped syncing"))
+    }
+
+    // MARK: - Bar title
+
+    @Test
+    func theBarTitleNamesTheMonthAndYearInEveryMode() {
+        let selected = date(2026, 10, 16)
+        let scrolledTo = date(2026, 11, 1)
+        #expect(CalendarTitle.text(mode: "day", visibleMonth: nil, visibleYear: nil, selectedDay: selected, calendar: calendar) == "October 2026")
+        #expect(CalendarTitle.text(mode: "week", visibleMonth: scrolledTo, visibleYear: nil, selectedDay: selected, calendar: calendar) == "October 2026")
+        // Month and year follow the scroll, not the selection (D17).
+        #expect(CalendarTitle.text(mode: "month", visibleMonth: scrolledTo, visibleYear: nil, selectedDay: selected, calendar: calendar) == "November 2026")
+        #expect(CalendarTitle.text(mode: "month", visibleMonth: nil, visibleYear: nil, selectedDay: selected, calendar: calendar) == "October 2026")
+        #expect(CalendarTitle.text(mode: "year", visibleMonth: nil, visibleYear: 2027, selectedDay: selected, calendar: calendar) == "2027")
+        #expect(CalendarTitle.text(mode: "year", visibleMonth: nil, visibleYear: nil, selectedDay: selected, calendar: calendar) == "2026")
+    }
+
+    @Test
+    func monthCellsShowTitlesOnlyBelowTheAccessibilitySizes() {
+        #expect(MonthCellStyle.showsTitles(isAccessibilitySize: false))
+        #expect(!MonthCellStyle.showsTitles(isAccessibilitySize: true))
+        #expect(MonthCellStyle.dotLimit == 3)
+    }
+
+    // MARK: - Event when lines
+
+    @Test
+    func theWhenRowsSplitTheDayAndTheTime() {
+        let start = date(2026, 10, 16, 11)
+        let end = date(2026, 10, 16, 12)
+        let timed = EventWhen.lines(start: start, end: end, allDay: false, calendar: calendar)
+        #expect(timed.day == start.formatted(date: .complete, time: .omitted))
+        #expect(timed.time?.contains("–") == true)
+        #expect(timed.day.contains("·") == false)
+
+        let allDay = EventWhen.lines(start: date(2026, 10, 16), end: date(2026, 10, 17), allDay: true, calendar: calendar)
+        #expect(allDay.time == "All day")
+        #expect(allDay.day == date(2026, 10, 16).formatted(date: .complete, time: .omitted))
+
+        let span = EventWhen.lines(start: date(2026, 10, 16), end: date(2026, 10, 19), allDay: true, calendar: calendar)
+        #expect(span.time == "All day")
+        #expect(span.day.contains("–"))
+
+        let missing = EventWhen.lines(start: nil, end: nil, allDay: false, calendar: calendar)
+        #expect(missing.day == "Time unavailable")
+        #expect(missing.time == nil)
+    }
+
 
     // MARK: - Week navigation
 

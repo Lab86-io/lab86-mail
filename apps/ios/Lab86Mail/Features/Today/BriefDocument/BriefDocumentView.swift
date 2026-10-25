@@ -1,4 +1,5 @@
 import Charts
+import Kingfisher
 import MobileAPI
 import SwiftUI
 
@@ -32,6 +33,8 @@ struct BriefDocumentView: View {
     @State private var inactiveRefs: Set<String> = []
     @State private var completedRefs: [String: Bool] = [:]
     @State private var hydrationFailed = false
+    // Bumped by the Refresh word under "Saved details" to hydrate again.
+    @State private var hydrationAttempt = 0
     @State private var undo: BriefUndo?
     @State private var actionError: String?
 
@@ -56,7 +59,7 @@ struct BriefDocumentView: View {
                 )
             )
         )
-        .task(id: document.generatedAt) { await hydratePinnedRefs() }
+        .task(id: "\(document.generatedAt):\(hydrationAttempt)") { await hydratePinnedRefs() }
         .task(id: BriefInactivePolling.key(hideInactive: hideInactive, generatedAt: document.generatedAt)) {
             await pollInactiveRefs()
         }
@@ -150,9 +153,17 @@ struct BriefDocumentView: View {
         case .composing:
             BriefPlaceholderBars()
         case .savedDetails:
-            Text("Saved details. Some rows may be out of date.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text("Saved details. Some rows may be out of date.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Refresh") { hydrationAttempt += 1 }
+                    .buttonStyle(.plain)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.tint)
+                    .fixedSize()
+            }
         case nil:
             EmptyView()
         }
@@ -252,11 +263,21 @@ extension BriefDocumentView {
         guard !refs.isEmpty else { return }
         do {
             let hydrated = try await client.resolve(Array(refs.prefix(100)))
-            entities = Dictionary(uniqueKeysWithValues: hydrated.map { ($0.key, $0) })
+            entities = BriefHydrationIndex.make(hydrated)
             hydrationFailed = false
         } catch {
+            // A read the view gave up on is not a failure; the saved
+            // details stay without a note.
+            guard !error.isCancellation else { return }
             hydrationFailed = true
         }
+    }
+
+    // A row action changed one item. Only the brief re-reads, and the row
+    // does not wait for it (B7).
+    private func refreshBriefInBackground() {
+        let store = environment.store
+        Task { await store.refreshBrief() }
     }
 
     private func collectRefs() -> [BriefSourceRef] {
@@ -368,7 +389,7 @@ extension BriefDocumentView {
                 )
             }
             record(action, regionID: regionID, payload: payload, sourceRef: sourceRef, outcome: "done")
-            await environment.store.refreshToday()
+            refreshBriefInBackground()
         } catch {
             if hides, let key { hiddenRefs.remove(key) }
             if action == "toggle_task", let key {
@@ -469,7 +490,7 @@ extension BriefDocumentView {
                     completedRefs[key] = item.previousCompleted
                 }
                 record(item.action, regionID: item.regionID, payload: payload, sourceRef: item.sourceRef, outcome: "undone")
-                await environment.store.refreshToday()
+                refreshBriefInBackground()
                 return
             }
             switch item.action {
@@ -522,8 +543,9 @@ extension BriefDocumentView {
                 completedRefs[key] = item.previousCompleted
             }
             record(item.action, regionID: item.regionID, payload: payload, sourceRef: item.sourceRef, outcome: "undone")
-            await environment.store.refreshToday()
+            refreshBriefInBackground()
         } catch {
+            guard !error.isCancellation else { return }
             actionError = error.localizedDescription
         }
     }
@@ -594,6 +616,16 @@ extension BriefDocumentView {
         case "archive_thread": "Conversation archived"
         default: "Updated"
         }
+    }
+}
+
+// The entity index by ref key. The server can return two rows with one key:
+// its resolver adds an account to an event ref that has none and drops it
+// from a work or card ref, and `events_today` repeats an event per calendar.
+// The index keeps the first row and never traps on a duplicate.
+enum BriefHydrationIndex {
+    static func make(_ entities: [BriefHydratedEntity]) -> [String: BriefHydratedEntity] {
+        Dictionary(entities.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
     }
 }
 
@@ -883,7 +915,6 @@ private struct BriefGroupView: View {
                         if let kicker = node.kicker {
                             Text(kicker)
                                 .font(.caption2.weight(.semibold))
-                                .textCase(.uppercase)
                                 .foregroundStyle(.tint)
                         }
                         Text(node.title ?? "Brief")
@@ -1051,12 +1082,12 @@ private struct BriefEntityRow: View {
                 )
                 handoffDisclosure(handoff)
             } else {
-                let detail = [
+                let detail = BriefCopy.join([
                     item.framing?.reason,
                     item.framing?.prep,
                     entity?.subtitle,
                     entity?.gone == true ? "This item is no longer available." : entity?.status,
-                ].compactMap { $0 }.joined(separator: " · ")
+                ])
                 if !detail.isEmpty {
                     Text(detail)
                         .font(.caption)
@@ -1104,7 +1135,6 @@ private struct BriefEntityRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(handoff.recommendations.count > 1 ? "Your moves" : "Your move")
                     .font(.caption2.weight(.semibold))
-                    .textCase(.uppercase)
                     .foregroundStyle(.secondary)
                 if handoff.recommendations.count > 1 {
                     ForEach(Array(handoff.recommendations.enumerated()), id: \.offset) { index, move in
@@ -1184,31 +1214,56 @@ private struct BriefQueryListView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var result: BriefQueryResult?
     @State private var loading = true
+    @State private var failed = false
+    @State private var attempt = 0
 
     var body: some View {
         Group {
             if loading {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 72)
+            } else if failed {
+                // A failed read is a failure, not an empty list (B8).
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text("This list did not load.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("Retry") { attempt += 1 }
+                        .buttonStyle(.plain)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.tint)
+                        .fixedSize()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 BriefEntityListView(
                     title: node.title,
                     items: (result?.items ?? []).map(entityItem),
                     variant: node.variant ?? "rows",
                     emptyText: node.emptyText ?? "Nothing here right now.",
-                    entities: Dictionary(uniqueKeysWithValues: (result?.items ?? []).map { ($0.key, $0) }),
+                    entities: BriefHydrationIndex.make(result?.items ?? []),
                     hiddenRefs: hiddenRefs,
                     completedRefs: completedRefs,
                     onAction: onAction
                 )
             }
         }
-        .task(id: node.query) {
+        .task(id: BriefQueryAttempt(query: node.query, attempt: attempt)) {
             guard let query = node.query, let client = environment.briefHydration else {
                 loading = false
                 return
             }
-            result = try? await client.query(query, limit: node.limit ?? 12)
-            loading = false
+            loading = true
+            failed = false
+            do {
+                result = try await client.query(query, limit: node.limit ?? 12)
+                loading = false
+            } catch {
+                // A cancelled read ends because the view left or the query
+                // changed; the next task reports the new state.
+                guard !error.isCancellation else { return }
+                failed = true
+                loading = false
+            }
         }
     }
 
@@ -1239,6 +1294,12 @@ private struct BriefQueryListView: View {
     }
 }
 
+// One read of a query list: the query and the attempt the Retry word bumps.
+struct BriefQueryAttempt: Hashable {
+    let query: BriefQuery?
+    let attempt: Int
+}
+
 private struct BriefStatView: View {
     let node: BriefNode
     @Environment(AppEnvironment.self) private var environment
@@ -1248,7 +1309,6 @@ private struct BriefStatView: View {
         VStack(alignment: .leading, spacing: 7) {
             Text(node.label ?? "Total")
                 .font(.caption.weight(.semibold))
-                .textCase(.uppercase)
                 .foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(displayValue)
@@ -1475,18 +1535,17 @@ private struct BriefCollectionView: View {
         ForEach(Array((node.collectionItems ?? []).enumerated()), id: \.offset) { _, item in
             VStack(alignment: .leading, spacing: 7) {
                 if let image = item.image {
-                    AsyncImage(url: image) { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
-                        Rectangle().fill(.quaternary)
-                    }
-                    .frame(height: 110)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    // The same cache as the rest of the app's remote images.
+                    KFImage(image)
+                        .placeholder { Rectangle().fill(.quaternary) }
+                        .resizable()
+                        .scaledToFill()
+                        .frame(height: 110)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 if let badge = item.badge {
                     Text(badge)
                         .font(.caption2.weight(.semibold))
-                        .textCase(.uppercase)
                         .foregroundStyle(.tint)
                 }
                 Text(item.title).font(.subheadline.weight(.medium))
@@ -1558,7 +1617,7 @@ private struct BriefCanvasNodeView: View {
     var body: some View {
         if let html = node.html, !html.isEmpty {
             BriefArtifactWebView(
-                html: BriefArtifactDocument.make(
+                html: BriefArtifactDocument.memoized(
                     from: html,
                     nonce: nonce,
                     themeCSS: environment.theme.briefThemeCSS

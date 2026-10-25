@@ -50,16 +50,31 @@ struct EventDetailView: View {
                         .font(.title3.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
                     if let source = calendarSourceLine {
-                        Label(source, systemImage: "calendar")
+                        Text(source)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
                 .padding(.vertical, 2)
+                // The one action a meeting needs sits with the title, as a
+                // word, not behind an icon further down the page.
+                if let url = detail?.conferenceURL {
+                    Button("Join \(detail?.conferenceLabel ?? "video call")") {
+                        openURL(url)
+                    }
+                    .font(.body.weight(.semibold))
+                }
             }
 
             Section("When") {
-                LabeledContent("Date", value: whenText)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(whenLines.day)
+                    if let time = whenLines.time {
+                        Text(time)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityElement(children: .combine)
                 if isLoading {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
@@ -70,10 +85,8 @@ struct EventDetailView: View {
 
             if let location = resolvedLocation {
                 Section("Location") {
-                    Button {
+                    Button(location) {
                         if let url = mapsURL(for: location) { openURL(url) }
-                    } label: {
-                        Label(location, systemImage: "mappin.and.ellipse")
                     }
                     .accessibilityHint("Opens in Maps")
                 }
@@ -94,16 +107,6 @@ struct EventDetailView: View {
             }
 
             if let detail {
-                if let url = detail.conferenceURL {
-                    Section("Video call") {
-                        Button {
-                            openURL(url)
-                        } label: {
-                            Label("Join \(detail.conferenceLabel ?? "video call")", systemImage: "video")
-                        }
-                    }
-                }
-
                 if !detail.attendees.isEmpty {
                     Section("Guests") {
                         ForEach(detail.attendees) { attendee in
@@ -129,10 +132,8 @@ struct EventDetailView: View {
 
                 if let link = detail.htmlLink {
                     Section {
-                        Button {
+                        Button("Open in calendar") {
                             openURL(link)
-                        } label: {
-                            Label("Open in calendar", systemImage: "arrow.up.forward.app")
                         }
                     }
                 }
@@ -148,7 +149,7 @@ struct EventDetailView: View {
                 }
             } else if let loadError, detail == nil {
                 Section {
-                    Label("Couldn’t load full details. \(loadError)", systemImage: "exclamationmark.triangle")
+                    Text("Could not load the full details. \(loadError)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -160,7 +161,16 @@ struct EventDetailView: View {
                         Button {
                             openTask = task
                         } label: {
-                            Label(task.title, systemImage: task.completed ? "checkmark.circle.fill" : "circle")
+                            HStack {
+                                Text(task.title)
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                if task.completed {
+                                    Text("Done")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
                     }
                 }
@@ -169,7 +179,9 @@ struct EventDetailView: View {
         .navigationTitle(resolvedTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if resolvedCalendarID != nil {
+            // A read-only calendar (a subscription, a shared view) has no
+            // edit and no delete; the page states that it is read-only.
+            if resolvedCalendarID != nil, !isReadOnlyCalendar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         if isRecurring {
@@ -223,14 +235,14 @@ struct EventDetailView: View {
             titleVisibility: .visible
         ) {
             if isRecurring {
-                Button("Delete This Occurrence", role: .destructive) {
+                Button("Delete this occurrence", role: .destructive) {
                     Task { await deleteEvent(scope: .occurrence) }
                 }
-                Button("Delete Entire Series", role: .destructive) {
+                Button("Delete entire series", role: .destructive) {
                     Task { await deleteEvent(scope: .series) }
                 }
             } else {
-                Button("Delete Event", role: .destructive) {
+                Button("Delete event", role: .destructive) {
                     Task { await deleteEvent(scope: .occurrence) }
                 }
             }
@@ -248,6 +260,17 @@ struct EventDetailView: View {
     private var resolvedCalendarID: String? {
         let id = route.calendarID ?? summary?.calendarID
         return (id?.isEmpty == false) ? id : nil
+    }
+
+    private var calendarChoice: CalendarChoice? {
+        guard let calendarID = resolvedCalendarID else { return nil }
+        return environment.store.calendarChoices.first {
+            $0.accountID == route.accountID && $0.calendarID == calendarID
+        }
+    }
+
+    private var isReadOnlyCalendar: Bool {
+        calendarChoice?.isReadOnly == true
     }
 
     private var isRecurring: Bool {
@@ -275,6 +298,7 @@ struct EventDetailView: View {
             )
             await load()
         } catch {
+            guard !error.isCancellation else { return }
             actionError = error.localizedDescription
         }
     }
@@ -292,34 +316,22 @@ struct EventDetailView: View {
             )
             dismiss()
         } catch {
+            guard !error.isCancellation else { return }
             actionError = error.localizedDescription
         }
     }
 
     private var calendarSourceLine: String? {
-        let calendar = detail?.calendarName
+        let calendar = detail?.calendarName ?? calendarChoice?.name
         let account = detail?.accountID ?? summary?.accountID.nonEmpty
-        return [calendar, account].compactMap { $0 }.first
+        guard let source = [calendar, account].compactMap({ $0 }).first else { return nil }
+        return isReadOnlyCalendar ? "\(source), read-only" : source
     }
 
-    private var whenText: String {
-        guard let start = resolvedStart else { return "Time unavailable" }
-        let end = resolvedEnd
-        if resolvedAllDay {
-            let calendar = Calendar.autoupdatingCurrent
-            if let end, !calendar.isDate(start, inSameDayAs: end.addingTimeInterval(-1)) {
-                return "All day · \(start.formatted(date: .abbreviated, time: .omitted)) – \(end.formatted(date: .abbreviated, time: .omitted))"
-            }
-            return "All day · \(start.formatted(date: .complete, time: .omitted))"
-        }
-        let day = start.formatted(date: .complete, time: .omitted)
-        let startTime = start.formatted(date: .omitted, time: .shortened)
-        guard let end else { return "\(day) · \(startTime)" }
-        let calendar = Calendar.autoupdatingCurrent
-        if calendar.isDate(start, inSameDayAs: end) {
-            return "\(day) · \(startTime) – \(end.formatted(date: .omitted, time: .shortened))"
-        }
-        return "\(start.formatted(date: .abbreviated, time: .shortened)) – \(end.formatted(date: .abbreviated, time: .shortened))"
+    // The date on one line and the time on the next. Two facts, two lines;
+    // no joining dot.
+    private var whenLines: (day: String, time: String?) {
+        EventWhen.lines(start: resolvedStart, end: resolvedEnd, allDay: resolvedAllDay)
     }
 
     private func mapsURL(for location: String) -> URL? {
@@ -353,8 +365,43 @@ struct EventDetailView: View {
                 masterEventID: detail?.masterEventID
             )
         } catch {
+            guard !error.isCancellation else { return }
             loadError = error.localizedDescription
         }
+    }
+}
+
+// The "When" rows of an event: the day on one line, the time on the next.
+// An all-day event says so where the time would be; a span across days
+// names both days.
+enum EventWhen {
+    static func lines(
+        start: Date?,
+        end: Date?,
+        allDay: Bool,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> (day: String, time: String?) {
+        guard let start else { return ("Time unavailable", nil) }
+        if allDay {
+            if let end, !calendar.isDate(start, inSameDayAs: end.addingTimeInterval(-1)) {
+                let last = end.addingTimeInterval(-1)
+                return (
+                    "\(start.formatted(date: .abbreviated, time: .omitted)) – \(last.formatted(date: .abbreviated, time: .omitted))",
+                    "All day"
+                )
+            }
+            return (start.formatted(date: .complete, time: .omitted), "All day")
+        }
+        let day = start.formatted(date: .complete, time: .omitted)
+        let startTime = start.formatted(date: .omitted, time: .shortened)
+        guard let end else { return (day, startTime) }
+        if calendar.isDate(start, inSameDayAs: end) {
+            return (day, "\(startTime) – \(end.formatted(date: .omitted, time: .shortened))")
+        }
+        return (
+            "\(start.formatted(date: .abbreviated, time: .omitted)) – \(end.formatted(date: .abbreviated, time: .omitted))",
+            "\(startTime) – \(end.formatted(date: .omitted, time: .shortened))"
+        )
     }
 }
 

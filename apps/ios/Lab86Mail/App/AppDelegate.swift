@@ -33,8 +33,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUser
         if userInfo["codeAvailable"] as? Bool == true {
             NotificationCenter.default.post(name: .lab86OneTimeCodeAvailable, object: nil)
         }
+        // Read once here: the payload names the domain the wake refreshes (K2).
+        let payload = RemoteWakePayload(userInfo: userInfo)
         Task { @MainActor in
-            await BackgroundRefreshCoordinator.shared.runRemoteNotification(completion: completionHandler)
+            await BackgroundRefreshCoordinator.shared.runRemoteNotification(payload, completion: completionHandler)
         }
     }
 

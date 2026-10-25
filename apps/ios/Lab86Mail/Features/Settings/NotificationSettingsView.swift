@@ -31,7 +31,7 @@ struct NotificationSettingsView: View {
                     .disabled(!preferences.nativePushEnabled)
                 Toggle("Calendar suggestions from mail", isOn: $preferences.eventSuggestionPushEnabled)
                     .disabled(!preferences.nativePushEnabled)
-                Toggle("Morning Brief is ready", isOn: $preferences.morningBriefEnabled)
+                Toggle("Daily brief is ready", isOn: $preferences.morningBriefEnabled)
                     .disabled(!preferences.nativePushEnabled)
                 Toggle("In-app Activity", isOn: $preferences.inAppEnabled)
             } header: {
@@ -97,7 +97,7 @@ struct NotificationSettingsView: View {
                         .foregroundStyle(.red)
                 }
             } header: {
-                Text("Daily Brief location")
+                Text("Daily brief location")
             } footer: {
                 Text("Albatross stores an approximate location only after you tap Use Current Location. It is used to fetch local morning weather and can be removed here.")
             }

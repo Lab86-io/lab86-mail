@@ -17,7 +17,7 @@ struct StandingOrdersView: View {
             if let loadError, !didLoad {
                 Section {
                     Text(loadError).foregroundStyle(.secondary)
-                    Button("Try Again") { Task { await load() } }
+                    Button("Try again") { Task { await load() } }
                 }
             } else if !didLoad {
                 Section { ProgressView("Loading your standing orders…") }

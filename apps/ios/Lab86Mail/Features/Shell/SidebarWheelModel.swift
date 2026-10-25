@@ -15,11 +15,13 @@ enum SidebarWheelSpace {
 // into separately observed properties.
 //
 // The riffle is a scroll. A drag turns the wheel — the fan, the bloom, and the
-// detent ticks all follow the thumb — but letting go only lets the list coast
-// and settle, and the list then stays where it stopped. Navigation happens in
-// exactly one way: an explicit tap on a row, through `activate`. There is no
-// swipe that selects; a sideways swipe belongs to the sidebar's own reveal and
-// dismiss.
+// detent ticks all follow the thumb — and letting go lets the list coast and
+// settle, and the list then stays where it stopped. The riffle never selects:
+// when the pick rests on a row, that row's page loads in the strip of page
+// beside the sidebar, through `onPreview`, and the sidebar stays open. A tap
+// on a row goes through `activate`; the sidebar decides there whether the tap
+// loads the page beside it or goes to it. There is no swipe that selects; a
+// sideways swipe belongs to the sidebar's own reveal and dismiss.
 //
 // The mirroring is deliberate rather than redundant. Observation tracks whole
 // stored properties, so if a view read `engine.engagement` it would register a
@@ -56,6 +58,7 @@ final class SidebarWheelModel {
             // wheel. The engine keeps itself inside the new range; the row the
             // last scroll stopped on means nothing once the order changes.
             restingAnchor = nil
+            resetPageLoads()
             engine.setCount(destinations.count)
             sync()
         }
@@ -64,12 +67,23 @@ final class SidebarWheelModel {
     var boundaryIndices: Set<Int> = []
     // The wheel's frame in window coordinates; touches outside are not ours.
     var activeRect: CGRect = .zero
-    // Navigation. Reached only from `activate` — a tap on a row, or VoiceOver
-    // activating one. Never from a drag, a fling, or the end of either.
+    // A tap on a row. Reached only from `activate` — a tap on a row, or
+    // VoiceOver activating one. Never from a drag, a fling, or the end of
+    // either.
     var onCommit: ((SidebarDestination) -> Void)?
+    // The page beside the sidebar follows a resting pick: a riffle that holds
+    // on a row for `previewDwell`, or a wheel that comes to rest. This loads
+    // the page and leaves the sidebar open. It never fires for the page that
+    // is already open.
+    var onPreview: ((SidebarDestination) -> Void)?
     // The open page. The wheel ticks as the pick passes it, and a first grab
     // starts there.
     var currentIndex: (() -> Int?)?
+
+    // How long a held pick must stay on one row before its page loads. Short
+    // enough to read as a response to the thumb, long enough that rows the
+    // riffle only passes over never build their pages.
+    static let previewDwell: Double = 0.22
 
     var reduceMotion = false {
         didSet { engine.tuning = reduceMotion ? .reduced : .standard }
@@ -101,6 +115,14 @@ final class SidebarWheelModel {
     // released. A row's Button that survives gesture arbitration for the same
     // touch therefore cannot navigate behind the wheel's back.
     @ObservationIgnored private(set) var suppressesRowTaps = false
+    // The row the held pick sits on, how long it has sat there, and whether
+    // that stay has already loaded its page. One load per stay.
+    @ObservationIgnored private var dwellDetent: Int?
+    @ObservationIgnored private var dwellTime: Double = 0
+    @ObservationIgnored private var dwellLoaded = false
+    // The row the last rest loaded, so a wheel that sits idle across several
+    // frames loads its page once.
+    @ObservationIgnored private var restLoadedDetent: Int?
 
     func setMeasurement(centers: [CGFloat], total: CGFloat, sequence: Int? = nil) {
         if let sequence {
@@ -158,6 +180,7 @@ final class SidebarWheelModel {
             isGrabbed = true
             grabTranslationY = translation.y
             suppressesRowTaps = true
+            resetPageLoads()
             haptics.prepare()
             if engine.isRunning {
                 // Still coasting, bouncing, or relaxing: take hold of it where
@@ -233,6 +256,7 @@ final class SidebarWheelModel {
         // Never leave taps suppressed behind us; a stuck flag would make every
         // row in the sidebar dead to a plain tap.
         suppressesRowTaps = false
+        resetPageLoads()
         clock?.stop()
         clock = nil
         haptics.shutdown()
@@ -251,7 +275,9 @@ final class SidebarWheelModel {
     // One frame. Called by the display link, and by tests directly.
     func advance(by dt: Double) {
         if let rolled = engine.step(dt: dt) { play(rolled) }
-        if !isGrabbed {
+        if isGrabbed {
+            holdPick(for: dt)
+        } else {
             // A frame is always a later turn of the run loop than the touch
             // that ended the drag, so the same-touch guard has done its job.
             suppressesRowTaps = false
@@ -276,6 +302,48 @@ final class SidebarWheelModel {
         let rest = SidebarWheelPlacement.resting(wheel, viewport: viewportHeight, total: contentHeight)
         if restOffset != rest { restOffset = rest }
         restingAnchor = engine.detent
+        loadRestingPage()
+    }
+
+    // MARK: - The page beside the sidebar
+
+    // A held pick that stays on one row loads that row's page, once for each
+    // stay. Rows the thumb only passes over never build their pages.
+    private func holdPick(for dt: Double) {
+        let detent = engine.detent
+        guard dwellDetent == detent else {
+            dwellDetent = detent
+            dwellTime = 0
+            dwellLoaded = false
+            return
+        }
+        guard !dwellLoaded else { return }
+        dwellTime += dt
+        guard dwellTime >= Self.previewDwell else { return }
+        dwellLoaded = true
+        loadPage(at: detent)
+    }
+
+    // The wheel came to rest: the row it rests on shows its page. A stay
+    // under the thumb that already loaded this row does not load it again.
+    private func loadRestingPage() {
+        let detent = engine.detent
+        guard restLoadedDetent != detent else { return }
+        restLoadedDetent = detent
+        if dwellLoaded, dwellDetent == detent { return }
+        loadPage(at: detent)
+    }
+
+    private func loadPage(at index: Int) {
+        guard destinations.indices.contains(index), index != currentIndex?() else { return }
+        onPreview?(destinations[index])
+    }
+
+    private func resetPageLoads() {
+        dwellDetent = nil
+        dwellTime = 0
+        dwellLoaded = false
+        restLoadedDetent = nil
     }
 
     private var restingSurface: CGFloat {

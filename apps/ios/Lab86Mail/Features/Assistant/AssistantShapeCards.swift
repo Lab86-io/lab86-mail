@@ -19,7 +19,7 @@ struct AssistantShapeCardView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .surfaceCard(cornerRadius: 14)
+        .insetPanel(cornerRadius: 12)
     }
 
     @ViewBuilder private var content: some View {

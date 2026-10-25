@@ -29,7 +29,10 @@ struct DailyBriefView: View {
             // buttons to VoiceOver via its DOM — no wrapper label that would
             // collapse it into a single element.
             BriefArtifactWebView(
-                html: BriefArtifactDocument.make(
+                // Composed once per edition and theme, not on every body
+                // evaluation: the sanitising passes run five regexes over
+                // the whole artifact.
+                html: BriefArtifactDocument.memoized(
                     from: report.html ?? "",
                     nonce: nonce,
                     themeCSS: environment.theme.briefThemeCSS
@@ -44,24 +47,24 @@ struct DailyBriefView: View {
         .accessibilityLabel(Text(report.title))
     }
 
+    // Machine narration in the display italic: what the edition is doing,
+    // or when it was last read. No icon before the words.
     @ViewBuilder private var statusStrip: some View {
         HStack(spacing: 8) {
             if report.isGenerating {
                 ProgressView().controlSize(.small)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Putting today’s brief together…")
-                        .font(.footnote.weight(.medium))
+                    Text("Writing today\u{2019}s brief")
+                        .font(environment.theme.displayType.displayItalicFont(size: 15))
+                        .foregroundStyle(.secondary)
                     if let progress = report.progress, progress.total > 0 {
                         ProgressView(value: progress.fraction)
                             .frame(maxWidth: 200)
                     }
                 }
             } else {
-                Image(systemName: isOffline ? "wifi.slash" : "checkmark.seal")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
                 Text(freshnessText)
-                    .font(.footnote)
+                    .font(environment.theme.displayType.displayItalicFont(size: 15))
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
@@ -332,7 +335,7 @@ struct ArtifactActionReviewSheet: View {
                     }
                 }
             }
-            .navigationTitle("Review Action")
+            .navigationTitle("Review action")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -355,9 +358,13 @@ struct ArtifactActionReviewSheet: View {
         defer { isApplying = false }
         do {
             try await perform()
-            await onApplied()
+            // The sheet closes first. The owner's re-read runs on its own
+            // and never holds the sheet open (B7).
             dismiss()
+            let onApplied = onApplied
+            Task { await onApplied() }
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -374,12 +381,10 @@ struct ArtifactActionReviewSheet: View {
                 arguments: ["cardId": .string(cardID), "completed": .bool(completed)]
             )
             if completed {
+                // The tool accepts a string title or no key, never null.
                 _ = try? await environment.tools.invoke(
                     "dismiss_daily_report_task",
-                    arguments: [
-                        "cardId": .string(cardID),
-                        "title": payload.title.map(JSONValue.string) ?? .null,
-                    ]
+                    arguments: BriefToolArguments.dismissTask(cardID: cardID, title: payload.title)
                 )
             }
         case "dismiss_task":
@@ -388,10 +393,7 @@ struct ArtifactActionReviewSheet: View {
             }
             _ = try await environment.tools.invoke(
                 "dismiss_daily_report_task",
-                arguments: [
-                    "cardId": .string(cardID),
-                    "title": payload.title.map(JSONValue.string) ?? .null,
-                ]
+                arguments: BriefToolArguments.dismissTask(cardID: cardID, title: payload.title)
             )
         case "resolve_thread", "dismiss_thread":
             try await dismissThread(resolved: request.action == "resolve_thread")
@@ -607,15 +609,17 @@ struct ArtifactActionReviewSheet: View {
         guard let account = request.payload.account, let threadID = request.payload.threadID else {
             throw BackendError.server(status: 400, message: "The report omitted the mail identity.")
         }
+        // The tool accepts a string subject and a number, or no key; never
+        // null. The shared helper leaves a missing value out.
         _ = try await environment.tools.invoke(
             "dismiss_daily_report_thread",
-            arguments: [
-                "account": .string(account),
-                "threadId": .string(threadID),
-                "subject": request.payload.subject.map(JSONValue.string) ?? .null,
-                "receivedAt": request.payload.receivedAt.map(JSONValue.number) ?? .null,
-                "action": .string(resolved ? "resolved" : "dismissed"),
-            ]
+            arguments: BriefToolArguments.dismissThread(
+                account: account,
+                threadID: threadID,
+                subject: request.payload.subject,
+                receivedAt: request.payload.receivedAt,
+                resolved: resolved
+            )
         )
     }
 
@@ -625,6 +629,33 @@ struct ArtifactActionReviewSheet: View {
 }
 
 enum BriefArtifactDocument {
+    private struct ComposedArtifact {
+        let rawHTML: String
+        let themeCSS: String
+        let html: String
+    }
+
+    // One composed document per web view, by its nonce. A page holds a few
+    // web views at most; past that the cache starts over.
+    @MainActor private static var composed: [String: ComposedArtifact] = [:]
+    static let composedCacheLimit = 8
+
+    /// `make`, once per (artifact, theme) for one view. The body of the view
+    /// evaluates often; the sanitising passes should not.
+    @MainActor
+    static func memoized(from rawHTML: String, nonce: String, themeCSS: String = "") -> String {
+        if let hit = composed[nonce], hit.themeCSS == themeCSS, hit.rawHTML == rawHTML {
+            return hit.html
+        }
+        let html = make(from: rawHTML, nonce: nonce, themeCSS: themeCSS)
+        if composed.count >= composedCacheLimit { composed.removeAll() }
+        composed[nonce] = ComposedArtifact(rawHTML: rawHTML, themeCSS: themeCSS, html: html)
+        return html
+    }
+
+    /// How many documents the memo holds, for tests.
+    @MainActor static var composedCount: Int { composed.count }
+
     // Strip every script/handler/dangerous element from the untrusted artifact,
     // then inject a strict CSP (whose only allowed script is our nonce) plus the
     // trusted click bridge. Idempotence is not required — a fresh nonce/document
@@ -701,6 +732,10 @@ enum BriefArtifactDocument {
         <meta name="referrer" content="no-referrer">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=6">
         <style>
+        /* The web view is as tall as its last content. A root that fills the
+           viewport would then measure the old height forever, so the
+           document measures its own content and can shrink. */
+        html, body { height: auto !important; min-height: 0 !important; }
         /* Mobile correction for stored editions: this webview grows to its
            content, so vh-based masthead sizing resolves against the full
            artifact height and blows the painting up to several screens tall.
@@ -727,7 +762,16 @@ enum BriefArtifactDocument {
     static let bridgeJS = """
     (function(){
       function post(name, body){ try { window.webkit.messageHandlers[name].postMessage(body); } catch (e) {} }
-      function reportHeight(){ post('briefHeight', Math.ceil(document.documentElement.scrollHeight || document.body.scrollHeight || 0)); }
+      function contentHeight(){
+        var root = document.documentElement; var body = document.body;
+        var fallback = (root && root.scrollHeight) || (body && body.scrollHeight) || 0;
+        if (!body) { return fallback; }
+        var style = window.getComputedStyle(body);
+        var margins = (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
+        var measured = Math.max(body.getBoundingClientRect().height + margins, root ? root.getBoundingClientRect().height : 0);
+        return measured > 0 ? measured : fallback;
+      }
+      function reportHeight(){ post('briefHeight', Math.ceil(contentHeight())); }
       document.addEventListener('click', function(e){
         if (!e.isTrusted) { return; }
         var el = e.target && e.target.closest ? e.target.closest('[data-action]') : null;

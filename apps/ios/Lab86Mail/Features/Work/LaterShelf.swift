@@ -146,13 +146,8 @@ struct LaterShelf: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Rectangle().fill(Color.secondary.opacity(0.45)).frame(width: 18, height: 1)
-                Text("Later").font(.system(.subheadline, design: .serif).weight(.semibold))
-                Text("Sleeps until its date.").font(.caption2).foregroundStyle(.tertiary)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 20)
+            RuledSectionHeader(title: "Later", hint: "Sleeps until its date.")
+                .padding(.horizontal, 20)
 
             if useVerticalLayout {
                 verticalList
@@ -318,7 +313,7 @@ struct LaterShelf: View {
 }
 
 /// One dormant Work: the title, the horizon line in the display italic, the
-/// area name. One elevation step, 168 pt wide.
+/// area name. A flat insert, 168 pt wide.
 struct LaterCard: View {
     @Environment(AppEnvironment.self) private var environment
     let item: WorkListItem
@@ -346,7 +341,7 @@ struct LaterCard: View {
         .padding(14)
         .frame(width: LaterShelfLayout.cardWidth, alignment: .topLeading)
         .frame(minHeight: 96, alignment: .topLeading)
-        .surfaceCard(cornerRadius: 14)
+        .insetPanel(cornerRadius: 12)
         .contentShape(.rect)
     }
 }

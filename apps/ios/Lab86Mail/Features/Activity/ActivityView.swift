@@ -299,9 +299,18 @@ struct ActivityView: View {
                 if changes == nil {
                     changes = RecentChangesModel(client: OperationsClient(tools: environment.tools))
                 }
+                // The three reads run together, so the approvals do not wait
+                // for the calendar and the board (A1). The store reads update
+                // the long-lived store and run outside this task: a close of
+                // the sheet must not cancel them into the app-wide alert.
+                let store = environment.store
+                let storeReads = Task { @MainActor in
+                    async let today: Void = store.refreshToday()
+                    async let execution: Void = store.refreshExecution()
+                    _ = await (today, execution)
+                }
                 await changes?.load()
-                await environment.store.refreshToday()
-                await environment.store.refreshExecution()
+                await storeReads.value
                 loadCheckinDraft()
             }
             .refreshable {

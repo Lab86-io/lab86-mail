@@ -5,7 +5,20 @@ import SwiftUI
 // Leads with the durable living brief, then the real linked sections the server
 // contract provides. Loads by stable id; a missing/archived area is unavailable
 // with a route back, never invented data.
+//
+// The page is keyed on the Area id (W1): a switch to another Area starts a
+// fresh page with its own cached detail, instead of showing the previous
+// Area's brief and inbox until `area_home` returns.
 struct AreaDetailView: View {
+    let route: AreaRoute
+
+    var body: some View {
+        AreaDetailPage(route: route)
+            .id(route.areaID)
+    }
+}
+
+struct AreaDetailPage: View {
     private enum AreaSurface: String, CaseIterable, Identifiable {
         case brief
         case inbox
@@ -92,6 +105,7 @@ struct AreaDetailView: View {
             Text("Shown as this area’s brief masthead here and its icon on desktop. Paste an image address; leave empty to remove.")
         }
         .task(id: route.id) { await load(initial: true) }
+        .task(id: isBriefGenerating) { await pollBriefWhileGenerating() }
         .onChange(of: environment.store.areaRefreshStates[route.areaID]?.phase) { _, phase in
             if phase == .done { Task { await load(initial: false) } }
         }
@@ -115,6 +129,22 @@ struct AreaDetailView: View {
 
     private func refreshBrief() async {
         _ = await environment.store.queueAreaBriefRefresh(areaID: route.areaID)
+    }
+
+    private var isBriefGenerating: Bool {
+        AreaBriefPolling.shouldPoll(status: detail?.livingBrief?.status)
+    }
+
+    /// A generating brief shows its placeholder bars until the page reads
+    /// again (W3). While the server says "generating", read every few
+    /// seconds; the task ends when the status changes or the page leaves.
+    private func pollBriefWhileGenerating() async {
+        guard isBriefGenerating else { return }
+        while !Task.isCancelled {
+            do { try await Task.sleep(for: AreaBriefPolling.interval) } catch { return }
+            await load(initial: false)
+            if !isBriefGenerating { return }
+        }
     }
 
     // MARK: - Loaded
@@ -405,9 +435,9 @@ struct AreaDetailView: View {
             Task { await performInboxAction("remove_area", rows: rows) }
         }
         Menu("Correct smart category") {
-            ForEach(["main", "action", "noise"], id: \.self) { category in
-                Button(category.capitalized) {
-                    Task { await performInboxAction("category", rows: rows, category: category) }
+            ForEach(SmartCategoryChoice.allCases) { category in
+                Button(category.label) {
+                    Task { await performInboxAction("category", rows: rows, category: category.rawValue) }
                 }
             }
         }
@@ -771,7 +801,7 @@ struct AreaDetailView: View {
         } description: {
             Text(message)
         } actions: {
-            Button("Try Again") { Task { await load(initial: false) } }
+            Button("Try again") { Task { await load(initial: false) } }
                 .buttonStyle(.borderedProminent)
         }
     }
@@ -794,6 +824,9 @@ struct AreaDetailView: View {
             loadError = nil
             isUnavailable = false
         } catch {
+            // A read the page gave up on (it left, or a poll ended) is not a
+            // failure to show.
+            guard !error.isCancellation else { return }
             let message = error.localizedDescription
             if detail == nil {
                 if isAreaMissing(message) { isUnavailable = true } else { loadError = message }
@@ -978,12 +1011,10 @@ private struct AreaDocumentSection<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .textCase(.uppercase)
-                .tracking(1.2)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            // The one section header of the app: a short rule and the
+            // display-face heading, in sentence case.
+            RuledSectionHeader(title: title)
             content
         }
         .padding(.horizontal, 20)

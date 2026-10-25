@@ -162,6 +162,9 @@ enum DayChips {
         // The identity the colour family is derived from — the calendar for an
         // event, so one calendar reads as one colour across the month.
         let seed: String
+        // The calendar the chip belongs to, so the grid can paint it in the
+        // calendar's own colour. Nil for a task.
+        var calendarKey: String?
     }
 
     static func make(
@@ -174,8 +177,18 @@ enum DayChips {
         let allDay = events.filter(\.allDay).sorted { $0.title < $1.title }
         let timed = events.filter { !$0.allDay }.sorted { $0.start < $1.start }
         let ordered =
-            allDay.map { Chip(id: CalendarGrid.entityKey(for: $0), title: $0.title, kind: .allDay, seed: seed(for: $0)) }
-            + timed.map { Chip(id: CalendarGrid.entityKey(for: $0), title: $0.title, kind: .timed, seed: seed(for: $0)) }
+            allDay.map {
+                Chip(
+                    id: CalendarGrid.entityKey(for: $0), title: $0.title, kind: .allDay,
+                    seed: seed(for: $0), calendarKey: CalendarVisibility.key(for: $0)
+                )
+            }
+            + timed.map {
+                Chip(
+                    id: CalendarGrid.entityKey(for: $0), title: $0.title, kind: .timed,
+                    seed: seed(for: $0), calendarKey: CalendarVisibility.key(for: $0)
+                )
+            }
             + tasks.map { Chip(id: "task:" + $0.id, title: $0.title, kind: .task, seed: "task") }
 
         guard limit > 0 else { return ([], ordered.count) }
@@ -188,6 +201,236 @@ enum DayChips {
 
     static func seed(for event: CalendarEventSummary) -> String {
         event.calendarID?.nilIfBlank ?? event.accountID.nilIfBlank ?? "calendar"
+    }
+}
+
+// MARK: - Hour axis
+
+// The hour gutter of the day and week timelines. Its width comes from the
+// widest label the locale produces ("12 AM", "23"), not from a constant, so
+// the labels never cut to "2…" at accessibility text sizes (D2).
+enum HourAxis {
+    static func label(hour: Int, on day: Date, calendar: Calendar) -> String {
+        let date = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: day) ?? day
+        return date.formatted(.dateTime.hour())
+    }
+
+    static func labels(on day: Date, calendar: Calendar) -> [String] {
+        (0..<24).map { label(hour: $0, on: day, calendar: calendar) }
+    }
+
+    // The label the gutter is measured against. The longest string wins; a tie
+    // goes to the later hour, whose digits are wider ("10", "11", "12").
+    static func widestLabel(on day: Date, calendar: Calendar) -> String {
+        var widest = ""
+        for label in labels(on: day, calendar: calendar) where label.count >= widest.count {
+            widest = label
+        }
+        return widest
+    }
+
+    // The hour the timeline opens on. Today opens an hour before now once the
+    // day is under way; before the first entry it opens on that entry, so the
+    // morning is not hidden under hours of empty grid (D12). Another day opens
+    // on its first entry, or on 8 when it has none.
+    static func openingHour(now: Date, isToday: Bool, firstStart: Date?, calendar: Calendar) -> Int {
+        if let firstStart {
+            let firstHour = calendar.component(.hour, from: firstStart)
+            if !isToday || now < firstStart { return max(0, firstHour - 1) }
+        }
+        if isToday { return max(0, calendar.component(.hour, from: now) - 1) }
+        return 8
+    }
+
+    // The height of one hour row. It grows with the text, at six tenths of the
+    // text's growth, so a day stays scrollable at the largest sizes while the
+    // labels and titles still fit.
+    static func hourHeight(base: CGFloat, textScale: CGFloat) -> CGFloat {
+        let scale = max(1, textScale)
+        return (base * (1 + (scale - 1) * 0.6)).rounded()
+    }
+
+    // The hour labels grow with the text to a ceiling. They are the axis,
+    // not the content: at the largest sizes an uncapped label would take a
+    // quarter of the screen for "12 AM" and leave the events no room.
+    static let maximumLabelFontSize: CGFloat = 20
+
+    static func labelFontSize(scaled: CGFloat) -> CGFloat {
+        min(max(scaled, 1), maximumLabelFontSize)
+    }
+}
+
+// The day numerals of the strips grow with the text to a ceiling, so seven
+// of them always fit across a phone.
+enum DayNumeralSize {
+    static let maximumAccessibleFontSize: CGFloat = 24
+
+    static func accessibleFontSize(scaled: CGFloat) -> CGFloat {
+        min(max(scaled, 1), maximumAccessibleFontSize)
+    }
+}
+
+// MARK: - Block text
+
+// How much of its title an event block shows. A block narrower than a few
+// characters shows no text at all (its colour says it is there); a narrow
+// column shows one line cut at the end, never a word broken in the middle
+// (D11); a wide block shows as many lines as its height holds, to a limit.
+enum BlockText {
+    struct Plan: Equatable {
+        let lines: Int
+        var showsText: Bool { lines > 0 }
+    }
+
+    static func plan(
+        width: CGFloat,
+        height: CGFloat,
+        fontSize: CGFloat,
+        inset: CGFloat = 8,
+        maxLines: Int = 3
+    ) -> Plan {
+        guard fontSize > 0 else { return Plan(lines: 0) }
+        let lineHeight = fontSize * 1.22
+        let characterWidth = fontSize * 0.52
+        let characters = (width - inset) / characterWidth
+        guard characters >= 4 else { return Plan(lines: 0) }
+        let rows = Int((height - 4) / lineHeight)
+        guard rows >= 1 else { return Plan(lines: 0) }
+        if characters < 10 { return Plan(lines: 1) }
+        return Plan(lines: min(rows, maxLines))
+    }
+}
+
+// MARK: - Slots
+
+// Where a touch on the empty grid lands in time. A hold on the grid creates
+// an event at that slot.
+enum TimelineSlot {
+    static let defaultSnapMinutes = 30
+
+    static func minutes(forY y: CGFloat, hourHeight: CGFloat, snap: Int = defaultSnapMinutes) -> Int {
+        guard hourHeight > 0, snap > 0 else { return 0 }
+        let raw = Int((y / hourHeight * 60).rounded(.down))
+        let snapped = (raw / snap) * snap
+        return min(max(snapped, 0), TimelineLayout.minutesPerDay - snap)
+    }
+
+    static func start(
+        forY y: CGFloat,
+        hourHeight: CGFloat,
+        on day: Date,
+        calendar: Calendar,
+        snap: Int = defaultSnapMinutes
+    ) -> Date {
+        let total = minutes(forY: y, hourHeight: hourHeight, snap: snap)
+        let start = calendar.startOfDay(for: day)
+        return calendar.date(byAdding: .minute, value: total, to: start) ?? start
+    }
+
+    // The week column under an x position, or nil in the gutter.
+    static func column(forX x: CGFloat, gutter: CGFloat, columnWidth: CGFloat, count: Int = 7) -> Int? {
+        guard columnWidth > 0, x >= gutter else { return nil }
+        let index = Int((x - gutter) / columnWidth)
+        return index < count ? index : nil
+    }
+}
+
+// MARK: - Calendar colours
+
+// A provider calendar colour ("#3B6E8F") as red, green, blue in 0...1. The
+// view turns it into a Color; this part stays testable.
+enum CalendarPalette {
+    struct RGB: Equatable {
+        let red: Double
+        let green: Double
+        let blue: Double
+    }
+
+    static func rgb(hex: String?) -> RGB? {
+        guard let hex else { return nil }
+        var digits = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if digits.hasPrefix("#") { digits.removeFirst() }
+        if digits.count == 3 {
+            digits = digits.map { "\($0)\($0)" }.joined()
+        }
+        guard digits.count == 6 || digits.count == 8,
+              digits.allSatisfy(\.isHexDigit),
+              let value = UInt32(digits.prefix(6), radix: 16)
+        else { return nil }
+        return RGB(
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255
+        )
+    }
+}
+
+// MARK: - Visibility
+
+// A calendar the user hid stays out of every grid. The key joins the account
+// and the calendar, the same identity `CalendarChoice.id` carries.
+enum CalendarVisibility {
+    static func key(accountID: String, calendarID: String) -> String {
+        "\(accountID):\(calendarID)"
+    }
+
+    static func key(for event: CalendarEventSummary) -> String? {
+        guard let calendarID = event.calendarID?.nilIfBlank else { return nil }
+        return key(accountID: event.accountID, calendarID: calendarID)
+    }
+
+    static func visible(_ events: [CalendarEventSummary], hiddenKeys: Set<String>) -> [CalendarEventSummary] {
+        guard !hiddenKeys.isEmpty else { return events }
+        return events.filter { event in
+            guard let key = key(for: event) else { return true }
+            return !hiddenKeys.contains(key)
+        }
+    }
+}
+
+// MARK: - Reconnect
+
+// The accounts whose calendar sign-in ended, as the store lists them, in a
+// stable order for the banner.
+enum CalendarReconnect {
+    static func accounts(unauthorizedIDs: Set<String>, accounts: [AccountSummary]) -> [AccountSummary] {
+        accounts
+            .filter { unauthorizedIDs.contains($0.id) }
+            .sorted { $0.email.localizedCaseInsensitiveCompare($1.email) == .orderedAscending }
+    }
+
+    static func message(for account: AccountSummary) -> String {
+        "\(account.email) stopped syncing its calendar. Sign in again to see its events."
+    }
+}
+
+// MARK: - Bar title
+
+// What the navigation bar says in each mode. Month and year scroll, so the
+// title follows the period under the reader's eye (D17); day and week name
+// the selected day's month.
+enum CalendarTitle {
+    static func text(mode: String, visibleMonth: Date?, visibleYear: Int?, selectedDay: Date, calendar: Calendar) -> String {
+        switch mode {
+        case "year":
+            return String(visibleYear ?? calendar.component(.year, from: selectedDay))
+        case "month":
+            return (visibleMonth ?? selectedDay).formatted(.dateTime.month(.wide).year())
+        default:
+            return selectedDay.formatted(.dateTime.month(.wide).year())
+        }
+    }
+}
+
+// MARK: - Month cells
+
+// At accessibility text sizes a month cell cannot hold titles; it shows one
+// dot for each entry in the calendar's colour instead.
+enum MonthCellStyle {
+    static let dotLimit = 3
+
+    static func showsTitles(isAccessibilitySize: Bool) -> Bool {
+        !isAccessibilitySize
     }
 }
 

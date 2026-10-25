@@ -258,15 +258,15 @@ struct EventEditorView: View {
                 isPresented: $showsDiscardConfirmation,
                 titleVisibility: .visible
             ) {
-                Button("Discard Changes", role: .destructive) { dismiss() }
-                Button("Keep Editing", role: .cancel) {}
+                Button("Discard changes", role: .destructive) { dismiss() }
+                Button("Keep editing", role: .cancel) {}
             }
             .confirmationDialog(
                 "Send invitations?",
                 isPresented: $showsInviteConfirmation,
                 titleVisibility: .visible
             ) {
-                Button("Save and Invite \(attendeeEmails.count) People") {
+                Button(attendeeEmails.count == 1 ? "Save and invite 1 person" : "Save and invite \(attendeeEmails.count) people") {
                     Task { await save() }
                 }
                 Button("Cancel", role: .cancel) {}
@@ -366,6 +366,7 @@ struct EventEditorView: View {
             }
             dismiss()
         } catch {
+            guard !error.isCancellation else { return }
             saveError = (error as? BackendError)?.errorDescription ?? error.localizedDescription
         }
     }

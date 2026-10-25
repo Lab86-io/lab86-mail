@@ -288,7 +288,14 @@ enum PracticeReview {
     static func formatValue(_ value: Double, unit: String = "") -> String {
         let rounded = (abs(value) * 10).rounded() / 10
         let text: String
-        if rounded == rounded.rounded(.towardZero) {
+        if !rounded.isFinite {
+            // Infinity and NaN have no figure. `Int(_:)` traps on them.
+            text = "0"
+        } else if rounded >= 1e15 {
+            // Past what `Int` holds with exact figures; the format reads
+            // the double without a conversion that could trap.
+            text = String(format: "%.0f", locale: Locale(identifier: "en_US_POSIX"), rounded)
+        } else if rounded == rounded.rounded(.towardZero) {
             text = String(Int(rounded))
         } else {
             text = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), rounded)

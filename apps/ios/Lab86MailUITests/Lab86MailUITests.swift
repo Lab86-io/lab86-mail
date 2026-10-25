@@ -39,7 +39,7 @@ final class Lab86MailUITests: XCTestCase {
             let askOrHold = app.buttons["Ask or hold"]
             XCTAssertTrue(askOrHold.waitForExistence(timeout: 3))
             askOrHold.tap()
-            XCTAssertTrue(app.textFields["Ask or hold"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.textFields["Ask Albatross"].waitForExistence(timeout: 5))
 
             let chatScreenshot = XCTAttachment(screenshot: app.screenshot())
             chatScreenshot.name = "Ask or hold conversation"

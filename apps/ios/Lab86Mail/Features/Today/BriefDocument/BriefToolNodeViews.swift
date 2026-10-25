@@ -382,23 +382,50 @@ struct BriefGeoMapNodeView: View {
     }
 
     private var region: MKCoordinateRegion {
-        let markers = node.mapMarkers ?? []
-        guard let first = markers.first else {
-            return MKCoordinateRegion(
-                center: CLLocationCoordinate2D(latitude: 0, longitude: 0),
-                span: MKCoordinateSpan(latitudeDelta: 30, longitudeDelta: 30)
-            )
-        }
-        let latitudes = markers.map(\.lat)
-        let longitudes = markers.map(\.lng)
-        let latitudeDelta = max((latitudes.max() ?? first.lat) - (latitudes.min() ?? first.lat), 0.08)
-        let longitudeDelta = max((longitudes.max() ?? first.lng) - (longitudes.min() ?? first.lng), 0.08)
+        let fit = BriefMapRegion.fit(node.mapMarkers ?? [])
         return MKCoordinateRegion(
-            center: CLLocationCoordinate2D(
-                latitude: ((latitudes.min() ?? first.lat) + (latitudes.max() ?? first.lat)) / 2,
-                longitude: ((longitudes.min() ?? first.lng) + (longitudes.max() ?? first.lng)) / 2
-            ),
-            span: MKCoordinateSpan(latitudeDelta: latitudeDelta * 1.4, longitudeDelta: longitudeDelta * 1.4)
+            center: CLLocationCoordinate2D(latitude: fit.centerLatitude, longitude: fit.centerLongitude),
+            span: MKCoordinateSpan(latitudeDelta: fit.latitudeDelta, longitudeDelta: fit.longitudeDelta)
+        )
+    }
+}
+
+/// The region that fits the markers with a margin, inside what MapKit
+/// accepts: at most 180 degrees of latitude, at most 360 of longitude, and
+/// a centre that keeps the span within the poles. Markers in Hawaii and
+/// Tokyo used to push the longitude span past 360 and raise "Invalid Region".
+enum BriefMapRegion {
+    struct Fit: Equatable {
+        var centerLatitude: Double
+        var centerLongitude: Double
+        var latitudeDelta: Double
+        var longitudeDelta: Double
+    }
+
+    static let margin = 1.4
+    static let minimumDelta = 0.08
+    static let world = Fit(centerLatitude: 0, centerLongitude: 0, latitudeDelta: 30, longitudeDelta: 30)
+
+    static func fit(_ markers: [BriefMapMarker]) -> Fit {
+        fit(latitudes: markers.map(\.lat), longitudes: markers.map(\.lng))
+    }
+
+    static func fit(latitudes: [Double], longitudes: [Double]) -> Fit {
+        guard let minLatitude = latitudes.min(), let maxLatitude = latitudes.max(),
+              let minLongitude = longitudes.min(), let maxLongitude = longitudes.max() else {
+            return world
+        }
+        let centerLatitude = min(max((minLatitude + maxLatitude) / 2, -90), 90)
+        let centerLongitude = min(max((minLongitude + maxLongitude) / 2, -180), 180)
+        let latitudeMargin = min(max(maxLatitude - minLatitude, minimumDelta) * margin, 180)
+        // The span must not reach past a pole from its centre.
+        let latitudeDelta = max(min(latitudeMargin, 2 * (90 - abs(centerLatitude))), 0)
+        let longitudeDelta = min(max(maxLongitude - minLongitude, minimumDelta) * margin, 360)
+        return Fit(
+            centerLatitude: centerLatitude,
+            centerLongitude: centerLongitude,
+            latitudeDelta: latitudeDelta,
+            longitudeDelta: longitudeDelta
         )
     }
 }

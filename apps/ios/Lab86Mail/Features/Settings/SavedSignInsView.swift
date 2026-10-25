@@ -39,7 +39,7 @@ struct SavedSignInsView: View {
                     LabeledContent(SavedSignInsCopy.title, value: status.line())
                 } else if let loadError {
                     Text(loadError).foregroundStyle(.secondary)
-                    Button("Try Again") { Task { await load() } }
+                    Button("Try again") { Task { await load() } }
                 } else {
                     ProgressView("Checking…")
                 }

@@ -46,10 +46,12 @@ struct AssistantAuditTests {
         chat.continueResponse()
         try await waitUntilIdle(chat)
 
-        // One user message in the whole exchange.
+        // One user message in the whole exchange. The stub answers with no
+        // tokens, so the retried turn runs once more by itself before it
+        // reports the empty reply: send, retry, its automatic retry, continue.
         #expect(chat.messages.filter { $0.role == .user }.count == 1)
         let bodies = agentBodies(server)
-        #expect(bodies.count == 3)
+        #expect(bodies.count == 4)
         #expect(bodies[0]["continuation"] == nil)
         for body in bodies.dropFirst() {
             #expect(body["continuation"] == .bool(true))
@@ -73,7 +75,9 @@ struct AssistantAuditTests {
         chat.send("Second")
         try await waitUntilIdle(chat)
         let bodies = agentBodies(server)
-        #expect(bodies.map { $0["continuation"] } == [nil, .bool(true), nil])
+        // Each send gets one automatic retry of its empty reply; Continue is
+        // a continuation of its own and gets none.
+        #expect(bodies.map { $0["continuation"] } == [nil, .bool(true), .bool(true), nil, .bool(true)])
     }
 
     @Test

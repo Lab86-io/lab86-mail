@@ -711,7 +711,7 @@ struct AssistantToolCardView: View {
                         .padding(13)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .surfaceCard(cornerRadius: 16)
+                    .insetPanel(cornerRadius: 12)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Email from \(email.sender), \(email.subject)")
@@ -755,6 +755,7 @@ struct AssistantToolCardView: View {
                         Button(media.isVideo ? "Play video" : "Play audio") { openURL(media.url) }
                             .font(.caption.weight(.medium))
                             .buttonStyle(.bordered)
+                            .buttonBorderShape(.roundedRectangle(radius: 8))
                             .controlSize(.small)
                     }
                 }
@@ -905,6 +906,6 @@ struct AssistantToolCardView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .surfaceCard(cornerRadius: 14)
+        .insetPanel(cornerRadius: 12)
     }
 }

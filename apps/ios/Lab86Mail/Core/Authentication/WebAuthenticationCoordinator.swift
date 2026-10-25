@@ -28,6 +28,10 @@ enum WebAuthenticationError: LocalizedError {
 final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
     private let backend: BackendClient
     private var session: ASWebAuthenticationSession?
+    // The waiting flow. One place resumes it, once: `start()` can return
+    // false and the session can still call its completion, and a second
+    // resume of a continuation is fatal.
+    private var continuation: CheckedContinuation<URL, Error>?
     #if canImport(UIKit)
     // The scene the flow started from; the anchor falls back to it if the
     // key window changes hands while the browser is up.
@@ -37,6 +41,24 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
 
     init(backend: BackendClient) {
         self.backend = backend
+    }
+
+    /// The browser's error as the app reads it. The person closing the sheet
+    /// is a cancellation, not a failure (S1); `isCancellation` is true for
+    /// it, so a caller shows nothing.
+    nonisolated static func mapped(_ error: Error) -> Error {
+        let ns = error as NSError
+        if ns.domain == ASWebAuthenticationSessionError.errorDomain,
+           ns.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+            return CancellationError()
+        }
+        return error
+    }
+
+    private func finish(_ result: Result<URL, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(with: result)
     }
 
     /// The connect path for a mailbox sign-in. A reconnect names its account,
@@ -107,21 +129,28 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
         defer {
             isAuthorizing = false
             session = nil
+            continuation = nil
         }
         let callbackURL = try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<URL, Error>) in
+            self.continuation = continuation
+            // The system calls the completion off the main actor, so the
+            // closure is @Sendable and its body hops to main before it
+            // touches the coordinator.
             let browser = ASWebAuthenticationSession(
                 url: authorizationURL,
                 callbackURLScheme: "lab86"
-            ) { callback, error in
+            ) { @Sendable [weak self] callback, error in
+                let result: Result<URL, Error>
+                if let error {
+                    result = .failure(Self.mapped(error))
+                } else if let callback {
+                    result = .success(callback)
+                } else {
+                    result = .failure(WebAuthenticationError.invalidCallback)
+                }
                 Task { @MainActor in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else if let callback {
-                        continuation.resume(returning: callback)
-                    } else {
-                        continuation.resume(throwing: WebAuthenticationError.invalidCallback)
-                    }
+                    self?.finish(result)
                 }
             }
             browser.presentationContextProvider = self
@@ -129,7 +158,7 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
             session = browser
             guard browser.start() else {
                 session = nil
-                continuation.resume(throwing: WebAuthenticationError.couldNotStart)
+                finish(.failure(WebAuthenticationError.couldNotStart))
                 return
             }
         }

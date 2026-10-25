@@ -82,7 +82,7 @@ struct AssistantToolRow: Identifiable, Equatable, Sendable {
     /// The input the sentence grammar reads: the full input when known, else
     /// whatever has streamed so far.
     var effectiveInput: JSONValue? {
-        input ?? AssistantToolGrammar.partialInput(from: inputText)
+        input ?? AssistantToolGrammar.partialInput(from: inputText, cacheKey: callID)
     }
 
     /// The row text. The shape's sentences win once the shape has arrived;
@@ -123,11 +123,12 @@ struct AssistantReasoningPart: Identifiable, Equatable, Sendable {
 
     var isStreaming: Bool { endedAt == nil }
 
-    /// `Thought` while streaming, `Thought for 3s` once done.
+    /// `Thought` while streaming, `Thought for 3s` or `Thought for 1m 15s`
+    /// once done, as the web's `reasoningLabel`.
     var label: String {
         guard let startedAt, let endedAt else { return "Thought" }
         let seconds = max(1, Int(endedAt.timeIntervalSince(startedAt).rounded()))
-        return "Thought for \(seconds)s"
+        return "Thought for \(AssistantWorkLog.durationText(seconds: seconds))"
     }
 }
 
@@ -146,6 +147,10 @@ struct AssistantQuestionPart: Identifiable, Equatable, Sendable {
         /// A request for a Passwords and IDs item (docs/albatross-secure-store.md,
         /// V12). The answer is `{ saved, itemId }` or `{ skipped }`; never a value.
         case secureDetail = "ask_secure_detail"
+        /// An `ask_*` tool this app has no card for (the deck checkpoints,
+        /// a new tool). Its card offers Skip, so the turn never waits on
+        /// nothing. The part keeps the server's tool name.
+        case unknown = "ask_unknown"
     }
 
     let id: String
@@ -153,9 +158,27 @@ struct AssistantQuestionPart: Identifiable, Equatable, Sendable {
     let kind: Kind
     let input: JSONValue
     var answer: JSONValue?
+    /// The tool's own name: the kind's, or the server's for an unknown one.
+    let toolName: String
 
-    var toolName: String { kind.rawValue }
+    init(id: String, toolCallID: String, kind: Kind, input: JSONValue, answer: JSONValue? = nil, toolName: String? = nil) {
+        self.id = id
+        self.toolCallID = toolCallID
+        self.kind = kind
+        self.input = input
+        self.answer = answer
+        self.toolName = toolName ?? kind.rawValue
+    }
+
     var isAnswered: Bool { answer != nil }
+
+    /// The kind for a tool name: a known card, or `unknown` for any other
+    /// `ask_*` tool. Approvals are not questions.
+    static func kind(forToolName name: String) -> Kind? {
+        if let kind = Kind(rawValue: name) { return kind }
+        guard name.hasPrefix("ask_"), name != "ask_approval" else { return nil }
+        return .unknown
+    }
 }
 
 /// A web or connector source the reply cited (`source-url`).
@@ -217,9 +240,21 @@ enum AssistantWorkLog {
                 blocks.append(.approval(approval))
             case .question(let question):
                 blocks.append(.question(question))
+            case .file:
+                // The user's turn draws its files; a reply has none.
+                continue
             }
         }
         return blocks
+    }
+
+    /// "3s", "1m", "1m 15s": the web's `formatDuration`, never under a second.
+    static func durationText(seconds: Int) -> String {
+        let total = max(1, seconds)
+        if total < 60 { return "\(total)s" }
+        let minutes = total / 60
+        let rest = total % 60
+        return rest == 0 ? "\(minutes)m" : "\(minutes)m \(rest)s"
     }
 
     enum HeaderState: Equatable, Sendable {

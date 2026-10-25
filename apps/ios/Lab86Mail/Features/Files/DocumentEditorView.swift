@@ -315,6 +315,7 @@ struct DocumentEditorView: View {
                     draft = refreshed
                     persisted = refreshed
                 } catch {
+                    guard !error.isCancellation else { return }
                     errorMessage = error.localizedDescription
                 }
             }
@@ -372,6 +373,9 @@ struct GoogleDocumentEditorView: View {
     @State private var saveQueued = false
     @State private var showsAI = false
     @State private var errorMessage: String?
+    /// The first read failed: the page says so and offers Retry, instead of
+    /// a spinner that never ends (F4).
+    @State private var loadError: String?
     @State private var showsFullEditor = false
 
     let route: GoogleDocumentRoute
@@ -380,6 +384,8 @@ struct GoogleDocumentEditorView: View {
         Group {
             if let draft {
                 editor(draft)
+            } else if let loadError {
+                loadFailed(loadError)
             } else {
                 ProgressView("Opening from Google Drive…")
             }
@@ -513,13 +519,34 @@ struct GoogleDocumentEditorView: View {
         draft?.model = model
     }
 
+    private func loadFailed(_ message: String) -> some View {
+        ContentUnavailableView {
+            Text("Could not open this file from Google Drive")
+        } description: {
+            Text(message)
+        } actions: {
+            Button("Try again") { Task { await load() } }
+                .buttonStyle(.borderedProminent)
+            if let url = route.webURL {
+                Button("Open in Google") { openURL(url) }
+                    .buttonStyle(.bordered)
+            }
+        }
+    }
+
     private func load() async {
+        loadError = nil
         do {
             let document = try await environment.documents.openGoogleDocument(route)
             draft = document
             persisted = document
         } catch {
-            errorMessage = error.localizedDescription
+            guard !error.isCancellation else { return }
+            if draft == nil {
+                loadError = error.localizedDescription
+            } else {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

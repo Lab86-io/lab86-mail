@@ -439,7 +439,11 @@ final class NativeWorkspaceBrowser: NSObject, WKNavigationDelegate, WKUIDelegate
             default: try await authorization.connectOAuthSource(server: request.value)
             }
             webView?.reload()
-        } catch { downloadError = error.localizedDescription }
+        } catch {
+            // A closed sign-in sheet is the person's choice, not a failure.
+            guard !error.isCancellation else { return }
+            downloadError = error.localizedDescription
+        }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse) async -> WKNavigationResponsePolicy {

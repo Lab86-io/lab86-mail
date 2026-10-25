@@ -11,8 +11,9 @@ import Foundation
 // The wheel is a scroll, not a picker. Moving it riffles the pick through the
 // rows, but letting go never chooses anything: a slow release settles on the
 // nearest row, a fling coasts and decelerates like a scroll view, and either
-// end of the list gives ground on a rubber band and springs back. Only a tap
-// on a row navigates, and that happens outside the engine entirely.
+// end of the list gives ground on a rubber band and springs back. The page
+// beside the sidebar follows a resting pick, and a tap on a row opens it;
+// both happen outside the engine entirely.
 //
 // While a thumb is down the finger is the authority: position is assigned,
 // never integrated, so there is no lag by construction. On release the engine

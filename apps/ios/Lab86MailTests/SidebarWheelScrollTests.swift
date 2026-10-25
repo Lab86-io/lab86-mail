@@ -6,14 +6,16 @@ import Testing
 // The sidebar riffle is a scroll. These play whole gestures through the real
 // model — the same calls the gesture recognizer and the rows make — with the
 // display link swapped for a hand-driven clock, and hold it to the contract:
-// the riffle moves the pick and the list, letting go never navigates, either
-// end bounces back, and only a tap on a row selects. There is no swipe that
+// the riffle moves the pick and the list, letting go never selects, either
+// end bounces back, a resting pick loads its page beside the sidebar, and
+// only a tap on a row reaches the sidebar's tap rule. There is no swipe that
 // selects; a sideways swipe belongs to the sidebar's own reveal and dismiss.
 @MainActor
 struct SidebarWheelScrollTests {
     @MainActor
     private final class Recorder {
         var commits: [SidebarDestination] = []
+        var previews: [SidebarDestination] = []
     }
 
     private static let rowCount = 14
@@ -33,6 +35,7 @@ struct SidebarWheelScrollTests {
         model.setMeasurement(centers: Self.centers, total: Self.total)
         model.currentIndex = { current }
         model.onCommit = { recorder.commits.append($0) }
+        model.onPreview = { recorder.previews.append($0) }
         return model
     }
 
@@ -340,6 +343,101 @@ struct SidebarWheelScrollTests {
         #expect(recorder.commits.isEmpty)
         model.reduceMotion = false
         #expect(model.tuning == .standard)
+    }
+
+    // MARK: - The page beside the sidebar
+
+    @Test
+    func aRiffleThatComesToRestLoadsThatPageBesideTheSidebar() {
+        let recorder = Recorder()
+        let model = makeModel(current: 3, recorder: recorder)
+        drag(model, by: -120)
+        let picked = model.detent
+        #expect(picked != 3)
+        model.handleEnd(velocity: .zero, completed: true)
+        runToRest(model)
+        tick(model, 1)
+        // The page loads; nothing selects.
+        #expect(recorder.previews == [model.destinations[picked]])
+        #expect(recorder.commits.isEmpty)
+    }
+
+    @Test
+    func aPickHeldOnARowLoadsItsPageOnceAfterTheDwell() {
+        let recorder = Recorder()
+        let model = makeModel(current: 3, recorder: recorder)
+        drag(model, by: -120)
+        let picked = model.detent
+        // Short of the dwell: nothing loads yet.
+        tick(model, 20)
+        #expect(recorder.previews.isEmpty)
+        tick(model, 12)
+        #expect(recorder.previews == [model.destinations[picked]])
+        // One load for each stay, however long the thumb holds.
+        tick(model, 60)
+        #expect(recorder.previews.count == 1)
+        // Letting go on the same row does not load it again.
+        model.handleEnd(velocity: .zero, completed: true)
+        runToRest(model)
+        tick(model, 1)
+        #expect(model.detent == picked)
+        #expect(recorder.previews.count == 1)
+        #expect(recorder.commits.isEmpty)
+    }
+
+    @Test
+    func rowsThePickOnlyPassesOverNeverLoad() {
+        let recorder = Recorder()
+        let model = makeModel(current: 0, recorder: recorder)
+        let start = CGPoint(x: 120, y: 360)
+        // A steady riffle, about one row every 50 ms: well inside the dwell.
+        for step in 1...60 {
+            let travel = -CGFloat(step) * 4
+            model.handleChange(start: start, translation: CGPoint(x: 0, y: travel), velocity: .zero)
+            model.advance(by: 1.0 / 120)
+        }
+        #expect(model.detent > 5)
+        #expect(recorder.previews.isEmpty)
+        // The thumb stops: the row under it loads.
+        tick(model, 40)
+        #expect(recorder.previews == [model.destinations[model.detent]])
+    }
+
+    @Test
+    func aRiffleThatRestsOnTheOpenPageLoadsNothing() {
+        let recorder = Recorder()
+        let model = makeModel(current: 3, recorder: recorder)
+        drag(model, by: -120)
+        model.handleEnd(velocity: .zero, completed: false)
+        runToRest(model)
+        tick(model, 1)
+        #expect(model.detent == 3)
+        #expect(recorder.previews.isEmpty)
+        #expect(recorder.commits.isEmpty)
+    }
+
+    @Test
+    func aTapLoadsThePageBesideTheSidebarAndASecondTapOpensIt() {
+        let mail = SidebarDestination.primary(.mail)
+        let today = SidebarDestination.primary(.today)
+        #expect(SidebarRowTap.outcome(for: mail, showing: today, voiceOver: false) == .load)
+        #expect(SidebarRowTap.outcome(for: mail, showing: mail, voiceOver: false) == .open)
+        #expect(SidebarRowTap.outcome(for: mail, showing: nil, voiceOver: false) == .load)
+        // An area matches on its id alone, so a stale route name still counts.
+        let home = SidebarDestination.area(id: "area_home", name: "Home")
+        #expect(SidebarRowTap.outcome(for: home, showing: .area(id: "area_home", name: ""), voiceOver: false) == .open)
+        // A label is its own page, not Mail.
+        let receipts = SidebarDestination.mailLabel(id: "label_receipts", name: "Receipts")
+        #expect(SidebarRowTap.outcome(for: receipts, showing: mail, voiceOver: false) == .load)
+        #expect(SidebarRowTap.outcome(for: mail, showing: receipts, voiceOver: false) == .load)
+        #expect(SidebarRowTap.outcome(for: receipts, showing: receipts, voiceOver: false) == .open)
+    }
+
+    @Test
+    func voiceOverAndSettingsOpenInOneStep() {
+        let today = SidebarDestination.primary(.today)
+        #expect(SidebarRowTap.outcome(for: .primary(.calendar), showing: today, voiceOver: true) == .open)
+        #expect(SidebarRowTap.outcome(for: .settings, showing: today, voiceOver: false) == .open)
     }
 }
 #endif

@@ -74,6 +74,8 @@ final class AppEnvironment {
     // one. Distinct from intent capture, which stays a form.
     private(set) var assistantChat: AssistantChatModel?
 
+    private static var installedImageAuthorization = false
+
     // Rendering tests build a second, isolated environment inside the host
     // app. Its local database lives in memory, so it never shares the app's
     // store file. The screenshot tour also gives a stub backend client, so
@@ -97,6 +99,13 @@ final class AppEnvironment {
             baseURL: configuration.apiBaseURL,
             tokenProvider: tokenProvider
         )
+        // Company logos sit behind the app's sign-in: image requests to the
+        // API origin carry the token (M7). Once for the process; rendering
+        // tests build a second environment.
+        if !Self.installedImageAuthorization {
+            Self.installedImageAuthorization = true
+            APIImageRequestModifier.install(apiBaseURL: configuration.apiBaseURL, tokenProvider: tokenProvider)
+        }
         let tools = ToolClient(backend: backend)
         let mobileContainer = MobilePersistence.makeContainer(inMemory: inMemoryPersistence)
         let convexClient: ConvexClientWithAuth<String>?
@@ -205,7 +214,10 @@ final class AppEnvironment {
                         ])
                     )
                     guard result["ok"]?.boolValue == true else { return false }
-                    await store.refreshToday()
+                    // The answer is in. The refresh runs on its own, so the
+                    // notification response completes inside its time limit
+                    // on a background launch.
+                    Task { await store.refreshToday() }
                     return true
                 case .mail(let accountID, let threadID, let messageID):
                     try await store.reply(
@@ -214,7 +226,7 @@ final class AppEnvironment {
                         messageID: messageID,
                         body: response.text
                     )
-                    await store.refreshMail()
+                    Task { await store.refreshMail() }
                     return true
                 }
             } catch {

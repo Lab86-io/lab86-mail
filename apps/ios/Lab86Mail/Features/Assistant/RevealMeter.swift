@@ -149,8 +149,35 @@ enum RevealSplit {
     }
 
     static func split(_ text: String) -> Result {
+        split(text, fenceCount: fenceCount(in: text))
+    }
+
+    /// Splits a text that grows. The fence count comes from the appended
+    /// tail alone, so each tick of the reveal reads the new words, not the
+    /// whole reply again (C7).
+    struct Cache: Equatable, Sendable {
+        private var scanned = ""
+        private var fences = 0
+
+        init() {}
+
+        mutating func split(_ text: String) -> Result {
+            if !scanned.isEmpty, text.hasPrefix(scanned) {
+                // Two characters of overlap, so a fence cut by the seam counts once.
+                let seam = String(scanned.suffix(2))
+                let tailStart = text.utf8.index(text.utf8.startIndex, offsetBy: scanned.utf8.count)
+                fences += RevealSplit.fenceCount(in: seam + text[tailStart...]) - RevealSplit.fenceCount(in: seam)
+            } else {
+                fences = RevealSplit.fenceCount(in: text)
+            }
+            scanned = text
+            return RevealSplit.split(text, fenceCount: fences)
+        }
+    }
+
+    static func split(_ text: String, fenceCount: Int) -> Result {
         guard !text.isEmpty else { return Result(head: "", tail: "") }
-        if fenceCount(in: text) % 2 == 1 {
+        if fenceCount % 2 == 1 {
             return Result(head: text, tail: "")
         }
         let block: Substring
@@ -176,7 +203,7 @@ enum RevealSplit {
         return Result(head: String(text[..<tailStart]), tail: String(tail))
     }
 
-    private static func fenceCount(in text: String) -> Int {
+    static func fenceCount(in text: some StringProtocol) -> Int {
         text.components(separatedBy: "```").count - 1
     }
 
