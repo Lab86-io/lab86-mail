@@ -79,7 +79,8 @@ struct RefreshPlanningTests {
     func dataIsStaleAfterTheAgeOrOnANewDay() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
-        let noon = Date(timeIntervalSince1970: 1_800_000_000 - (1_800_000_000 % 86_400) + 12 * 3_600)
+        let midnight = 1_800_000_000 - 1_800_000_000 % 86_400
+        let noon = Date(timeIntervalSince1970: TimeInterval(midnight + 12 * 3_600))
         #expect(RefreshStaleness.isStale(lastRefresh: nil, now: noon, calendar: calendar))
         #expect(!RefreshStaleness.isStale(lastRefresh: noon.addingTimeInterval(-4 * 60), now: noon, calendar: calendar))
         #expect(RefreshStaleness.isStale(lastRefresh: noon.addingTimeInterval(-6 * 60), now: noon, calendar: calendar))

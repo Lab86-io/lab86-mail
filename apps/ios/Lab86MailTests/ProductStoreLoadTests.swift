@@ -79,7 +79,7 @@ struct ProductStoreLoadTests {
         }
     }
 
-    private static let accountJSON: JSONValue = .object([
+    nonisolated private static let accountJSON: JSONValue = .object([
         "accounts": .array([
             .object([
                 "email": .string("owner@example.com"),
@@ -90,11 +90,11 @@ struct ProductStoreLoadTests {
         ]),
     ])
 
-    private static let emptyBoard: JSONValue = .object([
+    nonisolated private static let emptyBoard: JSONValue = .object([
         "board": .object(["columns": .array([]), "cards": .array([]), "role": .string("owner")]),
     ])
 
-    private static func report(_ id: String, generatedAt: Double, status: String) -> JSONValue {
+    nonisolated private static func report(_ id: String, generatedAt: Double, status: String) -> JSONValue {
         .object([
             "report": .object([
                 "_id": .string(id),

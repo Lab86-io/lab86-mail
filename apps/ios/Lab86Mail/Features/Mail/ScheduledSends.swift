@@ -121,7 +121,7 @@ final class ScheduledSendsModel {
     private(set) var cancellingID: String?
     var cancelError: String?
 
-    static func phase(accountCount: Int, failedCount: Int) -> Phase {
+    nonisolated static func phase(accountCount: Int, failedCount: Int) -> Phase {
         accountCount > 0 && failedCount == accountCount ? .failed : .loaded
     }
 

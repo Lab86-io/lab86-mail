@@ -96,6 +96,10 @@ struct CoreReliabilityTests {
         let real = NSError(domain: ASWebAuthenticationSessionError.errorDomain, code: ASWebAuthenticationSessionError.presentationContextInvalid.rawValue)
         #expect(!WebAuthenticationCoordinator.mapped(real).isCancellation)
         let other = WebAuthenticationError.couldNotStart
-        #expect((WebAuthenticationCoordinator.mapped(other) as? WebAuthenticationError) == .couldNotStart)
+        // WebAuthenticationError carries a String case and is not Equatable.
+        let mappedOther = WebAuthenticationCoordinator.mapped(other) as? WebAuthenticationError
+        var keptCouldNotStart = false
+        if case .couldNotStart? = mappedOther { keptCouldNotStart = true }
+        #expect(keptCouldNotStart)
     }
 }
