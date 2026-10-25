@@ -180,7 +180,7 @@ struct ChatPhaseTwoTests {
         "calendar_unsubscribe_calendar", "tasks_list_boards", "tasks_get_board", "tasks_create_board",
         "tasks_create_card", "tasks_update_card", "tasks_move_card", "tasks_delete_card", "tasks_attach_link",
         "tasks_attach_file", "tasks_attach_calendar_event_link", "contact_lookup", "expand_alias",
-        "browserbase_search", "browserbase_fetch", "web_research", "web_file_save", "browser_download",
+        "browserbase_search", "browserbase_fetch", "web_research", "web_file_save",
         "ui_focus_thread", "ui_set_query", "ui_open_compose", "ui_open_reply", "ui_toast", "ui_close_bar",
         "ui_switch_account",
     ]
@@ -212,8 +212,6 @@ struct ChatPhaseTwoTests {
         )
         #expect(saved.done == "Saved to your details: Phone, Address")
         #expect(AssistantToolGrammar.sentences(toolName: "personal_details_save", input: nil, output: .object([:])).done == "Saved nothing to your details")
-        let download = AssistantToolGrammar.sentences(toolName: "browser_download", input: nil, output: .object(["title": .string("W-9.pdf")]))
-        #expect(download.done == "Saved W-9.pdf in Files")
         #expect(AssistantToolGrammar.sentences(toolName: "ask_secure_detail", input: .object(["kind": .string("sign_in"), "site": .string("ny.gov")]), output: nil).done == "Asked you to add a sign-in for ny.gov")
         #expect(AssistantToolGrammar.sentences(toolName: "area_fact_set_status", input: .object(["status": .string("rejected")]), output: nil).done == "Fact rejected")
     }

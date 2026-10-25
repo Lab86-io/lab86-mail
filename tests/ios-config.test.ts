@@ -235,7 +235,8 @@ describe('native iOS authentication configuration', () => {
     expect(editor).toContain('return false');
     expect(editor).not.toContain('while isSaving');
     expect(editor).not.toContain('? Color.accentColor : .quaternary');
-    expect(files).toContain('catch is CancellationError');
+    // A cancelled read is not an error (URLError.cancelled included).
+    expect(files).toContain('error.isCancellation');
     expect(files).toContain('guard !Task.isCancelled else { return }');
     expect(files).toContain('asCopy: false');
     expect(files).toContain('.quickLookPreview($previewURL)');
