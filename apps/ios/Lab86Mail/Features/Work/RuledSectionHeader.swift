@@ -50,7 +50,9 @@ struct RuledSectionHeader: View {
                 .frame(width: 18, height: 1)
                 .accessibilityHidden(true)
             Text(title)
-                .font(environment.theme.displayType.displayFont(size: headingSize))
+                // Capped: at the largest text sizes an uncapped heading ran
+                // to two lines of about 50 pt and pushed the rows away.
+                .font(environment.theme.displayType.displayFont(size: min(headingSize, 28)))
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }

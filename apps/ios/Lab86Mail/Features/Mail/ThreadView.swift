@@ -26,6 +26,10 @@ struct ThreadView: View {
     @State private var dismissedProofOffer = false
     // Round 2 (FEATURES item 13): unsubscribe asks first; block has Undo.
     @State private var unsubscribe: UnsubscribeFlowModel?
+    // The subject is the page's headline in the content, where it can wrap.
+    // The bar shows it only after the headline scrolls away.
+    @State private var headlineScrolledAway = false
+    @ScaledMetric(relativeTo: .title) private var scaledHeadline: CGFloat = 28
 
     var body: some View {
         Group {
@@ -64,6 +68,11 @@ struct ThreadView: View {
                     .frame(maxWidth: ThreadReaderMetrics.maxWidth)
                     .frame(maxWidth: .infinity)
                 }
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.contentOffset.y + geometry.contentInsets.top > 64
+                } action: { _, scrolledAway in
+                    headlineScrolledAway = scrolledAway
+                }
                 .background(environment.theme.paperColor)
             } else if isLoading {
                 ProgressView("Opening thread…")
@@ -77,12 +86,16 @@ struct ThreadView: View {
                 }
             }
         }
-        // The subject is the page's own title: it starts large and collapses
-        // into the navigation bar with the native transition. Long subjects
-        // truncate only in the compact bar state — the full text stays
-        // available through the lead row (VoiceOver + copy).
+        // A system large title never wraps, so a long subject read
+        // "Offsite venue: final he…". The subject is the headline at the top
+        // of the content instead, and the inline bar title shows it once the
+        // headline has scrolled away. The Mac pane keeps its title.
+        #if os(iOS)
+        .navigationTitle(headlineScrolledAway ? pageTitle : "")
+        #else
         .navigationTitle(pageTitle)
-        .navigationBarTitleDisplayMode(.large)
+        #endif
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -158,17 +171,21 @@ struct ThreadView: View {
         return subject.isEmpty ? "No subject" : subject
     }
 
-    // The lead block under the large title: one italic line (the machine's
-    // voice) with the count and the newest date, then the summary, the proof
-    // offer, and linked tasks when present, each a flat insert. Carries the
-    // complete subject for VoiceOver and copy, since the bar truncates long
-    // titles once collapsed.
+    // The lead block: the subject as the headline, one italic line (the
+    // machine's voice) with the count and the newest date, then the summary,
+    // the proof offer, and linked tasks when present, each a flat insert.
     private func threadLead(_ detail: MailThreadDetail) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            Text(pageTitle)
+                .font(environment.theme.displayType.displayFont(size: min(scaledHeadline, 40)))
+                .lineLimit(5)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .accessibilityAddTraits(.isHeader)
             Text(leadLine(detail))
                 .font(environment.theme.displayType.displayItalicFont(size: 15))
                 .foregroundStyle(.secondary)
-                .accessibilityLabel("\(pageTitle). \(leadLine(detail))")
+                .accessibilityLabel(leadLine(detail))
                 .contextMenu {
                     Button("Copy Subject", systemImage: "doc.on.doc") {
                         PlatformPasteboard.copy(pageTitle)
