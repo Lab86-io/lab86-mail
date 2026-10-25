@@ -285,7 +285,7 @@ struct PreparedWorkCard: View {
                     Text(file.name)
                         .font(.subheadline)
                         .foregroundStyle(.primary)
-                    Text("\(file.kind) · \(PreparedWorkPolicy.sizeLabel(byteCount: file.byteCount))")
+                    Text("\(file.kind), \(PreparedWorkPolicy.sizeLabel(byteCount: file.byteCount))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

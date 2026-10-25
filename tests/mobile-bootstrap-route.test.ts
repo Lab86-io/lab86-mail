@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import { createMobileBootstrapGet } from '../app/api/mobile/v1/bootstrap/route';
 import { AuthRequiredError } from '../lib/auth/current-user';
 
-function dependencies(imageUrl = 'javascript:alert(1)') {
+function dependencies(imageUrl = 'javascript:alert(1)', syncError?: unknown) {
   return {
     requireCurrentUser: mock(async () => ({
       userId: 'bootstrap_user',
@@ -30,6 +30,7 @@ function dependencies(imageUrl = 'javascript:alert(1)') {
           messagesSynced: 0,
           lastIncrementalSyncAt: 0,
           lastBackfillAt: 123,
+          ...(syncError === undefined ? {} : { error: syncError }),
         },
       ],
       heads: [{ domain: 'mail', revision: 4 }],
@@ -40,6 +41,32 @@ function dependencies(imageUrl = 'javascript:alert(1)') {
 }
 
 describe('mobile bootstrap route', () => {
+  test('a long raw sync error is cut to the contract cap instead of failing the bootstrap', async () => {
+    const rawError = `Provider refused: ${'x'.repeat(2_000)} \ud83d`;
+    const deps = dependencies(undefined, rawError);
+
+    const response = await createMobileBootstrapGet(deps as any)(
+      new Request('http://localhost/api/mobile/v1/bootstrap'),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.accounts[0].sync.error.length).toBe(500);
+    expect(body.accounts[0].sync.error.startsWith('Provider refused: ')).toBe(true);
+  });
+
+  test('an empty or non-string sync error reads as no error', async () => {
+    const empty = await createMobileBootstrapGet(dependencies(undefined, '') as any)(
+      new Request('http://localhost/api/mobile/v1/bootstrap'),
+    );
+    expect((await empty.json()).accounts[0].sync.error).toBeUndefined();
+
+    const numeric = await createMobileBootstrapGet(dependencies(undefined, 503) as any)(
+      new Request('http://localhost/api/mobile/v1/bootstrap'),
+    );
+    expect((await numeric.json()).accounts[0].sync.error).toBe('503');
+  });
+
   test('serializes account sync fields and zero cursors without unsafe image URLs', async () => {
     const deps = dependencies();
 

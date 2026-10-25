@@ -2,12 +2,18 @@ import Kingfisher
 import SwiftUI
 
 // The document-v2 masthead, native: the same daily-art hero desktop renders
-// (components/report/brief-canvas/BriefMasthead.tsx), with the dateline, "The
-// Daily Brief" mark, the edition title over a scrim, and the art credit. The
-// art and its fallback order arrive on the report payload so both platforms
-// show the identical museum piece for an edition.
+// (components/report/brief-canvas/BriefMasthead.tsx), with the dateline, the
+// edition title over a scrim, and the art credit. The art and its fallback
+// order arrive on the report payload so both platforms show the identical
+// museum piece for an edition.
+//
+// The dateline sits above the title in the display italic, sentence case,
+// and the two scale together under a cap, so a large text size never cuts
+// the title or runs the dateline into it (D4).
 struct DailyBriefMasthead: View {
     @Environment(AppEnvironment.self) private var environment
+    @ScaledMetric(relativeTo: .largeTitle) private var scaledTitleSize: CGFloat = 40
+    @ScaledMetric(relativeTo: .subheadline) private var scaledDatelineSize: CGFloat = 15
     let generatedAt: Date
     let art: DailyBriefArt?
     // The edition kind. A `weekly` edition is "The Weekly Review".
@@ -22,6 +28,32 @@ struct DailyBriefMasthead: View {
         guard width > 0 else { return 280 }
         return min(360, max(220, width * 0.62))
     }
+
+    // The title follows Dynamic Type up to this size, the dateline up to
+    // its own. Past that the plate would be mostly type.
+    static let titleSizeCap: CGFloat = 58
+    static let datelineSizeCap: CGFloat = 26
+
+    /// The plate grows with the type it carries: two title lines, the
+    /// dateline, and the room around them. At the default text size the
+    /// width rule wins.
+    static func plateHeight(width: CGFloat, titleSize: CGFloat, datelineSize: CGFloat) -> CGFloat {
+        max(height(forWidth: width), titleSize * 2.4 + datelineSize + 96)
+    }
+
+    /// "Wheat Field with Cypresses, Vincent van Gogh, 1889, from The Met".
+    /// Two facts join with a word, never a middle dot.
+    static func creditLine(credit: String?, source: String?) -> String? {
+        guard let credit, !credit.isEmpty else { return nil }
+        guard let source, !source.isEmpty else { return credit }
+        return "\(credit), from \(source)"
+    }
+
+    // The decoded bitmap is sized for the plate, not for the museum file. A
+    // fixed target keeps one cache entry per piece across rotations: 2,400
+    // pixels on the long side covers an iPad plate at 2x and a phone at 3x.
+    static let downsampleTarget = CGSize(width: 1_200, height: 744)
+    static let downsampleScale: CGFloat = 2
 
     static let weeklyReviewTitle = "The Weekly Review"
 
@@ -50,63 +82,25 @@ struct DailyBriefMasthead: View {
     }
 
     private var sources: [URL] { art?.orderedURLs ?? [] }
+    private var titleSize: CGFloat { min(scaledTitleSize, Self.titleSizeCap) }
+    private var datelineSize: CGFloat { min(scaledDatelineSize, Self.datelineSizeCap) }
+    private var plateHeight: CGFloat {
+        Self.plateHeight(width: width, titleSize: titleSize, datelineSize: datelineSize)
+    }
 
     var body: some View {
         ZStack {
             // Ordered fallback walking; when every source fails the accent
             // field carries the masthead — never a broken-image state.
             environment.theme.accentSoftColor
-            if let url = walk.current(in: sources) {
-                KFImage(url)
-                    .onFailure { _ in
-                        walk.advance(in: sources)
-                    }
-                    .placeholder { environment.theme.accentSoftColor }
-                    .fade(duration: 0.2)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            }
-            LinearGradient(
-                stops: [
-                    .init(color: .black.opacity(0.30), location: 0),
-                    .init(color: .black.opacity(0.10), location: 0.5),
-                    .init(color: .black.opacity(0.45), location: 1),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            Text(Self.editionTitle(for: generatedAt, kind: kind))
-                .font(environment.theme.displayType.displayFont(size: 40))
-                .fontWeight(.semibold)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.5), radius: 14, y: 2)
-                .padding(.horizontal, 24)
-                .accessibilityAddTraits(.isHeader)
+            artImage
+            scrim
+            plateText
         }
-        .frame(height: Self.height(forWidth: width))
+        .frame(height: plateHeight)
         .frame(maxWidth: .infinity)
         .clipped()
-        .overlay(alignment: .topLeading) {
-            Text(generatedAt.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                .font(.caption2.weight(.medium))
-                .textCase(.uppercase)
-                .kerning(1.2)
-                .foregroundStyle(.white.opacity(0.85))
-                .shadow(color: .black.opacity(0.6), radius: 4)
-                .padding(12)
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if let credit = creditLine {
-                Text(credit)
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.75))
-                    .shadow(color: .black.opacity(0.65), radius: 4)
-                    .lineLimit(1)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-            }
-        }
+        .overlay(alignment: .bottomTrailing) { creditText }
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
         } action: { newWidth in
@@ -118,10 +112,92 @@ struct DailyBriefMasthead: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var creditLine: String? {
-        guard let art, let credit = art.credit else { return nil }
-        if let source = art.source { return "\(credit) · \(source)" }
-        return credit
+    @ViewBuilder private var artImage: some View {
+        if let url = walk.current(in: sources) {
+            KFImage(url)
+                .setProcessor(DownsamplingImageProcessor(size: Self.downsampleTarget))
+                .scaleFactor(Self.downsampleScale)
+                .cacheOriginalImage()
+                .onFailure { _ in
+                    walk.advance(in: sources)
+                }
+                .placeholder { environment.theme.accentSoftColor }
+                .fade(duration: 0.2)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        }
+    }
+
+    private var scrim: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .black.opacity(0.30), location: 0),
+                .init(color: .black.opacity(0.10), location: 0.5),
+                .init(color: .black.opacity(0.45), location: 1),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    // The dateline narrates in the display italic; the title answers in the
+    // upright display face. One column, so neither can overlap the other.
+    private var plateText: some View {
+        VStack(spacing: 6) {
+            Text(generatedAt.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                .font(environment.theme.displayType.fixedDisplayItalicFont(size: datelineSize))
+                .foregroundStyle(.white.opacity(0.9))
+            Text(Self.editionTitle(for: generatedAt, kind: kind))
+                .font(environment.theme.displayType.fixedDisplayFont(size: titleSize))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.6)
+                .accessibilityAddTraits(.isHeader)
+        }
+        .multilineTextAlignment(.center)
+        .shadow(color: .black.opacity(0.5), radius: 14, y: 2)
+        .padding(.horizontal, 24)
+    }
+
+    @ViewBuilder private var creditText: some View {
+        if let credit = Self.creditLine(credit: art?.credit, source: art?.source) {
+            Text(credit)
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.75))
+                .shadow(color: .black.opacity(0.65), radius: 4)
+                .lineLimit(2)
+                .multilineTextAlignment(.trailing)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+        }
+    }
+}
+
+extension DisplayTypeChoice {
+    /// The display face at a size the caller sets. `Font.custom(_:size:)`
+    /// scales again with Dynamic Type; the plate scales its type itself, with
+    /// a cap, so it asks for a fixed size.
+    func fixedDisplayFont(size: CGFloat) -> Font {
+        switch self {
+        case .serif:
+            Font.custom("Fraunces-SemiBold", fixedSize: size)
+        case .sans:
+            Font.custom("Geist-SemiBold", fixedSize: size)
+        case .rounded:
+            Font.system(size: size, weight: .semibold, design: .rounded)
+        }
+    }
+
+    /// The display italic at a fixed size, for the plate's dateline.
+    func fixedDisplayItalicFont(size: CGFloat) -> Font {
+        switch self {
+        case .serif:
+            Font.custom("Fraunces-SemiBoldItalic", fixedSize: size)
+        case .sans:
+            Font.custom("Geist-SemiBold", fixedSize: size).italic()
+        case .rounded:
+            Font.system(size: size, weight: .semibold, design: .rounded).italic()
+        }
     }
 }
 

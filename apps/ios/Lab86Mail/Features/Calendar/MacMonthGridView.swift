@@ -8,6 +8,7 @@ import SwiftUI
 struct MacMonthGridView: View {
     @Environment(AppEnvironment.self) private var environment
     let index: CalendarDayIndex
+    let colors: CalendarColors
     let selectedDay: Date
     let onSelectDay: (Date) -> Void
     let onOpenDay: (Date) -> Void
@@ -100,7 +101,7 @@ struct MacMonthGridView: View {
             }
         }
         .padding(.vertical, 6)
-        .background(Color(uiColor: .systemBackground))
+        .background(environment.theme.paperColor)
         .accessibilityHidden(true)
     }
 
@@ -200,19 +201,18 @@ struct MacMonthGridView: View {
         }
     }
 
+    // A chip wears its calendar's colour: a low tint and a thin leading edge.
     private func chipView(_ chip: DayChips.Chip) -> some View {
-        let tint = chip.kind == .task
-            ? environment.theme.accentColor
-            : environment.theme.avatarColor(seed: chip.seed)
-        return Text(chip.title)
-            .font(.system(size: 10, weight: .medium))
+        Text(chip.title)
+            .font(.caption2.weight(.medium))
             .lineLimit(1)
             .truncationMode(.tail)
             .foregroundStyle(.primary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 4)
+            .padding(.leading, 6)
+            .padding(.trailing, 3)
             .padding(.vertical, 1)
-            .background(tint.opacity(0.2), in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+            .calendarBlock(tint: colors.color(for: chip), cornerRadius: 3, edge: 2)
     }
 
     private func accessibilityLabel(for date: Date, entries: Int) -> String {

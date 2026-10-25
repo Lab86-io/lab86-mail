@@ -310,6 +310,10 @@ enum BriefEventTimeSlot {
         let suffix: String?
     }
 
+    // The widest time the slot can hold in monospaced digits. The lane's
+    // time column takes its width from this text, not from a constant.
+    static let widestTime = "12:00"
+
     static func make(reason: String?, startAt: Double?, timeZone: TimeZone = .current) -> Slot? {
         if let reason = reason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
             if reason.lowercased().hasPrefix("all day") { return Slot(time: "All", suffix: "day") }
@@ -325,8 +329,31 @@ enum BriefEventTimeSlot {
         var style = Date.FormatStyle(date: .omitted, time: .shortened)
         style.timeZone = timeZone
         let text = date.formatted(style)
-        let parts = text.split(separator: " ", maxSplits: 1).map(String.init)
+        // Foundation writes a narrow no-break space before "AM" on current
+        // SDKs; either space splits the time from its suffix.
+        let parts = text
+            .split(maxSplits: 1, whereSeparator: { $0 == " " || $0 == "\u{202F}" })
+            .map(String.init)
         return Slot(time: parts.first ?? text, suffix: parts.count > 1 ? parts[1] : nil)
+    }
+}
+
+// MARK: - Joined facts
+
+// Facts that share one line join as prose, never with a middle dot: a part
+// that ends a sentence keeps its stop, every other part takes a comma.
+enum BriefCopy {
+    static func join(_ parts: [String?]) -> String {
+        let clean = parts.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard clean.count > 1 else { return clean.first ?? "" }
+        var joined = ""
+        for (index, part) in clean.enumerated() {
+            if index > 0 { joined += " " }
+            joined += part
+            let last = index == clean.count - 1
+            if !last, let end = part.last, !".!?".contains(end) { joined += "," }
+        }
+        return joined
     }
 }
 
@@ -423,24 +450,107 @@ struct BriefMailRowCopy: Equatable {
 
 // MARK: - Views
 
-// A section rule in the Today voice: hairline, serif title, quiet note.
+// The one section header of the page: a short rule, the heading in the
+// user's display face, and a quiet note. At accessibility text sizes the
+// note moves under the heading instead of wrapping in a narrow column
+// beside it, and the action word moves under them both.
 struct BriefSectionRule: View {
+    enum NoteVoice {
+        // A hint about the section, in the detail face.
+        case hint
+        // Machine narration ("Written just now"), in the display italic.
+        case narration
+    }
+
+    // One text-only action at the trailing end of the rule.
+    struct Action {
+        let title: String
+        var isDisabled = false
+        let run: () -> Void
+    }
+
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
     let note: String?
+    let noteVoice: NoteVoice
+    let noteWarns: Bool
+    let action: Action?
+
+    init(
+        title: String,
+        note: String? = nil,
+        noteVoice: NoteVoice = .hint,
+        noteWarns: Bool = false,
+        action: Action? = nil
+    ) {
+        self.title = title
+        self.note = note
+        self.noteVoice = noteVoice
+        self.noteWarns = noteWarns
+        self.action = action
+    }
+
+    static func stacks(_ size: DynamicTypeSize) -> Bool { size.isAccessibilitySize }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Rectangle()
-                .fill(Color.secondary.opacity(0.45))
-                .frame(width: 18, height: 1)
-            Text(title).font(.system(.subheadline, design: .serif).weight(.semibold))
-            if let note {
-                Text(note).font(.caption2).foregroundStyle(.tertiary)
+        if Self.stacks(dynamicTypeSize) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    rule
+                    heading
+                }
+                if let note { noteText(note) }
+                if let action { actionButton(action) }
             }
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                rule
+                heading
+                if let note { noteText(note) }
+                Spacer(minLength: 0)
+                if let action { actionButton(action) }
+            }
+            .accessibilityElement(children: .contain)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
+    }
+
+    private var rule: some View {
+        Rectangle()
+            .fill(Color.secondary.opacity(0.45))
+            .frame(width: 18, height: 1)
+    }
+
+    private var heading: some View {
+        Text(title)
+            .font(environment.theme.displayType.displayFont(size: 15))
+            .foregroundStyle(.primary)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func noteText(_ note: String) -> some View {
+        Text(note)
+            .font(noteFont)
+            .foregroundStyle(noteWarns ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var noteFont: Font {
+        switch noteVoice {
+        case .hint: .footnote
+        case .narration: environment.theme.displayType.displayItalicFont(size: 13)
+        }
+    }
+
+    private func actionButton(_ action: Action) -> some View {
+        Button(action.title, action: action.run)
+            .buttonStyle(.plain)
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(.tint)
+            .disabled(action.isDisabled)
+            .fixedSize()
     }
 }
 
@@ -714,16 +824,27 @@ struct BriefEventRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             if showsSlot {
-                VStack(spacing: 0) {
-                    Text(slot?.time ?? "—")
+                // The column is as wide as the widest time in this font, so
+                // "11:00" never wraps as "11:0 / 0" (D18).
+                ZStack(alignment: .top) {
+                    Text(BriefEventTimeSlot.widestTime)
                         .font(.caption.weight(.semibold).monospacedDigit())
-                    if let suffix = slot?.suffix {
-                        Text(suffix)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        .hidden()
+                    VStack(spacing: 0) {
+                        Text(slot?.time ?? "—")
+                            .font(.caption.weight(.semibold).monospacedDigit())
+                            .lineLimit(1)
+                            .fixedSize()
+                        if let suffix = slot?.suffix {
+                            Text(suffix)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
                     }
                 }
-                .frame(width: 32)
+                .fixedSize(horizontal: true, vertical: false)
                 .padding(.top, 3)
             }
             let arrangement = arrangement

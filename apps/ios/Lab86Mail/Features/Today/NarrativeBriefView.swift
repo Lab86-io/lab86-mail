@@ -5,6 +5,8 @@ import SwiftUI
 struct NarrativeBriefView: View {
     let memory: NarrativeBriefStore
     let backend: BackendClient
+    // Repeats the read after a failure. Nil hides the Try again word.
+    var onRetry: (() async -> Void)? = nil
     @State private var showsSources = false
 
     var body: some View {
@@ -18,7 +20,7 @@ struct NarrativeBriefView: View {
                 Button {
                     showsSources = true
                 } label: {
-                    Label("^[Read the \(entry.sourceIDs.count) supporting observation](inflect: true)", systemImage: "text.book.closed")
+                    Text("^[Read the \(entry.sourceIDs.count) supporting observation](inflect: true)")
                         .font(.subheadline)
                         .frame(minHeight: 44)
                 }
@@ -28,19 +30,42 @@ struct NarrativeBriefView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if let error = memory.error { Text(error).font(.caption).foregroundStyle(.secondary) }
+                if let error = memory.error {
+                    errorLine(error)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
             .sheet(isPresented: $showsSources) {
                 NarrativeSourcesSheet(id: entry.id, backend: backend)
             }
-        } else if memory.enabled || memory.error != nil {
-            Text(memory.error ?? (memory.running ? "Your narrative is being prepared." : "No narrative account is ready for this edition."))
+        } else if let error = memory.error {
+            errorLine(error)
+                .padding(.horizontal, 20)
+        } else if memory.enabled {
+            Text(memory.running ? "Your narrative is being prepared." : "No narrative account is ready for this edition.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 20)
         }
+    }
+
+    // The failure and, when the owner can repeat the read, one text button.
+    private func errorLine(_ error: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let onRetry {
+                Button("Try again") { Task { await onRetry() } }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.tint)
+                    .fixedSize()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -56,7 +81,7 @@ private struct NarrativeSourcesSheet: View {
             List {
                 if let error = memory.error {
                     Text(error).foregroundStyle(.secondary)
-                    Button("Try Again") { Task { await reload() } }
+                    Button("Try again") { Task { await reload() } }
                 } else if memory.isLoading && memory.entry == nil {
                     ProgressView("Loading supporting observations…")
                 } else if memory.entry == nil {
@@ -80,8 +105,10 @@ private struct NarrativeSourcesSheet: View {
             }
             .refreshable { await reload() }
         }
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { memory.clear(); return }
+        // The poll runs while the scene is active or inactive (Control
+        // Center, Face ID) and clears only in the background (B5).
+        .task(id: scenePhase == .background) {
+            guard scenePhase != .background else { memory.clear(); return }
             while !Task.isCancelled {
                 await reload()
                 do { try await Task.sleep(for: .seconds(60)) } catch { return }

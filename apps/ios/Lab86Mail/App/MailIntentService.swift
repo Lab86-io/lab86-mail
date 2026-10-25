@@ -109,7 +109,16 @@ actor MailIntentService {
             let result = try await tools.invoke("list_drafts", arguments: ["account": .string(account.id)])
             for row in result["drafts"]?.arrayValue ?? [] {
                 guard let localID = row["_id"]?.stringValue else { continue }
-                let reference = MailEntityReference(kind: .draft, accountID: account.id, localID: localID)
+                // A reply draft keeps its thread, so a Siri send answers the
+                // thread instead of starting new mail (feature audit, item 12).
+                let reference = MailEntityReference(
+                    kind: .draft,
+                    accountID: account.id,
+                    threadID: row["threadId"]?.stringValue?.nilIfBlank,
+                    messageID: row["inReplyToMessageId"]?.stringValue?.nilIfBlank
+                        ?? row["replyToMessageId"]?.stringValue?.nilIfBlank,
+                    localID: localID
+                )
                 guard identifiers == nil || identifiers?.contains(reference.identifier) == true else { continue }
                 let subject = row["subject"]?.stringValue
                 let to = row["to"]?.stringValue
@@ -255,18 +264,16 @@ actor MailIntentService {
     }
 
     func sendDraft(_ target: AlbatrossMailDraftEntity, later: Date?) async throws {
-        var fields = [
-            "mode": "new",
-            "account": target.account.id,
-            "to": MailIntentAddressCodec.string(from: target.to),
-            "cc": MailIntentAddressCodec.string(from: target.cc),
-            "bcc": MailIntentAddressCodec.string(from: target.bcc),
-            "subject": target.subject ?? "",
-            "body": target.body.map { String($0.characters) } ?? "",
-        ]
-        if let later {
-            fields["sendAt"] = String(Int(later.timeIntervalSince1970 * 1_000))
-        }
+        let fields = Self.sendFields(
+            accountID: target.account.id,
+            to: MailIntentAddressCodec.string(from: target.to),
+            cc: MailIntentAddressCodec.string(from: target.cc),
+            bcc: MailIntentAddressCodec.string(from: target.bcc),
+            subject: target.subject ?? "",
+            body: target.body.map { String($0.characters) } ?? "",
+            reference: MailEntityReference(identifier: target.id),
+            later: later
+        )
         let files = target.attachments.map {
             MultipartFile(
                 fieldName: "attachments",
@@ -277,6 +284,41 @@ actor MailIntentService {
         }
         _ = try await backend.postMultipart(path: "/api/compose", fields: fields, files: files)
         try await deleteDrafts([target])
+    }
+
+    /// The `/api/compose` fields for a Siri send. A draft that answers a
+    /// thread goes out as a reply on that thread, not as new mail (feature
+    /// audit, item 12).
+    nonisolated static func sendFields(
+        accountID: String,
+        to: String,
+        cc: String,
+        bcc: String,
+        subject: String,
+        body: String,
+        reference: MailEntityReference?,
+        later: Date?
+    ) -> [String: String] {
+        var fields = [
+            "mode": "new",
+            "account": accountID,
+            "to": to,
+            "cc": cc,
+            "bcc": bcc,
+            "subject": subject,
+            "body": body,
+        ]
+        if let threadID = reference?.threadID?.nilIfBlank {
+            fields["mode"] = "reply"
+            fields["threadId"] = threadID
+            if let messageID = reference?.messageID?.nilIfBlank {
+                fields["messageId"] = messageID
+            }
+        }
+        if let later {
+            fields["sendAt"] = String(Int(later.timeIntervalSince1970 * 1_000))
+        }
+        return fields
     }
 
     func resolveMessageReference(_ entity: AlbatrossMailMessageEntity) async throws -> MailEntityReference {

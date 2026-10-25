@@ -50,15 +50,14 @@ struct MissedMoveRecoveryView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(.secondarySystemGroupedBackground))
-        )
+        // One flat insert in light and dark (D25): the inset fill and a
+        // hairline, no card surface.
+        .insetPanel(cornerRadius: 12)
         .disabled(isRecovering)
         .overlay {
             if isRecovering {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(.systemBackground).opacity(0.86))
+                    .fill(environment.theme.subtleColor.opacity(0.86))
                 ProgressView("Updating the plan…")
                     .font(.caption)
             }

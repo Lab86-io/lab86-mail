@@ -2,99 +2,132 @@ import Foundation
 import Testing
 @testable import Lab86Mail
 
-// Stage 2 iOS 0.8 parity: the simplified visible category set, presentation-
-// time mapping of retired stored labels, and single-ownership of the global
-// create control.
+// The mail views mirror the web's model (lib/mail/navigation.ts): four
+// primary views in the strip, the rest under More, the web's ids as raw
+// values. Also single-ownership of the global create control.
 struct MailPresentationTests {
-    // MARK: - Visible category set
+    // MARK: - The view set
 
     @Test
-    func visibleCategoryOrderIsMainCodesOrdersThenAllMailLast() {
-        #expect(MailCategoryScope.allCases == [.main, .codes, .orders, .all])
+    func primaryViewsAreTheWebStripInOrder() {
+        #expect(MailCategoryScope.primary == [.main, .needsReply, .noise, .codes])
+        #expect(MailCategoryScope.primary.map(\.title) == ["Main", "Needs reply", "Noise", "Codes"])
     }
 
     @Test
-    func retiredCategoryLabelsAreGoneFromEveryVisibleTitle() {
-        let titles = Set(MailCategoryScope.allCases.map(\.title))
-        #expect(titles == ["Main", "Codes", "Orders", "All Mail"])
-        for retired in ["Needs Reply", "Review", "Finance & Admin", "Noise"] {
-            #expect(!titles.contains(retired))
+    func moreViewsAreTheWebMenuInOrder() {
+        #expect(MailCategoryScope.more == [.needsAction, .waitingFor, .importantChanges, .orders, .financeAdmin, .review])
+        #expect(MailCategoryScope.more.map(\.title) == [
+            "Needs action", "Waiting for", "Changes", "Orders", "Finance / admin", "Review",
+        ])
+    }
+
+    @Test
+    func rawValuesAreTheWebCategoryIDs() {
+        #expect(MailCategoryScope.needsReply.rawValue == "needs_reply")
+        #expect(MailCategoryScope.needsAction.rawValue == "needs_action")
+        #expect(MailCategoryScope.waitingFor.rawValue == "waiting_for")
+        #expect(MailCategoryScope.importantChanges.rawValue == "important_changes")
+        #expect(MailCategoryScope.financeAdmin.rawValue == "finance_admin")
+        for scope in MailCategoryScope.primary + MailCategoryScope.more {
+            #expect(MailCategoryScope.allCases.contains(scope))
+        }
+        // All mail stays for links minted before this round; it is not a pill.
+        #expect(!MailCategoryScope.primary.contains(.all))
+        #expect(!MailCategoryScope.more.contains(.all))
+        #expect(MailCategoryScope.all.title == "All mail")
+    }
+
+    @Test
+    func noTitleIsInAllCapsAndNoneRepeatsAnother() {
+        let titles = MailCategoryScope.allCases.map(\.title)
+        #expect(Set(titles).count == titles.count)
+        for title in titles {
+            #expect(title != title.uppercased())
         }
     }
 
     @Test
     func correctionPresentsOnlyClassifierDestinations() {
-        // All Mail is a viewing scope, never a correction target. Noise is a
+        // All mail is a viewing scope, never a correction target. Noise is a
         // destination (CLS-9) so promotions can leave Main on native too.
         #expect(MailCategoryCorrection.allCases == [.main, .codes, .orders, .noise])
     }
 
     @Test
-    func categorySymbolsMatchTheSpecAndSelectedVariantsAreFilled() {
-        #expect(MailCategoryScope.main.symbol == "person.crop.circle")
-        #expect(MailCategoryScope.codes.symbol == "key")
-        #expect(MailCategoryScope.orders.symbol == "shippingbox")
-        #expect(MailCategoryScope.all.symbol == "tray.full")
+    func everyViewHasASymbolAndAFilledOrSameSelectedVariant() {
         for scope in MailCategoryScope.allCases {
-            #expect(scope.selectedSymbol == "\(scope.symbol).fill")
+            #expect(!scope.symbol.isEmpty)
+            #expect(scope.selectedSymbol == scope.symbol || scope.selectedSymbol == "\(scope.symbol).fill")
         }
+        #expect(MailCategoryScope.codes.selectedSymbol == "key.fill")
+        #expect(MailCategoryScope.waitingFor.selectedSymbol == "hourglass")
     }
 
-    // MARK: - Stored classification → visible scope
+    // MARK: - Stored classification → visible view
 
     @Test
-    func mainIsTheCatchAllForLegacyAndUnclassifiedMail() {
-        for stored in ["main", "needs_reply", "review", "finance_admin", nil] {
+    func mainIsAMainVerdictOrNoVerdictYet() {
+        for stored in ["main", nil] {
             #expect(MailCategoryScope.main.includes(storedCategory: stored))
-            #expect(!MailCategoryScope.codes.includes(storedCategory: stored))
-            #expect(!MailCategoryScope.orders.includes(storedCategory: stored))
+            #expect(MailCategoryScope.all.includes(storedCategory: stored))
+        }
+        for stored in ["needs_reply", "review", "finance_admin", "noise", "codes", "orders"] {
+            #expect(!MailCategoryScope.main.includes(storedCategory: stored))
             #expect(MailCategoryScope.all.includes(storedCategory: stored))
         }
     }
 
     @Test
-    func codesAndOrdersOnlyShowTheirOwnMail() {
+    func eachViewShowsItsOwnPrimaryOrSecondaryVerdict() {
+        #expect(MailCategoryScope.needsReply.includes(storedCategory: "needs_reply"))
+        #expect(MailCategoryScope.needsReply.includes(storedCategory: "main", secondary: ["needs_reply"]))
+        #expect(!MailCategoryScope.needsReply.includes(storedCategory: "main", secondary: ["orders"]))
+        #expect(MailCategoryScope.noise.includes(storedCategory: "noise"))
+        #expect(!MailCategoryScope.noise.includes(storedCategory: "main"))
+        #expect(MailCategoryScope.review.includes(storedCategory: "review"))
+        #expect(MailCategoryScope.financeAdmin.includes(storedCategory: "finance_admin"))
         #expect(MailCategoryScope.codes.includes(storedCategory: "codes"))
         #expect(!MailCategoryScope.codes.includes(storedCategory: "orders"))
-        #expect(MailCategoryScope.orders.includes(storedCategory: "orders"))
-        #expect(!MailCategoryScope.orders.includes(storedCategory: "codes"))
-        #expect(!MailCategoryScope.main.includes(storedCategory: "codes"))
-        #expect(!MailCategoryScope.main.includes(storedCategory: "orders"))
+        #expect(MailCategoryScope.orders.includes(storedCategory: "main", secondary: ["orders"]))
     }
 
     @Test
-    func noiseIsSuppressedFromMainButPresentInAllMail() {
-        #expect(!MailCategoryScope.main.includes(storedCategory: "noise"))
-        #expect(MailCategoryScope.all.includes(storedCategory: "noise"))
-        #expect(!MailCategoryScope.codes.includes(storedCategory: "noise"))
-        #expect(!MailCategoryScope.orders.includes(storedCategory: "noise"))
-    }
-
-    @Test
-    func mailFiledUnderALabelLeavesMainButStaysInAllMail() {
+    func mailFiledUnderALabelLeavesEveryViewButAllMail() {
         let filed = "custom:smart-label-dev-ops"
-        #expect(!MailCategoryScope.main.includes(storedCategory: filed))
-        #expect(!MailCategoryScope.codes.includes(storedCategory: filed))
-        #expect(!MailCategoryScope.orders.includes(storedCategory: filed))
+        for scope in MailCategoryScope.allCases where scope != .all {
+            #expect(!scope.includes(storedCategory: filed))
+            #expect(!scope.includes(storedCategory: filed, secondary: [scope.rawValue]))
+        }
         #expect(MailCategoryScope.all.includes(storedCategory: filed))
         #expect(MailCategoryScope.storedTitle(filed) == "Filed under your label")
         #expect(MailCategoryScope.storedTitle("finance_admin") == "Finance Admin")
         #expect(MailCategoryScope.storedTitle(nil) == "Unclassified")
     }
 
+    @Test
+    func mainPagesTheUnifiedListAndOtherViewsPageByTheirID() {
+        #expect(MailCategoryScope.main.serverCategory == nil)
+        #expect(MailCategoryScope.all.serverCategory == nil)
+        #expect(MailCategoryScope.needsReply.serverCategory == "needs_reply")
+        #expect(MailCategoryScope.noise.serverCategory == "noise")
+        #expect(MailCategoryScope.codes.serverCategory == "codes")
+        #expect(MailCategoryScope.financeAdmin.serverCategory == "finance_admin")
+    }
+
     // MARK: - Raw routing values (sidebar taps, deep links, stored prefs)
 
     @Test
-    func pendingCategoryRoutingMapsCurrentAndRetiredRawValues() {
+    func pendingCategoryRoutingMapsEveryWebIDAndFallsBackToMain() {
         #expect(MailCategoryScope.from(raw: "main") == .main)
         #expect(MailCategoryScope.from(raw: "codes") == .codes)
         #expect(MailCategoryScope.from(raw: "orders") == .orders)
         #expect(MailCategoryScope.from(raw: "all") == .all)
-        // Retired mailboxes land where their mail now lives.
-        #expect(MailCategoryScope.from(raw: "needs_reply") == .main)
-        #expect(MailCategoryScope.from(raw: "review") == .main)
-        #expect(MailCategoryScope.from(raw: "finance_admin") == .main)
-        #expect(MailCategoryScope.from(raw: "noise") == .all)
+        #expect(MailCategoryScope.from(raw: "needs_reply") == .needsReply)
+        #expect(MailCategoryScope.from(raw: "review") == .review)
+        #expect(MailCategoryScope.from(raw: "finance_admin") == .financeAdmin)
+        #expect(MailCategoryScope.from(raw: "noise") == .noise)
+        #expect(MailCategoryScope.from(raw: "waiting_for") == .waitingFor)
         // Unknown and missing values default to the primary destination.
         #expect(MailCategoryScope.from(raw: "someday_new") == .main)
         #expect(MailCategoryScope.from(raw: nil) == .main)

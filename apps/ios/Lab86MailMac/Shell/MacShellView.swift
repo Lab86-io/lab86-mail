@@ -110,6 +110,9 @@ struct MacShellView: View {
                 // The Mac process stays up for days: the Files choice, the
                 // trial note, and the source line are read again on return.
                 await activationRefresh.run(environment)
+                // Data older than five minutes, or from another day, reads
+                // again (K3), the same as the phone.
+                await environment.store.refreshIfStale()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .lab86RemoteWake)) { _ in

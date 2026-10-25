@@ -7,36 +7,28 @@ import SwiftUI
 // Dark mode elevates by lightness delta plus a hairline, not by shadow.
 
 extension ThemeStore {
-    // The page field. Light ≈ oklch(0.977) / dark ≈ oklch(0.145), same floors
-    // as --color-bg on desktop.
+    // The depth ladder of globals.css: every rung is a distance from the
+    // paper, multiplied by the user's depth spread, in the paper's hue. The
+    // paper tint lifts the chroma of every rung together. Dark mode compresses
+    // a spread over 1 so raised dark surfaces never turn grey.
+    // The page field (--color-bg).
     var paperColor: Color {
-        Self.adaptiveSurface(
-            hue: accentHue,
-            lightL: 0.977,
-            lightC: 0.002 + 0.008 * backgroundWash,
-            darkL: 0.145,
-            darkC: 0.003 + 0.009 * backgroundWash
-        )
+        Self.ladderColor(hue: paperHue, tint: surfaceTint, depth: depthSpread, rung: .paper)
     }
 
-    // One step up: cards, message articles, composer chrome (--color-bg-elevated).
+    // One step up: sheets and real raised layers (--color-bg-elevated).
     var elevatedColor: Color {
-        Self.adaptiveSurface(hue: accentHue, lightL: 0.995, lightC: 0.002, darkL: 0.205, darkC: 0.006)
+        Self.ladderColor(hue: paperHue, tint: surfaceTint, depth: depthSpread, rung: .elevated)
     }
 
-    // One step down: wells, inset fields, collapsed rows (--color-bg-subtle).
+    // One step down: wells, inserts, inset fields (--color-bg-subtle).
     var subtleColor: Color {
-        Self.adaptiveSurface(hue: accentHue, lightL: 0.958, lightC: 0.004, darkL: 0.175, darkC: 0.006)
+        Self.ladderColor(hue: paperHue, tint: surfaceTint, depth: depthSpread, rung: .subtle)
     }
 
+    // The sidebar field, a quiet tone between the paper and the well.
     var railColor: Color {
-        Self.adaptiveSurface(
-            hue: accent2Hue,
-            lightL: 0.965,
-            lightC: 0.002 + 0.009 * railWash,
-            darkL: 0.165,
-            darkC: 0.003 + 0.01 * railWash
-        )
+        Self.ladderColor(hue: paperHue, tint: surfaceTint, depth: depthSpread, rung: .rail)
     }
 
     // Accent-soft wash for selected/quarantined surfaces (summary cards,
@@ -51,31 +43,47 @@ extension ThemeStore {
         }
     }
 
-    // The highlight voice (--color-accent-3): the third hue of the palette
-    // chord, 94 degrees after the action accent, at chroma 0.08 scaled by the
-    // accent's own brilliance. The web rule is lib/theme/palette-presets.ts.
-    // The default Forest accent (hue 156) gives the web default, hue 250.
-    // Blanks for the user (BlankSentence) use it.
-    var accent3Color: Color {
-        let hue = (accentHue + 94).truncatingRemainder(dividingBy: 360)
-        let brilliance = min(1.5, max(0.25, accentChroma / 0.09))
-        let chroma = min(0.16, max(0.012, 0.08 * brilliance))
-        return Color(Self.adaptiveUIColor(hue: hue, chroma: chroma))
-    }
-
     var hairlineColor: Color { Color.primary.opacity(0.08) }
 
-    private static func adaptiveSurface(
-        hue: Double,
-        lightL: Double,
-        lightC: Double,
-        darkL: Double,
-        darkC: Double
-    ) -> Color {
+    enum LadderRung: Sendable {
+        case paper
+        case elevated
+        case subtle
+        case rail
+    }
+
+    /// The lightness and chroma of one rung, as globals.css computes them.
+    /// Pure, so SurfaceLadderTests can hold it to the web's numbers.
+    nonisolated static func ladderComponents(
+        tint: Double,
+        depth: Double,
+        rung: LadderRung,
+        isDark: Bool
+    ) -> (l: Double, c: Double) {
+        if isDark {
+            let spread = min(1, depth) + max(0, depth - 1) * 0.35
+            let paperL = 0.145 + tint * 0.08
+            switch rung {
+            case .paper: return (paperL, 0.006 + tint * 0.04)
+            case .elevated: return (paperL + 0.075 * spread, tint * 0.032)
+            case .subtle: return (paperL + 0.033 * spread, tint * 0.034)
+            case .rail: return (paperL + 0.016 * spread, 0.004 + tint * 0.036)
+            }
+        }
+        switch rung {
+        case .paper: return (0.977 - tint * 0.012, 0.005 + tint * 0.022)
+        case .elevated: return (min(0.998, 0.977 + 0.018 * depth - tint * 0.008), tint * 0.014)
+        case .subtle: return (0.977 - 0.012 * depth - tint * 0.012, 0.006 + tint * 0.024)
+        case .rail: return (0.977 - 0.006 * depth - tint * 0.012, 0.006 + tint * 0.024)
+        }
+    }
+
+    // The provider closure captures plain numbers, never the store: UIKit
+    // resolves it off the main actor while a view renders.
+    private nonisolated static func ladderColor(hue: Double, tint: Double, depth: Double, rung: LadderRung) -> Color {
         dynamicColor { isDark in
-            isDark
-                ? oklch(l: darkL, c: darkC, h: hue)
-                : oklch(l: lightL, c: lightC, h: hue)
+            let parts = ladderComponents(tint: tint, depth: depth, rung: rung, isDark: isDark)
+            return oklch(l: parts.l, c: parts.c, h: hue)
         }
     }
 

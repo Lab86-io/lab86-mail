@@ -38,6 +38,10 @@ final class UnsubscribeFlowModel {
             guard case .loading(let current) = phase, current == target else { return }
             phase = .confirm(target, options, UnsubscribeConfirmCopy.make(options, mailbox: target.mailbox))
         } catch {
+            if error.isCancellation {
+                phase = .idle
+                return
+            }
             phase = .failed(error.localizedDescription.nilIfBlank ?? "Could not read the unsubscribe details for this sender.")
         }
     }
@@ -164,6 +168,7 @@ struct UnsubscribeFlowModifier: ViewModifier {
                 break
             }
         } catch {
+            guard !error.isCancellation else { return }
             failure = error.localizedDescription
         }
     }
@@ -193,6 +198,7 @@ enum SenderBlocking {
             await environment.store.refreshMail()
             return result
         } catch {
+            guard !error.isCancellation else { return nil }
             environment.store.mailErrorMessage = error.localizedDescription
             return nil
         }
@@ -304,7 +310,7 @@ struct SenderCleanupView: View {
 
     private func detailLine(_ row: SenderCleanupRow) -> String {
         guard let lastDate = row.lastDate else { return row.sender }
-        return "\(row.sender) · last \(lastDate.formatted(.dateTime.month(.abbreviated).day()))"
+        return "\(row.sender), last \(lastDate.formatted(.dateTime.month(.abbreviated).day()))"
     }
 
     private func load() async {
@@ -315,6 +321,8 @@ struct SenderCleanupView: View {
             selection = selection.intersection(Set(rows.map(\.sender)))
             loadError = nil
         } catch {
+            // A read the view gave up on is not a failure to report.
+            guard !error.isCancellation else { return }
             loadError = "The sender list could not load. Try again."
         }
         didLoad = true
@@ -335,6 +343,7 @@ struct SenderCleanupView: View {
             do {
                 blocked.append(try await client.block(sender: row.sender, batchID: batchID))
             } catch {
+                if error.isCancellation { return }
                 failed.append(row.sender)
             }
         }

@@ -26,24 +26,19 @@ struct AppShellView: View {
         // The wake nudge sits under the navigation bar, at the trailing edge.
         .shellWakeNudge(topInset: windowSafeAreaInsets.top + 52)
         .task {
-            BackgroundRefreshCoordinator.shared.install {
-                let ownerID = environment.sessionStore.ownerID
-                let outboxSucceeded = await environment.flushCommandOutbox(ownerID: ownerID)
-                let accountsSucceeded = if let ownerID {
-                    await environment.refreshAccounts(ownerID: ownerID)
-                } else {
-                    true
-                }
-                await environment.store.bootstrap(cacheOwner: ownerID)
-                await environment.refreshTodayWidget()
-                return outboxSucceeded && accountsSucceeded && environment.store.errorMessage == nil
+            BackgroundRefreshCoordinator.shared.install { wake in
+                await refresh(for: wake)
             }
+            // Locals, not the view, cross into the child tasks.
+            let environment = self.environment
             let ownerID = environment.sessionStore.ownerID
-            _ = await environment.flushCommandOutbox(ownerID: ownerID)
-            if let ownerID {
-                _ = await environment.refreshAccounts(ownerID: ownerID)
-            }
+            // The outbox drain and the account read run beside the
+            // bootstrap, not ahead of it (K4). The bootstrap itself reads
+            // its domains at once and paints the brief first.
+            async let outbox: Bool = environment.flushCommandOutbox(ownerID: ownerID)
+            async let accounts: Bool = Self.refreshAccounts(environment, ownerID: ownerID)
             await environment.store.bootstrap(cacheOwner: ownerID)
+            _ = await (outbox, accounts)
             await environment.refreshTodayWidget()
             await environment.notifications.refreshAuthorizationStatus()
             await environment.notifications.retryPendingTextResponses()
@@ -55,12 +50,19 @@ struct AppShellView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             environment.navigation.consumeAppIntentRequests()
             BackgroundRefreshCoordinator.shared.schedule()
+            // The thread list poll comes back with the app (K3).
+            environment.threads.resumeFollowing(environment.backend)
             Task {
                 // Mail actions saved while offline go out on return (NAT-10).
                 _ = await environment.flushCommandOutbox(ownerID: environment.sessionStore.ownerID)
                 await environment.notifications.retryPendingTextResponses()
                 await consumeMailNotificationAction()
                 await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
+                // Data older than five minutes, or from another day, reads
+                // again (K3). The domains read at once.
+                if await environment.store.refreshIfStale() {
+                    await environment.refreshTodayWidget()
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .lab86MailNotificationAction)) { _ in
@@ -279,6 +281,38 @@ struct AppShellView: View {
     private func consumeMailNotificationAction() async {
         await ShellNotificationActions.consumePendingMailAction(environment: environment)
     }
+
+    private static func refreshAccounts(_ environment: AppEnvironment, ownerID: String?) async -> Bool {
+        guard let ownerID else { return true }
+        return await environment.refreshAccounts(ownerID: ownerID)
+    }
+
+    // The one handler for a background refresh and for a push with
+    // `content-available`. A background refresh reads everything; a push
+    // drains the outbox and refreshes only the domain it names, and skips a
+    // domain the app read a moment ago while active (K2).
+    private func refresh(for wake: RemoteWake) async -> Bool {
+        let ownerID = environment.sessionStore.ownerID
+        let outboxSucceeded = await environment.flushCommandOutbox(ownerID: ownerID)
+        switch wake {
+        case .backgroundRefresh:
+            let accountsSucceeded = await Self.refreshAccounts(environment, ownerID: ownerID)
+            await environment.store.bootstrap(cacheOwner: ownerID)
+            await environment.refreshTodayWidget()
+            return outboxSucceeded && accountsSucceeded && environment.store.errorMessage == nil
+        case .push(let payload):
+            let plan = RemoteRefreshPlan.make(payload)
+            let appIsActive = UIApplication.shared.applicationState == .active
+            await environment.store.refresh(for: plan, appIsActive: appIsActive)
+            if plan.isUnspecific || !plan.domains.isDisjoint(with: [.mail, .brief, .tasks, .calendar]) {
+                await environment.refreshTodayWidget()
+            }
+            if plan.domains.contains(.work) {
+                environment.navigation.refreshOpenWork()
+            }
+            return outboxSucceeded && environment.store.errorMessage == nil
+        }
+    }
 }
 
 private struct SourceList: View {
@@ -294,6 +328,7 @@ private struct SourceList: View {
     @State private var showsNewArea = false
     @State private var newAreaName = ""
     @State private var isCreatingArea = false
+    @State private var showsWhatsNew = false
 
     @State private var measurementSequence = SidebarMeasurementSequence()
     @State private var wheelFrame: CGRect = .zero
@@ -322,6 +357,10 @@ private struct SourceList: View {
 
             Divider()
 
+            // After an update, one quiet row above Settings until the notes
+            // are read. The sidebar holds it so nothing covers a page.
+            whatsNewRow
+
             // Settings is outside the wheel deliberately — see SidebarDestination.
             Button {
                 environment.navigation.sheet = .settings
@@ -339,10 +378,48 @@ private struct SourceList: View {
             .accessibilityHint("Opens account and app settings")
         }
         .background(environment.theme.railColor)
+        .task { await ProductReleaseStore.shared.load(backend: environment.backend) }
+        .sheet(isPresented: $showsWhatsNew) {
+            NavigationStack {
+                WhatsNewView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showsWhatsNew = false }
+                        }
+                    }
+            }
+        }
         .onAppear { refresh() }
         .onChange(of: areaIdentity) { _, _ in refresh() }
         .onChange(of: reduceMotion) { _, value in model.reduceMotion = value }
         .onDisappear { model.stop() }
+    }
+
+    // MARK: - What's new
+
+    @ViewBuilder private var whatsNewRow: some View {
+        let releases = ProductReleaseStore.shared
+        if releases.hasUnseenRelease, let release = releases.release {
+            Button {
+                showsWhatsNew = true
+            } label: {
+                HStack(spacing: 8) {
+                    Text("What’s new in \(release.version)")
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Circle()
+                        .fill(environment.theme.accentColor)
+                        .frame(width: 7, height: 7)
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(.rect)
+                .padding(.horizontal, 16)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the notes for this version")
+        }
     }
 
     // MARK: - The wheel

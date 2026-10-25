@@ -1,9 +1,9 @@
 import SwiftUI
 
-// A phone-native calendar in the shape of the best mobile references
-// (Outlook/Cron/Google Calendar): a paged week strip up top, a swipeable
-// all-day + hourly day timeline underneath with overlap-aware event blocks
-// and a live now line, plus an agenda list mode for scanning ahead.
+// The calendar page: a paged week strip over a swipeable day timeline, with
+// week, month, year, and agenda modes behind one picker. Events wear their
+// calendar's own colour, hidden calendars stay out, and an account whose
+// sign-in ended asks to be reconnected where its events would be.
 struct CalendarView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.scenePhase) private var scenePhase
@@ -11,6 +11,8 @@ struct CalendarView: View {
     @State private var macSyncCaption = MacCalendarSyncCaptionModel()
     #endif
     @State private var showsNewEvent = false
+    // A hold on the empty grid creates an event at that slot.
+    @State private var newEventSlot: NewEventSlot?
     // The freshness subtitle re-renders on this clock, not on every layout.
     @State private var freshnessClock = Date.now
     @State private var selectedDay: Date = Calendar.autoupdatingCurrent.startOfDay(for: .now)
@@ -28,19 +30,36 @@ struct CalendarView: View {
 
     private static let dayWindow = -28...56
 
+    struct NewEventSlot: Identifiable {
+        let start: Date
+        var id: Date { start }
+    }
+
     private var store: ProductStore { environment.store }
     private var calendar: Calendar { .autoupdatingCurrent }
+
+    private var colors: CalendarColors {
+        CalendarColors(choices: store.calendarChoices, theme: environment.theme)
+    }
+
+    // The calendars the user hid, keyed the way `CalendarChoice.id` is.
+    private var hiddenKeys: Set<String> {
+        Set(store.calendarChoices.filter(\.isHidden).map(\.id))
+    }
+
+    private var visibleEvents: [CalendarEventSummary] {
+        CalendarVisibility.visible(store.events, hiddenKeys: hiddenKeys)
+    }
 
     var body: some View {
         @Bindable var navigation = environment.navigation
         VStack(spacing: 0) {
-            // Missed moves live in the Work detail only. The calendar shows
-            // the day, not a recovery banner.
-            // Day mode carries the line under its week strip. The other modes
-            // have no strip, so the line sits at the top of the content.
+            // Day mode carries the sync line under its week strip. The other
+            // modes have no strip, so the line sits at the top of the content.
             if viewMode != "day" {
                 CalendarSyncLine(phase: store.calendarSync.phase)
             }
+            CalendarReconnectBanner()
             Group {
                 switch viewMode {
                 case "agenda": agendaBody
@@ -51,6 +70,7 @@ struct CalendarView: View {
                 }
             }
         }
+        .background(environment.theme.paperColor)
         .onChange(of: navigation.pendingCalendarDay, initial: true) { _, day in
             guard let day else { return }
             selectedDay = calendar.startOfDay(for: day)
@@ -58,12 +78,17 @@ struct CalendarView: View {
             navigation.pendingCalendarDay = nil
         }
         .navigationTitle(navigationTitleText)
-        .navigationSubtitle(freshnessSubtitle)
         .navigationBarTitleDisplayMode(.inline)
+        .modifier(CalendarTitleChrome(title: navigationTitleText, dateline: freshnessSubtitle))
         .task {
             // A passive open. The server skips the sync when the last one
             // finished under two minutes ago, and then no line shows.
             await store.resyncCalendar(reason: .viewOpen)
+        }
+        .task {
+            // The calendar list gives each event its colour and tells which
+            // calendars are hidden or read-only.
+            await store.refreshCalendarChoices()
         }
         .task {
             while !Task.isCancelled {
@@ -102,50 +127,62 @@ struct CalendarView: View {
         }
         .onChange(of: store.events, initial: true) { rebuildDayIndex() }
         .onChange(of: store.dueCalendarTasks, initial: true) { rebuildDayIndex() }
+        .onChange(of: store.calendarChoices) { rebuildDayIndex() }
         .navigationDestination(item: $navigation.eventRoute) { route in
             EventDetailView(route: route)
         }
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                if showsTodayButton {
-                    Button("Today") {
-                        select(day: calendar.startOfDay(for: .now))
-                        // Month and year scroll on their own, so returning to
-                        // today has to be asked for explicitly rather than
-                        // inferred from the selection — which also changes when
-                        // a day is opened, and must not scroll a view that is
-                        // on its way out.
-                        todayToken += 1
-                    }
-                }
-                Menu {
-                    Picker("View", selection: $viewMode) {
-                        Text("Day").tag("day")
-                        Text("Week").tag("week")
-                        Text("Month").tag("month")
-                        Text("Year").tag("year")
-                        Text("Agenda").tag("agenda")
-                    }
-                } label: {
-                    Label("Calendar view", systemImage: viewModeSymbol)
-                }
-                Button {
-                    showsNewEvent = true
-                } label: {
-                    Label("New event", systemImage: "plus")
-                }
-            }
-        }
+        .toolbar { modeToolbar }
         .sheet(isPresented: $showsNewEvent) {
             EventEditorView(
                 mode: .create,
                 start: defaultNewEventStart
             )
         }
+        .sheet(item: $newEventSlot) { slot in
+            EventEditorView(
+                mode: .create,
+                start: slot.start,
+                end: slot.start.addingTimeInterval(3_600)
+            )
+        }
         .sheet(item: $openTask) {
             TaskDetailView(task: $0)
         }
         .shellToolbar()
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder private var modeToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            if showsTodayButton {
+                Button("Today") {
+                    select(day: calendar.startOfDay(for: .now))
+                    // Month and year scroll on their own, so a return to today
+                    // is asked for explicitly rather than inferred from the
+                    // selection, which also changes when a day is opened.
+                    todayToken += 1
+                }
+            }
+            Menu {
+                Picker("View", selection: $viewMode) {
+                    Text("Day").tag("day")
+                    Text("Week").tag("week")
+                    Text("Month").tag("month")
+                    Text("Year").tag("year")
+                    Text("Agenda").tag("agenda")
+                }
+            } label: {
+                Label("Calendar view", systemImage: viewModeSymbol)
+            }
+            // The shell's floating button makes chats, mail, and files, not
+            // events, so the calendar keeps its own door in the bar.
+            Button {
+                showsNewEvent = true
+            } label: {
+                Label("New event", systemImage: "plus")
+            }
+        }
     }
 
     // MARK: - Day mode
@@ -162,44 +199,43 @@ struct CalendarView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
             }
-            #if os(macOS)
-            // The Mac has no swipe pager (and the TabView fallback painted
-            // phantom scrollers); the strip's arrows and cells drive the day.
-            DayTimelineView(
-                day: selectedDay,
-                events: timedEvents(on: selectedDay),
-                allDayEvents: allDayEvents(on: selectedDay),
-                tasks: dueTasks(on: selectedDay),
-                onOpen: { environment.navigation.openEvent($0) },
-                onOpenTask: { openTask = $0 },
-                onReschedule: { event, start, end in
-                    Task { await store.rescheduleEvent(event, start: start, end: end) }
-                }
-            )
-            .id(selectedDay)
-            #else
-            TabView(selection: dayBinding) {
-                ForEach(dayRange, id: \.self) { day in
-                    DayTimelineView(
-                        day: day,
-                        events: timedEvents(on: day),
-                        allDayEvents: allDayEvents(on: day),
-                        tasks: dueTasks(on: day),
-                        onOpen: { environment.navigation.openEvent($0) },
-                        onOpenTask: { openTask = $0 },
-                        onReschedule: { event, start, end in
-                            Task { await store.rescheduleEvent(event, start: start, end: end) }
-                        }
-                    )
-                    .tag(day)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .ignoresSafeArea(edges: .bottom)
-            #endif
+            dayPager
         }
-        .background(Color(uiColor: .systemBackground))
         .refreshableIfAvailable { await store.resyncCalendar(reason: .pull) }
+    }
+
+    @ViewBuilder private var dayPager: some View {
+        #if os(macOS)
+        // The Mac has no swipe pager (and the TabView fallback painted
+        // phantom scrollers); the strip's arrows and cells drive the day.
+        dayTimeline(for: selectedDay)
+            .id(selectedDay)
+        #else
+        TabView(selection: dayBinding) {
+            ForEach(dayRange, id: \.self) { day in
+                dayTimeline(for: day)
+                    .tag(day)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .ignoresSafeArea(edges: .bottom)
+        #endif
+    }
+
+    private func dayTimeline(for day: Date) -> some View {
+        DayTimelineView(
+            day: day,
+            events: timedEvents(on: day),
+            allDayEvents: allDayEvents(on: day),
+            tasks: dueTasks(on: day),
+            colors: colors,
+            onOpen: { environment.navigation.openEvent($0) },
+            onOpenTask: { openTask = $0 },
+            onReschedule: { event, start, end in
+                Task { await store.rescheduleEvent(event, start: start, end: end) }
+            },
+            onCreate: { start in newEventSlot = NewEventSlot(start: start) }
+        )
     }
 
     #if os(macOS)
@@ -213,7 +249,7 @@ struct CalendarView: View {
             weekStepButton(direction: 1, symbol: "chevron.right", label: "Next week")
         }
         .padding(.horizontal, 10)
-        .frame(height: 74)
+        .padding(.vertical, 6)
     }
 
     private func weekStepButton(direction: Int, symbol: String, label: String) -> some View {
@@ -246,38 +282,26 @@ struct CalendarView: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .frame(height: 74)
+        .frame(height: weekStripHeight)
     }
+
+    @ScaledMetric(relativeTo: .body) private var weekStripHeight: CGFloat = 78
     #endif
 
     private func dayCell(_ day: Date) -> some View {
         let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
         let isToday = calendar.isDateInToday(day)
-        let hasEvents = !timedEvents(on: day).isEmpty
-            || !allDayEvents(on: day).isEmpty
-            || !dueTasks(on: day).isEmpty
+        let hasEntries = dayIndex.hasEntries(on: day)
         return Button {
             select(day: day)
         } label: {
-            VStack(spacing: 5) {
+            VStack(spacing: 4) {
                 Text(day.formatted(.dateTime.weekday(.narrow)))
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
-                Text(day.formatted(.dateTime.day()))
-                    .font(.callout.weight(isSelected || isToday ? .semibold : .regular))
-                    .foregroundStyle(
-                        isSelected
-                            ? Color(uiColor: .systemBackground)
-                            : (isToday ? environment.theme.accentColor : .primary)
-                    )
-                    .frame(width: 34, height: 34)
-                    .background {
-                        if isSelected {
-                            Circle().fill(environment.theme.accentColor)
-                        }
-                    }
+                DayNumeral(text: day.formatted(.dateTime.day()), isToday: isToday, isSelected: isSelected)
                 Circle()
-                    .fill(hasEvents ? environment.theme.accent2Color : .clear)
+                    .fill(hasEntries ? environment.theme.accentColor.opacity(0.55) : .clear)
                     .frame(width: 4, height: 4)
             }
             .frame(maxWidth: .infinity)
@@ -285,6 +309,7 @@ struct CalendarView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(day.formatted(date: .complete, time: .omitted))
+        .accessibilityValue(hasEntries ? "Has entries" : "")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
@@ -298,15 +323,14 @@ struct CalendarView: View {
         }
     }
 
-    // Month and year both print their period inside the scroll — the month name
-    // above each month, the numeral above each year — so the bar states only
-    // what the page itself does not.
     private var navigationTitleText: String {
-        switch viewMode {
-        case "year": ""
-        case "month": (visibleMonth ?? selectedDay).formatted(.dateTime.year())
-        default: monthTitle
-        }
+        CalendarTitle.text(
+            mode: viewMode,
+            visibleMonth: visibleMonth,
+            visibleYear: visibleYear,
+            selectedDay: selectedDay,
+            calendar: calendar
+        )
     }
 
     // In the scrolling modes the offer to return is about where the scroll has
@@ -325,6 +349,23 @@ struct CalendarView: View {
 
     // MARK: - Week mode
 
+    private func weekTimeline(for weekStart: Date) -> some View {
+        WeekTimelineView(
+            weekStart: weekStart,
+            index: dayIndex,
+            selectedDay: selectedDay,
+            colors: colors,
+            onOpen: { environment.navigation.openEvent($0) },
+            onOpenTask: { openTask = $0 },
+            onSelectDay: { day in select(day: day) },
+            onOpenDay: { day in
+                select(day: day)
+                viewMode = "day"
+            },
+            onCreate: { start in newEventSlot = NewEventSlot(start: start) }
+        )
+    }
+
     #if os(macOS)
     private var weekBody: some View {
         VStack(spacing: 0) {
@@ -335,47 +376,23 @@ struct CalendarView: View {
             }
             .padding(.horizontal, 10)
             .frame(height: 34)
-            WeekTimelineView(
-                weekStart: weekPage,
-                index: dayIndex,
-                selectedDay: selectedDay,
-                onOpen: { environment.navigation.openEvent($0) },
-                onOpenTask: { openTask = $0 },
-                onSelectDay: { day in select(day: day) },
-                onOpenDay: { day in
-                    select(day: day)
-                    viewMode = "day"
-                }
-            )
-            .id(weekPage)
+            weekTimeline(for: weekPage)
+                .id(weekPage)
         }
-        .background(Color(uiColor: .systemBackground))
     }
     #else
     private var weekBody: some View {
         TabView(selection: weekBinding) {
             ForEach(weekRange, id: \.self) { weekStart in
-                WeekTimelineView(
-                    weekStart: weekStart,
-                    index: dayIndex,
-                    selectedDay: selectedDay,
-                    onOpen: { environment.navigation.openEvent($0) },
-                    onOpenTask: { openTask = $0 },
-                    onSelectDay: { day in select(day: day) },
-                    onOpenDay: { day in
-                        select(day: day)
-                        viewMode = "day"
-                    }
-                )
-                // A page that only asks for the height of its content gets
-                // centred by the pager, which is what left the week hanging in
-                // the middle of the screen with its early hours cut off.
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .tag(weekStart)
+                weekTimeline(for: weekStart)
+                    // A page that only asks for the height of its content gets
+                    // centred by the pager, which left the week hanging in the
+                    // middle of the screen with its early hours cut off.
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .tag(weekStart)
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .background(Color(uiColor: .systemBackground))
     }
     #endif
 
@@ -387,6 +404,7 @@ struct CalendarView: View {
         #elseif os(macOS)
         MacMonthGridView(
             index: dayIndex,
+            colors: colors,
             selectedDay: selectedDay,
             onSelectDay: { day in select(day: day) },
             onOpenDay: { day in
@@ -396,7 +414,6 @@ struct CalendarView: View {
             onVisibleMonthChange: { visibleMonth = $0 },
             todayToken: todayToken
         )
-        .background(Color(uiColor: .systemBackground))
         #else
         agendaBody
         #endif
@@ -406,6 +423,7 @@ struct CalendarView: View {
     private var horizonMonthBody: some View {
         HorizonMonthView(
             index: dayIndex,
+            colors: colors,
             selectedDay: selectedDay,
             onSelectDay: { day in
                 select(day: day)
@@ -414,7 +432,6 @@ struct CalendarView: View {
             onVisibleMonthChange: { visibleMonth = $0 },
             todayToken: todayToken
         )
-        .background(Color(uiColor: .systemBackground))
     }
     #endif
 
@@ -434,7 +451,6 @@ struct CalendarView: View {
             onVisibleYearChange: { visibleYear = $0 },
             todayToken: todayToken
         )
-        .background(Color(uiColor: .systemBackground))
     }
 
     // MARK: - Agenda mode
@@ -448,7 +464,7 @@ struct CalendarView: View {
     }
 
     @ViewBuilder private var agendaBody: some View {
-        if store.events.isEmpty, store.dueCalendarTasks.isEmpty {
+        if visibleEvents.isEmpty, store.dueCalendarTasks.isEmpty {
             emptyOrErrorState
         } else {
             ScrollViewReader { proxy in
@@ -470,43 +486,52 @@ struct CalendarView: View {
     }
 
     private var agendaList: some View {
-            List {
-                if let error = store.calendarError {
-                    Section {
-                        CalendarNotice(message: error) {
-                            Task { await store.resyncCalendar(reason: .manualHTTP) }
-                        }
+        List {
+            if let error = store.calendarError {
+                Section {
+                    CalendarNotice(message: error) {
+                        Task { await store.resyncCalendar(reason: .manualHTTP) }
                     }
-                }
-                ForEach(groupedDates, id: \.0) { day, events, tasks in
-                    Section(sectionTitle(day)) {
-                        ForEach(events) { event in
-                            Button { environment.navigation.openEvent(event) } label: {
-                                EventRow(event: event)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        ForEach(tasks) { task in
-                            Button { openTask = task } label: {
-                                HStack {
-                                    Image(systemName: task.completed ? "checkmark.circle.fill" : "checklist")
-                                        .foregroundStyle(environment.theme.accentColor)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(task.title)
-                                            .foregroundStyle(.primary)
-                                        Text("Task due \(task.due?.formatted(date: .omitted, time: .shortened) ?? "")")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .id(day)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
                 }
             }
-            .refreshable { await store.resyncCalendar(reason: .pull) }
+            ForEach(groupedDates, id: \.0) { day, events, tasks in
+                Section(sectionTitle(day)) {
+                    ForEach(events) { event in
+                        Button { environment.navigation.openEvent(event) } label: {
+                            EventRow(event: event)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    ForEach(tasks) { task in
+                        Button { openTask = task } label: {
+                            agendaTaskRow(task)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .id(day)
+            }
+        }
+        .refreshable { await store.resyncCalendar(reason: .pull) }
+    }
+
+    private func agendaTaskRow(_ task: TaskSummary) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(task.title)
+                .foregroundStyle(task.completed ? .secondary : .primary)
+                .strikethrough(task.completed)
+            Text(agendaTaskDetail(task))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func agendaTaskDetail(_ task: TaskSummary) -> String {
+        guard let due = task.due else { return "Task" }
+        return "Task, due \(due.formatted(date: .omitted, time: .shortened))"
     }
 
     @ViewBuilder private var emptyOrErrorState: some View {
@@ -515,7 +540,7 @@ struct CalendarView: View {
                 ProgressView("Loading your calendar…")
             } else if let error = store.calendarError {
                 ContentUnavailableView {
-                    Label("Couldn’t load your calendar", systemImage: "calendar.badge.exclamationmark")
+                    Label("Could not load your calendar", systemImage: "calendar.badge.exclamationmark")
                 } description: {
                     Text(error)
                 } actions: {
@@ -541,11 +566,13 @@ struct CalendarView: View {
                     .buttonStyle(.borderedProminent)
             }
         } else {
-            ContentUnavailableView(
-                "No upcoming events",
-                systemImage: "calendar",
-                description: Text("Nothing scheduled in the next 30 days.")
-            )
+            ContentUnavailableView {
+                Label("No upcoming events", systemImage: "calendar")
+            } description: {
+                Text("Nothing is scheduled in the next 30 days.")
+            } actions: {
+                Button("New event") { showsNewEvent = true }
+            }
         }
     }
 
@@ -606,10 +633,6 @@ struct CalendarView: View {
         }
     }
 
-    private var monthTitle: String {
-        selectedDay.formatted(.dateTime.month(.wide).year())
-    }
-
     private var freshnessSubtitle: String {
         CalendarFreshness.subtitle(state: store.calendarSync, now: freshnessClock)
     }
@@ -623,7 +646,7 @@ struct CalendarView: View {
 
     private func rebuildDayIndex() {
         dayIndex = CalendarDayIndex(
-            events: store.events,
+            events: visibleEvents,
             tasks: store.dueCalendarTasks,
             calendar: calendar,
             revision: dayIndex.revision + 1
@@ -643,7 +666,7 @@ struct CalendarView: View {
     }
 
     private var groupedDates: [(Date, [CalendarEventSummary], [TaskSummary])] {
-        let eventGroups = Dictionary(grouping: store.events) { calendar.startOfDay(for: $0.start) }
+        let eventGroups = Dictionary(grouping: visibleEvents) { calendar.startOfDay(for: $0.start) }
         let taskGroups = Dictionary(grouping: store.dueCalendarTasks) {
             calendar.startOfDay(for: $0.due ?? .distantFuture)
         }
@@ -664,6 +687,26 @@ struct CalendarView: View {
     }
 }
 
+// The bar title in the two product voices. iOS draws it as the principal
+// item; the Mac keeps the system title and subtitle, which its toolbar and
+// the sync caption are built around.
+private struct CalendarTitleChrome: ViewModifier {
+    let title: String
+    let dateline: String
+
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content.navigationSubtitle(dateline)
+        #else
+        content.toolbar {
+            ToolbarItem(placement: .principal) {
+                CalendarBarTitle(title: title, dateline: dateline)
+            }
+        }
+        #endif
+    }
+}
+
 // A pull-to-refresh that composes onto non-List containers.
 private extension View {
     func refreshableIfAvailable(_ action: @escaping @Sendable () async -> Void) -> some View {
@@ -678,619 +721,5 @@ private extension View {
         #else
         self
         #endif
-    }
-}
-
-// MARK: - Day timeline
-
-private struct DayTimelineView: View {
-    let day: Date
-    let events: [CalendarEventSummary]
-    let allDayEvents: [CalendarEventSummary]
-    let tasks: [TaskSummary]
-    let onOpen: (CalendarEventSummary) -> Void
-    let onOpenTask: (TaskSummary) -> Void
-    let onReschedule: (CalendarEventSummary, Date, Date) -> Void
-
-    @Environment(AppEnvironment.self) private var environment
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
-    private static let hourHeight: CGFloat = 58
-    private static let gutter: CGFloat = 54
-
-    private var calendar: Calendar { .autoupdatingCurrent }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if !allDayEvents.isEmpty || !tasks.isEmpty {
-                allDayLane
-                Divider()
-            }
-            ScrollViewReader { proxy in
-                ScrollView {
-                    timeline
-                        .padding(.bottom, 24)
-                }
-                .onAppear { scrollToStart(proxy) }
-                .onChange(of: day) { scrollToStart(proxy) }
-            }
-        }
-    }
-
-    private var allDayLane: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(allDayEvents) { event in
-                    Button {
-                        onOpen(event)
-                    } label: {
-                        Text(event.title)
-                            .font(.caption.weight(.medium))
-                            .lineLimit(1)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                environment.theme.accent2Color.opacity(0.16),
-                                in: Capsule()
-                            )
-                            .foregroundStyle(.primary)
-                    }
-                    .buttonStyle(.plain)
-                }
-                ForEach(tasks) { task in
-                    Button {
-                        onOpenTask(task)
-                    } label: {
-                        Label(task.title, systemImage: task.completed ? "checkmark.circle.fill" : "checklist")
-                            .font(.caption.weight(.medium))
-                            .lineLimit(1)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                environment.theme.accentColor.opacity(0.14),
-                                in: Capsule()
-                            )
-                            .foregroundStyle(.primary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Opens task, not calendar event")
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
-    }
-
-    private var timeline: some View {
-        GeometryReader { geometry in
-            let laneWidth = geometry.size.width - Self.gutter - 12
-            ZStack(alignment: .topLeading) {
-                hourGrid
-                ForEach(placements) { placement in
-                    eventBlock(placement, laneWidth: laneWidth)
-                }
-                if calendar.isDateInToday(day) {
-                    nowLine(width: geometry.size.width)
-                }
-            }
-        }
-        .frame(height: Self.hourHeight * 24)
-    }
-
-    private var hourGrid: some View {
-        VStack(spacing: 0) {
-            ForEach(0..<24, id: \.self) { hour in
-                HStack(alignment: .top, spacing: 8) {
-                    Text(hourLabel(hour))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .frame(width: Self.gutter - 12, alignment: .trailing)
-                        .offset(y: -5)
-                    VStack { Divider() }
-                }
-                .frame(height: Self.hourHeight, alignment: .top)
-                .id(hour)
-            }
-        }
-    }
-
-    private func eventBlock(_ placement: TimelineLayout.Placement, laneWidth: CGFloat) -> some View {
-        let event = placement.event
-        let frame = blockFrame(placement)
-        let width = max(44, laneWidth / CGFloat(placement.laneCount) - 3)
-        let accent = environment.theme.accentColor
-        let isPending = environment.store.isPendingServerCopy(event)
-        return Button {
-            onOpen(event)
-        } label: {
-            HStack(alignment: .top, spacing: 0) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(accent)
-                    .frame(width: 3)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(event.title)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(frame.height > 40 ? 2 : 1)
-                    if frame.height > 30 {
-                        Text(timeRange(event))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    if let location = event.location, frame.height > 58 {
-                        Text(location)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                Spacer(minLength: 0)
-            }
-            .frame(width: width, height: frame.height, alignment: .topLeading)
-            .background(accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .pendingServerCopyBorder(isPending, accent: accent, cornerRadius: 6)
-            .overlay(alignment: .bottomTrailing) {
-                Capsule()
-                    .fill(accent.opacity(0.8))
-                    .frame(width: 22, height: 4)
-                    .padding(4)
-                    .opacity(horizontalSizeClass == .regular ? 1 : 0)
-                    .gesture(
-                        DragGesture(minimumDistance: 4)
-                            .onEnded { value in
-                                let minutes = Int(value.translation.height / Self.hourHeight * 60)
-                                    .roundedToMultiple(15)
-                                guard minutes != 0 else { return }
-                                let end = max(
-                                    event.start.addingTimeInterval(15 * 60),
-                                    event.end.addingTimeInterval(TimeInterval(minutes * 60))
-                                )
-                                onReschedule(event, event.start, end)
-                                PlatformHaptics.lightImpact()
-                                PlatformAccessibility.announce(
-                                    "Ends at \(end.formatted(date: .omitted, time: .shortened))"
-                                )
-                            },
-                        isEnabled: horizontalSizeClass == .regular
-                    )
-                    .accessibilityLabel("Resize event")
-            }
-            .clipped()
-        }
-        .buttonStyle(.plain)
-        .gesture(
-            DragGesture(minimumDistance: 8)
-                .onEnded { value in
-                    let minutes = Int(value.translation.height / Self.hourHeight * 60).roundedToMultiple(15)
-                    guard minutes != 0 else { return }
-                    let start = event.start.addingTimeInterval(TimeInterval(minutes * 60))
-                    let end = event.end.addingTimeInterval(TimeInterval(minutes * 60))
-                    onReschedule(event, start, end)
-                    PlatformHaptics.lightImpact()
-                    PlatformAccessibility.announce(
-                        "Moved to \(start.formatted(date: .omitted, time: .shortened))"
-                    )
-                },
-            isEnabled: horizontalSizeClass == .regular
-        )
-        .offset(
-            x: Self.gutter + (laneWidth / CGFloat(placement.laneCount)) * CGFloat(placement.lane),
-            y: frame.y
-        )
-        .accessibilityLabel("\(event.title), \(timeRange(event))")
-    }
-
-    private func nowLine(width: CGFloat) -> some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let minutes = minutesIntoDay(context.date)
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(.red)
-                    .frame(width: 7, height: 7)
-                Rectangle()
-                    .fill(.red)
-                    .frame(height: 1)
-            }
-            .frame(width: width - Self.gutter + 10)
-            .offset(x: Self.gutter - 10, y: CGFloat(minutes) / 60 * Self.hourHeight - 3.5)
-            .accessibilityHidden(true)
-        }
-    }
-
-    // MARK: - Geometry
-
-    private var placements: [TimelineLayout.Placement] {
-        TimelineLayout.place(events, on: day, calendar: calendar)
-    }
-
-    private func blockFrame(_ placement: TimelineLayout.Placement) -> (y: CGFloat, height: CGFloat) {
-        let y = CGFloat(placement.startMinutes) / 60 * Self.hourHeight
-        let height = max(
-            26,
-            CGFloat(placement.endMinutes - placement.startMinutes) / 60 * Self.hourHeight - 2
-        )
-        return (y, height)
-    }
-
-    private func minutesIntoDay(_ date: Date) -> Int {
-        TimelineLayout.wallClockMinutes(of: date, on: day, calendar: calendar)
-    }
-
-    private func scrollToStart(_ proxy: ScrollViewProxy) {
-        let target: Int
-        if calendar.isDateInToday(day) {
-            target = max(0, calendar.component(.hour, from: .now) - 1)
-        } else if let first = events.first(where: { calendar.isDate($0.start, inSameDayAs: day) }) {
-            target = max(0, calendar.component(.hour, from: first.start) - 1)
-        } else {
-            target = 8
-        }
-        proxy.scrollTo(target, anchor: .top)
-    }
-
-    private func hourLabel(_ hour: Int) -> String {
-        let date = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: day) ?? day
-        return date.formatted(.dateTime.hour())
-    }
-
-    private func timeRange(_ event: CalendarEventSummary) -> String {
-        "\(event.start.formatted(date: .omitted, time: .shortened)) – \(event.end.formatted(date: .omitted, time: .shortened))"
-    }
-}
-
-private extension Int {
-    func roundedToMultiple(_ multiple: Int) -> Int {
-        guard multiple > 0 else { return self }
-        return Int((Double(self) / Double(multiple)).rounded()) * multiple
-    }
-}
-
-// MARK: - Week timeline (7 columns over one hour axis)
-
-private struct WeekTimelineView: View {
-    let weekStart: Date
-    let index: CalendarDayIndex
-    let selectedDay: Date
-    let onOpen: (CalendarEventSummary) -> Void
-    let onOpenTask: (TaskSummary) -> Void
-    let onSelectDay: (Date) -> Void
-    let onOpenDay: (Date) -> Void
-
-    @Environment(AppEnvironment.self) private var environment
-
-    private static let hourHeight: CGFloat = 52
-    private static let gutter: CGFloat = 42
-    private static let allDayChipLimit = 2
-
-    private var calendar: Calendar { .autoupdatingCurrent }
-    private var days: [Date] {
-        (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: weekStart) }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            if hasAllDayEntries {
-                Divider()
-                allDayLane
-            }
-            Divider()
-            ScrollViewReader { proxy in
-                ScrollView {
-                    grid.padding(.bottom, 24)
-                }
-                .onAppear { proxy.scrollTo(scrollTarget, anchor: .top) }
-                .onChange(of: weekStart) { proxy.scrollTo(scrollTarget, anchor: .top) }
-            }
-        }
-        // Without this the pager centres a page that asked only for the height
-        // of its content, and the timeline floats away from the header.
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack(spacing: 0) {
-            ForEach(days, id: \.self) { day in
-                dayHeading(day)
-            }
-        }
-        // The hour gutter is reserved with padding, not with a spacer view.
-        // `Color.clear.frame(width:)` leaves the height unconstrained, so it
-        // grew to fill the page and split the space with the timeline below —
-        // which is what left the week's header stranded halfway down the
-        // screen with its morning hours scrolled out of reach.
-        .padding(.leading, Self.gutter)
-        .padding(.bottom, 6)
-    }
-
-    private func dayHeading(_ day: Date) -> some View {
-        let isToday = calendar.isDateInToday(day)
-        let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
-        return Button {
-            // The first tap moves the week's selection; tapping the day that is
-            // already selected is what opens it, so the header stays a scanning
-            // surface rather than a trapdoor.
-            if isSelected { onOpenDay(day) } else { onSelectDay(day) }
-        } label: {
-            VStack(spacing: 3) {
-                Text(day.formatted(.dateTime.weekday(.narrow)))
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Text(day.formatted(.dateTime.day()))
-                    .font(.system(size: 15, weight: isToday || isSelected ? .semibold : .regular))
-                    .foregroundStyle(isToday ? Color(uiColor: .systemBackground) : .primary)
-                    .frame(width: 26, height: 26)
-                    .background {
-                        if isToday {
-                            Circle().fill(environment.theme.accentColor)
-                        } else if isSelected {
-                            Circle().fill(environment.theme.accentSoftColor)
-                        }
-                    }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 6)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(day.formatted(date: .complete, time: .omitted))
-        .accessibilityHint(isSelected ? "Opens the day" : "Selects the day")
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-    }
-
-    // MARK: - All-day lane
-
-    private var hasAllDayEntries: Bool {
-        days.contains { !allDayEntries(on: $0).chips.isEmpty }
-    }
-
-    private var allDayLane: some View {
-        HStack(alignment: .top, spacing: 0) {
-            Text("all-day")
-                .font(.system(size: 9))
-                .foregroundStyle(.tertiary)
-                .frame(width: Self.gutter - 6, alignment: .trailing)
-                .padding(.trailing, 6)
-                .padding(.top, 3)
-            ForEach(days, id: \.self) { day in
-                let content = allDayEntries(on: day)
-                VStack(spacing: 1) {
-                    ForEach(content.chips) { chip in
-                        allDayChip(chip, day: day)
-                    }
-                    if content.overflow > 0 {
-                        Text("+\(content.overflow)")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .top)
-                .padding(.horizontal, 1)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func allDayChip(_ chip: DayChips.Chip, day: Date) -> some View {
-        let tint = chip.kind == .task
-            ? environment.theme.accentColor
-            : environment.theme.avatarColor(seed: chip.seed)
-        return Button {
-            open(chip, on: day)
-        } label: {
-            Text(chip.title)
-                .font(.system(size: 9, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 3)
-                .padding(.vertical, 1)
-                .background(tint.opacity(0.2), in: RoundedRectangle(cornerRadius: 3, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func open(_ chip: DayChips.Chip, on day: Date) {
-        if chip.kind == .task {
-            if let task = dueTasks(on: day).first(where: { "task:" + $0.id == chip.id }) {
-                onOpenTask(task)
-            }
-        } else if let event = allDay(on: day).first(where: { CalendarGrid.entityKey(for: $0) == chip.id }) {
-            onOpen(event)
-        }
-    }
-
-    private func allDayEntries(on day: Date) -> (chips: [DayChips.Chip], overflow: Int) {
-        DayChips.make(events: allDay(on: day), tasks: dueTasks(on: day), limit: Self.allDayChipLimit)
-    }
-
-    // MARK: - Grid
-
-    private var grid: some View {
-        GeometryReader { geometry in
-            let columnWidth = (geometry.size.width - Self.gutter) / 7
-            ZStack(alignment: .topLeading) {
-                hourRows
-                columnRules(columnWidth: columnWidth, height: Self.hourHeight * 24)
-                if let index = days.firstIndex(where: { calendar.isDate($0, inSameDayAs: selectedDay) }) {
-                    Rectangle()
-                        .fill(environment.theme.accentSoftColor.opacity(0.5))
-                        .frame(width: columnWidth, height: Self.hourHeight * 24)
-                        .offset(x: Self.gutter + CGFloat(index) * columnWidth)
-                        .allowsHitTesting(false)
-                }
-                ForEach(Array(days.enumerated()), id: \.element) { index, day in
-                    ForEach(TimelineLayout.place(timed(on: day), on: day, calendar: calendar)) { placement in
-                        block(placement, columnIndex: index, columnWidth: columnWidth)
-                    }
-                }
-                nowLine(columnWidth: columnWidth)
-            }
-        }
-        .frame(height: Self.hourHeight * 24)
-    }
-
-    private var hourRows: some View {
-        VStack(spacing: 0) {
-            ForEach(0..<24, id: \.self) { hour in
-                HStack(alignment: .top, spacing: 6) {
-                    Text(shortHour(hour))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                        .frame(width: Self.gutter - 12, alignment: .trailing)
-                        .offset(y: -5)
-                    VStack { Divider() }
-                }
-                .frame(height: Self.hourHeight, alignment: .top)
-                .id(hour)
-            }
-        }
-    }
-
-    // Faint verticals keep a block readable as belonging to its day when the
-    // week is dense; the hour rules alone are not enough at this column width.
-    private func columnRules(columnWidth: CGFloat, height: CGFloat) -> some View {
-        ForEach(1..<7, id: \.self) { index in
-            Rectangle()
-                .fill(environment.theme.hairlineColor)
-                .frame(width: 0.5, height: height)
-                .offset(x: Self.gutter + CGFloat(index) * columnWidth)
-        }
-        .allowsHitTesting(false)
-    }
-
-    @ViewBuilder private func nowLine(columnWidth: CGFloat) -> some View {
-        if let todayIndex = days.firstIndex(where: { calendar.isDateInToday($0) }) {
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                let minutes = calendar.component(.hour, from: context.date) * 60
-                    + calendar.component(.minute, from: context.date)
-                HStack(spacing: 0) {
-                    Circle()
-                        .fill(.red)
-                        .frame(width: 6, height: 6)
-                    Rectangle()
-                        .fill(.red)
-                        .frame(height: 1.5)
-                }
-                .frame(width: columnWidth)
-                .offset(
-                    x: Self.gutter + CGFloat(todayIndex) * columnWidth,
-                    y: CGFloat(minutes) / 60 * Self.hourHeight - 3
-                )
-                .accessibilityHidden(true)
-            }
-        }
-    }
-
-    private func block(
-        _ placement: TimelineLayout.Placement,
-        columnIndex: Int,
-        columnWidth: CGFloat
-    ) -> some View {
-        let event = placement.event
-        let y = CGFloat(placement.startMinutes) / 60 * Self.hourHeight
-        let height = max(
-            16,
-            CGFloat(placement.endMinutes - placement.startMinutes) / 60 * Self.hourHeight - 1
-        )
-        let laneWidth = (columnWidth - 2) / CGFloat(placement.laneCount)
-        let tint = environment.theme.avatarColor(seed: DayChips.seed(for: event))
-        let isPending = environment.store.isPendingServerCopy(event)
-        return Button {
-            onOpen(event)
-        } label: {
-            Text(event.title)
-                .font(.system(size: 9, weight: .semibold))
-                .lineLimit(height > 30 ? 3 : 1)
-                .multilineTextAlignment(.leading)
-                .padding(.horizontal, 3)
-                .padding(.vertical, 1)
-                .frame(width: max(10, laneWidth - 1), height: height, alignment: .topLeading)
-                .background(tint.opacity(0.2), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                .pendingServerCopyBorder(isPending, accent: tint, cornerRadius: 4)
-                .overlay(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 1).fill(tint).frame(width: 2)
-                }
-                .clipped()
-        }
-        .buttonStyle(.plain)
-        .offset(
-            x: Self.gutter + CGFloat(columnIndex) * columnWidth + 1 + laneWidth * CGFloat(placement.lane),
-            y: y
-        )
-        .accessibilityLabel("\(event.title), \(event.start.formatted(date: .abbreviated, time: .shortened))")
-    }
-
-    // MARK: - Data
-
-    // Open on the first hour that carries something, so a week whose work
-    // starts at seven is not scrolled past and one that starts at ten does not
-    // open on empty grid.
-    private var scrollTarget: Int {
-        if days.contains(where: { calendar.isDateInToday($0) }) {
-            return max(0, calendar.component(.hour, from: .now) - 1)
-        }
-        let starts = days.flatMap { timed(on: $0) }.map { calendar.component(.hour, from: $0.start) }
-        guard let earliest = starts.min() else { return 8 }
-        return max(0, earliest - 1)
-    }
-
-    private func timed(on day: Date) -> [CalendarEventSummary] {
-        index.timed(on: day)
-    }
-
-    private func allDay(on day: Date) -> [CalendarEventSummary] {
-        index.allDay(on: day)
-    }
-
-    private func dueTasks(on day: Date) -> [TaskSummary] {
-        index.tasks(on: day)
-    }
-
-    private func shortHour(_ hour: Int) -> String {
-        let date = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: weekStart) ?? weekStart
-        return date.formatted(.dateTime.hour())
-    }
-}
-
-// A new event wears a dashed 1 pt border until the server copy lands. The
-// border then cross-fades away and the solid block remains.
-private extension View {
-    func pendingServerCopyBorder(_ isPending: Bool, accent: Color, cornerRadius: CGFloat) -> some View {
-        overlay {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(accent, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                .opacity(isPending ? 1 : 0)
-        }
-        .animation(.easeInOut(duration: 0.18), value: isPending)
-    }
-}
-
-struct CalendarNotice: View {
-    let message: String
-    let onSync: () -> Void
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Sync now", action: onSync)
-                    .font(.caption.weight(.medium))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tint)
-            }
-        }
-        .accessibilityElement(children: .combine)
     }
 }

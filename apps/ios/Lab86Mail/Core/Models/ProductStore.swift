@@ -116,9 +116,7 @@ final class ProductStore {
     var taskBoards: [TaskBoardSummary] = []
     var activeBoardID: String? = UserDefaults.standard.string(forKey: "albatross.tasks.active-board")
     var taskColumnRows: [TaskColumnSummary] = []
-    var taskBoardMembers: [TaskBoardMember] = []
     var taskBoardRole = "viewer"
-    var taskPublicToken: String?
     var projects: [ProjectSummary] = []
     // Project panes keyed by project id — linked tasks, loading, error, and
     // freshness — so the project surface reads store state instead of holding
@@ -161,6 +159,9 @@ final class ProductStore {
     // time of each event that still waits for its server copy.
     var calendarSync = CalendarSyncState()
     private var calendarSyncFollowTask: Task<Void, Never>?
+    // A follow that a newer follow replaced must not reset the newer one's
+    // phase when it ends (Cal1).
+    private var calendarFollowGeneration = 0
     private(set) var pendingCalendarEventCreations: [String: Date] = [:]
     var briefError: String?
     var taskError: String?
@@ -178,7 +179,40 @@ final class ProductStore {
     // not "nothing here", and the pages show a loading state.
     var mailDidLoad = false
     var briefDidLoad = false
+    // Approvals, suggestions, and the check-in are one read. A failure there
+    // shows on Today, not in the app-wide alert (K11).
+    var todayError: String?
     var lastRefresh: Date?
+    // When each domain last read with success. A push refreshes only the
+    // domain it names, and skips it while the app is active and the read is
+    // this fresh (K2).
+    private(set) var domainRefreshedAt: [ProductDomain: Date] = [:]
+    /// How fresh a domain read must be for a push to skip it.
+    var pushFreshnessWindow: TimeInterval = 60
+    // Overlapping mail refreshes: only the newest one writes the list (K10).
+    private var mailRefreshGeneration = 0
+    // One cache write after a burst of loaders, not one per loader (K8).
+    private var cacheWriteTask: Task<Void, Never>?
+    var cacheWriteDelay: Duration = .seconds(2)
+    // Spotlight updates run in order, off the loaders' path (K4).
+    private var spotlightTask: Task<Void, Never>?
+    // The 20 most recent opened details of each kind stay in memory and in
+    // the cache (K8).
+    private var recentAreaDetailKeys = RecentKeys()
+    private var recentWorkDetailKeys = RecentKeys()
+    // The Past briefs sheet: a failed list read is not an empty list. The
+    // brief page does not show this failure.
+    var historyError: String?
+    var historyDidLoad = false
+    // The generation time of the edition `latestDailyReportID` names, so a
+    // selected newer edition can take the latest mark (B3).
+    private var latestDailyReportGeneratedAt: Date?
+    // When the calendar mirror was last read; a view open re-reads a copy
+    // older than two minutes (Cal3).
+    private var calendarReadAt: Date?
+    var calendarMirrorMaxAge: TimeInterval = 120
+    // An area refresh monitor that never hears "done" ends here (W4).
+    var areaRefreshTimeout: Duration = .seconds(180)
     var undoNotice: UndoableOperationNotice?
     var areaRefreshStates: [String: AreaRefreshState] = [:]
     // Immediate/offline read cache of opened area homes, keyed by area id. Never
@@ -221,6 +255,8 @@ final class ProductStore {
     func bootstrap(cacheOwner: String? = nil) async {
         guard !isLoading else { return }
         if let cacheOwner, self.cacheOwner != cacheOwner {
+            // Another owner's data must not read as loaded for this one.
+            if self.cacheOwner != nil { resetLoadFlags() }
             self.cacheOwner = cacheOwner
             await restoreCache(owner: cacheOwner)
         }
@@ -230,18 +266,94 @@ final class ProductStore {
             lastRefresh = .now
         }
         errorMessage = nil
-        await refreshMail()
-        await refreshToday()
-        await refreshWork()
-        await persistCache()
+        // The brief starts first, and nothing waits behind anything else: the
+        // reads are independent, so they run at once (K4). One cache write
+        // ends the pass.
+        async let brief: Void = refreshBrief()
+        async let mail: Void = refreshMail()
+        async let today: Void = refreshToday(includingBrief: false)
+        async let work: Void = refreshWork()
+        _ = await (brief, mail, today, work)
+        await flushCacheWrite()
         startLiveMail()
     }
 
+    /// A return to the foreground reads again when the data is older than
+    /// `maxAge` or from another day (K3). The domains read at once. True
+    /// when a refresh ran.
+    @discardableResult
+    func refreshIfStale(maxAge: TimeInterval = RefreshStaleness.defaultMaxAge, now: Date = .now) async -> Bool {
+        guard !isLoading else { return false }
+        guard RefreshStaleness.isStale(lastRefresh: lastRefresh, now: now, maxAge: maxAge) else { return false }
+        await refreshDomains(Set(ProductDomain.allCases))
+        return true
+    }
+
+    /// What a push asks for (K2): the domains it names, minus the ones read
+    /// within `pushFreshnessWindow` while the app is active. A wake that
+    /// names no domain refreshes only what is stale.
+    func refresh(for plan: RemoteRefreshPlan, appIsActive: Bool, now: Date = .now) async {
+        if plan.isUnspecific {
+            await refreshIfStale(now: now)
+            return
+        }
+        let due = plan.due(
+            refreshedAt: domainRefreshedAt,
+            appIsActive: appIsActive,
+            now: now,
+            window: pushFreshnessWindow
+        )
+        await refreshDomains(due)
+    }
+
+    /// Reads the given domains at once, then asks for one cache write.
+    /// `lastRefresh` moves when every domain was read.
+    func refreshDomains(_ domains: Set<ProductDomain>) async {
+        guard !domains.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            for domain in domains {
+                group.addTask { await self.refresh(domain) }
+            }
+        }
+        if domains == Set(ProductDomain.allCases) { lastRefresh = .now }
+        scheduleCacheWrite()
+    }
+
+    private func refresh(_ domain: ProductDomain) async {
+        switch domain {
+        case .mail: await refreshMail()
+        case .calendar: await refreshCalendar()
+        case .tasks: await refreshTasks()
+        case .activity: await refreshActivity()
+        case .brief: await refreshBrief()
+        case .work: await refreshWork()
+        }
+    }
+
+    private func noteRefreshed(_ domain: ProductDomain) {
+        domainRefreshedAt[domain] = .now
+    }
+
+    private func resetLoadFlags() {
+        mailDidLoad = false
+        briefDidLoad = false
+        workDidLoad = false
+        tasksDidLoad = false
+        calendarDidLoad = false
+        snoozedDidLoad = false
+        domainRefreshedAt = [:]
+    }
+
     func refreshMail() async {
+        // Only the newest refresh writes the list; an older response that
+        // ends late is dropped (K10).
+        mailRefreshGeneration += 1
+        let generation = mailRefreshGeneration
         mailErrorMessage = nil
         defer { mailDidLoad = true }
         do {
             let result = try await tools.invoke("list_accounts")
+            guard generation == mailRefreshGeneration else { return }
             let listed = (result["accounts"]?.arrayValue ?? []).compactMap(AccountSummary.init)
             // A mailbox that needs to reconnect is not a mail account until
             // it does; it is listed apart so Mail can say so.
@@ -249,6 +361,7 @@ final class ProductStore {
             accounts = refreshedAccounts
             reconnectAccounts = listed.filter(\.needsReconnect)
             await refreshMailLabels()
+            guard generation == mailRefreshGeneration else { return }
             // Typed paged path: one unified corpus page with a real cursor,
             // instead of 200 threads per account replayed on every refresh.
             // An empty first page on a corpus that is still backfilling falls
@@ -261,16 +374,27 @@ final class ProductStore {
                         cursor: nil,
                         limit: 100
                     )
+                    guard generation == mailRefreshGeneration else { return }
                     if !page.items.isEmpty || refreshedAccounts.isEmpty {
-                        threads = page.items.compactMap(applyPendingMailState).sorted { $0.date > $1.date }
+                        // The page replaces its own window and keeps the rows
+                        // paged in beneath it, so a refresh never undoes Load
+                        // More (K10).
+                        threads = MailListMerge.replacingFirstPage(
+                            existing: threads,
+                            firstPage: page.items.compactMap(applyPendingMailState)
+                        )
                         mailNextCursor = page.nextCursor
                         hasMoreMail = page.hasMore
                         resetMailScopes()
-                        await persistCache()
-                        await syncMailIndex()
+                        noteRefreshed(.mail)
+                        scheduleCacheWrite()
+                        syncMailIndex()
                         return
                     }
                 } catch {
+                    // A view that left cancelled this read; the legacy path
+                    // must not run for it.
+                    if error.isCancellation { return }
                     // The legacy path below remains the fallback contract.
                 }
             }
@@ -282,22 +406,26 @@ final class ProductStore {
                         "list_account_threads",
                         arguments: ["account": .string(account.id), "limit": .number(200)]
                     )
+                    guard generation == mailRefreshGeneration else { return }
                     allThreads += (rows["threads"]?.arrayValue ?? []).compactMap {
                         MailThreadSummary(json: $0, accountID: account.id)
                     }
                 } catch {
+                    if error.isCancellation { return }
                     firstFailure = firstFailure ?? error
                     // A single disconnected provider must not blank every other
                     // mailbox—or discard the last useful snapshot for this one.
                     allThreads += threads.filter { $0.accountID == account.id }
                 }
             }
+            guard generation == mailRefreshGeneration else { return }
             threads = allThreads.compactMap(applyPendingMailState).sorted { $0.date > $1.date }
             mailNextCursor = nil
             hasMoreMail = false
             resetMailScopes()
-            await persistCache()
-            await syncMailIndex()
+            if firstFailure == nil { noteRefreshed(.mail) }
+            scheduleCacheWrite()
+            syncMailIndex()
             if let firstFailure { recordMail(firstFailure) }
         } catch {
             recordMail(error)
@@ -320,7 +448,7 @@ final class ProductStore {
             mergeMailPage(page.items)
             mailNextCursor = page.nextCursor
             hasMoreMail = page.hasMore
-            await persistCache()
+            scheduleCacheWrite()
         } catch {
             recordMail(error)
         }
@@ -365,21 +493,29 @@ final class ProductStore {
         guard let mailPages, !loadingMailScopes.contains(scope) else { return }
         loadingMailScopes.insert(scope)
         defer { loadingMailScopes.remove(scope) }
-        let generation = mailScopeGeneration
-        do {
-            let page = try await mailPages.fetchMailThreads(
-                accountID: scope.accountID,
-                category: scope.category,
-                cursor: cursor,
-                limit: 100
-            )
-            // A refresh replaced the list while this page loaded.
-            guard generation == mailScopeGeneration else { return }
-            mergeMailPage(page.items)
-            mailScopeCursors[scope] = MailScopeCursor(cursor: page.nextCursor, hasMore: page.hasMore)
-            await persistCache()
-        } catch {
-            recordMail(error)
+        // A first page whose list was replaced while it loaded asks once
+        // more; a later page is gone with its cursor (M3).
+        for attempt in 0 ..< 2 {
+            let generation = mailScopeGeneration
+            do {
+                let page = try await mailPages.fetchMailThreads(
+                    accountID: scope.accountID,
+                    category: scope.category,
+                    cursor: cursor,
+                    limit: 100
+                )
+                guard generation == mailScopeGeneration else {
+                    if cursor == nil, attempt == 0 { continue }
+                    return
+                }
+                mergeMailPage(page.items)
+                mailScopeCursors[scope] = MailScopeCursor(cursor: page.nextCursor, hasMore: page.hasMore)
+                scheduleCacheWrite()
+                return
+            } catch {
+                recordMail(error)
+                return
+            }
         }
     }
 
@@ -438,69 +574,58 @@ final class ProductStore {
                 return MailThreadSummary(json: item).flatMap(applyPendingMailState)
             }
             completedMailSearchQuery = query
-        } catch is CancellationError {
-            return
         } catch {
+            // A changed query cancels the request in flight; that is not a
+            // failed search (M1).
+            if error.isCancellation { return }
             guard generation == mailSearchGeneration else { return }
             recordMail(error)
         }
     }
 
     func refreshToday() async {
+        await refreshToday(includingBrief: true)
+    }
+
+    /// Calendar, the board, and the activity read run at once (K4). The
+    /// brief joins them unless the caller already started it. Each read keeps
+    /// its failure on its own surface (K11).
+    func refreshToday(includingBrief: Bool) async {
         // Calendar is one data owner: Today filters this window to the current
         // local day; the Calendar tab shows the full upcoming window.
-        await refreshCalendar()
+        async let calendar: Void = refreshCalendar()
+        async let board: Void = refreshTasks()
+        async let activity: Void = refreshActivity()
+        if includingBrief { await refreshBrief() }
+        _ = await (calendar, board, activity)
+        scheduleCacheWrite()
+    }
 
-        do {
-            isLoadingTasks = true
-            defer { isLoadingTasks = false }
-            var boardArguments: [String: JSONValue] = [:]
-            if let activeBoardID { boardArguments["boardId"] = .string(activeBoardID) }
-            let result = try await tools.invoke("tasks_get_board", arguments: boardArguments)
-            let board = result["board"]
-            var columnNames: [String: String] = [:]
-            var orderedColumns: [String] = []
-            for row in board?["columns"]?.arrayValue ?? [] {
-                if let id = row["columnId"]?.stringValue, let name = row["name"]?.stringValue {
-                    columnNames[id] = name
-                    orderedColumns.append(name)
-                }
-            }
-            taskColumns = orderedColumns
-            taskColumnRows = (board?["columns"]?.arrayValue ?? []).compactMap(TaskColumnSummary.init)
-            taskBoardMembers = (board?["members"]?.arrayValue ?? []).compactMap(TaskBoardMember.init)
-            taskBoardRole = board?["role"]?.stringValue ?? "viewer"
-            taskPublicToken = Self.nonBlank(board?["publicToken"]?.stringValue)
-            tasks = (board?["cards"]?.arrayValue ?? []).compactMap { card in
-                TaskSummary(json: card, column: columnNames[card["columnId"]?.stringValue ?? ""] ?? "Tasks")
-            }.sorted {
-                if $0.column != $1.column { return $0.column < $1.column }
-                return $0.order < $1.order
-            }
-            tasksDidLoad = true
-            taskError = nil
-        } catch {
-            taskError = error.localizedDescription
-            record(error)
-        }
-
+    /// Approvals, suggestions, the check-in, and the open questions: what
+    /// Activity and Today show. A failure stays on `todayError`.
+    func refreshActivity() async {
+        var failure: Error?
         do {
             let result = try await tools.invoke(
                 "albatross_list_approval_queue",
                 arguments: ["status": .string("pending"), "limit": .number(50)]
             )
             approvals = (result["approvals"]?.arrayValue ?? []).compactMap(ApprovalSummary.init)
-        } catch { record(error) }
+        } catch { failure = error }
 
         do {
             let result = try await backend.post(path: "/api/mobile/activity", body: .object([:]))
             suggestions = (result["suggestions"]?.arrayValue ?? []).compactMap(SuggestionSummary.init)
             checkin = result["checkin"].flatMap(CheckinSummary.init)
             pendingQuestions = (result["questions"]?.arrayValue ?? []).compactMap(PendingWorkQuestionSummary.init)
-        } catch { record(error) }
+        } catch { failure = failure ?? error }
 
-        await refreshBrief()
-        await persistCache()
+        if let failure {
+            recordToday(failure)
+        } else {
+            todayError = nil
+            noteRefreshed(.activity)
+        }
     }
 
     // Calendar-specific loader. `sync: false` (bootstrap) lists the cached/current
@@ -517,6 +642,8 @@ final class ProductStore {
             do {
                 _ = try await tools.invoke("calendar_sync_now")
             } catch {
+                // A view that left cancelled the pull; nothing failed (Cal2).
+                if error.isCancellation { return }
                 syncFailure = error.localizedDescription
             }
         }
@@ -551,9 +678,11 @@ final class ProductStore {
                     TaskSummary(json: value)
                 }
             } catch {
-                taskError = error.localizedDescription
+                recordTask(error)
             }
             calendarDidLoad = true
+            calendarReadAt = .now
+            noteRefreshed(.calendar)
             if let syncFailure {
                 calendarError = syncFailure
             } else if decoded.count < rows.count {
@@ -561,10 +690,17 @@ final class ProductStore {
             } else {
                 calendarError = nil
             }
-            await persistCache()
+            scheduleCacheWrite()
         } catch {
-            calendarError = error.localizedDescription
+            recordCalendar(error)
         }
+    }
+
+    /// True when the local copy of the mirror is older than
+    /// `calendarMirrorMaxAge`, or was never read (Cal3).
+    func isCalendarMirrorStale(now: Date = .now) -> Bool {
+        guard let calendarReadAt else { return true }
+        return now.timeIntervalSince(calendarReadAt) > calendarMirrorMaxAge
     }
 
     // MARK: - Calendar sync kicks
@@ -582,10 +718,15 @@ final class ProductStore {
             if let lastSyncedAt = response.lastSyncedAt { calendarSync.lastSyncedAt = lastSyncedAt }
             calendarSync.failureMessage = nil
             guard response.started else {
-                // A fresh calendar shows no line. The mirror read is still
-                // cheap, and a pull expects the list to move.
-                if reason != .viewOpen { await refreshCalendar(sync: false) }
-                if calendarSync.phase == .failed { calendarSync.phase = .idle }
+                // A fresh calendar shows no line. A pull expects the list to
+                // move; a view open re-reads a local copy older than two
+                // minutes (Cal3).
+                if reason != .viewOpen || isCalendarMirrorStale() { await refreshCalendar(sync: false) }
+                // No sync runs, so the line must not say one does (Cal1). A
+                // background follow from a mutation keeps its own phase.
+                if calendarSyncFollowTask == nil, calendarSync.phase == .failed || calendarSync.phase == .running {
+                    calendarSync.phase = .idle
+                }
                 return
             }
             // One follow loop at a time. A background follow from a mutation
@@ -594,6 +735,9 @@ final class ProductStore {
             calendarSyncFollowTask = nil
             await followCalendarSync(since: response.lastSyncedAt)
         } catch {
+            // A view that left cancelled the request; that is not a failed
+            // sync (Cal2).
+            if error.isCancellation { return }
             // 429 and every other failure read the same on the surface. The
             // subtitle tells the user what to do next.
             calendarSyncFollowTask?.cancel()
@@ -642,11 +786,21 @@ final class ProductStore {
         interval: Duration = .seconds(1),
         deadline: Duration = .seconds(60)
     ) async {
+        calendarFollowGeneration += 1
+        let follow = calendarFollowGeneration
         calendarSync.phase = .running
         calendarSync.failureMessage = nil
         let startedAt = ContinuousClock.now
+        defer {
+            // Cancelled: no sync runs under this follow now (Cal1). A newer
+            // follow that took over owns the phase.
+            if Task.isCancelled, follow == calendarFollowGeneration, calendarSync.phase == .running {
+                calendarSync.phase = .idle
+            }
+        }
         while !Task.isCancelled {
             let rows = (try? await readCalendarSyncStates()) ?? []
+            guard !Task.isCancelled else { return }
             if !rows.isEmpty { calendarSync.rows = rows }
             switch CalendarSyncFollow.outcome(rows: rows, since: since) {
             case .done(let lastSyncedAt):
@@ -693,20 +847,30 @@ final class ProductStore {
         return events.filter { $0.start < end && $0.end > start }
     }
 
+    /// The newest edition. While the server still composes it, the Today
+    /// page calls this every 5 s (B1); the store keeps no poll of its own.
     func refreshBrief() async {
         briefError = nil
         defer { briefDidLoad = true }
         do {
             let result = try await tools.invoke("get_latest_daily_report")
-            let report = DailyReportModel(json: result["report"])
+            // An edition can hold a large document; it decodes off the main
+            // actor (K9).
+            let report = await Self.decodeReport(result["report"])
             dailyReport = report
             latestDailyReportID = report?.id
+            latestDailyReportGeneratedAt = report?.generatedAt
             dailyBrief = report?.legacyText ?? Self.briefText(from: result["report"])
-            await persistCache()
+            noteRefreshed(.brief)
+            scheduleCacheWrite()
         } catch {
-            briefError = error.localizedDescription
+            recordBrief(error)
         }
         await refreshBriefSources()
+    }
+
+    nonisolated private static func decodeReport(_ json: JSONValue?) async -> DailyReportModel? {
+        DailyReportModel(json: json)
     }
 
     /// Reads the source health line for the shown edition. A failure keeps
@@ -719,30 +883,46 @@ final class ProductStore {
         }
     }
 
+    /// The Past briefs list. A failure lands on `historyError`, so the sheet
+    /// can tell an empty list from a failed read; the brief page is not told.
     func loadDailyReportHistory() async {
+        historyError = nil
         do {
-            let result = try await tools.invoke(
-                "list_daily_reports",
-                // The sheet shows only titles and dates; a tap loads the full
-                // edition. Full rows here cost about 20 MB.
-                arguments: ["limit": .number(30), "summaryOnly": .bool(true)]
-            )
-            dailyReportHistory = (result["reports"]?.arrayValue ?? []).compactMap(DailyReportModel.init)
+            dailyReportHistory = try await fetchDailyReportHistory()
+            historyDidLoad = true
         } catch {
-            briefError = error.localizedDescription
+            recordHistory(error)
         }
     }
 
+    /// The same list, thrown to the caller.
+    func fetchDailyReportHistory() async throws -> [DailyReportModel] {
+        let result = try await tools.invoke(
+            "list_daily_reports",
+            // The sheet shows only titles and dates; a tap loads the full
+            // edition. Full rows here cost about 20 MB.
+            arguments: ["limit": .number(30), "summaryOnly": .bool(true)]
+        )
+        return (result["reports"]?.arrayValue ?? []).compactMap(DailyReportModel.init)
+    }
+
     func selectDailyReport(id: String) async {
-        if dailyReport?.id == id { return }
+        // The shown edition again is a no-op, unless the server still writes
+        // it: then the read brings the next partial (B2).
+        if dailyReport?.id == id, dailyReport?.isGenerating != true { return }
         do {
             let result = try await tools.invoke("get_daily_report", arguments: ["id": .string(id)])
-            guard let report = DailyReportModel(json: result["report"]) else {
+            guard let report = await Self.decodeReport(result["report"]) else {
                 throw BackendError.invalidResponse
             }
             dailyReport = report
+            // An edition newer than the known latest is the latest (B3).
+            if DailyReportSelection.takesLatest(generatedAt: report.generatedAt, latestGeneratedAt: latestDailyReportGeneratedAt) {
+                latestDailyReportID = report.id
+                latestDailyReportGeneratedAt = report.generatedAt
+            }
         } catch {
-            briefError = error.localizedDescription
+            recordBrief(error)
         }
     }
 
@@ -755,7 +935,7 @@ final class ProductStore {
             _ = try await tools.invoke("generate_daily_report", arguments: ["kind": .string("manual")])
             await refreshBrief()
         } catch {
-            briefError = error.localizedDescription
+            recordBrief(error)
         }
     }
 
@@ -773,7 +953,7 @@ final class ProductStore {
             await refreshTasks()
             await refreshProjectPanes(containing: task.id)
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
             await refreshTasks()
         }
     }
@@ -798,7 +978,7 @@ final class ProductStore {
             await refreshTasks()
             await refreshProjectPanes(containing: nil)
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
         }
     }
 
@@ -810,7 +990,7 @@ final class ProductStore {
             )
             return TaskDraftSuggestion(json: result["draft"])
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return nil
         }
     }
@@ -831,7 +1011,7 @@ final class ProductStore {
             await refreshTasks()
             await refreshProjectPanes(containing: task.id)
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
             await refreshTasks()
         }
     }
@@ -866,7 +1046,7 @@ final class ProductStore {
             await refreshProjectPanes(containing: task.id)
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
             return false
         }
     }
@@ -879,7 +1059,7 @@ final class ProductStore {
             )
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
             return false
         }
     }
@@ -893,7 +1073,7 @@ final class ProductStore {
             )
             await refreshProjectPanes(containing: task.id)
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
             await refreshTasks()
         }
     }
@@ -913,7 +1093,7 @@ final class ProductStore {
             await refreshTasks()
             await refreshProjectPanes(containing: task.id)
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
             await refreshTasks()
         }
     }
@@ -940,7 +1120,7 @@ final class ProductStore {
             }
             return true
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return false
         }
     }
@@ -958,7 +1138,7 @@ final class ProductStore {
             await refreshBoardsAndProjects()
             return true
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return false
         }
     }
@@ -971,7 +1151,7 @@ final class ProductStore {
             await refreshBoardsAndProjects()
             return true
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return false
         }
     }
@@ -986,7 +1166,7 @@ final class ProductStore {
             await refreshTasks()
             return true
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return false
         }
     }
@@ -1002,7 +1182,7 @@ final class ProductStore {
             await refreshTasks()
             return true
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return false
         }
     }
@@ -1015,7 +1195,7 @@ final class ProductStore {
             await refreshTasks()
             return true
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return false
         }
     }
@@ -1038,7 +1218,7 @@ final class ProductStore {
             }
             await refreshTasks()
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             await refreshTasks()
         }
     }
@@ -1062,7 +1242,7 @@ final class ProductStore {
             // Rollback via server refresh, THEN surface the error —
             // refreshTasks' success path clears taskError.
             await refreshTasks()
-            taskError = error.localizedDescription
+            recordTask(error)
         }
     }
 
@@ -1114,7 +1294,7 @@ final class ProductStore {
             // Rollback via server refresh, THEN surface the error —
             // refreshTasks' success path clears taskError.
             await refreshTasks()
-            taskError = error.localizedDescription
+            recordTask(error)
         }
     }
 
@@ -1123,7 +1303,7 @@ final class ProductStore {
             let result = try await tools.invoke("tasks_get_card", arguments: ["cardId": .string(task.id)])
             return result["card"].flatMap { TaskSummary(json: $0, column: task.column) } ?? task
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return task
         }
     }
@@ -1138,7 +1318,7 @@ final class ProductStore {
                 TaskSummary(json: value)
             }
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return []
         }
     }
@@ -1152,7 +1332,7 @@ final class ProductStore {
                 TaskSummary(json: value)
             }
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return []
         }
     }
@@ -1165,7 +1345,7 @@ final class ProductStore {
             await refreshTasks()
             return true
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return false
         }
     }
@@ -1198,57 +1378,7 @@ final class ProductStore {
             await refreshTasks()
             return true
         } catch {
-            taskError = error.localizedDescription
-            return false
-        }
-    }
-
-    func setBoardPublicLink(enabled: Bool) async -> Bool {
-        guard let activeBoardID else { return false }
-        do {
-            let result = try await tools.invoke(
-                "tasks_set_public_link",
-                arguments: ["boardId": .string(activeBoardID), "enabled": .bool(enabled)]
-            )
-            taskPublicToken = Self.nonBlank(result["publicToken"]?.stringValue)
-            await refreshBoardsAndProjects()
-            return true
-        } catch {
-            taskError = error.localizedDescription
-            return false
-        }
-    }
-
-    func inviteBoardMember(email: String, role: String) async -> Bool {
-        guard let activeBoardID else { return false }
-        do {
-            _ = try await tools.invoke(
-                "tasks_invite_member",
-                arguments: [
-                    "boardId": .string(activeBoardID),
-                    "email": .string(email),
-                    "role": .string(role),
-                ]
-            )
-            await refreshTasks()
-            return true
-        } catch {
-            taskError = error.localizedDescription
-            return false
-        }
-    }
-
-    func removeBoardMember(_ member: TaskBoardMember) async -> Bool {
-        guard let activeBoardID else { return false }
-        do {
-            _ = try await tools.invoke(
-                "tasks_remove_member",
-                arguments: ["boardId": .string(activeBoardID), "memberId": .string(member.id)]
-            )
-            await refreshTasks()
-            return true
-        } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return false
         }
     }
@@ -1264,7 +1394,7 @@ final class ProductStore {
                 return TaskSummary(json: card, column: card["columnName"]?.stringValue ?? "Tasks")
             }
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return []
         }
     }
@@ -1306,7 +1436,8 @@ final class ProductStore {
                   projectPaneLoadGeneration[projectID] == generation
             else { return }
             pane.isLoading = false
-            pane.error = error.localizedDescription
+            // A view that left is not a failed pane.
+            pane.error = error.isCancellation ? nil : error.localizedDescription
             projectPanes[projectID] = pane
         }
     }
@@ -1340,7 +1471,7 @@ final class ProductStore {
             projects = (list["projects"]?.arrayValue ?? []).compactMap(ProjectSummary.init)
             return true
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
             return false
         }
     }
@@ -1358,7 +1489,7 @@ final class ProductStore {
                 }
             }
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
         }
         do {
             let result = try await tools.invoke(
@@ -1367,7 +1498,7 @@ final class ProductStore {
             )
             projects = (result["projects"]?.arrayValue ?? []).compactMap(ProjectSummary.init)
         } catch {
-            taskError = error.localizedDescription
+            recordTask(error)
         }
         await refreshTasks()
     }
@@ -1391,9 +1522,7 @@ final class ProductStore {
             }
             taskColumns = orderedColumns
             taskColumnRows = (board?["columns"]?.arrayValue ?? []).compactMap(TaskColumnSummary.init)
-            taskBoardMembers = (board?["members"]?.arrayValue ?? []).compactMap(TaskBoardMember.init)
             taskBoardRole = board?["role"]?.stringValue ?? "viewer"
-            taskPublicToken = Self.nonBlank(board?["publicToken"]?.stringValue)
             tasks = (board?["cards"]?.arrayValue ?? []).compactMap { card in
                 TaskSummary(json: card, column: columnNames[card["columnId"]?.stringValue ?? ""] ?? "Tasks")
             }.sorted {
@@ -1402,11 +1531,24 @@ final class ProductStore {
             }
             tasksDidLoad = true
             taskError = nil
-            await persistCache()
+            noteRefreshed(.tasks)
+            scheduleCacheWrite()
         } catch {
+            // The saved board is gone (deleted, or shared access ended):
+            // forget it and read the default board (feature audit, item 7).
+            if activeBoardID != nil, TaskBoardRecovery.isBoardGone(error) {
+                forgetActiveBoard()
+                await refreshTasks()
+                return
+            }
             // A failed reload keeps the optimistic state; the next refreshToday settles it.
-            taskError = error.localizedDescription
+            recordTask(error)
         }
+    }
+
+    private func forgetActiveBoard() {
+        activeBoardID = nil
+        UserDefaults.standard.removeObject(forKey: "albatross.tasks.active-board")
     }
 
     func refreshWork() async {
@@ -1424,17 +1566,17 @@ final class ProductStore {
             } catch {
                 guard sessionGeneration == accountSessionGeneration else { return }
                 if allWork.isEmpty { throw error }
-                workError = error.localizedDescription
+                recordWork(error)
                 workDidLoad = true
             }
             guard sessionGeneration == accountSessionGeneration else { return }
-            await persistCache()
+            scheduleCacheWrite()
         } catch {
             guard sessionGeneration == accountSessionGeneration else { return }
             // Keep the last-good cached areas visible and record the failure only
             // on the Work surface. A Work failure must never blank Mail or raise
             // the app-wide `errorMessage`.
-            workError = error.localizedDescription
+            recordWork(error)
         }
     }
 
@@ -1446,10 +1588,10 @@ final class ProductStore {
         do {
             try await loadWorkProjection(sessionGeneration: sessionGeneration)
             guard sessionGeneration == accountSessionGeneration else { return }
-            await persistCache()
+            scheduleCacheWrite()
         } catch {
             guard sessionGeneration == accountSessionGeneration else { return }
-            workError = error.localizedDescription
+            recordWork(error)
         }
     }
 
@@ -1486,6 +1628,7 @@ final class ProductStore {
         }
         workDidLoad = true
         workError = nil
+        noteRefreshed(.work)
     }
 
     /// Apply a horizon locally before the server confirms it. The row moves
@@ -1558,7 +1701,7 @@ final class ProductStore {
             return true
         } catch {
             if let previous { applyWorkMilestones(workID, milestones: previous) }
-            workError = error.localizedDescription
+            recordWork(error)
             return false
         }
     }
@@ -1583,7 +1726,7 @@ final class ProductStore {
             await refreshWork()
             return true
         } catch {
-            workError = error.localizedDescription
+            recordWork(error)
             return false
         }
     }
@@ -1597,7 +1740,7 @@ final class ProductStore {
             await refreshWork()
             return true
         } catch {
-            workError = error.localizedDescription
+            recordWork(error)
             return false
         }
     }
@@ -1644,7 +1787,7 @@ final class ProductStore {
                 if let previous { workDetails[workID] = previous }
                 else { workDetails.removeValue(forKey: workID) }
             }
-            workError = error.localizedDescription
+            recordWork(error)
             return nil
         }
     }
@@ -1699,7 +1842,7 @@ final class ProductStore {
                 replayURL: result["replayUrl"]?.stringValue ?? ""
             )
         } catch {
-            workError = error.localizedDescription
+            recordWork(error)
             return nil
         }
     }
@@ -1734,7 +1877,7 @@ final class ProductStore {
             }
             return (satisfied, result["reason"]?.stringValue ?? "")
         } catch {
-            workError = error.localizedDescription
+            recordWork(error)
             return nil
         }
     }
@@ -1775,7 +1918,7 @@ final class ProductStore {
             _ = try? await loadWorkDetail(workID)
             return runID
         } catch {
-            workError = error.localizedDescription
+            recordWork(error)
             return nil
         }
     }
@@ -1793,7 +1936,7 @@ final class ProductStore {
             _ = try? await loadWorkDetail(workID)
             return newRunID
         } catch {
-            workError = error.localizedDescription
+            recordWork(error)
             return nil
         }
     }
@@ -1812,7 +1955,7 @@ final class ProductStore {
             _ = try? await loadWorkDetail(workID)
             return true
         } catch {
-            workError = error.localizedDescription
+            recordWork(error)
             return false
         }
     }
@@ -1830,7 +1973,7 @@ final class ProductStore {
             _ = try? await loadWorkDetail(workID)
             return true
         } catch {
-            workError = error.localizedDescription
+            recordWork(error)
             return false
         }
     }
@@ -1961,7 +2104,7 @@ final class ProductStore {
             await refreshWork()
             return true
         } catch {
-            workError = error.localizedDescription
+            recordWork(error)
             return false
         }
     }
@@ -1976,7 +2119,7 @@ final class ProductStore {
             await refreshWork()
             return true
         } catch {
-            workError = error.localizedDescription
+            recordWork(error)
             return false
         }
     }
@@ -1999,7 +2142,8 @@ final class ProductStore {
             throw BackendError.server(status: 404, message: "This area is unavailable.")
         }
         areaDetails[areaID] = detail
-        await persistCache()
+        recentAreaDetailKeys.touch(areaID)
+        scheduleCacheWrite()
         return detail
     }
 
@@ -2010,7 +2154,8 @@ final class ProductStore {
             throw BackendError.server(status: 404, message: "This Work is unavailable.")
         }
         workDetails[workID] = detail
-        await persistCache()
+        recentWorkDetailKeys.touch(workID)
+        scheduleCacheWrite()
         return detail
     }
 
@@ -2126,7 +2271,7 @@ final class ProductStore {
             snoozedDidLoad = true
             snoozedError = nil
         } catch {
-            snoozedError = error.localizedDescription
+            if !error.isCancellation { snoozedError = error.localizedDescription }
         }
     }
 
@@ -2178,8 +2323,8 @@ final class ProductStore {
             ))
         }
         guard changed else { return }
-        await persistCache()
-        await syncMailIndex()
+        scheduleCacheWrite()
+        syncMailIndex()
     }
 
     private func dispatchMail(_ actions: [MailAction]) async {
@@ -2339,9 +2484,11 @@ final class ProductStore {
     func bulkTriage(_ selected: [MailThreadSummary]) async -> [BulkTriageVerdict] {
         guard !selected.isEmpty else { return [] }
         do {
+            // With the account the server saves each verdict on its thread.
             let items = selected.prefix(40).map { thread in
                 JSONValue.object([
                     "id": .string(mailKey(thread)),
+                    "account": .string(thread.accountID),
                     "from": .string(thread.sender),
                     "subject": .string(thread.subject),
                     "snippet": .string(thread.snippet),
@@ -2844,7 +2991,7 @@ final class ProductStore {
                 recurrence: nil
             )
         } catch {
-            calendarError = error.localizedDescription
+            recordCalendar(error)
         }
     }
 
@@ -2885,7 +3032,7 @@ final class ProductStore {
                 }
             )
         } catch {
-            calendarError = error.localizedDescription
+            recordCalendar(error)
         }
     }
 
@@ -2919,7 +3066,7 @@ final class ProductStore {
             if undoNotice?.id == notice.id { undoNotice = nil }
             switch notice.kind {
             case .mail: recordMail(error)
-            case .general: errorMessage = error.localizedDescription
+            case .general: recordAction(error)
             }
         }
     }
@@ -2994,7 +3141,7 @@ final class ProductStore {
             )
             try await client.mutation("albatross:reindexMyAreas", with: ["areaId": areaID])
             areaBriefMonitoringTasks[areaID]?.cancel()
-            areaBriefMonitoringTasks[areaID] = Task { [weak self] in
+            let monitor = Task { [weak self] in
                 do {
                     let updates = client.subscribe(
                         to: "albatross:areaIndexStatus",
@@ -3017,13 +3164,29 @@ final class ProductStore {
                         }
                         if phase == .error { return }
                     }
-                } catch is CancellationError {
-                    return
                 } catch {
+                    if error.isCancellation { return }
                     self?.areaRefreshStates[areaID] = AreaRefreshState(
                         phase: .error,
                         progress: nil,
                         error: error.localizedDescription
+                    )
+                }
+            }
+            areaBriefMonitoringTasks[areaID] = monitor
+            // A monitor that never hears "done" ends after the timeout (W4),
+            // so the row does not say "Refreshing" for good.
+            let timeout = areaRefreshTimeout
+            Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard let self, self.areaBriefMonitoringTasks[areaID] == monitor else { return }
+                monitor.cancel()
+                self.areaBriefMonitoringTasks[areaID] = nil
+                if let state = self.areaRefreshStates[areaID], state.phase == .queued || state.phase == .running {
+                    self.areaRefreshStates[areaID] = AreaRefreshState(
+                        phase: .error,
+                        progress: nil,
+                        error: "The refresh took too long. Try again."
                     )
                 }
             }
@@ -3034,7 +3197,7 @@ final class ProductStore {
                 progress: nil,
                 error: error.localizedDescription
             )
-            errorMessage = error.localizedDescription
+            recordAction(error)
             return false
         }
     }
@@ -3055,7 +3218,7 @@ final class ProductStore {
             _ = try? await loadAreaDetail(areaID)
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
             return false
         }
     }
@@ -3089,7 +3252,7 @@ final class ProductStore {
             _ = try? await loadAreaDetail(areaID)
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
             return false
         }
     }
@@ -3117,7 +3280,7 @@ final class ProductStore {
             await refreshWork()
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
             return false
         }
     }
@@ -3146,7 +3309,7 @@ final class ProductStore {
             await refreshWork()
             return areaID
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
             return nil
         }
     }
@@ -3164,7 +3327,7 @@ final class ProductStore {
             await refreshWork()
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
             return false
         }
     }
@@ -3220,7 +3383,7 @@ final class ProductStore {
             )
             _ = try? await loadAreaDetail(areaID)
         } catch {
-            errorMessage = error.localizedDescription
+            recordAction(error)
         }
     }
 
@@ -3328,9 +3491,9 @@ final class ProductStore {
                 throw BackendError.server(status: 500, message: result["error"]?.stringValue ?? "Suggestion failed.")
             }
             suggestions.removeAll { $0.id == id }
-            await persistCache()
+            scheduleCacheWrite()
             if action == "accept" { await refreshToday() }
-        } catch { record(error) }
+        } catch { recordAction(error) }
     }
 
     func answerCheckin(
@@ -3355,7 +3518,7 @@ final class ProductStore {
             ])
         )
         try applyCheckinAnswerResponse(response)
-        await persistCache()
+        scheduleCacheWrite()
         await refreshToday()
     }
 
@@ -3376,16 +3539,33 @@ final class ProductStore {
         // Invalidate every suspended account-owned request before the first await.
         accountSessionGeneration += 1
         workProjectionGeneration += 1
+        mailRefreshGeneration += 1
         liveMailTask?.cancel()
         liveMailTask = nil
+        // A write still waiting must not bring the cache back after it is
+        // removed below.
+        cacheWriteTask?.cancel()
+        cacheWriteTask = nil
         for task in areaBriefMonitoringTasks.values { task.cancel() }
         areaBriefMonitoringTasks = [:]
         areaRefreshStates = [:]
         if let cacheOwner {
+            // The index update in flight lands first, so the removal is last.
+            await spotlightTask?.value
+            spotlightTask = nil
             await spotlight.remove(owner: cacheOwner)
             try? await cache.remove(owner: cacheOwner)
         }
         cacheOwner = nil
+        todayError = nil
+        historyError = nil
+        historyDidLoad = false
+        dailyReportHistory = []
+        recentAreaDetailKeys.removeAll()
+        recentWorkDetailKeys.removeAll()
+        latestDailyReportGeneratedAt = nil
+        calendarReadAt = nil
+        resetLoadFlags()
         accounts = []
         reconnectAccounts = []
         threads = []
@@ -3446,11 +3626,23 @@ final class ProductStore {
         mailUndoRollBacks = [:]
     }
 
+    // Every recorder skips a cancellation first (K1): a view that left or a
+    // query that changed is not a failure the person needs to read.
+
     private func record(_ error: Error) {
+        guard !error.isCancellation else { return }
         if errorMessage == nil { errorMessage = error.localizedDescription }
     }
 
+    // An action the person took and the server refused: the newest message
+    // wins, where `record` keeps the first.
+    private func recordAction(_ error: Error) {
+        guard !error.isCancellation else { return }
+        errorMessage = error.localizedDescription
+    }
+
     private func recordMail(_ error: Error) {
+        guard !error.isCancellation else { return }
         if let backendError = error as? BackendError,
            case .unauthorized = backendError {
             // Authentication is an app-wide boundary failure. Keep it out of
@@ -3462,10 +3654,34 @@ final class ProductStore {
         if mailErrorMessage == nil { mailErrorMessage = error.localizedDescription }
     }
 
-    private static func nonBlank(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+    private func recordTask(_ error: Error) {
+        guard !error.isCancellation else { return }
+        taskError = error.localizedDescription
+    }
+
+    private func recordWork(_ error: Error) {
+        guard !error.isCancellation else { return }
+        workError = error.localizedDescription
+    }
+
+    private func recordBrief(_ error: Error) {
+        guard !error.isCancellation else { return }
+        briefError = error.localizedDescription
+    }
+
+    private func recordCalendar(_ error: Error) {
+        guard !error.isCancellation else { return }
+        calendarError = error.localizedDescription
+    }
+
+    private func recordHistory(_ error: Error) {
+        guard !error.isCancellation else { return }
+        historyError = error.localizedDescription
+    }
+
+    private func recordToday(_ error: Error) {
+        guard !error.isCancellation else { return }
+        todayError = error.localizedDescription
     }
 
     private func startLiveMail() {
@@ -3494,19 +3710,22 @@ final class ProductStore {
     }
 
     func applyLiveMail(_ payload: LiveMailThreadsPayload) async {
-        let live = payload.items.map(\.summary).compactMap(applyPendingMailState)
+        // The row summaries run header and snippet cleanups over every row;
+        // they build off the main actor (K9).
+        let live = await Self.liveSummaries(payload).compactMap(applyPendingMailState)
         // An empty live window says nothing about mail that was paged in
         // beneath it; replacing the list here would blank the inbox on one
         // empty tick while the cursor still described a partially paged list.
         guard !live.isEmpty else { return }
         // The live query owns its recency window; threads paged in beneath it
         // must survive each tick or Load More would visibly undo itself.
-        let liveKeys = Set(live.map(mailKey))
-        let oldestLive = live.map(\.date).min() ?? .distantPast
-        let pagedTail = threads.filter { !liveKeys.contains(mailKey($0)) && $0.date < oldestLive }
-        threads = (live + pagedTail).sorted { $0.date > $1.date }
-        await persistCache()
-        await syncMailIndex()
+        threads = MailListMerge.replacingFirstPage(existing: threads, firstPage: live)
+        scheduleCacheWrite()
+        syncMailIndex()
+    }
+
+    nonisolated private static func liveSummaries(_ payload: LiveMailThreadsPayload) async -> [MailThreadSummary] {
+        payload.items.map(\.summary)
     }
 
     private func mailKey(_ thread: MailThreadSummary) -> String {
@@ -3616,17 +3835,58 @@ final class ProductStore {
         // server refresh completes.
         if !areas.isEmpty { workDidLoad = true }
         if !tasks.isEmpty { tasksDidLoad = true }
+        // A cached list or edition is a loaded state, not "not loaded yet".
+        if !threads.isEmpty { mailDidLoad = true }
+        if dailyReport != nil || dailyBrief != nil { briefDidLoad = true }
+        for key in areaDetails.keys.sorted() { recentAreaDetailKeys.touch(key) }
+        for key in workDetails.keys.sorted() { recentWorkDetailKeys.touch(key) }
         lastRefresh = snapshot.savedAt
-        await syncMailIndex()
+        syncMailIndex()
     }
 
-    private func syncMailIndex() async {
+    /// Spotlight follows the list in order, off the loaders' path (K4). The
+    /// indexer writes only the rows that changed (K8).
+    private func syncMailIndex() {
         guard let cacheOwner else { return }
-        await spotlight.replace(owner: cacheOwner, accounts: accounts, threads: threads)
+        let spotlight = self.spotlight
+        let accounts = self.accounts
+        let threads = self.threads
+        let previous = spotlightTask
+        spotlightTask = Task {
+            await previous?.value
+            await spotlight.replace(owner: cacheOwner, accounts: accounts, threads: threads)
+        }
+    }
+
+    /// Waits for the Spotlight update in flight. Tests use it.
+    func settleMailIndex() async {
+        await spotlightTask?.value
+    }
+
+    /// Loaders ask for a write; one runs after the burst (K8).
+    private func scheduleCacheWrite() {
+        guard cacheOwner != nil, cacheWriteTask == nil else { return }
+        let delay = cacheWriteDelay
+        cacheWriteTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            self.cacheWriteTask = nil
+            await self.persistCache()
+        }
+    }
+
+    /// Writes the cache now: the end of a bootstrap, and tests.
+    func flushCacheWrite() async {
+        cacheWriteTask?.cancel()
+        cacheWriteTask = nil
+        await persistCache()
     }
 
     private func persistCache() async {
         guard let cacheOwner else { return }
+        // The 20 most recent details of each kind stay (K8).
+        areaDetails = recentAreaDetailKeys.trimmed(areaDetails)
+        workDetails = recentWorkDetailKeys.trimmed(workDetails)
         let snapshot = ProductSnapshot(
             accounts: accounts,
             threads: threads,
@@ -3688,5 +3948,25 @@ enum DailyReportSelection {
         guard let latestID else { return true }
         guard let shownID else { return true }
         return shownID == latestID
+    }
+
+    /// A selected edition newer than the known latest becomes the latest
+    /// (B3). With no known latest, the selected one is it.
+    static func takesLatest(generatedAt: Date, latestGeneratedAt: Date?) -> Bool {
+        guard let latestGeneratedAt else { return true }
+        return generatedAt > latestGeneratedAt
+    }
+}
+
+// The saved board id points at a board the server no longer has (deleted,
+// or shared access ended). The store forgets it and reads the default board
+// (feature audit, item 7).
+enum TaskBoardRecovery {
+    static func isBoardGone(_ error: Error) -> Bool {
+        guard let backendError = error as? BackendError,
+              case .server(let status, let message) = backendError else { return false }
+        if status == 404 { return true }
+        let text = message.lowercased()
+        return text.contains("board not found") || (text.contains("board") && text.contains("access denied"))
     }
 }

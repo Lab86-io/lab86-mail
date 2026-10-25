@@ -231,7 +231,7 @@ final class WorkThreadModel {
     var runRouteLine: String? {
         guard chat.route == .run, let view = redirectArmed ?? openRun else { return nil }
         let number = detail?.execution.guideSteps.firstIndex { $0.id == view.run.stepKey }.map { $0 + 1 }
-        return RunBlockCopy.runRouteLine(stepNumber: number, title: view.run.stepTitle)
+        return RunBlockCopy.runRouteLine(stepNumber: number, title: view.run.stepTitle, goal: view.run.isGoal)
     }
 
     /// The composer holds an Ask while a reply runs on the server. A run

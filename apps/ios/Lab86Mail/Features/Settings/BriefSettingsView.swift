@@ -69,7 +69,7 @@ struct BriefSettingsView: View {
                 Section {
                     Text("The brief delivery settings could not load.")
                         .foregroundStyle(.secondary)
-                    Button("Try Again") { Task { await load() } }
+                    Button("Try again") { Task { await load() } }
                 }
             } else {
                 Section {
@@ -83,7 +83,7 @@ struct BriefSettingsView: View {
                 }
             }
         }
-        .navigationTitle("Daily Brief")
+        .navigationTitle("Daily brief")
         .navigationBarTitleDisplayMode(.inline)
         .disabled(isSaving)
         .task { await load() }

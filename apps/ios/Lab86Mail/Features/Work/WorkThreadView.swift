@@ -31,6 +31,7 @@ struct WorkThreadView: View {
     @State private var showsDetails = false
     @State private var showsHorizonSheet = false
     @State private var showsArchiveConfirmation = false
+    @State private var showsReleaseSheet = false
     @State private var signInOffer: SignInSaveOffer?
     @State private var atBottom = true
     @State private var announced: String?
@@ -188,7 +189,10 @@ struct WorkThreadView: View {
             .onChange(of: model.threadState) { previous, next in
                 announce(previous: previous, next: next, model: model)
             }
-            .overlay(alignment: .bottomTrailing) {
+            // Centered over the composer, as in other chat apps: run blocks
+            // put their buttons at the trailing edge, and a trailing jump
+            // control covered them.
+            .overlay(alignment: .bottom) {
                 if let pill = ThreadJumpPill.text(
                     atBottom: atBottom,
                     pendingFormOffscreen: (model.pendingQuestion != nil || model.pendingAllow != nil) && !atBottom
@@ -199,7 +203,6 @@ struct WorkThreadView: View {
                             proxy.scrollTo(last, anchor: .bottom)
                         }
                     }
-                    .padding(.trailing, 20)
                     .padding(.bottom, 12)
                 }
             }
@@ -277,6 +280,15 @@ struct WorkThreadView: View {
                         if horizon?.isDormant(at: .now) == true { environment.navigation.workRoute = nil }
                     }
                     return ok
+                }
+            }
+            .sheet(isPresented: $showsReleaseSheet, onDismiss: {
+                // A released Albatross leaves the list; the thread closes
+                // behind the receipt.
+                if model.detail?.work.workState == "released" { environment.navigation.workRoute = nil }
+            }) {
+                ReleaseSheet(workID: route.workID, title: model.title) {
+                    await model.loadDetail()
                 }
             }
             .confirmationDialog("Archive this Albatross?", isPresented: $showsArchiveConfirmation, titleVisibility: .visible) {
@@ -442,10 +454,12 @@ struct WorkThreadView: View {
                     draft = Self.splitPrompt
                     composerFocused = true
                 }
-                if model.detail?.work.workState == "paused" {
+                if ["paused", "released"].contains(model.detail?.work.workState ?? "") {
                     Button("Pick it up") { Task { _ = await model.setWorkState("active") } }
                 } else {
-                    Button("Put it down") { Task { _ = await model.setWorkState("paused") } }
+                    // A release with an optional reason, as on the web. Not a
+                    // pause: a paused Albatross still asks for room.
+                    Button("Put it down…") { showsReleaseSheet = true }
                 }
                 Button("Set horizon…") { showsHorizonSheet = true }
                 Button("Mark done") { Task { _ = await model.setWorkState("done") } }

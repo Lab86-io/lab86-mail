@@ -164,6 +164,8 @@ struct MailboxOnboardingView: View {
             }
             step = .intelligence
         } catch {
+            // A closed sign-in sheet is the person's choice, not a failure.
+            guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
         }
     }

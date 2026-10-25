@@ -8,29 +8,104 @@ import AppKit
 typealias PlatformNativeColor = NSColor
 #endif
 
-// Native mirror of the desktop ThemePanel: the same OKLCH dual-accent seeds and
-// curated palette pairs, derived with the same lightness rules as globals.css
-// (light: L 0.45 text-safe; dark: L 0.73 with chroma × 0.78). Like the web,
-// theming is per-client state — persisted in UserDefaults, not the server.
+// Native mirror of the desktop ThemePanel: the palette wheel of
+// lib/theme/palette-presets.ts, derived with the same lightness rules as
+// globals.css (light: L 0.45 text-safe; dark: L 0.73 with chroma × 0.78).
+// Like the web, theming is per-client state — persisted in UserDefaults, not
+// the server.
 
-struct PalettePreset: Identifiable, Equatable, Sendable {
-    let name: String
-    let hue: Double
-    let chroma: Double
-    let hue2: Double
-    let chroma2: Double
+/// The web's palette wheel (lib/theme/palette-presets.ts). The palette is one
+/// chord seated on a paper tint: the accent at the wheel angle, the second
+/// voice 111 degrees before it, the third voice 94 degrees after it, the paper
+/// 61 degrees before it. The wheel has 20 stops. Brilliance scales every
+/// chroma and the paper tint together. Keep the numbers in step with the web;
+/// PaletteWheelTests compares a few stops to the web's output.
+enum PaletteWheel {
+    static let stopCount = 20
+    static let stepDegrees = 360.0 / Double(stopCount)
+    static let minBrilliance = 0.25
+    static let maxBrilliance = 1.5
+    static let minChroma = 0.012
+    static let maxChroma = 0.16
+    static let maxSurfaceTint = 0.4
+    static let minDepth = 0.4
+    static let maxDepth = 1.6
 
-    var id: String { name }
+    static let defaultHue = 156.0
+    static let defaultChroma = 0.09
+    static let defaultChroma2 = 0.11
+    static let defaultChroma3 = 0.08
+    static let defaultSurfaceTint = 0.22
+    static let accent2Offset = -111.0
+    static let accent3Offset = 94.0
+    static let paperOffset = -61.0
 
-    // Mirrors lib/theme/palette-presets.ts — keep the two in step.
-    static let all: [PalettePreset] = [
-        PalettePreset(name: "Forest", hue: 156, chroma: 0.09, hue2: 45, chroma2: 0.11),
-        PalettePreset(name: "Ocean", hue: 235, chroma: 0.11, hue2: 70, chroma2: 0.12),
-        PalettePreset(name: "Iris", hue: 290, chroma: 0.11, hue2: 110, chroma2: 0.10),
-        PalettePreset(name: "Rose", hue: 15, chroma: 0.11, hue2: 195, chroma2: 0.09),
-        PalettePreset(name: "Ember", hue: 60, chroma: 0.10, hue2: 265, chroma2: 0.10),
-        PalettePreset(name: "Mono", hue: 250, chroma: 0.015, hue2: 40, chroma2: 0.06),
-    ]
+    /// The full palette object at one wheel stop.
+    struct Stop: Equatable, Sendable {
+        let hue: Double
+        let chroma: Double
+        let hue2: Double
+        let chroma2: Double
+        let hue3: Double
+        let chroma3: Double
+        let paperHue: Double
+        let surfaceTint: Double
+    }
+
+    static func rotate(_ hue: Double, by delta: Double) -> Double {
+        let turned = (hue + delta).truncatingRemainder(dividingBy: 360)
+        return (turned + 360).truncatingRemainder(dividingBy: 360)
+    }
+
+    static func clampBrilliance(_ value: Double) -> Double {
+        guard value.isFinite else { return 1 }
+        return min(maxBrilliance, max(minBrilliance, value))
+    }
+
+    static func clampChroma(_ value: Double) -> Double {
+        min(maxChroma, max(minChroma, value))
+    }
+
+    /// Stop 0 is the Forest default.
+    static func stop(_ index: Int, brilliance: Double = 1) -> Stop {
+        let b = clampBrilliance(brilliance)
+        let hue = rotate(defaultHue, by: Double(index) * stepDegrees)
+        return Stop(
+            hue: hue,
+            chroma: clampChroma(defaultChroma * b),
+            hue2: rotate(hue, by: accent2Offset),
+            chroma2: clampChroma(defaultChroma2 * b),
+            hue3: rotate(hue, by: accent3Offset),
+            chroma3: clampChroma(defaultChroma3 * b),
+            paperHue: rotate(hue, by: paperOffset),
+            surfaceTint: min(maxSurfaceTint, defaultSurfaceTint * b)
+        )
+    }
+
+    /// The stop whose accent hue is nearest to the given hue.
+    static func nearestStop(hue: Double) -> Int {
+        let turns = rotate(hue, by: -defaultHue) / stepDegrees
+        return Int(turns.rounded()) % stopCount
+    }
+
+    /// The brilliance axis, read back from the applied accent chroma.
+    static func brilliance(fromChroma chroma: Double) -> Double {
+        clampBrilliance(chroma / defaultChroma)
+    }
+
+    /// The readout under the Depth slider, as on the web.
+    static func depthLabel(_ depth: Double) -> String {
+        if depth < 0.75 { return "Flat" }
+        if depth > 1.25 { return "Deep" }
+        return "Standard"
+    }
+
+    /// The old "Background wash" (0...1, default 0.35) becomes the web's
+    /// paper tint, so the default wash lands on the web's default tint.
+    static func migratedSurfaceTint(backgroundWash: Double?) -> Double {
+        guard let backgroundWash, backgroundWash.isFinite else { return defaultSurfaceTint }
+        return min(maxSurfaceTint, max(0, backgroundWash * (defaultSurfaceTint / 0.35)))
+    }
 }
 
 enum AppearanceChoice: String, CaseIterable, Identifiable {
@@ -104,45 +179,78 @@ final class ThemeStore {
     var accentChroma: Double { didSet { persist() } }
     var accent2Hue: Double { didSet { persist() } }
     var accent2Chroma: Double { didSet { persist() } }
+    var accent3Hue: Double { didSet { persist() } }
+    var accent3Chroma: Double { didSet { persist() } }
+    /// The paper seat: the hue of every surface in the depth ladder.
+    var paperHue: Double { didSet { persist() } }
+    /// How much of the paper hue shows in the surfaces (0...0.4).
+    var surfaceTint: Double { didSet { persist() } }
+    /// The distance between the rungs of the depth ladder (0.4...1.6).
+    var depthSpread: Double { didSet { persist() } }
     var appearance: AppearanceChoice { didSet { persist() } }
     var displayType: DisplayTypeChoice { didSet { persist() } }
-    var backgroundWash: Double { didSet { persist() } }
-    var railWash: Double { didSet { persist() } }
     var grain: Double { didSet { persist() } }
 
     private let defaults: UserDefaults
+    private var isApplyingStop = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let stored = defaults.dictionary(forKey: Self.defaultsKey) ?? [:]
-        accentHue = stored["accentHue"] as? Double ?? 156
-        accentChroma = stored["accentChroma"] as? Double ?? 0.09
-        accent2Hue = stored["accent2Hue"] as? Double ?? 45
-        accent2Chroma = stored["accent2Chroma"] as? Double ?? 0.11
+        let hue = stored["accentHue"] as? Double ?? PaletteWheel.defaultHue
+        let chroma = stored["accentChroma"] as? Double ?? PaletteWheel.defaultChroma
+        accentHue = hue
+        accentChroma = chroma
+        accent2Hue = stored["accent2Hue"] as? Double ?? PaletteWheel.rotate(hue, by: PaletteWheel.accent2Offset)
+        accent2Chroma = stored["accent2Chroma"] as? Double ?? PaletteWheel.defaultChroma2
+        // Values the six old presets never stored derive from the chord, so
+        // an old palette keeps its look and gains the web's third voice and
+        // paper seat.
+        let brilliance = PaletteWheel.brilliance(fromChroma: chroma)
+        accent3Hue = stored["accent3Hue"] as? Double ?? PaletteWheel.rotate(hue, by: PaletteWheel.accent3Offset)
+        accent3Chroma = stored["accent3Chroma"] as? Double
+            ?? PaletteWheel.clampChroma(PaletteWheel.defaultChroma3 * brilliance)
+        paperHue = stored["paperHue"] as? Double ?? PaletteWheel.rotate(hue, by: PaletteWheel.paperOffset)
+        surfaceTint = stored["surfaceTint"] as? Double
+            ?? PaletteWheel.migratedSurfaceTint(backgroundWash: stored["backgroundWash"] as? Double)
+        depthSpread = stored["depthSpread"] as? Double ?? 1
         appearance = AppearanceChoice(rawValue: stored["appearance"] as? String ?? "") ?? .system
         displayType = DisplayTypeChoice(rawValue: stored["displayType"] as? String ?? "") ?? .serif
-        backgroundWash = stored["backgroundWash"] as? Double ?? 0.35
-        railWash = stored["railWash"] as? Double ?? 0.5
         grain = stored["grain"] as? Double ?? 0
     }
 
-    var selectedPreset: PalettePreset? {
-        PalettePreset.all.first {
-            abs($0.hue - accentHue) < 0.5 && abs($0.chroma - accentChroma) < 0.005
-                && abs($0.hue2 - accent2Hue) < 0.5 && abs($0.chroma2 - accent2Chroma) < 0.005
-        }
+    // MARK: - The wheel
+
+    /// The wheel stop nearest to the accent in use.
+    var wheelStop: Int { PaletteWheel.nearestStop(hue: accentHue) }
+
+    /// The brilliance axis, read back from the accent chroma.
+    var brilliance: Double { PaletteWheel.brilliance(fromChroma: accentChroma) }
+
+    /// A wheel scrub writes the complete palette object: the chord, the paper
+    /// seat, and the tint. One write to the defaults at the end.
+    func applyWheel(stop index: Int, brilliance: Double) {
+        let stop = PaletteWheel.stop(index, brilliance: brilliance)
+        isApplyingStop = true
+        accentHue = stop.hue
+        accentChroma = stop.chroma
+        accent2Hue = stop.hue2
+        accent2Chroma = stop.chroma2
+        accent3Hue = stop.hue3
+        accent3Chroma = stop.chroma3
+        paperHue = stop.paperHue
+        surfaceTint = stop.surfaceTint
+        isApplyingStop = false
+        persist()
     }
 
-    func apply(_ preset: PalettePreset) {
-        accentHue = preset.hue
-        accentChroma = preset.chroma
-        accent2Hue = preset.hue2
-        accent2Chroma = preset.chroma2
-    }
+    // MARK: - Colors
 
     // Trait-adaptive accents using the same light/dark derivation as the web.
     var accentColor: Color { Self.adaptiveColor(hue: accentHue, chroma: accentChroma) }
     var accent2Color: Color { Self.adaptiveColor(hue: accent2Hue, chroma: accent2Chroma) }
+    // The highlight voice (--color-accent-3): badges, lanes, blanks for the user.
+    var accent3Color: Color { Self.adaptiveColor(hue: accent3Hue, chroma: accent3Chroma) }
 
     func accentColor(for scheme: ColorScheme) -> Color {
         scheme == .dark
@@ -188,16 +296,20 @@ final class ThemeStore {
     }
 
     private func persist() {
+        if isApplyingStop { return }
         defaults.set(
             [
                 "accentHue": accentHue,
                 "accentChroma": accentChroma,
                 "accent2Hue": accent2Hue,
                 "accent2Chroma": accent2Chroma,
+                "accent3Hue": accent3Hue,
+                "accent3Chroma": accent3Chroma,
+                "paperHue": paperHue,
+                "surfaceTint": surfaceTint,
+                "depthSpread": depthSpread,
                 "appearance": appearance.rawValue,
                 "displayType": displayType.rawValue,
-                "backgroundWash": backgroundWash,
-                "railWash": railWash,
                 "grain": grain,
             ],
             forKey: Self.defaultsKey

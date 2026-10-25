@@ -12,6 +12,18 @@ struct SignaturesSettingsView: View {
         Form {
             if !didLoad {
                 Section { ProgressView("Loading signatures…") }
+            } else if signatures.isEmpty, let errorMessage {
+                // A failed read is not "no mailboxes": say so and offer Retry.
+                Section {
+                    Text("Could not load your signatures.")
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("Try again") {
+                        didLoad = false
+                        Task { await load() }
+                    }
+                }
             } else if signatures.isEmpty {
                 Section {
                     Text("Connect a mailbox to add its signature.")
@@ -36,7 +48,7 @@ struct SignaturesSettingsView: View {
                     Text("A signature is added below new mail, replies, and forwards from its mailbox. You can leave it off for one message in the composer.")
                 }
             }
-            if let errorMessage {
+            if let errorMessage, !signatures.isEmpty {
                 Section { Text(errorMessage).font(.footnote).foregroundStyle(.red) }
             }
         }

@@ -24,8 +24,15 @@ struct ChatRefreshTests {
         return day.addingTimeInterval(Double(hour * 3_600 + minute * 60))
     }
 
+    // Foundation puts a narrow no-break space (U+202F) before AM and PM, and
+    // older releases a plain space. The product keeps whichever it gets, so
+    // the time never wraps away from its AM or PM; the tests read either.
+    private func plain(_ text: String?) -> String? {
+        text?.replacingOccurrences(of: "\u{202F}", with: " ")
+    }
+
     private func sentence(_ input: ChatDesk.Input) -> String {
-        ChatDesk.sentence(input: input, now: friday, calendar: calendar, locale: locale)
+        plain(ChatDesk.sentence(input: input, now: friday, calendar: calendar, locale: locale)) ?? ""
     }
 
     private func rows(_ input: ChatDesk.Input) -> [ChatDesk.Row] {
@@ -59,7 +66,11 @@ struct ChatRefreshTests {
         #expect(sentence(ChatDesk.Input()) == ChatDesk.fallbackSentence)
         #expect(sentence(ChatDesk.Input(mail: [sarah])) == "Sarah wrote to you.")
         #expect(sentence(ChatDesk.Input(mail: [sarah, priya])) == "Sarah and Priya wrote to you.")
-        #expect(sentence(ChatDesk.Input(mail: [sarah, priya, sam])) == "Sarah, Priya, and 1 other wrote to you.")
+        #expect(sentence(ChatDesk.Input(mail: [sarah, priya, sam])) == "Sarah, Priya, and Sam wrote to you.")
+        let casey = ChatDesk.Mail(id: "t-casey", senderName: "Casey Morgan", subject: "Lunch", date: friday)
+        let lee = ChatDesk.Mail(id: "t-lee", senderName: "Lee Park", subject: "Keys", date: friday)
+        #expect(sentence(ChatDesk.Input(mail: [sarah, priya, sam, casey])) == "Sarah, Priya, and two others wrote to you.")
+        #expect(sentence(ChatDesk.Input(mail: [sarah, priya, sam, casey, lee])) == "Sarah, Priya, and three others wrote to you.")
         // Two threads from one sender name one person.
         #expect(sentence(ChatDesk.Input(mail: [sarah, sarah, priya])) == "Sarah and Priya wrote to you.")
         var waiting = sarah
@@ -108,11 +119,11 @@ struct ChatRefreshTests {
         #expect(desk.count == ChatDesk.rowLimit)
         #expect(desk.map(\.kind) == [.mail, .event, .work, .fixed])
         #expect(desk[0].ask == "Reply to Sarah about “Offsite venue: final head count”")
-        #expect(desk[0].source == "Sarah Chen, 2:48 PM")
-        #expect(desk[1].ask == "Get ready for “Standup”")
-        #expect(desk[1].source == "Today at 3:30 PM")
+        #expect(plain(desk[0].source) == "Sarah Chen, 2:48 PM")
+        #expect(desk[1].ask == "Get ready for Standup")
+        #expect(plain(desk[1].source) == "Today at 3:30 PM")
         #expect(desk[2].ask == "What does “Confirm the offsite head count” need from me?")
-        #expect(desk[2].source == "Albatross, needs you")
+        #expect(desk[2].source == "Waiting on you")
         #expect(desk[3].ask == ChatDesk.fixedAsks[0])
         #expect(desk[3].source == nil)
         #expect(Set(desk.map(\.id)).count == desk.count)
@@ -123,9 +134,11 @@ struct ChatRefreshTests {
         let mail = rows(ChatDesk.Input(mail: [sarah, priya, sam], areas: [offsite]))
         #expect(mail.map(\.kind) == [.mail, .mail, .area, .fixed])
         #expect(mail[2].ask == "What does Team offsite need from me?")
-        #expect(mail[2].source == "Area, 1 needs you")
+        #expect(mail[2].source == "Area, one thing waits on you")
         let busy = ChatDesk.Area(id: "area-home", name: "Home", needsYou: 3)
-        #expect(rows(ChatDesk.Input(areas: [busy]))[0].source == "Area, 3 need you")
+        #expect(rows(ChatDesk.Input(areas: [busy]))[0].source == "Area, three things wait on you")
+        #expect(ChatDesk.countWord(9) == "nine")
+        #expect(ChatDesk.countWord(12) == "12")
         // Mail from another day names the date.
         var old = priya
         old = ChatDesk.Mail(id: old.id, senderName: old.senderName, subject: old.subject, date: at(9, dayOffset: -3))
@@ -252,7 +265,7 @@ struct ChatRefreshTests {
         #expect(ChatHistoryGroups.filter(sessions, query: "offsite").map(\.id) == ["a"])
         #expect(ChatHistoryGroups.filter(sessions, query: "2211").map(\.id) == ["b"])
         #expect(ChatHistoryGroups.filter(sessions, query: "lease").isEmpty)
-        #expect(ChatHistoryGroups.timeLabel(at(9), now: friday, calendar: calendar) == "9:00 AM")
+        #expect(plain(ChatHistoryGroups.timeLabel(at(9), now: friday, calendar: calendar)) == "9:00 AM")
         #expect(ChatHistoryGroups.timeLabel(at(10, dayOffset: -2), now: friday, calendar: calendar) == "Oct 21")
     }
 

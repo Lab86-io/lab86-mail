@@ -135,13 +135,14 @@ struct ChatDesk: Equatable, Sendable {
             waits = waits && item.waitsOnReply
         }
         guard !names.isEmpty else { return nil }
+        // Three names read as a list; more than that, the first two and a
+        // count in words. "And 1 other" read as a form, not a sentence.
         let subject: String
         switch names.count {
         case 1: subject = names[0]
         case 2: subject = "\(names[0]) and \(names[1])"
-        default:
-            let others = names.count - 2
-            subject = "\(names[0]), \(names[1]), and \(others) other\(others == 1 ? "" : "s")"
+        case 3: subject = "\(names[0]), \(names[1]), and \(names[2])"
+        default: subject = "\(names[0]), \(names[1]), and \(countWord(names.count - 2)) others"
         }
         if waits {
             return names.count == 1 ? "\(subject) waits on a reply." : "\(subject) wait on a reply."
@@ -204,7 +205,7 @@ struct ChatDesk: Equatable, Sendable {
             rows.append(Row(
                 id: "event-\(event.id)",
                 kind: .event,
-                ask: "Get ready for “\(event.title)”",
+                ask: "Get ready for \(event.title)",
                 source: "Today at \(event.start.formatted(base.hour().minute()))"
             ))
         }
@@ -213,14 +214,16 @@ struct ChatDesk: Equatable, Sendable {
                 id: "work-\(work.id)",
                 kind: .work,
                 ask: "What does “\(work.title)” need from me?",
-                source: "Albatross, needs you"
+                source: "Waiting on you"
             ))
         } else if let area = input.areas.first(where: { $0.needsYou > 0 }) {
             rows.append(Row(
                 id: "area-\(area.id)",
                 kind: .area,
                 ask: "What does \(area.name) need from me?",
-                source: area.needsYou == 1 ? "Area, 1 needs you" : "Area, \(area.needsYou) need you"
+                source: area.needsYou == 1
+                    ? "Area, one thing waits on you"
+                    : "Area, \(countWord(area.needsYou)) things wait on you"
             ))
         }
         var result = Array(rows.prefix(rowLimit))
@@ -231,6 +234,12 @@ struct ChatDesk: Equatable, Sendable {
     }
 
     // MARK: - Helpers
+
+    /// Small counts in words, as a sentence writes them; 10 and up in digits.
+    static func countWord(_ count: Int) -> String {
+        let words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+        return words.indices.contains(count) ? words[count] : "\(count)"
+    }
 
     /// "Priya Patel" gives "Priya"; a bare address gives its mailbox.
     static func firstName(_ name: String) -> String {

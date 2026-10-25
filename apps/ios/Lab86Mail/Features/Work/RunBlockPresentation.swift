@@ -153,8 +153,11 @@ enum RunBlockCopy {
     static let replyInProgressPlaceholder = "Albatross writes a reply"
     static let askWhileRunPlaceholder = "Ask Albatross a question"
 
-    /// "To the run · Step 2, Renew online" (lead decision 5).
-    static func runRouteLine(stepNumber: Int?, title: String) -> String {
+    /// "To the run · Step 2, Renew online" (lead decision 5). A goal run says
+    /// "To the run" alone, as on the web: its checklist names the current
+    /// item, and the goal's title is already the page title.
+    static func runRouteLine(stepNumber: Int?, title: String, goal: Bool = false) -> String {
+        if goal { return "To the run" }
         guard let stepNumber else { return "To the run · \(title)" }
         return "To the run · Step \(stepNumber), \(title)"
     }

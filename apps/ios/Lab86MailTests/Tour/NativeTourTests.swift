@@ -65,6 +65,16 @@ final class NativeTourTests: XCTestCase {
         try await tour(Screen(id: "mail-empty", title: "Mail with no messages", section: "Mail", tab: .mail))
     }
 
+    func testTour07bMailNeedsReply() async throws {
+        // The Needs reply view with no mail: the text pills with their
+        // counts, the More pill, and the view's own empty copy.
+        var screen = Screen(id: "mail-needs-reply", title: "Mail, Needs reply view with no mail", section: "Mail", tab: .mail)
+        screen.setUp = { environment in
+            environment.navigation.pendingMailCategory = MailCategoryScope.needsReply.rawValue
+        }
+        try await tour(screen)
+    }
+
     func testTour08MailError() async throws {
         try await tour(Screen(id: "mail-error", title: "Mail when the server does not answer", section: "Mail", tab: .mail))
     }
@@ -341,6 +351,64 @@ final class NativeTourTests: XCTestCase {
         try await tour(screen)
     }
 
+    func testTour35SettingsAppearance() async throws {
+        // Settings, Appearance: the 20-stop palette wheel with Brilliance,
+        // the display type, the fine-tune sliders, and Depth under Surfaces.
+        var screen = Screen(id: "settings-appearance", title: "Settings, Appearance", section: "Settings", tab: .today)
+        screen.rootView = {
+            AnyView(NavigationStack { AppearanceSettingsView() })
+        }
+        screen.fullPage = true
+        try await tour(screen)
+    }
+
+    func testTour36SettingsWhatsNew() async throws {
+        // Settings, What's new: two dated batches of notes, one with a
+        // picture, their changes with the quiet kind word, and the web link.
+        // The release is given to the page, so no request is made.
+        let release = ProductRelease(
+            id: "0.16.43:2026-10-20-area-pills,2026-10-15-update-notice",
+            version: "0.16.43",
+            updates: [
+                ProductUpdate(
+                    id: "2026-10-20-area-pills",
+                    publishedAt: "2026-10-20",
+                    title: "Narrow the list to one Area",
+                    changes: [
+                        ProductUpdateChange(id: "pills", kind: .improved, title: "Area pills on Albatrosses", description: "One tap shows the Work of one Area."),
+                        ProductUpdateChange(id: "draft-mark", kind: .new, title: "A draft mark on rows", description: "A row shows Draft when you left words in its thread."),
+                        ProductUpdateChange(id: "later-cards", kind: .fixed, title: "Later cards sit flat", description: "The shelf uses the same insert as the rest of the page."),
+                    ]
+                ),
+                ProductUpdate(
+                    id: "2026-10-15-update-notice",
+                    publishedAt: "2026-10-15",
+                    title: "Updates come to you",
+                    summary: "Review a new version from a small notice, then open its notes when you are ready.",
+                    changes: [
+                        ProductUpdateChange(id: "notice", kind: .new, title: "A notice after an update", description: "It waits until you look."),
+                    ],
+                    hasWebDemo: true
+                ),
+            ]
+        )
+        var screen = Screen(id: "settings-whats-new", title: "Settings, What's new", section: "Settings", tab: .today)
+        screen.rootView = {
+            AnyView(NavigationStack { WhatsNewView(preloaded: release) })
+        }
+        try await tour(screen)
+    }
+
+    func testTour37WorkRelease() async throws {
+        // Putting an Albatross down: the question in the display face, the
+        // optional reason, "Put it down", and "Keep it".
+        var screen = Screen(id: "work-release", title: "Put an Albatross down", section: "Tasks and Work", tab: .work)
+        screen.rootView = {
+            AnyView(ReleaseSheet(workID: "w-passport", title: "Renew my passport before the Denver trip"))
+        }
+        try await tour(screen)
+    }
+
     // MARK: - Screens and variants
 
     private struct Screen {
@@ -452,11 +520,12 @@ final class NativeTourTests: XCTestCase {
 
     private static let screenOrder = [
         "shell-sidebar", "today-brief", "today-empty", "today-error", "mail-list", "mail-thread", "mail-empty",
-        "mail-error", "compose-new", "compose-reply", "calendar-day", "calendar-week", "calendar-month", "tasks",
+        "mail-needs-reply", "mail-error", "compose-new", "compose-reply", "calendar-day", "calendar-week", "calendar-month", "tasks",
         "work", "work-detail", "work-detail-run", "work-detail-handoff", "work-thread-run", "work-thread-form",
         "work-thread-handoff", "work-thread-allow", "work-thread-receipt", "work-thread-goal-run", "work-thread-goal-package",
-        "work-thread-goal-stopped", "document-mode-package", "compose-attachments", "files", "chat-desk", "chat", "settings",
-        "settings-personal-details", "settings-passwords-ids", "settings-passwords-ids-detail",
+        "work-thread-goal-stopped", "document-mode-package", "compose-attachments", "work-release", "files", "chat-desk", "chat", "settings",
+        "settings-personal-details", "settings-passwords-ids", "settings-passwords-ids-detail", "settings-appearance",
+        "settings-whats-new",
     ]
 
     // MARK: - The tour

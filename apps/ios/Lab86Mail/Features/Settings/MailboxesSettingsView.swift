@@ -254,7 +254,10 @@ struct MailboxesSettingsView: View {
         do {
             try await environment.webAuthentication.connectMailbox(provider: provider.id)
             await load()
+            await refreshMailAfterChange()
         } catch {
+            // A closed sign-in sheet is the person's choice, not a failure.
+            guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -265,7 +268,9 @@ struct MailboxesSettingsView: View {
         do {
             try await environment.webAuthentication.connectMailbox(provider: mailbox.provider, accountId: mailbox.id)
             await load()
+            await refreshMailAfterChange()
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -279,9 +284,17 @@ struct MailboxesSettingsView: View {
                 body: .object(["accountId": .string(accountID)])
             )
             await load()
+            await refreshMailAfterChange()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Mail follows a mailbox change at once (S2): the account list and the
+    /// inbox read again after a connect, a reconnect, or a removal.
+    /// `refreshMail` reloads the accounts before the threads.
+    private func refreshMailAfterChange() async {
+        await environment.store.refreshMail()
     }
 
     private func saveAlias(accountID: String) async {

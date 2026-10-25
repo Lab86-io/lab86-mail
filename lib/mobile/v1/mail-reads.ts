@@ -78,6 +78,24 @@ export function mailThreadSummaryFromCorpus(item: any) {
   });
 }
 
+/** Maps a page of corpus rows. A row the strict schema rejects is skipped
+ * and reported through `onSkip`, so one bad row never fails the whole page
+ * for a native list (feature audit, item 8). */
+export function mailThreadSummariesFromCorpus(
+  items: unknown[],
+  onSkip?: (error: unknown, index: number) => void,
+) {
+  const summaries: ReturnType<typeof mailThreadSummaryFromCorpus>[] = [];
+  items.forEach((item, index) => {
+    try {
+      summaries.push(mailThreadSummaryFromCorpus(item));
+    } catch (error) {
+      onSkip?.(error, index);
+    }
+  });
+  return summaries;
+}
+
 export function mailListCursor(raw: string | null): number | undefined {
   if (!raw) return undefined;
   if (!/^\d+$/.test(raw)) {

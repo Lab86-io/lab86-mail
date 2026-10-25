@@ -1,6 +1,5 @@
 import Combine
 import ConvexMobile
-import Kingfisher
 import QuickLook
 import SwiftUI
 
@@ -60,6 +59,10 @@ struct ThreadView: View {
                         }
                     }
                     .padding(.bottom, 24)
+                    // The reading column: 680 pt at most, centered on wide
+                    // screens (D23). Phones keep the full width.
+                    .frame(maxWidth: ThreadReaderMetrics.maxWidth)
+                    .frame(maxWidth: .infinity)
                 }
                 .background(environment.theme.paperColor)
             } else if isLoading {
@@ -155,16 +158,17 @@ struct ThreadView: View {
         return subject.isEmpty ? "No subject" : subject
     }
 
-    // The lead block under the large title: message count and latest activity,
-    // then machine summary and linked tasks when present. Carries the complete
-    // subject for VoiceOver and copy, since the bar truncates long titles once
-    // collapsed.
+    // The lead block under the large title: one italic line (the machine's
+    // voice) with the count and the newest date, then the summary, the proof
+    // offer, and linked tasks when present, each a flat insert. Carries the
+    // complete subject for VoiceOver and copy, since the bar truncates long
+    // titles once collapsed.
     private func threadLead(_ detail: MailThreadDetail) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(metaLine(detail))
-                .font(.footnote)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(leadLine(detail))
+                .font(environment.theme.displayType.displayItalicFont(size: 15))
                 .foregroundStyle(.secondary)
-                .accessibilityLabel("\(pageTitle). \(metaLine(detail))")
+                .accessibilityLabel("\(pageTitle). \(leadLine(detail))")
                 .contextMenu {
                     Button("Copy Subject", systemImage: "doc.on.doc") {
                         PlatformPasteboard.copy(pageTitle)
@@ -178,39 +182,66 @@ struct ThreadView: View {
                     .font(.subheadline)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.green.opacity(0.12), in: .rect(cornerRadius: 12))
+                    .insetPanel()
             } else if !dismissedProofOffer, let candidate = proofCandidates.first {
                 proofOffer(candidate, detail: detail)
             }
             if !linkedTasks.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Linked tasks")
-                        .font(.headline)
-                    ForEach(linkedTasks) { task in
-                        Button {
-                            openTask = task
-                        } label: {
-                            HStack {
-                                Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
-                                Text(task.title)
-                                    .foregroundStyle(.primary)
-                                Spacer()
-                                Image(systemName: "chevron.forward")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(12)
-                            .background(.thinMaterial, in: .rect(cornerRadius: 12))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                linkedTasksInsert
             }
         }
         .padding(.horizontal, 16)
         .padding(.top, 2)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func leadLine(_ detail: MailThreadDetail) -> String {
+        ThreadLeadCopy.line(messageCount: detail.messages.count, lastDate: detail.messages.last?.date)
+    }
+
+    // Tasks that cite this thread: an italic label and plain rows in one
+    // insert. A finished task says so in words.
+    private var linkedTasksInsert: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Linked tasks")
+                .font(environment.theme.displayType.displayItalicFont(size: 15))
+                .foregroundStyle(.secondary)
+            VStack(spacing: 0) {
+                ForEach(linkedTasks) { task in
+                    linkedTaskRow(task)
+                    if task.id != linkedTasks.last?.id {
+                        Divider().padding(.leading, 12)
+                    }
+                }
+            }
+            .insetPanel()
+        }
+    }
+
+    private func linkedTaskRow(_ task: TaskSummary) -> some View {
+        Button {
+            openTask = task
+        } label: {
+            HStack(spacing: 10) {
+                Text(task.title)
+                    .foregroundStyle(task.completed ? .secondary : .primary)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                if task.completed {
+                    Text("Done")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Image(systemName: "chevron.forward")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(task.completed ? "\(task.title), done" : task.title)
     }
 
     private func proofOffer(_ candidate: WorkProofCandidate, detail: MailThreadDetail) -> some View {
@@ -255,20 +286,17 @@ struct ThreadView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(environment.theme.accentSoftColor, in: .rect(cornerRadius: 14))
-        .overlay(alignment: .leading) {
-            Rectangle()
-                .fill(environment.theme.accentColor)
-                .frame(width: 3)
-        }
+        .insetPanel()
     }
 
     @ViewBuilder
     private func proofOfferActions(_ candidate: WorkProofCandidate, detail: MailThreadDetail) -> some View {
+        // A soft fill: Reply is the one filled control on this screen.
         Button(isAttachingProof ? "Filing proof…" : "Yes, use as proof") {
             Task { await attachProof(candidate, detail: detail) }
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.bordered)
+        .tint(environment.theme.accentColor)
         .disabled(isAttachingProof)
         .frame(minHeight: 44)
 
@@ -301,21 +329,9 @@ struct ThreadView: View {
             .frame(minHeight: 44)
     }
 
-    private func metaLine(_ detail: MailThreadDetail) -> String {
-        let count = detail.messages.count
-        var parts = ["\(count) message\(count == 1 ? "" : "s")"]
-        if let sender = detail.messages.last?.sender, !sender.isEmpty {
-            parts.append(sender)
-        }
-        if let date = detail.messages.last?.date {
-            parts.append(date.formatted(date: .abbreviated, time: .shortened))
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    // Machine text is quarantined from real messages: accent-washed card with
-    // a left accent rail and a display-italic label — never mistakable for a
-    // human message.
+    // Machine text is quarantined from real messages: a flat insert with a
+    // display-italic label in the accent, never mistakable for a human
+    // message.
     private func summaryCard(_ answer: ModelAnswer) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -344,18 +360,8 @@ struct ThreadView: View {
                 .textSelection(.enabled)
         }
         .padding(14)
-        .padding(.leading, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            environment.theme.accentSoftColor,
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-        )
-        .overlay(alignment: .leading) {
-            UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16)
-                .fill(environment.theme.accentColor)
-                .frame(width: 3)
-        }
-        .padding(.bottom, 2)
+        .insetPanel()
     }
 
     private var moreMenu: some View {
@@ -410,6 +416,8 @@ struct ThreadView: View {
             if let detail { await refreshProofCandidates(for: detail) }
             await resolveSenderPhotos()
         } catch {
+            // A read the view gave up on is not a failure.
+            guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -449,9 +457,8 @@ struct ThreadView: View {
                     }
                 }
             }
-        } catch is CancellationError {
-            return
         } catch {
+            if error.isCancellation { return }
             // The authenticated HTTP load remains the fallback. A transient
             // websocket failure should not replace a readable message with an error.
             if detail == nil { errorMessage = error.localizedDescription }
@@ -466,6 +473,7 @@ struct ThreadView: View {
             let content = detail.messages.map { "From: \($0.sender)\n\($0.body)" }.joined(separator: "\n\n")
             modelSummary = try await environment.modelRouter.summarize(thread: route, content: content)
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -548,14 +556,18 @@ struct ThreadView: View {
 // The message's identity row, pinned as its section header: as the reader
 // scrolls, the current author stays visible beneath the navigation bar until
 // the next message's header pushes it out. Pure presentation over cached
-// state — pinning and unpinning triggers no requests or mutations.
+// state — pinning and unpinning triggers no requests or mutations. The row
+// prints names; the address is in the accessibility label and the menu.
 private struct MessageSenderHeader: View {
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let message: MailMessage
     let accountID: String
     @Binding var expandedMessageID: String?
 
     private var isExpanded: Bool { expandedMessageID == message.id }
+    private var stacksMeta: Bool { dynamicTypeSize.isAccessibilitySize }
+    private var senderName: String { EmailTextNormalizer.displayName(from: message.sender) ?? message.sender }
 
     var body: some View {
         Button {
@@ -564,20 +576,22 @@ private struct MessageSenderHeader: View {
             }
         } label: {
             HStack(alignment: .center, spacing: 10) {
-                senderAvatar
+                SenderAvatar(name: message.sender, email: message.fromEmail, baseSize: 30)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(message.sender)
+                    Text(senderName)
                         .font(environment.theme.displayType.displayFont(size: 15))
                         .foregroundStyle(.primary)
-                        .lineLimit(1)
+                        .lineLimit(stacksMeta ? 2 : 1)
                     if !message.recipients.isEmpty {
-                        Text("to \(message.recipients)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text("to \(RecipientNames.line(from: message.recipients))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
+                    if stacksMeta { dateText }
                 }
                 Spacer()
-                Text(message.date, format: .dateTime.month().day().hour().minute())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if !stacksMeta { dateText }
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -588,6 +602,7 @@ private struct MessageSenderHeader: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityText)
         // Opaque paper background so pinned headers read cleanly over the
         // message content scrolling beneath them.
         .background(environment.theme.paperColor)
@@ -595,6 +610,9 @@ private struct MessageSenderHeader: View {
             Divider().opacity(0.6)
         }
         .contextMenu {
+            Button("Copy Address", systemImage: "doc.on.doc") {
+                PlatformPasteboard.copy(contactAddress)
+            }
             Button("Show Emails With Them", systemImage: "magnifyingglass") {
                 environment.navigation.threadRoute = nil
                 environment.navigation.selectPrimary(.mail)
@@ -621,21 +639,18 @@ private struct MessageSenderHeader: View {
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
     }
 
-    // Provider photo when the identity store has one cached, initials
-    // otherwise — identical 30pt geometry either way.
-    @ViewBuilder
-    private var senderAvatar: some View {
-        if let url = environment.mailIdentity.photoURL(for: message.fromEmail) {
-            KFImage(url)
-                .placeholder { InitialsAvatar(name: message.sender, size: 30) }
-                .fade(duration: 0.15)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: 30, height: 30)
-                .clipShape(Circle())
-        } else {
-            InitialsAvatar(name: message.sender, size: 30)
-        }
+    private var dateText: some View {
+        Text(message.date, format: .dateTime.month().day().hour().minute())
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private var accessibilityText: String {
+        var parts = [senderName]
+        if contactAddress != senderName { parts.append(contactAddress) }
+        if !message.recipients.isEmpty { parts.append("to \(RecipientNames.line(from: message.recipients))") }
+        parts.append(message.date.formatted(date: .abbreviated, time: .shortened))
+        return parts.joined(separator: ", ")
     }
 
     private var contactAddress: String {
@@ -652,16 +667,6 @@ private struct MessageSenderHeader: View {
 // just readable internal padding, with messages separated by spacing and a
 // hairline. The identity row lives in MessageSenderHeader.
 private struct MessageView: View {
-    // Desktop windows are wider than an email wants to be; the reader column
-    // caps and centres. Phones keep the full width.
-    static var readerMaxWidth: CGFloat {
-        #if os(macOS)
-        840
-        #else
-        .infinity
-        #endif
-    }
-
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
     let message: MailMessage
@@ -687,53 +692,18 @@ private struct MessageView: View {
                     )
                     .padding(.horizontal, 12)
                     .padding(.bottom, 14)
-                    .frame(maxWidth: Self.readerMaxWidth)
-                    .frame(maxWidth: .infinity)
                 } else {
                     Text(message.body)
                         .textSelection(.enabled)
                         .font(.body)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 14)
-                        .frame(maxWidth: Self.readerMaxWidth, alignment: .leading)
-                        .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if !message.attachments.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(message.attachments) { attachment in
-                            Button {
-                                Task { await openAttachment(attachment) }
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "paperclip")
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(attachment.filename).lineLimit(1)
-                                        if attachment.size > 0 {
-                                            Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.size), countStyle: .file))
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    Spacer()
-                                    if downloadingAttachmentID == attachment.id {
-                                        ProgressView()
-                                    } else {
-                                        Image(systemName: "arrow.down.circle")
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(downloadingAttachmentID != nil)
-                        }
-                        if let attachmentError {
-                            Text(attachmentError)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 14)
+                    attachmentsInsert
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 14)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 2) {
@@ -761,6 +731,63 @@ private struct MessageView: View {
         }
     }
 
+    // The files of a message as plain rows in one insert: the name, the
+    // size, and a download mark after the text.
+    private var attachmentsInsert: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(spacing: 0) {
+                ForEach(message.attachments) { attachment in
+                    attachmentRow(attachment)
+                    if attachment.id != message.attachments.last?.id {
+                        Divider().padding(.leading, 12)
+                    }
+                }
+            }
+            .insetPanel()
+            if let attachmentError {
+                Text(attachmentError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func attachmentRow(_ attachment: MailAttachment) -> some View {
+        Button {
+            Task { await openAttachment(attachment) }
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(attachment.filename)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if attachment.size > 0 {
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.size), countStyle: .file))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                if downloadingAttachmentID == attachment.id {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.down.circle")
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(downloadingAttachmentID != nil)
+        .accessibilityLabel("Open \(attachment.filename)")
+    }
+
     private func openLink(_ url: URL) {
         if url.scheme?.lowercased() == "mailto" {
             environment.navigation.open(url)
@@ -780,6 +807,7 @@ private struct MessageView: View {
                 attachment: attachment
             )
         } catch {
+            guard !error.isCancellation else { return }
             attachmentError = error.localizedDescription
         }
     }
@@ -846,6 +874,9 @@ private struct CommitmentReviewView: View {
                 sourceThread: route
             )
             dismiss()
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            guard !error.isCancellation else { return }
+            errorMessage = error.localizedDescription
+        }
     }
 }

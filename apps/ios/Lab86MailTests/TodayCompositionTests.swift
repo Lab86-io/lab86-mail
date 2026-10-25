@@ -173,7 +173,7 @@ struct TodayCompositionTests {
         #expect(
             TodayComposition.briefStandingLine(
                 generatedAt: now.addingTimeInterval(-24 * 24 * 3_600), now: now
-            ).hasSuffix("it describes an older day.")
+            ).hasSuffix(". It describes an older day.")
         )
     }
 

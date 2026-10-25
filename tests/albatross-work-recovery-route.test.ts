@@ -10,11 +10,11 @@ const user = {
   source: 'clerk' as const,
 };
 
-function request(recovery: string) {
+function request(recovery: string, extra: Record<string, unknown> = {}) {
   return new NextRequest('http://localhost/api/albatross/work/work-1/recover', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ recovery, stepKey: 'step-1', timezone: 'America/New_York' }),
+    body: JSON.stringify({ recovery, stepKey: 'step-1', timezone: 'America/New_York', ...extra }),
   });
 }
 
@@ -39,10 +39,21 @@ function dependencies() {
   };
 }
 
-async function invoke(deps: ReturnType<typeof dependencies>, recovery: string) {
-  return createWorkRecoveryPost(deps as any)(request(recovery), {
+async function invoke(
+  deps: ReturnType<typeof dependencies>,
+  recovery: string,
+  extra: Record<string, unknown> = {},
+) {
+  return createWorkRecoveryPost(deps as any)(request(recovery, extra), {
     params: Promise.resolve({ workId: 'work-1' }),
   });
+}
+
+function releaseReasons(deps: ReturnType<typeof dependencies>): unknown[] {
+  return deps.convexMutation.mock.calls
+    .map((call: any[]) => call[1])
+    .filter((args: any) => args && 'reason' in args && !('recovery' in args))
+    .map((args: any) => args.reason);
 }
 
 describe('Albatross Work recovery route', () => {
@@ -89,6 +100,25 @@ describe('Albatross Work recovery route', () => {
       });
       expect(deps.advanceWork).not.toHaveBeenCalled();
       expect(deps.completeWorkStep).not.toHaveBeenCalled();
+    }
+  });
+
+  test('a release keeps the reason the person wrote', async () => {
+    const deps = dependencies();
+
+    const response = await invoke(deps, 'release', { reason: '  The trip moved to spring.  ' });
+
+    expect(response.status).toBe(200);
+    expect(releaseReasons(deps)).toEqual(['The trip moved to spring.']);
+  });
+
+  test('a release with no words of its own keeps the missed-block reason', async () => {
+    for (const reason of [undefined, '', '   ', 42]) {
+      const deps = dependencies();
+
+      await invoke(deps, 'release', reason === undefined ? {} : { reason });
+
+      expect(releaseReasons(deps)).toEqual(['This no longer deserves space after its planned block passed.']);
     }
   });
 
