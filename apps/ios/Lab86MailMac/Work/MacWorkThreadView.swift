@@ -366,14 +366,12 @@ struct MacWorkThreadView: View {
                     atBottom: atBottom,
                     pendingFormOffscreen: (model.pendingQuestion != nil || model.pendingAllow != nil) && !atBottom
                 ) {
-                    Button(pill) {
+                    ThreadJumpControl(text: pill) {
                         guard let last = model.newestItemID else { return }
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
                             proxy.scrollTo(last, anchor: .bottom)
                         }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                     .padding(.trailing, 20)
                     .padding(.bottom, 12)
                 }
@@ -400,10 +398,16 @@ struct MacWorkThreadView: View {
     }
 
     private func transcriptScroll(_ model: WorkThreadModel, proxy: ScrollViewProxy) -> some View {
-        ScrollView {
+        // Computed once for the list (C7): the timeline merge and the
+        // streaming flags do not run again for each row.
+        let items = model.items
+        let streaming = model.chat.isStreaming
+        let lastID = model.chat.messages.last?.id
+        let latestReplyID = model.chat.latestReplyID
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
-                ForEach(model.items) { item in
-                    itemView(item, model: model)
+                ForEach(items) { item in
+                    itemView(item, model: model, streaming: streaming, lastID: lastID, latestReplyID: latestReplyID)
                         .id(item.id)
                 }
                 chatFooter(model)
@@ -420,15 +424,21 @@ struct MacWorkThreadView: View {
         } action: { _, isAtBottom in
             atBottom = isAtBottom
         }
-        .onChange(of: model.items.count) { _, _ in
-            guard atBottom, let last = model.newestItemID else { return }
+        .onChange(of: items.count) { _, _ in
+            guard atBottom, let last = items.last?.id else { return }
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                 proxy.scrollTo(last, anchor: .bottom)
             }
         }
     }
 
-    @ViewBuilder private func itemView(_ item: ThreadItem, model: WorkThreadModel) -> some View {
+    @ViewBuilder private func itemView(
+        _ item: ThreadItem,
+        model: WorkThreadModel,
+        streaming: Bool,
+        lastID: String?,
+        latestReplyID: String?
+    ) -> some View {
         switch item {
         case .outcome:
             // In document mode the "Your part" card names the step; the
@@ -458,7 +468,12 @@ struct MacWorkThreadView: View {
             }
             .accessibilityElement(children: .combine)
         case .message(let message):
-            AssistantMessageRow(model: model.chat, message: message)
+            AssistantMessageRow(
+                model: model.chat,
+                message: message,
+                isStreamingReply: streaming && message.id == lastID,
+                isLatestReply: message.id == latestReplyID
+            )
         case .run(let view, let continues):
             RunBlockView(
                 view: view,

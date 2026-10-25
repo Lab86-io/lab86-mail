@@ -91,7 +91,7 @@ struct HoldCard: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .surfaceCard(cornerRadius: 14)
+        .insetPanel(cornerRadius: 12)
         .scaleEffect(phase == .travel ? 0.6 : 1, anchor: .leading)
         .opacity(phase == .travel ? 0 : 1)
         .offset(x: phase == .travel ? -60 : 0)
@@ -128,30 +128,5 @@ struct HoldReceiptRow: View {
                 .accessibilityHint("Shows the Work")
         }
         .padding(.vertical, 6)
-    }
-}
-
-/// The quiet action under an assistant reply. It becomes "Kept" once used.
-struct HoldThisButton: View {
-    let isHeld: Bool
-    var isWorking: Bool = false
-    let onHold: () -> Void
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Spacer(minLength: 0)
-            if isWorking {
-                ProgressView().controlSize(.mini)
-            }
-            Button(isHeld ? "Kept" : "Hold this") {
-                guard !isHeld else { return }
-                onHold()
-            }
-            .buttonStyle(.plain)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .disabled(isHeld || isWorking)
-        }
-        .accessibilityLabel(isHeld ? "Kept" : "Hold this reply")
     }
 }

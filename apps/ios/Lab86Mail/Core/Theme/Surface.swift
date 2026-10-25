@@ -106,24 +106,33 @@ struct GrainOverlay: View {
 
     var body: some View {
         if amount > 0, !reduceTransparency {
-            Canvas { context, size in
-                let spacing: CGFloat = 5
-                let columns = Int(size.width / spacing) + 1
-                let rows = Int(size.height / spacing) + 1
-                for row in 0..<rows {
-                    for column in 0..<columns {
-                        let hash = (row &* 73_856_093) ^ (column &* 19_349_663)
-                        guard hash % 7 == 0 else { continue }
-                        let x = CGFloat(column) * spacing + CGFloat(abs(hash % 3))
-                        let y = CGFloat(row) * spacing + CGFloat(abs((hash / 3) % 3))
-                        let rect = CGRect(x: x, y: y, width: 0.7, height: 0.7)
-                        context.fill(Path(ellipseIn: rect), with: .color(.primary.opacity(0.055 * amount)))
-                    }
+            Canvas(renderer: Self.renderer(amount: amount))
+                .blendMode(.overlay)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    // Built outside the main actor. A renderer written inline in this view
+    // would inherit main-actor isolation, and Swift traps if SwiftUI ever
+    // draws it on its render thread, which is how a colour provider once
+    // crashed the app.
+    nonisolated private static func renderer(amount: Double) -> (inout GraphicsContext, CGSize) -> Void {
+        { context, size in
+            let spacing: CGFloat = 5
+            let columns = Int(size.width / spacing) + 1
+            let rows = Int(size.height / spacing) + 1
+            let ink = Color.primary.opacity(0.055 * amount)
+            for row in 0..<rows {
+                for column in 0..<columns {
+                    let hash = (row &* 73_856_093) ^ (column &* 19_349_663)
+                    guard hash % 7 == 0 else { continue }
+                    let x = CGFloat(column) * spacing + CGFloat(abs(hash % 3))
+                    let y = CGFloat(row) * spacing + CGFloat(abs((hash / 3) % 3))
+                    let rect = CGRect(x: x, y: y, width: 0.7, height: 0.7)
+                    context.fill(Path(ellipseIn: rect), with: .color(ink))
                 }
             }
-            .blendMode(.overlay)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
         }
     }
 }
@@ -191,6 +200,47 @@ extension View {
 
     func surfaceCard(theme: ThemeStore, cornerRadius: CGFloat = 18) -> some View {
         modifier(ThemedSurfaceCardModifier(theme: theme, cornerRadius: cornerRadius))
+    }
+}
+
+// MARK: - Inset panel
+
+// One step down into the paper: subtle fill and a hairline, no shadow. The
+// evidence inserts of a chat transcript (tool cards, questions, approvals)
+// use it, so the user's words and the raised sheets keep their own levels.
+private struct InsetPanelModifier: ViewModifier {
+    @Environment(AppEnvironment.self) private var environment
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        content.modifier(ThemedInsetPanelModifier(theme: environment.theme, cornerRadius: cornerRadius))
+    }
+}
+
+private struct ThemedInsetPanelModifier: ViewModifier {
+    let theme: ThemeStore
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                theme.subtleColor,
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(theme.hairlineColor, lineWidth: 1)
+            }
+    }
+}
+
+extension View {
+    func insetPanel(cornerRadius: CGFloat = 12) -> some View {
+        modifier(InsetPanelModifier(cornerRadius: cornerRadius))
+    }
+
+    func insetPanel(theme: ThemeStore, cornerRadius: CGFloat = 12) -> some View {
+        modifier(ThemedInsetPanelModifier(theme: theme, cornerRadius: cornerRadius))
     }
 }
 

@@ -25,9 +25,20 @@ enum AssistantToolGrammar {
     /// A best-effort parse of a partially streamed JSON input. Closing the
     /// open string and object usually yields the `query` argument early, so a
     /// running row can already read “Searching your mail for …”.
-    static func partialInput(from text: String) -> JSONValue? {
+    static func partialInput(from text: String, cacheKey: String? = nil) -> JSONValue? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+        if let cacheKey, let entry = PartialInputCache.shared.entry(for: cacheKey, length: trimmed.count) {
+            return entry.value
+        }
+        let value = parsePartial(trimmed)
+        if let cacheKey {
+            PartialInputCache.shared.store(value, for: cacheKey, length: trimmed.count)
+        }
+        return value
+    }
+
+    private static func parsePartial(_ trimmed: String) -> JSONValue? {
         for candidate in [trimmed, trimmed + "\"}", trimmed + "}", trimmed + "\"]}", trimmed + "]}"] {
             if let data = candidate.data(using: .utf8),
                let value = try? JSONDecoder().decode(JSONValue.self, from: data),
@@ -41,6 +52,45 @@ enum AssistantToolGrammar {
     // MARK: - Helpers
 
     private typealias Builder = @Sendable (JSONValue, JSONValue) -> ShapeActivity
+}
+
+/// The partial parses by tool call, so a redraw does not decode a long
+/// streamed input again (C8). A longer input replaces the entry; the cache
+/// clears itself at its limit.
+final class PartialInputCache: @unchecked Sendable {
+    struct Entry: Sendable {
+        let length: Int
+        let value: JSONValue?
+    }
+
+    static let shared = PartialInputCache()
+    static let limit = 256
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+
+    func entry(for key: String, length: Int) -> Entry? {
+        lock.withLock {
+            guard let entry = entries[key], entry.length == length else { return nil }
+            return entry
+        }
+    }
+
+    func store(_ value: JSONValue?, for key: String, length: Int) {
+        lock.withLock {
+            if entries.count >= Self.limit { entries.removeAll(keepingCapacity: true) }
+            entries[key] = Entry(length: length, value: value)
+        }
+    }
+
+    var count: Int { lock.withLock { entries.count } }
+
+    func removeAll() {
+        lock.withLock { entries.removeAll() }
+    }
+}
+
+extension AssistantToolGrammar {
 
     private static func str(_ value: JSONValue?) -> String {
         value?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

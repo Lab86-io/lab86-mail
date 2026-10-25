@@ -534,7 +534,7 @@ struct MacSourceList: View {
                     .foregroundStyle(.secondary)
             }
         case .failed:
-            Button("Retry loading Areas") {
+            Button("Load areas again") {
                 Task { await environment.store.refreshWork() }
             }
         case .empty:

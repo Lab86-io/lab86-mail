@@ -173,6 +173,11 @@ final class ProductStore {
     var workError: String?
     var isLoadingWork = false
     var workDidLoad = false
+    // True once the first mail read and the first brief read have ended, with
+    // a result or an error. Until then an empty list means "not loaded yet",
+    // not "nothing here", and the pages show a loading state.
+    var mailDidLoad = false
+    var briefDidLoad = false
     var lastRefresh: Date?
     var undoNotice: UndoableOperationNotice?
     var areaRefreshStates: [String: AreaRefreshState] = [:]
@@ -234,6 +239,7 @@ final class ProductStore {
 
     func refreshMail() async {
         mailErrorMessage = nil
+        defer { mailDidLoad = true }
         do {
             let result = try await tools.invoke("list_accounts")
             let listed = (result["accounts"]?.arrayValue ?? []).compactMap(AccountSummary.init)
@@ -689,6 +695,7 @@ final class ProductStore {
 
     func refreshBrief() async {
         briefError = nil
+        defer { briefDidLoad = true }
         do {
             let result = try await tools.invoke("get_latest_daily_report")
             let report = DailyReportModel(json: result["report"])

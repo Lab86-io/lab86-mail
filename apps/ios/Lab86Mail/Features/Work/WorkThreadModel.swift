@@ -46,6 +46,8 @@ final class WorkThreadModel {
 
     private(set) var detail: WorkDetail?
     private(set) var detailError: String?
+    /// True while the first reads of the thread run (C3).
+    private(set) var isOpening = false
     private(set) var questionStates: [String: QuestionState] = [:]
     /// The run whose page the sheet shows. Nil when the page is closed.
     var pageRun: ThreadRunView?
@@ -111,6 +113,19 @@ final class WorkThreadModel {
     }
 
     // MARK: - Derived
+
+    /// Something is on screen: the chat read, a detail, or a run.
+    var hasContent: Bool {
+        chat.threadLoaded || detail != nil || !store.runs.isEmpty
+    }
+
+    /// The first read brought nothing: the screen shows why, with Retry (C3).
+    var openFailure: String? {
+        guard !isOpening, !hasContent else { return nil }
+        return chat.errorMessage ?? detailError ?? store.notice ?? Self.openFailureFallback
+    }
+
+    static let openFailureFallback = "Could not load this Albatross."
 
     var threadState: ThreadState {
         ThreadState.resolve(detail: detail, runs: store.runs)
@@ -274,6 +289,8 @@ final class WorkThreadModel {
     /// The three reads on open, in parallel: the chat session, the runs,
     /// and the Work detail.
     func open(intent: WorkRoute.Intent?) async {
+        isOpening = true
+        defer { isOpening = false }
         async let session: Void = chat.restoreWorkThread(workID: workID)
         async let runs: Void = store.load(transport)
         async let work: Void = loadDetail()
@@ -286,6 +303,11 @@ final class WorkThreadModel {
     }
 
     func refresh() async {
+        // A reply this device lost finished on the server (C1): read the
+        // saved copy before the runs.
+        if chat.needsServerCopy {
+            await chat.restoreWorkThread(workID: workID)
+        }
         async let runs: Void = store.load(transport)
         async let work: Void = loadDetail()
         _ = await (runs, work)
@@ -315,6 +337,7 @@ final class WorkThreadModel {
             detail = try await productStore.loadWorkDetail(workID)
             detailError = nil
         } catch {
+            guard !error.isCancellation else { return }
             if detail == nil { detailError = error.localizedDescription }
         }
     }

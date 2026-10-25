@@ -151,6 +151,17 @@ final class NativeTourTests: XCTestCase {
         try await tour(screen)
     }
 
+    func testTour18bChatDesk() async throws {
+        // The desk (docs/research/ios-refresh-design-2026-10-24.md): the
+        // dateline, one sentence from the fixture day, and four asks with
+        // their sources, before the first message.
+        var screen = Screen(id: "chat-desk", title: "Chat before the first message", section: "Chat", tab: .chat)
+        screen.setUp = { environment in
+            environment.startAssistantChat()
+        }
+        try await tour(screen)
+    }
+
     func testTour19Settings() async throws {
         var screen = Screen(id: "settings", title: "Settings", section: "Settings", tab: .today)
         screen.setUp = { environment in
@@ -444,7 +455,7 @@ final class NativeTourTests: XCTestCase {
         "mail-error", "compose-new", "compose-reply", "calendar-day", "calendar-week", "calendar-month", "tasks",
         "work", "work-detail", "work-detail-run", "work-detail-handoff", "work-thread-run", "work-thread-form",
         "work-thread-handoff", "work-thread-allow", "work-thread-receipt", "work-thread-goal-run", "work-thread-goal-package",
-        "work-thread-goal-stopped", "document-mode-package", "compose-attachments", "files", "chat", "settings",
+        "work-thread-goal-stopped", "document-mode-package", "compose-attachments", "files", "chat-desk", "chat", "settings",
         "settings-personal-details", "settings-passwords-ids", "settings-passwords-ids-detail",
     ]
 

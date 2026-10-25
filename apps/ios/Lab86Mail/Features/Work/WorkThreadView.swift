@@ -76,10 +76,17 @@ struct WorkThreadView: View {
     private var loaded: some View {
         Group {
             if let model {
-                content(model)
+                if model.isOpening, !model.hasContent {
+                    loadingView
+                } else if let failure = model.openFailure {
+                    ThreadLoadFailureView(message: failure) {
+                        Task { await model.open(intent: nil) }
+                    }
+                } else {
+                    content(model)
+                }
             } else {
-                ProgressView("Loading…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                loadingView
             }
         }
         .background(environment.theme.paperColor)
@@ -131,6 +138,11 @@ struct WorkThreadView: View {
             .documentMode(model, route: route, enabled: presentsDocument)
     }
 
+    private var loadingView: some View {
+        ProgressView("Loading…")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     /// The poll task restarts when a run opens or closes, or a turn streams.
     private var followKey: String {
         guard let model else { return "none" }
@@ -140,17 +152,25 @@ struct WorkThreadView: View {
     // MARK: - Content
 
     private func content(_ model: WorkThreadModel) -> some View {
-        ScrollViewReader { proxy in
+        // Computed once for the list (C7): the timeline merge and the
+        // streaming flags do not run again for each row.
+        let items = model.items
+        let streaming = model.chat.isStreaming
+        let lastID = model.chat.messages.last?.id
+        let latestReplyID = model.chat.latestReplyID
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {
-                    ForEach(model.items) { item in
-                        itemView(item, model: model)
+                    ForEach(items) { item in
+                        itemView(item, model: model, streaming: streaming, lastID: lastID, latestReplyID: latestReplyID)
                             .id(item.id)
                     }
                     chatFooter(model)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
+                .frame(maxWidth: ChatLayout.measure, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
@@ -159,8 +179,8 @@ struct WorkThreadView: View {
             } action: { _, isAtBottom in
                 atBottom = isAtBottom
             }
-            .onChange(of: model.items.count) { _, _ in
-                guard atBottom, let last = model.newestItemID else { return }
+            .onChange(of: items.count) { _, _ in
+                guard atBottom, let last = items.last?.id else { return }
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                     proxy.scrollTo(last, anchor: .bottom)
                 }
@@ -173,14 +193,12 @@ struct WorkThreadView: View {
                     atBottom: atBottom,
                     pendingFormOffscreen: (model.pendingQuestion != nil || model.pendingAllow != nil) && !atBottom
                 ) {
-                    Button(pill) {
-                        guard let last = model.newestItemID else { return }
+                    ThreadJumpControl(text: pill) {
+                        guard let last = items.last?.id else { return }
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
                             proxy.scrollTo(last, anchor: .bottom)
                         }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                     .padding(.trailing, 20)
                     .padding(.bottom, 12)
                 }
@@ -282,7 +300,13 @@ struct WorkThreadView: View {
         }
     }
 
-    @ViewBuilder private func itemView(_ item: ThreadItem, model: WorkThreadModel) -> some View {
+    @ViewBuilder private func itemView(
+        _ item: ThreadItem,
+        model: WorkThreadModel,
+        streaming: Bool,
+        lastID: String?,
+        latestReplyID: String?
+    ) -> some View {
         switch item {
         case .outcome:
             OutcomeBlockView(
@@ -308,7 +332,12 @@ struct WorkThreadView: View {
             }
             .accessibilityElement(children: .combine)
         case .message(let message):
-            AssistantMessageRow(model: model.chat, message: message)
+            AssistantMessageRow(
+                model: model.chat,
+                message: message,
+                isStreamingReply: streaming && message.id == lastID,
+                isLatestReply: message.id == latestReplyID
+            )
         case .run(let view, let continues):
             RunBlockView(
                 view: view,
@@ -334,13 +363,8 @@ struct WorkThreadView: View {
         WorkQuestionsView(model: model)
         // A reply runs on the server (T5): one quiet row until it lands.
         if model.replyInProgress {
-            HStack(spacing: 8) {
-                RevealDot()
-                Text(RunBlockCopy.replyInProgress)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .combine)
+            WorkLineView(line: AssistantWorkLine.Line(text: RunBlockCopy.replyInProgress, tone: .live))
+                .accessibilityLabel(RunBlockCopy.replyInProgress)
         }
         ForEach(model.chat.receipts) { receipt in
             HoldReceiptRow(
@@ -360,8 +384,14 @@ struct WorkThreadView: View {
         if let notice = model.stepNotice, !model.documentOpen {
             Text(notice).font(.footnote).foregroundStyle(.red)
         }
+        // The Work detail did not load: the thread shows why, with Retry (C3).
         if let error = model.detailError, model.detail == nil {
-            Text(error).font(.footnote).foregroundStyle(.red)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(error).font(.footnote).foregroundStyle(.red)
+                Button("Retry") { Task { await model.loadDetail() } }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.roundedRectangle(radius: 8))
+            }
         }
         if model.chat.errorMessage != nil || model.chat.canContinue {
             VStack(alignment: .leading, spacing: 8) {
@@ -502,9 +532,25 @@ struct WorkThreadView: View {
             Task { await model.chat.hold(text) }
             return
         }
-        model.send(draft, attachments: pendingFiles)
-        clearDraft()
-        model.chat.clearRoute()
+        // The draft and the files leave once the turn has started; a failed
+        // upload keeps both, so the send control is the retry (C10).
+        let text = draft
+        let files = pendingFiles
+        guard !files.isEmpty else {
+            model.send(text, attachments: [])
+            clearDraft()
+            model.chat.clearRoute()
+            return
+        }
+        Task {
+            guard await model.chat.sendDraft(text, attachments: files) else { return }
+            if draft == text {
+                clearDraft()
+            } else {
+                pendingFiles = []
+            }
+            model.chat.clearRoute()
+        }
     }
 
     private func clearDraft() {
@@ -667,6 +713,64 @@ struct WorkThreadView: View {
         guard let line, line != announced else { return }
         announced = line
         PlatformAccessibility.announce(line)
+    }
+}
+
+// MARK: - The jump control and the load states
+
+/// The jump control over the composer: a glass circle with a down arrow
+/// when the user is above the newest item, or the answer line while a
+/// pending form is off screen. iOS and the Mac share it.
+struct ThreadJumpControl: View {
+    let text: String
+    let action: () -> Void
+
+    static let jumpLabel = "Jump to latest"
+
+    /// The glyph stands for "Newest"; any other text shows as words.
+    static func showsGlyph(_ text: String) -> Bool {
+        text == ThreadJumpPill.newest
+    }
+
+    var body: some View {
+        Button(action: action) {
+            if Self.showsGlyph(text) {
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 36, height: 36)
+                    .contentShape(Circle())
+            } else {
+                Text(text)
+                    .font(.footnote.weight(.medium))
+                    .padding(.horizontal, 14)
+                    .frame(height: 36)
+                    .contentShape(Capsule())
+            }
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .accessibilityLabel(Self.showsGlyph(text) ? Self.jumpLabel : text)
+    }
+}
+
+/// The thread when its first read brought nothing: the reason and Retry (C3).
+struct ThreadLoadFailureView: View {
+    let message: String
+    let onRetry: () -> Void
+
+    static let title = "Could not load this Albatross"
+    static let retry = "Retry"
+
+    var body: some View {
+        ContentUnavailableView {
+            Text(Self.title)
+        } description: {
+            Text(message)
+        } actions: {
+            Button(Self.retry, action: onRetry)
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.roundedRectangle(radius: 8))
+        }
     }
 }
 

@@ -1,82 +1,53 @@
 import SwiftUI
 
-// The live work log block (docs/chat-agentic-pass.md, section 2): a vertical
-// rule on the left, a header that reads the state of the group, one row per
-// tool call, and the tool's card under its row inside the rule.
+// The work log block (docs/chat-agentic-pass.md, section 2, and the 2026-10-24
+// refresh): one italic work line that names what Albatross did, and the
+// cards under it as flat inserts. A tap on the line shows the rows, one per
+// tool call. No rule, no header meta string.
 struct AssistantWorkLogView: View {
-    @Environment(AppEnvironment.self) private var environment
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let rows: [AssistantToolRow]
     /// True once the turn that owns these rows has finished.
     let turnFinished: Bool
     /// The conversation the rows belong to. Draft artifacts need it.
     var sessionID: String? = nil
-    // nil follows the collapse rule; a tap pins the choice for this block.
-    @State private var expandedOverride: Bool?
+    @State private var expanded = false
 
-    private var headerState: AssistantWorkLog.HeaderState {
-        AssistantWorkLog.headerState(rows: rows, turnFinished: turnFinished)
+    static let showHint = "Shows the steps"
+    static let hideHint = "Hides the steps"
+
+    private var line: AssistantWorkLine.Line {
+        AssistantWorkLine.line(rows: rows, turnFinished: turnFinished)
     }
 
-    private var isExpanded: Bool {
-        expandedOverride ?? !AssistantWorkLog.collapsesByDefault(rows: rows, turnFinished: turnFinished)
-    }
-
-    private var canToggle: Bool {
-        turnFinished
+    /// The rows drawn under the line: every row once open, else the ones
+    /// with a card to show.
+    private var shownRows: [AssistantToolRow] {
+        expanded ? rows : rows.filter { $0.card != nil || $0.shape != nil }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            header
-            if isExpanded {
-                ForEach(rows) { row in
-                    AssistantWorkLogRowView(row: row, sessionID: sessionID)
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            lineButton
+            ForEach(shownRows) { row in
+                AssistantWorkLogRowView(row: row, sessionID: sessionID, showsSentence: expanded)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, 14)
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 1)
-                .fill(environment.theme.hairlineColor)
-                .frame(width: 2)
-                .padding(.vertical, 2)
-        }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: isExpanded)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: expanded)
         .accessibilityElement(children: .contain)
     }
 
-    private var header: some View {
+    private var lineButton: some View {
         Button {
-            guard canToggle else { return }
-            expandedOverride = !isExpanded
+            expanded.toggle()
         } label: {
-            HStack(spacing: 8) {
-                if case .working = headerState {
-                    RevealDot()
-                }
-                Text(AssistantWorkLog.headerText(headerState))
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(headerColor)
-                if canToggle {
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                }
-            }
-            .contentShape(.rect)
+            WorkLineView(line: line, showsChevron: true, expanded: expanded)
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .disabled(!canToggle)
-        .accessibilityLabel(AssistantWorkLog.headerText(headerState))
-        .accessibilityHint(canToggle ? (isExpanded ? "Collapses the steps" : "Shows the steps") : "")
-    }
-
-    private var headerColor: Color {
-        if case .failed = headerState { return .red }
-        return .secondary
+        .accessibilityLabel(line.text)
+        .accessibilityHint(expanded ? Self.hideHint : Self.showHint)
     }
 }
 
@@ -223,28 +194,43 @@ struct AssistantReasoningLine: View {
     }
 }
 
-/// Sources the reply cited, as one quiet list of links.
+/// The sources the reply cited, as one footnote line of links that wraps.
 struct AssistantSourcesLine: View {
     @Environment(\.openURL) private var openURL
     let sources: [AssistantSourceLink]
 
+    static let lead = "Sources"
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Sources")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+        ChipFlowLayout(spacing: 10) {
+            Text(Self.lead)
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
             ForEach(sources) { source in
                 Button {
-                    if let url = URL(string: source.url), ["https", "http"].contains(url.scheme?.lowercased() ?? "") { openURL(url) }
+                    open(source)
                 } label: {
-                    Text(source.title?.nilIfBlank ?? URL(string: source.url)?.host() ?? source.url)
-                        .font(.caption)
-                        .lineLimit(1)
+                    Text(Self.title(source))
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                         .underline()
+                        .lineLimit(1)
                 }
                 .buttonStyle(.plain)
+                .accessibilityHint("Opens the source")
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+
+    static func title(_ source: AssistantSourceLink) -> String {
+        source.title?.nilIfBlank ?? URL(string: source.url)?.host() ?? source.url
+    }
+
+    private func open(_ source: AssistantSourceLink) {
+        guard let url = URL(string: source.url),
+              ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return }
+        openURL(url)
     }
 }

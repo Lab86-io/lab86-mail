@@ -719,7 +719,13 @@ private struct SourceList: View {
     }
 
     @ViewBuilder private var areaState: some View {
-        if environment.store.isLoadingWork || !environment.store.workDidLoad {
+        let store = environment.store
+        switch AreaListState.resolve(
+            isLoading: store.isLoadingWork,
+            didLoad: store.workDidLoad,
+            hasError: store.workError != nil
+        ) {
+        case .loading:
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Loading areas…")
@@ -728,13 +734,15 @@ private struct SourceList: View {
             }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        } else if environment.store.workError != nil {
-            Button("Retry loading Areas") {
-                Task { await environment.store.refreshWork() }
+        case .failed:
+            // A failed first load leaves `workDidLoad` false. The old check
+            // for loading first kept "Loading areas…" up for good.
+            Button("Load areas again") {
+                Task { await store.refreshWork() }
             }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        } else {
+        case .empty:
             Text("No active areas")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
