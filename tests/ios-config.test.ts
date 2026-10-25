@@ -260,6 +260,8 @@ describe('native iOS authentication configuration', () => {
     expect(indexer).toContain('MailEntityReference');
     expect(indexer).not.toContain('thread.snippet');
     expect(app).toContain('CSSearchableItemActivityIdentifier');
-    expect(store).toContain('await spotlight.remove(owner: cacheOwner)');
+    // Sign-out removes the owner captured before its first await, so a late
+    // loader cannot write for the signed-out account.
+    expect(store).toContain('await spotlight.remove(owner: signedOutOwner)');
   });
 });
