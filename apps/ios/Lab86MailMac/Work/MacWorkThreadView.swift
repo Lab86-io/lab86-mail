@@ -24,6 +24,9 @@ struct MacWorkThreadView: View {
     /// the next thread opens.
     @State private var keepUnread = false
     @State private var draft = ""
+    // The thread the view shows now. The view stays when the route changes,
+    // so a send that finishes late checks this before it touches the draft.
+    @State private var openWorkID: String?
     @State private var pendingFiles: [ComposeAttachment] = []
     @State private var attachRequest: ComposerAttachSource?
     @State private var showsPlan = false
@@ -135,6 +138,7 @@ struct MacWorkThreadView: View {
             // and the draft comes back with the thread.
             let model = environment.threadModels.model(for: route.workID, title: route.title, environment: environment)
             self.model = model
+            openWorkID = route.workID
             model.actions = actions(for: model)
             keepUnread = false
             draft = environment.composerDrafts.draft(for: route.workID)
@@ -928,14 +932,22 @@ struct MacWorkThreadView: View {
             model.chat.clearRoute()
             return
         }
+        let sendingWorkID = route.workID
         Task {
             guard await model.chat.sendDraft(text, attachments: files) else { return }
+            model.chat.clearRoute()
+            // Another thread opened while the files uploaded: its composer is
+            // not this send's. Only the stored draft of the sending thread
+            // goes.
+            guard openWorkID == sendingWorkID else {
+                environment.composerDrafts.clear(for: sendingWorkID)
+                return
+            }
             if draft == text {
                 clearDraft()
             } else {
                 pendingFiles = []
             }
-            model.chat.clearRoute()
         }
     }
 
