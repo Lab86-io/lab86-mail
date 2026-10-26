@@ -8,6 +8,9 @@ struct DayRibbonTests {
     private var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "America/New_York") ?? .gmt
+        // The rows format in the calendar's locale (its hour cycle); fixed so
+        // the runner's locale cannot change the words.
+        calendar.locale = Locale(identifier: "en_US")
         return calendar
     }
 
