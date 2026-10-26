@@ -895,8 +895,13 @@ final class ProductStore {
     /// Reads the source health line for the shown edition. A failure keeps
     /// the last good line; the masthead never blanks on a slow read.
     func refreshBriefSources() async {
+        // A sign-out during the read: one account's source health never
+        // reaches the next account's brief.
+        let session = accountSessionGeneration
         do {
-            briefSources = try await BriefSettingsClient(tools: tools).sources(reportID: dailyReport?.id)
+            let health = try await BriefSettingsClient(tools: tools).sources(reportID: dailyReport?.id)
+            guard session == accountSessionGeneration else { return }
+            briefSources = health
         } catch {
             // The line is a read-only aid. The brief itself reports errors.
         }

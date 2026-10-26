@@ -353,6 +353,20 @@ struct ProductStoreLoadTests {
     }
 
     @Test
+    func aSignOutDuringASourceHealthReadLeavesTheClearedStoreClear() async {
+        let tools = HeldTools(holding: "get_brief_sources") { _, _, _ in .object([:]) }
+        let store = makeStore(tools: tools)
+
+        let late = Task { await store.refreshBriefSources() }
+        await tools.waitUntilHeld()
+        await store.clearForSignOut()
+        await tools.release(.object(["attention": .number(1), "line": .string("Reconnect"), "sources": .array([])]))
+        await late.value
+
+        #expect(store.briefSources == nil)
+    }
+
+    @Test
     func theCacheWritesOnceAfterABurstAndOnFlush() async throws {
         let cache = ProductCache(directory: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString))
         let pages = PagedMail(pages: [page([thread("t1", epoch: 300)]), page([thread("t2", epoch: 200)])])
