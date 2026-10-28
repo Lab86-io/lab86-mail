@@ -42,7 +42,11 @@ struct ComposeSupportTests {
         let short = plain(ComposeDeliveryLabel.short(sendsLater: true, date: date, locale: locale, calendar: calendar))
         #expect(full.hasPrefix("Sends Oct 28, 2026"))
         #expect(full.hasSuffix("3:45 PM"))
-        #expect(short == "Sends Oct 28, 3:45 PM")
+        // Foundation picks the words between the date and the time
+        // ("Oct 28 at 3:45 PM" on iOS 26), so the test checks the parts.
+        #expect(short.hasPrefix("Sends Oct 28"))
+        #expect(short.hasSuffix("3:45 PM"))
+        #expect(!short.contains("2026"))
         #expect(short.count < full.count)
         #expect(ComposeDeliveryLabel.full(sendsLater: false, date: date) == "Send now")
         #expect(ComposeDeliveryLabel.short(sendsLater: false, date: date) == "Send now")
