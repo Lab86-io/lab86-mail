@@ -465,19 +465,24 @@ enum CalendarDateParser {
         }
     }
 
+    // The format styles are values, so they are shared and parse without a
+    // new formatter for each date (K9). ISO8601DateFormatter is a class and
+    // is not Sendable; it stays the fallback for the rare offset forms the
+    // styles do not read.
+    private static let fractionalStyle = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    private static let plainStyle = Date.ISO8601FormatStyle()
+
     static func date(fromString raw: String) -> Date? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        // Formatters are built inline (ISO8601DateFormatter is a non-Sendable
-        // class, so it is not held as shared static state).
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let parsed = fractional.date(from: trimmed) { return parsed }
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        if let parsed = plain.date(from: trimmed) { return parsed }
+        if let parsed = try? fractionalStyle.parse(trimmed) { return parsed }
+        if let parsed = try? plainStyle.parse(trimmed) { return parsed }
         if let numeric = Double(trimmed) { return date(fromNumber: numeric) }
-        return nil
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let parsed = formatter.date(from: trimmed) { return parsed }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: trimmed)
     }
 
     static func date(fromNumber value: Double) -> Date? {
@@ -497,6 +502,9 @@ struct CalendarEventSummary: Identifiable, Hashable, Codable, Sendable {
     let end: Date
     let allDay: Bool
     let location: String?
+    // The join link, when the list row carries one (`conferencing.details.url`
+    // or the older top-level `url`). The full read has the rest.
+    let conferenceURL: URL?
 
     init(
         id: String,
@@ -506,7 +514,8 @@ struct CalendarEventSummary: Identifiable, Hashable, Codable, Sendable {
         start: Date,
         end: Date,
         allDay: Bool,
-        location: String?
+        location: String?,
+        conferenceURL: URL? = nil
     ) {
         self.id = id
         self.accountID = accountID
@@ -516,6 +525,7 @@ struct CalendarEventSummary: Identifiable, Hashable, Codable, Sendable {
         self.end = end
         self.allDay = allDay
         self.location = location
+        self.conferenceURL = conferenceURL
     }
 
     init?(json: JSONValue) {
@@ -542,13 +552,16 @@ struct CalendarEventSummary: Identifiable, Hashable, Codable, Sendable {
             self.end = end
         }
         location = json["location"]?.stringValue?.nilIfBlank
+        let conference = json["conferencing"]
+        let conferenceSources = [conference, conference?["details"]].compactMap { $0 }
+        conferenceURL = CalendarEventDetail.conferenceLink(in: conferenceSources).flatMap(URL.init(string:))
     }
 
     // Backwards-compatible cache decoding: snapshots written before accountID /
     // calendarID / allDay existed still load (new fields default rather than
     // failing the whole ProductSnapshot).
     enum CodingKeys: String, CodingKey {
-        case id, accountID, calendarID, title, start, end, allDay, location
+        case id, accountID, calendarID, title, start, end, allDay, location, conferenceURL
     }
 
     init(from decoder: Decoder) throws {
@@ -561,6 +574,7 @@ struct CalendarEventSummary: Identifiable, Hashable, Codable, Sendable {
         end = try container.decode(Date.self, forKey: .end)
         allDay = try container.decodeIfPresent(Bool.self, forKey: .allDay) ?? false
         location = try container.decodeIfPresent(String.self, forKey: .location)
+        conferenceURL = try container.decodeIfPresent(URL.self, forKey: .conferenceURL)
     }
 }
 
@@ -618,14 +632,13 @@ struct CalendarEventDetail: Sendable {
         masterEventID = json["masterEventId"]?.stringValue?.nilIfBlank
         recurrence = (json["recurrence"]?.arrayValue ?? []).compactMap(\.stringValue)
 
+        // The server sends the join link under `conferencing.details`; older
+        // rows put it at the top. Both read (feature audit).
         let conference = json["conferencing"]
-        let rawConferenceURL = conference?["url"]?.stringValue
-            ?? conference?["uri"]?.stringValue
-            ?? conference?["link"]?.stringValue
-            ?? conference?["entryPoints"]?.arrayValue?.compactMap { $0["uri"]?.stringValue }.first
+        let conferenceSources = [conference, conference?["details"]].compactMap { $0 }
+        let rawConferenceURL = Self.conferenceLink(in: conferenceSources)
         conferenceURL = rawConferenceURL.flatMap(URL.init(string:))
-        conferenceLabel = conference?["provider"]?.stringValue?.nilIfBlank
-            ?? conference?["name"]?.stringValue?.nilIfBlank
+        conferenceLabel = Self.conferenceLabel(in: conferenceSources)
             ?? (rawConferenceURL != nil ? "Video call" : nil)
 
         attendees = (json["participants"]?.arrayValue ?? json["attendees"]?.arrayValue ?? []).compactMap { row in
@@ -641,6 +654,27 @@ struct CalendarEventDetail: Sendable {
             )
         }
     }
+
+    static func conferenceLink(in sources: [JSONValue]) -> String? {
+        for source in sources {
+            for key in ["url", "uri", "link"] {
+                if let link = source[key]?.stringValue?.nilIfBlank { return link }
+            }
+            if let entry = source["entryPoints"]?.arrayValue?.compactMap({ $0["uri"]?.stringValue?.nilIfBlank }).first {
+                return entry
+            }
+        }
+        return nil
+    }
+
+    static func conferenceLabel(in sources: [JSONValue]) -> String? {
+        for source in sources {
+            for key in ["provider", "name"] {
+                if let label = source[key]?.stringValue?.nilIfBlank { return label }
+            }
+        }
+        return nil
+    }
 }
 
 struct CalendarChoice: Identifiable, Hashable, Sendable {
@@ -649,6 +683,9 @@ struct CalendarChoice: Identifiable, Hashable, Sendable {
     let name: String
     let isPrimary: Bool
     let isReadOnly: Bool
+    // A calendar the provider hides from the person's list. The Calendar
+    // page leaves it out of its pickers (feature audit).
+    let isHidden: Bool
     let hexColor: String?
 
     var id: String { "\(accountID):\(calendarID)" }
@@ -660,7 +697,8 @@ struct CalendarChoice: Identifiable, Hashable, Sendable {
         self.calendarID = calendarID
         name = json["name"]?.stringValue?.nilIfBlank ?? "Calendar"
         isPrimary = json["isPrimary"]?.boolValue ?? false
-        isReadOnly = json["readOnly"]?.boolValue ?? false
+        isReadOnly = json["readOnly"]?.boolValue ?? json["isReadOnly"]?.boolValue ?? false
+        isHidden = json["hidden"]?.boolValue ?? json["isHidden"]?.boolValue ?? false
         hexColor = json["hexColor"]?.stringValue?.nilIfBlank
     }
 }
@@ -707,21 +745,6 @@ struct TaskColumnSummary: Identifiable, Hashable, Sendable {
         self.id = id
         self.name = name
         order = json["order"]?.doubleValue ?? 0
-    }
-}
-
-struct TaskBoardMember: Identifiable, Hashable, Sendable {
-    let id: String
-    let email: String
-    let role: String
-    let status: String
-
-    init?(json: JSONValue) {
-        guard let id = json["memberId"]?.stringValue, let email = json["email"]?.stringValue else { return nil }
-        self.id = id
-        self.email = email
-        role = json["role"]?.stringValue ?? "viewer"
-        status = json["status"]?.stringValue ?? "invited"
     }
 }
 

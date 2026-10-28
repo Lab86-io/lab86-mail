@@ -1,10 +1,10 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// The default board as a real mobile kanban, in the shape of the best
-// references (Trello/Asana/Jira mobile): full-height columns paged
-// horizontally with the next column peeking, per-column quick add, and
-// long-press drag to move cards between columns.
+// The board: columns of flat cards on paper. A phone pages one column at a
+// time with the next one peeking; a wide window shows every column at once
+// (D22). A card is an insert with quiet text under its title, and a hold on
+// a card moves it between columns. The board picker lives in the title.
 struct TasksView: View {
     @Environment(AppEnvironment.self) private var environment
     struct NewCardContext: Identifiable {
@@ -15,11 +15,11 @@ struct TasksView: View {
     @State private var showsProjects = false
     @State private var showsBoardManagement = false
     @State private var showsColumnManagement = false
-    @State private var showsBoardSharing = false
     @State private var openTask: TaskSummary?
     @State private var newCard: NewCardContext?
     @State private var pendingDeleteTask: TaskSummary?
     @AppStorage("albatross.tasks.view-mode") private var viewMode = "board"
+    @ScaledMetric(relativeTo: .body) private var glyphWidth: CGFloat = 22
 
     private var store: ProductStore { environment.store }
 
@@ -27,218 +27,178 @@ struct TasksView: View {
         store.taskBoards.first { $0.id == store.activeBoardID }?.title ?? "Personal"
     }
 
+    private var canEdit: Bool { store.taskBoardRole != "viewer" }
+
     var body: some View {
-        Group {
-            if !store.tasksDidLoad, store.isLoadingTasks, store.tasks.isEmpty {
-                ProgressView("Loading tasks…")
-            } else if !store.tasksDidLoad, let taskError = store.taskError, store.tasks.isEmpty {
-                ContentUnavailableView {
-                    Label("Tasks unavailable", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(taskError)
-                } actions: {
-                    Button("Try Again") {
-                        Task { await store.refreshBoardsAndProjects() }
-                    }
+        content
+            .background(environment.theme.paperColor)
+            .navigationTitle(activeBoardTitle)
+            .toolbarTitleMenu { boardPicker }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    moreMenu
                 }
-            } else if columns.isEmpty {
-                ContentUnavailableView(
-                    "Nothing on the board",
-                    systemImage: "checkmark.circle",
-                    description: Text("Hand something to Albatross from the sidebar, or pull to refresh.")
-                )
-            } else if viewMode == "list" {
-                taskList
-            } else {
-                board
+                .visibilityPriority(.low)
             }
-        }
-        .background(Color(uiColor: .systemGroupedBackground))
-        .navigationTitle(activeBoardTitle)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Picker(
-                        "Board",
-                        selection: Binding(
-                            get: { store.activeBoardID ?? "" },
-                            set: { newValue in
-                                Task { await store.switchBoard(to: newValue.isEmpty ? nil : newValue) }
-                            }
-                        )
-                    ) {
-                        if store.taskBoards.isEmpty {
-                            Text("Personal").tag("")
-                        }
-                        ForEach(store.taskBoards) { board in
-                            Text(board.title).tag(board.id)
-                        }
-                    }
-                    Divider()
-                    Picker("View", selection: $viewMode) {
-                        Label("Board", systemImage: "rectangle.split.3x1").tag("board")
-                        Label("List", systemImage: "list.bullet").tag("list")
-                    }
-                    Divider()
-                    Button("Projects") { showsProjects = true }
-                    Button("Manage Boards") { showsBoardManagement = true }
-                    Button("Manage Columns") { showsColumnManagement = true }
-                        .disabled(store.activeBoardID == nil || store.taskBoardRole == "viewer")
-                    Button("Share Board") { showsBoardSharing = true }
-                        .disabled(store.activeBoardID == nil || store.taskBoardRole != "owner")
-                } label: {
-                    Label("Boards", systemImage: "square.stack")
+            .sheet(isPresented: $showsProjects) {
+                ProjectsSheet()
+            }
+            .sheet(isPresented: $showsBoardManagement) {
+                BoardManagementSheet()
+            }
+            .sheet(isPresented: $showsColumnManagement) {
+                ColumnManagementSheet()
+            }
+            .sheet(item: $openTask) { task in
+                TaskDetailView(task: task)
+            }
+            .sheet(item: $newCard) { context in
+                NewTaskSheet(column: context.column)
+            }
+            .confirmationDialog(
+                "Delete this card?",
+                isPresented: Binding(
+                    get: { pendingDeleteTask != nil },
+                    set: { if !$0 { pendingDeleteTask = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: pendingDeleteTask
+            ) { task in
+                Button("Delete “\(task.title)”", role: .destructive) {
+                    pendingDeleteTask = nil
+                    Task { await store.deleteTask(task) }
                 }
+                Button("Cancel", role: .cancel) { pendingDeleteTask = nil }
+            } message: { task in
+                Text("This removes the card from \(task.column).")
             }
-            .visibilityPriority(.low)
-        }
-        .sheet(isPresented: $showsProjects) {
-            ProjectsSheet()
-        }
-        .sheet(isPresented: $showsBoardManagement) {
-            BoardManagementSheet()
-        }
-        .sheet(isPresented: $showsColumnManagement) {
-            ColumnManagementSheet()
-        }
-        .sheet(isPresented: $showsBoardSharing) {
-            BoardSharingSheet()
-        }
-        .sheet(item: $openTask) { task in
-            TaskDetailView(task: task)
-        }
-        .sheet(item: $newCard) { context in
-            NewTaskSheet(column: context.column)
-        }
-        .confirmationDialog(
-            "Delete this card?",
-            isPresented: Binding(
-                get: { pendingDeleteTask != nil },
-                set: { if !$0 { pendingDeleteTask = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: pendingDeleteTask
-        ) { task in
-            Button("Delete “\(task.title)”", role: .destructive) {
-                pendingDeleteTask = nil
-                Task { await store.deleteTask(task) }
-            }
-            Button("Cancel", role: .cancel) { pendingDeleteTask = nil }
-        } message: { task in
-            Text("This removes the card from \(task.column).")
-        }
-        .task { await store.refreshBoardsAndProjects() }
-        .shellToolbar()
+            .task { await store.refreshBoardsAndProjects() }
+            .shellToolbar()
     }
+
+    // MARK: - States
+
+    @ViewBuilder private var content: some View {
+        if !store.tasksDidLoad, store.isLoadingTasks, store.tasks.isEmpty {
+            ProgressView("Loading tasks…")
+        } else if !store.tasksDidLoad, let taskError = store.taskError, store.tasks.isEmpty {
+            ContentUnavailableView {
+                Label("Could not load the board", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(taskError)
+            } actions: {
+                Button("Try again") {
+                    Task { await store.refreshBoardsAndProjects() }
+                }
+            }
+        } else if columns.isEmpty {
+            ContentUnavailableView(
+                "Nothing on the board",
+                systemImage: "checkmark.circle",
+                description: Text("Hand something to Albatross from the sidebar, or pull to refresh.")
+            )
+        } else if viewMode == "list" {
+            taskList
+        } else {
+            board
+        }
+    }
+
+    // MARK: - Title menu and toolbar
+
+    // The board switch belongs to the title: the title names the board, so
+    // the title changes the board.
+    @ViewBuilder private var boardPicker: some View {
+        Picker("Board", selection: boardSelection) {
+            if store.taskBoards.isEmpty {
+                Text("Personal").tag("")
+            }
+            ForEach(store.taskBoards) { board in
+                Text(board.title).tag(board.id)
+            }
+        }
+        Divider()
+        Button("Manage boards") { showsBoardManagement = true }
+    }
+
+    private var boardSelection: Binding<String> {
+        Binding(
+            get: { store.activeBoardID ?? "" },
+            set: { newValue in
+                Task { await store.switchBoard(to: newValue.isEmpty ? nil : newValue) }
+            }
+        )
+    }
+
+    // The bar menu holds everything about boards; the title menu is the
+    // short way to switch.
+    private var moreMenu: some View {
+        Menu {
+            boardPicker
+            Divider()
+            Picker("View", selection: $viewMode) {
+                Text("Board").tag("board")
+                Text("List").tag("list")
+            }
+            Divider()
+            Button("Projects") { showsProjects = true }
+            Button("Manage columns") { showsColumnManagement = true }
+                .disabled(store.activeBoardID == nil || !canEdit)
+        } label: {
+            Label("Boards", systemImage: "square.stack")
+        }
+    }
+
+    // MARK: - Board
 
     private var board: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(alignment: .top, spacing: 12) {
-                ForEach(columns, id: \.self) { column in
-                    columnView(column)
-                        .containerRelativeFrame(.horizontal) { length, _ in
-                            min(length * 0.82, 340)
-                        }
+        GeometryReader { geometry in
+            let plan = BoardLayout.plan(available: geometry.size.width, count: columns.count)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: plan.spacing) {
+                    ForEach(Array(columns.enumerated()), id: \.element) { position, column in
+                        columnView(column, isLast: position == columns.count - 1, spacing: plan.spacing)
+                            .frame(width: plan.columnWidth)
+                    }
                 }
+                .scrollTargetLayout()
+                .padding(.horizontal, plan.inset)
+                .padding(.top, 4)
             }
-            .scrollTargetLayout()
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-        }
-        .scrollTargetBehavior(.viewAligned)
-        .reorderContainer(
-            for: TaskSummary.self,
-            in: String.self,
-            isEnabled: store.taskBoardRole != "viewer"
-        ) { difference in
-            guard let taskID = difference.sources.first else { return }
-            let destinationID: String? = switch difference.destination.position {
-            case .before(let id): id
-            case .end: nil
-            }
-            // One confirmation tick when the drop lands; the lift/placeholder
-            // feedback during the drag is the native reorder container's.
-            PlatformHaptics.lightImpact()
-            Task {
-                await store.reorderTask(
-                    id: taskID,
-                    to: difference.destination.collectionID,
-                    before: destinationID
-                )
-            }
-        }
-    }
-
-    private var taskList: some View {
-        List {
-            ForEach(columns, id: \.self) { column in
-                Section(column) {
-                    ForEach(cards(in: column)) { task in
-                        HStack(spacing: 10) {
-                            Button {
-                                Task { await store.setTaskCompleted(task, completed: !task.completed) }
-                            } label: {
-                                Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
-                            }
-                            .buttonStyle(.plain)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(task.title)
-                                    .strikethrough(task.completed)
-                                    .foregroundStyle(task.completed ? .secondary : .primary)
-                                if let due = task.due {
-                                    Text(dueLabel(due))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .contentShape(.rect)
-                        .onTapGesture { openTask = task }
-                        .swipeActions(edge: .trailing) {
-                            Button("Delete", role: .destructive) {
-                                pendingDeleteTask = task
-                            }
-                        }
-                    }
-                    .onMove { offsets, destination in
-                        Task { await store.reorderTasks(in: column, from: offsets, to: destination) }
-                    }
+            .scrollTargetBehavior(.viewAligned)
+            .scrollDisabled(plan.fits)
+            .reorderContainer(
+                for: TaskSummary.self,
+                in: String.self,
+                isEnabled: canEdit
+            ) { difference in
+                guard let taskID = difference.sources.first else { return }
+                let destinationID: String? = switch difference.destination.position {
+                case .before(let id): id
+                case .end: nil
+                }
+                // One confirmation tick when the drop lands; the lift and the
+                // placeholder during the drag are the native container's.
+                PlatformHaptics.lightImpact()
+                Task {
+                    await store.reorderTask(
+                        id: taskID,
+                        to: difference.destination.collectionID,
+                        before: destinationID
+                    )
                 }
             }
         }
-        .refreshable { await store.refreshBoardsAndProjects() }
     }
 
     // MARK: - Column
 
-    private func columnView(_ column: String) -> some View {
+    // A column is a region of the paper, not a box: a header, its cards, and
+    // a hairline rule to the next column.
+    private func columnView(_ column: String, isLast: Bool, spacing: CGFloat) -> some View {
         let cards = cards(in: column)
         return VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Text(column)
-                    .font(.subheadline.weight(.semibold))
-                Text("\(cards.count)")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Color.primary.opacity(0.06), in: Capsule())
-                Spacer()
-                Button {
-                    newCard = NewCardContext(column: column)
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(width: 28, height: 28)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add card to \(column)")
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-
+            columnHeader(column, count: cards.count)
             ScrollView {
                 VStack(spacing: 8) {
                     ForEach(cards) { task in
@@ -246,119 +206,130 @@ struct TasksView: View {
                     }
                     .reorderable(collectionID: column)
                     if cards.isEmpty {
-                        Button {
-                            newCard = NewCardContext(column: column)
-                        } label: {
-                            Text("Add a card")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                                .background(
-                                    Color.primary.opacity(0.04),
-                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                )
-                        }
-                        .buttonStyle(.plain)
+                        emptyColumn(column)
                     }
                 }
-                .padding(.horizontal, 10)
                 .padding(.bottom, 12)
             }
-            .refreshable { await store.refreshToday() }
+            .refreshable { await store.refreshBoardsAndProjects() }
         }
-        .background(
-            Color(uiColor: .secondarySystemGroupedBackground).opacity(0.6),
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(
-                    Color.primary.opacity(0.06),
-                    lineWidth: 1
-                )
+        .overlay(alignment: .trailing) {
+            if !isLast {
+                Rectangle()
+                    .fill(environment.theme.hairlineColor)
+                    .frame(width: 0.5)
+                    .padding(.trailing, -spacing / 2)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private func columnHeader(_ column: String, count: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(column)
+                .font(.headline)
+            Text("\(count)")
+                .font(.subheadline)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            if canEdit {
+                Button("Add") {
+                    newCard = NewCardContext(column: column)
+                }
+                .font(.subheadline.weight(.medium))
+                .buttonStyle(.plain)
+                .foregroundStyle(environment.theme.accentColor)
+                .accessibilityLabel("Add card to \(column)")
+            }
+        }
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder private func emptyColumn(_ column: String) -> some View {
+        if canEdit {
+            Button("Add a card") {
+                newCard = NewCardContext(column: column)
+            }
+            .font(.subheadline)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(environment.theme.hairlineColor, lineWidth: 1)
+            }
+        } else {
+            Text("No cards")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 44)
         }
     }
 
     // MARK: - Cards
 
     private func card(_ task: TaskSummary) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let meta = TaskMeta.line(priority: task.priority, due: task.due, completed: task.completed)
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Button {
-                    Task { await store.setTaskCompleted(task, completed: !task.completed) }
-                } label: {
-                    Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
-                        .font(.body)
-                        .foregroundStyle(task.completed ? Color.secondary : environment.theme.accentColor)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(task.completed ? "Reopen" : "Complete")
-
+                completeButton(task)
                 Text(task.title)
-                    .font(.subheadline)
+                    .font(.body)
                     .strikethrough(task.completed)
                     .foregroundStyle(task.completed ? .secondary : .primary)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
-
-                Menu {
-                    cardActions(task)
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(width: 28, height: 28)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Actions for \(task.title)")
+                actionsMenu(task)
             }
-            if task.priority != nil || task.due != nil || task.details?.isEmpty == false {
-            HStack(spacing: 6) {
-                if let priority = task.priority, priority != "none" {
-                    Text(priority.capitalized)
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            (priority == "high" ? Color.red.opacity(0.14) : environment.theme.accent2Color.opacity(0.14)),
-                            in: Capsule()
-                        )
-                        .foregroundStyle(priority == "high" ? .red : environment.theme.accent2Color)
-                }
-                if let due = task.due {
-                    Text(dueLabel(due))
-                        .font(.caption)
-                        .foregroundStyle(
-                            !task.completed && due < .now ? .red : Color.secondary
-                        )
-                }
-                if task.details?.isEmpty == false {
-                    Image(systemName: "text.alignleft")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .accessibilityLabel("Has notes")
-                }
-            }
-            .padding(.leading, 26)
+            if let meta {
+                Text(meta.text)
+                    .font(.footnote)
+                    .foregroundStyle(meta.isOverdue ? Color.red : Color.secondary)
+                    .padding(.leading, glyphWidth + 10)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(uiColor: .secondarySystemGroupedBackground),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
-        .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
+        .insetPanel(cornerRadius: 12)
         .contentShape(.rect)
         .onTapGesture { openTask = task }
-        // Board mode carries NO swipe actions: horizontal swipes fight the
-        // hold-and-drag reorder gesture, which is why cards felt unmovable.
-        // Complete/Move/Delete stay reachable through the visible overflow
-        // menu and native context menu (swipes remain in list mode).
+        // Board mode carries no swipe actions: horizontal swipes fight the
+        // hold-and-drag reorder gesture. Complete, move, and delete stay
+        // reachable through the menu and the context menu.
         .contextMenu {
             cardActions(task)
         }
+    }
+
+    private func completeButton(_ task: TaskSummary) -> some View {
+        Button {
+            Task { await store.setTaskCompleted(task, completed: !task.completed) }
+        } label: {
+            Image(systemName: task.completed ? "checkmark.circle.fill" : "circle")
+                .font(.body)
+                .foregroundStyle(task.completed ? Color.secondary : environment.theme.accentColor)
+                .frame(width: glyphWidth)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(task.completed ? "Reopen" : "Complete")
+    }
+
+    private func actionsMenu(_ task: TaskSummary) -> some View {
+        Menu {
+            cardActions(task)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Actions for \(task.title)")
     }
 
     @ViewBuilder
@@ -388,6 +359,50 @@ struct TasksView: View {
         }
     }
 
+    // MARK: - List
+
+    private var taskList: some View {
+        List {
+            ForEach(columns, id: \.self) { column in
+                Section(column) {
+                    ForEach(cards(in: column)) { task in
+                        listRow(task)
+                    }
+                    // A viewer reads the board; only an editor moves rows, as
+                    // in board mode. A nil action turns the move off.
+                    .onMove(perform: canEdit ? { offsets, destination in
+                        Task { await store.reorderTasks(in: column, from: offsets, to: destination) }
+                    } : nil)
+                }
+            }
+        }
+        .refreshable { await store.refreshBoardsAndProjects() }
+    }
+
+    private func listRow(_ task: TaskSummary) -> some View {
+        let meta = TaskMeta.line(priority: task.priority, due: task.due, completed: task.completed)
+        return HStack(spacing: 10) {
+            completeButton(task)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title)
+                    .strikethrough(task.completed)
+                    .foregroundStyle(task.completed ? .secondary : .primary)
+                if let meta {
+                    Text(meta.text)
+                        .font(.caption)
+                        .foregroundStyle(meta.isOverdue ? Color.red : Color.secondary)
+                }
+            }
+        }
+        .contentShape(.rect)
+        .onTapGesture { openTask = task }
+        .swipeActions(edge: .trailing) {
+            Button("Delete", role: .destructive) {
+                pendingDeleteTask = task
+            }
+        }
+    }
+
     // MARK: - Data
 
     private var columns: [String] {
@@ -402,21 +417,9 @@ struct TasksView: View {
             .sorted { $0.order < $1.order }
     }
 
-    private func nextColumn(after column: String) -> String? {
-        guard let index = columns.firstIndex(of: column), index + 1 < columns.count else { return nil }
-        return columns[index + 1]
-    }
-
     private func dueDate(_ daysAhead: Int) -> Date {
         let base = Calendar.current.date(bySettingHour: 17, minute: 0, second: 0, of: .now) ?? .now
         return Calendar.current.date(byAdding: .day, value: daysAhead, to: base) ?? base
-    }
-
-    private func dueLabel(_ due: Date) -> String {
-        let calendar = Calendar.autoupdatingCurrent
-        if calendar.isDateInToday(due) { return "Today · \(due.formatted(date: .omitted, time: .shortened))" }
-        if calendar.isDateInTomorrow(due) { return "Tomorrow" }
-        return due.formatted(.dateTime.month(.abbreviated).day())
     }
 }
 
@@ -448,10 +451,10 @@ struct NewTaskSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("What needs doing?", text: $title, axis: .vertical)
+                    TextField("What is the task?", text: $title, axis: .vertical)
                         .lineLimit(1...3)
                         .focused($titleFocused)
-                    Button(isAutofilling ? "Autofilling…" : "Autofill with Albatross", systemImage: "square.and.pencil") {
+                    Button(isAutofilling ? "Autofilling…" : "Autofill with Albatross") {
                         Task { await autofill() }
                     }
                     .disabled(
@@ -527,7 +530,7 @@ struct NewTaskSheet: View {
     }
 }
 
-// Albatross projects across areas — tap through to the owning area.
+// Albatross projects across areas. A tap goes to the project.
 struct ProjectsSheet: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
@@ -590,7 +593,7 @@ struct ProjectDetailView: View {
     }
 
     // The pane lives in ProductStore keyed by project id, so task mutations
-    // anywhere in the app refresh this surface — no one-shot local snapshot.
+    // anywhere in the app refresh this surface.
     private var pane: ProjectPaneState? {
         environment.store.projectPanes[project.id]
     }
@@ -611,12 +614,12 @@ struct ProjectDetailView: View {
             Section("Tasks") {
                 if let error = pane?.error {
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("Couldn’t load this project’s tasks", systemImage: "exclamationmark.triangle")
+                        Text("Could not load the tasks of this project")
                             .font(.subheadline.weight(.medium))
                         Text(error)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Button("Try Again") {
+                        Button("Try again") {
                             Task { await environment.store.loadProjectPane(projectID: project.id, force: true) }
                         }
                         .buttonStyle(.bordered)
@@ -653,7 +656,7 @@ struct ProjectDetailView: View {
 
             if let areaID = project.areaID {
                 Section("Context") {
-                    Button("Open Area", systemImage: "square.stack.3d.up") {
+                    Button("Open area") {
                         environment.navigation.openArea(id: areaID, name: nil)
                     }
                 }
@@ -672,21 +675,21 @@ struct ProjectDetailView: View {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     if status == "active" {
-                        Button("Pause", systemImage: "pause") {
+                        Button("Pause") {
                             Task { await changeStatus("paused") }
                         }
                     } else {
-                        Button("Resume", systemImage: "play") {
+                        Button("Resume") {
                             Task { await changeStatus("active") }
                         }
                     }
                     if status != "done" {
-                        Button("Mark Done", systemImage: "checkmark.circle") {
+                        Button("Mark done") {
                             Task { await changeStatus("done") }
                         }
                     }
                     Divider()
-                    Button("Archive", systemImage: "archivebox", role: .destructive) {
+                    Button("Archive", role: .destructive) {
                         showsArchiveConfirmation = true
                     }
                 } label: {
@@ -707,14 +710,14 @@ struct ProjectDetailView: View {
             isPresented: $showsArchiveConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Archive Project", role: .destructive) {
+            Button("Archive project", role: .destructive) {
                 Task {
                     await changeStatus("archived")
                     environment.navigation.projectRoute = nil
                 }
             }
         } message: {
-            Text("Its task cards remain available on their boards.")
+            Text("Its task cards stay on their boards.")
         }
     }
 
@@ -776,7 +779,7 @@ private struct BoardManagementSheet: View {
 
                 Section("New board") {
                     TextField("Board name", text: $newBoardTitle)
-                    Button("Create Board") {
+                    Button("Create board") {
                         Task {
                             isWorking = true
                             if await environment.store.createBoard(title: newBoardTitle) {
@@ -791,12 +794,12 @@ private struct BoardManagementSheet: View {
 
                 if selectedBoard?.owned == true {
                     Section {
-                        Button("Delete Board", role: .destructive) {
+                        Button("Delete board", role: .destructive) {
                             showsDeleteConfirmation = true
                         }
                         .disabled(isWorking)
                     } footer: {
-                        Text("Deleting a board permanently removes its columns, cards, and share access.")
+                        Text("This removes the board with its columns and cards.")
                     }
                 }
             }
@@ -816,7 +819,7 @@ private struct BoardManagementSheet: View {
                 isPresented: $showsDeleteConfirmation,
                 titleVisibility: .visible
             ) {
-                Button("Delete Board and Cards", role: .destructive) {
+                Button("Delete board and cards", role: .destructive) {
                     Task {
                         isWorking = true
                         _ = await environment.store.deleteActiveBoard()
@@ -825,7 +828,7 @@ private struct BoardManagementSheet: View {
                     }
                 }
             } message: {
-                Text("This action cannot be undone.")
+                Text("You cannot undo this.")
             }
         }
     }
@@ -849,16 +852,17 @@ private struct ColumnManagementSheet: View {
                             Text(column.name)
                             Spacer()
                             Menu {
-                                Button("Rename", systemImage: "pencil") {
+                                Button("Rename") {
                                     renameColumn = column
                                     renameText = column.name
                                 }
-                                Button("Delete", systemImage: "trash", role: .destructive) {
+                                Button("Delete", role: .destructive) {
                                     deleteColumn = column
                                 }
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                             }
+                            .accessibilityLabel("Actions for \(column.name)")
                         }
                     }
                     .onMove { offsets, destination in
@@ -869,12 +873,12 @@ private struct ColumnManagementSheet: View {
                 } header: {
                     Text("Workflow")
                 } footer: {
-                    Text("Drag columns into the order used by board and list views.")
+                    Text("Drag the columns into the order the board and the list use.")
                 }
 
                 Section("Add column") {
                     TextField("Column name", text: $newColumnName)
-                    Button("Add Column") {
+                    Button("Add column") {
                         Task {
                             isWorking = true
                             if await environment.store.createColumn(name: newColumnName) {
@@ -914,120 +918,13 @@ private struct ColumnManagementSheet: View {
                 ),
                 titleVisibility: .visible
             ) {
-                Button("Delete Column and Cards", role: .destructive) {
+                Button("Delete column and cards", role: .destructive) {
                     guard let column = deleteColumn else { return }
                     deleteColumn = nil
                     Task { _ = await environment.store.deleteColumn(column) }
                 }
             } message: {
-                Text("Every card in this column will be permanently deleted.")
-            }
-        }
-    }
-}
-
-private struct BoardSharingSheet: View {
-    @Environment(AppEnvironment.self) private var environment
-    @Environment(\.dismiss) private var dismiss
-    @State private var email = ""
-    @State private var role = "member"
-    @State private var publicLinkEnabled = false
-    @State private var pendingRemove: TaskBoardMember?
-    @State private var isWorking = false
-
-    private var publicURL: URL? {
-        guard let token = environment.store.taskPublicToken,
-              let baseURL = environment.configuration.apiBaseURL else { return nil }
-        return URL(string: "/b/\(token)", relativeTo: baseURL)?.absoluteURL
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Invite") {
-                    TextField("Email address", text: $email)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                    Picker("Access", selection: $role) {
-                        Text("Can edit").tag("member")
-                        Text("View only").tag("viewer")
-                    }
-                    Button("Send Invite") {
-                        Task {
-                            isWorking = true
-                            if await environment.store.inviteBoardMember(email: email, role: role) {
-                                email = ""
-                            }
-                            isWorking = false
-                        }
-                    }
-                    .disabled(isWorking || !email.contains("@"))
-                }
-
-                Section("People") {
-                    if environment.store.taskBoardMembers.isEmpty {
-                        Text("Only you have access.")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(environment.store.taskBoardMembers) { member in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(member.email)
-                                Text("\(member.role == "member" ? "Can edit" : "View only") · \(member.status)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Remove", role: .destructive) { pendingRemove = member }
-                                .font(.caption)
-                        }
-                    }
-                }
-
-                Section {
-                    Toggle("Public read-only link", isOn: Binding(
-                        get: { publicLinkEnabled },
-                        set: { enabled in
-                            publicLinkEnabled = enabled
-                            Task {
-                                if !(await environment.store.setBoardPublicLink(enabled: enabled)) {
-                                    publicLinkEnabled.toggle()
-                                }
-                            }
-                        }
-                    ))
-                    if let publicURL {
-                        ShareLink(item: publicURL) {
-                            Label("Share Public Link", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                } footer: {
-                    Text("Anyone with the public link can view this board. They cannot edit cards.")
-                }
-            }
-            .navigationTitle("Share Board")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .onAppear {
-                publicLinkEnabled = environment.store.taskPublicToken != nil
-            }
-            .confirmationDialog(
-                "Remove access for \(pendingRemove?.email ?? "this person")?",
-                isPresented: Binding(
-                    get: { pendingRemove != nil },
-                    set: { if !$0 { pendingRemove = nil } }
-                ),
-                titleVisibility: .visible
-            ) {
-                Button("Remove Access", role: .destructive) {
-                    guard let member = pendingRemove else { return }
-                    pendingRemove = nil
-                    Task { _ = await environment.store.removeBoardMember(member) }
-                }
+                Text("This deletes every card in this column.")
             }
         }
     }

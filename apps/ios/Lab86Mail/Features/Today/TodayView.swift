@@ -4,15 +4,39 @@ struct TodayView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var narrative = NarrativeBriefStore()
     @State private var emptyEditionDate = Date.now
     @State private var showsHistory = false
+    @State private var historyLoading = false
+    @State private var historyError: String?
     @State private var artifactReview: ArtifactReviewRequest?
     @State private var isRegenerating = false
+    // What the user last asked the brief to do, so "Try again" repeats it.
+    @State private var lastBriefRequest: BriefRequest = .read
     @State private var showsInlineDate = false
     @State private var showsBriefSettings = false
 
     private var store: ProductStore { environment.store }
+
+    /// The brief reads were a plain load, or a request to write the edition.
+    enum BriefRequest: Equatable {
+        case read
+        case write
+    }
+
+    /// The reading column under the plate: 680 pt of text and the 20 pt
+    /// margins on each side (D23).
+    static let readingWidth: CGFloat = 720
+
+    /// Room under the last row so the floating "+" never covers it (D24).
+    static let bottomReserve: CGFloat = 88
+
+    /// On a regular-width iPad the floating "+" sits over the trailing end of
+    /// the rows. The column leaves it that room (56 pt button, 20 pt margin).
+    static func trailingReserve(regularWidth: Bool) -> CGFloat {
+        regularWidth ? 76 : 0
+    }
 
     private var dateline: String {
         Self.editionDate(report: store.dailyReport, now: emptyEditionDate)
@@ -35,9 +59,42 @@ struct TodayView: View {
         offset > DailyBriefMasthead.height(forWidth: containerWidth) - 56
     }
 
+    // The narrative poll runs while the scene is active or inactive (Control
+    // Center, Face ID). It stops, and the account clears, only in the
+    // background. The key changes with the edition, so a new edition starts a
+    // fresh poll and the store clears the old account itself (B5).
+    static func narrativePollKey(report: DailyReportModel?, scenePhase: ScenePhase) -> String {
+        "\(report?.generatedAt.timeIntervalSince1970 ?? 0):\(clearsNarrative(in: scenePhase) ? "background" : "foreground")"
+    }
+
+    static func clearsNarrative(in scenePhase: ScenePhase) -> Bool {
+        scenePhase == .background
+    }
+
+    // While the shown edition is still being written, Today re-reads it every
+    // five seconds so the progress note and the finished letter arrive
+    // without a pull (B1). The poll stops in the background and once the
+    // edition is done.
+    static let briefPollInterval: Duration = .seconds(5)
+
+    static func pollsBrief(report: DailyReportModel?, scenePhase: ScenePhase) -> Bool {
+        report?.isGenerating == true && scenePhase != .background
+    }
+
+    static func briefPollKey(report: DailyReportModel?, scenePhase: ScenePhase) -> String {
+        "\(report?.id ?? "none"):\(pollsBrief(report: report, scenePhase: scenePhase))"
+    }
+
+    // A failed history read with nothing to show is the sheet's error. When
+    // past briefs from an earlier read are still there, the sheet shows them.
+    static func historyFailure(reportCount: Int, loadError: String?) -> String? {
+        reportCount == 0 ? loadError : nil
+    }
+
     var body: some View {
         todayBody
         .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // The dateline lives in the masthead. It crossfades into the bar
             // only once the masthead has scrolled away, so it never reads twice.
@@ -62,18 +119,13 @@ struct TodayView: View {
             ToolbarItem(placement: .primaryAction) {
                 regenerateButton
             }
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Button("Past editions") {
-                        Task {
-                            await store.loadDailyReportHistory()
-                            showsHistory = true
-                        }
-                    }
-                    Button("Delivery and schedule") { showsBriefSettings = true }
-                } label: {
-                    Label("Brief options", systemImage: "ellipsis.circle")
-                }
+            // Secondary actions share the system overflow menu, so the bar
+            // carries one ellipsis, never two side by side (D20).
+            ToolbarItem(placement: .secondaryAction) {
+                Button("Past briefs", systemImage: "clock") { openHistory() }
+            }
+            ToolbarItem(placement: .secondaryAction) {
+                Button("Delivery and schedule", systemImage: "calendar.badge.clock") { showsBriefSettings = true }
             }
         }
         .sheet(isPresented: $showsBriefSettings) {
@@ -91,26 +143,37 @@ struct TodayView: View {
         }
         .task { await environment.trust.refreshPlan() }
         .sheet(isPresented: $showsHistory) {
-            DailyReportHistorySheet(reports: store.dailyReportHistory) { report in
-                await store.selectDailyReport(id: report.id)
-                showsHistory = false
-            }
+            DailyReportHistorySheet(
+                reports: store.dailyReportHistory,
+                isLoading: historyLoading,
+                error: historyError,
+                onRetry: { await loadHistory() },
+                onSelect: { report in await openPastBrief(report) }
+            )
         }
         .sheet(item: $artifactReview) { request in
+            // The sheet closes first; only the brief re-reads, in the
+            // background (B7).
             ArtifactActionReviewSheet(request: request) {
-                await store.refreshToday()
+                await readBrief()
             }
         }
         .shellToolbar()
-        .task(id: "\(store.dailyReport?.generatedAt.timeIntervalSince1970 ?? 0):\(scenePhase)") {
-            guard scenePhase == .active else { narrative.clear(); return }
+        .task(id: Self.narrativePollKey(report: store.dailyReport, scenePhase: scenePhase)) {
+            if Self.clearsNarrative(in: scenePhase) { narrative.clear(); return }
             emptyEditionDate = .now
             while !Task.isCancelled {
                 await reloadNarrative()
                 do { try await Task.sleep(for: .seconds(narrative.running ? 8 : 60)) } catch { return }
             }
         }
-        .onDisappear { narrative.clear() }
+        .task(id: Self.briefPollKey(report: store.dailyReport, scenePhase: scenePhase)) {
+            guard Self.pollsBrief(report: store.dailyReport, scenePhase: scenePhase) else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: Self.briefPollInterval) } catch { return }
+                await readBrief()
+            }
+        }
         // A `brief_ready` notification names its edition. Open that one, not
         // the latest. The request is read once.
         .task(id: environment.navigation.pendingBriefEditionID) {
@@ -133,12 +196,69 @@ struct TodayView: View {
     }
 
     private func regenerateBrief() async {
+        lastBriefRequest = .write
         let backend = environment.backend
         await narrative.requestRefresh {
             try await backend.post(path: "/api/narrative", body: .object(["action": .string("refresh")]))
         }
         await store.generateBrief()
         await reloadNarrative()
+    }
+
+    private func startRegenerate() {
+        isRegenerating = true
+        Task {
+            await regenerateBrief()
+            isRegenerating = false
+        }
+    }
+
+    // A read replaces the last write as the request "Try again" repeats, so
+    // a failed read never retries an old write.
+    private func readBrief() async {
+        lastBriefRequest = .read
+        await store.refreshBrief()
+    }
+
+    private func refreshTodayPage() async {
+        lastBriefRequest = .read
+        await store.refreshToday()
+    }
+
+    // "Try again" repeats what failed: the write, or the plain read.
+    private func retryBrief() async {
+        switch lastBriefRequest {
+        case .write:
+            isRegenerating = true
+            await regenerateBrief()
+            isRegenerating = false
+        case .read:
+            await readBrief()
+        }
+    }
+
+    private func openHistory() {
+        showsHistory = true
+        Task { await loadHistory() }
+    }
+
+    private func loadHistory() async {
+        historyLoading = true
+        historyError = nil
+        await store.loadDailyReportHistory()
+        historyLoading = false
+        historyError = Self.historyFailure(reportCount: store.dailyReportHistory.count, loadError: store.historyError)
+    }
+
+    // Opens one past edition. Nil when it opened; else the reason it did not,
+    // which the sheet shows in place (it stays open).
+    private func openPastBrief(_ report: DailyReportModel) async -> String? {
+        await store.selectDailyReport(id: report.id)
+        if store.dailyReport?.id == report.id {
+            showsHistory = false
+            return nil
+        }
+        return store.briefError ?? "This brief did not open."
     }
 
     /// On compact Apple platforms, Today is one page read in layers down one
@@ -167,6 +287,14 @@ struct TodayView: View {
         #endif
     }
 
+    private var trailingReserve: CGFloat {
+        #if os(iOS)
+        Self.trailingReserve(regularWidth: horizontalSizeClass == .regular)
+        #else
+        0
+        #endif
+    }
+
     /// The compact-client composition remains one continuous page of live day
     /// context followed by its synthesis. macOS only uses this as the fallback
     /// until a complete Brief artifact is available.
@@ -183,14 +311,19 @@ struct TodayView: View {
                     kind: store.dailyReport?.kind
                 )
                 sourceStrip
+                    .modifier(TodayColumn(trailingReserve: trailingReserve))
                 todayDeck
+                    .modifier(TodayColumn(trailingReserve: trailingReserve))
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     liveLayer(now: context.date)
                 }
+                .modifier(TodayColumn(trailingReserve: trailingReserve))
                 briefLayer
                     .padding(.bottom, 32)
+                    .modifier(TodayColumn(trailingReserve: trailingReserve))
             }
         }
+        .contentMargins(.bottom, Self.bottomReserve, for: .scrollContent)
         .onScrollGeometryChange(for: Bool.self) { geometry in
             Self.mastheadScrolledPast(
                 offset: geometry.contentOffset.y + geometry.contentInsets.top,
@@ -200,7 +333,7 @@ struct TodayView: View {
             showsInlineDate = crossed
         }
         .refreshable {
-            await store.refreshToday()
+            await refreshTodayPage()
             await store.refreshExecution()
             await reloadNarrative()
             await environment.refreshTodayWidget()
@@ -213,11 +346,6 @@ struct TodayView: View {
                     return
                 }
                 await store.refreshExecution()
-            }
-        }
-        .overlay {
-            if store.isLoading && store.dailyReport == nil && store.events.isEmpty && store.approvals.isEmpty {
-                ProgressView("Putting your day together…")
             }
         }
     }
@@ -237,7 +365,7 @@ struct TodayView: View {
                         ReadyForYouSection()
                     }
                     if BriefOwnerMounts.mountsNarrative(document) {
-                        NarrativeBriefView(memory: narrative, backend: environment.backend)
+                        narrativeView
                     }
                     if BriefOwnerMounts.mountsLede(document, narrativeLoaded: narrative.entry != nil) {
                         DailyBriefLede(text: document.summary)
@@ -276,7 +404,7 @@ struct TodayView: View {
                     // source line, the Reconnect rows, and the trial note
                     // lead the page (round 2).
                     sourceStrip
-                    NarrativeBriefView(memory: narrative, backend: environment.backend)
+                    narrativeView
                     DailyBriefView(
                         report: report,
                         lastRefresh: store.lastRefresh,
@@ -301,7 +429,7 @@ struct TodayView: View {
             showsInlineDate = crossed
         }
         .refreshable {
-            await store.refreshToday()
+            await refreshTodayPage()
             await reloadNarrative()
         }
     }
@@ -315,6 +443,12 @@ struct TodayView: View {
             notes: BriefEditionNotes.notes(for: store.dailyReport),
             trialNote: environment.trust.plan?.trialNote
         )
+    }
+
+    private var narrativeView: some View {
+        NarrativeBriefView(memory: narrative, backend: environment.backend) {
+            await reloadNarrative()
+        }
     }
 
     /// The deck under the plate: one sentence about the shape of the day. The
@@ -346,9 +480,22 @@ struct TodayView: View {
         )
     }
 
-    /// Mail that matters, from the brief's own attention index. At most four.
+    /// The conversations the letter below already lists, as "account:thread"
+    /// keys. Only a native edition can be read this way; an HTML edition
+    /// keeps the live section whole.
+    private var letterThreadKeys: Set<String> {
+        guard let report = store.dailyReport, report.hasArtifact,
+              let document = report.document, Self.rendersNativeDocument(report) else { return [] }
+        return TodayComposition.letterThreadKeys(in: document)
+    }
+
+    /// Mail that matters, from the brief's own attention index, without the
+    /// conversations the letter already shows on this page (D19). At most four.
     private var importantMail: [ImportantMailItem] {
-        Array((store.dailyReport?.importantMail ?? []).prefix(TodayComposition.importantMailLimit))
+        TodayComposition.mailOutsideLetter(
+            store.dailyReport?.importantMail ?? [],
+            letterThreadKeys: letterThreadKeys
+        )
     }
 
     /// Today is the day, the mail, and one move. Always current, because it
@@ -357,17 +504,12 @@ struct TodayView: View {
         // The day drawn to scale rather than listed. Where the open air is
         // decides what can move today, and a list never says it.
         todaySection("Your day", note: "Solid is booked. Dashed is open air.") {
-            if store.todaysEvents.isEmpty {
-                scheduleEmptyState
-            } else {
-                DayRibbonView(events: store.todaysEvents, now: now) { event in
-                    environment.navigation.openEvent(event)
-                }
-            }
+            scheduleBody(now: now)
         }
 
         if !importantMail.isEmpty {
-            todaySection("Mail that matters", note: "What you would not want to miss.") {
+            // The rows say why each one matters; the rule needs no hint.
+            todaySection("Mail that matters") {
                 MailThatMattersSection(items: importantMail) { item in
                     environment.navigation.openThread(accountID: item.accountID, threadID: item.threadID)
                 }
@@ -383,23 +525,38 @@ struct TodayView: View {
         }
     }
 
-    /// A section rule in the editorial voice: a hairline, a serif heading, a
-    /// quiet note, and a rule running out to the margin.
+    // Three states, never a spinner over an empty line (B4): loading rows
+    // until the first calendar read ends, the failure with a retry, else the
+    // ribbon. An empty day still draws the ribbon: open air is the point.
+    @ViewBuilder private func scheduleBody(now: Date) -> some View {
+        if let error = store.calendarError, !store.calendarDidLoad {
+            TodayProblemLine(message: "Your calendar did not load.", detail: error) {
+                await refreshTodayPage()
+            }
+        } else if !store.calendarDidLoad {
+            BriefPlaceholderBars()
+                .padding(.vertical, 8)
+        } else {
+            DayRibbonView(
+                events: store.todaysEvents,
+                now: now,
+                height: store.todaysEvents.isEmpty ? 180 : 300
+            ) { event in
+                environment.navigation.openEvent(event)
+            }
+        }
+    }
+
+    /// A section in the editorial voice: the shared rule, the heading in the
+    /// display face, a quiet note, then the content.
     @ViewBuilder
     private func todaySection<Content: View>(
         _ title: String,
-        note: String,
+        note: String? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Rectangle()
-                    .fill(Color.secondary.opacity(0.45))
-                    .frame(width: 18, height: 1)
-                Text(title).font(.system(.subheadline, design: .serif).weight(.semibold))
-                Text(note).font(.caption2).foregroundStyle(.tertiary)
-                Spacer(minLength: 0)
-            }
+            BriefSectionRule(title: title, note: note)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -420,16 +577,12 @@ struct TodayView: View {
     private var regenerateButton: some View {
         let busy = Self.regenerateInFlight(isRegenerating: isRegenerating, report: store.dailyReport)
         return Button {
-            isRegenerating = true
-            Task {
-                await regenerateBrief()
-                isRegenerating = false
-            }
+            startRegenerate()
         } label: {
             if busy {
                 ProgressView()
             } else {
-                Label("Regenerate brief", systemImage: "arrow.clockwise")
+                Label("Write the brief again", systemImage: "arrow.clockwise")
             }
         }
         .disabled(busy)
@@ -440,38 +593,48 @@ struct TodayView: View {
     /// page; it never replaces the live day above it.
     @ViewBuilder private var briefLayer: some View {
         let report = store.dailyReport
-        let standing = TodayComposition.briefStandingLine(generatedAt: report?.generatedAt, now: Date())
-        let stale = TodayComposition.briefIsStale(generatedAt: report?.generatedAt, now: Date())
         let busy = Self.regenerateInFlight(isRegenerating: isRegenerating, report: report)
 
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Rectangle()
-                    .fill(Color.secondary.opacity(0.45))
-                    .frame(width: 18, height: 1)
-                Text(report?.isWeeklyReview == true ? "The weekly review" : "The brief")
-                    .font(.system(.subheadline, design: .serif).weight(.semibold))
-                Text(standing)
-                    .font(.caption2)
-                    .foregroundStyle(stale ? Color.orange : Color.secondary)
-                Spacer(minLength: 0)
-                Button {
-                    isRegenerating = true
-                    Task {
-                        await regenerateBrief()
-                        isRegenerating = false
-                    }
-                } label: {
-                    Text(busy ? "Writing…" : (report == nil ? "Write today\u{2019}s brief" : "Write it again"))
-                        .font(.caption)
+            briefRule(report: report, busy: busy)
+                .padding(.horizontal, 20)
+            // A failed read or write says so in every state, not only when
+            // no edition shows (B6).
+            if let error = store.briefError, !busy {
+                TodayProblemLine(
+                    message: lastBriefRequest == .write ? "The brief was not written." : "The brief did not load.",
+                    detail: error
+                ) {
+                    await retryBrief()
                 }
-                .disabled(busy)
+                .padding(.horizontal, 20)
             }
-            .padding(.horizontal, 20)
-
             briefContent(report)
         }
         .padding(.top, 20)
+    }
+
+    private func briefRule(report: DailyReportModel?, busy: Bool) -> some View {
+        let standing = Self.briefStanding(report: report, briefDidLoad: store.briefDidLoad, now: Date())
+        let stale = TodayComposition.briefIsStale(generatedAt: report?.generatedAt, now: Date())
+        return BriefSectionRule(
+            title: report?.isWeeklyReview == true ? "The weekly review" : "The brief",
+            note: standing,
+            noteVoice: .narration,
+            noteWarns: stale,
+            action: BriefSectionRule.Action(
+                title: busy ? "Writing" : (report == nil ? "Write today\u{2019}s brief" : "Write it again"),
+                isDisabled: busy,
+                run: startRegenerate
+            )
+        )
+    }
+
+    // Before the first brief read ends the rule does not claim "not written
+    // yet"; it says the read is in progress (B4).
+    static func briefStanding(report: DailyReportModel?, briefDidLoad: Bool, now: Date) -> String {
+        if report == nil, !briefDidLoad { return "Reading today\u{2019}s edition" }
+        return TodayComposition.briefStandingLine(generatedAt: report?.generatedAt, now: now)
     }
 
     @ViewBuilder
@@ -484,60 +647,12 @@ struct TodayView: View {
         if BriefOwnerMounts.mountsNarrative(
             report.flatMap { Self.rendersNativeDocument($0) ? $0.document : nil }
         ) {
-            NarrativeBriefView(memory: narrative, backend: environment.backend)
+            narrativeView
         }
         if let report, report.hasArtifact {
-            if let document = report.document, Self.rendersNativeDocument(report) {
-                // Today has already given the date, so the brief brings no
-                // masthead of its own into the same scroll.
-                if BriefOwnerMounts.mountsLede(document, narrativeLoaded: narrative.entry != nil) {
-                    DailyBriefLede(text: document.summary)
-                }
-                BriefDocumentView(
-                    document: document,
-                    isComposing: report.artifactStatus == "composing",
-                    surface: .daily,
-                    reportID: report.id,
-                    hideInactive: store.showsLatestDailyReport,
-                    liveSections: BriefOwnerMounts.liveSections(
-                        showsLatest: store.showsLatestDailyReport,
-                        narrative: narrative,
-                        backend: environment.backend
-                    ),
-                    onReview: { artifactReview = $0 }
-                )
-                if BriefOwnerMounts.mountsPreparedWork(
-                    document,
-                    hasArtifact: report.hasArtifact,
-                    showsLatest: store.showsLatestDailyReport
-                ) {
-                    PreparedWorkSection()
-                }
-                BriefMailBacklog(items: report.overflow) { item in
-                    environment.navigation.openThread(accountID: item.accountID, threadID: item.threadID)
-                }
-                DailyBriefFooter(report: report)
-            } else {
-                DailyBriefView(
-                    report: report,
-                    lastRefresh: store.lastRefresh,
-                    isOffline: store.briefError != nil,
-                    onAction: handleBriefAction
-                )
-            }
+            briefArtifact(report)
         } else if let report, report.isGenerating {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Putting today\u{2019}s brief together…")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                if let progress = report.progress, progress.total > 0 {
-                    ProgressView(value: progress.fraction)
-                }
-            }
-            .padding(.horizontal, 20)
+            briefWritingLine(report)
         } else if let report {
             VStack(alignment: .leading, spacing: 8) {
                 if let text = report.legacyText {
@@ -546,17 +661,14 @@ struct TodayView: View {
                 briefCountSummary(report.sectionCounts)
             }
             .padding(.horizontal, 20)
-        } else if let error = store.briefError {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Couldn\u{2019}t load today\u{2019}s brief", systemImage: "exclamationmark.triangle")
-                    .font(.subheadline.weight(.medium))
-                Text(error).font(.caption).foregroundStyle(.secondary)
-                Button("Try Again") { Task { await store.refreshBrief() } }
-                    .buttonStyle(.bordered)
-            }
-            .padding(.horizontal, 20)
-        } else {
-            Text("Albatross writes this each morning from your mail and calendar. There is no edition for today yet.")
+        } else if !store.briefDidLoad {
+            // Loading rows until the first read ends; never "no edition yet"
+            // under a spinner (B4).
+            BriefPlaceholderBars()
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+        } else if store.briefError == nil {
+            Text("No edition for today yet. Albatross writes one each morning from your mail and calendar.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -564,9 +676,76 @@ struct TodayView: View {
         }
     }
 
+    @ViewBuilder
+    private func briefArtifact(_ report: DailyReportModel) -> some View {
+        if let document = report.document, Self.rendersNativeDocument(report) {
+            // Today has already given the date, so the brief brings no
+            // masthead of its own into the same scroll.
+            if BriefOwnerMounts.mountsLede(document, narrativeLoaded: narrative.entry != nil) {
+                DailyBriefLede(text: document.summary)
+            }
+            BriefDocumentView(
+                document: document,
+                isComposing: report.artifactStatus == "composing",
+                surface: .daily,
+                reportID: report.id,
+                hideInactive: store.showsLatestDailyReport,
+                liveSections: BriefOwnerMounts.liveSections(
+                    showsLatest: store.showsLatestDailyReport,
+                    narrative: narrative,
+                    backend: environment.backend
+                ),
+                onReview: { artifactReview = $0 }
+            )
+            if BriefOwnerMounts.mountsPreparedWork(
+                document,
+                hasArtifact: report.hasArtifact,
+                showsLatest: store.showsLatestDailyReport
+            ) {
+                PreparedWorkSection()
+            }
+            BriefMailBacklog(items: report.overflow) { item in
+                environment.navigation.openThread(accountID: item.accountID, threadID: item.threadID)
+            }
+            DailyBriefFooter(report: report)
+        } else {
+            DailyBriefView(
+                report: report,
+                lastRefresh: store.lastRefresh,
+                isOffline: store.briefError != nil,
+                onAction: handleBriefAction
+            )
+        }
+    }
+
+    private func briefWritingLine(_ report: DailyReportModel) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Writing today\u{2019}s brief")
+                    .font(environment.theme.displayType.displayItalicFont(size: 15))
+                    .foregroundStyle(.secondary)
+            }
+            if let progress = report.progress, progress.total > 0 {
+                ProgressView(value: progress.fraction)
+            }
+        }
+        .padding(.horizontal, 20)
+    }
+
     // A single reflowing summary line — wraps at any Dynamic Type size without
     // clipping, unlike a fixed row of chips.
     @ViewBuilder private func briefCountSummary(_ counts: DailyReportModel.SectionCounts) -> some View {
+        let line = Self.countSummaryLine(counts)
+        if !line.isEmpty {
+            Text(line)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    static func countSummaryLine(_ counts: DailyReportModel.SectionCounts) -> String {
         let parts: [String] = [
             counts.replyOwed > 0 ? "\(counts.replyOwed) reply owed" : nil,
             counts.followUpOwed > 0 ? "\(counts.followUpOwed) follow-up" : nil,
@@ -575,21 +754,7 @@ struct TodayView: View {
             counts.tasks > 0 ? "\(counts.tasks) tasks" : nil,
             counts.calendar > 0 ? "\(counts.calendar) events" : nil,
         ].compactMap { $0 }
-        if !parts.isEmpty {
-            Text(parts.joined(separator: " · "))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    @ViewBuilder private var scheduleEmptyState: some View {
-        if store.calendarError != nil && !store.calendarDidLoad {
-            Label("Couldn’t load your calendar", systemImage: "calendar.badge.exclamationmark")
-                .foregroundStyle(.secondary)
-        } else {
-            ContentUnavailableView("Nothing scheduled today", systemImage: "calendar.badge.checkmark")
-        }
+        return parts.joined(separator: ", ")
     }
 
     private func handleBriefAction(_ action: String, _ payload: BriefActionPayload) {
@@ -653,9 +818,62 @@ struct TodayView: View {
             artifactReview = ArtifactReviewRequest(
                 action: action,
                 payload: payload,
-                source: store.dailyReport?.title ?? "Daily Report"
+                source: store.dailyReport?.title ?? "Today\u{2019}s brief"
             )
         }
+    }
+}
+
+/// The reading column under the plate: a maximum width, centered on wide
+/// screens, with room on the trailing side for the floating "+" where it
+/// overlaps the rows.
+private struct TodayColumn: ViewModifier {
+    let trailingReserve: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: TodayView.readingWidth, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            .padding(.trailing, trailingReserve)
+    }
+}
+
+/// A failed read on Today: what went wrong, the detail, and one text button
+/// that repeats the read. Never an icon, never a spinner that stays.
+struct TodayProblemLine: View {
+    let message: String
+    var detail: String? = nil
+    var retryTitle = "Try again"
+    let retry: () async -> Void
+
+    @State private var isRetrying = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(message)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.primary)
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button(retryTitle) {
+                isRetrying = true
+                Task {
+                    await retry()
+                    isRetrying = false
+                }
+            }
+            .buttonStyle(.plain)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.tint)
+            .disabled(isRetrying)
+            .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -687,32 +905,46 @@ enum TodayBriefNavigationIntent: Equatable {
     }
 }
 
+// The past briefs. Three states while the list loads, fails, or is empty, and
+// a row that shows its own progress while that edition opens. A failed open
+// keeps the sheet and says why.
 private struct DailyReportHistorySheet: View {
     @Environment(\.dismiss) private var dismiss
     let reports: [DailyReportModel]
-    let onSelect: (DailyReportModel) async -> Void
+    let isLoading: Bool
+    let error: String?
+    let onRetry: () async -> Void
+    let onSelect: (DailyReportModel) async -> String?
+
+    @State private var openingID: String?
+    @State private var openError: String?
 
     var body: some View {
         NavigationStack {
-            List(reports, id: \.id) { report in
-                Button {
-                    Task { await onSelect(report) }
-                } label: {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(report.title)
-                            .foregroundStyle(.primary)
-                        Text(report.generatedAt.formatted(date: .complete, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            List {
+                if isLoading, reports.isEmpty {
+                    ForEach(0..<3, id: \.self) { _ in
+                        BriefPlaceholderBars()
+                            .padding(.vertical, 6)
+                    }
+                } else if let error {
+                    TodayProblemLine(message: "Past briefs did not load.", detail: error, retry: onRetry)
+                        .padding(.vertical, 6)
+                } else if reports.isEmpty {
+                    Text("No past briefs yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(reports, id: \.id) { report in
+                        row(report)
+                    }
+                    if let openError {
+                        Text(openError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
                     }
                 }
             }
-            .overlay {
-                if reports.isEmpty {
-                    ContentUnavailableView("No saved reports", systemImage: "doc.text.magnifyingglass")
-                }
-            }
-            .navigationTitle("Daily Report History")
+            .navigationTitle("Past briefs")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -721,6 +953,34 @@ private struct DailyReportHistorySheet: View {
             }
         }
     }
+
+    private func row(_ report: DailyReportModel) -> some View {
+        Button {
+            openingID = report.id
+            openError = nil
+            Task {
+                openError = await onSelect(report)
+                openingID = nil
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(report.title)
+                        .foregroundStyle(.primary)
+                    Text(report.generatedAt.formatted(date: .complete, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                if openingID == report.id {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .contentShape(.rect)
+        }
+        .disabled(openingID != nil)
+    }
 }
 
 struct EventRow: View {
@@ -728,14 +988,21 @@ struct EventRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(event.allDay ? "All day" : event.start.formatted(.dateTime.hour().minute()))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 64, alignment: .leading)
+            // The time column is as wide as the widest time, not a constant.
+            ZStack(alignment: .leading) {
+                Text("12:00 PM")
+                    .font(.caption.monospacedDigit())
+                    .hidden()
+                Text(event.allDay ? "All day" : event.start.formatted(.dateTime.hour().minute()))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .fixedSize(horizontal: true, vertical: false)
             VStack(alignment: .leading, spacing: 3) {
                 Text(event.title)
                 if let location = event.location {
-                    Label(location, systemImage: "location")
+                    Text(location)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -855,7 +1122,7 @@ struct NextMoveLine: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
-                    Text([move.time, move.workTitle].joined(separator: " · "))
+                    Text(TodayComposition.nextMoveSourceLine(move))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

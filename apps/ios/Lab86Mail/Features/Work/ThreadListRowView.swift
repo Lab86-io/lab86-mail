@@ -1,10 +1,11 @@
 import SwiftUI
 
 // One Albatross in the live list (docs/albatross-threads.md, T1 and T2):
-// the status dot, the title with weight as the unread mark, "Status word ·
-// preview", the time, and the area. A row with an open handoff that names
-// blanks shows the blank sentence in place of line 2
-// (docs/albatross-blank-design.md). The Mac rail mounts the same view.
+// the status dot, the title with weight as the unread mark, the status word
+// and the preview on their own lines, the time, and the area on a last quiet
+// line (D13: nothing sits centered on a two-line block, and there is no
+// middle dot). A row with an open handoff that names blanks shows the blank
+// sentence in place of the status lines (docs/albatross-blank-design.md).
 struct ThreadListRowView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let row: ThreadListRow
@@ -14,11 +15,13 @@ struct ThreadListRowView: View {
     var showsArea = true
     /// Two reads in a row failed: a live row says when it was last seen.
     var stale = false
+    /// The user left words in this thread's composer.
+    var hasDraft = false
 
     private var time: String? { ThreadRowPresentation.timeLabel(row, now: now) }
 
-    private var line: String {
-        stale ? ThreadRowPresentation.staleLine(row) : ThreadRowPresentation.statusLine(row)
+    private var parts: (word: String?, preview: String?) {
+        stale ? ThreadRowPresentation.staleParts(row) : ThreadRowPresentation.statusParts(row)
     }
 
     private var area: String? { showsArea ? row.areaName : nil }
@@ -26,68 +29,95 @@ struct ThreadListRowView: View {
     /// The blanks of an open handoff. None while the rows are stale.
     private var blanks: [String] { stale ? [] : ThreadRowPresentation.blanks(row) }
 
+    private var isAccessibilitySize: Bool { dynamicTypeSize.isAccessibilitySize }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             ThreadStatusDot(kind: stale ? .none : ThreadRowPresentation.dot(row))
                 .padding(.top, 6)
             VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(row.title)
-                        .font(.subheadline.weight(row.unread ? .semibold : .regular))
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(2)
-                    Spacer(minLength: 8)
-                    if let time {
-                        Text(time)
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                            .fixedSize()
-                    }
-                }
+                titleLine
                 if !blanks.isEmpty {
                     BlankSentence(blanks: blanks, size: 16)
                         .padding(.top, 2)
-                    if let area {
-                        Text(area)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
-                } else if dynamicTypeSize.isAccessibilitySize {
-                    Text(line)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let area {
-                        Text(area)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
                 } else {
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(line)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                        if let area {
-                            Spacer(minLength: 8)
-                            Text(area)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .lineLimit(1)
-                                .fixedSize()
-                        }
-                    }
+                    statusLines
                 }
+                footLine
             }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(ThreadRowPresentation.accessibilityLabel(row, time: time, area: area, stale: stale))
+        .accessibilityLabel(accessibilityLabel)
     }
+
+    private var titleLine: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(row.title)
+                .font(.subheadline.weight(row.unread ? .semibold : .regular))
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.leading)
+                .lineLimit(isAccessibilitySize ? 3 : 2)
+            Spacer(minLength: 8)
+            if let time {
+                Text(time)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .fixedSize()
+            }
+        }
+    }
+
+    @ViewBuilder private var statusLines: some View {
+        let current = parts
+        if let word = current.word {
+            Text(word)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let preview = current.preview {
+            Text(preview)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+                .lineLimit(isAccessibilitySize ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The area and the draft mark: one quiet line, or nothing.
+    @ViewBuilder private var footLine: some View {
+        if area != nil || hasDraft {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                if let area {
+                    Text(area)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+                if hasDraft {
+                    // A quiet mark: the accent stays with the needs-you dot.
+                    Text(ThreadRowCopy.draft)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 1)
+        }
+    }
+
+    private var accessibilityLabel: String {
+        var label = ThreadRowPresentation.accessibilityLabel(row, time: time, area: area, stale: stale)
+        if hasDraft { label += ". \(ThreadRowCopy.draft)" }
+        return label
+    }
+}
+
+enum ThreadRowCopy {
+    /// The draft mark on a row whose composer holds unsent words.
+    static let draft = "Draft"
 }
 
 /// The one indicator of a row (lead decision 2): accent and steady for

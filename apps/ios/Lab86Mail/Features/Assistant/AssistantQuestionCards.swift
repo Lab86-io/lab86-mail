@@ -268,15 +268,58 @@ struct AssistantQuestionCard: View {
                 }
             case .secureDetail:
                 SecureRequestCard(question: question, onAnswer: onAnswer)
+            case .unknown:
+                UnsupportedQuestionCard(question: question, onAnswer: onAnswer)
             }
         }
     }
 
     private var unavailable: some View {
-        QuestionShell(title: "Albatross asked a question this app cannot show") {
+        QuestionShell(title: UnsupportedQuestionCard.title) {
             Text("Answer it on the web, or ask again here.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// An `ask_*` tool this app has no card for (the deck checkpoints, a new
+/// tool). The person answers on the web, or skips here so Albatross goes on
+/// without the answer: the turn never waits on nothing.
+struct UnsupportedQuestionCard: View {
+    let question: AssistantQuestionPart
+    let onAnswer: (JSONValue) -> Void
+
+    static let title = "Albatross asked a question this app cannot show"
+    static let detail = "Answer it on the web, or skip it here and Albatross goes on without it."
+    static let skip = "Skip"
+    static let skipped = "Skipped."
+    static let skipReason = "This question has no card in the app. Continue without it."
+
+    /// The tool output of a skip, in the shape the other skips use.
+    static let skippedAnswer: JSONValue = .object([
+        "skipped": .bool(true),
+        "reason": .string(skipReason),
+    ])
+
+    var body: some View {
+        QuestionShell(title: Self.title) {
+            Text(Self.detail)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if question.isAnswered {
+                Text(Self.skipped)
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+            } else {
+                HStack {
+                    Spacer(minLength: 0)
+                    Button(Self.skip) { onAnswer(Self.skippedAnswer) }
+                        .buttonStyle(.borderless)
+                        .font(.subheadline)
+                }
+            }
         }
     }
 }
@@ -296,7 +339,7 @@ struct QuestionShell<Content: View>: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .surfaceCard(cornerRadius: 16)
+        .insetPanel(cornerRadius: 12)
         .accessibilityElement(children: .contain)
     }
 }
@@ -367,6 +410,7 @@ struct SubmitButton: View {
             Spacer(minLength: 0)
             Button(label, action: action)
                 .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.roundedRectangle(radius: 8))
                 .tint(environment.theme.accentColor)
                 .disabled(!enabled)
                 .keyboardShortcut(shortcut)
@@ -516,8 +560,20 @@ private struct AskParametersCard: View {
     }
 
     private func formatted(_ value: Double, _ slider: AskParametersForm.Slider) -> String {
-        let number = value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
-        return slider.unit.map { "\(number) \($0)" } ?? number
+        SliderValueText.make(value, unit: slider.unit)
+    }
+}
+
+/// The value under a parameter slider. A whole number shows without a
+/// decimal; a value `Int` cannot hold (infinity, past 1e15) keeps one, so
+/// the conversion never traps.
+enum SliderValueText {
+    static let wholeLimit: Double = 1e15
+
+    static func make(_ value: Double, unit: String?) -> String {
+        let whole = value.isFinite && abs(value) < wholeLimit && value == value.rounded()
+        let number = whole ? String(Int(value)) : String(format: "%.1f", value)
+        return unit.map { "\(number) \($0)" } ?? number
     }
 }
 

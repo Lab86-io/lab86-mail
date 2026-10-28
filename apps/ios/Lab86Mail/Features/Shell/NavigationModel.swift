@@ -436,8 +436,33 @@ final class NavigationModel {
         case "calendar", "events": selectPrimary(.calendar)
         case "tasks", "board": selectPrimary(.tasks)
         case "work", "area", "areas": selectPrimary(.work)
+        case "notifications", "activity": sheet = .activity
         default: selectPrimary(.today)
         }
+    }
+
+    /// True for a link a chat reply can hand to `open(appPath:)`: an app
+    /// path (`/?view=files&file=<id>`), a `lab86://` or `mailto:` link, or a
+    /// link into the app's own site.
+    nonisolated static func isAppLink(_ href: String) -> Bool {
+        let trimmed = href.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if trimmed.hasPrefix("/") || trimmed.hasPrefix("?") { return true }
+        guard let url = URL(string: trimmed) else { return false }
+        return url.scheme == "lab86" || url.scheme == "mailto" || isAppHost(url.host)
+    }
+
+    /// The app's own site: `lab86.io` or one of its subdomains. A host that
+    /// only contains the text (`lab86.io.example.com`) is not.
+    nonisolated static func isAppHost(_ host: String?) -> Bool {
+        guard let host = host?.lowercased(), !host.isEmpty else { return false }
+        return host == "lab86.io" || host.hasSuffix(".lab86.io")
+    }
+
+    /// An app path from a chat reply (`/?view=files&file=<id>`) goes through
+    /// the same router as a `lab86://` link.
+    func open(appPath: String) {
+        open(route: appPath)
     }
 
     // A notification tap and a Siri deep link both write the route down before
@@ -523,36 +548,44 @@ final class NavigationModel {
             sheet = .compose
             return
         }
-        guard url.scheme == "lab86" || url.host?.contains("lab86.io") == true else { return }
+        guard url.scheme == "lab86" || Self.isAppHost(url.host) else { return }
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         var query: [String: String] = [:]
         for item in components?.queryItems ?? [] {
             if let value = item.value { query[item.name] = value }
         }
         let route = [url.host, url.path].compactMap { $0 }.joined(separator: "/").lowercased()
+        // A web app path (`/?view=files&file=<id>`) names its target in the
+        // query, not the path. The named ids win; `id` alone needs the path.
+        let routedID: (String) -> String? = { word in route.contains(word) ? query["id"] : nil }
         if let editionID = Self.briefEditionID(route: route, query: query) {
             openBriefEdition(id: editionID)
-        } else if route.contains("thread"), let account = query["account"] ?? query["accountId"],
-           let thread = query["thread"] ?? query["threadId"] ?? query["id"] {
+        } else if let account = query["account"] ?? query["accountId"],
+                  let thread = query["thread"] ?? query["threadId"] ?? routedID("thread") {
             openThread(accountID: account, threadID: thread)
-        } else if route.contains("event"), let account = query["account"] ?? query["accountId"],
-                  let event = query["event"] ?? query["eventId"] ?? query["id"] {
+        } else if let account = query["account"] ?? query["accountId"],
+                  let event = query["event"] ?? query["eventId"] ?? routedID("event") {
             openEvent(
                 accountID: account,
                 eventID: event,
                 calendarID: query["calendar"] ?? query["calendarId"],
                 preview: nil
             )
-        } else if route.contains("work"), let work = query["work"] ?? query["workId"] ?? query["id"] {
+        } else if let work = query["work"] ?? query["workId"] ?? routedID("work") {
             if let area = query["area"] ?? query["areaId"] {
                 openArea(id: area, name: nil)
             }
             openWork(id: work, title: nil)
-        } else if route.contains("area"), let area = query["area"] ?? query["areaId"] ?? query["id"] {
+        } else if let area = query["area"] ?? query["areaId"] ?? routedID("area") {
             openArea(id: area, name: nil)
-        } else if route.contains("document"),
-                  let document = query["document"] ?? query["documentId"] ?? query["id"] {
+        } else if let document = query["document"] ?? query["documentId"] ?? query["office"] ?? routedID("document") {
+            // `office=` is a Word file in the document editor.
             openDocument(id: document)
+        } else if let file = query["file"], !file.isEmpty {
+            // `?view=files&file=<id>`: the saved file viewer.
+            openSavedFile(id: file, title: query["title"])
+        } else if let view = query["view"], !view.isEmpty {
+            openPrimaryView(view)
         } else if Self.isFilesRoute(route) {
             selectPrimary(.files)
         } else if route.contains("calendar") {

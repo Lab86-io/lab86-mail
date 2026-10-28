@@ -26,7 +26,7 @@ describe('desktop brief chrome composition', () => {
     // An older HTML edition has no native masthead, so the source line and
     // the Reconnect rows lead the legacy branch (round 2).
     expect(body).toMatch(
-      /BriefDocumentView\([\s\S]+\} else \{\s+LazyVStack\([^\n]+\{(?:\s+\/\/[^\n]*)*\s+sourceStrip\s+NarrativeBriefView\([^\n]+\)\s+DailyBriefView\(/,
+      /BriefDocumentView\([\s\S]+\} else \{\s+LazyVStack\([^\n]+\{(?:\s+\/\/[^\n]*)*\s+sourceStrip\s+(?:NarrativeBriefView\([^\n]+\)|narrativeView)\s+DailyBriefView\(/,
     );
     expect(body.match(/^\s+sourceStrip$/gm)).toHaveLength(2);
     expect(body).toMatch(/\.padding\(\.bottom, 32\)\s+\}\s+\}\s+\.background/);

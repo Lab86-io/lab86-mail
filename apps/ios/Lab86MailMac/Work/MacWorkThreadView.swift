@@ -24,8 +24,14 @@ struct MacWorkThreadView: View {
     /// the next thread opens.
     @State private var keepUnread = false
     @State private var draft = ""
+    // The thread the view shows now. The view stays when the route changes,
+    // so a send that finishes late checks this before it touches the draft.
+    @State private var openWorkID: String?
+    // False after the view leaves the screen. A send that finishes after
+    // that changes only the stored draft.
+    @State private var isOnScreen = false
     @State private var pendingFiles: [ComposeAttachment] = []
-    @State private var showsFileImporter = false
+    @State private var attachRequest: ComposerAttachSource?
     @State private var showsPlan = false
     @State private var showsDetailsPopover = false
     @State private var showsHorizonSheet = false
@@ -79,11 +85,15 @@ struct MacWorkThreadView: View {
                 guard !rows.isEmpty else { return }
                 showBanner(rows)
             }
-            .onAppear { environment.threads.beginFollowing(environment.backend) }
+            .onAppear {
+                isOnScreen = true
+                environment.threads.beginFollowing(environment.backend)
+            }
             .onChange(of: paneMode, initial: true) { _, mode in
                 MacRequests.shared.threadPaneMode = mode
             }
             .onDisappear {
+                isOnScreen = false
                 environment.threads.endFollowing()
                 hideBanner()
                 MacRequests.shared.threadPaneMode = .none
@@ -107,10 +117,7 @@ struct MacWorkThreadView: View {
                 guard let model, let previous, let next else { return }
                 announce(previous: previous, next: next, model: model)
             }
-            .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-                guard case .success(let urls) = result else { return }
-                AssistantComposerFiles.importing(urls, into: &pendingFiles)
-            }
+            .composerAttachmentSources(request: $attachRequest, files: $pendingFiles)
     }
 
     /// The thread, its title, its window, and the tasks that load and follow it.
@@ -138,6 +145,7 @@ struct MacWorkThreadView: View {
             // and the draft comes back with the thread.
             let model = environment.threadModels.model(for: route.workID, title: route.title, environment: environment)
             self.model = model
+            openWorkID = route.workID
             model.actions = actions(for: model)
             keepUnread = false
             draft = environment.composerDrafts.draft(for: route.workID)
@@ -366,14 +374,12 @@ struct MacWorkThreadView: View {
                     atBottom: atBottom,
                     pendingFormOffscreen: (model.pendingQuestion != nil || model.pendingAllow != nil) && !atBottom
                 ) {
-                    Button(pill) {
+                    ThreadJumpControl(text: pill) {
                         guard let last = model.newestItemID else { return }
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
                             proxy.scrollTo(last, anchor: .bottom)
                         }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                     .padding(.trailing, 20)
                     .padding(.bottom, 12)
                 }
@@ -400,10 +406,16 @@ struct MacWorkThreadView: View {
     }
 
     private func transcriptScroll(_ model: WorkThreadModel, proxy: ScrollViewProxy) -> some View {
-        ScrollView {
+        // Computed once for the list (C7): the timeline merge and the
+        // streaming flags do not run again for each row.
+        let items = model.items
+        let streaming = model.chat.isStreaming
+        let lastID = model.chat.messages.last?.id
+        let latestReplyID = model.chat.latestReplyID
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
-                ForEach(model.items) { item in
-                    itemView(item, model: model)
+                ForEach(items) { item in
+                    itemView(item, model: model, streaming: streaming, lastID: lastID, latestReplyID: latestReplyID)
                         .id(item.id)
                 }
                 chatFooter(model)
@@ -420,15 +432,21 @@ struct MacWorkThreadView: View {
         } action: { _, isAtBottom in
             atBottom = isAtBottom
         }
-        .onChange(of: model.items.count) { _, _ in
-            guard atBottom, let last = model.newestItemID else { return }
+        .onChange(of: items.count) { _, _ in
+            guard atBottom, let last = items.last?.id else { return }
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                 proxy.scrollTo(last, anchor: .bottom)
             }
         }
     }
 
-    @ViewBuilder private func itemView(_ item: ThreadItem, model: WorkThreadModel) -> some View {
+    @ViewBuilder private func itemView(
+        _ item: ThreadItem,
+        model: WorkThreadModel,
+        streaming: Bool,
+        lastID: String?,
+        latestReplyID: String?
+    ) -> some View {
         switch item {
         case .outcome:
             // In document mode the "Your part" card names the step; the
@@ -458,7 +476,12 @@ struct MacWorkThreadView: View {
             }
             .accessibilityElement(children: .combine)
         case .message(let message):
-            AssistantMessageRow(model: model.chat, message: message)
+            AssistantMessageRow(
+                model: model.chat,
+                message: message,
+                isStreamingReply: streaming && message.id == lastID,
+                isLatestReply: message.id == latestReplyID
+            )
         case .run(let view, let continues):
             RunBlockView(
                 view: view,
@@ -848,7 +871,7 @@ struct MacWorkThreadView: View {
             // A redirect note is text only: an attached file holds the send.
             sendDisabled: model.sendsAreHeld || (model.redirectArmed != nil && !pendingFiles.isEmpty),
             onSubmit: { submitDraft(model) },
-            onAttach: { showsFileImporter = true }
+            onAttach: { attachRequest = $0 }
         )
         .frame(maxWidth: MacThreadLayout.readingMeasure + 40)
         .frame(maxWidth: .infinity)
@@ -906,9 +929,30 @@ struct MacWorkThreadView: View {
             Task { await model.chat.hold(text) }
             return
         }
-        model.send(draft, attachments: pendingFiles)
-        clearDraft()
-        model.chat.clearRoute()
+        // The draft and the files leave once the turn has started; a failed
+        // upload keeps both, so the send control is the retry (C10).
+        let text = draft
+        let files = pendingFiles
+        guard !files.isEmpty else {
+            model.send(text, attachments: [])
+            clearDraft()
+            model.chat.clearRoute()
+            return
+        }
+        let sendingWorkID = route.workID
+        Task {
+            guard await model.chat.sendDraft(text, attachments: files) else { return }
+            model.chat.clearRoute()
+            // Only what went out leaves the draft. Edits made during the
+            // upload stay: changed text, and files added after the send (a
+            // photo import ends late). The stored draft changes first: another
+            // thread can be open now, or this view can be gone.
+            environment.composerDrafts.remove(sent: text, files: files, for: sendingWorkID)
+            guard isOnScreen, openWorkID == sendingWorkID else { return }
+            let sentIDs = Set(files.map(\.id))
+            if draft == text { draft = "" }
+            pendingFiles.removeAll { sentIDs.contains($0.id) }
+        }
     }
 
     private func clearDraft() {

@@ -32,8 +32,16 @@ describe('native tool grammar', () => {
   test('every tool the native grammar names exists for the native agent', () => {
     for (const platform of ['ios', 'macos'] as const) {
       const lifted = new Set(
-        // The native apps send the ask_form capability (AssistantChatModel.requestBody).
-        Object.keys(liftToolsForAgent('b', 'UTC', undefined, { clientPlatform: platform, askForm: true })),
+        // The native apps send the ask_form and ask_secure_detail capabilities
+        // (AssistantChatModel.requestBody). Runner-only tools such as
+        // browser_download never reach the chat, so the grammar leaves them out.
+        Object.keys(
+          liftToolsForAgent('b', 'UTC', undefined, {
+            clientPlatform: platform,
+            askForm: true,
+            askSecureDetail: true,
+          }),
+        ),
       );
       expect(names.filter((name) => !TOOLS[name] && !lifted.has(name))).toEqual([]);
     }

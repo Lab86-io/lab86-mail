@@ -59,6 +59,12 @@ struct AlbatrossDocBlock: Identifiable, Hashable, Sendable {
         }
     }
     var level: Int?
+    // A heading shown as the document title or subtitle ("title",
+    // "subtitle"), as lib/documents/model.ts carries it. Kept through a
+    // save, so a Title style does not fall back to a plain heading.
+    var variant: String?
+    // The nesting level of a bullet or numbered item; 0 is the top level.
+    var listLevel: Int?
     var runs: [AlbatrossDocRun]?
 
     init?(json: JSONValue) {
@@ -68,6 +74,8 @@ struct AlbatrossDocBlock: Identifiable, Hashable, Sendable {
         self.type = type
         text = json["text"]?.stringValue ?? ""
         level = exactInt(json["level"]?.doubleValue)
+        variant = json["variant"]?.stringValue?.nilIfBlank
+        listLevel = exactInt(json["listLevel"]?.doubleValue)
         if let values = json["runs"]?.arrayValue {
             let parsed = values.compactMap(AlbatrossDocRun.init)
             if parsed.count == values.count, parsed.map(\.text).joined() == text {
@@ -76,11 +84,20 @@ struct AlbatrossDocBlock: Identifiable, Hashable, Sendable {
         }
     }
 
-    init(id: String = UUID().uuidString, type: String = "paragraph", text: String = "", level: Int? = nil) {
+    init(
+        id: String = UUID().uuidString,
+        type: String = "paragraph",
+        text: String = "",
+        level: Int? = nil,
+        variant: String? = nil,
+        listLevel: Int? = nil
+    ) {
         self.id = id
         self.type = type
         self.text = text
         self.level = level
+        self.variant = variant
+        self.listLevel = listLevel
     }
 
     var json: JSONValue {
@@ -90,6 +107,8 @@ struct AlbatrossDocBlock: Identifiable, Hashable, Sendable {
             "text": .string(text),
         ]
         if let level { fields["level"] = .number(Double(level)) }
+        if let variant { fields["variant"] = .string(variant) }
+        if let listLevel { fields["listLevel"] = .number(Double(listLevel)) }
         if let runs, !runs.isEmpty, runs.map(\.text).joined() == text {
             fields["runs"] = .array(runs.map(\.json))
         }
@@ -104,6 +123,9 @@ struct AlbatrossDocRun: Hashable, Sendable {
     let underline: Bool?
     let strike: Bool?
     let code: Bool?
+    // An http, https, or mailto address. Kept through a save, so a link in
+    // the document does not become plain text.
+    let link: String?
 
     init?(json: JSONValue) {
         guard let text = json["text"]?.stringValue else { return nil }
@@ -113,6 +135,7 @@ struct AlbatrossDocRun: Hashable, Sendable {
         underline = json["underline"]?.boolValue
         strike = json["strike"]?.boolValue
         code = json["code"]?.boolValue
+        link = json["link"]?.stringValue?.nilIfBlank
     }
 
     var json: JSONValue {
@@ -122,6 +145,7 @@ struct AlbatrossDocRun: Hashable, Sendable {
         if let underline { fields["underline"] = .bool(underline) }
         if let strike { fields["strike"] = .bool(strike) }
         if let code { fields["code"] = .bool(code) }
+        if let link { fields["link"] = .string(link) }
         return .object(fields)
     }
 }
@@ -579,6 +603,26 @@ struct CloudFileItem: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Whether the app may write a Google file back, as the server judged it
+/// (`editability` on `/api/files/google/editor`). A sheet or deck import is
+/// a bounded projection, and a Doc with open comments or unsupported
+/// content stays a preview; the editor goes read-only and shows the reason.
+struct GoogleDocumentEditability: Hashable, Sendable {
+    let editable: Bool
+    let reason: String?
+
+    init(editable: Bool, reason: String? = nil) {
+        self.editable = editable
+        self.reason = reason
+    }
+
+    init?(json: JSONValue?) {
+        guard let json, let editable = json["editable"]?.boolValue else { return nil }
+        self.editable = editable
+        reason = json["reason"]?.stringValue?.nilIfBlank
+    }
+}
+
 struct GoogleProviderDocument: Hashable, Sendable {
     let connectionID: String
     let fileID: String
@@ -588,6 +632,11 @@ struct GoogleProviderDocument: Hashable, Sendable {
     var model: AlbatrossDocumentModel
     var webURL: URL?
     var providerVersion: String?
+    var editability: GoogleDocumentEditability?
+
+    /// True when the server said the file is not editable. A file with no
+    /// verdict stays editable, as before.
+    var isReadOnly: Bool { editability?.editable == false }
 
     init?(json: JSONValue) {
         guard let connectionID = json["connectionId"]?.stringValue,
@@ -605,6 +654,7 @@ struct GoogleProviderDocument: Hashable, Sendable {
         self.model = model
         webURL = json["webUrl"]?.stringValue.flatMap { URL(string: $0) }
         providerVersion = json["providerVersion"]?.stringValue
+        editability = GoogleDocumentEditability(json: json["editability"])
     }
 }
 

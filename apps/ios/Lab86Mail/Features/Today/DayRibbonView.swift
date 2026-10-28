@@ -118,11 +118,14 @@ enum DayRibbon {
         calendar: Calendar = .current,
         formatter: DateFormatter? = nil
     ) -> [Block] {
+        // The locale's own hour cycle, as the rail's tick labels use: "9:30 AM"
+        // in English, "09:30" where the clock runs to 24.
         let time = formatter ?? {
             let made = DateFormatter()
             made.calendar = calendar
             made.timeZone = calendar.timeZone
-            made.dateFormat = "h:mm a"
+            made.locale = calendar.locale ?? .current
+            made.setLocalizedDateFormatFromTemplate("jmm")
             return made
         }()
         return events
@@ -136,7 +139,7 @@ enum DayRibbon {
                     title: event.title,
                     top: top,
                     height: max(bottom - top, minimumBlockHeight),
-                    label: "\(time.string(from: event.start)) – \(time.string(from: event.end))",
+                    label: "\(plainTime(time, event.start)) – \(plainTime(time, event.end))",
                     location: event.location
                 )
             }
@@ -212,18 +215,53 @@ enum DayRibbon {
     }
 
     /// Hour ticks, thinned out so a long day does not turn into noise.
-    static func ticks(_ window: Window) -> [Tick] {
+    static func ticks(_ window: Window, locale: Locale = .current) -> [Tick] {
         let span = window.endHour - window.startHour
         let step = span > 12 ? 3 : (span > 8 ? 2 : 1)
         var made: [Tick] = []
         var hour = window.startHour
         while hour <= window.endHour {
-            let display = hour % 12 == 0 ? 12 : hour % 12
-            let suffix = hour >= 12 && hour < 24 ? "pm" : "am"
-            made.append(Tick(hour: hour, top: fraction(Double(hour), window), label: "\(display)\(suffix)"))
+            made.append(Tick(hour: hour, top: fraction(Double(hour), window), label: tickLabel(hour: hour, locale: locale)))
             hour += step
         }
         return made
+    }
+
+    /// A time with a plain space before AM or PM. Foundation writes a narrow
+    /// no-break space; the rail's labels and the rows agree on a plain one.
+    static func plainTime(_ formatter: DateFormatter, _ date: Date) -> String {
+        formatter.string(from: date).replacingOccurrences(of: "\u{202F}", with: " ")
+    }
+
+    /// The hour as the rows write their times: "10 AM" where the rows say
+    /// "10:30 AM", "10" where they say "10:30". One time style on the
+    /// ribbon (D16).
+    static func tickLabel(hour: Int, locale: Locale = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+        var components = DateComponents()
+        components.year = 2000
+        components.month = 1
+        components.day = 1
+        components.hour = hour % 24
+        guard let date = calendar.date(from: components) else { return "\(hour)" }
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = calendar.timeZone
+        formatter.setLocalizedDateFormatFromTemplate("j")
+        // Foundation writes a narrow no-break space before "AM"; the rows
+        // write a plain space, and the rail matches the rows.
+        return formatter.string(from: date).replacingOccurrences(of: "\u{202F}", with: " ")
+    }
+
+    /// The widest tick label in this locale sizes the hour rail.
+    static func widestTickLabel(locale: Locale = .current) -> String {
+        tickLabel(hour: 12, locale: locale)
+    }
+
+    /// The time range and the place on one line, joined as prose.
+    static func detailLine(label: String, location: String?) -> String {
+        BriefCopy.join([label, location])
     }
 
     /// One honest sentence about how much of the day is actually open.
@@ -231,7 +269,7 @@ enum DayRibbon {
         guard let longest = gaps.max(by: { $0.minutes < $1.minutes }) else {
             return "No real openings left today."
         }
-        if gaps.count == 1 { return "One opening left — \(describe(minutes: longest.minutes))." }
+        if gaps.count == 1 { return "One opening left, \(describe(minutes: longest.minutes))." }
         let total = gaps.reduce(0) { $0 + $1.minutes }
         return "\(gaps.count) openings left, \(describe(minutes: total)) in all."
     }
@@ -285,19 +323,25 @@ struct DayRibbonView: View {
             GeometryReader { geometry in
                 let full = geometry.size.height
                 HStack(alignment: .top, spacing: 0) {
-                    // Hour rail: small, quiet, the only numerals on the surface.
+                    // Hour rail: quiet, in the same time style as the rows.
+                    // The widest label sizes the rail; no constant width.
                     ZStack(alignment: .topLeading) {
-                        Color.clear
+                        Text(DayRibbon.widestTickLabel())
+                            .font(Self.timeFont)
+                            .hidden()
                         ForEach(ticks) { tick in
                             Text(tick.label)
-                                .font(.system(size: 10, design: .monospaced))
-                                .monospacedDigit()
-                                .foregroundStyle(.tertiary)
+                                .font(Self.timeFont)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
                                 // Centre the numeral on its rule.
-                                .offset(y: tick.top * full - 6)
+                                .offset(y: tick.top * full - 7)
                         }
                     }
-                    .frame(width: 36)
+                    .frame(maxHeight: .infinity, alignment: .topLeading)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.trailing, 6)
 
                     ZStack(alignment: .topLeading) {
                         Color.clear
@@ -367,6 +411,10 @@ struct DayRibbonView: View {
         }
     }
 
+    // One time style for the rail and the rows: the detail face with
+    // monospaced digits, secondary (D16).
+    static var timeFont: Font { .caption2.monospacedDigit() }
+
     @ViewBuilder
     private func blockView(_ block: DayRibbon.Block, height: CGFloat) -> some View {
         // A short block puts its title and time on one line rather than cutting
@@ -378,7 +426,7 @@ struct DayRibbonView: View {
                         .font(.footnote.weight(.medium))
                         .lineLimit(1)
                     Text(block.label)
-                        .font(.caption2)
+                        .font(Self.timeFont)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .layoutPriority(1)
@@ -388,8 +436,8 @@ struct DayRibbonView: View {
                     Text(block.title)
                         .font(.footnote.weight(.medium))
                         .lineLimit(1)
-                    Text(block.location.map { "\(block.label) · \($0)" } ?? block.label)
-                        .font(.caption2)
+                    Text(DayRibbon.detailLine(label: block.label, location: block.location))
+                        .font(Self.timeFont)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }

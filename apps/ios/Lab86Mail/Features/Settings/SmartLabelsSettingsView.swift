@@ -1,5 +1,15 @@
 import SwiftUI
 
+/// The value a sheet's fields read. A sheet presented with `.sheet(item:)`
+/// renders once more while it closes, after the item was set to nil; the
+/// fields then read the copy the sheet was presented with, so no force
+/// unwrap can trap.
+enum SheetItemBinding {
+    static func current<T>(live: T?, presented: T) -> T {
+        live ?? presented
+    }
+}
+
 struct SmartLabelsSettingsView: View {
     @Environment(AppEnvironment.self) private var environment
 
@@ -119,12 +129,15 @@ struct SmartLabelsSettingsView: View {
                 }
             }
         }
-        .navigationTitle("Smart Labels")
+        .navigationTitle("Smart labels")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
-        .sheet(item: $editor) { _ in
-            labelEditor
+        .sheet(item: $editor) { presented in
+            // The sheet renders once more while it closes, after Cancel or
+            // Save set `editor` to nil. Its fields read the presented copy
+            // then, never a force-unwrapped nil.
+            labelEditor(presented)
         }
         .confirmationDialog(
             "Delete \(deleteTarget?.name ?? "label")?",
@@ -141,22 +154,22 @@ struct SmartLabelsSettingsView: View {
             }
             Button("Cancel", role: .cancel) { deleteTarget = nil }
         } message: {
-            Text("Existing mail is not deleted. The label is disabled and removed from active classification.")
+            Text("The label and its rules are deleted. Mail keeps the labels it has in your mailbox.")
         }
     }
 
-    private var labelEditor: some View {
+    private func labelEditor(_ presented: Editor) -> some View {
         NavigationStack {
             Form {
                 Section("Definition") {
-                    TextField("Name", text: editorBinding(\.name))
-                    TextField("What belongs here?", text: editorBinding(\.description), axis: .vertical)
-                    Toggle("Show in sidebar", isOn: editorBinding(\.sidebarVisible))
+                    TextField("Name", text: editorBinding(presented, \.name))
+                    TextField("What belongs here?", text: editorBinding(presented, \.description), axis: .vertical)
+                    Toggle("Show in sidebar", isOn: editorBinding(presented, \.sidebarVisible))
                 }
                 Section {
                     TextField(
                         "One example per line",
-                        text: editorBinding(\.positive),
+                        text: editorBinding(presented, \.positive),
                         axis: .vertical
                     )
                     .lineLimit(3...7)
@@ -168,7 +181,7 @@ struct SmartLabelsSettingsView: View {
                 Section {
                     TextField(
                         "One example per line",
-                        text: editorBinding(\.negative),
+                        text: editorBinding(presented, \.negative),
                         axis: .vertical
                     )
                     .lineLimit(3...7)
@@ -193,7 +206,7 @@ struct SmartLabelsSettingsView: View {
                     Text(errorMessage).font(.footnote).foregroundStyle(.red)
                 }
             }
-            .navigationTitle(editor?.existingID == nil ? "New Smart Label" : "Edit Smart Label")
+            .navigationTitle(presented.existingID == nil ? "New smart label" : "Edit smart label")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -207,9 +220,9 @@ struct SmartLabelsSettingsView: View {
         }
     }
 
-    private func editorBinding<T>(_ keyPath: WritableKeyPath<Editor, T>) -> Binding<T> {
+    private func editorBinding<T>(_ presented: Editor, _ keyPath: WritableKeyPath<Editor, T>) -> Binding<T> {
         Binding(
-            get: { editor![keyPath: keyPath] },
+            get: { SheetItemBinding.current(live: editor, presented: presented)[keyPath: keyPath] },
             set: { editor?[keyPath: keyPath] = $0 }
         )
     }

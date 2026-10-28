@@ -55,7 +55,7 @@ struct SettingsView: View {
                     Text(DataExport.description)
                 }
 
-                Section("Daily Brief") {
+                Section("Daily brief") {
                     NavigationLink("Delivery and schedule") { BriefSettingsView() }
                 }
 
@@ -83,8 +83,8 @@ struct SettingsView: View {
                     Button("All settings") { showsAllSettings = true }
                     NavigationLink("Appearance") { AppearanceSettingsView() }
                     NavigationLink("Intelligence") { AISettingsView() }
-                    NavigationLink("Smart Labels") { SmartLabelsSettingsView() }
-                    NavigationLink("Keyboard Shortcuts") { ShortcutReferenceView() }
+                    NavigationLink("Smart labels") { SmartLabelsSettingsView() }
+                    NavigationLink("Keyboard shortcuts") { ShortcutReferenceView() }
                 }
 
                 Section {
@@ -128,6 +128,11 @@ struct SettingsView: View {
                 }
 
                 Section("Build") {
+                    NavigationLink {
+                        WhatsNewView()
+                    } label: {
+                        WhatsNewSettingsRow()
+                    }
                     LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0")
                     if let refresh = environment.store.lastRefresh {
                         LabeledContent("Last sync", value: refresh.formatted(.relative(presentation: .named)))
@@ -137,6 +142,9 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+            .task {
+                await ProductReleaseStore.shared.load(backend: environment.backend)
             }
             .task {
                 await environment.notifications.refreshAuthorizationStatus()
@@ -271,7 +279,7 @@ private struct AccountDeletionView: View {
                     }
                 }
             }
-            .navigationTitle("Delete Account")
+            .navigationTitle("Delete account")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

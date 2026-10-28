@@ -27,6 +27,8 @@ final class RecentChangesModel {
             didLoad = true
             errorMessage = nil
         } catch {
+            // The sheet closed before the read returned: not an error.
+            guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
         }
     }

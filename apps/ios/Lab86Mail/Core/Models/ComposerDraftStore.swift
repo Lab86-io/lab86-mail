@@ -41,6 +41,16 @@ final class ComposerDraftStore {
         files[workID] = nil
     }
 
+    /// A send ended after the person left the thread. What went out leaves
+    /// the stored draft; edits made during the upload stay: changed text,
+    /// and files added after the send.
+    func remove(sent text: String, files sent: [ComposeAttachment], for workID: String) {
+        let sentIDs = Set(sent.map(\.id))
+        let keptFiles = files(for: workID).filter { !sentIDs.contains($0.id) }
+        let storedText = draft(for: workID)
+        set(storedText == text ? "" : storedText, files: keptFiles, for: workID)
+    }
+
     /// Sign-out: every draft goes.
     func removeAll() {
         texts = [:]

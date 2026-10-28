@@ -12,32 +12,67 @@ final class CaptureVoiceCoordinator: NSObject {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
 
+    /// True between the Record tap and the engine's start, so a second tap in
+    /// that window does not start the engine twice.
+    private var isStarting = false
+
     private(set) var isRecording = false
     private(set) var transcript = ""
     var errorMessage: String?
 
+    static let unusableInputText = "The microphone gave no usable audio format. You can keep typing."
+
     func toggle() async {
         if isRecording {
             stop()
-        } else {
+        } else if !isStarting {
             await start()
         }
     }
 
+    /// Safe in every state: the tap, the request, and the task go whether or
+    /// not the engine ran, so a start that failed leaves nothing for the
+    /// next Record to trip on.
     func stop() {
-        guard isRecording else { return }
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         request?.endAudio()
+        request = nil
         task?.finish()
+        task = nil
         isRecording = false
     }
 
-    private func start() async {
-        errorMessage = nil
-        let speech = await withCheckedContinuation { continuation in
+    /// A format the tap can take: a 0 Hz or 0-channel format raises inside
+    /// `installTap`.
+    nonisolated static func inputFormatIsUsable(sampleRate: Double, channelCount: UInt32) -> Bool {
+        sampleRate > 0 && channelCount > 0
+    }
+
+    // The system calls these two closures off the main thread. A closure
+    // written inside this main-actor class inherits its isolation and traps
+    // there, so both live in nonisolated statics.
+    nonisolated private static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+        await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
         }
+    }
+
+    nonisolated private static func installTap(
+        on input: AVAudioInputNode,
+        format: AVAudioFormat,
+        request: SFSpeechAudioBufferRecognitionRequest
+    ) {
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            request.append(buffer)
+        }
+    }
+
+    private func start() async {
+        isStarting = true
+        defer { isStarting = false }
+        errorMessage = nil
+        let speech = await Self.requestSpeechAuthorization()
         guard speech == .authorized else {
             errorMessage = "Speech recognition permission was not granted. You can keep typing."
             return
@@ -64,10 +99,15 @@ final class CaptureVoiceCoordinator: NSObject {
             request.shouldReportPartialResults = true
             self.request = request
             let input = engine.inputNode
+            // A tap from a start that failed before this one.
+            input.removeTap(onBus: 0)
             let format = input.outputFormat(forBus: 0)
-            input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-                request.append(buffer)
+            guard Self.inputFormatIsUsable(sampleRate: format.sampleRate, channelCount: format.channelCount) else {
+                errorMessage = Self.unusableInputText
+                stop()
+                return
             }
+            Self.installTap(on: input, format: format, request: request)
             engine.prepare()
             try engine.start()
             isRecording = true

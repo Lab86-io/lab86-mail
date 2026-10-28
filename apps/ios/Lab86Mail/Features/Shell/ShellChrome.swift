@@ -138,11 +138,12 @@ struct PendingSendToast: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
+            let phase = environment.pendingSends.phase(for: record, at: context.date)
             HStack(spacing: 12) {
                 Image(systemName: "paperplane")
                     .foregroundStyle(environment.theme.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Sending in \(remainingSeconds(at: context.date))s")
+                    Text(phase.title)
                         .font(.subheadline.weight(.semibold))
                     Text(record.snapshot.subject.isEmpty ? "Message held by the server" : record.snapshot.subject)
                         .font(.caption)
@@ -171,7 +172,7 @@ struct PendingSendToast: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(environment.theme.accentColor)
-                .disabled(remainingSeconds(at: context.date) <= 0)
+                .disabled(phase == .sending)
             }
             .padding(12)
             .background(.regularMaterial, in: .rect(cornerRadius: 18))
@@ -181,16 +182,14 @@ struct PendingSendToast: View {
             }
         }
         .task(id: record.id) {
-            let delay = max(0, record.fireAt.timeIntervalSinceNow)
-            try? await Task.sleep(for: .seconds(delay + 0.5))
-            await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
-            await environment.store.refreshMail()
+            // The server starts the send at the fire time. The toast follows
+            // it with backoff until the server settles it, so it never sits
+            // on "0s" (K7).
+            if await environment.pendingSends.follow(record) {
+                await environment.store.refreshMail()
+            }
         }
         .accessibilityElement(children: .combine)
-    }
-
-    private func remainingSeconds(at date: Date) -> Int {
-        max(0, Int(ceil(record.fireAt.timeIntervalSince(date))))
     }
 }
 

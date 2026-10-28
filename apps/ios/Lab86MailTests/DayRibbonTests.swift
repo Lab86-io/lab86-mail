@@ -8,6 +8,9 @@ struct DayRibbonTests {
     private var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "America/New_York") ?? .gmt
+        // The rows format in the calendar's locale (its hour cycle); fixed so
+        // the runner's locale cannot change the words.
+        calendar.locale = Locale(identifier: "en_US")
         return calendar
     }
 
@@ -250,6 +253,19 @@ struct DayRibbonTests {
         }
     }
 
+    @Test func defaultLabelsFollowTheLocaleHourCycle() {
+        let meeting = event("a", from: at(9, 15), to: at(9, 25))
+        var german = calendar
+        german.locale = Locale(identifier: "de_DE")
+        var english = calendar
+        english.locale = Locale(identifier: "en_US")
+        let window = DayRibbon.window(events: [meeting], now: at(12), calendar: german)
+        let rows24 = DayRibbon.blocks(events: [meeting], window: window, now: at(12), calendar: german)
+        #expect(rows24[0].label == "09:15 – 09:25")
+        let rows12 = DayRibbon.blocks(events: [meeting], window: window, now: at(12), calendar: english)
+        #expect(rows12[0].label == "9:15 AM – 9:25 AM")
+    }
+
     @Test func anExplicitLabelFormatterIsPreserved() {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -340,10 +356,14 @@ struct DayRibbonTests {
         #expect(long.count <= short.count + 2)
     }
 
-    @Test func hoursReadAsAPersonSaysThem() {
-        let labels = DayRibbon.ticks(DayRibbon.Window(startHour: 11, endHour: 14)).map(\.label)
-        #expect(labels.contains("11am"))
-        #expect(labels.contains("12pm"))
-        #expect(!labels.contains("0pm"))
+    @Test func hoursReadAsTheRowsWriteThem() {
+        // One time style on the ribbon (D16): the rail says "11 AM" where
+        // the rows say "11:30 AM".
+        let english = Locale(identifier: "en_US")
+        let labels = DayRibbon.ticks(DayRibbon.Window(startHour: 11, endHour: 14), locale: english).map(\.label)
+        #expect(labels.contains("11 AM"))
+        #expect(labels.contains("12 PM"))
+        #expect(!labels.contains("0 PM"))
+        #expect(!labels.contains("11am"))
     }
 }

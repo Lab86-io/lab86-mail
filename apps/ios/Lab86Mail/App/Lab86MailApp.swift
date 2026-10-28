@@ -22,7 +22,11 @@ struct Lab86MailApp: App {
                 options: ClerkConfiguration.options(for: key)
             )
         }
-        _environment = State(initialValue: AppEnvironment(configuration: configuration))
+        let environment = AppEnvironment(configuration: configuration)
+        #if os(iOS)
+        NavigationTitleAppearance.apply(environment.theme.displayType)
+        #endif
+        _environment = State(initialValue: environment)
     }
 
     var body: some Scene {
@@ -61,6 +65,11 @@ struct Lab86MailApp: App {
             }
             .tint(environment.theme.accentColor)
             .preferredColorScheme(environment.theme.appearance.colorScheme)
+            #if os(iOS)
+            .onChange(of: environment.theme.displayType) { _, choice in
+                NavigationTitleAppearance.apply(choice)
+            }
+            #endif
             .environment(environment)
             .environment(Clerk.shared)
                 .onOpenURL { url in

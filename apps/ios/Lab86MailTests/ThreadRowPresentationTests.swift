@@ -87,16 +87,28 @@ struct ThreadRowPresentationTests {
 
     // MARK: - The words
 
-    @Test("Line 2 is the word, a separator, and the preview")
+    @Test("Line 2 is the word and the preview, as two parts and as one sentence")
     func statusLine() {
         let row = Self.row(Self.live("w", status: .needsAnswer, preview: "Which renewal term do you want?"))
-        #expect(ThreadRowPresentation.statusLine(row) == "Needs your answer · Which renewal term do you want?")
+        let parts = ThreadRowPresentation.statusParts(row)
+        #expect(parts.word == "Needs your answer")
+        #expect(parts.preview == "Which renewal term do you want?")
+        #expect(ThreadRowPresentation.statusLine(row) == "Needs your answer. Which renewal term do you want?")
+        #expect(!ThreadRowPresentation.statusLine(row).contains("·"))
     }
 
     @Test("A working row without a preview shows its step")
     func statusLineStep() {
         let row = Self.row(Self.live("w", status: .inProgress, stepTitle: "Fill in the renewal form"))
-        #expect(ThreadRowPresentation.statusLine(row) == "In progress · Fill in the renewal form")
+        #expect(ThreadRowPresentation.statusParts(row).preview == "Fill in the renewal form")
+        #expect(ThreadRowPresentation.statusLine(row) == "In progress. Fill in the renewal form")
+    }
+
+    @Test("Without a word the standing line is the preview part")
+    func statusPartsStanding() {
+        let parts = ThreadRowPresentation.statusParts(Self.row(nil, item: Self.item("w")))
+        #expect(parts.word == nil)
+        #expect(parts.preview == "Albatross is carrying this")
     }
 
     @Test("A word alone, a preview alone, and the standing line")
@@ -112,7 +124,7 @@ struct ThreadRowPresentationTests {
     @Test("The server's label leads line 2")
     func serverLabel() {
         let row = Self.row(Self.live("w", status: .stopped, statusLabel: "Stopped by you", preview: "Next: Fill in the renewal form"))
-        #expect(ThreadRowPresentation.statusLine(row) == "Stopped by you · Next: Fill in the renewal form")
+        #expect(ThreadRowPresentation.statusLine(row) == "Stopped by you. Next: Fill in the renewal form")
     }
 
     @Test("A stale live row says when it was last seen")
@@ -120,7 +132,10 @@ struct ThreadRowPresentationTests {
         let at = Date(timeIntervalSince1970: 1_760_000_000)
         let row = Self.row(Self.live("w", status: .inProgress, preview: "Typed the plate", lastActivityAt: at))
         let line = ThreadRowPresentation.staleLine(row, locale: Locale(identifier: "en_US"))
-        #expect(line.hasPrefix("In progress · last seen "))
+        #expect(line.hasPrefix("In progress, last seen "))
+        let parts = ThreadRowPresentation.staleParts(row, locale: Locale(identifier: "en_US"))
+        #expect(parts.word == "In progress")
+        #expect(parts.preview?.hasPrefix("Last seen ") == true)
         #expect(line != ThreadRowPresentation.statusLine(row))
         let done = Self.row(Self.live("w", status: .done, lastActivityAt: at))
         #expect(ThreadRowPresentation.staleLine(done) == "Done")
@@ -281,13 +296,54 @@ struct ThreadRowPresentationTests {
         }
     }
 
+    // MARK: - Area pills
+
+    @Test("The Area pills come from the rows, by name, once each")
+    func areaChoices() {
+        let rows = [
+            Self.row(nil, item: Self.item("a", areaID: "area-work", areaName: "Team offsite")),
+            Self.row(nil, item: Self.item("b", areaID: "area-home", areaName: "Household")),
+            Self.row(nil, item: Self.item("c", areaID: "area-work", areaName: "Team offsite")),
+            Self.row(nil, item: Self.item("d", areaID: nil, areaName: nil)),
+        ]
+        let choices = ThreadListGrouping.areaChoices(rows)
+        #expect(choices.map(\.name) == ["Household", "Team offsite"])
+        #expect(choices.map(\.id) == ["area-home", "area-work"])
+        #expect(ThreadListGrouping.filter(rows, by: .all, areaID: "area-work").map(\.id) == ["a", "c"])
+    }
+
+    @Test("Paused and released Work offers Pick it up")
+    func putDownState() {
+        #expect(WorkViewCopy.isPutDown("paused"))
+        #expect(WorkViewCopy.isPutDown("released"))
+        #expect(!WorkViewCopy.isPutDown("active"))
+        #expect(!WorkViewCopy.isPutDown(nil))
+    }
+
+    // MARK: - Release
+
+    @Test("A release goes to the recover route with the release recovery and the reason")
+    func releaseRequest() {
+        #expect(ReleaseRequest.path(workID: "w1") == "/api/albatross/work/w1/recover")
+        let body = ReleaseRequest.body(reason: "  Not this year.  ", timezone: "America/New_York")
+        #expect(body["recovery"]?.stringValue == "release")
+        #expect(body["reasonKind"]?.stringValue == "other")
+        #expect(body["timezone"]?.stringValue == "America/New_York")
+        #expect(body["reason"]?.stringValue == "Not this year.")
+        let silent = ReleaseRequest.body(reason: "   ", timezone: "UTC")
+        #expect(silent["reason"] == nil)
+        #expect(ReleaseCopy.title("Renew the passport") == "Put “Renew the passport” down?")
+    }
+
     // MARK: - VoiceOver
 
     @Test("The VoiceOver label: the title leads, then the state, the time, the area, and unread")
     func accessibilityLabel() {
         let row = Self.row(Self.live("w", status: .needsAnswer, preview: "Which renewal term do you want?", unread: true))
         let label = ThreadRowPresentation.accessibilityLabel(row, time: "4 min", area: "Household")
-        #expect(label == "Renew the car registration. Needs your answer · Which renewal term do you want?. 4 min. Household. Unread")
+        #expect(label == "Renew the car registration. Needs your answer. Which renewal term do you want? 4 min. Household. Unread")
+        #expect(ThreadRowPresentation.spokenJoin(["Done.", "Paid!", "Now"]) == "Done. Paid! Now")
+        #expect(ThreadRowPresentation.spokenJoin([]) == "")
         let seen = Self.row(Self.live("w", status: .done))
         #expect(ThreadRowPresentation.accessibilityLabel(seen, time: nil, area: nil) == "Renew the car registration. Done")
     }
@@ -309,6 +365,8 @@ struct ThreadRowPresentationTests {
     func threadWords() {
         #expect(RunBlockCopy.runRouteLine(stepNumber: 2, title: "Renew online") == "To the run · Step 2, Renew online")
         #expect(RunBlockCopy.runRouteLine(stepNumber: nil, title: "Renew online") == "To the run · Renew online")
+        // A goal run, as on the web: the checklist names the current item.
+        #expect(RunBlockCopy.runRouteLine(stepNumber: 2, title: "Bill Harbor Design for the quarter", goal: true) == "To the run")
         #expect(RunBlockCopy.replyInProgress == "Reply in progress")
         #expect(RunBlockCopy.stopAndRedirect == "Stop and redirect")
         #expect(RunBlockCopy.redirectPlaceholder == "What should Albatross do instead?")

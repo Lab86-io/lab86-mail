@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// The tool call behind a rendered card, kept so the transcript can carry the
 /// card to history and back and so an artifact keeps one identity.
@@ -17,6 +20,9 @@ enum AssistantChatPart: Identifiable, Equatable, Sendable {
     case card(id: String, AssistantToolCard, source: AssistantToolCardSource?)
     case approval(AssistantInlineApproval)
     case question(AssistantQuestionPart)
+    /// A file the user sent (a UIMessage `file` part). The user's turn
+    /// draws it; the model reads it.
+    case file(AssistantFilePart)
 
     var id: String {
         switch self {
@@ -26,6 +32,7 @@ enum AssistantChatPart: Identifiable, Equatable, Sendable {
         case .card(let id, _, _): id
         case .approval(let approval): approval.id
         case .question(let question): question.id
+        case .file(let file): file.id
         }
     }
 }
@@ -65,19 +72,35 @@ struct AssistantInlineApproval: Identifiable, Equatable, Sendable {
     var decision: Bool?
     /// What happened after the answer, such as a declined call.
     var outcome: String? = nil
+    /// The server's `data-tool-approval` data, kept so a saved conversation
+    /// reopens with the same card text.
+    var summaryJSON: JSONValue? = nil
 
     /// Tools the server stops for approval (lib/ai/approval.ts). Their input
     /// is the tool's own input, so the card text comes from the server's
     /// `data-tool-approval` chunk, or from `gatedTitle` before it arrives.
+    /// The same names as `APPROVAL_GATED_TOOLS` on the server.
     static let gatedTools: Set<String> = [
         "schedule_send", "calendar_create_event", "calendar_update_event",
-        "calendar_delete_event", "calendar_delete_recurring_series",
+        "calendar_delete_event", "calendar_delete_recurring_series", "calendar_rsvp_event",
+        "cancel_scheduled", "delete_draft", "delete_smart_label", "forget",
+        "calendar_unsubscribe_calendar", "tasks_delete_board", "tasks_delete_column",
+        "unsubscribe_sender",
+    ]
+
+    /// The gated tools whose action cannot be undone: the confirm reads red
+    /// until the server's own intent arrives.
+    static let destructiveGatedTools: Set<String> = [
+        "calendar_delete_event", "calendar_delete_recurring_series", "cancel_scheduled",
+        "delete_draft", "delete_smart_label", "forget", "calendar_unsubscribe_calendar",
+        "tasks_delete_board", "tasks_delete_column", "unsubscribe_sender",
     ]
 
     static let declinedOutcome = "Declined. Albatross did not run this step."
 
     /// Reads a `data-tool-approval` chunk's data into the card.
     mutating func apply(summary data: JSONValue) {
+        summaryJSON = data
         if let title = data["title"]?.stringValue?.nilIfBlank { self.title = title }
         description = data["description"]?.stringValue?.nilIfBlank
         metadata = (data["metadata"]?.arrayValue ?? []).compactMap { row in
@@ -95,6 +118,7 @@ struct AssistantInlineApproval: Identifiable, Equatable, Sendable {
         let event = input["title"]?.stringValue?.nilIfBlank
             ?? input["matchTitle"]?.stringValue?.nilIfBlank
             ?? "this event"
+        let name = (input["name"] ?? input["label"] ?? input["title"])?.stringValue?.nilIfBlank
         switch toolName {
         case "schedule_send":
             return "Schedule this email to \(input["to"]?.stringValue?.nilIfBlank ?? "the recipient")"
@@ -104,8 +128,29 @@ struct AssistantInlineApproval: Identifiable, Equatable, Sendable {
             return "Update “\(event)”"
         case "calendar_delete_recurring_series":
             return "Delete the series “\(event)”"
-        default:
+        case "calendar_delete_event":
             return "Delete “\(event)”"
+        case "calendar_rsvp_event":
+            return "Answer the invitation to “\(event)”"
+        case "calendar_unsubscribe_calendar":
+            return name.map { "Unsubscribe from the calendar “\($0)”" } ?? "Unsubscribe from the calendar"
+        case "cancel_scheduled":
+            return "Cancel the scheduled send"
+        case "delete_draft":
+            return "Delete the draft"
+        case "delete_smart_label":
+            return name.map { "Delete the label “\($0)”" } ?? "Delete the label"
+        case "forget":
+            return "Forget this memory"
+        case "tasks_delete_board":
+            return name.map { "Delete the board “\($0)”" } ?? "Delete the board"
+        case "tasks_delete_column":
+            return name.map { "Delete the column “\($0)”" } ?? "Delete the column"
+        case "unsubscribe_sender":
+            let sender = (input["email"] ?? input["sender"] ?? input["from"])?.stringValue?.nilIfBlank
+            return "Unsubscribe from \(sender ?? "this sender")"
+        default:
+            return "Approve this step"
         }
     }
 }
@@ -273,6 +318,32 @@ final class AssistantChatModel {
     private(set) var resumesLastTurn = false
     /// Wall clock for row and reasoning timestamps. Tests pin it.
     var clock: @MainActor () -> Date = { Date() }
+    /// A Work thread reply this device lost (the app left, the network
+    /// dropped): the server finishes it, and the thread reads the saved copy
+    /// when the app returns (C1). `restoreWorkThread` clears it.
+    private(set) var needsServerCopy = false
+    /// The server's id for a reply this client named first: the `start`
+    /// event renames the message, and later events still arrive under the
+    /// local id (C2).
+    private var renamedReplyIDs: [String: String] = [:]
+    /// True once the watchdog ended a quiet stream (C6).
+    private var streamStalled = false
+    private var lastStreamEventAt: Date?
+    /// The server sends a heartbeat every 15 s; a stream quiet for this long
+    /// has stalled.
+    static let streamIdleLimit: TimeInterval = 45
+    static let stalledErrorText = "Albatross stopped answering. Retry to continue."
+    static let detachedReplyText = "This reply finishes on the server. It shows here when you come back."
+    static let attachedFilesText = "Use the attached file(s)."
+    /// An empty completion (no tokens, no error) is a model hiccup. The web
+    /// retries it without a word; here once, then the person decides.
+    static let emptyReplyRetryLimit = 1
+    static let emptyReplyText = "Albatross did not answer. Try again."
+    private(set) var emptyReplyRetries = 0
+
+    static func uploadErrorText(count: Int, detail: String) -> String {
+        "Could not upload \(count == 1 ? "the file" : "the \(count) files"): \(detail)"
+    }
 
     init(
         backend: BackendClient,
@@ -305,21 +376,38 @@ final class AssistantChatModel {
         if !attachments.isEmpty {
             isUploading = true
             Task { [weak self] in
-                await self?.stageAndSend(text: text, attachments: attachments)
+                _ = await self?.stageAndSend(text: text, attachments: attachments)
             }
             return
         }
-        beginSend(text.isEmpty ? "Use the attached file(s)." : text)
+        beginSend(text.isEmpty ? Self.attachedFilesText : text)
     }
 
-    private func beginSend(_ text: String) {
+    /// The composer's send. True once the turn started, so the host clears
+    /// its draft. A failed upload returns false with the error set; the
+    /// draft and the files stay in the host for the next try (C10).
+    func sendDraft(_ raw: String, attachments: [ComposeAttachment] = []) async -> Bool {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (!text.isEmpty || !attachments.isEmpty), !isStreaming, !isUploading else { return false }
+        guard !attachments.isEmpty else {
+            beginSend(text)
+            return true
+        }
+        isUploading = true
+        return await stageAndSend(text: text, attachments: attachments)
+    }
+
+    private func beginSend(_ text: String, files: [AssistantFilePart] = []) {
         errorMessage = nil
         lastFailedUserText = nil
         lastFailedApprovalID = nil
         currentApprovalContinuationID = nil
         resumesLastTurn = false
         canContinue = false
+        emptyReplyRetries = 0
+        needsServerCopy = false
         var userMessage = AssistantChatMessage(id: Self.newMessageID(), role: .user, text: text)
+        userMessage.parts.append(contentsOf: files.map { AssistantChatPart.file($0) })
         userMessage.createdAt = clock()
         messages.append(userMessage)
         let replyID = appendAssistantReply()
@@ -354,6 +442,7 @@ final class AssistantChatModel {
         currentApprovalContinuationID = nil
         resumesLastTurn = true
         canContinue = false
+        needsServerCopy = false
         let replyID = appendAssistantReply()
         streamTask = Task { [weak self] in
             await self?.streamReply(into: replyID)
@@ -398,6 +487,7 @@ final class AssistantChatModel {
         resumesLastTurn = false
         currentApprovalContinuationID = approvalID
         canContinue = false
+        needsServerCopy = false
         let replyID = appendAssistantReply()
         streamTask = Task { [weak self] in
             await self?.streamReply(into: replyID)
@@ -442,7 +532,15 @@ final class AssistantChatModel {
         Task { await persistTranscript() }
     }
 
-    private func streamReply(into replyID: String) async {
+    private func streamReply(into localReplyID: String) async {
+        // The reply keeps going after the app leaves the foreground, within
+        // the system's allowance (C1).
+        let lease = BackgroundStreamLease()
+        defer { lease.end() }
+        streamStalled = false
+        lastStreamEventAt = clock()
+        let watchdog = Task { [weak self] in await self?.watchStream(localReplyID: localReplyID) }
+        defer { watchdog.cancel() }
         do {
             guard let baseURL, let url = URL(string: "/api/agent", relativeTo: baseURL)?.absoluteURL else {
                 throw BackendError.configuration
@@ -472,43 +570,141 @@ final class AssistantChatModel {
 
             for try await line in bytes.lines {
                 guard !Task.isCancelled else { break }
+                // Any line, a heartbeat or a blank keep-alive, feeds the watchdog.
+                lastStreamEventAt = clock()
                 guard line.hasPrefix("data:") else { continue }
                 let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                 guard !payload.isEmpty, payload != "[DONE]" else { continue }
                 guard let data = payload.data(using: .utf8),
                       let event = try? JSONDecoder().decode(JSONValue.self, from: data) else { continue }
-                apply(event: event, to: replyID)
+                apply(event: event, to: localReplyID)
             }
-        } catch is CancellationError {
-            // A stopped turn keeps whatever text already arrived.
+            if streamStalled { throw StreamStalledError() }
         } catch {
-            if !Task.isCancelled, activeReplyID == replyID {
-                errorMessage = (error as? BackendError)?.errorDescription ?? error.localizedDescription
-                if let approvalID = currentApprovalContinuationID {
-                    lastFailedApprovalID = approvalID
-                    lastFailedUserText = nil
+            let replyID = currentReplyID(localReplyID)
+            if streamStalled || error is StreamStalledError {
+                if activeReplyID == replyID { failTurn(message: Self.stalledErrorText) }
+            } else if error.isCancellation {
+                // A stopped turn keeps whatever text already arrived.
+            } else if activeReplyID == replyID {
+                if WorkThreadSession.isThreadID(sessionID), Self.isTransportError(error) {
+                    // The server finishes a thread reply on its own; the
+                    // thread reads the saved copy on return (C1).
+                    needsServerCopy = true
+                    errorMessage = Self.detachedReplyText
                 } else {
-                    lastFailedUserText = messages.last(where: { $0.role == .user })?.text
-                }
-                if let lastAssistant = messages.last(where: { $0.role == .assistant }) {
-                    canContinue = !lastAssistant.isVisuallyEmpty
+                    failTurn(message: (error as? BackendError)?.errorDescription ?? error.localizedDescription)
                 }
             }
         }
+        let replyID = currentReplyID(localReplyID)
+        renamedReplyIDs[localReplyID] = nil
         guard activeReplyID == replyID else { return }
+        let approvalID = currentApprovalContinuationID
+        let endedEmpty = errorMessage == nil && !canContinue && !needsServerCopy
+            && messages.first(where: { $0.id == replyID })?.isVisuallyEmpty == true
         finishStreaming()
         activeReplyID = nil
+        // A detached thread reply is the server's to save.
+        guard !needsServerCopy else { return }
+        if endedEmpty, !retryEmptyReply(approvalID: approvalID) {
+            errorMessage = Self.emptyReplyText
+            if let approvalID {
+                lastFailedApprovalID = approvalID
+            } else {
+                lastFailedUserText = messages.last(where: { $0.role == .user })?.text
+            }
+        } else if endedEmpty {
+            return
+        }
         await persistTranscript()
+    }
+
+    /// Runs the same turn again after an empty completion, once. False when
+    /// the retry is spent or there is nothing to resume.
+    private func retryEmptyReply(approvalID: String?) -> Bool {
+        guard emptyReplyRetries < Self.emptyReplyRetryLimit,
+              messages.contains(where: { $0.role == .user }) else { return false }
+        emptyReplyRetries += 1
+        if let approvalID {
+            beginApprovalContinuation(approvalID: approvalID)
+        } else {
+            beginContinuation()
+        }
+        return true
+    }
+
+    private struct StreamStalledError: Error {}
+
+    /// A network failure, as against a server answer or a configuration gap.
+    static func isTransportError(_ error: Error) -> Bool {
+        error is URLError
+    }
+
+    static func streamIsStalled(lastEventAt: Date, now: Date, limit: TimeInterval = streamIdleLimit) -> Bool {
+        now.timeIntervalSince(lastEventAt) > limit
+    }
+
+    /// Ends a turn whose stream has gone quiet past the idle limit (C6).
+    private func watchStream(localReplyID: String) async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled, activeReplyID == currentReplyID(localReplyID),
+                  let last = lastStreamEventAt else { return }
+            if Self.streamIsStalled(lastEventAt: last, now: clock()) {
+                streamStalled = true
+                streamTask?.cancel()
+                return
+            }
+        }
+    }
+
+    /// The turn ended with an error: the message, and what Retry resumes.
+    private func failTurn(message: String) {
+        errorMessage = message
+        if let approvalID = currentApprovalContinuationID {
+            lastFailedApprovalID = approvalID
+            lastFailedUserText = nil
+        } else {
+            lastFailedUserText = messages.last(where: { $0.role == .user })?.text
+        }
+        if let lastAssistant = messages.last(where: { $0.role == .assistant }) {
+            canContinue = !lastAssistant.isVisuallyEmpty
+        }
+    }
+
+    private func currentReplyID(_ localReplyID: String) -> String {
+        renamedReplyIDs[localReplyID] ?? localReplyID
+    }
+
+    /// The server names the reply in its `start` event (C2): the message
+    /// takes that id, so a Work thread saved there and on this device is one
+    /// message, not two.
+    private func adoptServerID(_ serverID: String, for localID: String, at index: Int) {
+        let local = messages[index]
+        var renamed = AssistantChatMessage(id: serverID, role: local.role, parts: local.parts)
+        renamed.sources = local.sources
+        renamed.endedTextIDs = local.endedTextIDs
+        renamed.createdAt = local.createdAt
+        renamed.steer = local.steer
+        messages[index] = renamed
+        renamedReplyIDs[localID] = serverID
+        activeReplyID = serverID
     }
 
     /// One UI-message stream event. The network reader is the only production
     /// caller; tests feed the same events to exercise the same transitions.
-    func apply(event: JSONValue, to replyID: String) {
+    func apply(event: JSONValue, to localReplyID: String) {
+        let replyID = currentReplyID(localReplyID)
         guard let type = event["type"]?.stringValue,
               activeReplyID == replyID,
               let index = messages.firstIndex(where: { $0.id == replyID }) else { return }
         switch type {
         case "start", "message-metadata":
+            if type == "start", let serverID = event["messageId"]?.stringValue?.nilIfBlank,
+               serverID != replyID, !messages.contains(where: { $0.id == serverID }) {
+                adoptServerID(serverID, for: localReplyID, at: index)
+            }
             // The server stamps the reply's time in the stream start chunk.
             if let created = Self.transcriptTimestamp(event["messageMetadata"]?["createdAt"]) {
                 messages[index].createdAt = created
@@ -603,7 +799,7 @@ final class AssistantChatModel {
                         )
                     )
                 }
-            } else if let kind = AssistantQuestionPart.Kind(rawValue: name) {
+            } else if let kind = AssistantQuestionPart.kind(forToolName: name) {
                 if !Self.containsQuestion(callID: callID, in: messages[index].parts) {
                     messages[index].parts.append(
                         .question(AssistantQuestionPart(
@@ -611,7 +807,8 @@ final class AssistantChatModel {
                             toolCallID: callID,
                             kind: kind,
                             input: input,
-                            answer: nil
+                            answer: nil,
+                            toolName: name
                         ))
                     )
                 }
@@ -911,8 +1108,18 @@ final class AssistantChatModel {
                     }
                 case .approval(let approval):
                     parts.append(Self.approvalPartJSON(approval))
+                    if includeDisplayParts, let summary = approval.summaryJSON {
+                        parts.append(.object([
+                            "type": .string("data-tool-approval"),
+                            "id": .string(approval.toolCallID),
+                            "data": summary,
+                        ]))
+                    }
                 case .question(let question):
                     parts.append(Self.questionPartJSON(question))
+                case .file(let file):
+                    // The model reads the file through this part, as on the web.
+                    parts.append(file.json)
                 case .card(_, _, let source):
                     // Cards travel with the transcript so reopening the chat
                     // brings them back, in the same tool-part shape the web
@@ -1080,7 +1287,7 @@ final class AssistantChatModel {
                 metadata: [],
                 confirmLabel: "Approve",
                 denyLabel: "Cancel",
-                destructive: toolName.contains("delete"),
+                destructive: AssistantInlineApproval.destructiveGatedTools.contains(toolName),
                 decision: nil
             )
         }
@@ -1194,6 +1401,7 @@ final class AssistantChatModel {
             currentApprovalContinuationID = nil
             canContinue = false
             threadLoaded = true
+            needsServerCopy = false
             for message in restored {
                 for part in message.parts {
                     switch part {
@@ -1204,7 +1412,7 @@ final class AssistantChatModel {
                 }
             }
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
         }
     }
 
@@ -1315,7 +1523,7 @@ final class AssistantChatModel {
             for card in cards { undoableHolds[card.id] = held }
             await runLanding(cards)
         } catch {
-            holdError = "Could not hold that. Try again."
+            if !error.isCancellation { holdError = "Could not hold that. Try again." }
         }
     }
 
@@ -1338,7 +1546,7 @@ final class AssistantChatModel {
             heldMessageIDs.insert(messageID)
             await runLanding(cards)
         } catch {
-            holdError = "Could not hold that. Try again."
+            if !error.isCancellation { holdError = "Could not hold that. Try again." }
         }
     }
 
@@ -1364,6 +1572,7 @@ final class AssistantChatModel {
                 )
                 archived = result["ok"]?.boolValue == true
             } catch {
+                if error.isCancellation { return nil }
                 archived = false
             }
             guard archived else {
@@ -1422,18 +1631,24 @@ final class AssistantChatModel {
         holdError = nil
     }
 
+    /// The saved conversations of this scope. It throws, so the history
+    /// sheet shows the error with Retry instead of an empty list (C9).
+    func loadHistory() async throws -> [AssistantChatSessionSummary] {
+        var path = "/api/chats?scopeKind=\(scope.kind.rawValue)"
+        if scope.kind == .area, let contextID = scope.contextID {
+            path += "&areaId=\(contextID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
+        } else if scope.kind == .work, let contextID = scope.contextID {
+            path += "&workId=\(contextID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
+        }
+        let result = try await backend.get(path: path)
+        return (result["sessions"]?.arrayValue ?? []).compactMap(AssistantChatSessionSummary.init)
+    }
+
     func history() async -> [AssistantChatSessionSummary] {
         do {
-            var path = "/api/chats?scopeKind=\(scope.kind.rawValue)"
-            if scope.kind == .area, let contextID = scope.contextID {
-                path += "&areaId=\(contextID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
-            } else if scope.kind == .work, let contextID = scope.contextID {
-                path += "&workId=\(contextID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
-            }
-            let result = try await backend.get(path: path)
-            return (result["sessions"]?.arrayValue ?? []).compactMap(AssistantChatSessionSummary.init)
+            return try await loadHistory()
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
             return []
         }
     }
@@ -1462,11 +1677,11 @@ final class AssistantChatModel {
                 }
             }
         } catch {
-            errorMessage = error.localizedDescription
+            if !error.isCancellation { errorMessage = error.localizedDescription }
         }
     }
 
-    private func stageAndSend(text: String, attachments: [ComposeAttachment]) async {
+    private func stageAndSend(text: String, attachments: [ComposeAttachment]) async -> Bool {
         defer { isUploading = false }
         do {
             let result = try await backend.postMultipart(
@@ -1483,18 +1698,34 @@ final class AssistantChatModel {
             )
             let rows = result["uploads"]?.arrayValue ?? []
             guard rows.count == attachments.count else { throw BackendError.invalidResponse }
-            uploadContext = [
-                "Files uploaded in this user turn. Use these exact chatUploadId values when a tool needs the file:",
-                rows.compactMap { row in
-                    guard let id = row["uploadId"]?.stringValue,
-                          let name = row["name"]?.stringValue else { return nil }
-                    return "- \(name): chatUploadId=\(id)"
-                }.joined(separator: "\n"),
-            ].joined(separator: "\n")
-            beginSend(text.isEmpty ? "Use the attached file(s)." : text)
+            var lines: [String] = []
+            var files: [AssistantFilePart] = []
+            for (row, attachment) in zip(rows, attachments) {
+                guard let uploadID = row["uploadId"]?.stringValue?.nilIfBlank else { throw BackendError.invalidResponse }
+                let name = row["name"]?.stringValue?.nilIfBlank ?? attachment.filename
+                let contentType = row["contentType"]?.stringValue?.nilIfBlank ?? attachment.contentType
+                let size = row["size"]?.doubleValue.map(Int.init) ?? attachment.data.count
+                lines.append(ChatAttachmentRules.uploadContextLine(name: name, contentType: contentType, size: size, uploadID: uploadID))
+                files.append(AssistantFilePart(
+                    id: "file-\(uploadID)",
+                    filename: name,
+                    mediaType: contentType,
+                    url: ChatAttachmentRules.uploadPath(uploadID),
+                    size: size
+                ))
+                // The bytes stay on this device for the viewer.
+                ChatAttachmentCache.shared.store(attachment.data, uploadID: uploadID, filename: name)
+            }
+            uploadContext = ([ChatAttachmentRules.uploadContextLead] + lines).joined(separator: "\n")
+            beginSend(text.isEmpty ? Self.attachedFilesText : text, files: files)
+            return true
         } catch {
-            errorMessage = error.localizedDescription
-            lastFailedUserText = text.nilIfBlank
+            guard !error.isCancellation else { return false }
+            // No turn started, so Retry has nothing to resume (C10): the
+            // host keeps the draft and the send control is the retry.
+            errorMessage = Self.uploadErrorText(count: attachments.count, detail: error.localizedDescription)
+            lastFailedUserText = nil
+            return false
         }
     }
 
@@ -1513,9 +1744,15 @@ final class AssistantChatModel {
               let role = AssistantChatMessage.Role(rawValue: roleValue) else { return nil }
         var parts: [AssistantChatPart] = []
         var sources: [AssistantSourceLink] = []
+        // The server's card text for each gated call, applied once every
+        // part is read: the web may save it before or after the call.
+        var approvalSummaries: [String: JSONValue] = [:]
         for (offset, part) in (json["parts"]?.arrayValue ?? []).enumerated() {
             let type = part["type"]?.stringValue ?? ""
             switch type {
+            case "data-tool-approval":
+                guard let callID = part["id"]?.stringValue, let data = part["data"] else { continue }
+                approvalSummaries[callID] = data
             case "text":
                 guard let text = part["text"]?.stringValue, !text.isEmpty else { continue }
                 if case .text(let textID, let existing)? = parts.last, !existing.isEmpty {
@@ -1523,6 +1760,9 @@ final class AssistantChatModel {
                 } else {
                     parts.append(.text(id: "\(id)-t\(offset)", text))
                 }
+            case "file":
+                guard let file = AssistantFilePart.decode(part, id: "\(id)-file-\(offset)") else { continue }
+                parts.append(.file(file))
             case "reasoning":
                 guard let text = (part["text"] ?? part["reasoning"])?.stringValue?.nilIfBlank else { continue }
                 parts.append(.reasoning(AssistantReasoningPart(
@@ -1550,6 +1790,14 @@ final class AssistantChatModel {
             default:
                 guard let restored = restoredToolPart(part, type: type, callID: nil) else { continue }
                 parts.append(restored)
+            }
+        }
+        if !approvalSummaries.isEmpty {
+            for index in parts.indices {
+                guard case .approval(var approval) = parts[index],
+                      let summary = approvalSummaries[approval.toolCallID] else { continue }
+                approval.apply(summary: summary)
+                parts[index] = .approval(approval)
             }
         }
         var message = AssistantChatMessage(id: id, role: role, parts: parts)
@@ -1598,13 +1846,14 @@ final class AssistantChatModel {
             }
             return .approval(approval)
         }
-        if let kind = AssistantQuestionPart.Kind(rawValue: toolName) {
+        if let kind = AssistantQuestionPart.kind(forToolName: toolName) {
             return .question(AssistantQuestionPart(
                 id: "question-\(callID)",
                 toolCallID: callID,
                 kind: kind,
                 input: input,
-                answer: state == "output-available" ? part["output"] : nil
+                answer: state == "output-available" ? part["output"] : nil,
+                toolName: toolName
             ))
         }
         var row = AssistantToolRow(
@@ -1632,3 +1881,39 @@ final class AssistantChatModel {
         "msg-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     }
 }
+
+#if os(iOS)
+/// Keeps the app alive for a reply after it leaves the foreground, within the
+/// system's allowance (C1). The system ends it when the allowance runs out.
+@MainActor
+private final class BackgroundStreamLease {
+    private final class Token: @unchecked Sendable {
+        var identifier: UIBackgroundTaskIdentifier = .invalid
+    }
+
+    private let token = Token()
+
+    init() {
+        let token = token
+        token.identifier = UIApplication.shared.beginBackgroundTask(withName: "albatross-reply") {
+            MainActor.assumeIsolated {
+                guard token.identifier != .invalid else { return }
+                UIApplication.shared.endBackgroundTask(token.identifier)
+                token.identifier = .invalid
+            }
+        }
+    }
+
+    func end() {
+        guard token.identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(token.identifier)
+        token.identifier = .invalid
+    }
+}
+#else
+@MainActor
+private final class BackgroundStreamLease {
+    init() {}
+    func end() {}
+}
+#endif

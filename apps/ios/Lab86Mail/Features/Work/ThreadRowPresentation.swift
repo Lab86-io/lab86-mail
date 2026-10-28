@@ -119,20 +119,40 @@ enum ThreadRowPresentation {
         row.live?.word
     }
 
-    /// Line 2 of the row: "Status word · preview". Without a word, the
-    /// preview alone; without both, today's standing line.
-    static func statusLine(_ row: ThreadListRow) -> String {
+    /// The two facts under the title: the status word and the preview. The
+    /// row draws them on two lines; a single string joins them with a full
+    /// stop, never a middle dot. Without a word, the preview alone; without
+    /// both, today's standing line as the preview.
+    static func statusParts(_ row: ThreadListRow) -> (word: String?, preview: String?) {
         // A goal run's step title is the Work title: it never repeats as the
         // preview (docs/albatross-goal-runs.md).
         let stepTitle = row.live?.stepTitle?.nilIfBlank
         let fallback = row.working && row.live?.goal != true && stepTitle != row.title ? stepTitle : nil
         let preview = row.live?.preview?.nilIfBlank ?? fallback
         switch (word(row), preview) {
-        case (let word?, let preview?): return "\(word) · \(preview)"
+        case (let word?, let preview?): return (word, preview)
+        case (let word?, nil): return (word, nil)
+        case (nil, let preview?): return (nil, preview)
+        case (nil, nil): return (nil, row.item.standingLine)
+        }
+    }
+
+    /// Line 2 as one string, for the Mac rail and VoiceOver: "Status word.
+    /// Preview".
+    static func statusLine(_ row: ThreadListRow) -> String {
+        let parts = statusParts(row)
+        switch (parts.word, parts.preview) {
+        case (let word?, let preview?): return "\(word). \(preview)"
         case (let word?, nil): return word
         case (nil, let preview?): return preview
         case (nil, nil): return row.item.standingLine
         }
+    }
+
+    /// The stale words of a live row: the word, and when it was last seen.
+    static func staleParts(_ row: ThreadListRow, locale: Locale = .current) -> (word: String?, preview: String?) {
+        guard row.working, let word = word(row), let at = row.lastActivityAt else { return statusParts(row) }
+        return (word, "Last seen \(at.formatted(.dateTime.hour().minute().locale(locale)))")
     }
 
     /// The blanks a row draws in place of line 2: only for an open
@@ -146,7 +166,7 @@ enum ThreadRowPresentation {
     /// last seen instead of a false "In progress".
     static func staleLine(_ row: ThreadListRow, locale: Locale = .current) -> String {
         guard row.working, let word = word(row), let at = row.lastActivityAt else { return statusLine(row) }
-        return "\(word) · last seen \(at.formatted(.dateTime.hour().minute().locale(locale)))"
+        return "\(word), last seen \(at.formatted(.dateTime.hour().minute().locale(locale)))"
     }
 
     /// The time at the trailing edge: the elapsed time of the run while a
@@ -210,7 +230,22 @@ enum ThreadRowPresentation {
         if let time { parts.append(time) }
         if let area { parts.append(area) }
         if row.unread { parts.append("Unread") }
-        return parts.joined(separator: ". ")
+        return spokenJoin(parts)
+    }
+
+    /// Parts joined as sentences: a full stop after a part only when it does
+    /// not already end in one, so a question reads "…want? 4 min", not
+    /// "…want?. 4 min".
+    static func spokenJoin(_ parts: [String]) -> String {
+        var joined = ""
+        for (index, part) in parts.enumerated() {
+            if index > 0 {
+                let ended = joined.last.map { ".!?".contains($0) } ?? false
+                joined += ended ? " " : ". "
+            }
+            joined += part
+        }
+        return joined
     }
 
     /// The trailing swipe buttons, from the edge inward. Two at most.
@@ -240,8 +275,27 @@ enum ThreadRowPresentation {
     }
 }
 
+/// One Area the list can narrow to, from the rows themselves.
+struct ThreadListAreaChoice: Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+}
+
 /// The list rows from the two reads, the filter, and the sections.
 enum ThreadListGrouping {
+    /// The Areas the rows belong to, by name. The pills show them only when
+    /// there are two or more; one Area is no choice.
+    static func areaChoices(_ rows: [ThreadListRow]) -> [ThreadListAreaChoice] {
+        var seen: [String: String] = [:]
+        for row in rows {
+            guard let id = row.item.primaryAreaID, let name = row.item.areaName?.nilIfBlank else { continue }
+            if seen[id] == nil { seen[id] = name }
+        }
+        return seen
+            .map { ThreadListAreaChoice(id: $0.key, name: $0.value) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
     /// `work_list` rows overlaid by the threads rows on the Work id. A Work
     /// without a threads row is idle.
     static func rows(items: [WorkListItem], live: [ThreadRow]) -> [ThreadListRow] {

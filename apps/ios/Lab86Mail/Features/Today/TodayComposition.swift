@@ -1,4 +1,5 @@
 import Foundation
+import MobileAPI
 
 /// What Today says about itself, in the same words the web uses.
 ///
@@ -82,8 +83,38 @@ enum TodayComposition {
         return NextMove(workID: move.workID, workTitle: move.workTitle, stepTitle: move.stepTitle, time: time)
     }
 
+    /// The source line under the step: the time, then the Work it belongs
+    /// to. A comma joins the two facts; no middle dot.
+    static func nextMoveSourceLine(_ move: NextMove) -> String {
+        "\(move.time), \(move.workTitle)"
+    }
+
     /// At most four rows. The section is not a digest.
     static let importantMailLimit = 4
+
+    /// Every conversation the letter lists, as "account:thread" keys, the
+    /// same key `ImportantMailItem.id` uses. Walks each region's entity
+    /// lists and their children.
+    static func letterThreadKeys(in document: BriefDocumentV2) -> Set<String> {
+        var keys = Set<String>()
+        func visit(_ node: BriefNode) {
+            for item in node.items ?? [] where item.ref.kind == "thread" {
+                keys.insert("\(item.ref.account ?? ""):\(item.ref.id)")
+            }
+            node.children?.forEach(visit)
+        }
+        document.regions.forEach { visit($0.tree) }
+        return keys
+    }
+
+    /// "Mail that matters" without the conversations the letter already
+    /// shows on the same page (D19). At most `importantMailLimit` rows.
+    static func mailOutsideLetter(
+        _ items: [ImportantMailItem],
+        letterThreadKeys: Set<String>
+    ) -> [ImportantMailItem] {
+        Array(items.filter { !letterThreadKeys.contains($0.id) }.prefix(importantMailLimit))
+    }
 
     /// How old the brief is, in plain words. Nil when none has ever been written.
     static func briefFreshness(generatedAt: Date?, now: Date) -> String? {
@@ -108,7 +139,7 @@ enum TodayComposition {
             return "Not written yet today."
         }
         if briefIsStale(generatedAt: generatedAt, now: now) {
-            return "\(freshness) — it describes an older day."
+            return "\(freshness). It describes an older day."
         }
         return "\(freshness), from your mail and calendar."
     }

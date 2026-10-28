@@ -105,7 +105,7 @@ struct MailAlertsSettingsView: View {
             } else if loadFailed {
                 Section {
                     Text("Mail alerts could not load.").foregroundStyle(.secondary)
-                    Button("Try Again") { Task { await load() } }
+                    Button("Try again") { Task { await load() } }
                 }
             } else {
                 Section { ProgressView("Loading mail alerts…") }

@@ -156,7 +156,7 @@ struct TaskDetailView: View {
                     TextField("https://…", text: $linkURL)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
-                    Button("Attach Link", systemImage: "link") {
+                    Button("Attach link") {
                         Task {
                             isAttaching = true
                             if await environment.store.attachLink(
@@ -172,7 +172,7 @@ struct TaskDetailView: View {
                         }
                     }
                     .disabled(isAttaching || linkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Button("Attach File", systemImage: "doc.badge.plus") {
+                    Button("Attach file") {
                         showsFileImporter = true
                     }
                     .disabled(isAttaching)
@@ -180,7 +180,7 @@ struct TaskDetailView: View {
 
                 if let source = loadedTask.source {
                     Section("Source") {
-                        Button(source.title ?? "Open source", systemImage: source.kind == "email" ? "envelope" : "calendar") {
+                        Button(source.title ?? "Open source") {
                             openSource(source)
                         }
                     }
@@ -228,8 +228,8 @@ struct TaskDetailView: View {
                 isPresented: $showsDiscardConfirmation,
                 titleVisibility: .visible
             ) {
-                Button("Discard Changes", role: .destructive) { dismiss() }
-                Button("Keep Editing", role: .cancel) {}
+                Button("Discard changes", role: .destructive) { dismiss() }
+                Button("Keep editing", role: .cancel) {}
             }
             .interactiveDismissDisabled(isDirty)
             .task { await reload() }
@@ -354,6 +354,7 @@ struct TaskDetailView: View {
                 await reload()
             }
         } catch {
+            guard !error.isCancellation else { return }
             environment.store.taskError = error.localizedDescription
         }
     }

@@ -159,6 +159,70 @@ enum PendingSendResolution: String, Sendable {
     case undone
 }
 
+/// What `/api/compose/status` says about one held message. `unknown` is an
+/// end: the server has no row, or the provider gave no answer.
+enum PendingSendServerStatus: String, Sendable {
+    case pending
+    case sending
+    case sent
+    case failed
+    case cancelled
+    case unknown
+
+    var resolution: PendingSendResolution? {
+        switch self {
+        case .sent: .sent
+        case .failed: .failed
+        case .cancelled: .cancelled
+        case .pending, .sending, .unknown: nil
+        }
+    }
+
+    /// True when the server has settled the message, one way or the other.
+    var isEnd: Bool {
+        switch self {
+        case .sent, .failed, .cancelled, .unknown: true
+        case .pending, .sending: false
+        }
+    }
+}
+
+/// The poll after a held message's fire time (K7). The server starts the
+/// send at exactly that time, so the first answer is often still `sending`.
+/// The toast follows with backoff for about two minutes, then ends with a
+/// note; the server still owns the send.
+enum PendingSendFollow {
+    static let delays: [Duration] = [
+        .seconds(2), .seconds(2), .seconds(4), .seconds(8), .seconds(15), .seconds(30), .seconds(60),
+    ]
+
+    /// The wait before the next poll, or nil after the last one.
+    static func delay(attempt: Int) -> Duration? {
+        guard attempt >= 0, attempt < delays.count else { return nil }
+        return delays[attempt]
+    }
+}
+
+/// What the toast shows for one held message. The countdown never sits on
+/// "0s": at the fire time the server sends, so the toast says so.
+enum PendingSendPhase: Equatable, Sendable {
+    case holding(secondsLeft: Int)
+    case sending
+
+    static func make(fireAt: Date, now: Date, serverSending: Bool) -> PendingSendPhase {
+        let secondsLeft = Int(ceil(fireAt.timeIntervalSince(now)))
+        if serverSending || secondsLeft <= 0 { return .sending }
+        return .holding(secondsLeft: secondsLeft)
+    }
+
+    var title: String {
+        switch self {
+        case .holding(let secondsLeft): "Sending in \(secondsLeft)s"
+        case .sending: "Sending…"
+        }
+    }
+}
+
 struct PendingSendRecord: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let ownerID: String
@@ -175,6 +239,8 @@ final class PendingSendCoordinator {
     // Outcomes of held messages this process learned about, so an artifact
     // that referenced a receipt can read how it ended after the toast is gone.
     private(set) var resolutions: [String: PendingSendResolution] = [:]
+    // Held messages the server reported as `sending`.
+    private(set) var sendingIDs: Set<String> = []
 
     private let backend: BackendClient
     private let tools: ToolClient
@@ -236,7 +302,7 @@ final class PendingSendCoordinator {
         defer { isReconciling = false }
 
         for record in owned {
-            let status: PendingSendResolution?
+            let status: PendingSendServerStatus?
             do {
                 status = try await fetchStatus(pendingID: record.id)
             } catch {
@@ -245,25 +311,76 @@ final class PendingSendCoordinator {
                 errorMessage = "Couldn’t confirm a pending message. Albatross will check again."
                 continue
             }
-            switch status {
-            case .sent:
-                resolutions[record.id] = .sent
-                await finish(record, removeAttachments: true)
-            case .failed:
-                records.removeAll { $0.id == record.id }
-                resolutions[record.id] = .failed
-                persist()
-                errorMessage = "A held message failed to send. Its draft is still available to restore."
-            case .cancelled:
-                // A different foreground scene or client may have completed
-                // cancellation. Keep the exact draft available in this scene.
-                records.removeAll { $0.id == record.id }
-                resolutions[record.id] = .cancelled
-                persist()
-                errorMessage = "A held message was cancelled. Reopen it from the restored draft."
-            case .undone, nil:
-                break
+            await apply(status, to: record)
+        }
+    }
+
+    /// Where one held message is, for the toast (K7).
+    func phase(for record: PendingSendRecord, at now: Date = .now) -> PendingSendPhase {
+        PendingSendPhase.make(fireAt: record.fireAt, now: now, serverSending: sendingIDs.contains(record.id))
+    }
+
+    /// Follows one held message from its fire time until the server settles
+    /// it (K7). True when it was sent, so the caller can refresh Mail. A
+    /// cancelled follow (the toast left) changes nothing; `reconcile` picks
+    /// the message up on the next return.
+    func follow(_ record: PendingSendRecord) async -> Bool {
+        let wait = record.fireAt.timeIntervalSinceNow
+        if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+        var attempt = 0
+        while !Task.isCancelled {
+            guard records.contains(where: { $0.id == record.id }) else {
+                return resolutions[record.id] == .sent
             }
+            let status = try? await fetchStatus(pendingID: record.id)
+            guard !Task.isCancelled else { return false }
+            if let status, status.isEnd {
+                await apply(status, to: record)
+                return status == .sent
+            }
+            await apply(status, to: record)
+            guard let delay = PendingSendFollow.delay(attempt: attempt) else {
+                // No end after the last poll. The toast ends with a note; a
+                // later check can still ask the server.
+                await apply(.unknown, to: record)
+                return false
+            }
+            attempt += 1
+            try? await Task.sleep(for: delay)
+        }
+        return false
+    }
+
+    private func apply(_ status: PendingSendServerStatus?, to record: PendingSendRecord) async {
+        switch status {
+        case .sent:
+            sendingIDs.remove(record.id)
+            resolutions[record.id] = .sent
+            await finish(record, removeAttachments: true)
+        case .failed:
+            sendingIDs.remove(record.id)
+            records.removeAll { $0.id == record.id }
+            resolutions[record.id] = .failed
+            persist()
+            errorMessage = "A held message failed to send. Its draft is still available to restore."
+        case .cancelled:
+            // A different foreground scene or client may have completed
+            // cancellation. Keep the exact draft available in this scene.
+            sendingIDs.remove(record.id)
+            records.removeAll { $0.id == record.id }
+            resolutions[record.id] = .cancelled
+            persist()
+            errorMessage = "A held message was cancelled. Reopen it from the restored draft."
+        case .unknown:
+            // No resolution is recorded, so a later check can still ask.
+            sendingIDs.remove(record.id)
+            records.removeAll { $0.id == record.id }
+            persist()
+            errorMessage = "Albatross could not confirm that the message went out. Check Sent in a minute."
+        case .sending:
+            sendingIDs.insert(record.id)
+        case .pending, nil:
+            break
         }
     }
 
@@ -271,25 +388,22 @@ final class PendingSendCoordinator {
     /// unreachable server answers nil, never a guessed outcome.
     func confirm(pendingID: String) async -> PendingSendResolution? {
         if let known = resolutions[pendingID] { return known }
-        guard let status = try? await fetchStatus(pendingID: pendingID) else { return nil }
-        resolutions[pendingID] = status
-        return status
+        guard let status = try? await fetchStatus(pendingID: pendingID),
+              let resolution = status.resolution else { return nil }
+        resolutions[pendingID] = resolution
+        return resolution
     }
 
-    private func fetchStatus(pendingID: String) async throws -> PendingSendResolution? {
+    private func fetchStatus(pendingID: String) async throws -> PendingSendServerStatus? {
         let encoded = pendingID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? pendingID
         let result = try await backend.get(path: "/api/compose/status?pendingId=\(encoded)")
-        switch result["status"]?.stringValue {
-        case "sent": return .sent
-        case "failed": return .failed
-        case "cancelled": return .cancelled
-        default: return nil
-        }
+        return result["status"]?.stringValue.flatMap(PendingSendServerStatus.init(rawValue:))
     }
 
     func clear(ownerID: String?) async {
         let removed = records.filter { ownerID == nil || $0.ownerID == ownerID }
         records.removeAll { ownerID == nil || $0.ownerID == ownerID }
+        for record in removed { sendingIDs.remove(record.id) }
         persist()
         for record in removed {
             if let key = record.snapshot.attachmentsKey {
@@ -300,6 +414,7 @@ final class PendingSendCoordinator {
 
     private func finish(_ record: PendingSendRecord, removeAttachments: Bool) async {
         records.removeAll { $0.id == record.id }
+        sendingIDs.remove(record.id)
         persist()
         if let draftID = record.snapshot.draftID {
             _ = try? await tools.invoke("delete_draft", arguments: ["id": .string(draftID)])

@@ -89,8 +89,7 @@ final class SidebarWheelHaptics {
             // few ticks after the next grab are swallowed while it spins back
             // up — which reads as the seams simply not firing.
             created.isAutoShutdownEnabled = false
-            created.resetHandler = { [weak created] in try? created?.start() }
-            created.stoppedHandler = { _ in }
+            Self.installHandlers(on: created)
             try created.start()
             engine = created
         } catch {
@@ -156,6 +155,16 @@ final class SidebarWheelHaptics {
         engine?.stop()
         engine = nil
         fallback = nil
+    }
+
+    // CoreHaptics calls these on its own queue: when the app goes to the
+    // background it stops the engine and calls `stoppedHandler` there. A
+    // closure written inside this main-actor class would inherit main-actor
+    // isolation, and Swift traps the moment a background queue runs it. Built
+    // here, outside the actor, the closures are not isolated at all.
+    nonisolated private static func installHandlers(on engine: CHHapticEngine) {
+        engine.resetHandler = { [weak engine] in try? engine?.start() }
+        engine.stoppedHandler = { _ in }
     }
 
     private func installFallback() {

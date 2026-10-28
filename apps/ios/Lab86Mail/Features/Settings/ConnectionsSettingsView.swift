@@ -214,6 +214,9 @@ struct ConnectionsSettingsView: View {
     @State private var isLoading = true
     @State private var busyID: String?
     @State private var errorMessage: String?
+    // The read of the list, apart from the errors of connect and disconnect:
+    // a failed sign-in must not turn the empty list into "Could not load".
+    @State private var loadError: String?
     @State private var tokenServer: Server?
     @State private var token = ""
     @State private var displayName = ""
@@ -224,12 +227,23 @@ struct ConnectionsSettingsView: View {
             Section {
                 if isLoading, connections.isEmpty {
                     HStack { ProgressView(); Text("Loading connections…") }
+                } else if connections.isEmpty, let loadError {
+                    // A failed read is not "no sources": say what happened
+                    // and offer Retry.
+                    ContentUnavailableView {
+                        Text("Could not load your connections")
+                    } description: {
+                        Text(loadError)
+                    } actions: {
+                        Button("Try again") { Task { await load() } }
+                            .buttonStyle(.bordered)
+                    }
                 } else if connections.isEmpty {
-                    ContentUnavailableView(
-                        "No connected sources",
-                        systemImage: "link",
-                        description: Text("Add a source below for Brief, Areas, and search.")
-                    )
+                    ContentUnavailableView {
+                        Text("No connected sources")
+                    } description: {
+                        Text("Add a source below for the daily brief, Areas, and search.")
+                    }
                 } else {
                     ForEach(connections) { connection in
                         connectionRow(connection)
@@ -255,9 +269,9 @@ struct ConnectionsSettingsView: View {
                 }
             }
 
-            if let errorMessage {
+            if let errorMessage, !connections.isEmpty {
                 Section {
-                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    Text(errorMessage)
                         .font(.footnote)
                         .foregroundStyle(.red)
                     Button("Try again") { Task { await load() } }
@@ -418,7 +432,7 @@ struct ConnectionsSettingsView: View {
                 .disabled(busyID != nil)
             }
             Toggle(
-                "Include in Daily Report",
+                "In daily brief",
                 isOn: toggleBinding(connection, key: "includeInBrief", value: connection.includeInBrief)
             )
             Toggle(
@@ -440,14 +454,15 @@ struct ConnectionsSettingsView: View {
 
     private func load() async {
         isLoading = true
-        errorMessage = nil
+        loadError = nil
         defer { isLoading = false }
         do {
             let result = try await environment.backend.get(path: "/api/mcp/status")
             connections = (result["connections"]?.arrayValue ?? []).compactMap(Connection.init(json:))
             servers = (result["servers"]?.arrayValue ?? []).compactMap(Server.init(json:))
         } catch {
-            errorMessage = error.localizedDescription
+            guard !error.isCancellation else { return }
+            loadError = error.localizedDescription
         }
     }
 
@@ -470,6 +485,8 @@ struct ConnectionsSettingsView: View {
             try await environment.webAuthentication.connectOAuthSource(server: server.id)
             await load()
         } catch {
+            // A closed sign-in sheet is the person's choice, not a failure.
+            guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
         }
     }

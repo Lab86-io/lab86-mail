@@ -235,7 +235,8 @@ describe('native iOS authentication configuration', () => {
     expect(editor).toContain('return false');
     expect(editor).not.toContain('while isSaving');
     expect(editor).not.toContain('? Color.accentColor : .quaternary');
-    expect(files).toContain('catch is CancellationError');
+    // A cancelled read is not an error (URLError.cancelled included).
+    expect(files).toContain('error.isCancellation');
     expect(files).toContain('guard !Task.isCancelled else { return }');
     expect(files).toContain('asCopy: false');
     expect(files).toContain('.quickLookPreview($previewURL)');
@@ -259,6 +260,8 @@ describe('native iOS authentication configuration', () => {
     expect(indexer).toContain('MailEntityReference');
     expect(indexer).not.toContain('thread.snippet');
     expect(app).toContain('CSSearchableItemActivityIdentifier');
-    expect(store).toContain('await spotlight.remove(owner: cacheOwner)');
+    // Sign-out removes the owner captured before its first await, so a late
+    // loader cannot write for the signed-out account.
+    expect(store).toContain('await spotlight.remove(owner: signedOutOwner)');
   });
 });

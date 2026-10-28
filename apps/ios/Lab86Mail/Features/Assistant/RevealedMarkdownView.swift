@@ -13,27 +13,33 @@ import SwiftUI
 // chip curve. When the run completes it moves into the Markdown view; blocks
 // the flow layout cannot draw (fenced code, tables, headings) stay whole in
 // the Markdown view. The dot sits after the last word of the run, or on its
-// own line while the run is empty.
+// own line while the run is empty. The split is computed when the revealed
+// text changes, through a cache that reads only the appended tail (C7).
 struct RevealedMarkdownView: View {
     /// The word rise: the route chip flip curve.
     static let riseAnimation = Animation.timingCurve(0.165, 0.84, 0.44, 1, duration: 0.15)
-    private static let headConfig = MarkdownRenderConfig(shouldAnimateText: false)
 
     let text: String
     /// True while this text is the reply being written.
     let isLive: Bool
 
+    @Environment(AppEnvironment.self) private var environment
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var meter = RevealMeter()
     @State private var revealed = ""
+    @State private var split = RevealSplit.Result(head: "", tail: "")
+    @State private var splitCache = RevealSplit.Cache()
     @State private var pump: Task<Void, Never>?
     @State private var didAppear = false
 
     var body: some View {
-        let split = isLive || !meter.isDrained ? RevealSplit.split(revealed) : RevealSplit.Result(head: revealed, tail: "")
         VStack(alignment: .leading, spacing: 6) {
             if !split.head.isEmpty {
-                MarkdownView(text: split.head, config: Self.headConfig)
+                MarkdownView(
+                    text: split.head,
+                    config: ChatMarkdownStyle.config(for: environment.theme.displayType, dynamicTypeSize: dynamicTypeSize)
+                )
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if !split.tail.isEmpty || showsDot {
@@ -48,7 +54,7 @@ struct RevealedMarkdownView: View {
                 pump = nil
                 meter.update(text: next)
                 meter.revealAll()
-                revealed = next
+                reveal(next)
                 return
             }
             meter.update(text: next)
@@ -60,9 +66,10 @@ struct RevealedMarkdownView: View {
             meter.finish()
             if reduceMotion {
                 meter.revealAll()
-                revealed = meter.revealedText
+                reveal(meter.revealedText)
             } else {
                 startPump()
+                resplit()
             }
         }
         .onChange(of: reduceMotion) { _, reduced in
@@ -70,7 +77,7 @@ struct RevealedMarkdownView: View {
             pump?.cancel()
             pump = nil
             meter.revealAll()
-            revealed = text
+            reveal(text)
         }
         .onDisappear {
             pump?.cancel()
@@ -84,6 +91,18 @@ struct RevealedMarkdownView: View {
         isLive || !meter.isDrained
     }
 
+    /// The revealed text and its split, in one step.
+    private func reveal(_ next: String) {
+        revealed = next
+        resplit()
+    }
+
+    private func resplit() {
+        split = isLive || !meter.isDrained
+            ? splitCache.split(revealed)
+            : RevealSplit.Result(head: revealed, tail: "")
+    }
+
     private func startPump() {
         guard pump == nil else { return }
         pump = Task { @MainActor in
@@ -94,10 +113,12 @@ struct RevealedMarkdownView: View {
                 meter.advance(elapsed: now.timeIntervalSince(previous))
                 previous = now
                 withAnimation(reduceMotion ? nil : Self.riseAnimation) {
-                    revealed = meter.revealedText
+                    reveal(meter.revealedText)
                 }
                 try? await Task.sleep(for: .seconds(RevealMeter.baseCadence))
             }
+            // The last word is out: the run moves into the Markdown view.
+            resplit()
         }
     }
 }
