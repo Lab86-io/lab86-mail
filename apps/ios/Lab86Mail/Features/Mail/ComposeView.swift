@@ -27,6 +27,8 @@ struct ComposeView: View {
     @State private var subject = ""
     @State private var bodyText = ""
     @State private var isSending = false
+    /// The draft is discarded or sent: no autosave may write it again.
+    @State private var isClosing = false
     @State private var errorMessage: String?
     @State private var mode = "new"
     @State private var sourceThreadID: String?
@@ -199,10 +201,12 @@ struct ComposeView: View {
             }
             .task(id: sendAsLoadKey) { await loadSendAs() }
             .task(id: draftFingerprint) {
-                guard didSeedDraft, hasMeaningfulDraft, isDirty, !isSending else { return }
+                guard didSeedDraft, hasMeaningfulDraft, isDirty, !isSending, !isClosing else { return }
                 do {
                     try await Task.sleep(for: .milliseconds(850))
                     try Task.checkCancellation()
+                    // A send or a discard can start during the wait.
+                    guard !isSending, !isClosing else { return }
                     await persistDraft()
                 } catch {
                     // A newer edit owns the next debounced save.
@@ -233,8 +237,10 @@ struct ComposeView: View {
                 }
                 Button("Discard Draft", role: .destructive) {
                     Task {
-                        // A save that is still on its way would bring the
-                        // draft back after the delete.
+                        // No new autosave starts, and a save that is still
+                        // on its way ends before the delete, so the draft
+                        // cannot come back.
+                        isClosing = true
                         await draftSaves.settle()
                         if let draftID { try? await environment.store.deleteDraft(id: draftID) }
                         if let attachmentsKey {
@@ -858,7 +864,9 @@ struct ComposeView: View {
                 )
                 environment.pendingSends.register(receipt: receipt, ownerID: ownerID, snapshot: snapshot)
             case .scheduled, .sent:
-                // The draft goes after any save that is still on its way.
+                // No new autosave starts, and the draft goes after any save
+                // that is still on its way.
+                isClosing = true
                 await draftSaves.settle()
                 if let draftID { try? await environment.store.deleteDraft(id: draftID) }
                 if let attachmentKey {
