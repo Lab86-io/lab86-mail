@@ -812,6 +812,10 @@ struct ComposeView: View {
         isSending = true
         sendNeedsWeb = false
         defer { isSending = false }
+        // A send that fails keeps the composer open, and each such path
+        // saves the latest edits first: an autosave that woke during the
+        // send did not save. The send's own message comes after the save,
+        // so a save that works does not clear it.
         // The request, the held-send record, and a refusal all use the
         // mailbox of this send, even when the selection changes later.
         let submittedAccountID = accountID
@@ -875,6 +879,7 @@ struct ComposeView: View {
             case .unconfirmed:
                 // Keep the message and its draft; the person checks Sent
                 // before deciding to send again.
+                await persistDraft()
                 errorMessage = "Albatross couldn’t confirm this was sent. Check Sent before sending again."
                 return
             }
@@ -883,6 +888,7 @@ struct ComposeView: View {
             // The draft stays open. The list may have changed in Gmail, so
             // the From control reads it again. Without a new list, the next
             // send leaves the address to the server.
+            await persistDraft()
             errorMessage = refusal.localizedDescription
             if accountID == submittedAccountID { fromAddress = nil }
             sendAsPages[submittedAccountID] = nil
@@ -896,12 +902,12 @@ struct ComposeView: View {
             // link shows only when that save worked.
             let sealed = fileAttachments.filter(\.sealed)
             let offersWeb = refusal.code.offersWeb
-            var saved = false
-            if offersWeb { saved = await persistDraft() }
+            let saved = await persistDraft()
             errorMessage = refusal.line(fileName: sealed.count == 1 ? sealed[0].name : nil)
             sendNeedsWeb = offersWeb && saved
         } catch {
             guard !error.isCancellation else { return }
+            await persistDraft()
             errorMessage = error.localizedDescription
         }
     }
