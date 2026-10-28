@@ -98,11 +98,11 @@ describe('Convex cost guardrails', () => {
       expect(railwayFlow).toContain('GITHUB_RUN_ID');
       expect(railwayFlow).toContain('GITHUB_RUN_ATTEMPT');
       expect(railwayFlow).toContain('-m "$RAILWAY_DEPLOY_MESSAGE"');
-      // 15 minutes, not 5. A cold Railway build of this app runs past five,
-      // and the wait then reports a timeout for a deployment that goes on to
-      // succeed — which fails the release and skips the Xcode Cloud trigger
-      // behind it, for no real fault.
-      expect(railwayReady).toContain('for attempt in {1..90}');
+      // 30 minutes. A cold Railway build of this app runs past 15 (v0.16.43
+      // took 17), and the wait then reports a timeout for a deployment that
+      // goes on to succeed — which fails the release and skips the tag push
+      // and the Xcode Cloud trigger behind it, for no real fault.
+      expect(railwayReady).toContain('for attempt in {1..180}');
       expect(railwayReady).toContain('--arg message "$RAILWAY_DEPLOY_MESSAGE"');
       expect(railwayReady).toContain('.meta.cliMessage == $message');
       expect(railwayReady).toContain('SUCCESS)');
