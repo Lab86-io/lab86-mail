@@ -47,4 +47,31 @@ struct ComposeSupportTests {
         #expect(ComposeDeliveryLabel.full(sendsLater: false, date: date) == "Send now")
         #expect(ComposeDeliveryLabel.short(sendsLater: false, date: date) == "Send now")
     }
+
+    @MainActor
+    private final class SaveLog {
+        var entries: [String] = []
+    }
+
+    @Test @MainActor
+    func draftSavesRunOneAtATimeInTheirOrder() async {
+        let chain = SerialSaveChain()
+        let log = SaveLog()
+        let first = chain.enqueue {
+            log.entries.append("first starts")
+            try? await Task.sleep(for: .milliseconds(50))
+            log.entries.append("first ends")
+            return true
+        }
+        let second = chain.enqueue {
+            log.entries.append("second starts")
+            log.entries.append("second ends")
+            return false
+        }
+        await chain.settle()
+        #expect(log.entries == ["first starts", "first ends", "second starts", "second ends"])
+        #expect(await first.value == true)
+        #expect(await second.value == false)
+        #expect(await chain.run { true } == true)
+    }
 }

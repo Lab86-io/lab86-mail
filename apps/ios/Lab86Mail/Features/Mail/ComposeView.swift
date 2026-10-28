@@ -51,6 +51,8 @@ struct ComposeView: View {
     @State private var didSeedDraft = false
     @State private var baselineFingerprint = ""
     @State private var isSavingDraft = false
+    /// Draft saves run one at a time, in order.
+    @State private var draftSaves = SerialSaveChain()
     @State private var isDraftingWithAlbatross = false
     // Round 2 (FEATURES item 11): the mailbox signature the server adds on
     // send, with a Leave off control, and the saved replies menu.
@@ -231,6 +233,9 @@ struct ComposeView: View {
                 }
                 Button("Discard Draft", role: .destructive) {
                     Task {
+                        // A save that is still on its way would bring the
+                        // draft back after the delete.
+                        await draftSaves.settle()
                         if let draftID { try? await environment.store.deleteDraft(id: draftID) }
                         if let attachmentsKey {
                             try? await MailIntentAttachmentStore.shared.remove(draftID: attachmentsKey)
@@ -853,6 +858,8 @@ struct ComposeView: View {
                 )
                 environment.pendingSends.register(receipt: receipt, ownerID: ownerID, snapshot: snapshot)
             case .scheduled, .sent:
+                // The draft goes after any save that is still on its way.
+                await draftSaves.settle()
                 if let draftID { try? await environment.store.deleteDraft(id: draftID) }
                 if let attachmentKey {
                     try? await MailIntentAttachmentStore.shared.remove(draftID: attachmentKey)
@@ -907,9 +914,16 @@ struct ComposeView: View {
         }
     }
 
-    /// True when the draft is saved now.
+    /// True when the draft is saved now. Saves run one at a time: each save
+    /// waits for the one before it, then writes the fields as they are at
+    /// that time. An older edit never writes after a newer one, and the id
+    /// of a new draft reaches the next save, so one draft never becomes two.
     @discardableResult
     private func persistDraft() async -> Bool {
+        await draftSaves.run { await saveDraftNow() }
+    }
+
+    private func saveDraftNow() async -> Bool {
         guard hasMeaningfulDraft, !accountID.isEmpty else { return false }
         isSavingDraft = true
         defer { isSavingDraft = false }

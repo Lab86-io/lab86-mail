@@ -62,3 +62,32 @@ enum ComposeDeliveryLabel {
         return "Sends \(date.formatted(style))"
     }
 }
+
+/// Draft saves run one at a time. Each save waits for the save before it,
+/// so an older save never writes after a newer one, and the id that the
+/// first save of a new draft gets reaches the next save.
+@MainActor
+final class SerialSaveChain {
+    private var last: Task<Bool, Never>?
+
+    /// Puts the save at the end of the chain and returns its task.
+    @discardableResult
+    func enqueue(_ work: @escaping @MainActor () async -> Bool) -> Task<Bool, Never> {
+        let previous = last
+        let task = Task { @MainActor in
+            _ = await previous?.value
+            return await work()
+        }
+        last = task
+        return task
+    }
+
+    func run(_ work: @escaping @MainActor () async -> Bool) async -> Bool {
+        await enqueue(work).value
+    }
+
+    /// Waits until the last save in the chain ends.
+    func settle() async {
+        _ = await last?.value
+    }
+}
