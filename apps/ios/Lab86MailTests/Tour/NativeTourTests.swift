@@ -65,6 +65,16 @@ final class NativeTourTests: XCTestCase {
         try await tour(Screen(id: "mail-empty", title: "Mail with no messages", section: "Mail", tab: .mail))
     }
 
+    func testTour07bMailNeedsReply() async throws {
+        // The Needs reply view with no mail: the text pills with their
+        // counts, the More pill, and the view's own empty copy.
+        var screen = Screen(id: "mail-needs-reply", title: "Mail, Needs reply view with no mail", section: "Mail", tab: .mail)
+        screen.setUp = { environment in
+            environment.navigation.pendingMailCategory = MailCategoryScope.needsReply.rawValue
+        }
+        try await tour(screen)
+    }
+
     func testTour08MailError() async throws {
         try await tour(Screen(id: "mail-error", title: "Mail when the server does not answer", section: "Mail", tab: .mail))
     }
@@ -511,7 +521,7 @@ final class NativeTourTests: XCTestCase {
 
     private static let screenOrder = [
         "shell-sidebar", "today-brief", "today-empty", "today-error", "mail-list", "mail-thread", "mail-empty",
-        "mail-error", "compose-new", "compose-reply", "calendar-day", "calendar-week", "calendar-month", "tasks",
+        "mail-needs-reply", "mail-error", "compose-new", "compose-reply", "calendar-day", "calendar-week", "calendar-month", "tasks",
         "work", "work-detail", "work-detail-run", "work-detail-handoff", "work-thread-run", "work-thread-form",
         "work-thread-handoff", "work-thread-allow", "work-thread-receipt", "work-thread-goal-run", "work-thread-goal-package",
         "work-thread-goal-stopped", "document-mode-package", "compose-attachments", "work-release", "files", "chat-desk", "chat", "settings",

@@ -19,6 +19,7 @@ struct ComposeView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var accountID = ""
     @State private var to = ""
     @State private var cc = ""
@@ -26,6 +27,8 @@ struct ComposeView: View {
     @State private var subject = ""
     @State private var bodyText = ""
     @State private var isSending = false
+    /// The draft is discarded or sent: no autosave may write it again.
+    @State private var isClosing = false
     @State private var errorMessage: String?
     @State private var mode = "new"
     @State private var sourceThreadID: String?
@@ -50,6 +53,8 @@ struct ComposeView: View {
     @State private var didSeedDraft = false
     @State private var baselineFingerprint = ""
     @State private var isSavingDraft = false
+    /// Draft saves run one at a time, in order.
+    @State private var draftSaves = SerialSaveChain()
     @State private var isDraftingWithAlbatross = false
     // Round 2 (FEATURES item 11): the mailbox signature the server adds on
     // send, with a Leave off control, and the saved replies menu.
@@ -98,8 +103,9 @@ struct ComposeView: View {
                             Text(errorMessage)
                                 .font(.footnote)
                                 .foregroundStyle(.red)
-                            if sendNeedsWeb {
-                                Button(GoalRunCopy.openOnWeb) { openSendPermissionOnWeb() }
+                                .fixedSize(horizontal: false, vertical: true)
+                            if sendNeedsWeb, let url = draftWebURL {
+                                Button(GoalRunCopy.openOnWeb) { openURL(url) }
                                     .buttonStyle(.borderless)
                                     .font(.footnote.weight(.medium))
                             }
@@ -110,7 +116,10 @@ struct ComposeView: View {
                 }
                 .padding(.bottom, 24)
             }
-            .background(environment.theme.paperColor)
+            // A sheet is a raised layer: it sits one step above the page, so
+            // its edge reads against the dimmed page in dark mode too (D26).
+            .scrollContentBackground(.hidden)
+            .background(environment.theme.elevatedColor)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) { utilityStrip }
             .navigationTitle(navigationTitle)
@@ -192,14 +201,16 @@ struct ComposeView: View {
             }
             .task(id: sendAsLoadKey) { await loadSendAs() }
             .task(id: draftFingerprint) {
-                guard didSeedDraft, hasMeaningfulDraft, isDirty, !isSending else { return }
+                guard didSeedDraft, hasMeaningfulDraft, isDirty, !isSending, !isClosing else { return }
                 do {
                     try await Task.sleep(for: .milliseconds(850))
                     try Task.checkCancellation()
+                    // A send or a discard can start during the wait.
+                    guard !isSending, !isClosing else { return }
                     await persistDraft()
-                } catch is CancellationError {
-                    // A newer edit owns the next debounced save.
                 } catch {
+                    // A newer edit owns the next debounced save.
+                    guard !error.isCancellation else { return }
                     errorMessage = "Couldn’t save this draft yet. Your text remains here."
                 }
             }
@@ -211,12 +222,26 @@ struct ComposeView: View {
             ) {
                 Button("Keep Draft") {
                     Task {
-                        await persistDraft()
-                        if errorMessage == nil { dismiss() }
+                        // The composer closes only after the draft is saved.
+                        // A failed or cancelled save keeps the text here.
+                        guard hasMeaningfulDraft else {
+                            dismiss()
+                            return
+                        }
+                        if await persistDraft() {
+                            dismiss()
+                        } else if errorMessage == nil {
+                            errorMessage = "Couldn’t save this draft yet. Your text remains here."
+                        }
                     }
                 }
                 Button("Discard Draft", role: .destructive) {
                     Task {
+                        // No new autosave starts, and a save that is still
+                        // on its way ends before the delete, so the draft
+                        // cannot come back.
+                        isClosing = true
+                        await draftSaves.settle()
                         if let draftID { try? await environment.store.deleteDraft(id: draftID) }
                         if let attachmentsKey {
                             try? await MailIntentAttachmentStore.shared.remove(draftID: attachmentsKey)
@@ -260,6 +285,7 @@ struct ComposeView: View {
                 onCompletion: importFiles
             )
         }
+        .presentationBackground(environment.theme.elevatedColor)
     }
 
     private var hairline: some View {
@@ -568,7 +594,8 @@ struct ComposeView: View {
             savedReplies = try await MailTemplatesClient(tools: environment.tools).savedReplies()
             savedRepliesState = .loaded
         } catch {
-            savedRepliesState = .failed
+            // A read the view gave up on loads again next time; it did not fail.
+            savedRepliesState = error.isCancellation ? .idle : .failed
         }
     }
 
@@ -587,13 +614,10 @@ struct ComposeView: View {
         }
     }
 
-    /// The send permission for a sealed file lives on the web this round.
-    private func openSendPermissionOnWeb() {
-        guard let base = environment.configuration.apiBaseURL,
-              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return }
-        components.path = "/"
-        components.queryItems = nil
-        if let url = components.url { openURL(url) }
+    /// The send permission for a sealed file lives on the web this round. The
+    /// link opens this draft there, so the user does not start over.
+    private var draftWebURL: URL? {
+        ComposeWebLink.draftURL(base: environment.configuration.apiBaseURL, accountID: accountID, draftID: draftID)
     }
 
     private var attachmentRows: some View {
@@ -627,77 +651,114 @@ struct ComposeView: View {
         .padding(.top, 8)
     }
 
-    // The floating utility capsule: attach and delivery, detached from the
-    // keyboard edge — a tool palette, not a system bar.
+    // The floating tool strip: attach and delivery, detached from the
+    // keyboard edge — a tool palette, not a system bar. At accessibility
+    // text sizes the two groups stack, so no word wraps one letter to a
+    // line, and the glass is a rounded rectangle at every height (D1).
     private var utilityStrip: some View {
-        HStack(spacing: 4) {
-            Button("Attach") { isImporting = true }
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.primary)
-                .buttonStyle(.plain)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-            Button {
-                previewsMarkdown.toggle()
-            } label: {
-                Label(previewsMarkdown ? "Write" : "Preview", systemImage: previewsMarkdown ? "pencil" : "eye")
-                    .labelStyle(.iconOnly)
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .accessibilityLabel(previewsMarkdown ? "Write message" : "Preview formatting")
-            Button {
-                Task { await draftWithAlbatross() }
-            } label: {
-                if isDraftingWithAlbatross {
-                    ProgressView()
-                } else {
-                    Image(systemName: "square.and.pencil")
+        Group {
+            if ComposeToolStripLayout.resolve(dynamicTypeSize: dynamicTypeSize) == .stacked {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) { stripTools }
+                    deliveryMenu
+                }
+            } else {
+                HStack(spacing: 4) {
+                    stripTools
+                    Spacer(minLength: 0)
+                    deliveryMenu
                 }
             }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .disabled(isDraftingWithAlbatross)
-            .accessibilityLabel("Draft with Albatross")
-            savedRepliesMenu
-            Spacer(minLength: 0)
-            Menu {
-                Button("Send now") { sendsLater = false }
-                Button("In 1 hour") {
-                    sendsLater = true
-                    sendLaterDate = .now.addingTimeInterval(60 * 60)
-                }
-                Button("Tomorrow at 9:00") {
-                    sendsLater = true
-                    let calendar = Calendar.autoupdatingCurrent
-                    let tomorrow = calendar.date(byAdding: .day, value: 1, to: .now) ?? .now
-                    sendLaterDate = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
-                }
-                Button("Custom date and time…") {
-                    showsCustomSchedule = true
-                }
-            } label: {
-                Text(deliveryLabel)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(sendsLater ? environment.theme.accentColor : .secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .contentShape(.rect)
-            }
-            .accessibilityLabel("Delivery: \(deliveryLabel)")
         }
         .padding(6)
-        .glassEffect(.regular.interactive(), in: .capsule)
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22, style: .continuous))
         .padding(.horizontal, 14)
         .padding(.top, 6)
         .padding(.bottom, 8)
     }
 
+    @ViewBuilder private var stripTools: some View {
+        Button("Attach") { isImporting = true }
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.primary)
+            .buttonStyle(.plain)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+        Button {
+            previewsMarkdown.toggle()
+        } label: {
+            Label(previewsMarkdown ? "Write" : "Preview", systemImage: previewsMarkdown ? "pencil" : "eye")
+                .labelStyle(.iconOnly)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .accessibilityLabel(previewsMarkdown ? "Write message" : "Preview formatting")
+        Button {
+            Task { await draftWithAlbatross() }
+        } label: {
+            if isDraftingWithAlbatross {
+                ProgressView()
+            } else {
+                Image(systemName: "square.and.pencil")
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .disabled(isDraftingWithAlbatross)
+        .accessibilityLabel("Draft with Albatross")
+        savedRepliesMenu
+    }
+
+    private var deliveryMenu: some View {
+        Menu {
+            Button("Send now") { sendsLater = false }
+            Button("In 1 hour") {
+                sendsLater = true
+                sendLaterDate = .now.addingTimeInterval(60 * 60)
+            }
+            Button("Tomorrow at 9:00") {
+                sendsLater = true
+                let calendar = Calendar.autoupdatingCurrent
+                let tomorrow = calendar.date(byAdding: .day, value: 1, to: .now) ?? .now
+                sendLaterDate = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+            }
+            Button("Custom date and time…") {
+                showsCustomSchedule = true
+            }
+        } label: {
+            // The full date when it fits; a narrow strip gets the date
+            // without the year, then that line cut short. The spoken label
+            // always reads the full date.
+            ViewThatFits(in: .horizontal) {
+                deliveryText(deliveryLabel).fixedSize(horizontal: true, vertical: false)
+                deliveryText(shortDeliveryLabel).fixedSize(horizontal: true, vertical: false)
+                deliveryText(shortDeliveryLabel)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .contentShape(.rect)
+        }
+        .menuIndicator(.hidden)
+        .accessibilityLabel("Delivery: \(deliveryLabel)")
+    }
+
+    private func deliveryText(_ label: String) -> some View {
+        Text(label)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(sendsLater ? environment.theme.accentColor : .secondary)
+            .lineLimit(1)
+    }
+
     private var deliveryLabel: String {
-        guard sendsLater else { return "Send now" }
-        return "Sends \(sendLaterDate.formatted(date: .abbreviated, time: .shortened))"
+        ComposeDeliveryLabel.full(sendsLater: sendsLater, date: sendLaterDate)
+    }
+
+    private var shortDeliveryLabel: String {
+        ComposeDeliveryLabel.short(sendsLater: sendsLater, date: sendLaterDate)
     }
 
     private var navigationTitle: String {
@@ -751,6 +812,10 @@ struct ComposeView: View {
         isSending = true
         sendNeedsWeb = false
         defer { isSending = false }
+        // A send that fails keeps the composer open, and each such path
+        // saves the latest edits first: an autosave that woke during the
+        // send did not save. The send's own message comes after the save,
+        // so a save that works does not clear it.
         // The request, the held-send record, and a refusal all use the
         // mailbox of this send, even when the selection changes later.
         let submittedAccountID = accountID
@@ -803,6 +868,10 @@ struct ComposeView: View {
                 )
                 environment.pendingSends.register(receipt: receipt, ownerID: ownerID, snapshot: snapshot)
             case .scheduled, .sent:
+                // No new autosave starts, and the draft goes after any save
+                // that is still on its way.
+                isClosing = true
+                await draftSaves.settle()
                 if let draftID { try? await environment.store.deleteDraft(id: draftID) }
                 if let attachmentKey {
                     try? await MailIntentAttachmentStore.shared.remove(draftID: attachmentKey)
@@ -810,6 +879,7 @@ struct ComposeView: View {
             case .unconfirmed:
                 // Keep the message and its draft; the person checks Sent
                 // before deciding to send again.
+                await persistDraft()
                 errorMessage = "Albatross couldn’t confirm this was sent. Check Sent before sending again."
                 return
             }
@@ -818,6 +888,7 @@ struct ComposeView: View {
             // The draft stays open. The list may have changed in Gmail, so
             // the From control reads it again. Without a new list, the next
             // send leaves the address to the server.
+            await persistDraft()
             errorMessage = refusal.localizedDescription
             if accountID == submittedAccountID { fromAddress = nil }
             sendAsPages[submittedAccountID] = nil
@@ -826,11 +897,19 @@ struct ComposeView: View {
         } catch let refusal as DraftAttachmentRefusal {
             // The draft stays open with its rows. A sealed file that needs a
             // send permission sends the user to the web for it; the line
-            // names the item, the file, and the domain.
+            // names the item, the file, and the domain. The web link opens
+            // the saved draft, so the latest edits are saved first, and the
+            // link shows only when that save worked.
             let sealed = fileAttachments.filter(\.sealed)
+            let offersWeb = refusal.code.offersWeb
+            let saved = await persistDraft()
             errorMessage = refusal.line(fileName: sealed.count == 1 ? sealed[0].name : nil)
-            sendNeedsWeb = refusal.code.offersWeb
-        } catch { errorMessage = error.localizedDescription }
+            sendNeedsWeb = offersWeb && saved
+        } catch {
+            guard !error.isCancellation else { return }
+            await persistDraft()
+            errorMessage = error.localizedDescription
+        }
     }
 
     /// The send check names the first entry that is not an address.
@@ -849,8 +928,17 @@ struct ComposeView: View {
         }
     }
 
-    private func persistDraft() async {
-        guard hasMeaningfulDraft, !accountID.isEmpty else { return }
+    /// True when the draft is saved now. Saves run one at a time: each save
+    /// waits for the one before it, then writes the fields as they are at
+    /// that time. An older edit never writes after a newer one, and the id
+    /// of a new draft reaches the next save, so one draft never becomes two.
+    @discardableResult
+    private func persistDraft() async -> Bool {
+        await draftSaves.run { await saveDraftNow() }
+    }
+
+    private func saveDraftNow() async -> Bool {
+        guard hasMeaningfulDraft, !accountID.isEmpty else { return false }
         isSavingDraft = true
         defer { isSavingDraft = false }
         do {
@@ -873,8 +961,11 @@ struct ComposeView: View {
                 attachments: fileAttachments
             )
             errorMessage = nil
+            return true
         } catch {
+            guard !error.isCancellation else { return false }
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -892,6 +983,7 @@ struct ComposeView: View {
             previewsMarkdown = false
             focusedField = .body
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -900,6 +992,7 @@ struct ComposeView: View {
         do {
             attachments = try await MailIntentAttachmentStore.shared.loadComposeAttachments(draftID: key)
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = "The draft opened, but its attachments could not be loaded."
         }
     }
