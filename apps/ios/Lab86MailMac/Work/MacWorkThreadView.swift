@@ -27,6 +27,9 @@ struct MacWorkThreadView: View {
     // The thread the view shows now. The view stays when the route changes,
     // so a send that finishes late checks this before it touches the draft.
     @State private var openWorkID: String?
+    // False after the view leaves the screen. A send that finishes after
+    // that changes only the stored draft.
+    @State private var isOnScreen = false
     @State private var pendingFiles: [ComposeAttachment] = []
     @State private var attachRequest: ComposerAttachSource?
     @State private var showsPlan = false
@@ -82,11 +85,15 @@ struct MacWorkThreadView: View {
                 guard !rows.isEmpty else { return }
                 showBanner(rows)
             }
-            .onAppear { environment.threads.beginFollowing(environment.backend) }
+            .onAppear {
+                isOnScreen = true
+                environment.threads.beginFollowing(environment.backend)
+            }
             .onChange(of: paneMode, initial: true) { _, mode in
                 MacRequests.shared.threadPaneMode = mode
             }
             .onDisappear {
+                isOnScreen = false
                 environment.threads.endFollowing()
                 hideBanner()
                 MacRequests.shared.threadPaneMode = .none
@@ -936,18 +943,15 @@ struct MacWorkThreadView: View {
         Task {
             guard await model.chat.sendDraft(text, attachments: files) else { return }
             model.chat.clearRoute()
-            // Another thread opened while the files uploaded: its composer is
-            // not this send's. Only what went out leaves the stored draft of
-            // the sending thread; edits made during the upload stay.
-            guard openWorkID == sendingWorkID else {
-                environment.composerDrafts.remove(sent: text, files: files, for: sendingWorkID)
-                return
-            }
-            if draft == text {
-                clearDraft()
-            } else {
-                pendingFiles = []
-            }
+            // Only what went out leaves the draft. Edits made during the
+            // upload stay: changed text, and files added after the send (a
+            // photo import ends late). The stored draft changes first: another
+            // thread can be open now, or this view can be gone.
+            environment.composerDrafts.remove(sent: text, files: files, for: sendingWorkID)
+            guard isOnScreen, openWorkID == sendingWorkID else { return }
+            let sentIDs = Set(files.map(\.id))
+            if draft == text { draft = "" }
+            pendingFiles.removeAll { sentIDs.contains($0.id) }
         }
     }
 
