@@ -216,8 +216,17 @@ struct ComposeView: View {
             ) {
                 Button("Keep Draft") {
                     Task {
-                        await persistDraft()
-                        if errorMessage == nil { dismiss() }
+                        // The composer closes only after the draft is saved.
+                        // A failed or cancelled save keeps the text here.
+                        guard hasMeaningfulDraft else {
+                            dismiss()
+                            return
+                        }
+                        if await persistDraft() {
+                            dismiss()
+                        } else if errorMessage == nil {
+                            errorMessage = "Couldn’t save this draft yet. Your text remains here."
+                        }
                     }
                 }
                 Button("Discard Draft", role: .destructive) {

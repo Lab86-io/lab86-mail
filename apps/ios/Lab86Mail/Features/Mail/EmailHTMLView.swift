@@ -115,6 +115,9 @@ actor EmailDocumentCache {
         let built = build(html, allowRemoteContent)
         buildCount += 1
         let size = built.utf8.count
+        // A document larger than the whole budget is returned but not kept,
+        // so it does not push out the documents that are already here.
+        guard size <= byteBudget else { return built }
         documents[key] = built
         sizes[key] = size
         order.append(key)

@@ -64,13 +64,19 @@ struct EmailDocumentCacheTests {
         var count = await cache.count
         #expect(bytes == 8)
         #expect(count == 2)
-        // A body larger than the budget comes back but is not kept.
+        // A body larger than the budget comes back but is not kept, and the
+        // bodies already here stay.
         let large = await cache.document(for: "dddddddddddd", allowRemoteContent: true)
         #expect(large == "dddddddddddd")
         bytes = await cache.byteCount
         count = await cache.count
-        #expect(bytes == 0)
-        #expect(count == 0)
+        #expect(bytes == 8)
+        #expect(count == 2)
+        let buildsBefore = await cache.buildCount
+        _ = await cache.document(for: "bbbb", allowRemoteContent: true)
+        _ = await cache.document(for: "cccc", allowRemoteContent: true)
+        let buildsAfter = await cache.buildCount
+        #expect(buildsAfter == buildsBefore)
     }
 
     @Test
