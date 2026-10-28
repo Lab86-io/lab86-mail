@@ -1,0 +1,37 @@
+import Foundation
+import SwiftUI
+
+// Pure helpers behind the composer: the tool strip layout and the web path
+// of a draft.
+
+/// The tool strip under the message. At accessibility text sizes the strip
+/// stacks its two groups, so "Attach" and "Send now" never wrap one letter
+/// to a line and the strip's glass never becomes a circle (D1).
+enum ComposeToolStripLayout: Equatable {
+    case inline
+    case stacked
+
+    static func resolve(dynamicTypeSize: DynamicTypeSize) -> ComposeToolStripLayout {
+        dynamicTypeSize.isAccessibilitySize ? .stacked : .inline
+    }
+}
+
+/// The web app opens a saved draft at `/?view=mail&account=<id>&draft=<id>`
+/// (lib/albatross/goal-runs.ts, runOpenPath). Without a saved draft there is
+/// nothing to open, so the link is not offered.
+enum ComposeWebLink {
+    static func draftURL(base: URL?, accountID: String, draftID: String?) -> URL? {
+        guard let base,
+              let draftID = draftID?.nilIfBlank,
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
+        components.path = "/"
+        components.fragment = nil
+        var items = [URLQueryItem(name: "view", value: "mail")]
+        if let account = accountID.nilIfBlank {
+            items.append(URLQueryItem(name: "account", value: account))
+        }
+        items.append(URLQueryItem(name: "draft", value: draftID))
+        components.queryItems = items
+        return components.url
+    }
+}

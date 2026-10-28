@@ -1,22 +1,108 @@
 import SwiftUI
 import WebKit
 
+// The sanitized document is built once for each message, off the main
+// thread, and kept in a small cache. The sanitizer parses the whole message
+// with SwiftSoup; a build inside `body` ran on the main thread again at
+// every height change and could freeze the reader (M6).
 struct EmailHTMLView: View {
     let html: String
     let allowRemoteContent: Bool
     let onOpenURL: (URL) -> Void
+    @State private var document: String?
     @State private var contentHeight: CGFloat = 120
 
-    var body: some View {
-        EmailWebView(
-            document: EmailHTMLDocument.make(from: html, allowRemoteContent: allowRemoteContent),
-            contentHeight: $contentHeight,
-            onOpenURL: onOpenURL
-        )
-        .frame(maxWidth: .infinity)
-        .frame(height: contentHeight)
-        .accessibilityLabel("Email message body")
+    private var key: EmailDocumentKey {
+        EmailDocumentKey(html: html, allowRemoteContent: allowRemoteContent)
     }
+
+    var body: some View {
+        Group {
+            if let document {
+                EmailWebView(
+                    document: document,
+                    contentHeight: $contentHeight,
+                    onOpenURL: onOpenURL
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: contentHeight)
+            } else {
+                // The body's place while the document builds; no spinner for
+                // a wait that is usually shorter than a frame.
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .frame(height: EmailBodyHeight.minimumHeight)
+            }
+        }
+        .accessibilityLabel("Email message body")
+        .task(id: key) {
+            let built = await EmailDocumentCache.shared.document(for: html, allowRemoteContent: allowRemoteContent)
+            guard !Task.isCancelled else { return }
+            document = built
+        }
+    }
+}
+
+/// The cache key of one message body: a stable hash of the html, its length,
+/// and the remote-content setting. A hash collision would need the same
+/// length too; the sanitized output differs only when the input does.
+struct EmailDocumentKey: Hashable, Sendable {
+    let hash: UInt64
+    let length: Int
+    let allowRemoteContent: Bool
+
+    init(html: String, allowRemoteContent: Bool) {
+        // FNV-1a over the UTF-8 bytes: stable across runs, unlike hashValue.
+        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+        for byte in html.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01B3
+        }
+        self.hash = hash
+        length = html.utf8.count
+        self.allowRemoteContent = allowRemoteContent
+    }
+}
+
+/// Builds sanitized documents away from the main actor and keeps the last
+/// few, so a message that is collapsed and expanded again, or a reader that
+/// re-measures its height, never parses the same html twice.
+actor EmailDocumentCache {
+    typealias Builder = @Sendable (_ html: String, _ allowRemoteContent: Bool) -> String
+
+    static let shared = EmailDocumentCache()
+
+    private let limit: Int
+    private let build: Builder
+    private var documents: [EmailDocumentKey: String] = [:]
+    private var order: [EmailDocumentKey] = []
+    private(set) var buildCount = 0
+
+    init(
+        limit: Int = 24,
+        build: @escaping Builder = { html, allowRemoteContent in
+            EmailHTMLDocument.make(from: html, allowRemoteContent: allowRemoteContent)
+        }
+    ) {
+        self.limit = max(limit, 1)
+        self.build = build
+    }
+
+    func document(for html: String, allowRemoteContent: Bool) -> String {
+        let key = EmailDocumentKey(html: html, allowRemoteContent: allowRemoteContent)
+        if let cached = documents[key] { return cached }
+        let built = build(html, allowRemoteContent)
+        buildCount += 1
+        documents[key] = built
+        order.append(key)
+        if order.count > limit {
+            let oldest = order.removeFirst()
+            documents[oldest] = nil
+        }
+        return built
+    }
+
+    var count: Int { documents.count }
 }
 
 // Pure, testable height policy. Ordinary messages size into the outer document

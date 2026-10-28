@@ -1,4 +1,3 @@
-import Kingfisher
 import SwiftUI
 
 struct MailView: View {
@@ -15,6 +14,14 @@ struct MailView: View {
     @State private var categoryInfoThread: MailThreadSummary?
     @State private var isBulkTriaging = false
     @State private var isSearchFocused = false
+    @State private var showsScheduledSends = false
+    // The cursor token of an older-page load that ended without a result;
+    // that row shows Load more instead of a spinner (M8).
+    @State private var failedLoadMoreToken: String?
+    // The last query whose search request ended in this view, with or
+    // without an answer. Until then an empty result means "searching" (M4).
+    @State private var answeredSearchQuery: String?
+    @State private var categoryCounts = MailCategoryCountsModel()
 
     static var tomorrowMorning: Date {
         let calendar = Calendar.autoupdatingCurrent
@@ -67,30 +74,22 @@ struct MailView: View {
                     }
                 }
                 if filteredThreads.isEmpty {
-                    if Self.showsLoadMoreRow(
-                        hasMore: environment.store.hasMoreMail(in: listScope)
-                            || environment.store.isLoadingMail(in: listScope),
-                        accountScope: accountScope,
-                        query: effectiveQuery
-                    ) {
+                    switch placeholder {
+                    case .loading(let label):
+                        loadingRow(label)
+                    case .loadMore:
                         // Older pages may still hold this scope's mail. Keep
                         // asking instead of calling the view empty.
                         loadMoreRow
-                    } else {
-                        ContentUnavailableView(
-                            searchText.isEmpty ? "No mail here" : "No matching mail",
-                            systemImage: searchText.isEmpty ? "tray" : "magnifyingglass",
-                            description: Text(searchText.isEmpty
-                                ? "Try another account or category, or pull to refresh."
-                                : "Try a different search.")
-                        )
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+                    case .empty(let copy):
+                        MailEmptyStateView(copy: copy)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                     }
                 } else {
                     ForEach(groupedThreads) { group in
                         Section {
-                            ForEach(group.threads) { thread in
+                            ForEach(group.threads, id: \.listKey) { thread in
                                 threadRow(thread, navigation: navigation)
                             }
                         } header: {
@@ -115,6 +114,11 @@ struct MailView: View {
         .background(environment.theme.paperColor)
         .environment(\.editMode, $editMode)
         .contentMargins(.top, 0, for: .scrollContent)
+        #if os(iOS)
+        // The search field floats over the foot of the list; the last row
+        // scrolls clear of it (D9).
+        .contentMargins(.bottom, Self.bottomBarClearance, for: .scrollContent)
+        #endif
         .navigationTitle("Mail")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -191,6 +195,7 @@ struct MailView: View {
                         }
                     }
                     Section {
+                        Button("Scheduled") { showsScheduledSends = true }
                         Button("Sender cleanup") { showsSenderCleanup = true }
                     }
                 } label: {
@@ -276,7 +281,12 @@ struct MailView: View {
                 return
             }
             await environment.store.searchMail(query)
+            // The request ended, with an answer or without one. An empty
+            // list now means no matches, not "still searching".
+            guard !Task.isCancelled else { return }
+            answeredSearchQuery = query
         }
+        .task { await categoryCounts.follow(convex: environment.convex) }
         // Resolve sender photos for whatever's currently visible, grouped by
         // each thread's own account. Re-runs only when the visible set of
         // (account, sender) pairs actually changes — the store itself
@@ -296,6 +306,9 @@ struct MailView: View {
             #else
             SenderCleanupView()
             #endif
+        }
+        .sheet(isPresented: $showsScheduledSends) {
+            ScheduledSendsView()
         }
         .sheet(item: $categoryInfoThread) { thread in
             CategoryExplanationSheet(thread: thread) { correction in
@@ -367,23 +380,66 @@ struct MailView: View {
         ) {
             if let route = navigation.threadRoute {
                 ThreadView(route: route, summary: environment.store.threads.first { route.matches($0) })
+                    // A new route is a new reader, not the old one re-fed:
+                    // the second thread must not open on the first one's
+                    // messages (M9).
+                    .id(route)
             }
         }
         #endif
         .shellToolbar()
     }
 
+    // Room under the list for the floating search field and create menu.
+    static let bottomBarClearance: CGFloat = 88
+
+    private var placeholder: MailListPlaceholder {
+        MailListPlaceholder.resolve(
+            mailDidLoad: environment.store.mailDidLoad,
+            searchPending: MailSearchPending.isPending(
+                query: effectiveQuery,
+                completedQuery: environment.store.completedMailSearchQuery,
+                answeredQuery: answeredSearchQuery
+            ),
+            query: effectiveQuery,
+            showsLoadMore: Self.showsLoadMoreRow(
+                hasMore: environment.store.hasMoreMail(in: listScope)
+                    || environment.store.isLoadingMail(in: listScope),
+                accountScope: accountScope,
+                query: effectiveQuery
+            ),
+            mailbox: mailboxScope,
+            selection: selection,
+            labelName: selection.labelID.flatMap { id in environment.store.mailLabels.first { $0.id == id }?.name },
+            searchText: searchText
+        )
+    }
+
+    private func loadingRow(_ label: String) -> some View {
+        HStack {
+            Spacer()
+            ProgressView(label)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.vertical, 32)
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+    }
+
     @ViewBuilder
     private func threadRow(_ thread: MailThreadSummary, navigation: NavigationModel) -> some View {
+        let badges = MailRowBadges.labels(for: thread, selection: selection, labels: environment.store.mailLabels)
         if editMode.isEditing {
-            MailThreadRow(thread: thread)
+            MailThreadRow(thread: thread, badges: badges)
                 .tag(threadKey(thread))
                 .listRowBackground(Color.clear)
         } else {
             Button {
                 navigation.threadRoute = ThreadRoute(accountID: thread.accountID, threadID: thread.id)
             } label: {
-                MailThreadRow(thread: thread)
+                MailThreadRow(thread: thread, badges: badges)
             }
             .buttonStyle(.plain)
             .listRowBackground(rowBackground(for: thread, navigation: navigation))
@@ -542,38 +598,72 @@ struct MailView: View {
         )
     }
 
-    // Smart categories as a scrolling row of text pills — the desktop rail's
-    // category list, surfaced where the thumb is. Selection carries the fill.
+    // The web rail's mail views where the thumb is: the four primary views
+    // as text pills with their unread counts, then More with the rest of
+    // the views and the user's labels. Selection carries the fill.
     private var categoryPills: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(MailCategoryScope.allCases) { category in
+                ForEach(MailCategoryScope.primary) { category in
                     let selected = selection.labelID == nil && selection.category == category
                     categoryPill(
                         title: category.title,
-                        symbol: selected ? category.selectedSymbol : category.symbol,
+                        count: categoryCounts.badge(for: category),
                         selected: selected
                     ) {
                         selection = MailScopeSelection(category: category)
                     }
                 }
-                // Custom labels the user shows in the sidebar (NAT-4).
-                ForEach(environment.store.mailLabels) { label in
-                    let selected = selection.labelID == label.id
-                    categoryPill(
-                        title: label.name,
-                        symbol: selected ? "tag.fill" : "tag",
-                        selected: selected
-                    ) {
-                        selection = MailScopeSelection.from(raw: label.rawCategory)
-                    }
-                }
+                moreViewsMenu
             }
             .padding(.horizontal, 16)
             .padding(.top, 2)
             .padding(.bottom, 6)
         }
         .background(environment.theme.paperColor.opacity(0.01))
+    }
+
+    // The More pill names the view it holds when one is selected, as the
+    // web's More control does.
+    private var moreViewsMenu: some View {
+        Menu {
+            Section("Views") {
+                ForEach(MailCategoryScope.more) { category in
+                    let selected = selection.labelID == nil && selection.category == category
+                    scopeButton(title: category.title, selected: selected) {
+                        selection = MailScopeSelection(category: category)
+                    }
+                }
+            }
+            if !environment.store.mailLabels.isEmpty {
+                // Custom labels the user shows in the sidebar (NAT-4).
+                Section("Labels") {
+                    ForEach(environment.store.mailLabels) { label in
+                        scopeButton(title: label.name, selected: selection.labelID == label.id) {
+                            selection = MailScopeSelection.from(raw: label.rawCategory)
+                        }
+                    }
+                }
+            }
+        } label: {
+            pillLabel(title: moreTitle, count: nil, selected: moreSelected, trailingSymbol: "chevron.down")
+        }
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .accessibilityLabel(moreSelected ? "More mail views, \(moreTitle)" : "More mail views")
+    }
+
+    private var moreSelected: Bool {
+        selection.labelID != nil || MailCategoryScope.more.contains(selection.category)
+    }
+
+    private var moreTitle: String {
+        if let labelID = selection.labelID,
+           let label = environment.store.mailLabels.first(where: { $0.id == labelID }) {
+            return label.name
+        }
+        if MailCategoryScope.more.contains(selection.category) { return selection.category.title }
+        return "More"
     }
 
     private func reconnectRow(_ account: AccountSummary) -> some View {
@@ -613,32 +703,47 @@ struct MailView: View {
 
     private func categoryPill(
         title: String,
-        symbol: String,
+        count: String?,
         selected: Bool,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: symbol)
-                    .font(.footnote)
-                Text(title)
-                    .font(.subheadline.weight(selected ? .semibold : .regular))
-            }
-            .foregroundStyle(selected ? environment.theme.accentColor : .secondary)
-            .padding(.horizontal, 13)
-            .padding(.vertical, 7)
-            .background(
-                Capsule().fill(selected ? environment.theme.accentSoftColor : .clear)
-            )
-            .overlay {
-                if !selected {
-                    Capsule().strokeBorder(environment.theme.hairlineColor, lineWidth: 1)
-                }
-            }
-            .contentShape(Capsule())
+            pillLabel(title: title, count: count, selected: selected, trailingSymbol: nil)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(count.map { "\(title), \($0) unread" } ?? title)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    // Text first; the count and the More chevron come after it.
+    private func pillLabel(title: String, count: String?, selected: Bool, trailingSymbol: String?) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.subheadline.weight(selected ? .semibold : .regular))
+            if let count {
+                Text(count)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(selected ? AnyShapeStyle(environment.theme.accentColor.opacity(0.8)) : AnyShapeStyle(.tertiary))
+            }
+            if let trailingSymbol {
+                Image(systemName: trailingSymbol)
+                    .font(.caption2.weight(.semibold))
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .foregroundStyle(selected ? environment.theme.accentColor : .secondary)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 7)
+        .background(
+            Capsule().fill(selected ? environment.theme.accentSoftColor : .clear)
+        )
+        .overlay {
+            if !selected {
+                Capsule().strokeBorder(environment.theme.hairlineColor, lineWidth: 1)
+            }
+        }
+        .contentShape(Capsule())
     }
 
     // The scope this view pages from the server.
@@ -648,20 +753,49 @@ struct MailView: View {
 
     // Older pages stream in beneath the list as this row comes on screen.
     // The task re-runs each time the cursor moves, so a row that stays on
-    // screen (an empty scope) keeps asking until the scope has no more.
+    // screen (an empty scope) keeps asking until the scope has no more. A
+    // page that fails leaves the cursor where it was; the row then offers
+    // Load more instead of a spinner that never ends (M8).
     private var loadMoreRow: some View {
-        HStack {
+        let token = environment.store.mailCursorToken(in: listScope)
+        return HStack {
             Spacer()
-            ProgressView()
-                .controlSize(.small)
+            if failedLoadMoreToken == token {
+                Button("Load more") {
+                    failedLoadMoreToken = nil
+                    Task { await loadOlderPage(token: token) }
+                }
+                .font(.subheadline.weight(.medium))
+                .buttonStyle(.plain)
+                .foregroundStyle(environment.theme.accentColor)
+                .accessibilityHint("Older mail did not load. Tries again.")
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Loading older mail")
+            }
             Spacer()
         }
+        .padding(.vertical, 8)
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
-        .task(id: environment.store.mailCursorToken(in: listScope)) {
-            await environment.store.loadMoreMail(in: listScope)
+        .task(id: token) {
+            await loadOlderPage(token: token)
         }
-        .accessibilityLabel("Loading older mail")
+    }
+
+    private func loadOlderPage(token: String) async {
+        let scope = listScope
+        await environment.store.loadMoreMail(in: scope)
+        guard !Task.isCancelled else { return }
+        if MailLoadMoreOutcome.failed(
+            tokenBefore: token,
+            tokenAfter: environment.store.mailCursorToken(in: scope),
+            hasMore: environment.store.hasMoreMail(in: scope),
+            isLoading: environment.store.isLoadingMail(in: scope)
+        ) {
+            failedLoadMoreToken = token
+        }
     }
 
     private struct ThreadGroup: Identifiable {
@@ -747,7 +881,7 @@ struct MailView: View {
         } else {
             accountLabel = "\(accountScope.count) Accounts"
         }
-        return mailboxScope == .inbox ? accountLabel : "\(mailboxScope.title) · \(accountLabel)"
+        return mailboxScope == .inbox ? accountLabel : "\(mailboxScope.title), \(accountLabel)"
     }
 
     // Each scope has its own server cursor: the unified inbox, one account,
@@ -805,12 +939,12 @@ struct MailView: View {
         switch account.sync.status {
         case .ready:
             if let date = account.sync.lastSyncedAt {
-                return "\(fallback) · \(date.formatted(.relative(presentation: .named)))"
+                return "\(fallback), \(date.formatted(.relative(presentation: .named)))"
             }
-            return "\(fallback) · Up to date"
-        case .backfilling: return "\(fallback) · Backfilling"
-        case .syncing: return "\(fallback) · Syncing"
-        case .error: return "\(fallback) · Needs attention"
+            return "\(fallback), up to date"
+        case .backfilling: return "\(fallback), backfilling"
+        case .syncing: return "\(fallback), syncing"
+        case .error: return "\(fallback), needs attention"
         case .idle: return fallback
         }
     }
@@ -830,33 +964,62 @@ struct MailView: View {
     }
 }
 
-// The visible mail scopes. The classifier's stored vocabulary is wider —
-// needs_reply/review/finance_admin fold into Main at presentation time, and
-// noise is suppressed from Main but always reachable through All Mail. Those
-// signals stay internal (Brief intelligence, notification triage); they are
-// no longer mailboxes. No stored value is migrated or rewritten.
+// The mail views, the web's model (lib/mail/navigation.ts): four primary
+// views in the strip, the rest under More. The raw values are the web's
+// category ids, so a sidebar tap, a deep link, and a stored preference
+// name the same view on every platform. `all` stays for links minted
+// before this round; it is not in the strip.
 enum MailCategoryScope: String, CaseIterable, Identifiable {
     case main
+    case needsReply = "needs_reply"
+    case noise
     case codes
+    case needsAction = "needs_action"
+    case waitingFor = "waiting_for"
+    case importantChanges = "important_changes"
     case orders
+    case financeAdmin = "finance_admin"
+    case review
     case all
 
     var id: String { rawValue }
 
+    /// The strip, in the web's order.
+    static let primary: [MailCategoryScope] = [.main, .needsReply, .noise, .codes]
+
+    /// The More menu, in the web's order.
+    static let more: [MailCategoryScope] = [.needsAction, .waitingFor, .importantChanges, .orders, .financeAdmin, .review]
+
     var title: String {
         switch self {
         case .main: "Main"
+        case .needsReply: "Needs reply"
+        case .noise: "Noise"
         case .codes: "Codes"
+        case .needsAction: "Needs action"
+        case .waitingFor: "Waiting for"
+        case .importantChanges: "Changes"
         case .orders: "Orders"
-        case .all: "All Mail"
+        case .financeAdmin: "Finance / admin"
+        case .review: "Review"
+        case .all: "All mail"
         }
     }
 
+    // Symbols for places that list views with a glyph (menus, the sidebar).
+    // The strip itself shows text only.
     var symbol: String {
         switch self {
         case .main: "person.crop.circle"
+        case .needsReply: "arrowshape.turn.up.left"
+        case .noise: "speaker.slash"
         case .codes: "key"
+        case .needsAction: "checkmark.circle"
+        case .waitingFor: "hourglass"
+        case .importantChanges: "arrow.triangle.2.circlepath"
         case .orders: "shippingbox"
+        case .financeAdmin: "doc.text"
+        case .review: "eye"
         case .all: "tray.full"
         }
     }
@@ -864,57 +1027,50 @@ enum MailCategoryScope: String, CaseIterable, Identifiable {
     // Filled variants carry the selected state where the symbol has one.
     var selectedSymbol: String {
         switch self {
-        case .main: "person.crop.circle.fill"
-        case .codes: "key.fill"
-        case .orders: "shippingbox.fill"
-        case .all: "tray.full.fill"
+        case .waitingFor, .importantChanges: symbol
+        default: "\(symbol).fill"
         }
     }
 
-    // The server category a scope pages by. Main folds in the retired
-    // labels on the device, so it pages the unified list instead.
+    // The server category a scope pages by. Main is the unified list with
+    // the local rule below; the other views page by their web id.
     var serverCategory: String? {
         switch self {
-        case .codes: "codes"
-        case .orders: "orders"
         case .main, .all: nil
+        default: rawValue
         }
     }
 
-    // Maps any raw category string — including the retired stored labels and
-    // deep-link values minted before the cleanup — onto the scope that shows
-    // that mail today.
+    // Maps any raw category string, including deep-link values minted before
+    // this round, onto the view that shows that mail.
     static func from(raw: String?) -> MailCategoryScope {
         guard let raw, !raw.isEmpty else { return .main }
-        if let scope = MailCategoryScope(rawValue: raw) { return scope }
-        switch raw {
-        case "needs_reply", "review", "finance_admin": return .main
-        case "noise": return .all
-        default: return .main
-        }
+        return MailCategoryScope(rawValue: raw) ?? .main
     }
 
-    // Whether a stored classification is visible inside this scope. Main is
-    // the catch-all for everything that isn't codes/orders/noise (including
-    // unclassified mail and the folded-in legacy labels). Mail that a
+    // Whether a stored classification is visible inside this view. Main is
+    // the web's Main: a `main` verdict or no verdict yet. Mail that a
     // label-move rule filed arrives as `custom:<labelId>` and shows only in
-    // All Mail and in its label view.
+    // All mail and in its label view.
     func includes(storedCategory: String?) -> Bool {
         includes(storedCategory: storedCategory, secondary: nil)
     }
 
-    // Codes and Orders follow the web rule: the primary or a secondary
-    // category matches, and the thread is not filed under a label.
+    // Every other view follows the web rule: the primary or a secondary
+    // category matches, and the thread is not filed under a label. The
+    // attention views (Needs reply, Needs action, Waiting for, Changes) are
+    // Jev views on the server; the summary carries only the classifier's
+    // categories, so a row the server lists there shows when its category
+    // names the view.
     func includes(storedCategory: String?, secondary: [String]?) -> Bool {
         switch self {
         case .all:
             return true
-        case .codes, .orders:
+        case .main:
+            return (storedCategory == nil || storedCategory == rawValue) && !Self.isFiled(storedCategory)
+        default:
             guard !Self.isFiled(storedCategory) else { return false }
             return storedCategory == rawValue || (secondary ?? []).contains(rawValue)
-        case .main:
-            return storedCategory != "codes" && storedCategory != "orders" && storedCategory != "noise"
-                && !Self.isFiled(storedCategory)
         }
     }
 
@@ -1115,49 +1271,40 @@ private struct MailDateline: View {
 
 // Desktop row grammar: [unread gutter][avatar][sender/subject/snippet][meta].
 // The unread dot lives in a stable gutter so scanning is one vertical
-// eye-track; the sender carries the display face.
+// eye-track; the sender carries the display face. At accessibility text
+// sizes the time moves under the sender and the sender gets two lines, so
+// a name is never cut to eight letters (D3). Status is words, not glyphs.
 private struct MailThreadRow: View {
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .body) private var avatarMetric: CGFloat = 40
     let thread: MailThreadSummary
+    var badges: [String] = []
+
+    private var avatarSize: CGFloat { SenderAvatar.resolvedSize(scaled: avatarMetric, base: 40) }
+    private var stacksMeta: Bool { dynamicTypeSize.isAccessibilitySize }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Circle()
                 .fill(thread.unread ? environment.theme.accentColor : .clear)
                 .frame(width: 7, height: 7)
-                .padding(.top, 16)
+                .padding(.top, 2 + avatarSize / 2 - 3.5)
                 .accessibilityHidden(true)
-            senderAvatar
+            SenderAvatar(name: thread.sender, email: thread.senderEmail)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(thread.senderDisplayName)
-                        .font(environment.theme.displayType.displayFont(
-                            size: 16,
-                            weight: thread.unread ? .semibold : .regular
-                        ))
-                        .foregroundStyle(thread.unread ? .primary : Color.primary.opacity(0.85))
-                        .lineLimit(1)
-                    Spacer()
-                    Text(thread.date, format: thread.date.isToday ? .dateTime.hour().minute() : .dateTime.month().day())
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                HStack(spacing: 5) {
-                    Text(thread.subject)
-                        .font(.subheadline.weight(thread.unread ? .medium : .regular))
-                        .lineLimit(1)
-                    if thread.starred {
-                        Image(systemName: "star.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.yellow)
-                            .accessibilityLabel("Starred")
-                    }
-                }
+                headline
+                Text(thread.subject)
+                    .font(.subheadline.weight(thread.unread ? .medium : .regular))
+                    .lineLimit(stacksMeta ? 2 : 1)
                 Text(thread.snippet)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                if !badges.isEmpty {
+                    badgeLine
+                }
             }
         }
         .padding(.vertical, 6)
@@ -1166,22 +1313,69 @@ private struct MailThreadRow: View {
         .accessibilityValue(thread.unread ? "Unread" : "Read")
     }
 
-    // Stable 40pt geometry whether it resolves to a cached provider/company
-    // photo or the InitialsAvatar fallback, so rows don't reflow as photos
-    // stream in.
-    @ViewBuilder
-    private var senderAvatar: some View {
-        if let url = environment.mailIdentity.photoURL(for: thread.senderEmail) {
-            KFImage(url)
-                .placeholder { InitialsAvatar(name: thread.sender, size: 40) }
-                .fade(duration: 0.15)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: 40, height: 40)
-                .clipShape(Circle())
+    private var senderText: some View {
+        Text(thread.senderDisplayName)
+            .font(environment.theme.displayType.displayFont(
+                size: 16,
+                weight: thread.unread ? .semibold : .regular
+            ))
+            .foregroundStyle(thread.unread ? .primary : Color.primary.opacity(0.85))
+    }
+
+    private var timeText: some View {
+        Text(thread.date, format: thread.date.isToday ? .dateTime.hour().minute() : .dateTime.month().day())
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private var headline: some View {
+        if stacksMeta {
+            VStack(alignment: .leading, spacing: 0) {
+                senderText.lineLimit(2)
+                timeText
+            }
         } else {
-            InitialsAvatar(name: thread.sender, size: 40)
+            HStack(alignment: .firstTextBaseline) {
+                senderText.lineLimit(1)
+                Spacer()
+                timeText
+            }
         }
+    }
+
+    // The status voice: "Needs reply", "Starred", a label name.
+    private var badgeLine: some View {
+        HStack(spacing: 10) {
+            ForEach(badges, id: \.self) { badge in
+                Text(badge)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(environment.theme.accent3Color)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.top, 2)
+    }
+}
+
+// The empty state of a view: what this view is, and the next action.
+private struct MailEmptyStateView: View {
+    @Environment(AppEnvironment.self) private var environment
+    let copy: MailEmptyCopy
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(copy.title)
+                .font(environment.theme.displayType.displayFont(size: 22))
+            Text(copy.detail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.top, 40)
+        .padding(.bottom, 24)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -1197,9 +1391,15 @@ private struct MailSnoozedRow: View {
         HStack(alignment: .top, spacing: 10) {
             Button(action: onOpen) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(senderLine)
+                    Text(row.senderDisplayName)
                         .font(environment.theme.displayType.displayFont(size: 16, weight: .regular))
                         .lineLimit(1)
+                    if showsAccount, let email = row.accountEmail {
+                        Text(email)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                     Text(row.subject)
                         .font(.subheadline)
                         .lineLimit(1)
@@ -1226,11 +1426,6 @@ private struct MailSnoozedRow: View {
             }
         }
         .padding(.vertical, 6)
-    }
-
-    private var senderLine: String {
-        guard showsAccount, let email = row.accountEmail else { return row.senderDisplayName }
-        return "\(row.senderDisplayName) · \(email)"
     }
 }
 
