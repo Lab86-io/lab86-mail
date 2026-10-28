@@ -36,4 +36,21 @@ struct ComposerDraftStoreTests {
         #expect(store.count == 0)
         #expect(store.files(for: "w-a").isEmpty)
     }
+
+    @Test("A late send removes only what went out; edits made during the upload stay")
+    func removesOnlyTheSend() {
+        let store = ComposerDraftStore()
+        let bill = ComposeAttachment(filename: "bill.pdf", contentType: "application/pdf", data: Data([1]))
+        let form = ComposeAttachment(filename: "w9.pdf", contentType: "application/pdf", data: Data([2]))
+        store.set("Pay it", files: [bill], for: "w-water")
+        store.remove(sent: "Pay it", files: [bill], for: "w-water")
+        #expect(store.draft(for: "w-water") == "")
+        #expect(store.files(for: "w-water").isEmpty)
+        #expect(store.count == 0)
+
+        store.set("Pay it today", files: [bill, form], for: "w-water")
+        store.remove(sent: "Pay it", files: [bill], for: "w-water")
+        #expect(store.draft(for: "w-water") == "Pay it today")
+        #expect(store.files(for: "w-water").map(\.filename) == ["w9.pdf"])
+    }
 }

@@ -937,10 +937,10 @@ struct MacWorkThreadView: View {
             guard await model.chat.sendDraft(text, attachments: files) else { return }
             model.chat.clearRoute()
             // Another thread opened while the files uploaded: its composer is
-            // not this send's. Only the stored draft of the sending thread
-            // goes.
+            // not this send's. Only what went out leaves the stored draft of
+            // the sending thread; edits made during the upload stay.
             guard openWorkID == sendingWorkID else {
-                environment.composerDrafts.clear(for: sendingWorkID)
+                environment.composerDrafts.remove(sent: text, files: files, for: sendingWorkID)
                 return
             }
             if draft == text {
