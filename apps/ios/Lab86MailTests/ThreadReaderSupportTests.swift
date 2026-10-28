@@ -61,6 +61,15 @@ struct ThreadReaderSupportTests {
     }
 
     @Test
+    func aCommaInsideAQuotedNameDoesNotSplitTheRecipient() {
+        let header = "\"Doe, Jane\" <jane@example.com>, B <b@x.example>, C <c@x.example>, D <d@x.example>"
+        #expect(RecipientNames.mailboxes(in: header).count == 4)
+        #expect(RecipientNames.line(from: header) == "Doe, Jane, B, C, and 1 more")
+        #expect(RecipientNames.line(from: "\"Doe, Jane\" <jane@example.com>") == "Doe, Jane")
+        #expect(RecipientNames.mailboxes(in: "\"A \\\"Q\\\", B\" <a@x.example>, c@x.example").count == 2)
+    }
+
+    @Test
     func theReadingColumnIsTheSharedMaximum() {
         #expect(ThreadReaderMetrics.maxWidth == 680)
     }

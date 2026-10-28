@@ -35,3 +35,30 @@ enum ComposeWebLink {
         return components.url
     }
 }
+
+/// The words of the delivery control. The full line names the date with the
+/// year and the time; the short line drops the year for a narrow strip.
+enum ComposeDeliveryLabel {
+    static func full(
+        sendsLater: Bool,
+        date: Date,
+        locale: Locale = .autoupdatingCurrent,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> String {
+        guard sendsLater else { return "Send now" }
+        let style = Date.FormatStyle(date: .abbreviated, time: .shortened, locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+        return "Sends \(date.formatted(style))"
+    }
+
+    static func short(
+        sendsLater: Bool,
+        date: Date,
+        locale: Locale = .autoupdatingCurrent,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> String {
+        guard sendsLater else { return "Send now" }
+        let style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+            .month(.abbreviated).day().hour().minute()
+        return "Sends \(date.formatted(style))"
+    }
+}

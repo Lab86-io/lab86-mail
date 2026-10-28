@@ -29,4 +29,22 @@ struct ComposeSupportTests {
         #expect(ComposeWebLink.draftURL(base: base, accountID: "acct-1", draftID: "  ") == nil)
         #expect(ComposeWebLink.draftURL(base: nil, accountID: "acct-1", draftID: "d-1") == nil)
     }
+
+    @Test
+    func theShortDeliveryLineDropsTheYearAndKeepsTheTime() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let locale = Locale(identifier: "en_US")
+        let date = Date(timeIntervalSince1970: 1_793_202_300) // 2026-10-28 15:45 UTC
+        // Foundation puts U+202F before AM and PM.
+        func plain(_ text: String) -> String { text.replacingOccurrences(of: "\u{202F}", with: " ") }
+        let full = plain(ComposeDeliveryLabel.full(sendsLater: true, date: date, locale: locale, calendar: calendar))
+        let short = plain(ComposeDeliveryLabel.short(sendsLater: true, date: date, locale: locale, calendar: calendar))
+        #expect(full.hasPrefix("Sends Oct 28, 2026"))
+        #expect(full.hasSuffix("3:45 PM"))
+        #expect(short == "Sends Oct 28, 3:45 PM")
+        #expect(short.count < full.count)
+        #expect(ComposeDeliveryLabel.full(sendsLater: false, date: date) == "Send now")
+        #expect(ComposeDeliveryLabel.short(sendsLater: false, date: date) == "Send now")
+    }
 }

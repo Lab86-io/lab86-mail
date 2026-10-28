@@ -29,14 +29,17 @@ struct ScheduledSendRow: Identifiable, Hashable, Sendable {
     }
 
     /// One provider row. The id, the status, and the close time each come
-    /// under more than one key (lib/shell/scheduled-sends.ts).
+    /// under more than one key (lib/shell/scheduled-sends.ts). The first key
+    /// with a usable value wins: an explicit null or a blank id goes on to
+    /// the next key.
     init?(json: JSONValue, accountID: String, accountLabel: String) {
-        guard let id = Self.identifier(json["scheduleId"] ?? json["schedule_id"] ?? json["id"]) else { return nil }
+        guard let id = ["scheduleId", "schedule_id", "id"].lazy.compactMap({ Self.identifier(json[$0]) }).first
+        else { return nil }
         self.accountID = accountID
         self.accountLabel = accountLabel
         scheduleID = id
         status = Self.status(from: json["status"]?["code"]?.stringValue ?? json["status"]?.stringValue)
-        sendAt = Self.date(from: json["closeTime"] ?? json["close_time"] ?? json["sendAt"] ?? json["send_at"])
+        sendAt = ["closeTime", "close_time", "sendAt", "send_at"].lazy.compactMap { Self.date(from: json[$0]) }.first
     }
 
     static func status(from code: String?) -> Status {
@@ -125,19 +128,38 @@ final class ScheduledSendsModel {
         accountCount > 0 && failedCount == accountCount ? .failed : .loaded
     }
 
+    /// Reads every mailbox at the same time. The list changes only after
+    /// all of them answer; a read that the view cancels changes nothing.
     func load(accounts: [AccountSummary], client: ScheduledSendsClient) async {
         phase = .loading
-        var collected: [ScheduledSendRow] = []
-        var failed: [String] = []
         let mailboxes = accounts.filter { !$0.id.isEmpty }
-        for account in mailboxes {
-            do {
-                collected += try await client.list(accountID: account.id, accountLabel: account.email)
-            } catch {
-                if error.isCancellation { return }
-                failed.append(account.email)
+        var results: [(index: Int, result: Result<[ScheduledSendRow], any Error>)] = []
+        await withTaskGroup(of: (Int, Result<[ScheduledSendRow], any Error>).self) { group in
+            for (index, account) in mailboxes.enumerated() {
+                group.addTask {
+                    do {
+                        return (index, .success(try await client.list(accountID: account.id, accountLabel: account.email)))
+                    } catch {
+                        return (index, .failure(error))
+                    }
+                }
+            }
+            for await (index, result) in group {
+                results.append((index, result))
             }
         }
+        var collected: [ScheduledSendRow] = []
+        var failed: [String] = []
+        for (index, result) in results.sorted(by: { $0.index < $1.index }) {
+            switch result {
+            case .success(let rows):
+                collected += rows
+            case .failure(let error):
+                if error.isCancellation { return }
+                failed.append(mailboxes[index].email)
+            }
+        }
+        guard !Task.isCancelled else { return }
         rows = ScheduledSendRow.pending(collected)
         failedAccounts = failed
         phase = Self.phase(accountCount: mailboxes.count, failedCount: failed.count)

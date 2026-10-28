@@ -52,6 +52,28 @@ struct EmailDocumentCacheTests {
     }
 
     @Test
+    func theCacheStaysInsideItsByteBudget() async {
+        let cache = EmailDocumentCache(limit: 10, byteBudget: 10) { html, _ in html }
+        _ = await cache.document(for: "aaaa", allowRemoteContent: true)
+        _ = await cache.document(for: "bbbb", allowRemoteContent: true)
+        var bytes = await cache.byteCount
+        #expect(bytes == 8)
+        // A third body passes the budget: the oldest goes.
+        _ = await cache.document(for: "cccc", allowRemoteContent: true)
+        bytes = await cache.byteCount
+        var count = await cache.count
+        #expect(bytes == 8)
+        #expect(count == 2)
+        // A body larger than the budget comes back but is not kept.
+        let large = await cache.document(for: "dddddddddddd", allowRemoteContent: true)
+        #expect(large == "dddddddddddd")
+        bytes = await cache.byteCount
+        count = await cache.count
+        #expect(bytes == 0)
+        #expect(count == 0)
+    }
+
+    @Test
     func theDefaultBuilderSanitizesLikeTheReader() async {
         let cache = EmailDocumentCache(limit: 1)
         let document = await cache.document(for: "<p>Hi</p><script>alert(1)</script>", allowRemoteContent: true)

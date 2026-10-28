@@ -710,22 +710,35 @@ struct ComposeView: View {
                 showsCustomSchedule = true
             }
         } label: {
-            Text(deliveryLabel)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(sendsLater ? environment.theme.accentColor : .secondary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .contentShape(.rect)
+            // The full date when it fits; a narrow strip gets the date
+            // without the year, then that line cut short. The spoken label
+            // always reads the full date.
+            ViewThatFits(in: .horizontal) {
+                deliveryText(deliveryLabel).fixedSize(horizontal: true, vertical: false)
+                deliveryText(shortDeliveryLabel).fixedSize(horizontal: true, vertical: false)
+                deliveryText(shortDeliveryLabel)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .contentShape(.rect)
         }
         .menuIndicator(.hidden)
         .accessibilityLabel("Delivery: \(deliveryLabel)")
     }
 
+    private func deliveryText(_ label: String) -> some View {
+        Text(label)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(sendsLater ? environment.theme.accentColor : .secondary)
+            .lineLimit(1)
+    }
+
     private var deliveryLabel: String {
-        guard sendsLater else { return "Send now" }
-        return "Sends \(sendLaterDate.formatted(date: .abbreviated, time: .shortened))"
+        ComposeDeliveryLabel.full(sendsLater: sendsLater, date: sendLaterDate)
+    }
+
+    private var shortDeliveryLabel: String {
+        ComposeDeliveryLabel.short(sendsLater: sendsLater, date: sendLaterDate)
     }
 
     private var navigationTitle: String {
@@ -855,12 +868,14 @@ struct ComposeView: View {
             // The draft stays open with its rows. A sealed file that needs a
             // send permission sends the user to the web for it; the line
             // names the item, the file, and the domain. The web link opens
-            // this draft, so it is saved first when it is not yet.
+            // the saved draft, so the latest edits are saved first, and the
+            // link shows only when that save worked.
             let sealed = fileAttachments.filter(\.sealed)
             let offersWeb = refusal.code.offersWeb
-            if offersWeb, draftID == nil { await persistDraft() }
+            var saved = false
+            if offersWeb { saved = await persistDraft() }
             errorMessage = refusal.line(fileName: sealed.count == 1 ? sealed[0].name : nil)
-            sendNeedsWeb = offersWeb
+            sendNeedsWeb = offersWeb && saved
         } catch {
             guard !error.isCancellation else { return }
             errorMessage = error.localizedDescription
@@ -883,8 +898,10 @@ struct ComposeView: View {
         }
     }
 
-    private func persistDraft() async {
-        guard hasMeaningfulDraft, !accountID.isEmpty else { return }
+    /// True when the draft is saved now.
+    @discardableResult
+    private func persistDraft() async -> Bool {
+        guard hasMeaningfulDraft, !accountID.isEmpty else { return false }
         isSavingDraft = true
         defer { isSavingDraft = false }
         do {
@@ -907,9 +924,11 @@ struct ComposeView: View {
                 attachments: fileAttachments
             )
             errorMessage = nil
+            return true
         } catch {
-            guard !error.isCancellation else { return }
+            guard !error.isCancellation else { return false }
             errorMessage = error.localizedDescription
+            return false
         }
     }
 

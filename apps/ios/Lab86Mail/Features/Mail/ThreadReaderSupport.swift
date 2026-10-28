@@ -60,14 +60,43 @@ enum ThreadLeadCopy {
 /// without the addresses. A long list ends with how many more.
 enum RecipientNames {
     static func line(from header: String, limit: Int = 3) -> String {
-        let names = header
-            .split(separator: ",")
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        let names = mailboxes(in: header)
             .map { EmailTextNormalizer.displayName(from: $0) ?? $0 }
         guard !names.isEmpty else { return "" }
         if names.count <= limit { return names.joined(separator: ", ") }
         let rest = names.count - limit
         return names.prefix(limit).joined(separator: ", ") + ", and \(rest) more"
+    }
+
+    /// The mailboxes of a header, split at the commas between them. A comma
+    /// inside a quoted name ("Doe, Jane" <jane@…>) or inside <…> stays.
+    static func mailboxes(in header: String) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        var inQuotes = false
+        var escaped = false
+        var angleDepth = 0
+        for character in header {
+            if escaped {
+                escaped = false
+            } else if character == "\\", inQuotes {
+                escaped = true
+            } else if character == "\"" {
+                inQuotes.toggle()
+            } else if !inQuotes, character == "<" {
+                angleDepth += 1
+            } else if !inQuotes, character == ">" {
+                angleDepth = max(angleDepth - 1, 0)
+            } else if !inQuotes, angleDepth == 0, character == "," {
+                parts.append(current)
+                current = ""
+                continue
+            }
+            current.append(character)
+        }
+        parts.append(current)
+        return parts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 }

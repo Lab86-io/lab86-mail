@@ -270,6 +270,8 @@ struct MailView: View {
             await environment.store.refreshSnoozed()
         }
         .task(id: effectiveQuery) {
+            // Each new query starts with no answer, also an empty one.
+            answeredSearchQuery = nil
             let query = effectiveQuery
             guard !query.isEmpty else {
                 await environment.store.searchMail("")

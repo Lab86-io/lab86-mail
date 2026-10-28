@@ -343,7 +343,9 @@ struct SenderCleanupView: View {
             do {
                 blocked.append(try await client.block(sender: row.sender, batchID: batchID))
             } catch {
-                if error.isCancellation { return }
+                // A cancel stops the batch, but the senders already blocked
+                // still get their note, the refresh, and the new list.
+                if error.isCancellation { break }
                 failed.append(row.sender)
             }
         }

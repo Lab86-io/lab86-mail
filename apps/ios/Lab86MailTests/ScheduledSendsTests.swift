@@ -75,6 +75,29 @@ struct ScheduledSendsTests {
     }
 
     @Test
+    func anExplicitNullGoesOnToTheNextKey() throws {
+        let row = try #require(ScheduledSendRow(
+            json: .object([
+                "scheduleId": .null,
+                "id": .string("sch-9"),
+                "closeTime": .null,
+                "sendAt": .number(1_800_000_000),
+            ]),
+            accountID: "acct-1",
+            accountLabel: "a"
+        ))
+        #expect(row.scheduleID == "sch-9")
+        #expect(row.sendAt == Date(timeIntervalSince1970: 1_800_000_000))
+
+        let blank = try #require(ScheduledSendRow(
+            json: .object(["scheduleId": .string("  "), "schedule_id": .string("sch-10")]),
+            accountID: "acct-1",
+            accountLabel: "a"
+        ))
+        #expect(blank.scheduleID == "sch-10")
+    }
+
+    @Test
     func statusWordsFollowTheWebRegexes() {
         // The web's rule is /succ?ess|sent/: "success" is sent, "succeeded" is not.
         #expect(ScheduledSendRow.status(from: "success") == .sent)

@@ -9,11 +9,19 @@ struct EmailHTMLView: View {
     let html: String
     let allowRemoteContent: Bool
     let onOpenURL: (URL) -> Void
-    @State private var document: String?
+    /// The last built document and the key it was built for. When the html
+    /// or the remote-content setting changes, the old document does not
+    /// show while the new one builds.
+    @State private var built: BuiltEmailDocument?
     @State private var contentHeight: CGFloat = 120
 
     private var key: EmailDocumentKey {
         EmailDocumentKey(html: html, allowRemoteContent: allowRemoteContent)
+    }
+
+    private var document: String? {
+        guard let built, built.key == key else { return nil }
+        return built.document
     }
 
     var body: some View {
@@ -36,11 +44,17 @@ struct EmailHTMLView: View {
         }
         .accessibilityLabel("Email message body")
         .task(id: key) {
-            let built = await EmailDocumentCache.shared.document(for: html, allowRemoteContent: allowRemoteContent)
+            let requested = key
+            let text = await EmailDocumentCache.shared.document(for: html, allowRemoteContent: allowRemoteContent)
             guard !Task.isCancelled else { return }
-            document = built
+            built = BuiltEmailDocument(key: requested, document: text)
         }
     }
+}
+
+struct BuiltEmailDocument: Equatable {
+    let key: EmailDocumentKey
+    let document: String
 }
 
 /// The cache key of one message body: a stable hash of the html, its length,
@@ -66,25 +80,32 @@ struct EmailDocumentKey: Hashable, Sendable {
 
 /// Builds sanitized documents away from the main actor and keeps the last
 /// few, so a message that is collapsed and expanded again, or a reader that
-/// re-measures its height, never parses the same html twice.
+/// re-measures its height, never parses the same html twice. The cache keeps
+/// at most `limit` documents and at most `byteBudget` UTF-8 bytes; the oldest
+/// go first, and a document larger than the budget is returned but not kept.
 actor EmailDocumentCache {
     typealias Builder = @Sendable (_ html: String, _ allowRemoteContent: Bool) -> String
 
     static let shared = EmailDocumentCache()
 
     private let limit: Int
+    private let byteBudget: Int
     private let build: Builder
     private var documents: [EmailDocumentKey: String] = [:]
+    private var sizes: [EmailDocumentKey: Int] = [:]
     private var order: [EmailDocumentKey] = []
     private(set) var buildCount = 0
+    private(set) var byteCount = 0
 
     init(
         limit: Int = 24,
+        byteBudget: Int = 8 * 1_024 * 1_024,
         build: @escaping Builder = { html, allowRemoteContent in
             EmailHTMLDocument.make(from: html, allowRemoteContent: allowRemoteContent)
         }
     ) {
         self.limit = max(limit, 1)
+        self.byteBudget = max(byteBudget, 1)
         self.build = build
     }
 
@@ -93,11 +114,15 @@ actor EmailDocumentCache {
         if let cached = documents[key] { return cached }
         let built = build(html, allowRemoteContent)
         buildCount += 1
+        let size = built.utf8.count
         documents[key] = built
+        sizes[key] = size
         order.append(key)
-        if order.count > limit {
+        byteCount += size
+        while !order.isEmpty, order.count > limit || byteCount > byteBudget {
             let oldest = order.removeFirst()
             documents[oldest] = nil
+            byteCount -= sizes.removeValue(forKey: oldest) ?? 0
         }
         return built
     }
