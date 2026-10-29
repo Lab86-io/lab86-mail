@@ -54,14 +54,18 @@ if [[ "$platform" == ios ]]; then
     -destination 'generic/platform=iOS' build \
     2>&1 | tee native-evidence/ios-device-build.log
 elif [[ "$platform" == release ]]; then
-  # Release is whole-module and optimized, as in the Xcode Cloud archive. The
-  # optimizer can crash on code that compiles in Debug (v0.16.45 failed its
-  # archive that way), so only this build shows those failures before merge.
+  # Archive both apps, as Xcode Cloud does. The optimizer can crash on code
+  # that compiles in Debug (v0.16.45 failed its archive that way). Use archive,
+  # not build: the scheme gathers coverage, and build then compiles Release
+  # with coverage counters, which changes the optimized code. That build of
+  # v0.16.45 passed.
   xcodebuild "${common[@]}" -scheme Lab86Mail \
-    -destination 'generic/platform=iOS' build \
+    -destination 'generic/platform=iOS' \
+    -archivePath "$RUNNER_TEMP/native-release/Lab86Mail.xcarchive" archive \
     2>&1 | tee native-evidence/ios-release-build.log
   xcodebuild "${common[@]}" -scheme Lab86MailMac \
-    -destination 'generic/platform=macOS' build \
+    -destination 'generic/platform=macOS' \
+    -archivePath "$RUNNER_TEMP/native-release/Lab86MailMac.xcarchive" archive \
     2>&1 | tee native-evidence/macos-release-build.log
 else
   # Compile the app and every Mac test. Do not lower the deployment target

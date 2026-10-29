@@ -74,19 +74,20 @@ test('native acceptance builds both native targets without signing or distributi
   assert.doesNotMatch(contents + script, /ASC_PRIVATE_KEY|upload-ios-export|start-xcode-cloud/);
 });
 
-test('the release job builds both apps in Release, as Xcode Cloud archives them', () => {
-  // Optimizer crashes show only in Release (the v0.16.45 archive), so the
-  // release job must build both apps that way and nothing else.
+test('the release job archives both apps in Release, as Xcode Cloud does', () => {
+  // Optimizer crashes show only in the Release archive (v0.16.45). A Release
+  // build of this scheme adds coverage counters and passed that version.
   const calls = nativeAcceptanceCalls('release');
   assert.deepEqual(
     calls.map((call) => [argument(call, '-scheme'), argument(call, '-destination'), call.at(-1)]),
     [
-      ['Lab86Mail', 'generic/platform=iOS', 'build'],
-      ['Lab86MailMac', 'generic/platform=macOS', 'build'],
+      ['Lab86Mail', 'generic/platform=iOS', 'archive'],
+      ['Lab86MailMac', 'generic/platform=macOS', 'archive'],
     ],
   );
   for (const call of calls) {
     assert.equal(argument(call, '-configuration'), 'Release');
+    assert.match(argument(call, '-archivePath'), /native-release\/Lab86Mail(Mac)?\.xcarchive$/);
     assert.ok(call.includes('CODE_SIGNING_ALLOWED=NO'));
   }
   // The other jobs keep Debug.

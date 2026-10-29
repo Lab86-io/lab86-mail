@@ -23,7 +23,7 @@ jobs:
     name: Native ${{ matrix.platform }} build and checks
     # Xcode 27's image contains the iOS 27 simulator and the macOS 27 SDK.
     # The Mac job also runs the Mac tour on the host (sw_vers shows its OS).
-    # The release job compiles both apps the way Xcode Cloud archives them.
+    # The release job archives both apps the way Xcode Cloud does.
     runs-on: xcode-27
     timeout-minutes: 60
     strategy:
