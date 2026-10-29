@@ -44,7 +44,7 @@ describe('production-only release workflow', () => {
     const acceptance = config('.github/workflows/native-acceptance.yml');
     const distribution = config('.github/workflows/xcode-cloud-production.yml');
     expect(acceptance.on.pull_request.branches).toEqual(['main']);
-    expect(acceptance.jobs.native.strategy.matrix.platform).toEqual(['ios', 'macos']);
+    expect(acceptance.jobs.native.strategy.matrix.platform).toEqual(['ios', 'macos', 'release']);
     expect(distribution.on.workflow_run.workflows).toEqual(['Deploy Production']);
   });
 });

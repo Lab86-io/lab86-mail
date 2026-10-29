@@ -1,8 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-platform="${1:?Pass ios or macos}"
-case "$platform" in ios|macos) ;; *) exit 2 ;; esac
+platform="${1:?Pass ios, macos, or release}"
+case "$platform" in ios|macos|release) ;; *) exit 2 ;; esac
+configuration=Debug
+[[ "$platform" == release ]] && configuration=Release
 mkdir -p native-evidence
 # Canonical public configuration, exactly as in ci_post_clone.sh. No secrets,
 # signing keys, source mutations, TestFlight uploads, or provider writes.
@@ -10,7 +12,7 @@ native_clerk_host=clerk.mail.lab86.io
 native_clerk_key="pk_live_$(printf '%s$' "$native_clerk_host" | base64 | tr -d '\n=')"
 common=(
   -project apps/ios/Lab86Mail.xcodeproj
-  -configuration Debug
+  -configuration "$configuration"
   -derivedDataPath "${RUNNER_TEMP:?}/native-${platform}"
   -skipPackagePluginValidation -skipMacroValidation
   CODE_SIGNING_ALLOWED=NO
@@ -51,6 +53,20 @@ if [[ "$platform" == ios ]]; then
   xcodebuild "${common[@]}" -scheme Lab86Mail \
     -destination 'generic/platform=iOS' build \
     2>&1 | tee native-evidence/ios-device-build.log
+elif [[ "$platform" == release ]]; then
+  # Archive both apps, as Xcode Cloud does. The optimizer can crash on code
+  # that compiles in Debug (v0.16.45 failed its archive that way). Use archive,
+  # not build: the scheme gathers coverage, and build then compiles Release
+  # with coverage counters, which changes the optimized code. That build of
+  # v0.16.45 passed.
+  xcodebuild "${common[@]}" -scheme Lab86Mail \
+    -destination 'generic/platform=iOS' \
+    -archivePath "$RUNNER_TEMP/native-release/Lab86Mail.xcarchive" archive \
+    2>&1 | tee native-evidence/ios-release-build.log
+  xcodebuild "${common[@]}" -scheme Lab86MailMac \
+    -destination 'generic/platform=macOS' \
+    -archivePath "$RUNNER_TEMP/native-release/Lab86MailMac.xcarchive" archive \
+    2>&1 | tee native-evidence/macos-release-build.log
 else
   # Compile the app and every Mac test. Do not lower the deployment target
   # to manufacture a green run.
