@@ -32,12 +32,15 @@ test('native app and test targets link the generated client runtime explicitly',
 test('native acceptance builds both native targets without signing or distributing', () => {
   const contents = workflow('native-acceptance.yml');
   const script = readFileSync(new URL('./native-acceptance.sh', import.meta.url), 'utf8');
-  assert.match(contents, /platform: \[ios, macos\]/);
+  assert.match(contents, /platform: \[ios, macos, release\]/);
   assert.match(contents, /runs-on: xcode-27/);
   assert.match(contents, /contents: read/);
   assert.match(script, /-only-testing:Lab86MailTests/);
   assert.match(script, /generic\/platform=iOS/);
   assert.match(script, /generic\/platform=macOS' build-for-testing/);
+  // Optimizer crashes show only in Release, so one job compiles both apps that way.
+  assert.match(script, /\[\[ "\$platform" == release \]\] && configuration=Release/);
+  assert.match(script, /-configuration "\$configuration"/);
   assert.match(script, /CODE_SIGNING_ALLOWED=NO/);
   assert.match(script, /ENABLE_DEBUG_DYLIB=NO/);
   assert.doesNotMatch(contents + script, /ASC_PRIVATE_KEY|upload-ios-export|start-xcode-cloud/);
