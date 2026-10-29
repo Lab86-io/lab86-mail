@@ -98,6 +98,26 @@ struct ScheduledSendsTests {
     }
 
     @Test
+    func theFirstUsableKeyWinsWhenSeveralHoldAValue() throws {
+        let row = try #require(ScheduledSendRow(
+            json: .object([
+                "id": .string("third"),
+                "schedule_id": .string("second"),
+                "scheduleId": .string("first"),
+                "send_at": .number(1_700_000_000),
+                "sendAt": .number(1_750_000_000),
+                "close_time": .string("not a time"),
+                "closeTime": .null,
+            ]),
+            accountID: "acct-1",
+            accountLabel: "a"
+        ))
+        #expect(row.scheduleID == "first")
+        // closeTime is null and close_time does not read as a time, so sendAt wins.
+        #expect(row.sendAt == Date(timeIntervalSince1970: 1_750_000_000))
+    }
+
+    @Test
     func statusWordsFollowTheWebRegexes() {
         // The web's rule is /succ?ess|sent/: "success" is sent, "succeeded" is not.
         #expect(ScheduledSendRow.status(from: "success") == .sent)

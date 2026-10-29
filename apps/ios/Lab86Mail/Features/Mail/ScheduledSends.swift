@@ -32,14 +32,33 @@ struct ScheduledSendRow: Identifiable, Hashable, Sendable {
     /// under more than one key (lib/shell/scheduled-sends.ts). The first key
     /// with a usable value wins: an explicit null or a blank id goes on to
     /// the next key.
+    ///
+    /// Plain loops, not `lazy.compactMap { … }.first`: in this initializer
+    /// that chain crashed the Xcode 27.1 Swift 6.4 optimizer (SimplifyCFG jump
+    /// threading) in the Release archive of v0.16.45. Debug builds compile it.
     init?(json: JSONValue, accountID: String, accountLabel: String) {
-        guard let id = ["scheduleId", "schedule_id", "id"].lazy.compactMap({ Self.identifier(json[$0]) }).first
-        else { return nil }
-        self.accountID = accountID
-        self.accountLabel = accountLabel
-        scheduleID = id
-        status = Self.status(from: json["status"]?["code"]?.stringValue ?? json["status"]?.stringValue)
-        sendAt = ["closeTime", "close_time", "sendAt", "send_at"].lazy.compactMap { Self.date(from: json[$0]) }.first
+        guard let id = Self.firstScheduleID(in: json) else { return nil }
+        self.init(
+            accountID: accountID,
+            accountLabel: accountLabel,
+            scheduleID: id,
+            status: Self.status(from: json["status"]?["code"]?.stringValue ?? json["status"]?.stringValue),
+            sendAt: Self.firstSendTime(in: json)
+        )
+    }
+
+    private static func firstScheduleID(in json: JSONValue) -> String? {
+        for key in ["scheduleId", "schedule_id", "id"] {
+            if let id = identifier(json[key]) { return id }
+        }
+        return nil
+    }
+
+    private static func firstSendTime(in json: JSONValue) -> Date? {
+        for key in ["closeTime", "close_time", "sendAt", "send_at"] {
+            if let time = date(from: json[key]) { return time }
+        }
+        return nil
     }
 
     static func status(from code: String?) -> Status {
