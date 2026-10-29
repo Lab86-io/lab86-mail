@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { buildRunCreatedAt, selectGitRefID } from './start-xcode-cloud.mjs';
 
 const immutableUploadArtifact = 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02';
@@ -8,6 +12,33 @@ const immutableCheckout = 'actions/checkout@34e114876b0b11c390a56381ad16ebd13914
 
 function workflow(name) {
   return readFileSync(new URL(`../workflows/${name}`, import.meta.url), 'utf8');
+}
+
+// Runs native-acceptance.sh with a stub xcodebuild and returns the argument
+// list of each xcodebuild call.
+function nativeAcceptanceCalls(platform) {
+  const root = mkdtempSync(path.join(tmpdir(), 'native-acceptance-'));
+  try {
+    const stub = path.join(root, 'xcodebuild');
+    const log = path.join(root, 'calls.log');
+    writeFileSync(stub, '#!/bin/bash\n{ printf \'%s\\037\' "$@"; printf \'\\n\'; } >> "$XCODEBUILD_CALLS"\n');
+    chmodSync(stub, 0o755);
+    execFileSync('bash', [fileURLToPath(new URL('./native-acceptance.sh', import.meta.url)), platform], {
+      cwd: root,
+      env: { ...process.env, PATH: `${root}:${process.env.PATH}`, RUNNER_TEMP: root, XCODEBUILD_CALLS: log },
+      stdio: 'pipe',
+    });
+    return readFileSync(log, 'utf8')
+      .trimEnd()
+      .split('\n')
+      .map((line) => line.split('\x1f').slice(0, -1));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function argument(call, flag) {
+  return call[call.indexOf(flag) + 1];
 }
 
 test('native app and test targets link the generated client runtime explicitly', () => {
@@ -38,12 +69,30 @@ test('native acceptance builds both native targets without signing or distributi
   assert.match(script, /-only-testing:Lab86MailTests/);
   assert.match(script, /generic\/platform=iOS/);
   assert.match(script, /generic\/platform=macOS' build-for-testing/);
-  // Optimizer crashes show only in Release, so one job compiles both apps that way.
-  assert.match(script, /\[\[ "\$platform" == release \]\] && configuration=Release/);
-  assert.match(script, /-configuration "\$configuration"/);
   assert.match(script, /CODE_SIGNING_ALLOWED=NO/);
   assert.match(script, /ENABLE_DEBUG_DYLIB=NO/);
   assert.doesNotMatch(contents + script, /ASC_PRIVATE_KEY|upload-ios-export|start-xcode-cloud/);
+});
+
+test('the release job builds both apps in Release, as Xcode Cloud archives them', () => {
+  // Optimizer crashes show only in Release (the v0.16.45 archive), so the
+  // release job must build both apps that way and nothing else.
+  const calls = nativeAcceptanceCalls('release');
+  assert.deepEqual(
+    calls.map((call) => [argument(call, '-scheme'), argument(call, '-destination'), call.at(-1)]),
+    [
+      ['Lab86Mail', 'generic/platform=iOS', 'build'],
+      ['Lab86MailMac', 'generic/platform=macOS', 'build'],
+    ],
+  );
+  for (const call of calls) {
+    assert.equal(argument(call, '-configuration'), 'Release');
+    assert.ok(call.includes('CODE_SIGNING_ALLOWED=NO'));
+  }
+  // The other jobs keep Debug.
+  for (const call of nativeAcceptanceCalls('macos')) {
+    assert.equal(argument(call, '-configuration'), 'Debug');
+  }
 });
 
 test('iOS auth dependency is pinned past the Clerk AuthView startup fix', () => {

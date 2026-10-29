@@ -47,6 +47,7 @@ struct ScheduledSendRow: Identifiable, Hashable, Sendable {
         )
     }
 
+    /// The id under the first key that holds a usable one, in the web's key order.
     private static func firstScheduleID(in json: JSONValue) -> String? {
         for key in ["scheduleId", "schedule_id", "id"] {
             if let id = identifier(json[key]) { return id }
@@ -54,6 +55,7 @@ struct ScheduledSendRow: Identifiable, Hashable, Sendable {
         return nil
     }
 
+    /// The close time under the first key that holds a usable one, in the web's key order.
     private static func firstSendTime(in json: JSONValue) -> Date? {
         for key in ["closeTime", "close_time", "sendAt", "send_at"] {
             if let time = date(from: json[key]) { return time }
