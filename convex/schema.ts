@@ -3096,6 +3096,9 @@ export default defineSchema({
       v.literal('urgent_mail'),
       v.literal('brief_ready'),
       v.literal('agent_error'),
+      // Needs you (docs/needs-you.md): the push of one obligation, or the
+      // hourly summary push. The in-app list reads the obligations table.
+      v.literal('obligation'),
     ),
     title: v.string(),
     body: v.string(),
@@ -3108,6 +3111,7 @@ export default defineSchema({
         v.literal('approval'),
         v.literal('suggestion'),
         v.literal('thread'),
+        v.literal('obligation'),
       ),
     ),
     entityId: v.optional(v.string()),
@@ -3150,6 +3154,111 @@ export default defineSchema({
     .index('by_push_held', ['pushHeldUntil'])
     .index('by_user_push_held', ['userId', 'pushHeldUntil']),
 
+  // Needs you (docs/needs-you.md): one row for each source item and kind.
+  // When the source changes, the same row changes. Phase 1 holds mail
+  // obligations from Jev and one-time codes. A code row keeps only the id of
+  // its mailOneTimeCodes row; the code value stays in that table.
+  obligations: defineTable({
+    userId: v.string(),
+    kind: v.union(
+      v.literal('reply'),
+      v.literal('action'),
+      v.literal('waiting'),
+      v.literal('change'),
+      v.literal('code'),
+    ),
+    state: v.union(
+      v.literal('open'),
+      v.literal('snoozed'),
+      v.literal('done'),
+      v.literal('resolved'),
+      v.literal('dismissed'),
+      v.literal('expired'),
+    ),
+    source: v.literal('mail'),
+    // `mail:<accountId>:<threadId>` (lib/obligations/contract.ts mailSourceKey).
+    sourceKey: v.string(),
+    accountId: v.optional(v.string()),
+    threadId: v.optional(v.string()),
+    // The evidence message: the reply anchor and the deep link.
+    messageId: v.optional(v.string()),
+    // The latest message of the thread when Jev last opened or changed the row.
+    sourceMessageId: v.optional(v.string()),
+    title: v.string(),
+    asker: v.string(),
+    askerAddress: v.optional(v.string()),
+    why: v.optional(v.string()),
+    excerpt: v.optional(v.string()),
+    due: v.union(v.literal('today'), v.literal('soon'), v.literal('later'), v.literal('none')),
+    dueAt: v.optional(v.number()),
+    workId: v.optional(v.string()),
+    probability: v.number(),
+    pushLevel: v.union(v.literal('none'), v.literal('normal'), v.literal('time_sensitive')),
+    // The last push of this row. The hourly limit counts rows by this time.
+    pushedAt: v.optional(v.number()),
+    pushCount: v.optional(v.number()),
+    notificationId: v.optional(v.id('albatrossNotifications')),
+    // A push that waits: quiet hours, or the hourly limit (then a summary).
+    pushHeldUntil: v.optional(v.number()),
+    pushHoldReason: v.optional(v.union(v.literal('quiet_hours'), v.literal('limit'))),
+    // Set when the hourly summary push named this row.
+    summarizedAt: v.optional(v.number()),
+    codeId: v.optional(v.id('mailOneTimeCodes')),
+    codeExpiresAt: v.optional(v.number()),
+    // The prepared reply (POST /api/obligations/[id]/draft), for one source message.
+    draft: v.optional(
+      v.object({
+        to: v.array(v.string()),
+        cc: v.array(v.string()),
+        subject: v.string(),
+        body: v.string(),
+        sourceMessageId: v.optional(v.string()),
+        createdAt: v.number(),
+      }),
+    ),
+    snoozedUntil: v.optional(v.number()),
+    openedAt: v.number(),
+    closedAt: v.optional(v.number()),
+    closeReason: v.optional(
+      v.union(
+        v.literal('sent_reply'),
+        v.literal('user_done'),
+        v.literal('user_done_no_reply'),
+        v.literal('evidence'),
+        v.literal('not_mine'),
+        v.literal('code_used'),
+        v.literal('expired'),
+      ),
+    ),
+    // A close by the user stays closed until the source has a new message.
+    closedBy: v.optional(v.union(v.literal('user'), v.literal('source'))),
+    // The latest message of the thread when the user closed the row.
+    closedMessageId: v.optional(v.string()),
+    // The state before the last user action, for Undo (UNDO_WINDOW_MS).
+    undo: v.optional(
+      v.object({
+        until: v.number(),
+        state: v.union(v.literal('open'), v.literal('snoozed')),
+        snoozedUntil: v.optional(v.number()),
+        // Not mine: the correction that the action replaced (null: none).
+        correctionId: v.optional(v.string()),
+        previousCorrection: v.optional(v.any()),
+        // A reply that waits in the outbox: Undo cancels the send first.
+        pendingId: v.optional(v.string()),
+      }),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user_state', ['userId', 'state', 'updatedAt'])
+    .index('by_user_source', ['userId', 'sourceKey', 'kind'])
+    .index('by_user_work', ['userId', 'workId'])
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_closed', ['userId', 'closedAt'])
+    .index('by_user_pushed', ['userId', 'pushedAt'])
+    .index('by_user_push_held', ['userId', 'pushHeldUntil'])
+    .index('by_push_held', ['pushHeldUntil']),
+
   albatrossNotificationPreferences: defineTable({
     userId: v.string(),
     timezone: v.string(),
@@ -3181,6 +3290,9 @@ export default defineSchema({
     quietHoursStart: v.optional(v.number()),
     quietHoursEnd: v.optional(v.number()),
     vipSenders: v.optional(v.array(v.string())),
+    // Needs you: "Push me when something needs me" (default on). Codes read
+    // oneTimeCodeAutofillEnabled, not this switch.
+    obligationPushEnabled: v.optional(v.boolean()),
     emailFallbackEnabled: v.boolean(),
     emailFallbackDelayMinutes: v.number(),
     // Explicitly opted-in approximate iPhone location for morning weather.

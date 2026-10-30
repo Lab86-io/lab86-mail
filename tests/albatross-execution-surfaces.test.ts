@@ -192,6 +192,8 @@ describe('the execution loop owns the visible product surfaces', () => {
         { type: 'daily_checkin', id: 'checkin' },
         // The wake has its own nudge in the shell. The bell does not repeat it.
         { type: 'work_wake', id: 'wake' },
+        // A Needs you push carrier. The Needs you page lists the obligation itself.
+        { type: 'obligation', id: 'obligation' },
       ]).map((row) => row.id),
     ).toEqual(['work', 'checkin']);
   });

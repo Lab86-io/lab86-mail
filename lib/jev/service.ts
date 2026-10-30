@@ -1,6 +1,8 @@
 import { recordClassifierUsage, resolveClassifierRuntime } from '../ai/gateway';
 import { classifierFailureText, evaluateClassifier, mapConcurrent } from '../classifier/client';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
+import { needsYouFlagFor } from '../obligations/contract';
+import { deliverObligationPushes } from '../obligations/delivery';
 import type { DailyReport } from '../shared/types';
 import type { JevCorrection, JevPreferences } from './contract';
 import {
@@ -25,7 +27,19 @@ export function loadJevPolicy(userId: string) {
   );
 }
 
-const sweepDefaults = {
+export interface JevSweepDependencies {
+  loadJevPolicy: typeof loadJevPolicy;
+  resolveClassifierRuntime: typeof resolveClassifierRuntime;
+  convexMutation: typeof convexMutation;
+  evaluateClassifier: typeof evaluateClassifier;
+  recordClassifierUsage: typeof recordClassifierUsage;
+  afterClassified?: (userId: string) => void;
+  /** Needs you (LAB86_NEEDS_YOU). Left out: the sweep passes no flag, as before. */
+  needsYouFor?: (userId: string) => boolean;
+  deliverObligations?: (userId: string, ids: string[]) => Promise<unknown>;
+}
+
+const sweepDefaults: JevSweepDependencies = {
   loadJevPolicy,
   resolveClassifierRuntime,
   convexMutation,
@@ -34,8 +48,11 @@ const sweepDefaults = {
   afterClassified: (userId: string) => {
     void import('../content/sync').then((module) => module.kickContentCycle(userId)).catch(() => undefined);
   },
+  // Needs you (LAB86_NEEDS_YOU). Off: the sweep works as before.
+  needsYouFor: (userId: string) => needsYouFlagFor(userId),
+  deliverObligations: (userId: string, ids: string[]) => deliverObligationPushes(userId, ids),
 };
-export async function runJevSweep(userId: string, dependencies = sweepDefaults) {
+export async function runJevSweep(userId: string, dependencies: JevSweepDependencies = sweepDefaults) {
   const {
     loadJevPolicy,
     resolveClassifierRuntime,
@@ -45,6 +62,10 @@ export async function runJevSweep(userId: string, dependencies = sweepDefaults) 
   } = dependencies;
   const policy = await loadJevPolicy(userId);
   if (!policy.preferences.enabled) return { classified: 0 };
+  // The flag is read once for the sweep. The claim records it for the page;
+  // the store syncs the obligations of each stored thread.
+  const needsYou = dependencies.needsYouFor?.(userId) ?? false;
+  const flagArgs = dependencies.needsYouFor ? { needsYou } : {};
   const runtime = await resolveClassifierRuntime(userId);
   let classified = 0;
   let moreRemaining = false;
@@ -53,7 +74,7 @@ export async function runJevSweep(userId: string, dependencies = sweepDefaults) 
     const page = await convexMutation<{
       items: Array<JevMailInput & { leaseId: string; facts?: JevFactsView }>;
       moreRemaining: boolean;
-    }>(api.jev.claimPending, { userId, limit: 12 });
+    }>(api.jev.claimPending, { userId, limit: 12, ...flagArgs });
     if (!page.items.length) {
       // The claim can take gated rows off the queue and return no items. It
       // then reports more rows, and the next claim reads further down.
@@ -109,11 +130,20 @@ export async function runJevSweep(userId: string, dependencies = sweepDefaults) 
         return { ...target, error: 'unavailable' };
       }
     });
-    const result = await convexMutation<{ stored: number }>(api.jev.storeAssessments, {
-      userId,
-      items,
-    });
+    const result = await convexMutation<{ stored: number; obligationIds?: string[] }>(
+      api.jev.storeAssessments,
+      {
+        userId,
+        items,
+        ...(needsYou ? { needsYou: true } : {}),
+      },
+    );
     classified += result.stored;
+    // Best effort, after each stored batch: a later batch that fails cannot
+    // drop the pushes of obligations that are already stored.
+    const stored = result.obligationIds ?? [];
+    if (stored.length && dependencies.deliverObligations)
+      await dependencies.deliverObligations(userId, stored).catch(() => undefined);
     moreRemaining = page.moreRemaining;
     if (!moreRemaining) break;
   }

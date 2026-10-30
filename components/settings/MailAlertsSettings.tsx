@@ -61,11 +61,31 @@ export function hourLabel(hour: number) {
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
 /**
+ * The Needs you rows (docs/needs-you.md, "Settings, Notifications"): one push
+ * switch and the codes switch take the place of the per-mail push select.
+ */
+export interface NeedsYouAlertsProps {
+  pushEnabled: boolean;
+  onPushEnabledChange: (enabled: boolean) => void;
+  codesEnabled: boolean;
+  onCodesEnabledChange: (enabled: boolean) => void;
+  saving?: boolean;
+}
+
+/**
  * Priority-only push, quiet hours, and VIP senders (FEATURES item 12).
  * `timezone` is the saved notification zone: quiet hours are labeled with it
- * and saves send it, so the page shows one zone.
+ * and saves send it, so the page shows one zone. With `needsYou`, the section
+ * is the Needs you one: no per-mail push setting.
  */
-export function MailAlertsSettings({ timezone }: { timezone?: string } = {}) {
+export function MailAlertsSettings({
+  timezone,
+  needsYou,
+}: {
+  timezone?: string;
+  needsYou?: NeedsYouAlertsProps;
+} = {}) {
+  const title = needsYou ? 'Needs you' : 'Mail alerts';
   const queryClient = useQueryClient();
   const settings = useQuery({
     queryKey: MAIL_PUSH_QUERY_KEY,
@@ -90,17 +110,17 @@ export function MailAlertsSettings({ timezone }: { timezone?: string } = {}) {
   if (settings.isLoading) {
     return (
       <section>
-        <MailSettingsGroupTitle>Mail alerts</MailSettingsGroupTitle>
-        <p className="text-[12.5px] text-[var(--color-text-muted)]">Loading mail alerts…</p>
+        <MailSettingsGroupTitle>{title}</MailSettingsGroupTitle>
+        <p className="text-[12.5px] text-[var(--color-text-muted)]">Loading…</p>
       </section>
     );
   }
   if (settings.error || !settings.data) {
     return (
       <section>
-        <MailSettingsGroupTitle>Mail alerts</MailSettingsGroupTitle>
+        <MailSettingsGroupTitle>{title}</MailSettingsGroupTitle>
         <p className="text-[12.5px] text-[var(--color-danger)]">
-          Mail alerts could not load. Reload to try again.
+          These settings could not load. Reload to try again.
         </p>
       </section>
     );
@@ -113,39 +133,63 @@ export function MailAlertsSettings({ timezone }: { timezone?: string } = {}) {
     save.mutate({ addVipSenders: [value] }, { onSuccess: () => setVipInput('') });
   };
 
+  const disabled = save.isPending || Boolean(needsYou?.saving);
   return (
     <section>
-      <MailSettingsGroupTitle aside={current.mode === 'priority' ? 'Priority only' : 'Every new email'}>
-        Mail alerts
+      <MailSettingsGroupTitle
+        aside={needsYou ? undefined : current.mode === 'priority' ? 'Priority only' : 'Every new email'}
+      >
+        {title}
       </MailSettingsGroupTitle>
       <MailSettingsCard>
-        <MailSettingsRow
-          label="Push for"
-          description={
-            current.mode === 'priority'
-              ? 'VIP senders, urgent mail, and mail that needs your reply or an action push at once. Everything else arrives in one summary push, at most once an hour.'
-              : 'Every new email pushes to your iPhone and Mac.'
-          }
-          control={
-            <Select
-              value={current.mode}
-              disabled={save.isPending}
-              onValueChange={(mode) => save.mutate({ mode: mode as MailPushSettings['mode'] })}
-            >
-              <SelectTrigger size="sm" className="w-40" aria-label="Which mail pushes">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent align="end">
-                <SelectItem value="all">Every new email</SelectItem>
-                <SelectItem value="priority">Priority only</SelectItem>
-              </SelectContent>
-            </Select>
-          }
-        />
+        {needsYou ? (
+          <MailSettingsRow
+            id="needs-you-push"
+            label="Push me when something needs me"
+            description="One push for each thing that needs you: a reply, an action, a time-sensitive change, or a code. Not one push for each new mail."
+            hint="At most 4 pushes an hour, codes not included. More become one push: “3 more things need you.”"
+            control={
+              <Switch
+                id="needs-you-push"
+                checked={needsYou.pushEnabled}
+                disabled={disabled}
+                onCheckedChange={needsYou.onPushEnabledChange}
+              />
+            }
+          />
+        ) : (
+          <MailSettingsRow
+            label="Push for"
+            description={
+              current.mode === 'priority'
+                ? 'VIP senders, urgent mail, and mail that needs your reply or an action push at once. Everything else arrives in one summary push, at most once an hour.'
+                : 'Every new email pushes to your iPhone and Mac.'
+            }
+            control={
+              <Select
+                value={current.mode}
+                disabled={save.isPending}
+                onValueChange={(mode) => save.mutate({ mode: mode as MailPushSettings['mode'] })}
+              >
+                <SelectTrigger size="sm" className="w-40" aria-label="Which mail pushes">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectItem value="all">Every new email</SelectItem>
+                  <SelectItem value="priority">Priority only</SelectItem>
+                </SelectContent>
+              </Select>
+            }
+          />
+        )}
         <MailSettingsRow
           id="mail-quiet-hours"
           label="Quiet hours"
-          description="No mail pushes in these hours, except from VIP senders. What arrives waits for one summary when quiet hours end."
+          description={
+            needsYou
+              ? 'Pushes wait until quiet hours end. Codes and time-sensitive changes do not wait.'
+              : 'No mail pushes in these hours, except from VIP senders. What arrives waits for one summary when quiet hours end.'
+          }
           hint={`Hours use your notification time zone (${timeZoneLabel(timezone ?? current.timezone)}).`}
           control={
             <Switch
@@ -180,7 +224,11 @@ export function MailAlertsSettings({ timezone }: { timezone?: string } = {}) {
         </MailSettingsRow>
         <MailSettingsRow
           label="VIP senders"
-          description="Mail from these addresses or domains always pushes, in quiet hours too."
+          description={
+            needsYou
+              ? 'When these addresses or domains need something from you, the push can go in quiet hours too. A VIP mail that needs nothing from you does not push.'
+              : 'Mail from these addresses or domains always pushes, in quiet hours too.'
+          }
         >
           {current.vipSenders.length ? (
             <ul className="mb-2 flex flex-wrap gap-1.5">
@@ -222,10 +270,26 @@ export function MailAlertsSettings({ timezone }: { timezone?: string } = {}) {
             </Button>
           </form>
         </MailSettingsRow>
+        {needsYou ? (
+          <MailSettingsRow
+            id="needs-you-codes"
+            label="Verification codes"
+            description="A code pushes at once and goes into AutoFill on your iPhone. The row closes when you use the code or when it expires."
+            control={
+              <Switch
+                id="needs-you-codes"
+                checked={needsYou.codesEnabled}
+                disabled={disabled}
+                onCheckedChange={needsYou.onCodesEnabledChange}
+              />
+            }
+          />
+        ) : null}
       </MailSettingsCard>
       <MailSettingsNote>
-        These settings apply to mail pushes on iPhone and Mac. You can also mark a sender as VIP from the More
-        menu of a thread.
+        {needsYou
+          ? 'There is no setting for each new mail. Everything open is on the Needs you page, pushed or not.'
+          : 'These settings apply to mail pushes on iPhone and Mac. You can also mark a sender as VIP from the More menu of a thread.'}
       </MailSettingsNote>
     </section>
   );

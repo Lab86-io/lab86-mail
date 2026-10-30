@@ -78,8 +78,13 @@ export const CENTER_NOTIFICATION_TYPES = [
 ] as const;
 
 export function visibleExecutionNotifications<T extends Pick<NotificationRow, 'type'>>(rows: T[]): T[] {
+  // `obligation` rows only carry a Needs you push; the page reads the obligations themselves.
   return rows.filter(
-    (row) => row.type !== 'mail_message' && row.type !== 'urgent_mail' && row.type !== 'work_wake',
+    (row) =>
+      row.type !== 'mail_message' &&
+      row.type !== 'urgent_mail' &&
+      row.type !== 'work_wake' &&
+      row.type !== 'obligation',
   );
 }
 

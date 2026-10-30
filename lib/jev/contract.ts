@@ -27,6 +27,13 @@ export const evidenceSchema = z.object({
   messageId: z.string().min(1),
   text: z.string().min(1).max(2400),
 });
+/**
+ * Jev's answer to the `due` question (Needs you): when the owner must act, by
+ * the evidence. `soon` is the next three days. An assessment stored before
+ * the question existed has no value; read it as `none`.
+ */
+export const dueSchema = z.enum(['today', 'soon', 'later', 'none']);
+export type JevDue = z.infer<typeof dueSchema>;
 export const obligationSchema = z.object({
   kind: z.enum(['reply', 'action', 'waiting']),
   evidence: evidenceSchema,
@@ -50,6 +57,7 @@ export const jevAssessmentSchema = z.object({
   contextComplete: z.boolean(),
   sender: z.string().optional(),
   listId: z.string().optional(),
+  due: dueSchema.optional(),
 });
 export type JevAssessment = z.infer<typeof jevAssessmentSchema>;
 export type JevObligation = z.infer<typeof obligationSchema>;
@@ -83,6 +91,10 @@ export function hasObligation(
   kind: JevObligation['kind'],
 ) {
   return Boolean(assessment?.obligations.some((item) => item.kind === kind));
+}
+/** The `due` answer of an assessment. An older assessment without it is `none`. */
+export function assessmentDue(assessment: Pick<JevAssessment, 'due'> | null | undefined): JevDue {
+  return assessment?.due ?? 'none';
 }
 export function attentionMatches(assessment: JevAssessment | null | undefined, view: AttentionView) {
   if (!assessment) return false;

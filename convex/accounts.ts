@@ -364,6 +364,8 @@ export const ACCOUNT_BULK_TABLES = [
   'mailOneTimeCodes',
   // Snooze rows would otherwise keep waking threads of a removed mailbox.
   'mailSnoozes',
+  // Needs you: the obligations of the mailbox's threads and codes.
+  'obligations',
   // Attachment files: each row takes its stored file when no row shares it.
   'mailAttachmentFiles',
   'mailAttachmentQueue',
@@ -467,6 +469,9 @@ export const PURGE_ROW_BYTES: Record<string, number> = {
   mailWebhookEvents: MiB,
   mailOneTimeCodes: 16 * KiB,
   mailSnoozes: 16 * KiB,
+  // Short fields (a 300-character title, a 400-character excerpt) and a
+  // prepared reply of at most 8,000 characters.
+  obligations: 48 * KiB,
   // Metadata, and the one row that can share the stored file.
   mailAttachmentFiles: 32 * KiB,
   mailAttachmentQueue: 16 * KiB,
@@ -769,6 +774,16 @@ export const ACCOUNT_KEYED_ROWS: readonly AccountKeyedRows[] = [
     index: 'by_user_dedupe',
     field: 'dedupeKey',
     value: (a) => `urgent-mail:${a}:`,
+    prefix: true,
+    rowBytes: PURGE_ROW_BYTES.albatrossNotifications,
+  },
+  // Needs you pushes quote the asker and the evidence line. Summary rows
+  // ("obligation-summary:") hold only a count and stay.
+  {
+    table: 'albatrossNotifications',
+    index: 'by_user_dedupe',
+    field: 'dedupeKey',
+    value: (a) => `obligation:${a}:`,
     prefix: true,
     rowBytes: PURGE_ROW_BYTES.albatrossNotifications,
   },

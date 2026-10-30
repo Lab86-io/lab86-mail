@@ -20,7 +20,8 @@ import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FilesSurface } from '@/components/files/FilesSurface';
 import { RecordMailboxesConnected } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
-import { NotificationsSurface } from '@/components/notifications/NotificationsSurface';
+import { NeedsYouArrivals } from '@/components/needs-you/NeedsYouArrivals';
+import { NeedsYouSurface } from '@/components/needs-you/NeedsYouSurface';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { briefEditionIdFromSearch, requestBriefEdition } from '@/components/report/brief-edition-request';
 import { Today } from '@/components/report/Today';
@@ -373,6 +374,7 @@ export function AppShell({
           <AIBarTrigger />
           <AlbatrossCompanion />
           <WakeNudgeHost />
+          <NeedsYouArrivals />
         </main>
       </SidebarProvider>
 
@@ -449,7 +451,7 @@ function PrimarySurface({ view, selectedWorkId }: { view: PrimaryView; selectedW
     case 'notifications':
       return (
         <SurfaceErrorBoundary surface="Notifications">
-          <NotificationsSurface onOpenActivity={() => useClientStore.getState().setPrimaryView('activity')} />
+          <NeedsYouSurface onOpenActivity={() => useClientStore.getState().setPrimaryView('activity')} />
         </SurfaceErrorBoundary>
       );
     case 'calendar':

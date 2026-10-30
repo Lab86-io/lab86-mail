@@ -265,6 +265,8 @@ async function seedMailbox(t: T, account: string) {
       });
     const mailNotice = await notice(`mail-message:${account}:m1`);
     await notice(`urgent-mail:${account}:m2`);
+    // A Needs you push quotes the asker and the evidence line.
+    await notice(`obligation:${account}:ob1:1`);
     await ctx.db.insert('notificationDeliveries', {
       userId: USER,
       notificationId: mailNotice,

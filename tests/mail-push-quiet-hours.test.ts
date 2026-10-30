@@ -373,14 +373,17 @@ describe('routes', () => {
     expect(
       (await denied(new NextRequest('http://localhost/api/cron/mail-digest', { method: 'POST' }))).status,
     ).toBe(401);
+    const obligations = mock(async () => ({ users: 0, pushes: 0, summaries: 0, waiting: 0, failed: 0 }));
     const allowed = createMailDigestPost({
       isInternalCronRequest: () => true,
       releaseDueMailDigests: release,
+      releaseHeldObligationPushes: obligations,
     });
     expect(
       (await allowed(new NextRequest('http://localhost/api/cron/mail-digest', { method: 'POST' }))).status,
     ).toBe(202);
     expect(release).toHaveBeenCalledTimes(1);
+    expect(obligations).toHaveBeenCalledTimes(1);
   });
 });
 

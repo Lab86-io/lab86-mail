@@ -272,23 +272,25 @@ export const getPreferences = query({
       .query('albatrossNotificationPreferences')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .unique();
-    return (
-      row || {
-        userId,
-        timezone: DEFAULT_TZ,
-        eveningCheckinEnabled: true,
-        eveningCheckinLocalTime: DEFAULT_CHECKIN_TIME,
-        inAppEnabled: true,
-        webPushEnabled: false,
-        nativePushEnabled: true,
-        newMailPushEnabled: true,
-        eventSuggestionPushEnabled: true,
-        morningBriefEnabled: true,
-        emailFallbackEnabled: true,
-        emailFallbackDelayMinutes: DEFAULT_EMAIL_DELAY,
-        briefLocationEnabled: false,
-      }
-    );
+    // Needs you: "Push me when something needs me" is on unless the user
+    // turned it off.
+    if (row) return { ...row, obligationPushEnabled: row.obligationPushEnabled !== false };
+    return {
+      userId,
+      obligationPushEnabled: true,
+      timezone: DEFAULT_TZ,
+      eveningCheckinEnabled: true,
+      eveningCheckinLocalTime: DEFAULT_CHECKIN_TIME,
+      inAppEnabled: true,
+      webPushEnabled: false,
+      nativePushEnabled: true,
+      newMailPushEnabled: true,
+      eventSuggestionPushEnabled: true,
+      morningBriefEnabled: true,
+      emailFallbackEnabled: true,
+      emailFallbackDelayMinutes: DEFAULT_EMAIL_DELAY,
+      briefLocationEnabled: false,
+    };
   },
 });
 
@@ -302,6 +304,8 @@ export const savePreferences = mutation({
     nativePushEnabled: v.optional(v.boolean()),
     newMailPushEnabled: v.optional(v.boolean()),
     eventSuggestionPushEnabled: v.optional(v.boolean()),
+    // Needs you: "Push me when something needs me". Left out, it keeps the stored value.
+    obligationPushEnabled: v.optional(v.boolean()),
     emailFallbackEnabled: v.boolean(),
     emailFallbackDelayMinutes: v.number(),
   },
@@ -333,6 +337,43 @@ export const savePreferences = mutation({
       return existing._id;
     }
     return ctx.db.insert('albatrossNotificationPreferences', { ...doc, createdAt: ts });
+  },
+});
+
+/**
+ * Needs you: "Push me when something needs me" alone. It writes no other
+ * field, so it cannot put old form values over a settings save that is not
+ * done yet.
+ */
+export const setObligationPush = mutation({
+  args: { enabled: v.boolean() },
+  handler: async (ctx, args) => {
+    const userId = await authenticatedUserId(ctx);
+    const existing = await ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .unique();
+    const ts = now();
+    if (existing) {
+      await ctx.db.patch(existing._id, { obligationPushEnabled: args.enabled, updatedAt: ts });
+      return existing._id;
+    }
+    return ctx.db.insert('albatrossNotificationPreferences', {
+      userId,
+      timezone: DEFAULT_TZ,
+      eveningCheckinEnabled: true,
+      eveningCheckinLocalTime: DEFAULT_CHECKIN_TIME,
+      inAppEnabled: true,
+      webPushEnabled: false,
+      nativePushEnabled: true,
+      newMailPushEnabled: true,
+      eventSuggestionPushEnabled: true,
+      emailFallbackEnabled: true,
+      emailFallbackDelayMinutes: DEFAULT_EMAIL_DELAY,
+      obligationPushEnabled: args.enabled,
+      createdAt: ts,
+      updatedAt: ts,
+    });
   },
 });
 
@@ -602,6 +643,7 @@ const notificationTypeValidator = v.union(
   v.literal('urgent_mail'),
   v.literal('brief_ready'),
   v.literal('agent_error'),
+  v.literal('obligation'),
 );
 
 export const liveCenter = query({
@@ -2218,7 +2260,11 @@ export const claimMailDigest = mutation({
 export const mailDigestTick = internalAction({
   args: {},
   handler: async (ctx) => {
-    const due = await ctx.runQuery(internal.albatrossNotifications.hasDueMailDigests, {});
+    // Held Needs you pushes (quiet hours, the hourly limit) use the same
+    // route; the app releases both kinds.
+    const due =
+      (await ctx.runQuery(internal.albatrossNotifications.hasDueMailDigests, {})) ||
+      (await ctx.runQuery(internal.obligations.hasDueHeldPushes, {}));
     if (!due) return;
     const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';

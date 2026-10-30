@@ -27,6 +27,7 @@ import { useSecureDetails } from '@/components/ai-elements/use-secure-details';
 import { TeachAreas } from '@/components/albatross/TeachAreas';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { NarrativeSettings } from '@/components/narrative/Narrative';
+import { NeedsYouAlertsSettings } from '@/components/needs-you/NeedsYouAlertsSettings';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { EXPORT_DESCRIPTION, ExportBeforeDelete, ExportDataButton } from '@/components/settings/AccountData';
 import { AccountPlanRow } from '@/components/settings/AccountPlan';
@@ -34,7 +35,6 @@ import { AiSection } from '@/components/settings/AiSection';
 import { BriefSection } from '@/components/settings/BriefSection';
 import { ContactsStatusLine } from '@/components/settings/ContactsStatusLine';
 import { JevSection } from '@/components/settings/JevSection';
-import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
 import {
   McpConnectionIdentity,
   McpConnectionTitle,
@@ -854,7 +854,7 @@ function NotificationsSection() {
           {dirty ? 'Changes apply after you save.' : 'Everything here is saved.'}
         </span>
       </div>
-      <MailAlertsSettings timezone={baseline?.timezone ?? prefs.timezone} />
+      <NeedsYouAlertsSettings timezone={baseline?.timezone ?? prefs.timezone} remote={remote} />
     </section>
   );
 }

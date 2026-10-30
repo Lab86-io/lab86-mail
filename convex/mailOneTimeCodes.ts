@@ -3,6 +3,7 @@ import { truncateText } from '../lib/shared/text';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
+import { closeCodeObligation, recordCodeObligation } from './obligations';
 
 // Codes are only useful for minutes and are dangerous for longer, so every read
 // path re-checks the expiry rather than trusting the stored status. A sweep
@@ -39,6 +40,11 @@ export const recordCode = mutation({
     confidence: v.number(),
     receivedAt: v.number(),
     expiresAt: v.number(),
+    // Needs you (S6): true when the user is in LAB86_NEEDS_YOU. The code then
+    // opens a `code` obligation in this transaction, and the caller pushes it.
+    needsYou: v.optional(v.boolean()),
+    sender: v.optional(v.string()),
+    subject: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -71,7 +77,21 @@ export const recordCode = mutation({
       createdAt: ts,
       updatedAt: ts,
     });
-    return { codeId, created: true, reason: 'created' as const };
+    if (!args.needsYou) return { codeId, created: true, reason: 'created' as const };
+    const obligationId = await recordCodeObligation(ctx, {
+      userId: args.userId,
+      accountId: args.accountId,
+      threadId: args.providerThreadId,
+      codeId,
+      messageId: args.providerMessageId,
+      from: args.sender || '',
+      subject: args.subject || '',
+      issuer: args.issuer,
+      label: args.label,
+      confidence: args.confidence,
+      expiresAt: args.expiresAt,
+    });
+    return { codeId, created: true, reason: 'created' as const, obligationId };
   },
 });
 
@@ -123,6 +143,8 @@ export const markUsed = mutation({
     const ts = now();
     if (row.status === 'active') {
       await ctx.db.patch(args.codeId, { status: 'used', usedAt: ts, updatedAt: ts });
+      // Needs you: the code row closes as `code_used`.
+      await closeCodeObligation(ctx, row, 'code_used', ts);
     }
     return {
       accountId: row.accountId,
@@ -178,6 +200,7 @@ export async function purgeExpiredCodes(ctx: MutationCtx, ts: number, limit: num
   for (const row of lapsed) {
     if (row.status !== 'active') continue;
     await ctx.db.patch(row._id, { status: 'expired', updatedAt: ts });
+    await closeCodeObligation(ctx, row, 'expired', ts);
     expired += 1;
   }
   return { expired, deleted: dead.length, more: dead.length === limit };

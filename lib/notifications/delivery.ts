@@ -37,6 +37,13 @@ export interface NotificationEnvelope {
   deepLink: string;
   /** Set when the message carried a one-time code the app should go fetch. */
   codeAvailable?: true;
+  /**
+   * APNs `apns-collapse-id` (Needs you: the obligation id). A later push with
+   * the same id replaces the earlier one on the device.
+   */
+  collapseId?: string;
+  /** The time-sensitive interruption level, as urgent mail uses. */
+  timeSensitive?: true;
 }
 
 function linkSecret() {

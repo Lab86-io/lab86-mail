@@ -108,7 +108,12 @@ describe('the Notifications section', () => {
   test('it saves the first zone and hands the saved zone to mail alerts', () => {
     expect(section).toContain('initialNotificationForm(remote, deviceTimezone)');
     expect(section).toMatch(/savePreferences\(seed\)/);
-    expect(section).toContain('<MailAlertsSettings timezone={baseline?.timezone ?? prefs.timezone} />');
+    // The Needs you chooser gets the saved zone and hands it to the mail alerts.
+    expect(section).toMatch(
+      /<NeedsYouAlertsSettings\s+timezone=\{baseline\?\.timezone \?\? prefs\.timezone\}/,
+    );
+    // The push switch saves only its own field, so it needs no copy of the form.
+    expect(section).not.toContain('saved={baseline}');
     // Mail alerts are not a second, zone-less sibling on the tab.
     expect(page).not.toMatch(/<NotificationsSection \/>\s*<MailAlertsSettings \/>/);
   });

@@ -8,6 +8,8 @@ import {
 } from '@/lib/notifications/mail-push';
 import { dispatchNativeNotification } from '@/lib/notifications/native-delivery';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
+import { needsYouFlagFor } from '@/lib/obligations/contract';
+import { deliverObligationPushes } from '@/lib/obligations/delivery';
 import { truncateText } from '@/lib/shared/text';
 import { extractOneTimeCode, type OneTimeCodeMessage } from './otp-detect';
 import { assessUrgency, parseUrgencyConfirmation, URGENCY_CONFIRMATION_SYSTEM_PROMPT } from './urgency';
@@ -83,6 +85,10 @@ export interface UrgentDetectorDependencies {
   confirm: typeof confirmUrgency;
   /** The clock for quiet hours and holds. Tests pin it. */
   clock?: () => number;
+  /** Needs you (LAB86_NEEDS_YOU). Left out: off, the old behavior. */
+  needsYou?: (userId: string) => boolean;
+  /** Sends the push of a code obligation (lib/obligations/delivery.ts). */
+  deliverObligations?: (userId: string, ids: string[]) => Promise<unknown>;
 }
 
 const defaultDependencies: UrgentDetectorDependencies = {
@@ -90,6 +96,8 @@ const defaultDependencies: UrgentDetectorDependencies = {
   mutate: convexMutation,
   dispatch: dispatchNativeNotification,
   confirm: confirmUrgency,
+  needsYou: (userId) => needsYouFlagFor(userId),
+  deliverObligations: (userId, ids) => deliverObligationPushes(userId, ids),
 };
 
 /**
@@ -143,17 +151,28 @@ export async function detectUrgentMailAndCodes(
   if (!pushEnabled && !codesEnabled && !newMailEnabled) return { codes: 0, urgent: 0, newMail: 0 };
 
   const now = (dependencies.clock ?? Date.now)();
+  // Needs you: a flag user gets a `code` obligation for each code (pushed at
+  // once with codeAvailable), and no per-mail push (no `mail_message` rows,
+  // so no new-mail digest). Urgent language without a code keeps urgent_mail.
+  const needsYou = dependencies.needsYou?.(row.userId) ?? false;
   let codes = 0;
   let held = 0;
   // Quiet hours, VIP senders, and priority-only mode decide whether a push
   // goes now or waits for the digest. The in-app row is written either way.
+  // A push that carries a code never waits (decideMailPush).
   const pushOrHold = async (
     notificationId: string,
     message: UrgentScanMessage,
     priority: boolean,
     options: { codeAvailable?: true },
   ) => {
-    const decision = decideMailPush({ now, settings: mailPush, from: message.from, priority });
+    const decision = decideMailPush({
+      now,
+      settings: mailPush,
+      from: message.from,
+      priority,
+      code: options.codeAvailable === true,
+    });
     if (decision.action === 'push') {
       await dependencies.dispatch(row.userId, notificationId, undefined, options).catch(() => undefined);
       return;
@@ -181,25 +200,35 @@ export async function detectUrgentMailAndCodes(
       const candidate = codesEnabled ? extractOneTimeCode(message) : null;
       let codeRecorded = false;
       if (candidate) {
-        const result = await dependencies.mutate<{ created: boolean }>(oneTimeCodesApi.recordCode, {
-          userId: row.userId,
-          accountId: row.accountId,
-          providerMessageId: message.providerMessageId,
-          providerThreadId: message.providerThreadId,
-          code: candidate.code,
-          label: candidate.label,
-          issuer: candidate.issuer,
-          serviceIdentifiers: candidate.serviceIdentifiers,
-          confidence: candidate.confidence,
-          receivedAt: message.receivedAt,
-          expiresAt: candidate.expiresAt,
-        });
+        const result = await dependencies.mutate<{ created: boolean; obligationId?: string }>(
+          oneTimeCodesApi.recordCode,
+          {
+            userId: row.userId,
+            accountId: row.accountId,
+            providerMessageId: message.providerMessageId,
+            providerThreadId: message.providerThreadId,
+            code: candidate.code,
+            label: candidate.label,
+            issuer: candidate.issuer,
+            serviceIdentifiers: candidate.serviceIdentifiers,
+            confidence: candidate.confidence,
+            receivedAt: message.receivedAt,
+            expiresAt: candidate.expiresAt,
+            ...(needsYou ? { needsYou: true, sender: message.from, subject: message.subject } : {}),
+          },
+        );
         if (result.created) {
           codes += 1;
           codeRecorded = true;
         } else {
           // A duplicate means this message was already handled; re-alerting on
           // a webhook redelivery would fire the same interruption twice.
+          continue;
+        }
+        if (needsYou) {
+          // The code obligation is the only alert: no urgent_mail row.
+          if (result.obligationId)
+            await dependencies.deliverObligations?.(row.userId, [result.obligationId]).catch(() => undefined);
           continue;
         }
       }
@@ -211,7 +240,7 @@ export async function detectUrgentMailAndCodes(
         : { urgent: false, reason: '', kind: 'language' as const, needsConfirmation: false };
 
       if (!assessment.urgent) {
-        if (newMailEnabled && isNotifiableArrival(message, now)) {
+        if (!needsYou && newMailEnabled && isNotifiableArrival(message, now)) {
           const queued = await dependencies.mutate<{ notificationId: string; created: boolean }>(
             notificationsApi.queueMailNotification,
             {
