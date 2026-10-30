@@ -2,7 +2,13 @@
 // preview, and the tests print the same words for the same item.
 
 import { horizonClock } from '@/lib/albatross/horizon';
-import type { ObligationCloseReason, ObligationView } from './contract';
+import {
+  OBLIGATION_SOURCE_LABELS,
+  type ObligationAction,
+  type ObligationCloseReason,
+  type ObligationSource,
+  type ObligationView,
+} from './contract';
 import { isClosedObligation } from './groups';
 
 const MINUTE_MS = 60_000;
@@ -218,16 +224,162 @@ export function spacedCode(value: string): string {
   return compact.match(new RegExp(`.{1,${size}}`, 'g'))?.join(' ') ?? value;
 }
 
+// ---- Sources (phase 2) -------------------------------------------------------
+
+/** "Mail", "Slack", "Jira", "GitHub": the source word of a row and a detail. */
+export function sourceWord(obligation: Pick<ObligationView, 'source'>): string {
+  return OBLIGATION_SOURCE_LABELS[obligation.source] ?? OBLIGATION_SOURCE_LABELS.mail;
+}
+
+/** "Slack · #release": the source word, then where in the source when the item names it. */
+export function sourceWords(obligation: Pick<ObligationView, 'source' | 'sourceLabel'>): string {
+  const label = obligation.sourceLabel?.trim();
+  return label ? `${sourceWord(obligation)} · ${label}` : sourceWord(obligation);
+}
+
+/** "Open in Slack": the quiet link that opens the item in its own app. */
+export function openInLabel(obligation: Pick<ObligationView, 'source'>): string {
+  return `Open in ${sourceWord(obligation)}`;
+}
+
+/** The item's link in its own app. Only an https link opens from the app; anything else reads as none. */
+export function safeSourceUrl(obligation: Pick<ObligationView, 'url'>): string | null {
+  const raw = obligation.url?.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+export type RowLeadKind = 'code' | 'glyph' | 'person';
+
+const GLYPH_SOURCES: readonly ObligationSource[] = ['granola', 'atlassian', 'bitbucket'];
+
+/**
+ * The round lead of a row: initials for a person, a monochrome source glyph
+ * for a meeting, an issue, a pipeline, or an event to prepare for, a key for a code.
+ */
+export function rowLeadKind(obligation: Pick<ObligationView, 'kind' | 'source'>): RowLeadKind {
+  if (obligation.kind === 'code') return 'code';
+  if (obligation.kind === 'prepare' || GLYPH_SOURCES.includes(obligation.source)) return 'glyph';
+  return 'person';
+}
+
+/** "Tomorrow 3:00 PM": when the event of an rsvp or prepare item starts. Empty without one. */
+export function eventStartLabel(
+  obligation: Pick<ObligationView, 'eventStart'>,
+  now: number,
+  timezone: string | undefined,
+): string {
+  if (obligation.eventStart === undefined) return '';
+  return dueDayLabel(obligation.eventStart, now, timezone);
+}
+
+// ---- Actions ------------------------------------------------------------------
+
+/** The first action of an item: the one Cmd+Enter runs and the row pill shows. */
+export type PrimaryAction = 'copy' | 'send_reply' | 'rsvp' | 'start_albatross' | 'done';
+
+/** A reply with a prepared draft is a mail reply. A Drive or Slack reply opens in its app. */
+export function canSendReply(obligation: Pick<ObligationView, 'kind' | 'source'>): boolean {
+  return obligation.kind === 'reply' && obligation.source === 'mail';
+}
+
+/** True when "Start in Albatross" applies: every kind but a code. */
+export function canStartAlbatross(obligation: Pick<ObligationView, 'kind'>): boolean {
+  return obligation.kind !== 'code';
+}
+
+export function primaryAction(obligation: Pick<ObligationView, 'kind' | 'source' | 'workId'>): PrimaryAction {
+  if (obligation.kind === 'code') return 'copy';
+  if (canSendReply(obligation)) return 'send_reply';
+  if (obligation.kind === 'rsvp') return 'rsvp';
+  if (obligation.workId) return 'start_albatross';
+  return 'done';
+}
+
+/** The pill a row shows on hover beside Done, or null when Done is the only one. */
+export function primaryPillLabel(
+  obligation: Pick<ObligationView, 'kind' | 'source' | 'workId'>,
+): string | null {
+  switch (primaryAction(obligation)) {
+    case 'copy':
+      return 'Copy';
+    case 'send_reply':
+      return 'Reply';
+    case 'rsvp':
+      return 'Yes';
+    case 'start_albatross':
+      return 'Start in Albatross';
+    default:
+      return null;
+  }
+}
+
+/** The title of the toast after an action: the same word as the button. */
+export function actionToastTitle(action: ObligationAction): string {
+  switch (action.action) {
+    case 'done':
+      return 'Done';
+    case 'later':
+      return 'Later';
+    case 'not_mine':
+      return 'Not mine';
+    case 'rsvp':
+      return `Answered ${action.response}`;
+    default:
+      return 'Undone';
+  }
+}
+
+/** The item as the input of a run: a person's message, or the thing itself. */
+function albatrossInput(obligation: Pick<ObligationView, 'source' | 'asker'>): string {
+  switch (obligation.source) {
+    case 'calendar':
+      return 'this event';
+    case 'granola':
+      return 'this meeting';
+    case 'atlassian':
+      return 'this issue';
+    case 'bitbucket':
+      return 'this item';
+    default:
+      return `${obligation.asker}’s message`;
+  }
+}
+
+/** What "Start in Albatross" does for this item. */
+export function albatrossNote(
+  obligation: Pick<ObligationView, 'source' | 'workId' | 'workTitle' | 'asker'>,
+): string {
+  const input = `${albatrossInput(obligation)} as its input`;
+  if (!obligation.workId) return `Starts a new Albatross with ${input}.`;
+  return `Starts a run in ${obligation.workTitle?.trim() || 'the Albatross'} with ${input}.`;
+}
+
 /** The quiet line under the action buttons. */
-export function actionNote(obligation: Pick<ObligationView, 'kind'>): string {
+export function actionNote(
+  obligation: Pick<ObligationView, 'kind' | 'source' | 'workId' | 'workTitle' | 'asker'>,
+): string {
   switch (obligation.kind) {
     case 'reply':
-      return 'Send reply answers in the thread. Done closes this without a reply. Undo for 10 seconds.';
+      return canSendReply(obligation)
+        ? 'Send reply answers in the thread. Done closes this without a reply. Undo for 10 seconds.'
+        : `Reply in ${sourceWord(obligation)}. Done closes this. Undo for 10 seconds.`;
     case 'code':
       return 'This closes itself when you use the code or when it expires.';
     case 'waiting':
       return 'This closes itself when the reply arrives. Done closes it now. Undo for 10 seconds.';
+    case 'rsvp':
+      return 'Yes, No, and Maybe answer the invitation in your calendar. Undo for 10 seconds.';
+    case 'prepare':
+      return 'Done closes this. It closes itself when the event starts. Undo for 10 seconds.';
     default:
-      return 'Done closes this. Undo for 10 seconds.';
+      return obligation.workId
+        ? `${albatrossNote(obligation)} Done closes this. Undo for 10 seconds.`
+        : 'Done closes this. Undo for 10 seconds.';
   }
 }

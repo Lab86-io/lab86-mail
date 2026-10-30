@@ -1,6 +1,7 @@
 import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
 import { BRIEF_ITEM_BUDGET, BRIEF_LANE_CAPS, type BriefLane, type BriefPlanTier } from '../mail/brief-score';
 import {
+  type BriefContentLeaf,
   type BriefDocumentV2,
   type BriefNode,
   type BriefRegion,
@@ -21,11 +22,13 @@ export const BRIEF_LETTER_MEASURE_PX = 620;
 export type BriefLetterKind = 'daily' | 'area' | 'weekly';
 
 // Region ids of each letter layout, in render order (brief round 2026-09-22
-// added yesterday, waiting, tasks, connected, week, and mail).
+// added yesterday, waiting, tasks, connected, week, and mail; Needs you phase
+// 3 added `needs-you`, which takes the place of `answer` for a flag user).
 export const DAILY_LETTER_REGION_IDS = [
   'lede',
   'yesterday',
   'since',
+  'needs-you',
   'answer',
   'today',
   'know',
@@ -40,6 +43,61 @@ export const AREA_LETTER_REGION_IDS = ['lede', 'pulse', 'ask', 'week', 'mail', '
 export const WEEKLY_LETTER_REGION_IDS = ['lede', 'done', 'open', 'waiting', 'next-week'] as const;
 export const WEEKLY_REVIEW_LETTER_TITLE = 'The Weekly Review';
 export const DAILY_LETTER_LANE_IDS: readonly BriefLane[] = ['answer', 'today', 'know'];
+
+// The Needs you lane (docs/needs-you.md, screen 6; lib/obligations/contract.ts
+// BriefNeedsYouRegion). The region is the rows alone, or a stack of the rows
+// and one plain text line about what closed by itself since the last letter.
+export const NEEDS_YOU_LANE_ID = 'needs-you';
+export const NEEDS_YOU_LANE_TITLE = 'Needs you';
+/** The lane shows this sub-label before the first row that is due today, after the Now rows. */
+export const NEEDS_YOU_DUE_TODAY_LABEL = 'Due today';
+/** The closed line starts with these words; the renderer sets them in bold. */
+export const NEEDS_YOU_CLOSED_PREFIX = 'Closed by itself since';
+/** The regions of the daily letter that hold rows: the Needs you lane, then the three budget lanes. */
+export const DAILY_LETTER_ROW_REGION_IDS: readonly string[] = [NEEDS_YOU_LANE_ID, ...DAILY_LETTER_LANE_IDS];
+
+export type BriefEntityListNode = Extract<BriefContentLeaf, { kind: 'entity_list' }>;
+
+export interface NeedsYouLaneParts {
+  /** The rows, or null when the region has none. */
+  list: BriefEntityListNode | null;
+  /** The plain line about what closed by itself, or null. */
+  closed: string | null;
+}
+
+/** The parts of the `needs-you` region tree. Any other tree reads as empty. */
+export function needsYouLaneParts(tree: BriefNode): NeedsYouLaneParts {
+  if (tree.kind === 'entity_list') return { list: tree, closed: null };
+  if (tree.kind === 'stack') {
+    const list = tree.children.find((child): child is BriefEntityListNode => child.kind === 'entity_list');
+    const text = tree.children.find((child) => child.kind === 'text');
+    const closed = text && text.kind === 'text' ? text.text.trim() : '';
+    return { list: list ?? null, closed: closed || null };
+  }
+  return { list: null, closed: null };
+}
+
+/**
+ * The bold start and the rest of the closed line. "Closed by itself since
+ * yesterday's letter: the pipeline passed." reads as the sentence "Closed by
+ * itself since yesterday's letter." and then "The pipeline passed."
+ */
+export function splitNeedsYouClosedLine(text: string): { lead: string; rest: string } {
+  const source = text.trim();
+  if (!source.startsWith(NEEDS_YOU_CLOSED_PREFIX)) return { lead: '', rest: source };
+  const colon = source.indexOf(':');
+  if (colon < 0) return { lead: source, rest: '' };
+  const lead = `${source.slice(0, colon).trim()}.`;
+  const rest = source.slice(colon + 1).trim();
+  return { lead, rest: rest ? rest[0].toUpperCase() + rest.slice(1) : '' };
+}
+
+/** The rows a daily-letter region holds, for the empty check. */
+function regionRowCount(region: BriefRegion): number {
+  if (!DAILY_LETTER_ROW_REGION_IDS.includes(region.id)) return 0;
+  if (region.id === NEEDS_YOU_LANE_ID) return needsYouLaneParts(region.tree).list?.items.length ?? 0;
+  return region.tree.kind === 'entity_list' ? region.tree.items.length : 0;
+}
 
 const DAILY_LETTER_EVENT_LIMIT = 4;
 const DAILY_LETTER_AREA_LIMIT = 3;
@@ -82,12 +140,7 @@ export function briefLetterLede(document: Pick<BriefDocumentV2, 'regions'>): str
 
 /** True when a daily letter has no lane rows at all. */
 export function briefLetterHasNoRows(document: Pick<BriefDocumentV2, 'regions'>): boolean {
-  return !document.regions.some(
-    (region) =>
-      (DAILY_LETTER_LANE_IDS as readonly string[]).includes(region.id) &&
-      region.tree.kind === 'entity_list' &&
-      region.tree.items.length > 0,
-  );
+  return !document.regions.some((region) => regionRowCount(region) > 0);
 }
 
 export const BRIEF_LETTER_EMPTY_COPY = 'Nothing needs an answer today. The week ahead is below.';

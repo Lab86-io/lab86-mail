@@ -1,5 +1,6 @@
 'use client';
 
+import { CircleCheck } from 'lucide-react';
 import { type CSSProperties, useState } from 'react';
 import { NarrativeBrief } from '@/components/narrative/NarrativeBrief';
 import { Avatar } from '@/components/ui/avatar';
@@ -10,7 +11,12 @@ import {
   type BriefLetterKind,
   briefLetterHasNoRows,
   markWeekdays,
+  NEEDS_YOU_DUE_TODAY_LABEL,
+  NEEDS_YOU_LANE_ID,
+  NEEDS_YOU_LANE_TITLE,
+  needsYouLaneParts,
   noiseFooterCopy,
+  splitNeedsYouClosedLine,
 } from '@/lib/brief/letter';
 import { briefActionTier, isBriefSteeringAction, isKnownBriefAction } from '@/lib/shared/brief-actions';
 import type {
@@ -37,6 +43,7 @@ type EntityItem = EntityListNode['items'][number];
 // Kicker copy for the row lanes when the document carries no title of its own
 // (brief round 2026-09-22: waiting, tasks, connected, and the area mail lane).
 const LANE_TITLES: Record<string, string> = {
+  [NEEDS_YOU_LANE_ID]: NEEDS_YOU_LANE_TITLE,
   answer: 'Answer',
   today: 'Today',
   know: 'Know',
@@ -106,6 +113,25 @@ export function BriefLetter({
                   </p>
                 ) : null}
               </section>
+            );
+          }
+          // The Needs you lane of a flag user (phase 3): the rows, the count
+          // sentence at the kicker's right, and the closed line at the end.
+          if (region.id === NEEDS_YOU_LANE_ID) {
+            const parts = needsYouLaneParts(region.tree);
+            if (!parts.list) return null;
+            const start = rowIndex;
+            rowIndex += parts.list.items.length;
+            return (
+              <LetterLane
+                key={region.id}
+                regionId={region.id}
+                node={parts.list}
+                context={withBriefRegion(context, region.id)}
+                firstRowIndex={start}
+                summary={region.summary}
+                foot={parts.closed}
+              />
             );
           }
           if (region.tree.kind === 'entity_list' && region.id !== 'areas') {
@@ -215,45 +241,90 @@ function LetterLane({
   node,
   context,
   firstRowIndex,
+  summary,
+  foot,
 }: {
   regionId: string;
   node: EntityListNode;
   context: BriefNodeContext;
   firstRowIndex: number;
+  /** A short count sentence at the kicker's right (the Needs you lane). */
+  summary?: string;
+  /** One plain line at the end of the lane (the Needs you lane). */
+  foot?: string | null;
 }) {
   const visible = node.items.filter((item) => !context.hiddenRefs.has(briefRefKey(item.ref)));
   if (!visible.length) return null;
   const title = node.title || LANE_TITLES[regionId] || null;
+  const needsYou = regionId === NEEDS_YOU_LANE_ID;
+  const kicker = title ? (
+    <span data-brief-letter-kicker className="text-[11px] font-semibold text-[var(--surface-accent)]">
+      {title}
+    </span>
+  ) : null;
+  const closed = needsYou && foot ? splitNeedsYouClosedLine(foot) : null;
   return (
     <section
       data-brief-region={regionId}
       className={cn(
         'brief-letter-lane surface-card mb-8 rounded-card p-1',
-        regionId === 'answer'
+        regionId === 'answer' || needsYou
           ? 'surface-accent'
           : regionId === 'today'
             ? 'surface-accent-3'
             : 'surface-accent-2',
       )}
     >
-      {title ? (
-        <span
-          data-brief-letter-kicker
-          className="block border-b border-[var(--surface-border)] px-3 py-2 text-[11px] font-semibold text-[var(--surface-accent)]"
-        >
-          {title}
-        </span>
+      {kicker && needsYou && summary ? (
+        <div className="flex items-baseline justify-between gap-3 border-b border-[var(--surface-border)] px-3 py-2">
+          {kicker}
+          <span
+            data-brief-letter-summary
+            className="truncate text-[11.5px] tabular-nums text-[var(--color-text-muted)]"
+          >
+            {summary}
+          </span>
+        </div>
+      ) : kicker ? (
+        <div className="border-b border-[var(--surface-border)] px-3 py-2">{kicker}</div>
       ) : null}
       <div className="brief-letter-items">
-        {visible.map((item, index) => (
-          <LetterRow
-            key={briefRefKey(item.ref)}
-            item={item}
-            context={context}
-            delayMs={rowDelay(firstRowIndex + index)}
-          />
-        ))}
+        {visible.map((item, index) => {
+          const row = (
+            <LetterRow
+              key={briefRefKey(item.ref)}
+              item={item}
+              context={context}
+              delayMs={rowDelay(firstRowIndex + index)}
+            />
+          );
+          // The Now rows come first; "Due today" separates the rest.
+          const previous = index > 0 ? visible[index - 1] : null;
+          if (needsYou && item.framing.lane === 'today' && previous?.framing.lane === 'now') {
+            return (
+              <div key={briefRefKey(item.ref)}>
+                <span
+                  data-brief-letter-sublabel
+                  className="block px-3 pb-0.5 pt-3 text-[11px] font-semibold text-[var(--color-accent-3)]"
+                >
+                  {NEEDS_YOU_DUE_TODAY_LABEL}
+                </span>
+                {row}
+              </div>
+            );
+          }
+          return row;
+        })}
       </div>
+      {closed ? (
+        <p
+          data-brief-letter-foot
+          className="border-t border-[var(--surface-border)] px-3 py-2.5 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]"
+        >
+          {closed.lead ? <b className="font-medium text-[var(--color-success)]">{closed.lead} </b> : null}
+          {closed.rest}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -279,6 +350,8 @@ function LetterRow({
   const isEvent = kind === 'event';
   const isTask = kind === 'task' || kind === 'card';
   const isTool = kind === 'mcp';
+  // An Albatross of the user's: a question in the Needs you lane.
+  const isWork = kind === 'work';
   // A logged operation from "What Albatross did" (FEATURES item 7).
   const isOperation = kind === 'derived' && item.ref.id.startsWith('operation:');
   const subject = entity?.title || item.ref.label || '(no subject)';
@@ -286,7 +359,7 @@ function LetterRow({
     ? 'Calendar'
     : isTask
       ? 'Task'
-      : isOperation
+      : isOperation || isWork
         ? item.framing.sender || 'Albatross'
         : item.framing.sender ||
           (entity?.subtitle ? shortFrom(entity.subtitle) : '') ||
@@ -328,7 +401,15 @@ function LetterRow({
       )}
       style={{ animationDelay: `${delayMs}ms` }}
     >
-      {isEvent || isTask || isOperation ? (
+      {isWork ? (
+        <span
+          aria-hidden
+          data-brief-letter-work-mark
+          className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+        >
+          <CircleCheck className="size-[15px]" />
+        </span>
+      ) : isEvent || isTask || isOperation ? (
         <span
           aria-hidden
           className={cn(

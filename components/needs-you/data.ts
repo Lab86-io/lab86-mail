@@ -7,8 +7,10 @@ import type {
   NeedsYouSnapshot,
   ObligationAction,
   ObligationActionResponse,
+  ObligationAlbatrossResponse,
   ObligationDraftResponse,
   ObligationReplyResponse,
+  ObligationView,
 } from '@/lib/obligations/contract';
 
 /*
@@ -30,6 +32,17 @@ export const setObligationPush = makeFunctionReference<'mutation', { enabled: bo
 export function useNeedsYouSnapshot(): NeedsYouSnapshot | undefined {
   const { isAuthenticated } = useConvexAuth();
   return useQuery(needsYouQuery, isAuthenticated ? {} : 'skip');
+}
+
+/** The open items of one Albatross and the items closed today (phase 3, S2). */
+export const workObligationsQuery = makeFunctionReference<'query', { workId: string }, ObligationView[]>(
+  'obligationViews:forWork',
+);
+
+/** The items of one Work thread. Undefined while they load, or before sign-in. */
+export function useWorkObligations(workId: string): ObligationView[] | undefined {
+  const { isAuthenticated } = useConvexAuth();
+  return useQuery(workObligationsQuery, isAuthenticated ? { workId } : 'skip');
 }
 
 type Fetch = typeof fetch;
@@ -68,6 +81,17 @@ export function postObligationReply(
   fetcher: Fetch = fetch,
 ): Promise<ObligationReplyResponse> {
   return post(`${obligationPath(id)}/reply`, { body }, 'Could not send the reply.', fetcher);
+}
+
+/**
+ * "Start in Albatross": with a `workId`, the item goes into that thread and a
+ * run starts; without one, a new Albatross starts from the item.
+ */
+export function postObligationAlbatross(
+  id: string,
+  fetcher: Fetch = fetch,
+): Promise<ObligationAlbatrossResponse> {
+  return post(`${obligationPath(id)}/albatross`, {}, 'Could not start this in Albatross.', fetcher);
 }
 
 /* A one-shot request to open one item on the page. The arrival toast sets

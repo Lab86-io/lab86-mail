@@ -3,16 +3,28 @@ import type { ObligationView } from '../lib/obligations/contract';
 import { NEEDS_YOU_FIXTURE_NOW, NEEDS_YOU_FIXTURE_TIMEZONE } from '../lib/obligations/fixtures';
 import {
   actionNote,
+  actionToastTitle,
   agoLabel,
+  albatrossNote,
+  canSendReply,
+  canStartAlbatross,
   closeReasonLabel,
   dueDayLabel,
   dueLabel,
   dueSentence,
+  eventStartLabel,
   expiryFraction,
   expiryLabel,
   kindLabel,
   obligationSentence,
+  openInLabel,
+  primaryAction,
+  primaryPillLabel,
+  rowLeadKind,
+  safeSourceUrl,
   safeTimeZone,
+  sourceWord,
+  sourceWords,
   spacedCode,
   whenLabel,
 } from '../lib/obligations/labels';
@@ -61,6 +73,8 @@ describe('close reasons and kinds', () => {
     expect(closeReasonLabel('not_mine')).toBe('Not mine');
     expect(closeReasonLabel('code_used')).toBe('Code used');
     expect(closeReasonLabel('expired')).toBe('Expired');
+    expect(closeReasonLabel('event_passed')).toBe('Event started');
+    expect(closeReasonLabel('aged_out')).toBe('Closed by itself');
     expect(closeReasonLabel(undefined)).toBe('Closed');
   });
 
@@ -71,6 +85,8 @@ describe('close reasons and kinds', () => {
     expect(kindLabel({ kind: 'change', pushLevel: 'normal' })).toBe('Change');
     expect(kindLabel({ kind: 'change', pushLevel: 'time_sensitive' })).toBe('Time-sensitive change');
     expect(kindLabel({ kind: 'code', pushLevel: 'time_sensitive' })).toBe('Code');
+    expect(kindLabel({ kind: 'rsvp', pushLevel: 'none' })).toBe('Invitation');
+    expect(kindLabel({ kind: 'prepare', pushLevel: 'normal' })).toBe('Prepare');
   });
 });
 
@@ -214,10 +230,121 @@ describe('due words', () => {
 
 describe('the quiet line under the actions', () => {
   test('each kind says what Done does', () => {
-    expect(actionNote({ kind: 'reply' })).toContain('Done closes this without a reply');
-    expect(actionNote({ kind: 'code' })).toContain('closes itself when you use the code');
-    expect(actionNote({ kind: 'waiting' })).toContain('when the reply arrives');
-    expect(actionNote({ kind: 'action' })).toBe('Done closes this. Undo for 10 seconds.');
-    expect(actionNote({ kind: 'change' })).toBe('Done closes this. Undo for 10 seconds.');
+    expect(actionNote(item({ kind: 'reply' }))).toContain('Done closes this without a reply');
+    expect(actionNote(item({ kind: 'reply', source: 'drive' }))).toBe(
+      'Reply in Drive. Done closes this. Undo for 10 seconds.',
+    );
+    expect(actionNote(item({ kind: 'code' }))).toContain('closes itself when you use the code');
+    expect(actionNote(item({ kind: 'waiting' }))).toContain('when the reply arrives');
+    expect(actionNote(item({ kind: 'action' }))).toBe('Done closes this. Undo for 10 seconds.');
+    expect(actionNote(item({ kind: 'change' }))).toBe('Done closes this. Undo for 10 seconds.');
+    expect(actionNote(item({ kind: 'rsvp' }))).toContain('Yes, No, and Maybe answer the invitation');
+    expect(actionNote(item({ kind: 'prepare' }))).toContain('closes itself when the event starts');
+    expect(
+      actionNote(item({ kind: 'action', workId: 'w', workTitle: 'Q3 review deck', asker: 'Priya Raman' })),
+    ).toBe(
+      'Starts a run in Q3 review deck with Priya Raman’s message as its input. Done closes this. Undo for 10 seconds.',
+    );
+  });
+
+  test('"Start in Albatross" names the Albatross, or says a new one starts', () => {
+    expect(albatrossNote(item({ asker: 'Priya Raman' }))).toBe(
+      'Starts a new Albatross with Priya Raman’s message as its input.',
+    );
+    expect(albatrossNote(item({ asker: 'Priya Raman', workId: 'w', workTitle: ' Q3 review deck ' }))).toBe(
+      'Starts a run in Q3 review deck with Priya Raman’s message as its input.',
+    );
+    expect(albatrossNote(item({ asker: 'Priya Raman', workId: 'w' }))).toBe(
+      'Starts a run in the Albatross with Priya Raman’s message as its input.',
+    );
+    // An event, a meeting, or an issue is not a message.
+    expect(albatrossNote(item({ source: 'calendar', workId: 'w', workTitle: 'Deck' }))).toBe(
+      'Starts a run in Deck with this event as its input.',
+    );
+    expect(albatrossNote(item({ source: 'granola' }))).toBe(
+      'Starts a new Albatross with this meeting as its input.',
+    );
+    expect(albatrossNote(item({ source: 'atlassian' }))).toBe(
+      'Starts a new Albatross with this issue as its input.',
+    );
+    expect(albatrossNote(item({ source: 'bitbucket' }))).toBe(
+      'Starts a new Albatross with this item as its input.',
+    );
+    expect(albatrossNote(item({ source: 'slack', asker: 'Priya Raman' }))).toBe(
+      'Starts a new Albatross with Priya Raman’s message as its input.',
+    );
+  });
+
+  test('the toast title is the word on the button', () => {
+    expect(actionToastTitle({ action: 'done' })).toBe('Done');
+    expect(actionToastTitle({ action: 'later', until: NOW })).toBe('Later');
+    expect(actionToastTitle({ action: 'not_mine' })).toBe('Not mine');
+    expect(actionToastTitle({ action: 'rsvp', response: 'maybe' })).toBe('Answered maybe');
+    expect(actionToastTitle({ action: 'undo' })).toBe('Undone');
+  });
+});
+
+describe('sources (phase 2)', () => {
+  test('the source word, the place in the source, and the open link', () => {
+    expect(sourceWord(item())).toBe('Mail');
+    expect(sourceWord(item({ source: 'atlassian' }))).toBe('Jira');
+    expect(sourceWords(item({ source: 'slack', sourceLabel: '#release' }))).toBe('Slack · #release');
+    expect(sourceWords(item({ source: 'github', sourceLabel: '  ' }))).toBe('GitHub');
+    expect(openInLabel(item({ source: 'bitbucket' }))).toBe('Open in Bitbucket');
+  });
+
+  test('only an https link opens from the app', () => {
+    expect(safeSourceUrl(item({ url: 'https://northwind.example.com/x?y=1' }))).toBe(
+      'https://northwind.example.com/x?y=1',
+    );
+    expect(safeSourceUrl(item({ url: 'http://northwind.example.com/x' }))).toBeNull();
+    expect(safeSourceUrl(item({ url: 'javascript:alert(1)' }))).toBeNull();
+    expect(safeSourceUrl(item({ url: 'not a url' }))).toBeNull();
+    expect(safeSourceUrl(item({ url: '  ' }))).toBeNull();
+    expect(safeSourceUrl(item())).toBeNull();
+  });
+
+  test('the lead: a key for a code, a glyph for a meeting, an issue, a pipeline, or an event, initials otherwise', () => {
+    expect(rowLeadKind(item({ kind: 'code' }))).toBe('code');
+    expect(rowLeadKind(item({ source: 'granola' }))).toBe('glyph');
+    expect(rowLeadKind(item({ source: 'atlassian' }))).toBe('glyph');
+    expect(rowLeadKind(item({ source: 'bitbucket' }))).toBe('glyph');
+    expect(rowLeadKind(item({ kind: 'prepare', source: 'calendar' }))).toBe('glyph');
+    expect(rowLeadKind(item({ kind: 'rsvp', source: 'calendar' }))).toBe('person');
+    expect(rowLeadKind(item({ source: 'slack' }))).toBe('person');
+    expect(rowLeadKind(item({ source: 'github' }))).toBe('person');
+    expect(rowLeadKind(item())).toBe('person');
+  });
+
+  test('when the event starts', () => {
+    expect(eventStartLabel(item({ eventStart: START_OF_TODAY + DAY + 15 * HOUR }), NOW, TZ)).toBe(
+      'Tomorrow 3:00 PM',
+    );
+    expect(eventStartLabel(item(), NOW, TZ)).toBe('');
+  });
+});
+
+describe('the first action', () => {
+  test('by kind, source, and Albatross', () => {
+    expect(primaryAction(item({ kind: 'code' }))).toBe('copy');
+    expect(primaryAction(item({ kind: 'reply' }))).toBe('send_reply');
+    expect(primaryAction(item({ kind: 'reply', source: 'drive' }))).toBe('done');
+    expect(primaryAction(item({ kind: 'reply', source: 'drive', workId: 'w' }))).toBe('start_albatross');
+    expect(primaryAction(item({ kind: 'rsvp', source: 'calendar', workId: 'w' }))).toBe('rsvp');
+    expect(primaryAction(item({ kind: 'action', workId: 'w' }))).toBe('start_albatross');
+    expect(primaryAction(item({ kind: 'action' }))).toBe('done');
+    expect(primaryAction(item({ kind: 'prepare', source: 'calendar' }))).toBe('done');
+    expect(canSendReply(item({ kind: 'reply' }))).toBe(true);
+    expect(canSendReply(item({ kind: 'reply', source: 'slack' }))).toBe(false);
+    expect(canStartAlbatross(item({ kind: 'code' }))).toBe(false);
+    expect(canStartAlbatross(item({ kind: 'waiting' }))).toBe(true);
+  });
+
+  test('the hover pill beside Done', () => {
+    expect(primaryPillLabel(item({ kind: 'code' }))).toBe('Copy');
+    expect(primaryPillLabel(item({ kind: 'reply' }))).toBe('Reply');
+    expect(primaryPillLabel(item({ kind: 'rsvp', source: 'calendar' }))).toBe('Yes');
+    expect(primaryPillLabel(item({ kind: 'action', workId: 'w' }))).toBe('Start in Albatross');
+    expect(primaryPillLabel(item({ kind: 'action' }))).toBeNull();
   });
 });

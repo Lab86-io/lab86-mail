@@ -4,6 +4,7 @@ import { notFound, useSearchParams } from 'next/navigation';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
+import { needsYouLetterFixture } from '@/lib/obligations/fixtures';
 import {
   areaPulseDocumentFixture,
   letterBriefDocumentFixture,
@@ -15,6 +16,7 @@ import {
  * signed-in account that owns a brief. Query switches:
  *   ?layout=letter (default)  the budget letter: lede, lanes, week ahead, areas
  *   ?layout=area              the area pulse letter
+ *   ?layout=needs-you         the daily letter of a Needs you user: the Needs you lane in the place of Answer
  *   ?layout=grid              the older editorial grid, for old editions
  *   ?embedded=1               the shape Today renders: no masthead, parent scroll
  *   ?noise=42                 the footer count of the letter
@@ -38,7 +40,9 @@ function BriefPreviewInner() {
       ? richBriefDocumentFixture
       : layout === 'area'
         ? areaPulseDocumentFixture
-        : letterBriefDocumentFixture;
+        : layout === 'needs-you'
+          ? needsYouLetterFixture()
+          : letterBriefDocumentFixture;
   return (
     <QueryProvider clerkEnabled={false}>
       {embedded ? (

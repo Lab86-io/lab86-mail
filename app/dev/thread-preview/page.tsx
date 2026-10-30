@@ -45,6 +45,8 @@ import {
   threadSessionFixture,
 } from '@/lib/albatross/thread-fixtures';
 import { createFixtureTransport } from '@/lib/chat/preview-fixture';
+import type { ObligationAction, ObligationView } from '@/lib/obligations/contract';
+import { workObligationsFixture } from '@/lib/obligations/fixtures';
 
 /* Dev-only harness: the Albatross thread in every state, from fixtures, so each
  * one can be seen and screenshotted without a backend. Query switches:
@@ -55,6 +57,7 @@ import { createFixtureTransport } from '@/lib/chat/preview-fixture';
  *          | goalStopped | goalFailed | goalDone | goalDetails | goalEarlierSteps
  *          | goalDocument   (docs/albatross-goal-runs.md; &tab=draft | invoice | hours | w9;
  *                           &allow=1 makes the compose route ask for a send permission)
+ *          | needsYou       (docs/needs-you.md, screen 5: the Needs you items of the thread)
  *   &region=page | details | document | none   (overrides the state's own region)
  * Not linked from anywhere; 404s outside development. */
 export default function ThreadPreviewPage() {
@@ -121,7 +124,8 @@ type StateName =
   | 'goalDone'
   | 'goalDetails'
   | 'goalEarlierSteps'
-  | 'goalDocument';
+  | 'goalDocument'
+  | 'needsYou';
 
 /** The `&tab=` name of a tab key, so the harness keeps the active tab in the URL vocabulary. */
 function tabNameOf(key: string): string | null {
@@ -406,13 +410,54 @@ function buildModel(
       threadRuns = [];
       messages = [];
       break;
+    // Needs you (phase 3): the Q3 review deck with its items from Slack, the calendar, and a closed mail.
+    case 'needsYou': {
+      detail = threadDetailFixture(NOW);
+      detail.work.title = 'Q3 review deck';
+      detail.plan = detail.plan
+        ? {
+            ...detail.plan,
+            summary: 'A Q3 review deck with the final numbers, ready for Friday’s 3 PM review.',
+          }
+        : detail.plan;
+      const titles = ['Outline the deck', 'Collect the numbers', 'Build the slides', 'Send to Priya'];
+      detail.execution.guideSteps = detail.execution.guideSteps.map((step, index) => ({
+        ...step,
+        title: titles[index] ?? step.title,
+        done: index === 0,
+      }));
+      threadRuns = [];
+      messages = [
+        {
+          id: 'm_user_deck',
+          role: 'user',
+          metadata: { createdAt: NOW - 50 * 60_000 },
+          parts: [{ type: 'text', text: 'Use last quarter’s outline, but drop the hiring slide.' }],
+        } as (typeof messages)[number],
+        {
+          id: 'm_assistant_deck',
+          role: 'assistant',
+          metadata: { createdAt: NOW - 49 * 60_000 },
+          parts: [
+            {
+              type: 'text',
+              text: 'Done. The outline has six sections. The revenue section waits for the numbers from finance, so step 2 is yours.',
+              state: 'done',
+            },
+          ],
+        } as unknown as (typeof messages)[number],
+      ];
+      break;
+    }
     default:
       break;
   }
   if (regionOverride !== undefined) region = regionOverride;
   const goalState = state.startsWith('goal');
   const title =
-    state === 'checkResult' || state === 'document' || goalState ? (detail.work.title ?? '') : common.title;
+    state === 'checkResult' || state === 'document' || state === 'needsYou' || goalState
+      ? (detail.work.title ?? '')
+      : common.title;
   // Document mode with the package: one tab per item, the `&tab=` one or the next.target one active.
   const packageRun =
     goalState && region === 'document' ? threadRuns.find((run) => run.items.length) : undefined;
@@ -524,6 +569,31 @@ function ThreadPreview() {
   const [region, setRegion] = useState<ThreadRegion | undefined>(undefined);
   const [tab, setTab] = useState<string | null>(params.get('tab'));
   const [sentDrafts, setSentDrafts] = useState<Record<string, string>>({});
+  // The Needs you items of the thread: Done, Later, Not mine, and Yes/No/Maybe change them in place.
+  const [obligations, setObligations] = useState<ObligationView[]>(() =>
+    workObligationsFixture(NOW, TIME_ZONE),
+  );
+  const onObligationAction = (obligation: ObligationView, action: ObligationAction) => {
+    const at = Date.now();
+    const next: ObligationView =
+      action.action === 'later'
+        ? { ...obligation, state: 'snoozed', snoozedUntil: action.until, updatedAt: at }
+        : action.action === 'undo'
+          ? { ...obligation, state: 'open', closedAt: undefined, closeReason: undefined, updatedAt: at }
+          : {
+              ...obligation,
+              state: action.action === 'not_mine' ? 'dismissed' : 'done',
+              closedAt: NOW,
+              closeReason:
+                action.action === 'not_mine'
+                  ? 'not_mine'
+                  : action.action === 'rsvp'
+                    ? 'event_passed'
+                    : 'user_done',
+              updatedAt: at,
+            };
+    setObligations((list) => list.map((item) => (item.id === next.id ? next : item)));
+  };
   const built = useMemo(
     () => buildModel(state, wide, region ?? regionParam, { tab, sentDrafts }),
     [state, wide, region, regionParam, tab, sentDrafts],
@@ -600,8 +670,13 @@ function ThreadPreview() {
       >
         <WorkThreadView
           key={`${state}:${built.region ?? 'none'}`}
-          model={built.model}
-          handlers={{ ...handlers, chat: { transport, preview: true, initialMessages: built.messages } }}
+          model={state === 'needsYou' ? { ...built.model, obligations } : built.model}
+          handlers={{
+            ...handlers,
+            onObligationAction,
+            onObligationHandle: noop,
+            chat: { transport, preview: true, initialMessages: built.messages },
+          }}
         />
       </main>
     </QueryProvider>

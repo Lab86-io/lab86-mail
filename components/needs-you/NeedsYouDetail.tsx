@@ -3,6 +3,7 @@
 import { ArrowUpRight, Check } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { NotificationItem } from '@/components/notifications/model';
+import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -14,12 +15,21 @@ import type { ObligationView } from '@/lib/obligations/contract';
 import { isClosedObligation, type LaterOption } from '@/lib/obligations/groups';
 import {
   actionNote,
+  albatrossNote,
+  canSendReply,
+  canStartAlbatross,
   closeReasonLabel,
   dueSentence,
+  eventStartLabel,
   expiryFraction,
   expiryLabel,
   kindLabel,
   obligationSentence,
+  openInLabel,
+  primaryAction,
+  rowLeadKind,
+  safeSourceUrl,
+  sourceWord,
   spacedCode,
   whenLabel,
 } from '@/lib/obligations/labels';
@@ -114,15 +124,37 @@ function Card({
   );
 }
 
+const QUIET_LINK_CLASS =
+  'text-[13px] text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]';
+
 function QuietLink({ children, onClick }: { children: ReactNode; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="text-[13px] text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
-    >
+    <button type="button" onClick={onClick} className={QUIET_LINK_CLASS}>
       {children}
     </button>
+  );
+}
+
+/** "Open in Slack": a plain link to the item in its own app. Only an https link renders. */
+export function OpenInSource({
+  obligation,
+  className,
+}: {
+  obligation: Pick<ObligationView, 'source' | 'url'>;
+  className?: string;
+}) {
+  const url = safeSourceUrl(obligation);
+  if (!url) return null;
+  return (
+    <a
+      data-needs-you-open-in={obligation.source}
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn(QUIET_LINK_CLASS, className)}
+    >
+      {openInLabel(obligation)}
+    </a>
   );
 }
 
@@ -142,12 +174,15 @@ function ErrorLine({ error, busy, onRetry }: { error: string | null; busy: boole
 
 function Actions({
   children,
+  end,
   note,
   error,
   busy,
   onRetry,
 }: {
   children: ReactNode;
+  /** A quiet link at the right end of the button row. */
+  end?: ReactNode;
   note: string;
   error: string | null;
   busy: boolean;
@@ -156,8 +191,32 @@ function Actions({
   return (
     <div className="mt-auto flex flex-col gap-2.5 border-t border-[var(--color-border)] pt-5">
       <ErrorLine error={error} busy={busy} onRetry={onRetry} />
-      <div className="flex flex-wrap items-center gap-2">{children}</div>
+      <div className="flex flex-wrap items-center gap-2">
+        {children}
+        {end ? <span className="ml-auto pl-2">{end}</span> : null}
+      </div>
       <p className="text-[12px] text-[var(--color-text-faint)]">{note}</p>
+    </div>
+  );
+}
+
+/** The Albatross an item belongs to: a status dot, the title, and the way into its thread. */
+function WorkCard({ obligation, onOpenWork }: { obligation: ObligationView; onOpenWork: () => void }) {
+  return (
+    <div
+      data-needs-you-work={obligation.workId}
+      className="corner-smooth mt-4 flex items-center gap-3 rounded-ui border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 py-3 shadow-[var(--shadow-soft)]"
+    >
+      <span aria-hidden className="size-2 shrink-0 rounded-full bg-[var(--color-accent)]" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-display text-[15px] font-medium leading-snug text-[var(--color-text)]">
+          {obligation.workTitle?.trim() || 'Albatross'}
+        </span>
+        <span className="block text-[12px] text-[var(--color-text-muted)]">
+          This item belongs to this Albatross.
+        </span>
+      </span>
+      <QuietLink onClick={onOpenWork}>Open thread</QuietLink>
     </div>
   );
 }
@@ -180,6 +239,9 @@ export interface ObligationDetailProps {
   onDraftChange: (body: string) => void;
   onCopy: () => void;
   onOpenSource: () => void;
+  onRsvp: (response: 'yes' | 'no' | 'maybe') => void;
+  onStartAlbatross: () => void;
+  onOpenWork: (workId: string) => void;
   onRetry?: () => void;
 }
 
@@ -201,23 +263,30 @@ export function ObligationDetail({
   onDraftChange,
   onCopy,
   onOpenSource,
+  onRsvp,
+  onStartAlbatross,
+  onOpenWork,
   onRetry,
 }: ObligationDetailProps) {
   const closed = isClosedObligation(obligation);
   const hot = obligation.pushLevel === 'time_sensitive' || obligation.kind === 'code';
   const due = dueSentence(obligation, now, timezone);
+  const mail = obligation.source === 'mail';
+  const calendar = obligation.source === 'calendar';
+  const label = obligation.sourceLabel?.trim();
   const parts: SourcePart[] = [
-    { key: 'source', node: 'Mail' },
+    { key: 'source', node: sourceWord(obligation) },
     { key: 'asker', node: obligation.asker },
-    {
-      key: 'kind',
-      node: (
-        <span className={hot ? 'text-[var(--color-accent-2)]' : 'text-[var(--color-accent)]'}>
-          {kindLabel(obligation)}
-        </span>
-      ),
-    },
   ];
+  if (label && label !== obligation.asker) parts.push({ key: 'label', node: label });
+  parts.push({
+    key: 'kind',
+    node: (
+      <span className={hot ? 'text-[var(--color-accent-2)]' : 'text-[var(--color-accent)]'}>
+        {kindLabel(obligation)}
+      </span>
+    ),
+  });
   if (due) parts.push({ key: 'due', node: <span className="text-[var(--color-accent-3)]">{due}</span> });
   if (closed) {
     parts.push({
@@ -225,16 +294,47 @@ export function ObligationDetail({
       node: <span className="text-[var(--color-success)]">{closeReasonLabel(obligation.closeReason)}</span>,
     });
   }
-  const openSource = <QuietLink onClick={onOpenSource}>Open in Mail</QuietLink>;
-  const sourceCard = (
-    <Card kicker="From the mail" sub={obligation.askerAddress} end={openSource}>
+  const openSource = mail ? (
+    <QuietLink onClick={onOpenSource}>Open in Mail</QuietLink>
+  ) : (
+    <OpenInSource obligation={obligation} />
+  );
+  const sourceCard = calendar ? (
+    <Card kicker="The event" sub={eventStartLabel(obligation, now, timezone)} end={openSource}>
+      <p className="font-display text-[15px] font-medium leading-snug">{label || obligation.title}</p>
+      {obligation.excerpt ? (
+        <p className="mt-1 whitespace-pre-wrap break-words text-[13px] text-[var(--color-text-muted)]">
+          {obligation.excerpt}
+        </p>
+      ) : null}
+    </Card>
+  ) : (
+    <Card
+      kicker={mail ? 'From the mail' : `From ${sourceWord(obligation)}`}
+      sub={mail ? obligation.askerAddress : label}
+      end={openSource}
+    >
+      {!mail && rowLeadKind(obligation) === 'person' ? (
+        <div className="mb-1.5 flex items-center gap-2">
+          <Avatar name={obligation.asker} size={20} />
+          <span className="font-display text-[14px] font-medium">{obligation.asker}</span>
+          <span className="text-[11.5px] tabular-nums text-[var(--color-text-faint)]">
+            {whenLabel(obligation.createdAt, now, timezone)}
+          </span>
+        </div>
+      ) : null}
       {obligation.excerpt ? (
         <p className="whitespace-pre-wrap break-words">{obligation.excerpt}</p>
       ) : (
-        <p className="text-[var(--color-text-muted)]">The mail is in the thread.</p>
+        <p className="text-[var(--color-text-muted)]">
+          {mail ? 'The mail is in the thread.' : `The message is in ${sourceWord(obligation)}.`}
+        </p>
       )}
     </Card>
   );
+  const workCard = obligation.workId ? (
+    <WorkCard obligation={obligation} onOpenWork={() => onOpenWork(obligation.workId as string)} />
+  ) : null;
   const later = (
     <DropdownMenu open={laterOpen} onOpenChange={onLaterOpenChange}>
       <DropdownMenuTrigger asChild>
@@ -261,6 +361,14 @@ export function ObligationDetail({
       Done
     </Button>
   );
+  const start = (primary: boolean) =>
+    primary ? (
+      <Button className="h-11" disabled={busy} onClick={onStartAlbatross}>
+        Start in Albatross
+      </Button>
+    ) : (
+      <QuietLink onClick={onStartAlbatross}>Start in Albatross</QuietLink>
+    );
 
   if (obligation.kind === 'code') {
     const expiresAt = obligation.code?.expiresAt;
@@ -315,13 +423,19 @@ export function ObligationDetail({
     );
   }
 
+  const primary = primaryAction(obligation);
+  const note =
+    primary === 'start_albatross'
+      ? `${albatrossNote(obligation)} Done closes this. Undo for 10 seconds.`
+      : actionNote(obligation);
   return (
     <>
       <SourceLine parts={parts} when={whenLabel(obligation.createdAt, now, timezone)} />
       <Title>{obligationSentence(obligation)}</Title>
       {obligation.why ? <Why>{obligation.why}</Why> : null}
       {sourceCard}
-      {obligation.kind === 'reply' && !closed ? (
+      {workCard}
+      {canSendReply(obligation) && !closed ? (
         <Card
           kicker="Draft reply"
           sub={`To ${obligation.asker}`}
@@ -358,9 +472,35 @@ export function ObligationDetail({
       ) : null}
       {closed ? (
         <ClosedLine obligation={obligation} now={now} timezone={timezone} />
+      ) : primary === 'rsvp' ? (
+        <Actions
+          note={note}
+          error={error}
+          busy={busy}
+          onRetry={onRetry}
+          end={canStartAlbatross(obligation) ? start(false) : null}
+        >
+          <Button className="h-11 min-w-20" disabled={busy} onClick={() => onRsvp('yes')}>
+            Yes
+          </Button>
+          <Button variant="ghost" className="h-11" disabled={busy} onClick={() => onRsvp('no')}>
+            No
+          </Button>
+          <Button variant="ghost" className="h-11" disabled={busy} onClick={() => onRsvp('maybe')}>
+            Maybe
+          </Button>
+          {later}
+          {notMine}
+        </Actions>
       ) : (
-        <Actions note={actionNote(obligation)} error={error} busy={busy} onRetry={onRetry}>
-          {obligation.kind === 'reply' ? (
+        <Actions
+          note={note}
+          error={error}
+          busy={busy}
+          onRetry={onRetry}
+          end={canStartAlbatross(obligation) && primary !== 'start_albatross' ? start(false) : null}
+        >
+          {primary === 'send_reply' ? (
             <>
               <Button
                 className="h-11"
@@ -369,6 +509,11 @@ export function ObligationDetail({
               >
                 Send reply
               </Button>
+              {done(false)}
+            </>
+          ) : primary === 'start_albatross' ? (
+            <>
+              {start(true)}
               {done(false)}
             </>
           ) : (
