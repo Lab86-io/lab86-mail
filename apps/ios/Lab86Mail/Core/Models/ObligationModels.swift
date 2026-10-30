@@ -105,10 +105,14 @@ enum ObligationSource: Hashable, Sendable {
         case .github: "GitHub"
         case .bitbucket: "Bitbucket"
         case .calendar: "Calendar"
-        case .other(let value):
-            let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return clean.isEmpty ? "Source" : clean.prefix(1).uppercased() + clean.dropFirst()
+        case .other(let value): Self.capitalizedWord(value)
         }
+    }
+
+    /// An unknown source word with a capital, or "Source" when it is empty.
+    private static func capitalizedWord(_ value: String) -> String {
+        let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return clean.isEmpty ? "Source" : clean.prefix(1).uppercased() + clean.dropFirst()
     }
 }
 
