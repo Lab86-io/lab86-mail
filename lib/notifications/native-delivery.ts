@@ -33,6 +33,10 @@ interface NativeDeliveryContext {
 export interface NativeDeliveryOptions {
   /** Marks the push so the woken app refreshes one-time codes on arrival. */
   codeAvailable?: true;
+  /** APNs collapse id: a later push with the same id replaces this one (Needs you). */
+  collapseId?: string;
+  /** The time-sensitive interruption level (Needs you). */
+  timeSensitive?: true;
 }
 
 interface NativeDeliveryDependencies {
@@ -94,6 +98,8 @@ export async function dispatchNativeNotification(
     body: context.notification.body,
     deepLink: context.notification.deepLink,
     ...(options.codeAvailable ? ({ codeAvailable: true } as const) : {}),
+    ...(options.collapseId ? { collapseId: options.collapseId } : {}),
+    ...(options.timeSensitive ? ({ timeSensitive: true } as const) : {}),
   };
   let sent = 0;
   let failed = 0;

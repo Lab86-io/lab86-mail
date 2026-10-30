@@ -96,7 +96,8 @@ export function buildAPNsPayload(envelope: NotificationEnvelope): APNsPayload {
   const messageId = deepLink.searchParams.get('message');
   const promptKind =
     deepLink.searchParams.get('prompt') === 'tomorrow' ? ('tomorrow' as const) : ('reflection' as const);
-  const urgent = envelope.type === 'urgent_mail';
+  // Urgent mail and a time-sensitive obligation (Needs you) share the level.
+  const urgent = envelope.type === 'urgent_mail' || envelope.timeSensitive === true;
   const category = urgent
     ? 'LAB86_URGENT'
     : envelope.type === 'brief_ready'
@@ -152,6 +153,12 @@ export function buildAPNsPayload(envelope: NotificationEnvelope): APNsPayload {
   };
 }
 
+/** APNs takes a collapse id of at most 64 bytes. A longer one is left out. */
+export function apnsCollapseId(envelope: NotificationEnvelope): string | undefined {
+  const id = envelope.collapseId?.trim();
+  return id && Buffer.byteLength(id, 'utf8') <= 64 ? id : undefined;
+}
+
 function configuration(): APNsConfiguration {
   const keyId = String(process.env.APNS_KEY_ID || '').trim();
   const teamId = String(process.env.APNS_TEAM_ID || '').trim();
@@ -198,6 +205,7 @@ export async function sendAPNsPush(envelope: NotificationEnvelope, device: APNsD
   const host = apnsHost(device.environment);
   const client = connectImpl(`https://${host}`);
   let responseHeaders: IncomingHttpHeaders = {};
+  const collapseId = apnsCollapseId(envelope);
   try {
     const request = client.request({
       [constants.HTTP2_HEADER_METHOD]: 'POST',
@@ -208,6 +216,7 @@ export async function sendAPNsPush(envelope: NotificationEnvelope, device: APNsD
       'apns-push-type': 'alert',
       'apns-priority': '10',
       'apns-expiration': String(Math.floor(Date.now() / 1_000) + 12 * 60 * 60),
+      ...(collapseId ? { 'apns-collapse-id': collapseId } : {}),
     });
     request.setEncoding('utf8');
     request.once('response', (headers) => {

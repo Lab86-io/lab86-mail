@@ -97,11 +97,13 @@ export function quietHoursEndAt(now: number, settings: Pick<MailPushSettings, 'q
 }
 
 export type MailPushDecision =
-  | { action: 'push'; reason: 'vip' | 'priority' | 'all' }
+  | { action: 'push'; reason: 'code' | 'vip' | 'priority' | 'all' }
   | { action: 'hold'; reason: MailPushHoldReason; until: number };
 
 /**
- * Push now, or hold for the digest. VIP mail always pushes. Quiet hours hold
+ * Push now, or hold for the digest. A one-time code always pushes: it is
+ * useful for minutes, and the held push has no `codeAvailable` flag, so the
+ * code would miss AutoFill. VIP mail always pushes. Quiet hours hold
  * everything else until they end. Priority-only mode holds mail that is not
  * urgent and needs no reply or action, for up to one hour.
  */
@@ -111,7 +113,10 @@ export function decideMailPush(input: {
   from: string | null | undefined;
   /** Urgent mail, or a message that needs a reply or an action. */
   priority: boolean;
+  /** The push carries a one-time code (`codeAvailable`). */
+  code?: boolean;
 }): MailPushDecision {
+  if (input.code) return { action: 'push', reason: 'code' };
   if (isVipSender(input.from, input.settings.vipSenders)) return { action: 'push', reason: 'vip' };
   if (inQuietHours(input.now, input.settings)) {
     return { action: 'hold', reason: 'quiet_hours', until: quietHoursEndAt(input.now, input.settings) };

@@ -86,6 +86,8 @@ export interface ObligationView {
   sourceKey: string;
   accountId?: string;
   threadId?: string;
+  /** The evidence message: the reply goes to it, and the deep link opens it. */
+  messageId?: string;
   /** One line about what the user owes, from the evidence. */
   title: string;
   /** The person or service that asked. */
@@ -104,6 +106,8 @@ export interface ObligationView {
   /** Set only for `code`. The value is shown in the app and copied by the user. */
   code?: { value: string; issuer?: string; expiresAt?: number };
   snoozedUntil?: number;
+  /** True when POST /api/obligations/[id]/draft has a prepared reply for the current source message. */
+  draftReady?: boolean;
   createdAt: number;
   updatedAt: number;
   closedAt?: number;

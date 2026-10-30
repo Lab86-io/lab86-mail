@@ -4,6 +4,7 @@ import { emailFromHeader } from '../shared/format';
 import { truncateText } from '../shared/text';
 import type { SmartCategory } from '../shared/types';
 import {
+  dueSchema,
   hasObligation,
   JEV_QUESTION_VERSION,
   JEV_VERSION,
@@ -201,6 +202,17 @@ export function buildMailQuestions(
     change: noul(
       'Does the latest inbound message report a newly occurring material problem or changed terms affecting an existing commitment, account, order or booking? Include payment failure, cancellation, rescheduling, overdue bill or account lock. Exclude ordinary receipts/confirmations, optional offers, hypothetical risks, and support discussion of an already established problem without a new change.',
     ),
+    // Needs you (docs/needs-you.md): the due bucket orders the obligations.
+    // It does not change the question version: an older verdict reads as `none`.
+    due: choice(
+      'By the evidence, when must the mailbox owner act on what the thread asks of them? Judge from the dates of the messages and any deadline they state. When the owner owes nothing, answer none.',
+      {
+        today: 'The owner must act today, or the stated deadline is already past.',
+        soon: 'The owner must act in the next three days.',
+        later: 'The owner must act, but the stated deadline is more than three days away.',
+        none: 'The owner owes nothing, or the messages state no time to act.',
+      },
+    ),
   };
   // Keep the newest messages when a model caps its option count (`none` takes one slot).
   const first = Math.max(0, input.messages.length - (model.maxOptions - 1));
@@ -277,6 +289,14 @@ export function assessmentFromResponse(
     if (key === 'change') changeEvidence = evidence;
     else obligations.push({ kind: key, evidence, probability: answer.noul });
   }
+  // `due` is optional: a response without it (or an unclear one) gives no due.
+  const dueAnswer = response.answers.due;
+  const due =
+    dueAnswer?.type === 'choice' &&
+    dueAnswer.confidence >= limits.evidenceConfidence &&
+    dueSchema.safeParse(dueAnswer.choice).success
+      ? (dueAnswer.choice as JevAssessment['due'])
+      : undefined;
   return jevAssessmentSchema.parse({
     version: JEV_VERSION,
     questionVersion: JEV_QUESTION_VERSION,
@@ -295,6 +315,7 @@ export function assessmentFromResponse(
     contextComplete: input.contextComplete,
     sender: (emailFromHeader(inbound?.from || '') || '').toLowerCase(),
     listId: (listHeader.match(/<([^>]+)>/)?.[1] || listHeader).trim().toLowerCase(),
+    ...(due ? { due } : {}),
   });
 }
 

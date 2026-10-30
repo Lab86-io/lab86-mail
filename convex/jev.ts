@@ -23,6 +23,7 @@ import { internal } from './_generated/api';
 import { internalAction, internalMutation, mutation, query } from './_generated/server';
 import { nextConnectedUsers } from './content';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
+import { needsYouEnabled, recordNeedsYouFlag, syncThreadObligations } from './obligations';
 import {
   classifierContent,
   classifyCorpusThread,
@@ -324,9 +325,19 @@ function evidenceTexts(message: JevMailMessage, facts?: JevFactsView) {
 }
 
 export const claimPending = mutation({
-  args: { internalSecret: v.optional(v.string()), userId: v.string(), limit: v.optional(v.number()) },
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    limit: v.optional(v.number()),
+    // Needs you: the LAB86_NEEDS_YOU value of the Node app for this user. The
+    // claim records it for the `needsYou` query (convex/obligations.ts).
+    needsYou: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
+    if (args.needsYou !== undefined && (await recordNeedsYouFlag(ctx, args.userId, args.needsYou)))
+      // The flag turned on: fill the ledger from the stored verdicts, in-app only.
+      await ctx.scheduler.runAfter(0, internal.jev.backfillObligations, { userId: args.userId });
     if (!(await loadJevSettings(ctx, args.userId)).preferences.enabled)
       return { items: [], moreRemaining: false };
     const limit = Math.max(1, Math.min(20, args.limit ?? 12));
@@ -425,6 +436,9 @@ export const storeAssessments = mutation({
         error: v.optional(v.string()),
       }),
     ),
+    // Needs you: true when the user is in LAB86_NEEDS_YOU. Each stored
+    // verdict then syncs the obligations of its thread in this transaction.
+    needsYou: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -433,6 +447,8 @@ export const storeAssessments = mutation({
       .query('connectedAccounts')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .collect();
+    const ledger = args.needsYou ? await obligationContext(ctx, args.userId, accounts) : null;
+    const obligationIds: string[] = [];
     let stored = 0;
     for (const item of args.items.slice(0, 20)) {
       const row = await ctx.db
@@ -515,9 +531,106 @@ export const storeAssessments = mutation({
         updatedAt: Date.now(),
       });
       await syncLabelMembership(ctx, row, { ...row, ...merged });
+      if (ledger)
+        obligationIds.push(
+          ...(await syncThreadObligations(ctx, {
+            ...ledger,
+            userId: args.userId,
+            accountId: item.accountId,
+            threadId: item.threadId,
+            subject: row.subject,
+            assessment,
+            messages: input.messages,
+            latestMessageId: item.messageId,
+          })),
+        );
       stored++;
     }
-    return { stored };
+    return ledger ? { stored, obligationIds } : { stored };
+  },
+});
+
+// The settings that each obligation sync of one user reads: the Jev
+// corrections (Not mine), the push preferences (VIP senders, zone), and the
+// mailbox addresses.
+async function obligationContext(ctx: any, userId: string, accounts: any[]) {
+  const [settings, preference] = await Promise.all([
+    loadJevSettings(ctx, userId),
+    ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q: any) => q.eq('userId', userId))
+      .unique(),
+  ]);
+  return {
+    corrections: settings.corrections,
+    preference,
+    selfAddresses: accounts.map((account: any) => String(account.email || '').toLowerCase()).filter(Boolean),
+  };
+}
+
+/** The Jev indexes that a backfill reads, one pass each. */
+const BACKFILL_INDEXES = [
+  ['by_user_jev_reply', 'jevNeedsReply'],
+  ['by_user_jev_action', 'jevNeedsAction'],
+  ['by_user_jev_waiting', 'jevWaiting'],
+  ['by_user_jev_change', 'jevChange'],
+] as const;
+/** Threads that one backfill pass reads, newest first. */
+export const BACKFILL_THREADS = 40;
+/** A backfill opens obligations only for mail of the last 30 days. */
+export const BACKFILL_WINDOW_MS = 30 * 86_400_000;
+
+/**
+ * Fills the Needs you ledger of one user from the stored Jev verdicts, when
+ * the flag turns on. The rows open in-app only: a backfill never pushes. One
+ * pass reads one Jev index (at most 40 threads and their newest messages)
+ * and schedules the next index.
+ */
+export const backfillObligations = internalMutation({
+  args: { userId: v.string(), pass: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const pass = args.pass ?? 0;
+    const entry = BACKFILL_INDEXES[pass];
+    if (!entry || !(await needsYouEnabled(ctx, args.userId))) return { synced: 0, done: true };
+    const [index, field] = entry;
+    const at = Date.now();
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex(index as any, (q: any) =>
+        q
+          .eq('userId', args.userId)
+          .eq(field, true)
+          .gte('lastDate', at - BACKFILL_WINDOW_MS),
+      )
+      .order('desc')
+      .take(BACKFILL_THREADS);
+    const { accounts, live } = await userAccounts(ctx, args.userId);
+    const ledger = await obligationContext(ctx, args.userId, accounts);
+    let synced = 0;
+    for (const row of rows as any[]) {
+      if (!live.has(row.accountId) || !assessmentIsCurrent(row.jev, row.latestMessageId)) continue;
+      const window = await threadWindow(ctx, row, accounts);
+      if (!window) continue;
+      await syncThreadObligations(ctx, {
+        ...ledger,
+        userId: args.userId,
+        accountId: row.accountId,
+        threadId: row.providerThreadId,
+        subject: row.subject,
+        assessment: row.jev,
+        messages: window.input.messages,
+        latestMessageId: window.input.messageId,
+        push: false,
+        at,
+      });
+      synced++;
+    }
+    if (pass + 1 < BACKFILL_INDEXES.length)
+      await ctx.scheduler.runAfter(0, internal.jev.backfillObligations, {
+        userId: args.userId,
+        pass: pass + 1,
+      });
+    return { synced, done: pass + 1 >= BACKFILL_INDEXES.length };
   },
 });
 

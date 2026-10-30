@@ -113,3 +113,40 @@ component tests.
 - One PR to `main`. CodeRabbit once. The merge waits for Jakob.
 - After the merge: set `LAB86_NEEDS_YOU` to Jakob's user id on Railway
   production (never `railway variables --kv`).
+
+## Server notes (builder 1, 2026-10-30)
+
+How the flag gets to Convex. `LAB86_NEEDS_YOU` is set on Railway only.
+Convex does not read it. The Node app computes `needsYouFlagFor(userId)` and
+gives the value to each Convex call that writes obligations:
+`jev.claimPending`, `jev.storeAssessments`, and `mailOneTimeCodes.recordCode`
+(argument `needsYou`). The Jev claim records the value for the user in
+`userDocs` (kind `needsYouFlag`). The `needsYou` query reads that record for
+`enabled`. The record changes at the next Jev claim, that is, in 5 minutes or
+less after a Railway change. When the flag turns on, the claim starts
+`jev.backfillObligations`. The backfill opens rows from the stored Jev
+verdicts of the last 30 days. It does not push.
+
+Rules that the code applies:
+
+- A push also needs `PUSH_PROBABILITY`. A VIP sender passes the due
+  condition, not the probability bar.
+- A VIP sender and a time-sensitive item are not held by quiet hours. A code
+  is never held, and the hourly limit does not count codes.
+- After quiet hours, one held item pushes as itself. Two or more become one
+  summary push ("N things need you"). Items over the hourly limit wait for
+  one summary push ("N more things need you"), at most one each hour. The
+  summary uses the collapse id `needs-you-summary`.
+- "Push me when something needs me" (`obligationPushEnabled`) does not stop
+  a code push. "Verification codes" (`oneTimeCodeAutofillEnabled`) does.
+- `why` is a fixed sentence for each kind. `excerpt` is the evidence text.
+  Jev writes no text.
+- Not mine writes the thread correction of the brief ("Not for me"), in the
+  same transaction. It also closes the other open rows of the thread. Undo
+  removes the correction.
+- Undo after Send reply cancels the outbox send first. If the send already
+  went out, the route gives 409 and the row stays closed.
+
+Not in phase 1: the follow-up push when a `waiting` item passes its due
+date, and the `workId` of a mail thread (the rules accept it, but the sync
+gives none).

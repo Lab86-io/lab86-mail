@@ -10,7 +10,7 @@ import {
 } from '../lib/brief/schedule';
 import { type JevCorrection, jevCorrectionSchema, normalizeJevPreferences } from '../lib/jev/contract';
 import { internal } from './_generated/api';
-import type { QueryCtx } from './_generated/server';
+import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 
@@ -545,6 +545,60 @@ export const briefSourceRows = query({
 const MAX_JEV_CORRECTIONS = 100;
 export const BRIEF_CORRECTION_PREFIX = 'brief-';
 
+/**
+ * Stores `correction` under `id` in the Jev corrections of the user, or
+ * removes the entry when `correction` is null. It gives the entry that it
+ * replaced. Brief steering and Needs you (Not mine) both write through it.
+ */
+export async function putBriefCorrection(
+  ctx: MutationCtx,
+  userId: string,
+  id: string,
+  correction: unknown,
+): Promise<{ previous: JevCorrection | null }> {
+  const row = await ctx.db
+    .query('userDocs')
+    .withIndex('by_user_kind_key', (q) =>
+      q.eq('userId', userId).eq('kind', 'jevPreferences').eq('key', 'default'),
+    )
+    .unique();
+  const stored: JevCorrection[] = (Array.isArray(row?.doc?.corrections) ? row.doc.corrections : []).flatMap(
+    (value: unknown) => {
+      const parsed = jevCorrectionSchema.safeParse(value);
+      return parsed.success ? [parsed.data] : [];
+    },
+  );
+  const previous = stored.find((rule) => rule.id === id) ?? null;
+  let corrections = stored.filter((rule) => rule.id !== id);
+  if (correction !== null && correction !== undefined) {
+    const parsed = jevCorrectionSchema.parse(correction);
+    if (parsed.id !== id) throw new Error('The correction id does not match.');
+    corrections.push(parsed);
+    // Room for a new steering rule comes from the oldest steering rule,
+    // never from a correction the user wrote in Settings.
+    while (corrections.length > MAX_JEV_CORRECTIONS) {
+      const oldest = corrections.findIndex(
+        (rule) => rule.id.startsWith(BRIEF_CORRECTION_PREFIX) && rule.id !== id,
+      );
+      if (oldest < 0) throw new Error('At most 100 corrections are supported.');
+      corrections = corrections.filter((_, index) => index !== oldest);
+    }
+  }
+  const ts = Math.max(Date.now(), (row?.updatedAt || 0) + 1);
+  const doc = { preferences: normalizeJevPreferences(row?.doc?.preferences), corrections };
+  if (row) await ctx.db.patch(row._id, { doc, updatedAt: ts });
+  else
+    await ctx.db.insert('userDocs', {
+      userId,
+      kind: 'jevPreferences',
+      key: 'default',
+      doc,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  return { previous };
+}
+
 export const setBriefCorrection = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -555,47 +609,7 @@ export const setBriefCorrection = mutation({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const row = await ctx.db
-      .query('userDocs')
-      .withIndex('by_user_kind_key', (q) =>
-        q.eq('userId', args.userId).eq('kind', 'jevPreferences').eq('key', 'default'),
-      )
-      .unique();
-    const stored: JevCorrection[] = (Array.isArray(row?.doc?.corrections) ? row.doc.corrections : []).flatMap(
-      (value: unknown) => {
-        const parsed = jevCorrectionSchema.safeParse(value);
-        return parsed.success ? [parsed.data] : [];
-      },
-    );
-    const previous = stored.find((rule) => rule.id === args.id) ?? null;
-    let corrections = stored.filter((rule) => rule.id !== args.id);
-    if (args.correction !== null && args.correction !== undefined) {
-      const correction = jevCorrectionSchema.parse(args.correction);
-      if (correction.id !== args.id) throw new Error('The correction id does not match.');
-      corrections.push(correction);
-      // Room for a new steering rule comes from the oldest steering rule,
-      // never from a correction the user wrote in Settings.
-      while (corrections.length > MAX_JEV_CORRECTIONS) {
-        const oldest = corrections.findIndex(
-          (rule) => rule.id.startsWith(BRIEF_CORRECTION_PREFIX) && rule.id !== args.id,
-        );
-        if (oldest < 0) throw new Error('At most 100 corrections are supported.');
-        corrections = corrections.filter((_, index) => index !== oldest);
-      }
-    }
-    const ts = Math.max(Date.now(), (row?.updatedAt || 0) + 1);
-    const doc = { preferences: normalizeJevPreferences(row?.doc?.preferences), corrections };
-    if (row) await ctx.db.patch(row._id, { doc, updatedAt: ts });
-    else
-      await ctx.db.insert('userDocs', {
-        userId: args.userId,
-        kind: 'jevPreferences',
-        key: 'default',
-        doc,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-    return { previous };
+    return putBriefCorrection(ctx, args.userId, args.id, args.correction);
   },
 });
 

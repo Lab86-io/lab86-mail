@@ -241,6 +241,8 @@ describe('the digest cron action', () => {
       '../convex/albatrossWorkV2.ts': () => import('../convex/albatrossWorkV2'),
       '../convex/albatrossWork.ts': () => import('../convex/albatrossWork'),
       '../convex/boards.ts': () => import('../convex/boards'),
+      // The tick also asks for held Needs you pushes.
+      '../convex/obligations.ts': () => import('../convex/obligations'),
     });
     await expect(t.action((internal as any).albatrossNotifications.mailDigestTick, {})).resolves.toBeNull();
   });
