@@ -3166,6 +3166,8 @@ export default defineSchema({
       v.literal('waiting'),
       v.literal('change'),
       v.literal('code'),
+      v.literal('rsvp'),
+      v.literal('prepare'),
     ),
     state: v.union(
       v.literal('open'),
@@ -3175,9 +3177,25 @@ export default defineSchema({
       v.literal('dismissed'),
       v.literal('expired'),
     ),
-    source: v.literal('mail'),
-    // `mail:<accountId>:<threadId>` (lib/obligations/contract.ts mailSourceKey).
+    source: v.union(
+      v.literal('mail'),
+      v.literal('slack'),
+      v.literal('atlassian'),
+      v.literal('granola'),
+      v.literal('drive'),
+      v.literal('github'),
+      v.literal('bitbucket'),
+      v.literal('calendar'),
+    ),
+    // `mail:<accountId>:<threadId>` (lib/obligations/contract.ts mailSourceKey),
+    // a content item key, or `calendar:<accountId>:<eventId>`.
     sourceKey: v.string(),
+    // Phases 2 to 4: where in the source, and a link that opens it there.
+    sourceLabel: v.optional(v.string()),
+    url: v.optional(v.string()),
+    workTitle: v.optional(v.string()),
+    eventId: v.optional(v.string()),
+    eventStart: v.optional(v.number()),
     accountId: v.optional(v.string()),
     threadId: v.optional(v.string()),
     // The evidence message: the reply anchor and the deep link.
@@ -3228,6 +3246,8 @@ export default defineSchema({
         v.literal('not_mine'),
         v.literal('code_used'),
         v.literal('expired'),
+        v.literal('event_passed'),
+        v.literal('aged_out'),
       ),
     ),
     // A close by the user stays closed until the source has a new message.

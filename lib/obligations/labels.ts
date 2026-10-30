@@ -42,6 +42,10 @@ export function closeReasonLabel(reason: ObligationCloseReason | undefined): str
       return 'Code used';
     case 'expired':
       return 'Expired';
+    case 'event_passed':
+      return 'Event started';
+    case 'aged_out':
+      return 'Closed by itself';
     default:
       return 'Closed';
   }
@@ -60,6 +64,10 @@ export function kindLabel(obligation: Pick<ObligationView, 'kind' | 'pushLevel'>
       return obligation.pushLevel === 'time_sensitive' ? 'Time-sensitive change' : 'Change';
     case 'code':
       return 'Code';
+    case 'rsvp':
+      return 'Invitation';
+    case 'prepare':
+      return 'Prepare';
   }
 }
 
