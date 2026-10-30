@@ -138,7 +138,7 @@ final class NeedsYouStore {
             let exchange = try await transport.exchange(method: "GET", path: Self.path, body: nil)
             guard revision == requestRevision, !Task.isCancelled else { return }
             guard exchange.isSuccess, let body = exchange.body, let snapshot = NeedsYouSnapshot(json: body) else {
-                loadError = exchange.errorMessage
+                loadError = Self.serverMessage(exchange) ?? exchange.errorMessage
                 return
             }
             apply(snapshot, now: now)
@@ -303,9 +303,17 @@ final class NeedsYouStore {
     static func errorMessage(for exchange: BackendExchange) -> String {
         switch exchange.status {
         case 404: "This item is no longer on your list."
-        case 409: exchange.body?["error"]?.stringValue?.nilIfBlank ?? "This item changed. Read it again."
-        default: exchange.errorMessage
+        case 409: serverMessage(exchange) ?? "This item changed. Read it again."
+        default: serverMessage(exchange) ?? exchange.errorMessage
         }
+    }
+
+    /// The server's line of a failed exchange. The mobile routes answer with
+    /// the envelope `{ ok: false, requestID, error: { code, message,
+    /// retryable } }`; an older route answers with `{ error: "..." }`.
+    static func serverMessage(_ exchange: BackendExchange) -> String? {
+        exchange.body?["error"]?["message"]?.stringValue?.nilIfBlank
+            ?? exchange.body?["error"]?.stringValue?.nilIfBlank
     }
 
     private func replace(_ obligation: ObligationView) {

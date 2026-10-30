@@ -277,6 +277,59 @@ describe('POST /api/mobile/v1/needs-you/[id]', () => {
   });
 });
 
+describe('POST /api/mobile/v1/needs-you/[id] with an RSVP (integration)', () => {
+  test('{ action: rsvp, response } reaches the calendar answer, and the OpenAPI body names it', async () => {
+    const { deps, calls } = harness();
+    const invitation = view({
+      kind: 'rsvp',
+      source: 'calendar',
+      sourceKey: 'calendar:acct:evt-1',
+      eventId: 'evt-1',
+      eventStart: NOW + 86_400_000,
+      threadId: undefined,
+      messageId: undefined,
+    });
+    const answers: unknown[] = [];
+    const service: ObligationServiceDependencies = {
+      ...deps.service,
+      get: async () => ({
+        obligation: invitation,
+        sourceMessageId: null,
+        calendarId: 'primary',
+        undo: null,
+        draft: null,
+      }),
+      rsvp: async (_caller, target) => {
+        answers.push(target);
+      },
+    };
+    const { status, json } = await read(
+      await createMobileNeedsYouActionPost({ ...deps, service })(
+        post('', { action: 'rsvp', response: 'yes' }),
+        context,
+      ),
+    );
+    expect(status).toBe(200);
+    expect(json.obligation.id).toBe('ob1');
+    expect(answers).toEqual([
+      { accountId: 'acct', calendarId: 'primary', eventId: 'evt-1', response: 'yes' },
+    ]);
+    expect(calls.act).toEqual([{ userId: 'u1', id: 'ob1', action: 'rsvp' }]);
+    // An answer that is not yes, no, or maybe is 400 in the envelope.
+    const bad = await read(
+      await createMobileNeedsYouActionPost({ ...deps, service })(
+        post('', { action: 'rsvp', response: 'sure' }),
+        context,
+      ),
+    );
+    expect(bad.status).toBe(400);
+    expect(bad.json).toMatchObject({ ok: false, requestID: 'req-1', error: { code: 'INVALID_REQUEST' } });
+    const schemas = (mobileOpenAPIV1() as any).components.schemas;
+    expect(schemas.ObligationActionRequest.properties.action.enum).toContain('rsvp');
+    expect(schemas.ObligationActionRequest.properties.response.enum).toEqual(['yes', 'no', 'maybe']);
+  });
+});
+
 describe('POST /api/mobile/v1/needs-you/[id]/draft and /reply', () => {
   test('the draft of a reply item; another kind is 400', async () => {
     const { deps } = harness();

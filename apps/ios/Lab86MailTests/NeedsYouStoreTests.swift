@@ -30,6 +30,19 @@ struct NeedsYouStoreTests {
         return .object(object)
     }
 
+    /// The mobile error envelope of `lib/mobile/v1/http.ts`.
+    private static func envelope(code: String, message: String, retryable: Bool = false) -> JSONValue {
+        .object([
+            "ok": .bool(false),
+            "requestID": .string("req-1"),
+            "error": .object([
+                "code": .string(code),
+                "message": .string(message),
+                "retryable": .bool(retryable),
+            ]),
+        ])
+    }
+
     private static func snapshot(enabled: Bool = true, _ rows: [JSONValue]) -> JSONValue {
         .object(["enabled": .bool(enabled), "timezone": .string("America/Los_Angeles"), "items": .array(rows)])
     }
@@ -88,7 +101,7 @@ struct NeedsYouStoreTests {
     func loadError() async throws {
         let server = StubBackendServer()
         defer { server.tearDown() }
-        server.routes[NeedsYouStore.path] = .object(["ok": .bool(false), "error": .string("down")])
+        server.routes[NeedsYouStore.path] = Self.envelope(code: "SERVER_ERROR", message: "down", retryable: true)
         server.statuses[NeedsYouStore.path] = 500
         let store = NeedsYouStore(defaults: try makeDefaults())
         await store.load(server.backend)
@@ -181,7 +194,7 @@ struct NeedsYouStoreTests {
         defer { server.tearDown() }
         server.routes[NeedsYouStore.path] = Self.snapshot([Self.row("ob_1")])
         let path = NeedsYouStore.actionPath(id: "ob_1")
-        server.routes[path] = .object(["error": .string("Not found")])
+        server.routes[path] = Self.envelope(code: "NOT_FOUND", message: "Not found.")
         server.statuses[path] = 404
         let store = NeedsYouStore(defaults: try makeDefaults())
         await store.load(server.backend)
@@ -192,9 +205,21 @@ struct NeedsYouStoreTests {
         #expect(store.actionError == nil)
 
         server.statuses[path] = 409
-        server.routes[path] = .object(["error": .string("The reply already went out.")])
+        server.routes[path] = Self.envelope(code: "CONFLICT", message: "The reply already went out.")
         #expect(await store.act(.undo, on: "ob_1", transport: server.backend) == false)
         #expect(store.actionError == "The reply already went out.")
+
+        // A refused RSVP answer (400) shows the server's line from the envelope.
+        server.statuses[path] = 400
+        server.routes[path] = Self.envelope(code: "INVALID_REQUEST", message: "Only an invitation has an answer.")
+        #expect(await store.act(.rsvp(.yes), on: "ob_1", transport: server.backend) == false)
+        #expect(store.actionError == "Only an invitation has an answer.")
+
+        // An older route that answers `{ error: "..." }` still reads.
+        server.statuses[path] = 409
+        server.routes[path] = .object(["error": .string("This item is already closed.")])
+        #expect(await store.act(.done, on: "ob_1", transport: server.backend) == false)
+        #expect(store.actionError == "This item is already closed.")
     }
 
     @Test("The draft and the reply use their own routes")
