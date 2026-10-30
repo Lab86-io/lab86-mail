@@ -23,7 +23,16 @@ import { internal } from './_generated/api';
 import { internalAction, internalMutation, mutation, query } from './_generated/server';
 import { nextConnectedUsers } from './content';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
-import { needsYouEnabled, recordNeedsYouFlag, syncThreadObligations } from './obligations';
+import {
+  fillCalendarObligations,
+  fillContentObligations,
+  markRulesVersion,
+  needsYouEnabled,
+  openMailThreads,
+  recordNeedsYouFlag,
+  syncThreadObligations,
+  takeRulesUpgrade,
+} from './obligations';
 import {
   classifierContent,
   classifyCorpusThread,
@@ -338,6 +347,10 @@ export const claimPending = mutation({
     if (args.needsYou !== undefined && (await recordNeedsYouFlag(ctx, args.userId, args.needsYou)))
       // The flag turned on: fill the ledger from the stored verdicts, in-app only.
       await ctx.scheduler.runAfter(0, internal.jev.backfillObligations, { userId: args.userId });
+    else if (args.needsYou && (await takeRulesUpgrade(ctx, args.userId)))
+      // Phase 1.1: the rows of a user in the flag follow older rules. Apply
+      // the new rules once, in-app only (repairObligations).
+      await ctx.scheduler.runAfter(0, internal.jev.repairObligations, { userId: args.userId });
     if (!(await loadJevSettings(ctx, args.userId)).preferences.enabled)
       return { items: [], moreRemaining: false };
     const limit = Math.max(1, Math.min(20, args.limit ?? 12));
@@ -575,6 +588,10 @@ const BACKFILL_INDEXES = [
   ['by_user_jev_waiting', 'jevWaiting'],
   ['by_user_jev_change', 'jevChange'],
 ] as const;
+/** After the mail passes: the connected sources (phase 2), then the calendar (phase 4). */
+const BACKFILL_CONTENT_PASS = BACKFILL_INDEXES.length;
+const BACKFILL_CALENDAR_PASS = BACKFILL_INDEXES.length + 1;
+const BACKFILL_PASSES = BACKFILL_INDEXES.length + 2;
 /** Threads that one backfill pass reads, newest first. */
 export const BACKFILL_THREADS = 40;
 /** A backfill opens obligations only for mail of the last 30 days. */
@@ -582,18 +599,37 @@ export const BACKFILL_WINDOW_MS = 30 * 86_400_000;
 
 /**
  * Fills the Needs you ledger of one user from the stored Jev verdicts, when
- * the flag turns on. The rows open in-app only: a backfill never pushes. One
- * pass reads one Jev index (at most 40 threads and their newest messages)
- * and schedules the next index.
+ * the flag turns on. The rows open in-app only: a backfill never pushes, and
+ * it makes no time-sensitive row (phase 1.1). One pass reads one Jev index
+ * (at most 40 threads and their newest messages) and schedules the next
+ * index. The last two passes fill the labelled content items of the last 30
+ * days and the invitations of the next 14 days.
  */
 export const backfillObligations = internalMutation({
   args: { userId: v.string(), pass: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const pass = args.pass ?? 0;
-    const entry = BACKFILL_INDEXES[pass];
-    if (!entry || !(await needsYouEnabled(ctx, args.userId))) return { synced: 0, done: true };
-    const [index, field] = entry;
+    if (pass >= BACKFILL_PASSES || !(await needsYouEnabled(ctx, args.userId)))
+      return { synced: 0, done: true };
     const at = Date.now();
+    const next = async () => {
+      if (pass + 1 < BACKFILL_PASSES)
+        await ctx.scheduler.runAfter(0, internal.jev.backfillObligations, {
+          userId: args.userId,
+          pass: pass + 1,
+        });
+      return pass + 1 >= BACKFILL_PASSES;
+    };
+    if (pass === 0) await markRulesVersion(ctx, args.userId);
+    if (pass === BACKFILL_CONTENT_PASS) {
+      const synced = await fillContentObligations(ctx, args.userId, at);
+      return { synced, done: await next() };
+    }
+    if (pass === BACKFILL_CALENDAR_PASS) {
+      const synced = await fillCalendarObligations(ctx, args.userId, at);
+      return { synced, done: await next() };
+    }
+    const [index, field] = BACKFILL_INDEXES[pass];
     const rows = await ctx.db
       .query('mailCorpusThreads')
       .withIndex(index as any, (q: any) =>
@@ -621,16 +657,67 @@ export const backfillObligations = internalMutation({
         messages: window.input.messages,
         latestMessageId: window.input.messageId,
         push: false,
+        fill: true,
         at,
       });
       synced++;
     }
-    if (pass + 1 < BACKFILL_INDEXES.length)
-      await ctx.scheduler.runAfter(0, internal.jev.backfillObligations, {
+    return { synced, done: await next() };
+  },
+});
+
+/**
+ * The phase 1.1 repair of one user (convex/obligations.ts). It applies the
+ * new rules to the threads of the open mail rows: a routine notice, an old
+ * change, or a change that is not a problem leaves Now or closes. A row that
+ * the new rules drop closes at the time the rules would have closed it, so it
+ * does not fill "Closed today". It never pushes. Then the backfill passes of
+ * the connected sources and the calendar run. A second run changes nothing.
+ * The Jev claim starts it once; it can also run by hand:
+ *   npx convex run jev:repairObligations '{"userId": "<clerk user id>"}'
+ */
+export const repairObligations = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    if (!(await needsYouEnabled(ctx, args.userId))) return { synced: 0 };
+    const at = Date.now();
+    const threads = await openMailThreads(ctx, args.userId);
+    const { accounts, live } = await userAccounts(ctx, args.userId);
+    const ledger = await obligationContext(ctx, args.userId, accounts);
+    let synced = 0;
+    for (const target of threads) {
+      const row = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_account_thread', (q) =>
+          q
+            .eq('userId', args.userId)
+            .eq('accountId', target.accountId)
+            .eq('providerThreadId', target.threadId),
+        )
+        .unique();
+      if (!row || !live.has(row.accountId) || !assessmentIsCurrent(row.jev, row.latestMessageId)) continue;
+      const window = await threadWindow(ctx, row, accounts);
+      if (!window) continue;
+      await syncThreadObligations(ctx, {
+        ...ledger,
         userId: args.userId,
-        pass: pass + 1,
+        accountId: row.accountId,
+        threadId: row.providerThreadId,
+        subject: row.subject,
+        assessment: row.jev,
+        messages: window.input.messages,
+        latestMessageId: window.input.messageId,
+        push: false,
+        repair: true,
+        at,
       });
-    return { synced, done: pass + 1 >= BACKFILL_INDEXES.length };
+      synced++;
+    }
+    await ctx.scheduler.runAfter(0, internal.jev.backfillObligations, {
+      userId: args.userId,
+      pass: BACKFILL_CONTENT_PASS,
+    });
+    return { synced };
   },
 });
 
@@ -892,6 +979,9 @@ export const usersWithMail = internalMutation({
 export const tick = internalAction({
   args: {},
   handler: async (ctx) => {
+    // Needs you: the bounded obligation sweep (convex/obligations.ts) rides
+    // this 5-minute cron. A failed sweep does not stop the Jev pass.
+    await ctx.runMutation(internal.obligations.sweep, {}).catch(() => undefined);
     const base = process.env.LAB86_MAIL_PUBLIC_URL;
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     if (!base || !secret) return;

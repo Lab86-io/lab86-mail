@@ -1,9 +1,26 @@
 import { v } from 'convex/values';
 import { truncateText } from '../lib/shared/text';
 import { sameFields } from '../lib/sync/content-hash';
-import type { QueryCtx } from './_generated/server';
+import type { Doc } from './_generated/dataModel';
+import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
+import { closeCalendarEventObligations, needsYouEnabled, syncCalendarObligations } from './obligations';
+
+/**
+ * Needs you (phase 4): the `rsvp` and `prepare` rows follow each changed
+ * event, for a user in LAB86_NEEDS_YOU (the flag that the Jev claim
+ * records). An unchanged event costs no read here.
+ */
+async function syncEventObligations(ctx: MutationCtx, userId: string, rows: Array<Doc<'calendarEvents'>>) {
+  if (!rows.length || !(await needsYouEnabled(ctx, userId))) return;
+  await syncCalendarObligations(ctx, userId, rows);
+}
+
+async function closeEventObligations(ctx: MutationCtx, rows: Array<Doc<'calendarEvents'>>) {
+  if (!rows.length || !(await needsYouEnabled(ctx, rows[0].userId))) return;
+  for (const row of rows) await closeCalendarEventObligations(ctx, row);
+}
 
 // Calendar corpus storage. Writers
 // are the Next server's sync/mutation paths (internal secret); the calendar
@@ -142,6 +159,7 @@ export const upsertEventBatch = mutation({
     requireInternalSecret(args.internalSecret);
     const ts = now();
     let skipped = 0;
+    const changed: Array<Doc<'calendarEvents'>> = [];
     for (const event of args.events) {
       const patch = {
         ...withClearedKeys(event, EVENT_INPUT_KEYS),
@@ -169,17 +187,21 @@ export const upsertEventBatch = mutation({
           continue;
         }
         await ctx.db.patch(row._id, patch);
+        changed.push({ ...row, ...patch });
       } else {
-        await ctx.db.insert('calendarEvents', {
+        const inserted = {
           ...patch,
           userId: args.userId,
           accountId: args.accountId,
           grantId: args.grantId,
           provider: args.provider,
           createdAt: ts,
-        });
+        };
+        const id = await ctx.db.insert('calendarEvents', inserted);
+        changed.push({ ...inserted, _id: id, _creationTime: ts } as Doc<'calendarEvents'>);
       }
     }
+    await syncEventObligations(ctx, args.userId, changed);
     return { ok: true, count: args.events.length, skipped };
   },
 });
@@ -197,7 +219,11 @@ export const deleteEvent = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const row = await findEventByProviderId(ctx, args);
-    if (row && row.userId === args.userId) await ctx.db.delete(row._id);
+    const removed: Array<Doc<'calendarEvents'>> = [];
+    if (row && row.userId === args.userId) {
+      await ctx.db.delete(row._id);
+      removed.push(row);
+    }
     if (args.includeInstances) {
       const instances = await ctx.db
         .query('calendarEvents')
@@ -209,9 +235,11 @@ export const deleteEvent = mutation({
         if (args.providerCalendarId && instance.providerCalendarId !== args.providerCalendarId) continue;
         if (instance.userId === args.userId) {
           await ctx.db.delete(instance._id);
+          removed.push(instance);
         }
       }
     }
+    await closeEventObligations(ctx, removed);
     return { ok: true };
   },
 });
@@ -301,12 +329,15 @@ export const reconcileWindow = mutation({
       })
       .paginate({ cursor: args.cursor ?? null, numItems: limit });
     let pruned = 0;
+    const removed: Array<Doc<'calendarEvents'>> = [];
     for (const row of page.page) {
       if (row.startAt >= args.windowEnd) continue;
       if (keep.has(row.providerEventId)) continue;
       await ctx.db.delete(row._id);
+      removed.push(row);
       pruned += 1;
     }
+    await closeEventObligations(ctx, removed);
     return {
       ok: true,
       pruned,

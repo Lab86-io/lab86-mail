@@ -334,22 +334,35 @@ describe('the rule table (mailObligations)', () => {
     expect(self).toMatchObject({ asker: 'Owner', askerAddress: 'owner@example.test' });
   });
 
-  test('a change on a booking, an account, or a bill is time-sensitive; another change is in-app only', () => {
-    const change = (subjectKind: JevAssessment['subjectKind'], probability = 0.95) =>
+  test('a new problem on a booking, an account, or a bill is time-sensitive; another change is in-app only', () => {
+    const change = (
+      subjectKind: JevAssessment['subjectKind'],
+      probability = 0.95,
+      text = 'Your flight HA 220 now departs at 6:40 pm.',
+    ) =>
       verdict({
         purpose: 'transaction',
         subjectKind,
         obligations: [],
         meaningfulChange: true,
-        changeEvidence: { messageId: 'm1', text: 'Your flight HA 220 now departs at 6:40 pm.' },
+        changeEvidence: { messageId: 'm1', text },
         probabilities: { reply: 0.02, action: 0.02, waiting: 0.02, change: probability },
       });
-    for (const kind of ['booking', 'account', 'finance'] as const)
-      expect(mailObligations(change(kind), facts(), settings, MONDAY)[0]).toMatchObject({
-        kind: 'change',
-        pushLevel: 'time_sensitive',
-        title: 'Your flight HA 220 now departs at 6:40 pm.',
-      });
+    expect(mailObligations(change('booking'), facts(), settings, MONDAY)[0]).toMatchObject({
+      kind: 'change',
+      pushLevel: 'time_sensitive',
+      title: 'Your flight HA 220 now departs at 6:40 pm.',
+      sourceAt: MONDAY,
+    });
+    for (const [kind, text] of [
+      ['account', 'Your account is locked after three failed sign-in attempts.'],
+      ['finance', 'Your payment of $20.00 failed. Update your card.'],
+    ] as const)
+      expect(mailObligations(change(kind, 0.95, text), facts(), settings, MONDAY)[0].pushLevel).toBe(
+        'time_sensitive',
+      );
+    // The same flight text is not an account or a bill problem.
+    expect(mailObligations(change('account'), facts(), settings, MONDAY)[0].pushLevel).toBe('none');
     expect(mailObligations(change('order'), facts(), settings, MONDAY)[0].pushLevel).toBe('none');
     expect(mailObligations(change('booking', 0.8), facts(), settings, MONDAY)[0].pushLevel).toBe('none');
     // A change verdict without its probability still opens, at the full value.
