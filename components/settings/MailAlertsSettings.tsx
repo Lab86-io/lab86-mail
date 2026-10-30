@@ -226,7 +226,7 @@ export function MailAlertsSettings({
           label="VIP senders"
           description={
             needsYou
-              ? 'Something from these addresses or domains always pushes, in quiet hours too. A VIP mail that needs nothing from you does not push.'
+              ? 'When these addresses or domains need something from you, the push can go in quiet hours too. A VIP mail that needs nothing from you does not push.'
               : 'Mail from these addresses or domains always pushes, in quiet hours too.'
           }
         >

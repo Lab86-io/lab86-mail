@@ -340,6 +340,43 @@ export const savePreferences = mutation({
   },
 });
 
+/**
+ * Needs you: "Push me when something needs me" alone. It writes no other
+ * field, so it cannot put old form values over a settings save that is not
+ * done yet.
+ */
+export const setObligationPush = mutation({
+  args: { enabled: v.boolean() },
+  handler: async (ctx, args) => {
+    const userId = await authenticatedUserId(ctx);
+    const existing = await ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .unique();
+    const ts = now();
+    if (existing) {
+      await ctx.db.patch(existing._id, { obligationPushEnabled: args.enabled, updatedAt: ts });
+      return existing._id;
+    }
+    return ctx.db.insert('albatrossNotificationPreferences', {
+      userId,
+      timezone: DEFAULT_TZ,
+      eveningCheckinEnabled: true,
+      eveningCheckinLocalTime: DEFAULT_CHECKIN_TIME,
+      inAppEnabled: true,
+      webPushEnabled: false,
+      nativePushEnabled: true,
+      newMailPushEnabled: true,
+      eventSuggestionPushEnabled: true,
+      emailFallbackEnabled: true,
+      emailFallbackDelayMinutes: DEFAULT_EMAIL_DELAY,
+      obligationPushEnabled: args.enabled,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  },
+});
+
 export const mobilePreferences = query({
   args: { internalSecret: v.optional(v.string()), userId: v.string() },
   handler: async (ctx, args) => {

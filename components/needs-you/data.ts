@@ -3,7 +3,6 @@
 import { useConvexAuth, useQuery } from 'convex/react';
 import { makeFunctionReference } from 'convex/server';
 import { create } from 'zustand';
-import type { NotificationPreferenceInput } from '@/lib/notifications/preferences';
 import type {
   NeedsYouSnapshot,
   ObligationAction,
@@ -22,12 +21,10 @@ export const needsYouQuery = makeFunctionReference<'query', Record<string, never
   'obligations:needsYou',
 );
 
-/** `savePreferences` with the optional `obligationPushEnabled` of phase 1 (S8). */
-export const savePreferencesWithObligationPush = makeFunctionReference<
-  'mutation',
-  NotificationPreferenceInput & { obligationPushEnabled?: boolean },
-  string
->('albatrossNotifications:savePreferences');
+/** "Push me when something needs me" alone (S8). It writes no other preference field. */
+export const setObligationPush = makeFunctionReference<'mutation', { enabled: boolean }, string>(
+  'albatrossNotifications:setObligationPush',
+);
 
 /** The live snapshot. Undefined while it loads, or before sign-in. */
 export function useNeedsYouSnapshot(): NeedsYouSnapshot | undefined {

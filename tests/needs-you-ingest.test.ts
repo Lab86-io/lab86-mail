@@ -1,4 +1,4 @@
-import { describe, expect, setSystemTime, test } from 'bun:test';
+import { afterEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { classifierById } from '../lib/classifier/catalog';
 import { DEFAULT_JEV_PREFERENCES } from '../lib/jev/contract';
@@ -83,6 +83,9 @@ function harness(
   return { deps, calls, names, dispatches, delivered };
 }
 
+// A failed assertion must not leave the fake clock on for later tests.
+afterEach(() => setSystemTime());
+
 describe('ingest scan for a flag user (S5, S6)', () => {
   test('a code opens a code obligation and pushes through it, with no urgent_mail row', async () => {
     setSystemTime(new Date(LATE));
@@ -99,7 +102,6 @@ describe('ingest scan for a flag user (S5, S6)', () => {
     // Quiet hours do not hold it: the obligation claim pushes a code at once.
     expect(run.delivered).toEqual([{ userId: 'user-1', ids: ['ob-code'] }]);
     expect(run.dispatches).toEqual([]);
-    setSystemTime();
   });
 
   test('a failed code push or a code without an obligation id does not fail the scan', async () => {
@@ -109,7 +111,6 @@ describe('ingest scan for a flag user (S5, S6)', () => {
     const none = harness({ needsYou: true, obligationId: null });
     await detectUrgentMailAndCodes(ROW, [message(CODE_MAIL)], none.deps);
     expect(none.delivered).toEqual([]);
-    setSystemTime();
   });
 
   test('ordinary mail writes no mail_message row and no push', async () => {
@@ -127,7 +128,6 @@ describe('ingest scan for a flag user (S5, S6)', () => {
     expect(result.urgent).toBe(1);
     expect(run.names()).toEqual(['queueUrgentMailNotification']);
     expect(run.dispatches).toHaveLength(1);
-    setSystemTime();
   });
 });
 
@@ -144,7 +144,6 @@ describe('ingest scan with the flag off', () => {
     expect(off.calls[1].args.needsYou).toBeUndefined();
     expect(off.dispatches.at(-1)).toEqual({ notificationId: 'n-msg-2', options: { codeAvailable: true } });
     expect(off.delivered).toEqual([]);
-    setSystemTime();
   });
 
   test('S6 for all users: quiet hours hold new mail but never the push that carries a code', async () => {
@@ -158,7 +157,6 @@ describe('ingest scan with the flag off', () => {
     expect(result).toEqual({ codes: 1, urgent: 1, newMail: 1, held: 1 });
     expect(run.calls.find((call) => call.fn.endsWith(':holdMailPush'))?.args.notificationId).toBe('n-msg-1');
     expect(run.dispatches).toEqual([{ notificationId: 'n-msg-2', options: { codeAvailable: true } }]);
-    setSystemTime();
   });
 });
 
@@ -218,6 +216,20 @@ describe('Jev sweep and the flag', () => {
     const legacy = sweepDeps(undefined);
     await runJevSweep('u', legacy.deps);
     expect('needsYou' in legacy.mutations[0].args).toBe(false);
+  });
+
+  test('each stored batch pushes at once, so a later failed batch cannot drop them', async () => {
+    const run = sweepDeps(true);
+    const item = { ...mailInput(), leaseId: 'lease' };
+    let claims = 0;
+    run.deps.convexMutation = async (_fn: any, args: any) => {
+      if (args.items) return { stored: args.items.length, obligationIds: ['ob1'] };
+      claims += 1;
+      if (claims === 1) return { items: [item], moreRemaining: true };
+      throw new Error('claim failed');
+    };
+    await expect(runJevSweep('u', run.deps)).rejects.toThrow('claim failed');
+    expect(run.delivered).toEqual([['ob1']]);
   });
 
   test('a failed push does not fail the sweep', async () => {

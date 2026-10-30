@@ -730,7 +730,7 @@ describe('push claims (S4)', () => {
       entityKind: 'obligation',
       entityId: id,
       deepLink: `/mail/thread?account=${ACCOUNT}&thread=${THREAD}&message=m1`,
-      dedupeKey: `obligation:${id}:1`,
+      dedupeKey: `obligation:${ACCOUNT}:${id}:1`,
     });
     expect((await rows(t))[0]).toMatchObject({ pushedAt: CLOCK, pushCount: 1 });
     expect(await t.mutation(ob.claimPush, { ...scope, id: 'nope' })).toEqual({
@@ -881,6 +881,34 @@ describe('preferences (S8)', () => {
     expect((await user.query(api.albatrossNotifications.getPreferences, {})).obligationPushEnabled).toBe(
       false,
     );
+  });
+
+  test('the push switch saves only its own field, so it cannot undo another save', async () => {
+    const t = harness();
+    const user = t.withIdentity({ subject: USER });
+    // No row yet: the switch makes one with the defaults.
+    await user.mutation(api.albatrossNotifications.setObligationPush, { enabled: false });
+    expect(await user.query(api.albatrossNotifications.getPreferences, {})).toMatchObject({
+      obligationPushEnabled: false,
+      timezone: 'UTC',
+      eveningCheckinEnabled: true,
+    });
+    await user.mutation(api.albatrossNotifications.savePreferences, {
+      timezone: 'America/Chicago',
+      eveningCheckinEnabled: false,
+      eveningCheckinLocalTime: '20:30',
+      inAppEnabled: true,
+      webPushEnabled: false,
+      emailFallbackEnabled: true,
+      emailFallbackDelayMinutes: 90,
+    });
+    await user.mutation(api.albatrossNotifications.setObligationPush, { enabled: true });
+    expect(await user.query(api.albatrossNotifications.getPreferences, {})).toMatchObject({
+      obligationPushEnabled: true,
+      timezone: 'America/Chicago',
+      eveningCheckinEnabled: false,
+      eveningCheckinLocalTime: '20:30',
+    });
   });
 });
 

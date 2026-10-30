@@ -350,7 +350,7 @@ export function ObligationDetail({
                 value={draft.body}
                 placeholder="Write the reply here."
                 onChange={(event) => onDraftChange(event.target.value)}
-                className="field-sizing-content min-h-24 w-full resize-none bg-transparent p-0 text-[13.5px] leading-[1.65] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)]"
+                className="field-sizing-content min-h-24 w-full resize-none bg-transparent p-0 text-base leading-[1.65] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] sm:text-[13.5px]"
               />
             </>
           )}

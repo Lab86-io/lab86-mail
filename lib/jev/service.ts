@@ -69,7 +69,6 @@ export async function runJevSweep(userId: string, dependencies: JevSweepDependen
   const runtime = await resolveClassifierRuntime(userId);
   let classified = 0;
   let moreRemaining = false;
-  const obligationIds: string[] = [];
   const deadline = Date.now() + 40_000;
   for (let batch = 0; batch < 4 && Date.now() < deadline; batch++) {
     const page = await convexMutation<{
@@ -140,14 +139,15 @@ export async function runJevSweep(userId: string, dependencies: JevSweepDependen
       },
     );
     classified += result.stored;
-    obligationIds.push(...(result.obligationIds ?? []));
+    // Best effort, after each stored batch: a later batch that fails cannot
+    // drop the pushes of obligations that are already stored.
+    const stored = result.obligationIds ?? [];
+    if (stored.length && dependencies.deliverObligations)
+      await dependencies.deliverObligations(userId, stored).catch(() => undefined);
     moreRemaining = page.moreRemaining;
     if (!moreRemaining) break;
   }
   if (classified) dependencies.afterClassified?.(userId);
-  // Best effort: the obligations are in the app whether or not a push goes.
-  if (obligationIds.length && dependencies.deliverObligations)
-    await dependencies.deliverObligations(userId, obligationIds).catch(() => undefined);
   return { classified, moreRemaining };
 }
 

@@ -327,12 +327,26 @@ describe('the detail', () => {
     expect(renderToStaticMarkup(back.props.children)).toContain('Fri');
   });
 
-  test('Later offers three times and snoozes; Not mine dismisses', async () => {
+  test('Later offers three times and snoozes until the chosen one', async () => {
     const h = harness();
     const renderer = await mount(h.props);
     await act(async () => rowButton(renderer, 'ob_nda').props.onClick());
-    const menuItems = renderer.root.findAll((node) => typeof node.props.onSelect === 'function');
-    expect(menuItems.length).toBeGreaterThanOrEqual(0);
+    // The menu content renders in a portal, so the test calls the detail's Later handler.
+    const detail = renderer.root.find(
+      (node) => typeof node.props.onLater === 'function' && Array.isArray(node.props.laterOptions),
+    );
+    const options = detail.props.laterOptions as { id: string; until: number }[];
+    expect(options).toHaveLength(3);
+    expect(new Set(options.map((option) => option.until)).size).toBe(3);
+    await act(async () => detail.props.onLater(options[1]));
+    expect(h.actions[0]).toEqual({ id: 'ob_nda', action: { action: 'later', until: options[1].until } });
+    expect(h.toasts[0]).toMatchObject({ title: 'Later' });
+  });
+
+  test('Not mine dismisses', async () => {
+    const h = harness();
+    const renderer = await mount(h.props);
+    await act(async () => rowButton(renderer, 'ob_nda').props.onClick());
     await act(async () => buttonNamed(renderer, 'Not mine').props.onClick());
     expect(h.actions[0]).toEqual({ id: 'ob_nda', action: { action: 'not_mine' } });
     expect(h.toasts[0]).toMatchObject({ title: 'Not mine' });

@@ -36,6 +36,35 @@ export function isClosedObligation(obligation: Pick<ObligationView, 'state'>): b
   return CLOSED_STATES.includes(obligation.state);
 }
 
+function openCodeExpiry(obligation: ObligationView): number | undefined {
+  if (obligation.kind !== 'code' || isClosedObligation(obligation)) return undefined;
+  return obligation.code?.expiresAt;
+}
+
+/**
+ * The snapshot query does not run again when time passes. An open code past
+ * its expiry reads as expired here, so it leaves Now and loses Copy code
+ * before the server sweep closes the row.
+ */
+export function settleExpiredCodes(items: readonly ObligationView[], now: number): ObligationView[] {
+  return items.map((obligation) => {
+    const expiresAt = openCodeExpiry(obligation);
+    if (expiresAt === undefined || expiresAt > now) return obligation;
+    return { ...obligation, state: 'expired', closeReason: 'expired', closedAt: expiresAt };
+  });
+}
+
+/** The soonest expiry of an open code after `now`, so the page can wake at that time. */
+export function nextCodeExpiry(items: readonly ObligationView[], now: number): number | undefined {
+  let next: number | undefined;
+  for (const obligation of items) {
+    const expiresAt = openCodeExpiry(obligation);
+    if (expiresAt !== undefined && expiresAt > now && (next === undefined || expiresAt < next))
+      next = expiresAt;
+  }
+  return next;
+}
+
 interface DayBounds {
   startOfToday: number;
   startOfTomorrow: number;

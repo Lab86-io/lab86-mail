@@ -18,7 +18,9 @@ import {
   type NeedsYouEntry,
   type NeedsYouExtraLike,
   needsYouSummary,
+  nextCodeExpiry,
   obligationGroup,
+  settleExpiredCodes,
 } from '../lib/obligations/groups';
 
 /* The groups of the Needs you page (docs/needs-you-phase-1.md, W1). */
@@ -230,5 +232,48 @@ describe('the flag', () => {
     expect(needsYouFlagFor('user_2', 'user_1, user_2')).toBe(true);
     expect(needsYouFlagFor('user_3', 'user_1,user_2')).toBe(false);
     expect(mailSourceKey('acct', 'thread')).toBe('mail:acct:thread');
+  });
+});
+
+describe('code expiry on an open page', () => {
+  const code = (id: string, expiresAt?: number, state: ObligationView['state'] = 'open') =>
+    item({
+      id,
+      kind: 'code',
+      state,
+      code: { value: '482913', ...(expiresAt === undefined ? {} : { expiresAt }) },
+    });
+
+  test('an open code past its expiry reads as expired and leaves Now', () => {
+    const [expired, live, noExpiry, reply] = settleExpiredCodes(
+      [code('old', NOW - 1), code('live', NOW + 5 * 60_000), code('none'), item({ id: 'r' })],
+      NOW,
+    );
+    expect(expired).toMatchObject({ state: 'expired', closeReason: 'expired', closedAt: NOW - 1 });
+    expect(group(expired)).toBe('closed_today');
+    expect(live.state).toBe('open');
+    expect(noExpiry.state).toBe('open');
+    expect(reply.state).toBe('open');
+  });
+
+  test('a closed code keeps its own close reason', () => {
+    const [used] = settleExpiredCodes([code('used', NOW - 1, 'done')], NOW);
+    expect(used.state).toBe('done');
+    expect(used.closeReason).toBeUndefined();
+  });
+
+  test('the next wake is the soonest open code expiry after now', () => {
+    expect(
+      nextCodeExpiry(
+        [
+          code('past', NOW - 1),
+          code('late', NOW + 9 * 60_000),
+          code('soon', NOW + 2 * 60_000),
+          code('closed', NOW + 60_000, 'expired'),
+        ],
+        NOW,
+      ),
+    ).toBe(NOW + 2 * 60_000);
+    expect(nextCodeExpiry([code('none'), item({ id: 'r' })], NOW)).toBeUndefined();
   });
 });

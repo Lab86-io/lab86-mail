@@ -71,6 +71,7 @@ function harness(
     },
     recordReply: async (input) => {
       note('recordReply', input);
+      if (options.recordReply === 'throw') throw new Error('Convex timeout');
       return (
         options.recordReply ?? {
           ok: true,
@@ -318,7 +319,18 @@ describe('POST /api/obligations/[id]/reply', () => {
     ]);
   });
 
-  test('an empty reply is 400; a closed item is 409; a failed close maps its error', async () => {
+  test('after the mail leaves, a failed record still reads as sent, so a retry cannot send twice', async () => {
+    for (const recordReply of [{ ok: false, error: 'closed' }, 'throw'] as const) {
+      const { deps, calls } = harness({ recordReply });
+      const { status, json } = await call(createObligationReplyPost(deps), { body: 'Hi' });
+      expect(status).toBe(200);
+      expect(calls.sendReply).toHaveLength(1);
+      expect(json.obligation).toMatchObject({ id: 'ob1', state: 'done', closeReason: 'sent_reply' });
+      expect(json.undoUntil).toBeUndefined();
+    }
+  });
+
+  test('an empty reply is 400; a closed item is 409; another kind is 400', async () => {
     const { deps, calls } = harness();
     expect((await call(createObligationReplyPost(deps), { body: '   ' })).status).toBe(400);
     expect((await call(createObligationReplyPost(deps), { text: 'hi' })).status).toBe(400);
@@ -327,8 +339,10 @@ describe('POST /api/obligations/[id]/reply', () => {
     expect((await call(createObligationReplyPost(closed.deps), { body: 'Hi' })).status).toBe(409);
     const code = harness({ record: record({}, { kind: 'code' }) });
     expect((await call(createObligationReplyPost(code.deps), { body: 'Hi' })).status).toBe(400);
-    const lost = harness({ recordReply: { ok: false, error: 'closed' } });
-    expect((await call(createObligationReplyPost(lost.deps), { body: 'Hi' })).status).toBe(409);
+    // Only a reply item takes a reply; nothing is sent for an action.
+    const action = harness({ record: record({}, { kind: 'action' }) });
+    expect((await call(createObligationReplyPost(action.deps), { body: 'Hi' })).status).toBe(400);
+    expect(action.calls.sendReply).toBeUndefined();
     const instant = harness({ recordReply: { ok: true, obligation: view({ state: 'done' }) } });
     expect(
       (await call(createObligationReplyPost(instant.deps), { body: 'Hi' })).json.undoUntil,

@@ -120,12 +120,20 @@ export function expiryFraction(obligation: Pick<ObligationView, 'createdAt' | 'c
   return Math.min(1, Math.max(0, fraction));
 }
 
-/** The due day as a word: "Today", "Today 6:40 PM", "Tomorrow", "Fri", "Nov 16". */
+/**
+ * The due day as a word: "Today", "Today 6:40 PM", "Tomorrow", "Fri", "Nov 16".
+ * A day in the past reads "Yesterday" or its date, never "Today".
+ */
 export function dueDayLabel(dueAt: number, now: number, timezone: string | undefined): string {
   const distance = dayDistance(dueAt, now, timezone);
   const clockTime = dueAt - startOfDay(dueAt, timezone);
-  const withTime = (word: string) => (clockTime ? `${word} ${timeOfDay(dueAt, timezone)}` : word);
-  if (distance <= 0) return withTime('Today');
+  // A due day from the evidence ends at 23:59:59.999. That is the day, not a stated time.
+  const endOfDay = startOfDay(dueAt + 1, timezone) === dueAt + 1;
+  const withTime = (word: string) =>
+    clockTime && !endOfDay ? `${word} ${timeOfDay(dueAt, timezone)}` : word;
+  if (distance === -1) return withTime('Yesterday');
+  if (distance < -1) return format(dueAt, timezone, { month: 'short', day: 'numeric' });
+  if (distance === 0) return withTime('Today');
   if (distance === 1) return withTime('Tomorrow');
   if (distance < 7) return format(dueAt, timezone, { weekday: 'short' });
   return format(dueAt, timezone, { month: 'short', day: 'numeric' });

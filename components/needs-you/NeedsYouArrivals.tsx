@@ -9,7 +9,7 @@ import { useClientStore } from '@/lib/client-state';
 import type { ObligationView } from '@/lib/obligations/contract';
 import { laterOptions } from '@/lib/obligations/groups';
 import { dueSentence, kindLabel, spacedCode } from '@/lib/obligations/labels';
-import { postObligationAction, requestNeedsYouItem } from './data';
+import { postObligationAction, requestNeedsYouItem, useNeedsYouSnapshot } from './data';
 import { NeedsYouGate } from './NeedsYouGate';
 import { sonnerNeedsYouNotifier } from './NeedsYouView';
 import { useNeedsYou } from './useNeedsYou';
@@ -191,11 +191,20 @@ function ArrivalsInner() {
   return null;
 }
 
+/**
+ * Reads only the snapshot first. A user outside the flag never mounts the
+ * inner part, so the shell starts no second Albatross notification read.
+ */
+function ArrivalsWhenEnabled() {
+  const snapshot = useNeedsYouSnapshot();
+  return snapshot?.enabled ? <ArrivalsInner /> : null;
+}
+
 /** Mounted once in the shell: it toasts a new Now item while the app is open. */
 export function NeedsYouArrivals() {
   return (
     <NeedsYouGate fallback={null}>
-      <ArrivalsInner />
+      <ArrivalsWhenEnabled />
     </NeedsYouGate>
   );
 }

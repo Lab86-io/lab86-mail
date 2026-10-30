@@ -777,6 +777,16 @@ export const ACCOUNT_KEYED_ROWS: readonly AccountKeyedRows[] = [
     prefix: true,
     rowBytes: PURGE_ROW_BYTES.albatrossNotifications,
   },
+  // Needs you pushes quote the asker and the evidence line. Summary rows
+  // ("obligation-summary:") hold only a count and stay.
+  {
+    table: 'albatrossNotifications',
+    index: 'by_user_dedupe',
+    field: 'dedupeKey',
+    value: (a) => `obligation:${a}:`,
+    prefix: true,
+    rowBytes: PURGE_ROW_BYTES.albatrossNotifications,
+  },
   // Event suggestions read from the mailbox's messages (lib/mail/suggestion-detectors.ts).
   {
     table: 'suggestions',

@@ -178,9 +178,23 @@ export async function sendObligationReply(
   if (!parsed.success) throw new ObligationApiError('Write the reply first.', 400);
   const record = await load(caller, id, deps);
   const target = mailTarget(record.obligation);
+  if (record.obligation.kind !== 'reply')
+    throw new ObligationApiError('Only a reply can be answered here.', 400);
   if (!isOpen(record.obligation)) throw new ObligationApiError('This item is already closed.', 409);
   const sent = await deps.sendReply(caller, { ...target, body: parsed.data.body });
-  const result = await deps.recordReply({ userId: caller.userId, id, ...sent });
-  if (!result.ok) failed(result);
+  // The mail has left. A ledger failure now must not read as a failed send,
+  // or a retry sends the mail a second time. The next Jev sync sees the reply
+  // in the thread and closes the item as sent_reply. Without the record there
+  // is no Undo.
+  const closedAt = Date.now();
+  const sentView: ObligationView = {
+    ...record.obligation,
+    state: 'done',
+    closeReason: 'sent_reply',
+    closedAt,
+    updatedAt: closedAt,
+  };
+  const result = await deps.recordReply({ userId: caller.userId, id, ...sent }).catch(() => null);
+  if (!result?.ok) return { obligation: sentView };
   return { obligation: result.obligation, ...(result.undoUntil ? { undoUntil: result.undoUntil } : {}) };
 }

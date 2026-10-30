@@ -134,7 +134,12 @@ describe('due words', () => {
   test('the due day: today with its time, tomorrow, the weekday, the date', () => {
     expect(dueDayLabel(START_OF_TODAY + 18 * HOUR + 40 * MINUTE, NOW, TZ)).toBe('Today 6:40 PM');
     expect(dueDayLabel(START_OF_TODAY, NOW, TZ)).toBe('Today');
-    expect(dueDayLabel(START_OF_TODAY - HOUR, NOW, TZ)).toBe('Today 11:00 PM');
+    // A past day is never "Today".
+    expect(dueDayLabel(START_OF_TODAY - HOUR, NOW, TZ)).toBe('Yesterday 11:00 PM');
+    expect(dueDayLabel(START_OF_TODAY - 3 * DAY + 9 * HOUR, NOW, TZ)).toBe('Oct 25');
+    // A parsed due day ends at 23:59:59.999 and shows no time.
+    expect(dueDayLabel(START_OF_TODAY + DAY - 1, NOW, TZ)).toBe('Today');
+    expect(dueDayLabel(START_OF_TODAY - 1, NOW, TZ)).toBe('Yesterday');
     expect(dueDayLabel(START_OF_TODAY + DAY, NOW, TZ)).toBe('Tomorrow');
     expect(dueDayLabel(START_OF_TODAY + DAY + 9 * HOUR, NOW, TZ)).toBe('Tomorrow 9:00 AM');
     expect(dueDayLabel(START_OF_TODAY + 2 * DAY, NOW, TZ)).toBe('Fri');

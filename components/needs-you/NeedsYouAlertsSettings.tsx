@@ -4,8 +4,8 @@ import { useMutation } from 'convex/react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
-import { type NotificationPreferences, notificationPreferenceInput } from '@/lib/notifications/preferences';
-import { savePreferencesWithObligationPush, useNeedsYouSnapshot } from './data';
+import type { NotificationPreferences } from '@/lib/notifications/preferences';
+import { setObligationPush, useNeedsYouSnapshot } from './data';
 import { NeedsYouGate } from './NeedsYouGate';
 
 /** The two Needs you flags as the saved preference row carries them. */
@@ -38,13 +38,11 @@ interface AlertsProps {
   timezone?: string;
   /** The saved preference row, with the flags of phase 1 when the server has them. */
   remote: NotificationPreferences | undefined;
-  /** The last saved form: the push switch saves it again with the flag. */
-  saved: NotificationPreferences | null;
 }
 
-function NeedsYouAlerts({ timezone, remote, saved }: AlertsProps) {
+function NeedsYouAlerts({ timezone, remote }: AlertsProps) {
   const snapshot = useNeedsYouSnapshot();
-  const save = useMutation(savePreferencesWithObligationPush);
+  const save = useMutation(setObligationPush);
   const [local, setLocal] = useState<{ pushEnabled?: boolean; codesEnabled?: boolean }>({});
   const [saving, setSaving] = useState(false);
   if (!snapshot?.enabled) return <MailAlertsSettings timezone={timezone} />;
@@ -53,11 +51,11 @@ function NeedsYouAlerts({ timezone, remote, saved }: AlertsProps) {
   const codesEnabled = local.codesEnabled ?? flags.codesEnabled;
 
   const onPushEnabledChange = async (enabled: boolean) => {
-    if (!saved) return;
     setLocal((current) => ({ ...current, pushEnabled: enabled }));
     setSaving(true);
     try {
-      await save({ ...notificationPreferenceInput(saved), obligationPushEnabled: enabled });
+      // Only this field: a settings save that is not done yet keeps its own values.
+      await save({ enabled });
       toast.success(enabled ? 'Pushes are on' : 'Pushes are off');
     } catch (error) {
       setLocal((current) => ({ ...current, pushEnabled: undefined }));

@@ -809,7 +809,9 @@ async function pushRow(ctx: MutationCtx, row: Obligation, at: number) {
     title: row.asker,
     body: row.title,
     deepLink: obligationDeepLink(row),
-    dedupeKey: `obligation:${String(row._id)}:${count}`,
+    // The account id leads the key, so a mailbox disconnect removes the row
+    // with the mail it quotes (ACCOUNT_KEYED_ROWS in convex/accounts.ts).
+    dedupeKey: `obligation:${row.accountId ?? 'none'}:${String(row._id)}:${count}`,
     entityId: String(row._id),
     at,
   });

@@ -854,11 +854,7 @@ function NotificationsSection() {
           {dirty ? 'Changes apply after you save.' : 'Everything here is saved.'}
         </span>
       </div>
-      <NeedsYouAlertsSettings
-        timezone={baseline?.timezone ?? prefs.timezone}
-        remote={remote}
-        saved={baseline}
-      />
+      <NeedsYouAlertsSettings timezone={baseline?.timezone ?? prefs.timezone} remote={remote} />
     </section>
   );
 }
