@@ -66,6 +66,7 @@ import type * as mobile from "../mobile.js";
 import type * as narrative from "../narrative.js";
 import type * as narrativeSchema from "../narrativeSchema.js";
 import type * as oauthCompletions from "../oauthCompletions.js";
+import type * as obligationViews from "../obligationViews.js";
 import type * as obligations from "../obligations.js";
 import type * as officeDocuments from "../officeDocuments.js";
 import type * as operations from "../operations.js";
@@ -145,6 +146,7 @@ declare const fullApi: ApiFromModules<{
   narrative: typeof narrative;
   narrativeSchema: typeof narrativeSchema;
   oauthCompletions: typeof oauthCompletions;
+  obligationViews: typeof obligationViews;
   obligations: typeof obligations;
   officeDocuments: typeof officeDocuments;
   operations: typeof operations;

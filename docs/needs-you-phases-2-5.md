@@ -140,3 +140,118 @@ by side). Reuse the shared models and clients that I adds.
   and Release archive) on the PR compiles and tests the Swift code.
 - Two PRs: server and web first, native second. CodeRabbit on each. The
   merge waits for the owner.
+
+## S2 notes (2026-10-30)
+
+### Albatross threads (`convex/obligationViews.ts`)
+
+- `forWork` (signed-in user, `{ workId }`): the open and snoozed items of
+  that Albatross, and the items that closed since the start of the user's
+  day. The order is `createdAt`, oldest first, so the newest item is last.
+  A user outside the flag, or a call without a session, gets `[]`.
+- `snapshotFor` (server secret, `{ userId }`): the same `NeedsYouSnapshot`
+  as `api.obligations.needsYou`.
+- `closedSinceFor` (server secret, `{ userId, since, limit? }`): the
+  `ObligationClosedNote` list for the brief. It holds only the items that
+  closed by themselves (`evidence`, `expired`, `event_passed`, `aged_out`),
+  newest first. It never holds a code or a close by the user.
+- `linkWork` (server secret, `{ userId, id, workId }`): sets `workId` and
+  `workTitle` on the row. The Albatross must be the user's and must be open.
+- Each view adds the row fields `sourceLabel`, `url`, `workTitle`, `eventId`,
+  and `eventStart` when `obligationView` does not set them yet.
+
+### Start in Albatross (`lib/obligations/albatross.ts`)
+
+- Not in the flag, or the id of another user: 404. A code: 400. A closed
+  item: 409. A snoozed item can start.
+- The item has a `workId` and that Albatross is open: the route sets
+  `workTitle`. A run that works now gets the item as a steer note. If no run
+  works, a run starts with the note (`startStepRun`, trigger `user`). The
+  run start rules apply. If a rule refuses the start, the item stays linked
+  and the response has no `runId`. The user can press "Handle it" in the
+  thread.
+- No `workId`, or that Albatross is closed or gone: a new Albatross starts
+  through the capture path (`captureWork` with one reviewed item, so no split
+  call to a model). The route links the item to it. A new Albatross makes
+  its plan first, so the route starts no run.
+- The note gives the item, the asker, the place, the evidence, the source
+  ids, and the link. `redactSecretShapes` removes secret shapes. The note
+  has at most 2,000 characters (the steer limit).
+- The route does not add a chat message. The Work thread shows the item
+  from `forWork`.
+- Contract change (additive): `ObligationAlbatrossResponse.runId?: string`.
+
+### The brief (`lib/obligations/brief-region.ts`)
+
+- The Node flag and `snapshotFor.enabled` must both be true. Then the
+  edition stores `sections.needsYou` (`BriefNeedsYouRegion`). If the ledger
+  read fails, the edition keeps the `answer` lane.
+- The region: `items` are the Now group and then the Today group, from
+  `groupNeedsYou` (the page rules), at most `BRIEF_NEEDS_YOU_LIMIT`. Codes
+  never. `open`, `now`, and `dueToday` count the open groups without codes.
+  `closedSince` holds the items closed by themselves since the previous
+  edition, at most 5.
+- The stored region has short text and no code value or draft state. It
+  stays below 16,000 bytes (`BRIEF_NEEDS_YOU_BYTE_LIMIT`). The edition
+  storage keeps it in every size step, and the read migration keeps it
+  (`lib/store/daily-reports.ts`).
+- `sections.answer` stays in the stored edition for older readers, the
+  prose, the weekly review, and the widgets. Only the document changes.
+- The document gets two regions in the place of `answer`:
+  - `needs-you`: an `entity_list` with the title "Needs you" and emphasis
+    `primary`. Each item has the item shape of the `answer` lane:
+    - `ref`: a mail item is `thread` (account, thread id). A calendar item
+      is `event`. A Slack, Jira, Granola, Drive, GitHub, or Bitbucket item
+      is `mcp` (id = `sourceKey`). Any other item is `derived`
+      (`obligation:<id>`). `label` is the item title.
+    - `framing`: `lane: 'needs-you'`, `sender` (the asker), `age`
+      ("Day 3" from `createdAt`), and `reason`. For a thread or an event,
+      `reason` is the item title. For other items, `reason` is the place
+      ("Slack, #release").
+    - `actions`: the open action first (`open_thread`, `open_event`, or
+      `open_url` for an https link). Then `draft_reply` for a mail reply,
+      and `open_work` when the item has a `workId`. An item without an open
+      action gets `open_view` with `{ view: 'notifications', obligationId }`.
+  - `needs-you-note`: a `text` node, role `aside`. It is one plain line:
+    "3 other open items are on the Needs you page." and "Closed by itself
+    since yesterday's letter: Renewal notice (Northwind Billing)." The
+    region is absent when the line is empty.
+- A mail thread in the `needs-you` lane leaves the `today`, `know`, and
+  `waiting` lanes. A lane that becomes empty goes.
+- The document holds at most 12 regions. If the lane makes 13, the note
+  goes first.
+- The daily document is always an editorial document. The editorial
+  modules make one module for each lane item (section `needs-you`, no lane
+  title) and one module for the note. The regions are then
+  `editorial-needs-you` and `editorial-needs-you-note`, unless the writer
+  places the modules in other regions.
+
+### Mobile API (`lib/mobile/v1/needs-you.ts`, phase 5)
+
+| Route | Body | Response | Rate limit |
+|---|---|---|---|
+| `GET /api/mobile/v1/needs-you` | none | `NeedsYouSnapshot` | 120 a minute |
+| `POST /api/mobile/v1/needs-you/[id]` | `ObligationAction` | `ObligationActionResponse` | 60 a minute |
+| `POST /api/mobile/v1/needs-you/[id]/draft` | none | `ObligationDraftResponse` | 20 a minute |
+| `POST /api/mobile/v1/needs-you/[id]/reply` | `{ body }` | `ObligationReplyResponse` | 30 a minute |
+| `POST /api/mobile/v1/needs-you/[id]/albatross` | none | `ObligationAlbatrossResponse` | 20 a minute |
+
+- The auth is the mobile session (`requireCurrentUser`). The services are
+  the web services. The JSON field names are the names in
+  `lib/obligations/contract.ts`. Times are epoch milliseconds (integers).
+- A user outside the flag gets `{ enabled: false, timezone: 'UTC', items: [] }`
+  from the GET route, with no Convex read. The other routes give 404.
+- Errors use the mobile envelope `{ ok: false, requestID, error: { code,
+  message, retryable } }`: 400 `INVALID_REQUEST`, 401 `AUTH_REQUIRED`, 403
+  `FORBIDDEN`, 404 `NOT_FOUND`, 409 `CONFLICT`, 429 `RATE_LIMITED`, 5xx
+  `SERVER_ERROR`. The message is the message of the web route.
+- A response loses the keys that are not in the schema, so a strict decoder
+  stays safe when the server adds a field.
+- The OpenAPI document has the five routes and the schemas `NeedsYouSnapshot`,
+  `ObligationView`, `ObligationActionRequest`, `ObligationActionResponse`,
+  `ObligationDraftResponse`, `ObligationReplyRequest`,
+  `ObligationReplyResponse`, and `ObligationAlbatrossResponse`. The Swift
+  OpenAPI generator makes types and client calls from `openapi.yaml` when
+  the package builds. Each response holds its own copy of `ObligationView`.
+- `ObligationActionRequest` is one flat object: `action`, and `until` or
+  `response` when the action needs them. Do not send a key with `null`.
