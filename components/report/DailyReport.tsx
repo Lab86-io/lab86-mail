@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
 import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
+import { requestNeedsYouItem } from '@/components/needs-you/data';
 import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
 import { BriefSourceLine, briefEditionNotes } from '@/components/report/BriefSourceLine';
@@ -583,6 +584,13 @@ function ReportArtifact({
               setPrimaryView(payload.view);
               return ack(true);
             }
+            // Needs you: the page, open at the item that the brief names.
+            if (payload.view === 'notifications') {
+              if (typeof payload.obligationId === 'string' && payload.obligationId)
+                requestNeedsYouItem(payload.obligationId);
+              setPrimaryView('notifications');
+              return ack(true);
+            }
             return ack(false, 'unknown view');
           case 'open_area':
             if (!payload.areaId) return ack(false, 'missing areaId');
@@ -951,6 +959,8 @@ export function DailyReport({
           fyi: asLane(report.sections.fyi),
           calendar: asEvents(report.sections.calendar),
           albatross: asAlbatrossContext(report.sections.albatross),
+          // Needs you (phase 3): a flag user's lane takes the place of Answer.
+          needsYou: (report.sections as { needsYou?: unknown }).needsYou,
         },
       },
       { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },

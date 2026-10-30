@@ -2,8 +2,10 @@
 // and address is invented. Domains are example.com.
 
 import { horizonClock } from '@/lib/albatross/horizon';
+import { composeEditorialDocument, defaultEditorialPlan, editorialModules } from '@/lib/brief/editorial';
 import type { BriefDocumentV2, BriefRegion } from '@/lib/shared/brief-document';
 import { letterBriefDocumentFixture } from '@/lib/shared/brief-document-fixtures';
+import type { DailyReport } from '@/lib/shared/types';
 import type { ObligationDraftResponse, ObligationView } from './contract';
 import { mailSourceKey } from './contract';
 import type { NeedsYouExtraLike } from './groups';
@@ -648,4 +650,17 @@ export function needsYouLetterFixture(): BriefDocumentV2 {
           : entry,
     ),
   };
+}
+
+/**
+ * The same day as an editorial edition, the form that real daily editions
+ * take: the letter goes through the editorial modules and the fallback plan
+ * (lib/brief/editorial.ts), so the lane is one module, a group of generic
+ * nodes, in the region `editorial-needs-you`.
+ */
+export function needsYouEditorialFixture(): BriefDocumentV2 {
+  const letter = needsYouLetterFixture();
+  const report = { generatedAt: letter.generatedAt, sections: {} } as unknown as DailyReport;
+  const modules = editorialModules(report, letter);
+  return composeEditorialDocument(letter, modules, defaultEditorialPlan(modules));
 }

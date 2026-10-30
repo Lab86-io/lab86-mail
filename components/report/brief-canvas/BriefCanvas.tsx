@@ -12,6 +12,7 @@ import {
   useState,
 } from 'react';
 import { toast } from 'sonner';
+import { requestNeedsYouItem } from '@/components/needs-you/data';
 import { FRONTIER_GATE_REGION_ID } from '@/lib/albatross/plan-frontier';
 import { callTool } from '@/lib/api-client';
 import { briefQueryKeys, briefRefKey, collectBriefRefs, hydratedEntityKey } from '@/lib/brief/hydration';
@@ -228,6 +229,7 @@ export function BriefCanvas({
             setChatScope,
             setAiBarOpen,
             openExternal: (url, target, features) => window.open(url, target, features),
+            openNeedsYouItem: requestNeedsYouItem,
           });
         } catch (error) {
           record(action, payload, sourceRef, meta, 'failed');
@@ -288,6 +290,7 @@ export function BriefCanvas({
             setChatScope,
             setAiBarOpen,
             openExternal: (url, target, features) => window.open(url, target, features),
+            openNeedsYouItem: requestNeedsYouItem,
           });
         }
         refresh();
@@ -898,6 +901,8 @@ export function navigateBriefAction(
     setChatScope: (value: { kind: 'area'; areaId: string }) => void;
     setAiBarOpen: (value: boolean) => void;
     openExternal: (url: string, target: '_blank', features: 'noopener,noreferrer') => void;
+    /** Needs you: opens the page at one item (components/needs-you/data.ts). */
+    openNeedsYouItem?: (id: string) => void;
   },
 ) {
   switch (action) {
@@ -913,6 +918,13 @@ export function navigateBriefAction(
       const view = required(payload, 'view');
       if (['mail', 'tasks', 'calendar', 'areas', 'plans', 'files'].includes(view)) {
         navigation.setPrimaryView(view);
+      }
+      // The Needs you page (the Notifications view of a flag user), open at
+      // the item of the brief lane when the action names one.
+      if (view === 'notifications') {
+        const obligationId = optional(payload, 'obligationId');
+        if (obligationId) navigation.openNeedsYouItem?.(obligationId);
+        navigation.setPrimaryView('notifications');
       }
       break;
     }

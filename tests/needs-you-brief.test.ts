@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import './tools/harness';
+import {
+  composeEditorialDocument,
+  defaultEditorialPlan,
+  EDITORIAL_REGION_LIMIT,
+  editorialModules,
+} from '../lib/brief/editorial';
+import { briefLetterFromReport, briefLetterKind } from '../lib/brief/letter';
+import { projectBriefMail } from '../lib/jev/report';
 import { generateAgentReport } from '../lib/mail/agent-report';
 import {
   BRIEF_NEEDS_YOU_BYTE_LIMIT,
@@ -7,10 +15,12 @@ import {
   buildBriefNeedsYouRegion,
   editionNeedsYou,
   NEEDS_YOU_LANE_ID,
-  NEEDS_YOU_NOTE_ID,
+  needsYouClosedLine,
+  needsYouCountSentence,
+  needsYouEditorialStory,
   needsYouLaneItem,
-  needsYouNoteText,
-  needsYouRegions,
+  needsYouLaneParts,
+  needsYouLetterRegion,
   needsYouSectionOf,
   parseBriefNeedsYouRegion,
   placeNeedsYouLane,
@@ -26,10 +36,17 @@ import {
   type ObligationView,
 } from '../lib/obligations/contract';
 import { isKnownBriefAction } from '../lib/shared/brief-actions';
-import { type BriefDocumentV2, type BriefRegion, parseBriefDocument } from '../lib/shared/brief-document';
+import {
+  type BriefDocumentV2,
+  type BriefNode,
+  type BriefRegion,
+  lintBriefDocument,
+  parseBriefDocument,
+} from '../lib/shared/brief-document';
 import type { DailyReport } from '../lib/shared/types';
 import { dailyReportForStorage, getDailyReport, migrateDailyReport } from '../lib/store/daily-reports';
 import { editorialFixture } from './fixtures/editorial';
+import { NOW as JEV_NOW, assessment as jevAssessment, policy, thread } from './fixtures/jev';
 import { withToolContext } from './tools/harness';
 
 // Needs you in the Daily Brief (phase 3, S2). Invented people and companies only.
@@ -192,11 +209,12 @@ describe('the lane items', () => {
         createdAt: NOW - 2 * DAY - HOUR,
       }),
       NOW,
+      'now',
     );
     expect(item).toEqual({
       ref: { kind: 'thread', id: 'thread-9', account: 'acct', label: 'Could you confirm the start date?' },
       framing: {
-        lane: 'needs-you',
+        lane: 'now',
         reason: 'Could you confirm the start date?',
         sender: 'Dana Whitfield',
         age: 'Day 3',
@@ -277,7 +295,7 @@ describe('the lane items', () => {
       label: 'Review the release notes',
     });
     expect(slack.framing).toEqual({
-      lane: 'needs-you',
+      lane: 'today',
       reason: 'Slack, #release',
       sender: 'Priya Natarajan',
     });
@@ -307,7 +325,7 @@ describe('the lane items', () => {
     );
     expect(jira.ref.kind).toBe('mcp');
     expect(jira.ref.label).toBe('Needs you');
-    expect(jira.framing).toEqual({ lane: 'needs-you', reason: 'Jira' });
+    expect(jira.framing).toEqual({ lane: 'today', reason: 'Jira' });
     expect(jira.actions).toEqual([
       {
         action: 'open_view',
@@ -323,61 +341,202 @@ describe('the lane items', () => {
   });
 });
 
-describe('the note line', () => {
-  test('names the other open items, and what closed by itself since the last letter', () => {
-    const base = { generatedAt: NOW, timezone: ZONE };
-    const withItems = region({ open: 5, items: [view(), view()] });
-    expect(needsYouNoteText(withItems, base)).toBe('3 other open items are on the Needs you page.');
-    expect(needsYouNoteText(region({ open: 2, items: [view()] }), base)).toBe(
-      '1 other open item is on the Needs you page.',
+describe('the lines of the lane', () => {
+  const base = { generatedAt: NOW, timezone: ZONE };
+
+  test('the count sentence leaves out a zero part', () => {
+    expect(needsYouCountSentence(region({ open: 8, now: 2, dueToday: 2 }))).toBe(
+      '8 open · 2 now · 2 due today',
     );
-    expect(needsYouNoteText(region({ open: 1 }), base)).toBe(
-      '1 open item is on the Needs you page. None is due today.',
+    expect(needsYouCountSentence(region({ open: 3, dueToday: 1 }))).toBe('3 open · 1 due today');
+    expect(needsYouCountSentence(region({ open: 4 }))).toBe('4 open');
+    expect(needsYouCountSentence(region())).toBe('Nothing open');
+  });
+
+  test('the closed line names what closed by itself since the last letter', () => {
+    expect(needsYouClosedLine(region({ open: 5, items: [view(), view()] }), base)).toBe('');
+    expect(needsYouClosedLine(region({ open: 1 }), base)).toBe(
+      'None is due today. 1 open item is on the Needs you page.',
     );
-    expect(needsYouNoteText(region({ open: 4 }), base)).toBe(
-      '4 open items are on the Needs you page. None is due today.',
+    expect(needsYouClosedLine(region({ open: 4 }), base)).toBe(
+      'None is due today. 4 open items are on the Needs you page.',
     );
-    expect(needsYouNoteText(region({ open: 1, items: [view()] }), base)).toBe('');
     const closed = region({
       closedSince: [closedNote(), closedNote({ title: 'Delivery   window moved', asker: '' })],
     });
-    expect(needsYouNoteText(closed, { ...base, previousGeneratedAt: NOW - DAY })).toBe(
-      "Closed by itself since yesterday's letter: Renewal notice (Northwind Billing); Delivery window moved.",
+    expect(needsYouClosedLine(closed, { ...base, previousGeneratedAt: NOW - DAY })).toBe(
+      'Closed by itself since yesterday’s letter: Renewal notice (Northwind Billing); Delivery window moved.',
     );
-    expect(needsYouNoteText(closed, { ...base, previousGeneratedAt: NOW - 3 * DAY })).toContain(
+    expect(needsYouClosedLine(closed, { ...base, previousGeneratedAt: NOW - 3 * DAY })).toContain(
       'since the last letter:',
     );
-    expect(needsYouNoteText(closed, base)).toContain('Closed by itself since yesterday:');
+    expect(needsYouClosedLine(closed, base)).toContain('Closed by itself since yesterday:');
+    // The time that the region stores gives the same words as the composer.
+    expect(needsYouClosedLine({ ...closed, previousGeneratedAt: NOW - DAY }, base)).toContain(
+      'since yesterday’s letter:',
+    );
+    expect(needsYouClosedLine(region({ open: 2, closedSince: [closedNote()] }), base)).toBe(
+      'None is due today. 2 open items are on the Needs you page. Closed by itself since yesterday: Renewal notice (Northwind Billing).',
+    );
   });
 
   test('"yesterday" follows the user time zone', () => {
-    // 03:00 UTC on 2026-10-30 is still 2026-10-29 in New York: yesterday's letter.
-    expect(sinceLetterPhrase(NOW, ZONE, Date.parse('2026-10-30T03:00:00Z'))).toBe("yesterday's letter");
+    // 03:00 UTC on 2026-10-30 is still 2026-10-29 in New York: yesterday’s letter.
+    expect(sinceLetterPhrase(NOW, ZONE, Date.parse('2026-10-30T03:00:00Z'))).toBe('yesterday’s letter');
     expect(sinceLetterPhrase(NOW, ZONE, NOW - HOUR)).toBe('the last letter');
-    expect(sinceLetterPhrase(NOW, 'Not/AZone', NOW - DAY)).toBe("yesterday's letter");
+    expect(sinceLetterPhrase(NOW, 'Not/AZone', NOW - DAY)).toBe('yesterday’s letter');
+    expect(sinceLetterPhrase(NOW, undefined, NOW - DAY)).toBe('yesterday’s letter');
     expect(sinceLetterPhrase(NOW, ZONE, null)).toBe('yesterday');
   });
+});
 
-  test('the regions: the lane when it has items, then the note when it has text', () => {
-    const options = { generatedAt: NOW, timezone: ZONE };
-    expect(needsYouRegions(region(), options)).toEqual([]);
-    const regions = needsYouRegions(
+describe('the letter region (one shape for web, iOS, and macOS)', () => {
+  const options = { generatedAt: NOW, timezone: ZONE, previousGeneratedAt: NOW - DAY };
+
+  test('the rows alone: an entity list titled "Needs you", Now items first, the count as the summary', () => {
+    const built = needsYouLetterRegion(
       region({ open: 3, now: 1, dueToday: 1, items: [view(), view()] }),
       options,
+    )!;
+    expect(built.id).toBe('needs-you');
+    expect(built.summary).toBe('3 open · 1 now · 1 due today');
+    expect(built.tree).toMatchObject({ kind: 'entity_list', title: 'Needs you', emphasis: 'primary' });
+    const parts = needsYouLaneParts(built.tree);
+    expect(parts.closed).toBeNull();
+    expect(parts.list?.items.map((item) => item.framing.lane)).toEqual(['now', 'today']);
+  });
+
+  test('with the closed line: a stack of the rows and one caption; without rows: the caption alone', () => {
+    const built = needsYouLetterRegion(
+      region({ open: 1, dueToday: 1, items: [view()], closedSince: [closedNote()] }),
+      options,
+    )!;
+    expect(built.tree.kind).toBe('stack');
+    const parts = needsYouLaneParts(built.tree);
+    expect(parts.list?.items).toHaveLength(1);
+    expect(parts.list?.items[0].framing.lane).toBe('today');
+    expect(parts.closed).toBe(
+      'Closed by itself since yesterday’s letter: Renewal notice (Northwind Billing).',
     );
-    expect(regions.map((entry) => entry.id)).toEqual([NEEDS_YOU_LANE_ID, NEEDS_YOU_NOTE_ID]);
-    expect(regions[0].summary).toBe('Needs you: 1 now, 1 due today, 3 open.');
-    expect(regions[0].tree).toMatchObject({ kind: 'entity_list', title: 'Needs you', emphasis: 'primary' });
-    expect(regions[1].tree).toEqual({
-      kind: 'text',
-      emphasis: 'muted',
-      tone: 'neutral',
-      role: 'aside',
-      text: '1 other open item is on the Needs you page.',
+    if (built.tree.kind !== 'stack') return;
+    expect(built.tree.children.at(-1)).toMatchObject({ kind: 'text', role: 'caption' });
+    const captionOnly = needsYouLetterRegion(region({ open: 2 }), options)!;
+    expect(captionOnly.summary).toBe('2 open');
+    expect(needsYouLaneParts(captionOnly.tree)).toEqual({
+      list: null,
+      closed: 'None is due today. 2 open items are on the Needs you page.',
     });
-    expect(needsYouRegions(region({ open: 2 }), options).map((entry) => entry.id)).toEqual([
-      NEEDS_YOU_NOTE_ID,
+    expect(needsYouLetterRegion(region(), options)).toBeNull();
+  });
+
+  test('needsYouLaneParts reads only the list and the text of the lane', () => {
+    const textNode: BriefNode = {
+      kind: 'text',
+      emphasis: 'standard',
+      tone: 'neutral',
+      role: 'body',
+      text: 'x',
+    };
+    expect(needsYouLaneParts(textNode)).toEqual({ list: null, closed: null });
+    const blank: BriefNode = {
+      kind: 'stack',
+      emphasis: 'standard',
+      tone: 'neutral',
+      density: 'standard',
+      children: [{ ...textNode, text: '  ' }],
+    };
+    expect(needsYouLaneParts(blank)).toEqual({ list: null, closed: null });
+  });
+});
+
+describe('the editorial module story', () => {
+  const options = { generatedAt: NOW, timezone: ZONE, previousGeneratedAt: NOW - DAY };
+
+  test('a group of generic nodes: the title, the count, the Now rows, "Due today", its rows, the closed line', () => {
+    const letterRegion = needsYouLetterRegion(
+      region({
+        open: 6,
+        now: 1,
+        dueToday: 2,
+        items: [view({ pushLevel: 'time_sensitive' }), view(), view()],
+        closedSince: [closedNote()],
+      }),
+      options,
+    )!;
+    const story = needsYouEditorialStory(letterRegion)!;
+    expect(story).toMatchObject({
+      kind: 'group',
+      title: 'Needs you',
+      kicker: '6 open · 1 now · 2 due today',
+      emphasis: 'primary',
+      collapsible: false,
+    });
+    if (story.kind !== 'group') return;
+    expect(story.children.map((child) => [child.kind, 'role' in child ? child.role : null])).toEqual([
+      ['entity_list', null],
+      ['text', 'kicker'],
+      ['entity_list', null],
+      ['text', 'caption'],
     ]);
+    const [now, label, today, caption] = story.children;
+    expect(now.kind === 'entity_list' && now.items).toHaveLength(1);
+    expect(label.kind === 'text' && label.text).toBe('Due today');
+    expect(today.kind === 'entity_list' && today.items).toHaveLength(2);
+    expect(caption.kind === 'text' && caption.text).toContain('Closed by itself since yesterday’s letter:');
+    // The rows show no lane word: the kicker carries the split.
+    for (const list of [now, today])
+      if (list.kind === 'entity_list')
+        for (const item of list.items) expect(item.framing).not.toHaveProperty('lane');
+    // The story is two levels deep, so the writer can place it at its deepest level.
+    const document = parseBriefDocument({
+      version: 2,
+      title: 'x',
+      summary: 'x',
+      generatedAt: NOW,
+      timezone: ZONE,
+      regions: [
+        {
+          id: 'editorial-x',
+          summary: 'x',
+          tree: {
+            kind: 'stack',
+            emphasis: 'standard',
+            tone: 'neutral',
+            density: 'standard',
+            children: [
+              {
+                kind: 'stack',
+                emphasis: 'standard',
+                tone: 'neutral',
+                density: 'standard',
+                children: [story],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(lintBriefDocument(document)).toEqual([]);
+    expect(document.regions[0].tree).toMatchObject({ children: [{ children: [{ kind: 'group' }] }] });
+  });
+
+  test('only Today rows, or only the caption, or another region', () => {
+    const todayOnly = needsYouEditorialStory(
+      needsYouLetterRegion(region({ open: 1, dueToday: 1, items: [view()] }), options)!,
+    )!;
+    expect(todayOnly.kind === 'group' && todayOnly.children.map((child) => child.kind)).toEqual([
+      'entity_list',
+    ]);
+    const captionOnly = needsYouEditorialStory(needsYouLetterRegion(region({ open: 2 }), options)!)!;
+    expect(captionOnly.kind === 'group' && captionOnly.children.map((child) => child.kind)).toEqual(['text']);
+    expect(needsYouEditorialStory(text('answer'))).toBeNull();
+    expect(
+      needsYouEditorialStory({
+        id: 'needs-you',
+        summary: 'x',
+        tree: { kind: 'text', emphasis: 'standard', tone: 'neutral', role: 'body', text: 'x' },
+      }),
+    ).toBeNull();
   });
 });
 
@@ -443,18 +602,22 @@ describe('placeNeedsYouLane', () => {
     expect(placed.regions.map((entry) => entry.id)).toEqual([
       'lede',
       'needs-you',
-      'needs-you-note',
       'today',
       'waiting',
       'week-ahead',
     ]);
-    const today = placed.regions[3].tree;
+    const today = placed.regions[2].tree;
     expect(today.kind === 'entity_list' && today.items.map((item) => item.ref.id)).toEqual(['evt-1']);
-    const waiting = placed.regions[4];
+    const waiting = placed.regions[3];
     expect(waiting).toEqual(document.regions[4]);
-    expect(placed.regions[2].tree).toMatchObject({
-      text: "2 other open items are on the Needs you page. Closed by itself since yesterday's letter: Renewal notice (Northwind Billing).",
-    });
+    expect(placed.regions[1].summary).toBe('3 open · 1 now');
+    expect(needsYouLaneParts(placed.regions[1].tree).closed).toBe(
+      'Closed by itself since yesterday’s letter: Renewal notice (Northwind Billing).',
+    );
+    // A letter that has the lane already (a live refresh) gets it once.
+    expect(placeNeedsYouLane(placed, built, options).regions.map((entry) => entry.id)).toEqual(
+      placed.regions.map((entry) => entry.id),
+    );
   });
 
   test('without an answer lane it goes before the first later region, or at the end', () => {
@@ -486,13 +649,21 @@ describe('placeNeedsYouLane', () => {
     expect(placeNeedsYouLane(document, undefined, options)).toBe(document);
   });
 
-  test('a full letter keeps the region limit: the note goes first', () => {
-    const ids = ['lede', 'yesterday', 'since', 'answer', 'today', 'know', 'waiting', 'tasks', 'connected'];
-    const document = letter([...ids.map((id) => text(id)), text('week-ahead'), text('areas'), text('extra')]);
+  test('a full letter keeps the region limit', () => {
+    const ids = ['lede', 'yesterday', 'since', 'today', 'know', 'waiting', 'tasks', 'connected'];
+    const document = letter([
+      ...ids.map((id) => text(id)),
+      text('week-ahead'),
+      text('areas'),
+      text('extra'),
+      text('last'),
+    ]);
+    expect(document.regions).toHaveLength(12);
     const placed = placeNeedsYouLane(document, region({ open: 4, items: [view()] }), options);
+    // The lane takes its place early; the last region goes.
     expect(placed.regions).toHaveLength(12);
-    expect(placed.regions.map((entry) => entry.id)).not.toContain('needs-you-note');
     expect(placed.regions[3].id).toBe('needs-you');
+    expect(placed.regions.at(-1)?.id).toBe('extra');
   });
 
   test('parseBriefDocument keeps the lane, its framing, and its actions', () => {
@@ -516,21 +687,22 @@ describe('placeNeedsYouLane', () => {
     const reread = parseBriefDocument(JSON.parse(JSON.stringify(placed)));
     expect(reread).toEqual(placed);
     const needsYou = reread.regions.find((entry) => entry.id === 'needs-you')!;
-    expect(needsYou.tree.kind).toBe('entity_list');
-    if (needsYou.tree.kind !== 'entity_list') return;
-    expect(needsYou.tree.title).toBe('Needs you');
-    expect(needsYou.tree.items[0].framing).toMatchObject({
-      lane: 'needs-you',
+    expect(needsYou.tree.kind).toBe('stack');
+    const parts = needsYouLaneParts(needsYou.tree);
+    expect(parts.list?.title).toBe('Needs you');
+    expect(parts.list?.items[0].framing).toMatchObject({
+      lane: 'now',
       sender: 'Dana Whitfield',
       age: 'Day 3',
     });
-    expect(needsYou.tree.items[0].actions.map((action) => action.action)).toEqual([
+    expect(parts.list?.items[1].framing.lane).toBe('today');
+    expect(parts.list?.items[0].actions.map((action) => action.action)).toEqual([
       'open_thread',
       'draft_reply',
       'open_work',
     ]);
-    expect(needsYou.tree.items[1].actions.map((action) => action.action)).toEqual(['open_url']);
-    expect(reread.regions.find((entry) => entry.id === 'needs-you-note')?.tree.kind).toBe('text');
+    expect(parts.list?.items[1].actions.map((action) => action.action)).toEqual(['open_url']);
+    expect(parts.closed).toContain('Closed by itself since');
   });
 });
 
@@ -636,11 +808,17 @@ describe('withBriefNeedsYou', () => {
         return [closedNote()];
       },
     });
-    const next = await withBriefNeedsYou(report(), 'u1', NOW - DAY);
+    const next = await withBriefNeedsYou(report(), 'u1', NOW - DAY, NOW - DAY + HOUR);
     expect(calls).toEqual([{ userId: 'u1', since: NOW - DAY }]);
     const stored = editionNeedsYou(next)!;
     expect(stored.items.map((item) => item.title)).toEqual(['Fix the failed payment']);
     expect(stored.closedSince).toHaveLength(1);
+    // The region keeps the time of the previous edition for the closed line.
+    expect(stored.previousGeneratedAt).toBe(NOW - DAY + HOUR);
+    expect(parseBriefNeedsYouRegion(stored)?.previousGeneratedAt).toBe(NOW - DAY + HOUR);
+    expect(editionNeedsYou(await withBriefNeedsYou(report(), 'u1', NOW - DAY))).not.toHaveProperty(
+      'previousGeneratedAt',
+    );
     setBriefNeedsYouLoaderForTest({
       flag: () => true,
       snapshot: async () => snapshot,
@@ -716,9 +894,15 @@ describe('the daily edition', () => {
     );
     expect(editionNeedsYou(edition)?.items.map((item) => item.title)).toEqual(['Fix the failed payment']);
     const ids = edition.document?.regions.map((entry) => entry.id) ?? [];
+    expect(edition.document?.layout).toBe('editorial');
     expect(ids).toContain('editorial-needs-you');
-    expect(ids).toContain('editorial-needs-you-note');
+    expect(ids).not.toContain('editorial-needs-you-note');
     expect(ids).not.toContain('editorial-answer');
+    // The lane is one module: a group titled "Needs you" with its count and closed line.
+    const lane = edition.document!.regions.find((entry) => entry.id === 'editorial-needs-you')!;
+    const group = lane.tree.kind === 'stack' ? lane.tree.children[0] : lane.tree;
+    expect(group).toMatchObject({ kind: 'group', title: 'Needs you', kicker: '1 open · 1 now' });
+    expect(JSON.stringify(group)).toContain('Closed by itself since yesterday:');
     const stored = await withToolContext(() => getDailyReport('needs-you-edition'), {
       userId: 'needs-you-owner',
     });
@@ -739,5 +923,131 @@ describe('the daily edition', () => {
     );
     expect(editionNeedsYou(edition)).toBeNull();
     expect(edition.document?.regions.map((entry) => entry.id) ?? []).not.toContain('editorial-needs-you');
+  });
+});
+
+describe('the editorial edition (the form real daily editions take)', () => {
+  // The fixture letter of tests/fixtures/editorial.ts, with the lane of a flag
+  // user in the place of Answer. thread-a is in both the lane and Answer.
+  function needsYouEdition() {
+    const { edition, letter } = editorialFixture();
+    const stored = region({
+      open: 3,
+      now: 1,
+      dueToday: 1,
+      items: [
+        view({ accountId: 'account-a', threadId: 'thread-a', title: 'Approve the launch budget' }),
+        view({ source: 'slack', sourceKey: 'slack:T:C:1', accountId: undefined, threadId: undefined }),
+      ],
+      closedSince: [closedNote()],
+      previousGeneratedAt: JEV_NOW - DAY,
+    });
+    const options = { generatedAt: edition.generatedAt, timezone: 'America/New_York' };
+    const placed = placeNeedsYouLane(letter, stored, options);
+    const withLane = { ...edition, sections: { ...edition.sections, needsYou: stored } } as DailyReport;
+    const modules = editorialModules(withLane, placed);
+    const plan = defaultEditorialPlan(modules);
+    return {
+      edition: {
+        ...withLane,
+        document: composeEditorialDocument(placed, modules, plan),
+        editorial: { plan, mode: 'fallback' as const },
+      } as DailyReport,
+      modules,
+    };
+  }
+
+  test('the lane is one module, and its region holds the group', () => {
+    const { edition, modules } = needsYouEdition();
+    const lane = modules.find((module) => module.id === 'needs-you')!;
+    expect(lane).toMatchObject({
+      section: 'needs-you',
+      title: 'Needs you',
+      summary: '3 open · 1 now · 1 due today',
+    });
+    expect(modules.filter((module) => module.section === 'needs-you')).toHaveLength(1);
+    expect(modules.some((module) => module.section === 'answer')).toBe(false);
+    const ids = edition.document!.regions.map((entry) => entry.id);
+    expect(ids).toContain('editorial-needs-you');
+    expect(ids).not.toContain('editorial-answer');
+    expect(lintBriefDocument(edition.document!)).toEqual([]);
+    expect(briefLetterKind(edition.document!)).toBeNull();
+  });
+
+  test('a live refresh keeps the lane in the place of Answer, with no live-updates region', () => {
+    const { edition } = needsYouEdition();
+    const read = migrateDailyReport(edition, JEV_NOW);
+    expect(editionNeedsYou(read)?.items).toHaveLength(2);
+    const live = projectBriefMail(
+      read,
+      [thread({ jev: jevAssessment({ sourceRevision: 'updated-request' }) })],
+      policy,
+      JEV_NOW + 2000,
+    );
+    const ids = live.document!.regions.map((entry) => entry.id);
+    expect(ids).toContain('editorial-needs-you');
+    expect(ids).not.toContain('live-updates');
+    expect(ids).not.toContain('editorial-answer');
+    expect(live.editorial?.plan).toEqual(edition.editorial?.plan);
+    const lane = live.document!.regions.find((entry) => entry.id === 'editorial-needs-you')!;
+    expect(JSON.stringify(lane)).toContain('Closed by itself since yesterday’s letter:');
+    // thread-a shows once: in the lane, not again in another lane.
+    const threadRefs = JSON.stringify(live.document).match(/"id":"thread-a"/g) ?? [];
+    expect(threadRefs).toHaveLength(1);
+  });
+
+  test('the fallback plan of a full letter fits the editorial region limit', () => {
+    const ids = ['lede', 'yesterday', 'since', 'needs-you', 'today', 'know', 'waiting', 'tasks', 'connected'];
+    const full = letter([
+      ...ids.map((id) =>
+        id === 'needs-you' ? needsYouLetterRegion(region({ open: 1 }), { generatedAt: NOW })! : text(id),
+      ),
+      text('week-ahead'),
+      text('areas'),
+      text('pulse'),
+    ]);
+    expect(full.regions).toHaveLength(12);
+    const modules = editorialModules(report(), full);
+    // Twelve letter regions and the two live sections.
+    expect(new Set(modules.map((module) => module.section)).size).toBe(14);
+    const plan = defaultEditorialPlan(modules);
+    expect(plan.regions).toHaveLength(EDITORIAL_REGION_LIMIT);
+    expect(plan.regions.at(-1)?.id).toBe('pulse');
+    const document = composeEditorialDocument(full, modules, plan);
+    expect(document.regions).toHaveLength(EDITORIAL_REGION_LIMIT);
+    expect(lintBriefDocument(document)).toEqual([]);
+    // A short letter keeps one region for each section.
+    const short = editorialModules(report(), letter([text('lede'), text('week-ahead')]));
+    expect(defaultEditorialPlan(short).regions.map((entry) => entry.id)).toEqual([
+      'lede',
+      'week-ahead',
+      'narrative',
+      'prepared-work',
+    ]);
+  });
+});
+
+describe('the fallback letter of a stored edition', () => {
+  test('the edition of a flag user shows the lane in the place of Answer; others keep Answer', () => {
+    const answer = [{ account: 'acct', threadId: 'thread-a', subject: 'Approve the budget' }];
+    const base = { generatedAt: NOW, prose: { lede: 'The day.' }, sections: { answer, today: [], know: [] } };
+    expect(briefLetterFromReport(base, { timezone: ZONE }).regions.map((entry) => entry.id)).toEqual([
+      'lede',
+      'answer',
+    ]);
+    const stored = region({ open: 1, now: 1, items: [view({ accountId: 'acct', threadId: 'thread-a' })] });
+    const withLane = briefLetterFromReport(
+      { ...base, sections: { ...base.sections, needsYou: stored } },
+      { timezone: ZONE },
+    );
+    expect(withLane.regions.map((entry) => entry.id)).toEqual(['lede', 'needs-you']);
+    expect(briefLetterKind(withLane)).toBe('daily');
+    // A stored value without the region shape is left out.
+    expect(
+      briefLetterFromReport(
+        { ...base, sections: { ...base.sections, needsYou: { id: 'x' } } },
+        { timezone: ZONE },
+      ).regions.map((entry) => entry.id),
+    ).toEqual(['lede', 'answer']);
   });
 });

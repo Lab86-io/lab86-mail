@@ -12,7 +12,7 @@ import {
   needsYouLaneParts,
   splitNeedsYouClosedLine,
 } from '../lib/brief/letter';
-import { needsYouLetterFixture } from '../lib/obligations/fixtures';
+import { needsYouEditorialFixture, needsYouLetterFixture } from '../lib/obligations/fixtures';
 import type { BriefDocumentV2, BriefNode, BriefRegion } from '../lib/shared/brief-document';
 
 /* The Needs you lane of the daily letter (docs/needs-you.md, screen 6; phase 3 W5). */
@@ -180,5 +180,65 @@ describe('the lane in the canvas', () => {
     };
     const none = doc(render(noRows));
     expect(none.querySelector('[data-brief-region="needs-you"]')).toBeNull();
+  });
+});
+
+describe('the lane without rows, and the editorial form', () => {
+  test('a lane with the closed line alone shows the kicker, the count, and the line', () => {
+    const footOnly: BriefDocumentV2 = {
+      ...fixture,
+      regions: fixture.regions.map((region) =>
+        region.id === NEEDS_YOU_LANE_ID
+          ? {
+              ...region,
+              summary: '3 open',
+              tree: {
+                kind: 'stack',
+                emphasis: 'primary',
+                tone: 'neutral',
+                density: 'standard',
+                children: [
+                  {
+                    kind: 'text',
+                    emphasis: 'muted',
+                    tone: 'neutral',
+                    role: 'caption',
+                    text: 'None is due today. 3 open items are on the Needs you page.',
+                  },
+                ],
+              },
+            }
+          : region,
+      ),
+    };
+    const page = doc(render(footOnly));
+    const section = page.querySelector('[data-brief-region="needs-you"]');
+    expect(section?.querySelector('[data-brief-letter-kicker]')?.textContent).toBe('Needs you');
+    expect(section?.querySelector('[data-brief-letter-summary]')?.textContent).toBe('3 open');
+    expect(section?.querySelector('[data-brief-letter-row]')).toBeNull();
+    const foot = section?.querySelector('[data-brief-letter-foot]');
+    expect(foot?.textContent).toBe('None is due today. 3 open items are on the Needs you page.');
+    expect(foot?.className).not.toContain('border-t');
+  });
+
+  test('the editorial edition renders the lane with generic nodes: title, count, split, closed line', () => {
+    const editorial = needsYouEditorialFixture();
+    expect(editorial.layout).toBe('editorial');
+    expect(briefLetterKind(editorial)).toBeNull();
+    const html = render(editorial);
+    const page = doc(html);
+    const region = page.querySelector('[data-brief-region="editorial-needs-you"]');
+    expect(region).not.toBeNull();
+    const text = region?.textContent ?? '';
+    expect(text).toContain('8 open · 2 now · 2 due today');
+    expect(text).toContain('Needs you');
+    expect(text).toContain('Due today');
+    expect(text).toContain('Closed by itself since yesterday’s letter:');
+    expect(text.indexOf('Which quarter numbers')).toBeLessThan(text.indexOf('Due today'));
+    expect(text.indexOf('Due today')).toBeLessThan(text.indexOf('Send the signed NDA'));
+    // The rows carry no lane word ("now", "today") in the generic renderer.
+    expect(region?.innerHTML).not.toContain('>now<');
+    expect(region?.innerHTML).not.toContain('>today<');
+    expect(page.querySelector('[data-brief-region="editorial-answer"]')).toBeNull();
   });
 });

@@ -243,6 +243,12 @@ export interface BriefNeedsYouRegion {
   items: ObligationView[];
   /** Items that closed since the previous edition without a user action. At most 5. */
   closedSince: ObligationClosedNote[];
+  /**
+   * The time of the previous edition, when there was one. The closed line
+   * says "since yesterday’s letter" or "since the last letter" from it, the
+   * same in the composed letter and in each live refresh.
+   */
+  previousGeneratedAt?: number;
 }
 
 export const BRIEF_NEEDS_YOU_LIMIT = 6;

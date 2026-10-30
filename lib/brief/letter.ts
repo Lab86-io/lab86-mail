@@ -1,7 +1,17 @@
 import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
 import { BRIEF_ITEM_BUDGET, BRIEF_LANE_CAPS, type BriefLane, type BriefPlanTier } from '../mail/brief-score';
 import {
-  type BriefContentLeaf,
+  type BriefEntityListNode,
+  editionNeedsYou,
+  NEEDS_YOU_CLOSED_PREFIX,
+  NEEDS_YOU_DUE_TODAY_LABEL,
+  NEEDS_YOU_LANE_ID,
+  NEEDS_YOU_LANE_TITLE,
+  type NeedsYouLaneParts,
+  needsYouLaneParts,
+  placeNeedsYouLane,
+} from '../obligations/brief-region';
+import {
   type BriefDocumentV2,
   type BriefNode,
   type BriefRegion,
@@ -47,35 +57,19 @@ export const DAILY_LETTER_LANE_IDS: readonly BriefLane[] = ['answer', 'today', '
 // The Needs you lane (docs/needs-you.md, screen 6; lib/obligations/contract.ts
 // BriefNeedsYouRegion). The region is the rows alone, or a stack of the rows
 // and one plain text line about what closed by itself since the last letter.
-export const NEEDS_YOU_LANE_ID = 'needs-you';
-export const NEEDS_YOU_LANE_TITLE = 'Needs you';
-/** The lane shows this sub-label before the first row that is due today, after the Now rows. */
-export const NEEDS_YOU_DUE_TODAY_LABEL = 'Due today';
-/** The closed line starts with these words; the renderer sets them in bold. */
-export const NEEDS_YOU_CLOSED_PREFIX = 'Closed by itself since';
+// The server builds it (lib/obligations/brief-region.ts); the names and the
+// tree reader live there, so the composer and the letter read one shape.
+export {
+  type BriefEntityListNode,
+  NEEDS_YOU_CLOSED_PREFIX,
+  NEEDS_YOU_DUE_TODAY_LABEL,
+  NEEDS_YOU_LANE_ID,
+  NEEDS_YOU_LANE_TITLE,
+  type NeedsYouLaneParts,
+  needsYouLaneParts,
+};
 /** The regions of the daily letter that hold rows: the Needs you lane, then the three budget lanes. */
 export const DAILY_LETTER_ROW_REGION_IDS: readonly string[] = [NEEDS_YOU_LANE_ID, ...DAILY_LETTER_LANE_IDS];
-
-export type BriefEntityListNode = Extract<BriefContentLeaf, { kind: 'entity_list' }>;
-
-export interface NeedsYouLaneParts {
-  /** The rows, or null when the region has none. */
-  list: BriefEntityListNode | null;
-  /** The plain line about what closed by itself, or null. */
-  closed: string | null;
-}
-
-/** The parts of the `needs-you` region tree. Any other tree reads as empty. */
-export function needsYouLaneParts(tree: BriefNode): NeedsYouLaneParts {
-  if (tree.kind === 'entity_list') return { list: tree, closed: null };
-  if (tree.kind === 'stack') {
-    const list = tree.children.find((child): child is BriefEntityListNode => child.kind === 'entity_list');
-    const text = tree.children.find((child) => child.kind === 'text');
-    const closed = text && text.kind === 'text' ? text.text.trim() : '';
-    return { list: list ?? null, closed: closed || null };
-  }
-  return { list: null, closed: null };
-}
 
 /**
  * The bold start and the rest of the closed line. "Closed by itself since
@@ -217,6 +211,8 @@ export interface BriefLetterReportInput {
   sections: Partial<Record<BriefLetterLaneKey, BriefLetterItem[]>> & {
     calendar?: BriefLetterEvent[];
     albatross?: Pick<AlbatrossDailyReportContext, 'includedAreas'> | null;
+    /** The stored Needs you region of a flag user's edition (BriefNeedsYouRegion). */
+    needsYou?: unknown;
   };
 }
 
@@ -346,7 +342,8 @@ function laneNode(
 /**
  * Builds the letter document from a stored edition when the edition has no
  * document of its own. The layout is the same as the composed letter: lede,
- * three lanes, week ahead, areas.
+ * three lanes, week ahead, areas. An edition with a Needs you region (a flag
+ * user) shows that lane in the place of Answer, as the composed letter does.
  */
 export function briefLetterFromReport(
   report: BriefLetterReportInput,
@@ -426,7 +423,7 @@ export function briefLetterFromReport(
     });
   }
 
-  return parseBriefDocument({
+  const document = parseBriefDocument({
     version: 2,
     title: dailyBriefEditionTitleAt(generatedAt, timezone),
     summary: lede,
@@ -434,4 +431,6 @@ export function briefLetterFromReport(
     timezone,
     regions,
   });
+  const needsYou = editionNeedsYou(report);
+  return needsYou ? placeNeedsYouLane(document, needsYou, { generatedAt, timezone }) : document;
 }

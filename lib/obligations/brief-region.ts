@@ -2,22 +2,30 @@
 // owner decision 9). For a user in LAB86_NEEDS_YOU the daily edition reads the
 // ledger: the lane `needs-you` ("Needs you") takes the place of the `answer`
 // lane. The edition stores the region data (BriefNeedsYouRegion) as
-// `sections.needsYou`, and the document gets two regions:
+// `sections.needsYou`. The document shape (one shape for web, iOS, and macOS;
+// see "Integration notes" in docs/needs-you-phases-2-5.md):
 //
-//   "needs-you"       entity_list, title "Needs you", the items of the Now and
-//                     Today groups (at most BRIEF_NEEDS_YOU_LIMIT, codes
-//                     never). Each item has the item shape of the `answer`
-//                     lane: ref, framing { lane, reason, sender, age }, actions.
-//   "needs-you-note"  text role:aside, one plain line: the other open items,
-//                     and "Closed by itself since yesterday's letter: ...".
+//   The letter region "needs-you" (the letter allow-list on both clients):
+//     summary  the count sentence, "8 open · 2 now · 2 due today"
+//     tree     entity_list, title "Needs you", the Now items and then the
+//              items due today (framing.lane 'now' or 'today'), or a stack of
+//              that list and one caption: the closed line. Without items, a
+//              stack of the caption alone.
+//   The editorial module "needs-you" (real daily editions are editorial):
+//     one module, so the writer places the lane in one piece. Its story is a
+//     group of generic nodes that every client renders as they are: the
+//     title "Needs you", the count sentence as the kicker, the Now rows, a
+//     "Due today" kicker and its rows, and the closed line as a caption.
 //
 // Users outside the flag keep `answer`. The brief never searches for
-// obligations itself.
+// obligations itself. This module has no static server import, so the
+// clients can use the pure parts (the fallback letter, the editorial module).
 
-import { api, convexQuery } from '../hosted/convex';
 import {
   BRIEF_DOCUMENT_LIMITS,
+  type BriefContentLeaf,
   type BriefDocumentV2,
+  type BriefNode,
   type BriefRegion,
   parseBriefDocument,
 } from '../shared/brief-document';
@@ -36,8 +44,11 @@ import {
 import { groupNeedsYou, needsYouSummary } from './groups';
 
 export const NEEDS_YOU_LANE_ID = 'needs-you' as const;
-export const NEEDS_YOU_NOTE_ID = 'needs-you-note' as const;
 export const NEEDS_YOU_LANE_TITLE = 'Needs you';
+/** The lane shows this sub-label before the first row that is due today, after the Now rows. */
+export const NEEDS_YOU_DUE_TODAY_LABEL = 'Due today';
+/** The closed line starts with these words; the web letter sets them in bold. */
+export const NEEDS_YOU_CLOSED_PREFIX = 'Closed by itself since';
 /** At most this many items in "Closed by itself". */
 export const BRIEF_NEEDS_YOU_CLOSED_LIMIT = 5;
 /**
@@ -53,11 +64,8 @@ const AFTER_ANSWER = new Set(['today', 'know', 'waiting', 'tasks', 'connected', 
 const THREAD_LANES = new Set(['today', 'know', 'waiting']);
 const CONNECTED_SOURCES = new Set(['slack', 'atlassian', 'granola', 'drive', 'github', 'bitbucket']);
 
-/** The DailyReport sections with the Needs you region. */
-export type NeedsYouSections = DailyReport['sections'] & { needsYou?: BriefNeedsYouRegion };
-
 function bytes(value: unknown) {
-  return Buffer.byteLength(JSON.stringify(value), 'utf8');
+  return new TextEncoder().encode(JSON.stringify(value)).length;
 }
 
 /** The stored form of one item: no code, no draft state, short text. */
@@ -80,14 +88,15 @@ function slimNote(note: ObligationClosedNote): ObligationClosedNote {
 
 /**
  * The region of one edition from the ledger: the counts, the Now items and
- * then the items due today (codes never), and the items that closed by
- * themselves since the previous edition.
+ * then the items due today (codes never), the items that closed by
+ * themselves since the previous edition, and the time of that edition.
  */
 export function buildBriefNeedsYouRegion(input: {
   items: readonly ObligationView[];
   closed: readonly ObligationClosedNote[];
   now: number;
   timezone: string;
+  previousGeneratedAt?: number | null;
 }): BriefNeedsYouRegion {
   const open = input.items.filter((item) => item.kind !== 'code');
   const groups = groupNeedsYou(open, [], input.now, input.timezone);
@@ -104,6 +113,7 @@ export function buildBriefNeedsYouRegion(input: {
     dueToday: today.length,
     items: lane.map(slimForBrief),
     closedSince: input.closed.slice(0, BRIEF_NEEDS_YOU_CLOSED_LIMIT).map(slimNote),
+    ...(isNumber(input.previousGeneratedAt) ? { previousGeneratedAt: input.previousGeneratedAt } : {}),
   };
   // Over the byte budget: the excerpts and the reasons go first, then items
   // from the end. The counts stay.
@@ -144,12 +154,15 @@ export function parseBriefNeedsYouRegion(value: unknown): BriefNeedsYouRegion | 
       (note): note is ObligationClosedNote =>
         Boolean(note) && typeof note.id === 'string' && typeof note.title === 'string',
     ),
+    ...(isNumber(region.previousGeneratedAt) ? { previousGeneratedAt: region.previousGeneratedAt } : {}),
   };
 }
 
 /** The Needs you region of a stored edition, or null for an edition without one. */
-export function editionNeedsYou(report: Pick<DailyReport, 'sections'>): BriefNeedsYouRegion | null {
-  return parseBriefNeedsYouRegion((report.sections as NeedsYouSections | undefined)?.needsYou) ?? null;
+export function editionNeedsYou(report: {
+  sections?: { needsYou?: unknown } | null;
+}): BriefNeedsYouRegion | null {
+  return parseBriefNeedsYouRegion(report.sections?.needsYou) ?? null;
 }
 
 /** The spread that keeps the region through the read migration of an edition. */
@@ -158,13 +171,16 @@ export function needsYouSectionOf(sections: unknown): { needsYou?: BriefNeedsYou
   return region ? { needsYou: region } : {};
 }
 
-// ---- The document regions ---------------------------------------------------
+// ---- The lane items -----------------------------------------------------------
 
 function ageLabel(createdAt: number, generatedAt: number): string {
   if (!isNumber(createdAt) || createdAt >= generatedAt) return '';
   const days = Math.floor((generatedAt - createdAt) / DAY_MS);
   return days >= 1 ? `Day ${days + 1}` : '';
 }
+
+/** The sub-lane of one item: the Now group, or the items due today. */
+export type NeedsYouLane = 'now' | 'today';
 
 type LaneAction = {
   action: string;
@@ -192,10 +208,10 @@ function laneRef(view: ObligationView, label: string) {
  * One lane item, in the item shape of the `answer` lane. The row tap opens
  * the source (the thread, the event, or the link); a mail reply also offers
  * Reply; an item of an Albatross offers it. An item with no place to open
- * opens the Needs you page.
+ * opens it on the Needs you page.
  */
-export function needsYouLaneItem(view: ObligationView, generatedAt: number) {
-  const label = truncateText(view.title, BRIEF_DOCUMENT_LIMITS.shortText) || 'Needs you';
+export function needsYouLaneItem(view: ObligationView, generatedAt: number, lane: NeedsYouLane = 'today') {
+  const label = truncateText(view.title, BRIEF_DOCUMENT_LIMITS.shortText) || NEEDS_YOU_LANE_TITLE;
   const ref = laneRef(view, label);
   const place = [OBLIGATION_SOURCE_LABELS[view.source], view.sourceLabel].filter(Boolean).join(', ');
   // A thread or an event shows its own subject after hydration; the line is
@@ -230,14 +246,14 @@ export function needsYouLaneItem(view: ObligationView, generatedAt: number) {
   if (!actions.length)
     actions.push({
       action: 'open_view',
-      label: 'Needs you',
+      label: NEEDS_YOU_LANE_TITLE,
       payload: { view: 'notifications', obligationId: view.id },
       style: 'quiet',
     });
   return {
     ref,
     framing: {
-      lane: NEEDS_YOU_LANE_ID,
+      lane,
       ...(reason ? { reason } : {}),
       ...(view.asker ? { sender: truncateText(view.asker, 200) } : {}),
       ...(age ? { age } : {}),
@@ -246,11 +262,13 @@ export function needsYouLaneItem(view: ObligationView, generatedAt: number) {
   };
 }
 
+// ---- The lines ----------------------------------------------------------------
+
 function plural(count: number, one: string, many: string) {
   return count === 1 ? one : many;
 }
 
-function dayKey(at: number, timezone: string) {
+function dayKey(at: number, timezone: string | undefined) {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: normalizeBriefTimezone(timezone),
     year: 'numeric',
@@ -259,71 +277,164 @@ function dayKey(at: number, timezone: string) {
   }).format(new Date(at));
 }
 
-/** "yesterday's letter", "the last letter", or "yesterday" when no letter came before. */
+/** The count sentence of the lane: "8 open · 2 now · 2 due today". A zero part is left out. */
+export function needsYouCountSentence(
+  region: Pick<BriefNeedsYouRegion, 'open' | 'now' | 'dueToday'>,
+): string {
+  if (!region.open && !region.now && !region.dueToday) return 'Nothing open';
+  return [
+    `${region.open} open`,
+    ...(region.now ? [`${region.now} now`] : []),
+    ...(region.dueToday ? [`${region.dueToday} due today`] : []),
+  ].join(' · ');
+}
+
+/** "yesterday’s letter", "the last letter", or "yesterday" when no letter came before. */
 export function sinceLetterPhrase(
   generatedAt: number,
-  timezone: string,
+  timezone: string | undefined,
   previousGeneratedAt?: number | null,
 ): string {
   if (!isNumber(previousGeneratedAt)) return 'yesterday';
   return dayKey(previousGeneratedAt, timezone) === dayKey(generatedAt - DAY_MS, timezone)
-    ? "yesterday's letter"
+    ? 'yesterday’s letter'
     : 'the last letter';
 }
 
-/** The one plain line under the lane, or an empty string when it has nothing to say. */
-export function needsYouNoteText(
-  region: BriefNeedsYouRegion,
-  options: { generatedAt: number; timezone: string; previousGeneratedAt?: number | null },
-): string {
+export interface NeedsYouLaneOptions {
+  generatedAt: number;
+  /** The user's IANA time zone. Left out or not valid: UTC. */
+  timezone?: string;
+  /** The previous edition. Left out: the time that the region stores. */
+  previousGeneratedAt?: number | null;
+}
+
+/**
+ * The one plain line at the end of the lane, or an empty string. It says
+ * what closed by itself since the last letter. A lane without rows says
+ * first where the open items are.
+ */
+export function needsYouClosedLine(region: BriefNeedsYouRegion, options: NeedsYouLaneOptions): string {
   const parts: string[] = [];
-  const more = Math.max(0, region.open - region.items.length);
-  if (more && region.items.length)
-    parts.push(`${more} other open ${plural(more, 'item is', 'items are')} on the Needs you page.`);
-  else if (more)
+  if (!region.items.length && region.open)
     parts.push(
-      `${more} open ${plural(more, 'item is', 'items are')} on the Needs you page. None is due today.`,
+      `None is due today. ${region.open} open ${plural(region.open, 'item is', 'items are')} on the Needs you page.`,
     );
   if (region.closedSince.length) {
     const names = region.closedSince.map((note) => {
       const title = truncateText(note.title.replace(/\s+/g, ' ').trim(), 120);
       return note.asker ? `${title} (${truncateText(note.asker, 80)})` : title;
     });
+    const previous = options.previousGeneratedAt ?? region.previousGeneratedAt;
     parts.push(
-      `Closed by itself since ${sinceLetterPhrase(options.generatedAt, options.timezone, options.previousGeneratedAt)}: ${names.join('; ')}.`,
+      `${NEEDS_YOU_CLOSED_PREFIX} ${sinceLetterPhrase(options.generatedAt, options.timezone, previous)}: ${names.join('; ')}.`,
     );
   }
   return truncateText(parts.join(' '), BRIEF_DOCUMENT_LIMITS.body);
 }
 
-/** The document regions of the region: the lane when it has items, then the note when it has text. */
-export function needsYouRegions(
+// ---- The letter region and the editorial module -----------------------------
+
+export type BriefEntityListNode = Extract<BriefContentLeaf, { kind: 'entity_list' }>;
+
+export interface NeedsYouLaneParts {
+  /** The rows, or null when the region has none. */
+  list: BriefEntityListNode | null;
+  /** The plain line at the end of the lane, or null. */
+  closed: string | null;
+}
+
+/** The parts of the `needs-you` region tree. Any other tree reads as empty. */
+export function needsYouLaneParts(tree: BriefNode): NeedsYouLaneParts {
+  if (tree.kind === 'entity_list') return { list: tree, closed: null };
+  if (tree.kind === 'stack') {
+    const list = tree.children.find((child): child is BriefEntityListNode => child.kind === 'entity_list');
+    const text = tree.children.find((child) => child.kind === 'text');
+    const closed = text && text.kind === 'text' ? text.text.trim() : '';
+    return { list: list ?? null, closed: closed || null };
+  }
+  return { list: null, closed: null };
+}
+
+const node = { emphasis: 'standard', tone: 'neutral' } as const;
+
+/**
+ * The letter region of the lane: the count sentence as its summary, the
+ * rows, and the closed line. Null when the lane has nothing to show.
+ */
+export function needsYouLetterRegion(
   region: BriefNeedsYouRegion,
-  options: { generatedAt: number; timezone: string; previousGeneratedAt?: number | null },
-): BriefRegion[] {
-  const regions: BriefRegion[] = [];
-  if (region.items.length) {
-    regions.push({
-      id: NEEDS_YOU_LANE_ID,
-      summary: `${NEEDS_YOU_LANE_TITLE}: ${region.now} now, ${region.dueToday} due today, ${region.open} open.`,
-      tree: {
+  options: NeedsYouLaneOptions,
+): BriefRegion | null {
+  const items = region.items.map((item, index) =>
+    needsYouLaneItem(item, options.generatedAt, index < region.now ? 'now' : 'today'),
+  );
+  const list = items.length
+    ? ({
+        ...node,
         kind: 'entity_list',
         emphasis: 'primary',
-        tone: 'neutral',
         title: NEEDS_YOU_LANE_TITLE,
         variant: 'rows',
-        items: region.items.map((item) => needsYouLaneItem(item, options.generatedAt)),
-      },
-    } as BriefRegion);
-  }
-  const note = needsYouNoteText(region, options);
-  if (note)
-    regions.push({
-      id: NEEDS_YOU_NOTE_ID,
-      summary: note,
-      tree: { kind: 'text', emphasis: 'muted', tone: 'neutral', role: 'aside', text: note },
-    });
-  return regions;
+        items,
+      } as BriefNode)
+    : null;
+  const line = needsYouClosedLine(region, options);
+  const caption: BriefNode | null = line
+    ? { ...node, kind: 'text', emphasis: 'muted', role: 'caption', text: line }
+    : null;
+  if (!list && !caption) return null;
+  const children = [list, caption].filter((child): child is BriefNode => Boolean(child));
+  return {
+    id: NEEDS_YOU_LANE_ID,
+    summary: needsYouCountSentence(region),
+    tree:
+      list && !caption
+        ? list
+        : { ...node, kind: 'stack', emphasis: 'primary', density: 'standard', children },
+  };
+}
+
+/**
+ * The story of the editorial module `needs-you`, from the letter region. It
+ * uses only generic nodes (a group, entity lists, and text), so the editorial
+ * renderers of web, iOS, and macOS show the title, the count sentence, the
+ * "Due today" split, and the closed line with no lane code. The items lose
+ * `framing.lane`: the kicker carries the split, so the rows show no lane word.
+ */
+export function needsYouEditorialStory(region: BriefRegion): BriefNode | null {
+  if (region.id !== NEEDS_YOU_LANE_ID) return null;
+  const parts = needsYouLaneParts(region.tree);
+  const strip = (item: BriefEntityListNode['items'][number]) => {
+    const { lane: _lane, ...framing } = item.framing;
+    return { ...item, framing };
+  };
+  const items = parts.list?.items ?? [];
+  const now = items.filter((item) => item.framing.lane === 'now').map(strip);
+  const today = items.filter((item) => item.framing.lane !== 'now').map(strip);
+  const rows = (entries: typeof now, emphasis: 'primary' | 'standard') =>
+    ({ ...node, kind: 'entity_list', emphasis, variant: 'rows', items: entries }) as BriefNode;
+  const children: BriefNode[] = [
+    ...(now.length ? [rows(now, 'primary')] : []),
+    ...(now.length && today.length
+      ? [{ ...node, kind: 'text', role: 'kicker', text: NEEDS_YOU_DUE_TODAY_LABEL } as BriefNode]
+      : []),
+    ...(today.length ? [rows(today, now.length ? 'standard' : 'primary')] : []),
+    ...(parts.closed
+      ? [{ ...node, kind: 'text', emphasis: 'muted', role: 'caption', text: parts.closed } as BriefNode]
+      : []),
+  ];
+  if (!children.length) return null;
+  return {
+    ...node,
+    kind: 'group',
+    emphasis: 'primary',
+    title: NEEDS_YOU_LANE_TITLE,
+    kicker: truncateText(region.summary, 120),
+    surface: 'elevated',
+    collapsible: false,
+    children,
+  } as BriefNode;
 }
 
 function threadKey(ref: { account?: string; id: string }) {
@@ -341,42 +452,37 @@ function withoutThreads(region: BriefRegion, threads: Set<string>): BriefRegion 
 }
 
 /**
- * The composed letter with the Needs you regions in the place of the
- * `answer` lane. A thread of the Needs you lane leaves the Today, Know, and
- * Waiting lanes. Without a region, the document does not change.
+ * The letter with the Needs you region in the place of the `answer` lane. A
+ * thread of the Needs you lane leaves the Today, Know, and Waiting lanes.
+ * Without a region, the document does not change. The composer, the live
+ * projection of a stored edition, and the fallback letter use it.
  */
 export function placeNeedsYouLane(
   document: BriefDocumentV2,
   region: BriefNeedsYouRegion | null | undefined,
-  options: { generatedAt: number; timezone: string; previousGeneratedAt?: number | null },
+  options: NeedsYouLaneOptions,
 ): BriefDocumentV2 {
   if (!region) return document;
-  const own = needsYouRegions(region, options);
+  const own = needsYouLetterRegion(region, options);
+  const list = own ? needsYouLaneParts(own.tree).list : null;
   const threads = new Set(
-    own
-      .flatMap((entry) => (entry.tree.kind === 'entity_list' ? entry.tree.items : []))
-      .filter((item) => item.ref.kind === 'thread')
-      .map((item) => threadKey(item.ref)),
+    (list?.items ?? []).filter((item) => item.ref.kind === 'thread').map((item) => threadKey(item.ref)),
   );
   const regions: BriefRegion[] = [];
   let placed = false;
   for (const entry of document.regions) {
+    if (entry.id === NEEDS_YOU_LANE_ID) continue;
     if (entry.id === 'answer' || (!placed && AFTER_ANSWER.has(entry.id))) {
-      if (!placed) regions.push(...own);
+      if (!placed && own) regions.push(own);
       placed = true;
       if (entry.id === 'answer') continue;
     }
     const kept = withoutThreads(entry, threads);
     if (kept) regions.push(kept);
   }
-  if (!placed) regions.push(...own);
-  // The document holds at most BRIEF_DOCUMENT_LIMITS.regions regions. The
-  // note is the first to go; the edition still stores it.
-  const fitted =
-    regions.length > BRIEF_DOCUMENT_LIMITS.regions
-      ? regions.filter((entry) => entry.id !== NEEDS_YOU_NOTE_ID)
-      : regions;
-  return parseBriefDocument({ ...document, regions: fitted });
+  if (!placed && own) regions.push(own);
+  // parseBriefDocument keeps the first BRIEF_DOCUMENT_LIMITS.regions regions.
+  return parseBriefDocument({ ...document, regions });
 }
 
 // ---- The edition --------------------------------------------------------------
@@ -388,15 +494,24 @@ export interface BriefNeedsYouLoader {
   closedSince(userId: string, since: number): Promise<ObligationClosedNote[]>;
 }
 
+// The Convex client loads only when the brief reads the ledger on the
+// server, so a client bundle that uses the pure parts never holds it.
+const convex = () => import('../hosted/convex');
+
 const loaderDefaults: BriefNeedsYouLoader = {
   flag: (userId) => needsYouFlagFor(userId),
-  snapshot: (userId) => convexQuery<NeedsYouSnapshot>(api.obligationViews.snapshotFor, { userId }),
-  closedSince: (userId, since) =>
-    convexQuery<ObligationClosedNote[]>(api.obligationViews.closedSinceFor, {
+  snapshot: async (userId) => {
+    const { api, convexQuery } = await convex();
+    return convexQuery<NeedsYouSnapshot>(api.obligationViews.snapshotFor, { userId });
+  },
+  closedSince: async (userId, since) => {
+    const { api, convexQuery } = await convex();
+    return convexQuery<ObligationClosedNote[]>(api.obligationViews.closedSinceFor, {
       userId,
       since,
       limit: BRIEF_NEEDS_YOU_CLOSED_LIMIT,
-    }),
+    });
+  },
 };
 let loader = loaderDefaults;
 
@@ -408,28 +523,33 @@ export function setBriefNeedsYouLoaderForTest(overrides: Partial<BriefNeedsYouLo
 /**
  * The edition with `sections.needsYou` for a user in the flag whose ledger is
  * on. Every other edition, and an edition whose ledger read fails, keeps the
- * `answer` lane and does not change.
+ * `answer` lane and does not change. `previousGeneratedAt` is the time of the
+ * previous edition, for the words of the closed line.
  */
 export async function withBriefNeedsYou(
   report: DailyReport,
   userId: string | null | undefined,
   since: number,
+  previousGeneratedAt?: number | null,
 ): Promise<DailyReport> {
   if (!userId || !loader.flag(userId)) return report;
   try {
     const snapshot = await loader.snapshot(userId);
     if (!snapshot?.enabled) return report;
     const closed = await loader.closedSince(userId, since);
-    const sections: NeedsYouSections = {
-      ...report.sections,
-      needsYou: buildBriefNeedsYouRegion({
-        items: snapshot.items,
-        closed: Array.isArray(closed) ? closed : [],
-        now: report.generatedAt,
-        timezone: snapshot.timezone,
-      }),
+    return {
+      ...report,
+      sections: {
+        ...report.sections,
+        needsYou: buildBriefNeedsYouRegion({
+          items: snapshot.items,
+          closed: Array.isArray(closed) ? closed : [],
+          now: report.generatedAt,
+          timezone: snapshot.timezone,
+          previousGeneratedAt,
+        }),
+      },
     };
-    return { ...report, sections };
   } catch (error) {
     console.warn('[brief] the Needs you ledger read failed; the edition keeps the answer lane', {
       error: error instanceof Error ? error.name : 'UnknownError',

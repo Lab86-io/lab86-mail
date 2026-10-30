@@ -124,6 +124,9 @@ struct BriefActionPayload: Hashable, Sendable {
     var until: Double? = nil
     var previousDueAt: Double? = nil
     var summary: String? = nil
+    // Needs you (phase 3): `open_view` with `view: notifications` names the
+    // item of the brief lane to open.
+    var obligationID: String? = nil
 
     init(
         account: String? = nil,
@@ -242,6 +245,7 @@ struct BriefActionPayload: Hashable, Sendable {
         mode = string("mode")
         senderEmail = string("senderEmail")
         operationID = string("operationId")
+        obligationID = string("obligationId")
         until = number("until")
         previousDueAt = number("previousDueAt")
         summary = string("summary")

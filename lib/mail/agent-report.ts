@@ -309,6 +309,7 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
     structured,
     input.userId,
     sinceWindowStart(previous, structured.generatedAt),
+    previous?.generatedAt ?? null,
   );
 
   const composition = compositionFromReport(structured);
@@ -531,7 +532,9 @@ export async function composeBudgetBrief(
       timezone,
     }),
     editionNeedsYou(report),
-    { generatedAt: report.generatedAt || now, timezone, previousGeneratedAt: deps.previous?.generatedAt },
+    // The closed line reads the previous edition time that the region
+    // stores, so each live refresh says the same words.
+    { generatedAt: report.generatedAt || now, timezone },
   );
   return {
     document,

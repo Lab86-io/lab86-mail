@@ -117,16 +117,25 @@ export function BriefLetter({
           }
           // The Needs you lane of a flag user (phase 3): the rows, the count
           // sentence at the kicker's right, and the closed line at the end.
+          // A lane without rows still shows its closed line.
           if (region.id === NEEDS_YOU_LANE_ID) {
             const parts = needsYouLaneParts(region.tree);
-            if (!parts.list) return null;
+            if (!parts.list && !parts.closed) return null;
+            const list: EntityListNode = parts.list ?? {
+              kind: 'entity_list',
+              emphasis: 'primary',
+              tone: 'neutral',
+              title: NEEDS_YOU_LANE_TITLE,
+              variant: 'rows',
+              items: [],
+            };
             const start = rowIndex;
-            rowIndex += parts.list.items.length;
+            rowIndex += list.items.length;
             return (
               <LetterLane
                 key={region.id}
                 regionId={region.id}
-                node={parts.list}
+                node={list}
                 context={withBriefRegion(context, region.id)}
                 firstRowIndex={start}
                 summary={region.summary}
@@ -254,7 +263,7 @@ function LetterLane({
   foot?: string | null;
 }) {
   const visible = node.items.filter((item) => !context.hiddenRefs.has(briefRefKey(item.ref)));
-  if (!visible.length) return null;
+  if (!visible.length && !foot) return null;
   const title = node.title || LANE_TITLES[regionId] || null;
   const needsYou = regionId === NEEDS_YOU_LANE_ID;
   const kicker = title ? (
@@ -319,7 +328,10 @@ function LetterLane({
       {closed ? (
         <p
           data-brief-letter-foot
-          className="border-t border-[var(--surface-border)] px-3 py-2.5 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]"
+          className={cn(
+            'px-3 py-2.5 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]',
+            visible.length > 0 && 'border-t border-[var(--surface-border)]',
+          )}
         >
           {closed.lead ? <b className="font-medium text-[var(--color-success)]">{closed.lead} </b> : null}
           {closed.rest}

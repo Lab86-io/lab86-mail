@@ -3,12 +3,17 @@ import { navigateBriefAction } from '../components/report/brief-canvas/BriefCanv
 
 function harness() {
   const opened: Array<[string, string, string]> = [];
+  const views: string[] = [];
+  const items: string[] = [];
   return {
     opened,
+    views,
+    items,
     navigation: {
       setSelectedThread: () => {},
       setThreadAccount: () => {},
-      setPrimaryView: () => {},
+      setPrimaryView: (view: string) => views.push(view),
+      openNeedsYouItem: (id: string) => items.push(id),
       setSelectedAreaId: () => {},
       setSelectedWorkId: () => {},
       setPendingReplyBody: () => {},
@@ -31,6 +36,21 @@ describe('BriefCanvas navigation', () => {
       navigateBriefAction('open_url', { url }, target.navigation);
     }
     expect(target.opened).toHaveLength(1);
+  });
+});
+
+describe('BriefCanvas navigation to Needs you', () => {
+  test('open_view notifications opens the page, at the item of the brief lane when it names one', () => {
+    const target = harness();
+    navigateBriefAction('open_view', { view: 'notifications', obligationId: 'ob_1' }, target.navigation);
+    navigateBriefAction('open_view', { view: 'notifications' }, target.navigation);
+    navigateBriefAction('open_view', { view: 'calendar', obligationId: 'ob_2' }, target.navigation);
+    expect(target.items).toEqual(['ob_1']);
+    expect(target.views).toEqual(['notifications', 'notifications', 'calendar']);
+    // A caller without the Needs you hook still opens the page.
+    const { openNeedsYouItem: _hook, ...plain } = target.navigation;
+    navigateBriefAction('open_view', { view: 'notifications', obligationId: 'ob_3' }, plain);
+    expect(target.views.at(-1)).toBe('notifications');
   });
 });
 
