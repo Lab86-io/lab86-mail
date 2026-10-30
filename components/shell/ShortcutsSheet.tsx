@@ -21,6 +21,12 @@ export const SHORTCUTS: [string[], string][] = [
   [['g', 's'], 'Go to Sent'],
   [['⌘', 'K'], 'Open the assistant'],
   [['⌘/Ctrl', 'P'], 'Search and switch pages, even while editing'],
+  [['j', 'k'], 'Needs you: move through the list'],
+  [['enter'], 'Needs you: open the focused item'],
+  [['e'], 'Needs you: mark the focused item done'],
+  [['l'], 'Needs you: put the focused item off until later'],
+  [['⌘/Ctrl', 'enter'], 'Needs you: run the first action of the open item'],
+  [['esc'], 'Needs you: back to the list'],
   [['?'], 'This sheet'],
 ];
 
