@@ -596,11 +596,13 @@ export function NotificationsView({
   );
 }
 
-function ConnectedNotifications({ onOpenActivity }: { onOpenActivity?: () => void }) {
-  const data = useNotifications();
-  const { userId } = useAuth();
+/**
+ * What an Albatross item's action does: open the Work, the Area, the check-in
+ * dialog, a page, or a link. The Notifications page and the Needs you page
+ * share it.
+ */
+export function useNotificationActions() {
   const router = useRouter();
-  const mark = useMutation(api.albatrossNotifications.markNotification);
   const openCheckin = useMutation(api.albatrossNotifications.openCheckin);
   const setPrimaryView = useClientStore((state) => state.setPrimaryView);
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
@@ -628,6 +630,15 @@ function ConnectedNotifications({ onOpenActivity }: { onOpenActivity?: () => voi
       setPrimaryView(action.kind);
     }
   };
+  return { onAction, checkinOpen, setCheckinOpen };
+}
+
+function ConnectedNotifications({ onOpenActivity }: { onOpenActivity?: () => void }) {
+  const data = useNotifications();
+  const { userId } = useAuth();
+  const mark = useMutation(api.albatrossNotifications.markNotification);
+  const setPrimaryView = useClientStore((state) => state.setPrimaryView);
+  const { onAction, checkinOpen, setCheckinOpen } = useNotificationActions();
   return (
     <>
       <NotificationsView

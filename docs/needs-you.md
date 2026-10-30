@@ -195,6 +195,25 @@ A code is an obligation of kind `code`.
 - Use only invented people, companies, and places in fixtures and mockups.
   Never copy real mail or screenshots of the owner's data.
 
+## Keyboard (web)
+
+The list is one tab stop. The keys work when the focus is in the list or in
+the detail. In a text field, only the send key works.
+
+| Key | Action |
+|---|---|
+| Up, Down, `j`, `k` | Move the focus between rows, across groups. |
+| Home, End | Go to the first or the last row. |
+| Enter, Space | Open the focused row in the detail. |
+| `e` | Mark the focused row done. Undo for 10 seconds. |
+| `l` | Open the focused row and open the Later menu. |
+| Cmd+Enter, Ctrl+Enter | Run the first action of the open item: Send reply, Copy code, or Done. |
+| Escape | Move the focus from the detail back to the row. |
+
+The page sets the default-prevented flag on each key it handles. The global
+mail keys (`e` archives an open thread, `n` captures, `c` composes) do not
+apply to these keys. The Needs you page has no `n` key for Not mine.
+
 ## Data
 
 New Convex table `obligations`:
