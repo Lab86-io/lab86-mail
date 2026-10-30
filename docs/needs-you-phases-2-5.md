@@ -140,3 +140,69 @@ by side). Reuse the shared models and clients that I adds.
   and Release archive) on the PR compiles and tests the Swift code.
 - Two PRs: server and web first, native second. CodeRabbit on each. The
   merge waits for the owner.
+
+## I notes (iOS, 2026-10-30)
+
+What was built: the Needs you page in the sidebar (shown while the snapshot
+says `enabled`), the detail with every action, the push tap, the brief lane
+`needs-you`, and Swift Testing tests. Design note:
+`docs/research/needs-you-ios-design-2026-10-30.md`.
+
+What the macOS builder can reuse. Every file below is in `Lab86Mail/`, so
+the Mac target compiles it already:
+
+- `Core/Models/ObligationModels.swift`: `ObligationView`,
+  `NeedsYouSnapshot`, `ObligationAction` (with `body`), the responses, and
+  the tolerant decode. Unknown `kind`, `source`, and `closeReason` values
+  keep the row.
+- `Core/Models/NeedsYouGrouping.swift`: `NeedsYouGrouping.groups(items:
+  extras:now:timezone:)`, `summary(of:)`, `laterOptions(now:timezone:)`,
+  `settleExpiredCodes`, `nextCodeExpiry`, and `NeedsYouClock`. Same answers
+  as `lib/obligations/groups.ts`.
+- `Core/Models/NeedsYouLabels.swift`: the words of `labels.ts`.
+- `Core/Models/NeedsYouStore.swift`: `environment.needsYou`. `load`,
+  `refreshOnForeground`, `refreshAfterPush`, `act`, `undoLast`,
+  `prepareDraft`, `sendReply`, `startAlbatross`, `item(id:)`,
+  `item(accountID:threadID:)`, `groups(now:extras:)`, `nowCount(now:)`.
+  The transport is `any BackendExchanging`; pass `environment.backend`.
+- `Features/NeedsYou/NeedsYouPresentation.swift`: the lead, the source
+  line, the meta line, the first button, the quiet links, and the extras
+  from `ProductStore.pendingQuestions` and `approvals`.
+- `Features/NeedsYou/NeedsYouRow.swift`: `NeedsYouObligationRow`,
+  `NeedsYouExtraRow`, `NeedsYouLeadView`, `NeedsYouCodeLine`,
+  `NeedsYouDueColumn`. They fit a Mac list column as they are.
+- `Features/NeedsYou/ObligationDetailView.swift`: `ObligationDetailView(id:)`
+  reads the item live from the store. It fits a Mac detail pane. The action
+  bar is a `safeAreaInset`.
+- `Features/Shell/NavigationModel.swift`: `PrimaryTab.needsYou`,
+  `PrimaryTab.sourceList(showsFiles:showsNeedsYou:)`, `openNeedsYou(_:)`,
+  `consumeObligation()`, `needsYouEnabled`, and the `/?view=needs-you` links.
+- `Core/Notifications/NotificationResponseRouter.swift`:
+  `ObligationNotificationTap`. The Mac delegate goes through the same
+  `NotificationResponseApplier`, so a tap routes the same way.
+
+What the Mac shell must add (`MacShellView.swift`, `MacSourceList`):
+
+1. `PrimaryTab.sourceList(showsFiles:showsNeedsYou: environment.needsYou.isEnabled)`.
+2. In the shell `.task`: `environment.needsYou.activate(ownerID:)`, then
+   `environment.navigation.needsYouEnabled = environment.needsYou.isEnabled`
+   before `consumeAppIntentRequests()`, then `await environment.needsYou.load(environment.backend)`.
+3. On `didBecomeActiveNotification`: the same flag line, then
+   `await environment.needsYou.refreshOnForeground(environment.backend)`.
+4. On `.lab86RemoteWake`: `await environment.needsYou.refreshAfterPush(environment.backend)`.
+5. A list and detail side by side: `NeedsYouView` works as the list; a
+   `NavigationSplitView` can put `ObligationDetailView(id:)` in the detail
+   column instead of the push.
+
+Push payload (I2). The phase 1 push carries `route`, `accountId`,
+`threadId`, `messageId`, and `codeAvailable`, not `type` or an obligation
+id (`lib/notifications/apns.ts`, `buildAPNsPayload`). The app routes a tap
+by the thread while `needsYouEnabled` is true, and falls back to the thread
+when the list has no item. Server ask: add `type: envelope.type` and, for
+obligations, `obligationId: envelope.collapseId` to the APNs payload. The
+app already reads both keys.
+
+Brief lane (I3). `BriefLetterLayout.classify` reads `needs-you` as an
+`entity_list` (the Answer item shape) or as a `stack` of an `entity_list`
+and a `text`. The closing line is the last `text` child under the region.
+If S2 stores the line in another place, change `closedLine(in:)` only.

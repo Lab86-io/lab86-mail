@@ -119,6 +119,16 @@ struct BriefDocumentView: View {
                 editionKey: editionKey,
                 onAction: perform
             )
+        case .needsYou(let items, let closedLine):
+            BriefNeedsYouSection(
+                items: items,
+                closedLine: closedLine,
+                entities: entities,
+                hiddenRefs: allHiddenRefs,
+                completedRefs: completedRefs,
+                editionKey: editionKey,
+                onAction: perform
+            )
         case .weekAhead(let text):
             WeekAheadText(text: text)
         case .areas(let items):

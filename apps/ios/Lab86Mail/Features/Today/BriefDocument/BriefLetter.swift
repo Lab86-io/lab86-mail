@@ -18,6 +18,8 @@ enum BriefLetterLane: String, CaseIterable, Equatable, Sendable {
     // What Albatross did since the last edition, each with Undo (round 2).
     case since
     case answer
+    // Needs you (phase 3): the open obligations, in the place of Answer.
+    case needsYou = "needs-you"
     case today
     case know
     case waiting
@@ -34,6 +36,7 @@ enum BriefLetterLane: String, CaseIterable, Equatable, Sendable {
         switch self {
         case .since: "What Albatross did"
         case .answer: "Answer"
+        case .needsYou: "Needs you"
         case .today: "Today"
         case .know: "Know"
         case .waiting: "Waiting on"
@@ -50,6 +53,7 @@ enum BriefLetterLane: String, CaseIterable, Equatable, Sendable {
         switch self {
         case .since: "Since the last edition"
         case .answer: "Replies you owe"
+        case .needsYou: "Open now, and due today"
         case .today: "Deadlines and the calendar"
         case .know: "Worth a look"
         case .waiting: "Replies you wait for"
@@ -67,7 +71,7 @@ enum BriefLetterLane: String, CaseIterable, Equatable, Sendable {
     // a check mark in the avatar's place.
     var showsAvatar: Bool {
         switch self {
-        case .since, .answer, .today, .know, .waiting, .mail, .open: true
+        case .since, .answer, .needsYou, .today, .know, .waiting, .mail, .open: true
         case .tasks, .connected, .done, .nextWeek: false
         }
     }
@@ -126,6 +130,9 @@ enum BriefLetterSection: Equatable {
     // The check-in reflection and what moved since the last edition.
     case yesterday(text: String)
     case lane(BriefLetterLane, items: [BriefEntityItem])
+    // The Needs you lane with its closing line ("Closed by itself since
+    // yesterday's letter: ...").
+    case needsYou(items: [BriefEntityItem], closedLine: String?)
     case weekAhead(text: String)
     // The area's next seven days.
     case week(text: String)
@@ -139,6 +146,7 @@ enum BriefLetterSection: Equatable {
         case .lede: "lede"
         case .yesterday: "yesterday"
         case .lane(let lane, _): lane.rawValue
+        case .needsYou: BriefLetterLane.needsYou.rawValue
         case .weekAhead: "week-ahead"
         case .week: "week"
         case .areas: "areas"
@@ -175,6 +183,12 @@ enum BriefLetterLayout {
             return .week(text: (tree.text ?? region.summary).trimmingCharacters(in: .whitespacesAndNewlines))
         case ("areas", "entity_list"):
             return .areas(items: Array((tree.items ?? []).prefix(areaLimit)))
+        case ("needs-you", "entity_list"):
+            return .needsYou(items: tree.items ?? [], closedLine: closedLine(in: tree))
+        case ("needs-you", "stack"):
+            // The lane as a stack: the list, then the closing line.
+            let list = tree.children?.first { $0.kind == "entity_list" }
+            return .needsYou(items: list?.items ?? [], closedLine: closedLine(in: tree))
         case (let id, "entity_list"):
             guard let lane = BriefLetterLane(rawValue: id) else { return .node(region) }
             return .lane(lane, items: tree.items ?? [])
@@ -190,6 +204,15 @@ enum BriefLetterLayout {
         }
     }
 
+    // The closing line of the Needs you lane: the last text node under the
+    // region, when the edition carries one.
+    static func closedLine(in tree: BriefNode) -> String? {
+        let texts = (tree.children ?? [])
+            .filter { $0.kind == "text" }
+            .compactMap { $0.text?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank }
+        return texts.last
+    }
+
     // The sections in render order. An empty lane or an empty area list
     // does not render. The lede renders only when the owner surface asks for
     // it: Today draws the lede itself above the document, the area page does
@@ -203,6 +226,8 @@ enum BriefLetterLayout {
                 return includeLede && !text.isEmpty ? section : nil
             case .lane(_, let items):
                 return items.isEmpty ? nil : section
+            case .needsYou(let items, let closedLine):
+                return items.isEmpty && closedLine == nil ? nil : section
             case .areas(let items):
                 return items.isEmpty ? nil : section
             case .weekAhead(let text), .yesterday(let text), .week(let text):
@@ -222,7 +247,7 @@ enum BriefLetterLayout {
         for region in document.regions {
             switch classify(region) {
             case .lede: hasLede = true
-            case .lane, .weekAhead, .yesterday, .week, .pulse: hasBody = true
+            case .lane, .needsYou, .weekAhead, .yesterday, .week, .pulse: hasBody = true
             default: break
             }
         }
@@ -235,6 +260,7 @@ enum BriefLetterLayout {
         case .lede: "lede"
         case .yesterday: "yesterday"
         case .lane(let lane, _): "lane:\(lane.rawValue)"
+        case .needsYou: "lane:needs-you"
         case .weekAhead: "week-ahead"
         case .week: "week"
         case .areas: "areas"
@@ -1063,5 +1089,38 @@ struct BriefOperationMark: View {
             .frame(width: 32, height: 32)
             .background(Circle().fill(environment.theme.accent2Color.opacity(0.14)))
             .accessibilityHidden(true)
+    }
+}
+
+// The Needs you lane (phase 3): the rows as the Answer lane shows them, then
+// one quiet line about what closed by itself since the last letter.
+struct BriefNeedsYouSection: View {
+    let items: [BriefEntityItem]
+    let closedLine: String?
+    let entities: [String: BriefHydratedEntity]
+    let hiddenRefs: Set<String>
+    var completedRefs: [String: Bool] = [:]
+    let editionKey: String
+    let onAction: (BriefDocumentAction, BriefSourceRef?) async -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            BriefLaneSection(
+                lane: .needsYou,
+                items: items,
+                entities: entities,
+                hiddenRefs: hiddenRefs,
+                completedRefs: completedRefs,
+                editionKey: editionKey,
+                onAction: onAction
+            )
+            if let closedLine {
+                Text(closedLine)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
     }
 }
