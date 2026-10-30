@@ -149,6 +149,7 @@ struct BriefLetterTests {
             case .lede: "lede"
             case .yesterday: "yesterday"
             case .lane(let lane, _): "lane:\(lane.rawValue)"
+            case .needsYou: "lane:needs-you"
             case .weekAhead: "week-ahead"
             case .week: "week"
             case .areas: "areas"

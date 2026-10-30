@@ -3,6 +3,9 @@ import Observation
 
 enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
     case today
+    // What needs the user (docs/needs-you.md, phase 5). In the sidebar only
+    // while the snapshot says the feature is on for this user.
+    case needsYou
     case tasks
     case calendar
     case work
@@ -17,6 +20,7 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .today: "Today"
+        case .needsYou: "Needs you"
         case .mail: "Mail"
         case .calendar: "Calendar"
         case .tasks: "Tasks"
@@ -29,6 +33,7 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
     var symbol: String {
         switch self {
         case .today: "sun.horizon"
+        case .needsYou: "bell"
         case .mail: "envelope"
         case .calendar: "calendar"
         case .tasks: "checklist"
@@ -45,14 +50,17 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
 
     /// The sidebar rows. Files shows only when Settings, Advanced turns it on
     /// (round 2, FEATURES item 17); a link to a document still opens it.
-    static func sourceList(showsFiles: Bool) -> [PrimaryTab] {
-        showsFiles ? sourceList : sourceList.filter { $0 != .files }
+    /// Needs you sits under Today while the feature is on for the user.
+    static func sourceList(showsFiles: Bool, showsNeedsYou: Bool = false) -> [PrimaryTab] {
+        var list = showsFiles ? sourceList : sourceList.filter { $0 != .files }
+        if showsNeedsYou { list.insert(.needsYou, at: 1) }
+        return list
     }
 
     /// Command-1 to Command-9 in the Albatross menu, in sidebar order, so the
     /// numbers match the rows the user sees.
-    static func commandShortcuts(showsFiles: Bool) -> [(tab: PrimaryTab, key: Character)] {
-        sourceList(showsFiles: showsFiles)
+    static func commandShortcuts(showsFiles: Bool, showsNeedsYou: Bool = false) -> [(tab: PrimaryTab, key: Character)] {
+        sourceList(showsFiles: showsFiles, showsNeedsYou: showsNeedsYou)
             .prefix(9)
             .enumerated()
             .map { index, tab in (tab: tab, key: Character(String(index + 1))) }
@@ -197,6 +205,13 @@ struct SavedFileSheetTarget: Hashable, Sendable {
     let title: String
 }
 
+/// The item Needs you opens first: by id from a link, or by its mail thread
+/// from a push (a phase 1 push names the thread, not the obligation).
+enum ObligationTarget: Hashable, Sendable {
+    case id(String)
+    case thread(accountID: String, threadID: String)
+}
+
 enum SheetDestination: Identifiable, Sendable {
     case assistant
     case activity
@@ -257,6 +272,29 @@ final class NavigationModel {
     // The banner's "Show" asks the Albatrosses list for one filter ("Needs
     // you"). The list reads and clears it.
     var pendingWorkFilter: WorkFilter?
+    // Needs you (phase 5). The shell sets `needsYouEnabled` from the store
+    // before it reads a pending link, so a push tap on a cold start goes to
+    // the right page. The page reads and clears `pendingObligation`.
+    var needsYouEnabled = false
+    var pendingObligation: ObligationTarget?
+
+    func openNeedsYou(_ target: ObligationTarget? = nil) {
+        selectPrimary(.needsYou)
+        if let target { pendingObligation = target }
+    }
+
+    func consumeObligation() -> ObligationTarget? {
+        defer { pendingObligation = nil }
+        return pendingObligation
+    }
+
+    /// Where a notification tap goes. A push that names an obligation always
+    /// opens Needs you. A mail-thread push opens Needs you only while the
+    /// feature is on; the page falls back to the thread when no item matches.
+    static func opensNeedsYou(_ tap: ObligationNotificationTap, enabled: Bool) -> Bool {
+        if tap.isObligation { return true }
+        return enabled && tap.target != nil
+    }
 
     func refreshOpenWork() {
         workRefreshToken += 1
@@ -436,6 +474,7 @@ final class NavigationModel {
         case "calendar", "events": selectPrimary(.calendar)
         case "tasks", "board": selectPrimary(.tasks)
         case "work", "area", "areas": selectPrimary(.work)
+        case "needs-you", "needs_you", "needsyou", "obligations": selectPrimary(.needsYou)
         case "notifications", "activity": sheet = .activity
         default: selectPrimary(.today)
         }
@@ -470,8 +509,13 @@ final class NavigationModel {
     // announce to. Reading it here, once, is what makes either arrival open the
     // destination exactly one time.
     func consumePendingDeepLink(defaults: UserDefaults = .standard) {
+        let tap = ObligationNotificationTap.consume(from: defaults)
         guard let route = defaults.string(forKey: "pendingAlbatrossDeepLink") else { return }
         defaults.removeObject(forKey: "pendingAlbatrossDeepLink")
+        if let tap, Self.opensNeedsYou(tap, enabled: needsYouEnabled) {
+            openNeedsYou(tap.target)
+            return
+        }
         open(route: route)
     }
 
@@ -558,7 +602,14 @@ final class NavigationModel {
         // A web app path (`/?view=files&file=<id>`) names its target in the
         // query, not the path. The named ids win; `id` alone needs the path.
         let routedID: (String) -> String? = { word in route.contains(word) ? query["id"] : nil }
-        if let editionID = Self.briefEditionID(route: route, query: query) {
+        if let obligation = query["obligation"] ?? query["obligationId"], !obligation.isEmpty {
+            // `/?view=needs-you&obligation=<id>`: one item on the page.
+            openNeedsYou(.id(obligation))
+        } else if Self.isNeedsYouView(query["view"]),
+                  let account = query["account"] ?? query["accountId"],
+                  let thread = query["thread"] ?? query["threadId"] {
+            openNeedsYou(.thread(accountID: account, threadID: thread))
+        } else if let editionID = Self.briefEditionID(route: route, query: query) {
             openBriefEdition(id: editionID)
         } else if let account = query["account"] ?? query["accountId"],
                   let thread = query["thread"] ?? query["threadId"] ?? routedID("thread") {
@@ -588,6 +639,8 @@ final class NavigationModel {
             openPrimaryView(view)
         } else if Self.isFilesRoute(route) {
             selectPrimary(.files)
+        } else if route.contains("needs-you") || route.contains("obligation") {
+            selectPrimary(.needsYou)
         } else if route.contains("calendar") {
             selectPrimary(.calendar)
         } else if route.contains("task") {
@@ -628,6 +681,12 @@ final class NavigationModel {
     }
 
     private static let filesRouteAliases: Set<Substring> = ["files", "drive", "documents"]
+    private static let needsYouViews: Set<String> = ["needs-you", "needs_you", "needsyou", "obligations"]
+
+    private static func isNeedsYouView(_ view: String?) -> Bool {
+        guard let view else { return false }
+        return needsYouViews.contains(view.lowercased())
+    }
 
     private static func isFilesRoute(_ raw: String) -> Bool {
         raw.lowercased()

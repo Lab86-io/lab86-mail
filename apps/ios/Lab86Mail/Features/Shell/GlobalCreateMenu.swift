@@ -58,8 +58,10 @@ enum GlobalCreateMenuPolicy {
             // system search field; a floating copy would double the control
             // and overlap the search bar.
             return false
-        case .chat, .files:
-            // Chat's composer and Files' native toolbar own their create controls.
+        case .chat, .files, .needsYou:
+            // Chat's composer and Files' native toolbar own their create
+            // controls. Needs you is a list of things to answer, and its
+            // Undo notice sits at the foot of the page.
             return false
         case .today, .tasks, .calendar, .work:
             return true

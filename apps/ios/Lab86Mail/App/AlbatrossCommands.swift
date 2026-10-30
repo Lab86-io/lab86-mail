@@ -72,7 +72,13 @@ struct AlbatrossCommands: Commands {
 
             Divider()
 
-            ForEach(PrimaryTab.commandShortcuts(showsFiles: environment.trust.showsFiles), id: \.tab) { shortcut in
+            ForEach(
+                PrimaryTab.commandShortcuts(
+                    showsFiles: environment.trust.showsFiles,
+                    showsNeedsYou: environment.needsYou.isEnabled
+                ),
+                id: \.tab
+            ) { shortcut in
                 Button(shortcut.tab.title) { environment.navigation.selectPrimary(shortcut.tab) }
                     .keyboardShortcut(KeyEquivalent(shortcut.key), modifiers: .command)
             }
