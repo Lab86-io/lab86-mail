@@ -9,11 +9,13 @@ import {
   createManualBranchConditionUpdatePayload,
   createManualTagConditionUpdatePayload,
   createProductionWorkflowPayload,
+  explainBuildStartFailure,
   hasExplicitBuildTarget,
   main,
   manualBranchConditionAllows,
   manualTagConditionAllows,
   matchesExpectedXcodeVersion,
+  PLA_NOT_ACCEPTED_CODE,
   resolveBuildRunSource,
   resolveGitReferenceWithPropagation,
   selectBranchRefID,
@@ -1118,5 +1120,131 @@ describe('Xcode Cloud build discovery', () => {
         links: { next: 'https://example.com/v1/workflows' },
       })),
     ).rejects.toThrow('App Store Connect pagination returned an unexpected origin');
+  });
+});
+
+describe('Xcode Cloud build start failures', () => {
+  const startFailure = () =>
+    new AppStoreConnectRequestError(
+      'App Store Connect request failed (500): {"errors":[{"status":"500","code":"UNEXPECTED_ERROR"}]}',
+      { recoverable: true, status: 500 },
+    );
+  const agreementPending = () =>
+    new AppStoreConnectRequestError(
+      `App Store Connect request failed (403): {"errors":[{"status":"403","code":"${PLA_NOT_ACCEPTED_CODE}"}]}`,
+      { status: 403 },
+    );
+
+  test('names a pending Program License Agreement behind a bare 500', async () => {
+    const original = startFailure();
+    const paths: string[] = [];
+    const explained = await explainBuildStartFailure(original, async (path: string) => {
+      paths.push(path);
+      throw agreementPending();
+    });
+
+    expect(paths).toEqual(['/v1/bundleIds?limit=1&fields[bundleIds]=identifier']);
+    expect(explained).not.toBe(original);
+    expect((explained as Error).message).toContain('latest Apple Developer Program License Agreement');
+    expect((explained as Error).message).toContain(PLA_NOT_ACCEPTED_CODE);
+    expect((explained as Error).cause).toBe(original);
+  });
+
+  test('keeps the original 500 when membership resources are available or the probe fails another way', async () => {
+    const original = startFailure();
+    expect(await explainBuildStartFailure(original, async () => ({ data: [] }))).toBe(original);
+    expect(
+      await explainBuildStartFailure(original, async () => {
+        throw new AppStoreConnectRequestError(
+          'App Store Connect request failed (403): {"errors":[{"code":"FORBIDDEN_ERROR"}]}',
+          {
+            status: 403,
+          },
+        );
+      }),
+    ).toBe(original);
+    expect(
+      await explainBuildStartFailure(original, async () => {
+        throw new Error('network down');
+      }),
+    ).toBe(original);
+  });
+
+  test('does not probe membership for client errors', async () => {
+    const conflict = new AppStoreConnectRequestError('App Store Connect request failed (409): {}', {
+      status: 409,
+    });
+    const plain = new Error('not an App Store Connect error');
+    let probes = 0;
+    const probe = async () => {
+      probes += 1;
+      throw agreementPending();
+    };
+
+    expect(await explainBuildStartFailure(conflict, probe)).toBe(conflict);
+    expect(await explainBuildStartFailure(plain, probe)).toBe(plain);
+    expect(probes).toBe(0);
+  });
+
+  test('reports the pending agreement when main cannot start the build', async () => {
+    const environmentNames = [
+      'ASC_ISSUER_ID',
+      'ASC_KEY_ID',
+      'ASC_PRIVATE_KEY',
+      'APP_STORE_APP_ID',
+      'XCODE_CLOUD_WORKFLOW_NAME',
+      'XCODE_CLOUD_BRANCH_NAME',
+      'XCODE_CLOUD_GIT_REF_NAME',
+      'XCODE_CLOUD_EXPECTED_COMMIT_SHA',
+      'XCODE_CLOUD_EXPECTED_XCODE_VERSION',
+      'XCODE_CLOUD_TEMPLATE_WORKFLOW_ID',
+      'XCODE_CLOUD_WORKFLOW_ID',
+      'XCODE_CLOUD_BRANCH_REF_ID',
+      'GITHUB_OUTPUT',
+    ];
+    const previousEnvironment = new Map(environmentNames.map((name) => [name, process.env[name]] as const));
+    const previousFetch = globalThis.fetch;
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const requests: Array<{ path: string; method: string }> = [];
+
+    for (const name of environmentNames) delete process.env[name];
+    Object.assign(process.env, {
+      ASC_ISSUER_ID: 'issuer',
+      ASC_KEY_ID: 'key',
+      ASC_PRIVATE_KEY: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      XCODE_CLOUD_WORKFLOW_ID: 'production-workflow',
+      XCODE_CLOUD_BRANCH_REF_ID: 'main-ref',
+    });
+
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      requests.push({ path: `${url.pathname}${url.search}`, method });
+      if (url.pathname === '/v1/scmGitReferences/main-ref') {
+        return Response.json({ data: { id: 'main-ref', attributes: { canonicalName: 'refs/heads/main' } } });
+      }
+      if (url.pathname === '/v1/ciBuildRuns' && method === 'POST') {
+        return Response.json({ errors: [{ status: '500', code: 'UNEXPECTED_ERROR' }] }, { status: 500 });
+      }
+      if (url.pathname === '/v1/bundleIds') {
+        return Response.json({ errors: [{ status: '403', code: PLA_NOT_ACCEPTED_CODE }] }, { status: 403 });
+      }
+      return new Response('not found', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      await expect(main()).rejects.toThrow('latest Apple Developer Program License Agreement');
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const [name, value] of previousEnvironment) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+
+    expect(
+      requests.filter(({ path, method }) => path === '/v1/ciBuildRuns' && method === 'POST'),
+    ).toHaveLength(1);
+    expect(requests.at(-1)?.path).toBe('/v1/bundleIds?limit=1&fields[bundleIds]=identifier');
   });
 });
