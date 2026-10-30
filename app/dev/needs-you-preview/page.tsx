@@ -10,6 +10,7 @@ import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import type {
   ObligationAction,
   ObligationActionResponse,
+  ObligationAlbatrossResponse,
   ObligationDraftResponse,
   ObligationReplyResponse,
   ObligationView,
@@ -20,13 +21,16 @@ import { isClosedObligation } from '@/lib/obligations/groups';
 
 /* Dev-only harness: the Needs you page from fixtures, so every state can be
  * seen and screenshotted without a backend. Query switches:
- *   ?select=<id>      opens one item (ob_sow, ob_code_now, ob_flight, ob_lease, question:q_deck)
+ *   ?select=<id>      opens one item (ob_sow, ob_code_now, ob_flight, ob_lease, question:q_deck,
+ *                     ob_slack_numbers, ob_jira_lab212, ob_granola_nda, ob_github_491, ob_pipeline,
+ *                     ob_drive_memo, ob_rsvp, ob_prepare, ob_card)
  *   ?state=empty      nothing open, only Closed today
  *   ?state=loading    the skeleton
  *   ?toast=1          the arrival toast for Dana's reply
  *   ?toast=code       the arrival toast for a code
  * Actions change local state and answer like the server: Done, Later, Not
- * mine, Undo, the draft, and Send reply all work. Not linked from anywhere;
+ * mine, Undo, the draft, Send reply, Yes/No/Maybe, and Start in Albatross
+ * all work. Not linked from anywhere;
  * 404s outside development. */
 export default function NeedsYouPreviewPage() {
   if (process.env.NODE_ENV === 'production') notFound();
@@ -66,6 +70,8 @@ function NeedsYouPreviewInner() {
         next = { ...obligation, state: 'snoozed', snoozedUntil: action.until, updatedAt: at };
       else if (action.action === 'not_mine')
         next = { ...obligation, state: 'dismissed', closedAt: at, closeReason: 'not_mine', updatedAt: at };
+      else if (action.action === 'rsvp')
+        next = { ...obligation, state: 'done', closedAt: at, closeReason: 'event_passed', updatedAt: at };
       else
         next = {
           ...obligation,
@@ -90,6 +96,21 @@ function NeedsYouPreviewInner() {
       return { draft };
     },
     [fixture],
+  );
+  const onStartAlbatross = useCallback(
+    async (obligation: ObligationView): Promise<ObligationAlbatrossResponse> => {
+      await delay(300);
+      const created = !obligation.workId;
+      const next: ObligationView = {
+        ...obligation,
+        workId: obligation.workId ?? 'work_new_from_item',
+        workTitle: obligation.workTitle ?? obligation.title.replace(/\.$/, ''),
+        updatedAt: fixtureNow(),
+      };
+      setItems((list) => list.map((item) => (item.id === next.id ? next : item)));
+      return { workId: next.workId as string, created, obligation: next };
+    },
+    [fixtureNow],
   );
   const onSendReply = useCallback(
     async (obligation: ObligationView): Promise<ObligationReplyResponse> => {
@@ -143,6 +164,10 @@ function NeedsYouPreviewInner() {
         }}
         onAlbatrossAction={() => {
           toast('Albatross action');
+        }}
+        onStartAlbatross={onStartAlbatross}
+        onOpenWork={(workId) => {
+          toast(`Open thread ${workId}`);
         }}
         onOpenActivity={() => {
           toast('Activity history');

@@ -3,7 +3,7 @@ import { JSDOM } from 'jsdom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { arrivalSentence, NeedsYouToast, newArrivals } from '../components/needs-you/NeedsYouArrivals';
-import { rowWords } from '../components/needs-you/NeedsYouRow';
+import { rowPills, rowWords } from '../components/needs-you/NeedsYouRow';
 import { mailThreadOf } from '../components/needs-you/NeedsYouSurface';
 import {
   NEEDS_YOU_ROW_CAP,
@@ -15,7 +15,11 @@ import { needsYouExtras } from '../components/needs-you/useNeedsYou';
 import type { NotificationItem } from '../components/notifications/model';
 import { bellWords } from '../components/shell/NotificationCenter';
 import { SHORTCUTS } from '../components/shell/ShortcutsSheet';
-import type { ObligationAction, ObligationView } from '../lib/obligations/contract';
+import type {
+  ObligationAction,
+  ObligationAlbatrossResponse,
+  ObligationView,
+} from '../lib/obligations/contract';
 import { UNDO_WINDOW_MS } from '../lib/obligations/contract';
 import {
   NEEDS_YOU_FIXTURE_NOW,
@@ -40,6 +44,9 @@ interface Harness {
   toasts: { kind: string; title: string; description?: string; until?: number }[];
   undo: (() => Promise<void>) | null;
   copied: string[];
+  /** "Start in Albatross" calls, and the Albatross threads the view opened. */
+  started: string[];
+  opened: string[];
 }
 
 function harness(overrides: Partial<NeedsYouViewProps> = {}): Harness {
@@ -47,7 +54,18 @@ function harness(overrides: Partial<NeedsYouViewProps> = {}): Harness {
   const replies: Harness['replies'] = [];
   const toasts: Harness['toasts'] = [];
   const copied: string[] = [];
-  const state: Harness = { actions, replies, toasts, undo: null, copied, props: {} as NeedsYouViewProps };
+  const started: string[] = [];
+  const opened: string[] = [];
+  const state: Harness = {
+    actions,
+    replies,
+    toasts,
+    undo: null,
+    copied,
+    started,
+    opened,
+    props: {} as NeedsYouViewProps,
+  };
   const notify: NeedsYouNotifier = {
     undo: ({ title, description, until, onUndo }) => {
       toasts.push({ kind: 'undo', title, description, until });
@@ -105,6 +123,18 @@ function harness(overrides: Partial<NeedsYouViewProps> = {}): Harness {
     },
     onOpenSource: () => {},
     onAlbatrossAction: () => {},
+    onStartAlbatross: async (obligation): Promise<ObligationAlbatrossResponse> => {
+      started.push(obligation.id);
+      const workId = obligation.workId ?? 'work_new';
+      return {
+        workId,
+        created: !obligation.workId,
+        obligation: { ...obligation, workId, updatedAt: NOW + 60_000 },
+      };
+    },
+    onOpenWork: (workId) => {
+      opened.push(workId);
+    },
     onOpenActivity: () => {},
     ...overrides,
   };
@@ -181,18 +211,20 @@ describe('the list', () => {
   const html = renderToStaticMarkup(<NeedsYouView {...harness().props} />);
   const page = doc(html);
 
+  const rowText = (id: string) => page.querySelector(`[data-needs-you-row="${id}"]`)?.textContent ?? '';
+
   test('shows the groups in order with their counts, and the summary line', () => {
     const heads = [...page.querySelectorAll('h2')].map((node) => node.textContent);
     expect(heads).toEqual([
       'Now3',
-      'Today2',
-      'This week2',
+      'Today7',
+      'This week6',
       'After this week1',
       'No due date1',
       'Waiting on others1',
-      'Closed today4',
+      'Closed today5',
     ]);
-    expect(page.querySelector('header p')?.textContent).toBe('3 now · 10 open · 4 closed today');
+    expect(page.querySelector('header p')?.textContent).toBe('3 now · 19 open · 5 closed today');
     expect(html).toContain('Activity history');
   });
 
@@ -203,7 +235,7 @@ describe('the list', () => {
     expect(html).toContain('Verification code');
     expect(html).toContain('8 min<small');
     expect(page.querySelector('[aria-expanded]')?.getAttribute('aria-expanded')).toBe('false');
-    expect(page.querySelectorAll('[data-needs-you-row]')).toHaveLength(10);
+    expect(page.querySelectorAll('[data-needs-you-row]')).toHaveLength(19);
   });
 
   test('each row names the asker, the source, the line, the time, and the due day', () => {
@@ -215,13 +247,61 @@ describe('the list', () => {
     expect(rows[2]).toContain('Q3 review deck');
     expect(rows[2]).toContain('Albatross');
     expect(rows[2]).toContain('Your turn');
-    expect(rows[5]).toContain('Dana Whitfield');
-    expect(rows[5]).toContain('Yesterday 4:48 PM · Reply');
-    expect(rows[5]).toContain('Fri');
-    expect(rows[9]).toContain('Marco Ruiz');
-    expect(rows[9]).toContain('6 dayswaiting');
+    expect(rowText('ob_sow')).toContain('Dana Whitfield');
+    expect(rowText('ob_sow')).toContain('Mail · Northwind Legal');
+    expect(rowText('ob_sow')).toContain('Yesterday 4:48 PM · Reply');
+    expect(rowText('ob_sow')).toContain('Fri');
+    expect(rowText('ob_lease')).toContain('Marco Ruiz');
+    expect(rowText('ob_lease')).toContain('6 dayswaiting');
     // Only one row is in the tab order.
     expect(page.querySelectorAll('[data-needs-you-row] > button[tabindex="0"]')).toHaveLength(1);
+  });
+
+  test('a connected item names its source and its Albatross; a meeting, an issue, and an event get a glyph', () => {
+    expect(rowText('ob_slack_numbers')).toContain('Priya Raman');
+    expect(rowText('ob_slack_numbers')).toContain('Slack · #release');
+    expect(rowText('ob_slack_numbers')).toContain('10:02 AM · Action · Q3 review deck');
+    expect(rowText('ob_github_491')).toContain('GitHub · northwind/web #491');
+    expect(rowText('ob_rsvp')).toContain('Calendar · Harbor Labs follow-up');
+    expect(rowText('ob_rsvp')).toContain('Invitation');
+    expect(rowText('ob_rsvp')).toContain('Tomorrow 3:00 PM');
+    // Phase 1.1: the three-day-old card failure is in Today, not Now.
+    expect(
+      page.querySelector('[data-needs-you-row="ob_card"]')?.closest('section')?.getAttribute('aria-label'),
+    ).toBe('Today');
+    expect(
+      page
+        .querySelector('[data-needs-you-row="ob_pipeline"]')
+        ?.closest('section')
+        ?.getAttribute('aria-label'),
+    ).toBe('Today');
+    const glyphs = [...page.querySelectorAll('[data-needs-you-row] [data-needs-you-glyph]')].map((node) =>
+      node.getAttribute('data-needs-you-glyph'),
+    );
+    expect(glyphs).toEqual(['bitbucket', 'calendar', 'granola', 'atlassian']);
+    // A person keeps initials, whatever the source.
+    expect(page.querySelector('[data-needs-you-row="ob_slack_numbers"] [role="img"]')?.textContent).toBe(
+      'PR',
+    );
+  });
+
+  test('the hover pills follow the first action', () => {
+    const handlers = {
+      onOpen: () => {},
+      onDone: () => {},
+      onCopy: () => {},
+      onRsvp: () => {},
+      onStartAlbatross: () => {},
+    };
+    const labels = (id: string) => rowPills(byId(id), handlers).map((pill) => pill.label);
+    expect(labels('ob_code_now')).toEqual(['Copy', 'Done']);
+    expect(labels('ob_sow')).toEqual(['Reply', 'Done']);
+    expect(labels('ob_rsvp')).toEqual(['Yes', 'No']);
+    expect(labels('ob_slack_numbers')).toEqual(['Start in Albatross', 'Done']);
+    expect(labels('ob_nda')).toEqual(['Done']);
+    expect(labels('ob_kickoff')).toEqual([]);
+    expect(rowPills(byId('ob_code_now'), { ...handlers, copied: true })[0].label).toBe('Copied');
+    expect(rowPills(byId('ob_rsvp'), { onOpen: () => {} })).toEqual([]);
   });
 
   test('the empty detail invites a selection; with nothing open it says so', () => {
@@ -385,6 +465,103 @@ describe('the detail', () => {
     expect(opened).toEqual([{ kind: 'work', workId: 'work_q3_deck' }]);
   });
 
+  test('a Slack item shows its source, Open in Slack, its Albatross, and starts there', async () => {
+    const h = harness();
+    const renderer = await mount(h.props);
+    await act(async () => rowButton(renderer, 'ob_slack_numbers').props.onClick());
+    const section = renderer.root.findByProps({ 'aria-label': 'Details' });
+    const html = renderToStaticMarkup(section.props.children);
+    const detail = doc(html);
+    expect(html).toContain('From Slack');
+    expect(html).toContain('#release');
+    expect(html).toContain('Priya Raman');
+    const link = detail.querySelector('[data-needs-you-open-in="slack"]');
+    expect(link?.textContent).toBe('Open in Slack');
+    expect(link?.getAttribute('href')).toBe(
+      'https://northwind.example.com/slack/archives/C_RELEASE/p1730131320',
+    );
+    expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(detail.querySelector('[data-needs-you-work="work_q3_deck"]')?.textContent).toContain(
+      'Q3 review deck',
+    );
+    expect(html).toContain('Open thread');
+    expect(html).toContain('Starts a run in Q3 review deck with Priya Raman’s message as its input.');
+    // No draft card: a Slack reply is not a mail reply.
+    expect(html).not.toContain('Draft reply');
+    await act(async () => buttonNamed(renderer, 'Start in Albatross').props.onClick());
+    expect(h.started).toEqual(['ob_slack_numbers']);
+    expect(h.opened).toEqual(['work_q3_deck']);
+    expect(h.toasts[0]).toMatchObject({ kind: 'info', title: 'Started in Albatross' });
+    // The row stays open until the run reports the step done.
+    expect(
+      renderer.root.findAll((node) => node.props['data-needs-you-row'] === 'ob_slack_numbers'),
+    ).toHaveLength(1);
+  });
+
+  test('an item without an Albatross offers Start in Albatross as a quiet link, and a new one opens', async () => {
+    const h = harness();
+    const renderer = await mount(h.props);
+    await act(async () => rowButton(renderer, 'ob_jira_lab212').props.onClick());
+    const section = renderer.root.findByProps({ 'aria-label': 'Details' });
+    const html = renderToStaticMarkup(section.props.children);
+    expect(html).toContain('From Jira');
+    expect(html).toContain('LAB-212');
+    expect(html).toContain('Open in Jira');
+    expect(html).not.toContain('Open thread');
+    expect(html).toContain('Done closes this. Undo for 10 seconds.');
+    await act(async () => buttonNamed(renderer, 'Start in Albatross').props.onClick());
+    expect(h.started).toEqual(['ob_jira_lab212']);
+    expect(h.opened).toEqual(['work_new']);
+    expect(h.toasts[0]).toMatchObject({ kind: 'info', title: 'Started a new Albatross' });
+  });
+
+  test('an invitation shows the event and answers Yes, No, or Maybe', async () => {
+    const h = harness();
+    const renderer = await mount(h.props);
+    await act(async () => rowButton(renderer, 'ob_rsvp').props.onClick());
+    const section = renderer.root.findByProps({ 'aria-label': 'Details' });
+    const html = renderToStaticMarkup(section.props.children);
+    expect(html).toContain('The event');
+    expect(html).toContain('Tomorrow 3:00 PM');
+    expect(html).toContain('Harbor Labs follow-up');
+    expect(html).toContain('Mira Sato, Lena Fischer, and you.');
+    expect(html).toContain('Open in Calendar');
+    expect(html).toContain('Yes, No, and Maybe answer the invitation');
+    expect(buttonNamed(renderer, 'Yes')).toBeDefined();
+    expect(buttonNamed(renderer, 'No')).toBeDefined();
+    await act(async () => buttonNamed(renderer, 'Maybe').props.onClick());
+    expect(h.actions).toEqual([{ id: 'ob_rsvp', action: { action: 'rsvp', response: 'maybe' } }]);
+    expect(h.toasts[0]).toMatchObject({ kind: 'undo', title: 'Answered maybe' });
+  });
+
+  test('a prepare item shows the event, its time, and the people, with Done first', async () => {
+    const prepare = { ...byId('ob_prepare'), workId: undefined, workTitle: undefined };
+    const h = harness({ items: fixture.items.map((item) => (item.id === 'ob_prepare' ? prepare : item)) });
+    const renderer = await mount(h.props);
+    await act(async () => rowButton(renderer, 'ob_prepare').props.onClick());
+    const section = renderer.root.findByProps({ 'aria-label': 'Details' });
+    const html = renderToStaticMarkup(section.props.children);
+    expect(html).toContain('Board check-in');
+    expect(html).toContain('Tomorrow 9:00 AM');
+    expect(html).toContain('Rafael Costa, Priya Raman, Noor Haddad, and you.');
+    expect(html).toContain('closes itself when the event starts');
+    expect(buttonNamed(renderer, 'Done').props['data-variant']).toBe('default');
+    await act(async () => buttonNamed(renderer, 'Done').props.onClick());
+    expect(h.actions).toEqual([{ id: 'ob_prepare', action: { action: 'done' } }]);
+  });
+
+  test('a link that is not https does not open', async () => {
+    const unsafe = { ...byId('ob_github_491'), url: 'http://github.example.com/northwind/web/pull/491' };
+    const h = harness({ items: fixture.items.map((item) => (item.id === unsafe.id ? unsafe : item)) });
+    const renderer = await mount(h.props);
+    await act(async () => rowButton(renderer, 'ob_github_491').props.onClick());
+    const section = renderer.root.findByProps({ 'aria-label': 'Details' });
+    const html = renderToStaticMarkup(section.props.children);
+    expect(html).toContain('From GitHub');
+    expect(html).not.toContain('data-needs-you-open-in');
+    expect(html).not.toContain('Open in GitHub');
+  });
+
   test('a failed action shows its message and keeps the row', async () => {
     const h = harness({
       onObligationAction: async () => {
@@ -507,7 +684,7 @@ describe('the bell and the toast', () => {
       />,
     );
     expect(reply).toContain('asks you to confirm the revised start date');
-    expect(reply).toContain('Mail · Reply · Due Friday');
+    expect(reply).toContain('Mail · Northwind Legal · Reply · Due Friday');
     expect(reply).toContain('>Open<');
     expect(reply).toContain('>Later<');
     const code = renderToStaticMarkup(

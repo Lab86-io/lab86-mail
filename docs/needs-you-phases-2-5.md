@@ -387,3 +387,65 @@ These notes record the decisions of builder S1. The code is the authority.
   the package builds. Each response holds its own copy of `ObligationView`.
 - `ObligationActionRequest` is one flat object: `action`, and `until` or
   `response` when the action needs them. Do not send a key with `null`.
+
+## W notes (web, 2026-10-30)
+
+What the web builder shipped on `claude/ny2-web`, and what it needs from the
+other builders.
+
+Pages and parts:
+
+- Rows and details show the source word (`OBLIGATION_SOURCE_LABELS`) and the
+  place in the source (`sourceLabel`): "Slack · #release". A person keeps
+  initials. A meeting, an issue, a pipeline, and an event to prepare for get a
+  monochrome glyph. "Open in Slack" (Jira, GitHub, ...) is a plain link to
+  `url`. Only an `https` link renders.
+- `rsvp`: the event card (title, start time, the people from `excerpt`), then
+  Yes, No, Maybe, Later, Not mine. `prepare`: the same card, then Done, Later,
+  Not mine. The event start comes from `eventStart`.
+- "Start in Albatross" for every kind but `code`. With a `workId` it is the
+  first action; without one it is a quiet link at the right of the action row.
+  The response `workId` opens the thread. The row stays open. The row meta
+  shows `workTitle`. The detail shows an Albatross card with "Open thread".
+- The Work thread reads `obligationViews:forWork` and shows the items as
+  cards in time order, after the conversation and before the Work questions.
+  "Handle it" posts to `/api/obligations/[id]/albatross`. Done, Later, Not
+  mine, and Yes/No/Maybe post to `/api/obligations/[id]`, with Undo.
+- The brief lane `needs-you` renders in the place of `answer`: the accent
+  surface, the kicker "Needs you", the region `summary` at the right, a "Due
+  today" sub-label, and the closed line at the end.
+- Phase 1.1 on the page: a `change` sits in Now only when it is
+  `time_sensitive` and newer than `CHANGE_NOW_WINDOW_MS`. An older one goes to
+  Today. Any other change goes by its due day and never into Now.
+- Previews: `/dev/needs-you-preview?select=ob_slack_numbers` (and `ob_rsvp`,
+  `ob_prepare`, `ob_jira_lab212`, `ob_drive_memo`, `ob_card`),
+  `/dev/thread-preview?state=needsYou`, `/dev/brief-preview?layout=needs-you`.
+
+Contract needs (S2 and the native builders):
+
+- The `needs-you` region tree: an `entity_list` with the title "Needs you"
+  alone, or a `stack` of that list and one `text` node (role `caption`) with
+  the closed line: "Closed by itself since yesterday’s letter: ...". The web
+  renders both shapes. `lib/obligations/fixtures.ts` `needsYouLetterFixture`
+  shows the stack form.
+- The region `summary` is the count sentence ("8 open · 2 now · 2 due today").
+  The lane shows it at the kicker's right.
+- Items in Now carry `framing.lane: 'now'`; items due today carry
+  `framing.lane: 'today'`. The "Due today" sub-label sits before the first
+  `today` item that follows a `now` item.
+- `framing.age` carries the small label after the sender: the time for a
+  mail item ("9:12 AM"), the source and the time for a connected item
+  ("GitHub · 8:05 AM"). `framing.sender` is the asker.
+- An Albatross question uses `ref.kind: 'work'` with `open_work`. A connected
+  item uses `ref.kind: 'mcp'` with `open_url`. The brief has no action that
+  closes an obligation; "Done" in the lane needs a new brief action.
+- The chat (`components/shell/AIBar.tsx`, not a W file) has no slot for
+  cards between messages. The thread shows the items in one block after the
+  messages, in time order. True interleaving needs a `thread.extras` slot in
+  the chat.
+- The thread rail row ("Your turn · Priya asked for the Q3 numbers") is in
+  `components/albatross/ThreadRail.tsx` and `lib/albatross/thread-list-view.ts`,
+  not W files. It still reads the run state, not the obligations.
+- The detail's Albatross card shows the title and "Open thread". The step line
+  of the mockup ("Step 2 of 4 · Collect the numbers · Your turn") needs step
+  data on the view; the contract has none.

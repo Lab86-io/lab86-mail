@@ -1,9 +1,23 @@
 'use client';
 
-import { ChevronDown, CircleCheck, KeyRound } from 'lucide-react';
+import {
+  CalendarDays,
+  ChevronDown,
+  CircleCheck,
+  FileText,
+  GitBranch,
+  GitPullRequest,
+  Hash,
+  KeyRound,
+  type LucideIcon,
+  Mail,
+  Mic,
+  SquareKanban,
+} from 'lucide-react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import type { NotificationItem } from '@/components/notifications/model';
 import { Avatar } from '@/components/ui/avatar';
+import type { ObligationSource, ObligationView } from '@/lib/obligations/contract';
 import type { NeedsYouEntry, NeedsYouGroup } from '@/lib/obligations/groups';
 import { isClosedObligation } from '@/lib/obligations/groups';
 import {
@@ -12,6 +26,9 @@ import {
   type DueTone,
   dueLabel,
   kindLabel,
+  primaryAction,
+  rowLeadKind,
+  sourceWords,
   spacedCode,
   whenLabel,
 } from '@/lib/obligations/labels';
@@ -26,7 +43,74 @@ const DUE_TONE: Record<DueTone, string> = {
   done: 'font-medium text-[var(--color-success)]',
 };
 
-/** The round lead of a row: initials for a person, a glyph for a code or an Albatross. */
+/** One monochrome glyph for each source. Never a logo. */
+const SOURCE_GLYPHS: Record<ObligationSource, LucideIcon> = {
+  mail: Mail,
+  slack: Hash,
+  atlassian: SquareKanban,
+  granola: Mic,
+  drive: FileText,
+  github: GitPullRequest,
+  bitbucket: GitBranch,
+  calendar: CalendarDays,
+};
+
+/** The round source mark: a glyph in the control color. The size follows the avatar beside it. */
+export function SourceGlyph({
+  source,
+  size = 28,
+  className,
+}: {
+  source: ObligationSource;
+  size?: number;
+  className?: string;
+}) {
+  const Glyph = SOURCE_GLYPHS[source] ?? Mail;
+  return (
+    <span
+      aria-hidden
+      data-needs-you-glyph={source}
+      className={cn(
+        'grid shrink-0 place-items-center rounded-full border border-[var(--color-avatar-ring)] bg-[var(--color-control)] text-[var(--color-text-muted)]',
+        className,
+      )}
+      style={{ width: size, height: size }}
+    >
+      <Glyph style={{ width: size / 2, height: size / 2 }} />
+    </span>
+  );
+}
+
+/** The lead of one obligation: initials for a person, a source glyph for a system, a key for a code. */
+export function ObligationLead({
+  obligation,
+  size = 28,
+  className,
+}: {
+  obligation: ObligationView;
+  size?: number;
+  className?: string;
+}) {
+  const kind = rowLeadKind(obligation);
+  if (kind === 'code') {
+    return (
+      <span
+        aria-hidden
+        className={cn(
+          'grid shrink-0 place-items-center rounded-full border border-[var(--color-avatar-ring)] bg-[var(--color-control)] text-[var(--color-text-muted)]',
+          className,
+        )}
+        style={{ width: size, height: size }}
+      >
+        <KeyRound style={{ width: size / 2, height: size / 2 }} />
+      </span>
+    );
+  }
+  if (kind === 'glyph') return <SourceGlyph source={obligation.source} size={size} className={className} />;
+  return <Avatar name={obligation.asker} size={size} className={className} />;
+}
+
+/** The round lead of a row: initials for a person, a glyph for a code, a source, or an Albatross. */
 export function RowLead({ entry }: { entry: NeedsYouListEntry }) {
   if (entry.type === 'albatross') {
     return (
@@ -38,17 +122,7 @@ export function RowLead({ entry }: { entry: NeedsYouListEntry }) {
       </span>
     );
   }
-  if (entry.obligation.kind === 'code') {
-    return (
-      <span
-        aria-hidden
-        className="mt-px grid size-7 shrink-0 place-items-center rounded-full border border-[var(--color-avatar-ring)] bg-[var(--color-control)] text-[var(--color-text-muted)]"
-      >
-        <KeyRound className="size-3.5" />
-      </span>
-    );
-  }
-  return <Avatar name={entry.obligation.asker} size={28} className="mt-px" />;
+  return <ObligationLead obligation={entry.obligation} className="mt-px" />;
 }
 
 function albatrossDue(item: NotificationItem): DueLabel {
@@ -84,10 +158,15 @@ export function rowWords(entry: NeedsYouListEntry, now: number, timezone: string
         : `${when} · ${agoLabel(obligation.createdAt, now)}`
       : closed
         ? when
-        : `${when} · ${kindLabel(obligation)}`;
+        : [when, kindLabel(obligation), obligation.workTitle?.trim() || null].filter(Boolean).join(' · ');
+  // "Board check-in · Calendar · Board check-in" says the place twice: the asker already names it.
+  const label = obligation.sourceLabel?.trim();
   return {
     name: obligation.asker,
-    source: 'Mail',
+    source: sourceWords({
+      source: obligation.source,
+      sourceLabel: label && label !== obligation.asker ? label : undefined,
+    }),
     line: obligation.kind === 'code' && closed ? 'Verification code.' : obligation.title,
     meta,
     due: dueLabel(obligation, now, timezone),
@@ -108,7 +187,44 @@ export interface NeedsYouRowProps {
   onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   onDone?: () => void;
   onCopy?: () => void;
+  onRsvp?: (response: 'yes' | 'no' | 'maybe') => void;
+  onStartAlbatross?: () => void;
   registerRef: (node: HTMLButtonElement | null) => void;
+}
+
+interface Pill {
+  label: string;
+  onClick: () => void;
+  primary?: boolean;
+}
+
+/** The hover pills of one open obligation: the first action, then Done. An invitation shows Yes and No. */
+export function rowPills(
+  obligation: ObligationView,
+  handlers: Pick<NeedsYouRowProps, 'onOpen' | 'onDone' | 'onCopy' | 'onRsvp' | 'onStartAlbatross'> & {
+    copied?: boolean;
+  },
+): Pill[] {
+  if (isClosedObligation(obligation)) return [];
+  const pills: Pill[] = [];
+  const primary = primaryAction(obligation);
+  if (primary === 'copy') {
+    if (handlers.onCopy)
+      pills.push({ label: handlers.copied ? 'Copied' : 'Copy', onClick: handlers.onCopy, primary: true });
+  } else if (primary === 'send_reply') {
+    pills.push({ label: 'Reply', onClick: handlers.onOpen, primary: true });
+  } else if (primary === 'rsvp') {
+    const { onRsvp } = handlers;
+    if (onRsvp) {
+      pills.push({ label: 'Yes', onClick: () => onRsvp('yes'), primary: true });
+      pills.push({ label: 'No', onClick: () => onRsvp('no') });
+    }
+    return pills;
+  } else if (primary === 'start_albatross' && handlers.onStartAlbatross) {
+    pills.push({ label: 'Start in Albatross', onClick: handlers.onStartAlbatross, primary: true });
+  }
+  if (handlers.onDone) pills.push({ label: 'Done', onClick: handlers.onDone });
+  return pills;
 }
 
 export function NeedsYouRow({
@@ -124,18 +240,17 @@ export function NeedsYouRow({
   onKeyDown,
   onDone,
   onCopy,
+  onRsvp,
+  onStartAlbatross,
   registerRef,
 }: NeedsYouRowProps) {
   const words = rowWords(entry, now, timezone);
   const obligation = entry.type === 'obligation' ? entry.obligation : null;
   const closed = obligation ? isClosedObligation(obligation) : false;
   const code = obligation?.kind === 'code' && !closed ? obligation.code : null;
-  const pills: { label: string; onClick: () => void; primary?: boolean }[] = [];
-  if (obligation && !closed) {
-    if (code && onCopy) pills.push({ label: copied ? 'Copied' : 'Copy', onClick: onCopy, primary: true });
-    else if (obligation.kind === 'reply') pills.push({ label: 'Reply', onClick: onOpen, primary: true });
-    if (onDone) pills.push({ label: 'Done', onClick: onDone });
-  }
+  const pills = obligation
+    ? rowPills(obligation, { onOpen, onDone, onCopy, onRsvp, onStartAlbatross, copied })
+    : [];
   const due = words.due;
   return (
     <li
@@ -161,9 +276,12 @@ export function NeedsYouRow({
             <span className="truncate font-display text-[14px] font-medium leading-[18px] text-[var(--color-text)]">
               {words.name}
             </span>
-            <span className="flex shrink-0 items-baseline gap-[7px] text-[11px] leading-[18px] text-[var(--color-text-muted)]">
-              <span aria-hidden className="size-[3px] rounded-full bg-[var(--color-text-faint)]" />
-              {words.source}
+            <span
+              data-needs-you-source
+              className="flex min-w-0 shrink items-baseline gap-[7px] text-[11px] leading-[18px] text-[var(--color-text-muted)]"
+            >
+              <span aria-hidden className="size-[3px] shrink-0 rounded-full bg-[var(--color-text-faint)]" />
+              <span className="truncate">{words.source}</span>
             </span>
           </span>
           {code ? (
@@ -220,7 +338,7 @@ export function NeedsYouRow({
                 pill.onClick();
               }}
               className={cn(
-                'h-[22px] rounded-[8px] border bg-[var(--color-bg-elevated)] px-2 text-[12px] font-medium leading-5 transition-colors hover:bg-[var(--color-control-hover)] disabled:opacity-60',
+                'h-[22px] whitespace-nowrap rounded-[8px] border bg-[var(--color-bg-elevated)] px-2 text-[12px] font-medium leading-5 transition-colors hover:bg-[var(--color-control-hover)] disabled:opacity-60',
                 pill.primary
                   ? 'border-[color-mix(in_oklab,var(--color-accent)_40%,var(--color-border))] text-[var(--color-accent)]'
                   : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
