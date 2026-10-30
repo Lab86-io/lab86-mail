@@ -1536,18 +1536,36 @@ export async function closeCalendarEventObligations(
 /** Calendar events that one fill pass reads: the next 14 days. */
 export const CALENDAR_FILL_EVENTS = 200;
 
-/** Opens the `rsvp` rows of the invitations in the next 14 days, in-app only. */
-export async function fillCalendarObligations(ctx: MutationCtx, userId: string, at = now()) {
+/**
+ * One page of the calendar fill: at most CALENDAR_FILL_EVENTS events of the
+ * next 14 days, from `from` (a start time) or from now. A full page gives the
+ * start time where the next page continues. The next page reads that time
+ * again, so events that share it are not skipped. A page whose events all
+ * start at `from` moves on by one millisecond.
+ */
+export async function calendarFillPage(ctx: MutationCtx, userId: string, at: number, from?: number) {
+  const resume = from !== undefined && from > at && from <= at + RSVP_WINDOW_MS ? from : undefined;
   const events = await ctx.db
     .query('calendarEvents')
-    .withIndex('by_user_start', (q) =>
-      q
-        .eq('userId', userId)
-        .gt('startAt', at)
-        .lte('startAt', at + RSVP_WINDOW_MS),
-    )
+    .withIndex('by_user_start', (q) => {
+      const user = q.eq('userId', userId);
+      return (resume === undefined ? user.gt('startAt', at) : user.gte('startAt', resume)).lte(
+        'startAt',
+        at + RSVP_WINDOW_MS,
+      );
+    })
     .take(CALENDAR_FILL_EVENTS);
-  return syncCalendarObligations(ctx, userId, events, { at });
+  const synced = await syncCalendarObligations(ctx, userId, events, { at });
+  const last = events.at(-1)?.startAt;
+  let next: number | undefined;
+  if (events.length === CALENDAR_FILL_EVENTS && last !== undefined)
+    next = resume !== undefined && last <= resume ? resume + 1 : last;
+  return { synced, next };
+}
+
+/** Opens the `rsvp` rows of the invitations in the next 14 days, in-app only (one page). */
+export async function fillCalendarObligations(ctx: MutationCtx, userId: string, at = now()) {
+  return (await calendarFillPage(ctx, userId, at)).synced;
 }
 
 /** The scheduled calendar fill of a flag user runs at most this often. */
@@ -1569,7 +1587,8 @@ export async function takeCalendarFill(ctx: MutationCtx, userId: string, at = no
     )
     .unique();
   if (row && at - (Number(row.doc?.at) || 0) < CALENDAR_FILL_EVERY_MS) return false;
-  if (row) await ctx.db.patch(row._id, { doc: { at }, updatedAt: at });
+  // Keep the saved page position (`from`) of the fill.
+  if (row) await ctx.db.patch(row._id, { doc: { ...(row.doc ?? {}), at }, updatedAt: at });
   else
     await ctx.db.insert('userDocs', {
       userId,
@@ -1584,14 +1603,42 @@ export async function takeCalendarFill(ctx: MutationCtx, userId: string, at = no
 
 /**
  * The scheduled calendar fill of one flag user (phase 4): the invitations of
- * the next 14 days, at most CALENDAR_FILL_EVENTS events, in-app only. The Jev
- * claim starts it at most once in CALENDAR_FILL_EVERY_MS.
+ * the next 14 days, one page of at most CALENDAR_FILL_EVENTS events, in-app
+ * only. The Jev claim starts it at most once in CALENDAR_FILL_EVERY_MS. A full
+ * page saves where the next fill continues, so a long calendar is read in
+ * turns and an invitation after the first page still opens. A short page
+ * clears the position, and the next fill starts at now again.
  */
 export const fillCalendar = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
     if (!(await needsYouEnabled(ctx, args.userId))) return { synced: 0 };
-    return { synced: await fillCalendarObligations(ctx, args.userId) };
+    const at = now();
+    const row = await ctx.db
+      .query('userDocs')
+      .withIndex('by_user_kind_key', (q) =>
+        q.eq('userId', args.userId).eq('kind', CALENDAR_FILL_KIND).eq('key', 'default'),
+      )
+      .unique();
+    const saved = Number(row?.doc?.from);
+    const page = await calendarFillPage(ctx, args.userId, at, Number.isFinite(saved) ? saved : undefined);
+    if (row) {
+      const { from: _from, ...doc } = row.doc ?? {};
+      await ctx.db.patch(row._id, {
+        doc: page.next === undefined ? doc : { ...doc, from: page.next },
+        updatedAt: at,
+      });
+    } else if (page.next !== undefined) {
+      await ctx.db.insert('userDocs', {
+        userId: args.userId,
+        kind: CALENDAR_FILL_KIND,
+        key: 'default',
+        doc: { from: page.next },
+        createdAt: at,
+        updatedAt: at,
+      });
+    }
+    return { synced: page.synced };
   },
 });
 
