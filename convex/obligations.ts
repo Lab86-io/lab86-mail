@@ -182,7 +182,8 @@ async function codeRowFor(ctx: QueryCtx | MutationCtx, row: Obligation) {
   return row.kind === 'code' && row.codeId ? ctx.db.get(row.codeId) : undefined;
 }
 
-async function viewOf(ctx: QueryCtx | MutationCtx, row: Obligation, at = now()) {
+/** The page view of one row, with its code read from the code store. */
+export async function viewOf(ctx: QueryCtx | MutationCtx, row: Obligation, at = now()) {
   return obligationView(row, await codeRowFor(ctx, row), at);
 }
 
@@ -194,53 +195,60 @@ async function preferenceRow(ctx: QueryCtx | MutationCtx, userId: string) {
 }
 
 /**
- * `api.obligations.needsYou`: the open and snoozed obligations of the
- * signed-in user, and the ones closed since the start of the user's day.
- * Each read is one index range with a bound.
+ * The NeedsYouSnapshot of one user: the open and snoozed obligations, and the
+ * ones closed since the start of the user's day. Each read is one index range
+ * with a bound. The web page (`needsYou`) and the mobile routes
+ * (`obligationViews:snapshotFor`) both read through this loader, so a rule
+ * change shows the same on every client.
  */
+export async function loadNeedsYouSnapshot(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  at = now(),
+): Promise<NeedsYouSnapshot> {
+  const [enabled, preference] = await Promise.all([needsYouEnabled(ctx, userId), preferenceRow(ctx, userId)]);
+  const timezone = preference?.timezone || 'UTC';
+  if (!enabled) return { enabled: false, timezone, items: [] };
+  const dayStart = startOfLocalDay(at, timezone);
+  const [open, snoozed, closed] = await Promise.all([
+    ctx.db
+      .query('obligations')
+      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'open'))
+      .order('desc')
+      .take(OPEN_READ),
+    ctx.db
+      .query('obligations')
+      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'snoozed'))
+      .order('desc')
+      .take(SNOOZED_READ),
+    ctx.db
+      .query('obligations')
+      .withIndex('by_user_closed', (q) => q.eq('userId', userId).gte('closedAt', dayStart))
+      .order('desc')
+      .take(CLOSED_READ),
+  ]);
+  const seen = new Set<string>();
+  const items: ObligationView[] = [];
+  for (const row of [...open, ...snoozed, ...closed]) {
+    const id = String(row._id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const view = await viewOf(ctx, row, at);
+    // A code that expired before today is not part of today's list.
+    if (!isOpen(view.state) && (view.closedAt ?? at) < dayStart) continue;
+    items.push(view);
+  }
+  return { enabled: true, timezone, items };
+}
+
+/** `api.obligations.needsYou`: the snapshot of the signed-in user. */
 export const needsYou = query({
   args: {},
   handler: async (ctx): Promise<NeedsYouSnapshot> => {
     const identity = await ctx.auth.getUserIdentity();
     const userId = identity?.subject;
     if (!userId) return { enabled: false, timezone: 'UTC', items: [] };
-    const [enabled, preference] = await Promise.all([
-      needsYouEnabled(ctx, userId),
-      preferenceRow(ctx, userId),
-    ]);
-    const timezone = preference?.timezone || 'UTC';
-    if (!enabled) return { enabled: false, timezone, items: [] };
-    const at = now();
-    const dayStart = startOfLocalDay(at, timezone);
-    const [open, snoozed, closed] = await Promise.all([
-      ctx.db
-        .query('obligations')
-        .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'open'))
-        .order('desc')
-        .take(OPEN_READ),
-      ctx.db
-        .query('obligations')
-        .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'snoozed'))
-        .order('desc')
-        .take(SNOOZED_READ),
-      ctx.db
-        .query('obligations')
-        .withIndex('by_user_closed', (q) => q.eq('userId', userId).gte('closedAt', dayStart))
-        .order('desc')
-        .take(CLOSED_READ),
-    ]);
-    const seen = new Set<string>();
-    const items: ObligationView[] = [];
-    for (const row of [...open, ...snoozed, ...closed]) {
-      const id = String(row._id);
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const view = await viewOf(ctx, row, at);
-      // A code that expired before today is not part of today's list.
-      if (!isOpen(view.state) && (view.closedAt ?? at) < dayStart) continue;
-      items.push(view);
-    }
-    return { enabled: true, timezone, items };
+    return loadNeedsYouSnapshot(ctx, userId);
   },
 });
 

@@ -283,6 +283,61 @@ describe('obligationViews.snapshotFor', () => {
   });
 });
 
+describe('one loader for the page and the mobile routes', () => {
+  test('snapshotFor and obligations.needsYou give the same snapshot, with the fields of phases 2 to 4', async () => {
+    const t = harness();
+    await flag(t);
+    await timezone(t);
+    const workId = String(await work(t));
+    await row(t, {
+      kind: 'action',
+      source: 'github',
+      sourceKey: 'github:conn:pr-482',
+      sourceLabel: 'northwind/web #482',
+      url: 'https://github.example.test/northwind/web/pull/482',
+      accountId: undefined,
+      threadId: undefined,
+      messageId: undefined,
+      workId,
+      workTitle: 'Renew the Northwind contract',
+    });
+    await row(t, {
+      kind: 'rsvp',
+      source: 'calendar',
+      sourceKey: 'calendar:acct:evt-1',
+      eventId: 'evt-1',
+      eventStart: CLOCK + 86_400_000,
+      threadId: undefined,
+      messageId: undefined,
+    });
+    await row(t, {
+      state: 'resolved',
+      closeReason: 'aged_out',
+      closedBy: 'source',
+      closedAt: CLOCK - 60_000,
+    });
+    const page = await t.withIdentity({ subject: USER }).query((api as any).obligations.needsYou, {});
+    const mobile = await t.query(views.snapshotFor, { internalSecret: SECRET, userId: USER });
+    expect(mobile).toEqual(page);
+    expect(page.items).toHaveLength(3);
+    expect(page.items.find((item: any) => item.source === 'github')).toMatchObject({
+      sourceLabel: 'northwind/web #482',
+      url: 'https://github.example.test/northwind/web/pull/482',
+      workId,
+      workTitle: 'Renew the Northwind contract',
+    });
+    expect(page.items.find((item: any) => item.kind === 'rsvp')).toMatchObject({
+      eventId: 'evt-1',
+      eventStart: CLOCK + 86_400_000,
+    });
+    // A user outside the flag: the same answer from both, with the time zone.
+    await flag(t, OTHER, false);
+    expect(await t.query(views.snapshotFor, { internalSecret: SECRET, userId: OTHER })).toEqual(
+      await t.withIdentity({ subject: OTHER }).query((api as any).obligations.needsYou, {}),
+    );
+  });
+});
+
 describe('obligationViews.closedSinceFor', () => {
   test('gives the items that closed by themselves since a time, newest first, at most the limit', async () => {
     const t = harness();

@@ -51,30 +51,6 @@ export function closedNoteOf(view: ObligationView): ObligationClosedNote {
   };
 }
 
-/** The fields of phases 2 to 4 that a stored row can carry. */
-export interface ObligationSourceFields {
-  sourceLabel?: string;
-  url?: string;
-  workTitle?: string;
-  eventId?: string;
-  eventStart?: number;
-}
-
-/**
- * Adds the source fields of the row to a view that does not carry them yet.
- * A value that the view already has stays.
- */
-export function withSourceFields(view: ObligationView, row: ObligationSourceFields): ObligationView {
-  return {
-    ...view,
-    ...(view.sourceLabel === undefined && row.sourceLabel ? { sourceLabel: row.sourceLabel } : {}),
-    ...(view.url === undefined && row.url ? { url: row.url } : {}),
-    ...(view.workTitle === undefined && row.workTitle && view.workId ? { workTitle: row.workTitle } : {}),
-    ...(view.eventId === undefined && row.eventId ? { eventId: row.eventId } : {}),
-    ...(view.eventStart === undefined && row.eventStart !== undefined ? { eventStart: row.eventStart } : {}),
-  };
-}
-
 /** Time order for the Work thread: the oldest first, so the newest is last. */
 export function threadTimeOrder(
   a: Pick<ObligationView, 'id' | 'createdAt'>,
