@@ -700,22 +700,39 @@ describe('calendar (phase 4)', () => {
     });
   });
 
+  const fillState = (t: TestConvex<typeof schema>) =>
+    t.run((ctx) =>
+      ctx.db
+        .query('userDocs')
+        .withIndex('by_user_kind_key', (q) =>
+          q.eq('userId', USER).eq('kind', 'needsYouCalendarFill').eq('key', 'default'),
+        )
+        .unique(),
+    );
+  const ownEvents = (count: number, startAt: (index: number) => number) =>
+    Array.from({ length: count }, (_, index) =>
+      event({
+        providerEventId: `own-${index}`,
+        startAt: startAt(index),
+        endAt: startAt(index) + HOUR,
+        organizer: { email: 'owner@example.test' },
+        participants: [{ email: 'owner@example.test', status: 'yes' }],
+      }),
+    );
+  const upsertAll = async (t: TestConvex<typeof schema>, events: unknown[]) => {
+    for (let start = 0; start < events.length; start += 50)
+      await t.mutation(calendar.upsertEventBatch, batch(events.slice(start, start + 50)));
+  };
+
   test('a long calendar fills in pages, so an invitation after the first page still opens', async () => {
     const t = harness();
     await connect(t);
     await flag(t);
     // 200 of the owner's own events (no invitation) between day 8 and day 12.
-    const own = Array.from({ length: CALENDAR_FILL_EVENTS }, (_, index) =>
-      event({
-        providerEventId: `own-${index}`,
-        startAt: CLOCK + 8 * DAY + index * 30 * 60_000,
-        endAt: CLOCK + 8 * DAY + index * 30 * 60_000 + HOUR,
-        organizer: { email: 'owner@example.test' },
-        participants: [{ email: 'owner@example.test', status: 'yes' }],
-      }),
+    await upsertAll(
+      t,
+      ownEvents(CALENDAR_FILL_EVENTS, (index) => CLOCK + 8 * DAY + index * 30 * 60_000),
     );
-    for (let start = 0; start < own.length; start += 50)
-      await t.mutation(calendar.upsertEventBatch, batch(own.slice(start, start + 50)));
     // The invitation is 20 days ahead: no row now.
     await t.mutation(
       calendar.upsertEventBatch,
@@ -726,20 +743,56 @@ describe('calendar (phase 4)', () => {
     setSystemTime(new Date(CLOCK + 7 * DAY));
     await t.mutation(internal.obligations.fillCalendar, { userId: USER });
     expect(await rows(t)).toEqual([]);
-    const saved = await t.run((ctx) =>
-      ctx.db
-        .query('userDocs')
-        .withIndex('by_user_kind_key', (q) =>
-          q.eq('userId', USER).eq('kind', 'needsYouCalendarFill').eq('key', 'default'),
-        )
-        .unique(),
-    );
-    expect(saved?.doc?.from).toBe(CLOCK + 8 * DAY + (CALENDAR_FILL_EVENTS - 1) * 30 * 60_000);
-    // The next fill continues from there and opens the invitation, then clears the position.
+    const saved = await fillState(t);
+    expect(saved?.doc?.cycle).toMatchObject({ lower: CLOCK + 7 * DAY, upper: CLOCK + 21 * DAY });
+    expect(typeof saved?.doc?.cycle?.cursor).toBe('string');
+    // An hour later the pass continues in the same fixed window and opens the invitation.
+    setSystemTime(new Date(CLOCK + 7 * DAY + HOUR));
     await t.mutation(internal.obligations.fillCalendar, { userId: USER });
     expect((await rows(t)).map((row) => `${row.kind}:${row.eventId}`)).toEqual(['rsvp:late']);
-    const cleared = await t.run((ctx) => ctx.db.get(saved!._id));
-    expect(cleared?.doc?.from).toBeUndefined();
+    expect((await fillState(t))?.doc?.cycle).toBeUndefined();
+  });
+
+  test('a pass reads every event once, also when more than one page starts at the same time', async () => {
+    const t = harness();
+    await connect(t);
+    await flag(t);
+    const sameStart = CLOCK + 3 * DAY;
+    await upsertAll(
+      t,
+      ownEvents(CALENDAR_FILL_EVENTS + 5, () => sameStart),
+    );
+    await t.mutation(
+      calendar.upsertEventBatch,
+      batch([event({ providerEventId: 'tied', startAt: sameStart, endAt: sameStart + HOUR })]),
+    );
+    // The sync opened the invitation; remove it, so only the fill can open it again.
+    for (const row of await rows(t)) await t.run((ctx) => ctx.db.delete(row._id));
+    await t.mutation(internal.obligations.fillCalendar, { userId: USER });
+    expect(await rows(t)).toEqual([]);
+    expect((await fillState(t))?.doc?.cycle?.cursor).toBeTruthy();
+    await t.mutation(internal.obligations.fillCalendar, { userId: USER });
+    expect((await rows(t)).map((row) => `${row.kind}:${row.eventId}`)).toEqual(['rsvp:tied']);
+    expect((await fillState(t))?.doc?.cycle).toBeUndefined();
+  });
+
+  test('a saved pass that Convex no longer accepts starts again at now', async () => {
+    const t = harness();
+    await connect(t);
+    await flag(t);
+    await t.run((ctx) =>
+      ctx.db.insert('userDocs', {
+        userId: USER,
+        kind: 'needsYouCalendarFill',
+        key: 'default',
+        doc: { at: CLOCK, cycle: { lower: CLOCK, upper: CLOCK + 14 * DAY, cursor: 'not-a-cursor' } },
+        createdAt: CLOCK,
+        updatedAt: CLOCK,
+      }),
+    );
+    expect(await t.mutation(internal.obligations.fillCalendar, { userId: USER })).toEqual({ synced: 0 });
+    const state = await fillState(t);
+    expect(state?.doc).toEqual({ at: CLOCK });
   });
 
   test('a cancel closes the rsvp by evidence; a deleted or pruned event closes its items', async () => {

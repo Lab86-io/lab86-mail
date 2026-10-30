@@ -1536,36 +1536,61 @@ export async function closeCalendarEventObligations(
 /** Calendar events that one fill pass reads: the next 14 days. */
 export const CALENDAR_FILL_EVENTS = 200;
 
-/**
- * One page of the calendar fill: at most CALENDAR_FILL_EVENTS events of the
- * next 14 days, from `from` (a start time) or from now. A full page gives the
- * start time where the next page continues. The next page reads that time
- * again, so events that share it are not skipped. A page whose events all
- * start at `from` moves on by one millisecond.
- */
-export async function calendarFillPage(ctx: MutationCtx, userId: string, at: number, from?: number) {
-  const resume = from !== undefined && from > at && from <= at + RSVP_WINDOW_MS ? from : undefined;
+/** Opens the `rsvp` rows of the invitations in the next 14 days, in-app only (the first page). */
+export async function fillCalendarObligations(ctx: MutationCtx, userId: string, at = now()) {
   const events = await ctx.db
     .query('calendarEvents')
-    .withIndex('by_user_start', (q) => {
-      const user = q.eq('userId', userId);
-      return (resume === undefined ? user.gt('startAt', at) : user.gte('startAt', resume)).lte(
-        'startAt',
-        at + RSVP_WINDOW_MS,
-      );
-    })
+    .withIndex('by_user_start', (q) =>
+      q
+        .eq('userId', userId)
+        .gt('startAt', at)
+        .lte('startAt', at + RSVP_WINDOW_MS),
+    )
     .take(CALENDAR_FILL_EVENTS);
-  const synced = await syncCalendarObligations(ctx, userId, events, { at });
-  const last = events.at(-1)?.startAt;
-  let next: number | undefined;
-  if (events.length === CALENDAR_FILL_EVENTS && last !== undefined)
-    next = resume !== undefined && last <= resume ? resume + 1 : last;
-  return { synced, next };
+  return syncCalendarObligations(ctx, userId, events, { at });
 }
 
-/** Opens the `rsvp` rows of the invitations in the next 14 days, in-app only (one page). */
-export async function fillCalendarObligations(ctx: MutationCtx, userId: string, at = now()) {
-  return (await calendarFillPage(ctx, userId, at)).synced;
+/**
+ * One pass of the hourly fill reads the 14-day window in pages. The window
+ * bounds stay fixed for the whole pass, because a Convex page cursor is valid
+ * only for the same query. The current time decides only which invitations
+ * can open.
+ */
+export interface CalendarFillCycle {
+  lower: number;
+  upper: number;
+  cursor: string;
+}
+
+function calendarFillCycle(value: unknown): CalendarFillCycle | undefined {
+  const cycle = value as Partial<CalendarFillCycle> | null | undefined;
+  if (!cycle || typeof cycle !== 'object') return undefined;
+  if (typeof cycle.lower !== 'number' || typeof cycle.upper !== 'number') return undefined;
+  if (typeof cycle.cursor !== 'string' || !cycle.cursor) return undefined;
+  return { lower: cycle.lower, upper: cycle.upper, cursor: cycle.cursor };
+}
+
+/** One page of a fill pass: the next page of the saved pass, or the first page of a new one. */
+export async function calendarFillPage(ctx: MutationCtx, userId: string, at: number, saved?: unknown) {
+  const cycle = calendarFillCycle(saved);
+  const lower = cycle?.lower ?? at;
+  const upper = cycle?.upper ?? at + RSVP_WINDOW_MS;
+  const query = () =>
+    ctx.db
+      .query('calendarEvents')
+      .withIndex('by_user_start', (q) => q.eq('userId', userId).gt('startAt', lower).lte('startAt', upper));
+  let result: Awaited<ReturnType<ReturnType<typeof query>['paginate']>>;
+  try {
+    result = await query().paginate({ numItems: CALENDAR_FILL_EVENTS, cursor: cycle?.cursor ?? null });
+  } catch {
+    // A cursor that Convex no longer accepts starts a new pass at now.
+    return { synced: 0, next: undefined };
+  }
+  const synced = await syncCalendarObligations(ctx, userId, result.page, { at });
+  const next: CalendarFillCycle | undefined = result.isDone
+    ? undefined
+    : { lower, upper, cursor: result.continueCursor };
+  return { synced, next };
 }
 
 /** The scheduled calendar fill of a flag user runs at most this often. */
@@ -1587,7 +1612,7 @@ export async function takeCalendarFill(ctx: MutationCtx, userId: string, at = no
     )
     .unique();
   if (row && at - (Number(row.doc?.at) || 0) < CALENDAR_FILL_EVERY_MS) return false;
-  // Keep the saved page position (`from`) of the fill.
+  // Keep the saved pass (`cycle`) of the fill.
   if (row) await ctx.db.patch(row._id, { doc: { ...(row.doc ?? {}), at }, updatedAt: at });
   else
     await ctx.db.insert('userDocs', {
@@ -1604,10 +1629,11 @@ export async function takeCalendarFill(ctx: MutationCtx, userId: string, at = no
 /**
  * The scheduled calendar fill of one flag user (phase 4): the invitations of
  * the next 14 days, one page of at most CALENDAR_FILL_EVENTS events, in-app
- * only. The Jev claim starts it at most once in CALENDAR_FILL_EVERY_MS. A full
- * page saves where the next fill continues, so a long calendar is read in
- * turns and an invitation after the first page still opens. A short page
- * clears the position, and the next fill starts at now again.
+ * only. The Jev claim starts it at most once in CALENDAR_FILL_EVERY_MS. A pass
+ * that has more pages saves its fixed window and its page cursor, so a long
+ * calendar is read in turns and every event of the window is read once, also
+ * when many events share one start time. The last page clears the pass, and
+ * the next fill starts a new pass at now.
  */
 export const fillCalendar = internalMutation({
   args: { userId: v.string() },
@@ -1620,12 +1646,11 @@ export const fillCalendar = internalMutation({
         q.eq('userId', args.userId).eq('kind', CALENDAR_FILL_KIND).eq('key', 'default'),
       )
       .unique();
-    const saved = Number(row?.doc?.from);
-    const page = await calendarFillPage(ctx, args.userId, at, Number.isFinite(saved) ? saved : undefined);
+    const page = await calendarFillPage(ctx, args.userId, at, row?.doc?.cycle);
     if (row) {
-      const { from: _from, ...doc } = row.doc ?? {};
+      const { cycle: _cycle, from: _from, ...doc } = row.doc ?? {};
       await ctx.db.patch(row._id, {
-        doc: page.next === undefined ? doc : { ...doc, from: page.next },
+        doc: page.next === undefined ? doc : { ...doc, cycle: page.next },
         updatedAt: at,
       });
     } else if (page.next !== undefined) {
@@ -1633,7 +1658,7 @@ export const fillCalendar = internalMutation({
         userId: args.userId,
         kind: CALENDAR_FILL_KIND,
         key: 'default',
-        doc: { from: page.next },
+        doc: { cycle: page.next },
         createdAt: at,
         updatedAt: at,
       });
