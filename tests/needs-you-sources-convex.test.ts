@@ -24,6 +24,7 @@ const modules = {
   '../convex/mailCorpus.ts': () => import('../convex/mailCorpus'),
   '../convex/jev.ts': () => import('../convex/jev'),
   '../convex/obligations.ts': () => import('../convex/obligations'),
+  '../convex/obligationViews.ts': () => import('../convex/obligationViews'),
   '../convex/content.ts': () => import('../convex/content'),
   '../convex/calendarData.ts': () => import('../convex/calendarData'),
   '../convex/dailyReports.ts': () => import('../convex/dailyReports'),
@@ -43,6 +44,7 @@ const ob = (api as any).obligations;
 const content = (api as any).content;
 const calendar = (api as any).calendarData;
 const jev = (api as any).jev;
+const obligationViews = (api as any).obligationViews;
 
 let previous: string | undefined;
 beforeAll(() => {
@@ -285,6 +287,68 @@ describe('mail: the Albatross of a thread (phase 1 gap)', () => {
     });
     expect(done).toEqual({ ok: true, obligationIds: [] });
     expect((await rows(t))[0]).toMatchObject({ workId: String(workId), workTitle: 'Q3 budget' });
+  });
+});
+
+describe('Start in Albatross and a later sync (integration)', () => {
+  test('a re-sync with no label keeps the link that Start in Albatross set, for mail and a connected item', async () => {
+    const t = harness();
+    await flag(t);
+    const chosen = String(await work(t, { title: 'Plan the Q3 review' }));
+    const other = String(await work(t, { title: 'Another Albatross' }));
+    await sync(t);
+    const [mail] = await rows(t);
+    expect(mail.workId).toBeUndefined();
+    const linked = await t.mutation(obligationViews.linkWork, {
+      internalSecret: SECRET,
+      userId: USER,
+      id: String(mail._id),
+      workId: chosen,
+    });
+    expect(linked).toMatchObject({ ok: true, workTitle: 'Plan the Q3 review' });
+    // A newer message from the same person, and no content label: no Albatross from the source.
+    await sync(t, {
+      messages: [maya, { ...maya, id: 'm2', date: CLOCK - 60_000 }],
+      latestMessageId: 'm2',
+      assessment: verdict({ sourceMessageId: 'm2' }),
+    });
+    expect((await rows(t))[0]).toMatchObject({ workId: chosen, workTitle: 'Plan the Q3 review' });
+    // A label that names another Albatross does not move the link either.
+    await contentItem(t, {
+      key: mailSourceKey(ACCOUNT, THREAD),
+      source: 'mail',
+      labels: { ...slackLabels, workId: other },
+    });
+    await sync(t, { latestMessageId: 'm1' });
+    expect((await rows(t))[0]).toMatchObject({ workId: chosen, workTitle: 'Plan the Q3 review' });
+
+    // A connected item: the user links it, then a new version arrives with no workId.
+    const itemId = await contentItem(t);
+    const label = (version: string) =>
+      t.mutation(content.completeItem, {
+        ...scope,
+        id: itemId,
+        version,
+        lease: 'lease-1',
+        labels: { ...slackLabels, workId: null },
+        needsYou: true,
+      });
+    expect(await label('v1')).toMatchObject({ ok: true });
+    const slack = (await rows(t)).find((entry) => entry.source === 'slack')!;
+    expect(slack.workId).toBeUndefined();
+    await t.mutation(obligationViews.linkWork, {
+      internalSecret: SECRET,
+      userId: USER,
+      id: String(slack._id),
+      workId: chosen,
+    });
+    await t.run((ctx) => ctx.db.patch(itemId, { version: 'v2', lease: 'lease-1' } as any));
+    expect(await label('v2')).toMatchObject({ ok: true });
+    expect((await rows(t)).find((entry) => entry.source === 'slack')).toMatchObject({
+      state: 'open',
+      workId: chosen,
+      workTitle: 'Plan the Q3 review',
+    });
   });
 });
 
