@@ -68,5 +68,9 @@ struct MacGoCommands: Commands {
                 in: MacGoCommandState.rows(environment)
             ))
         }
+
+        // The Needs You menu (phase 5) is part of the Mac commands the app
+        // already lists, so the shared app file needs no Mac-only line.
+        MacNeedsYouCommands(environment: environment)
     }
 }

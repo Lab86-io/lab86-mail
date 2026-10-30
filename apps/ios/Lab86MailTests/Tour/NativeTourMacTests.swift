@@ -328,6 +328,22 @@ final class NativeTourMacTests: XCTestCase {
         try await tour(screen)
     }
 
+    func testMacTour28NeedsYou() async throws {
+        // Needs you (docs/needs-you.md, phase 5): the list beside the detail
+        // at the desktop size, with a code and a time-sensitive change in
+        // Now, the dated groups, Waiting on others, and Closed today folded.
+        // The change is open in the detail. The rows are seeded: the stub
+        // server has no ledger.
+        var screen = Screen(id: "mac-needs-you", title: "Needs you with a change open", section: "Needs you", tab: .needsYou)
+        screen.setUp = { environment in
+            environment.needsYou.activate(ownerID: environment.sessionStore.ownerID)
+            environment.needsYou.apply(MacNeedsYouTourFixture.snapshot(now: .now))
+            environment.navigation.needsYouEnabled = true
+            environment.navigation.openNeedsYou(.id("ob-flight"))
+        }
+        try await tour(screen)
+    }
+
     // MARK: - Screens
 
     private struct Screen {
@@ -359,7 +375,7 @@ final class NativeTourMacTests: XCTestCase {
     private static let windowSize = NSSize(width: 1_440, height: 900)
 
     private static let screenOrder = [
-        "mac-today", "mac-mail", "mac-compose", "mac-calendar-week", "mac-calendar-month", "mac-tasks", "mac-work",
+        "mac-today", "mac-needs-you", "mac-mail", "mac-compose", "mac-calendar-week", "mac-calendar-month", "mac-tasks", "mac-work",
         "mac-work-detail", "mac-work-detail-run", "mac-work-detail-handoff", "mac-work-thread-run",
         "mac-work-thread-form", "mac-work-thread-handoff", "mac-work-thread-narrow", "mac-work-thread-allow",
         "mac-work-thread-receipt", "mac-work-thread-goal-run", "mac-work-thread-goal-package", "mac-document-mode-package",
@@ -584,6 +600,160 @@ final class NativeTourMacTests: XCTestCase {
 private final class TourMacWindow: NSWindow {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         frameRect
+    }
+}
+
+/// The Needs you rows of the Mac tour: the web mockup's cast. Invented
+/// people and example.com addresses only.
+enum MacNeedsYouTourFixture {
+    static func snapshot(now: Date) -> NeedsYouSnapshot {
+        let millis = NeedsYouClock.millis(now)
+        let minute: ObligationMillis = 60_000
+        let hour: ObligationMillis = 60 * minute
+        let day: ObligationMillis = 24 * hour
+        return NeedsYouSnapshot(
+            enabled: true,
+            timezone: TimeZone.current.identifier,
+            items: [
+                ObligationView(
+                    id: "ob-code",
+                    kind: .code,
+                    source: .mail,
+                    sourceKey: "mail:acct-work:t-bank",
+                    accountID: "acct-work",
+                    threadID: "t-bank",
+                    title: "Your Northwind Bank sign-in code",
+                    asker: "Northwind Bank",
+                    askerAddress: "no-reply@northwindbank.example.com",
+                    pushLevel: .timeSensitive,
+                    code: ObligationCode(value: "482913", issuer: "Northwind Bank", expiresAt: millis + 8 * minute),
+                    createdAt: millis - 2 * minute
+                ),
+                ObligationView(
+                    id: "ob-flight",
+                    kind: .change,
+                    source: .mail,
+                    sourceKey: "mail:acct-home:t-flight",
+                    accountID: "acct-home",
+                    threadID: "t-flight",
+                    title: "Flight HA 220 now departs at 6:40 pm, not 3:15 pm.",
+                    asker: "Harbor Air",
+                    askerAddress: "reservations@harborair.example.com",
+                    why: "The departure moved from 3:15 pm to 6:40 pm today. Your calendar still has the earlier time, with a car to the airport at 1:30 pm.",
+                    excerpt: "Your flight HA 220 from Portland (PDX) to Denver (DEN) on October 28 now departs at 6:40 pm and arrives at 10:05 pm. Seat 14C is unchanged. No action is needed to keep your booking.",
+                    due: .today,
+                    dueAt: millis + 7 * hour,
+                    pushLevel: .timeSensitive,
+                    createdAt: millis - 2 * hour
+                ),
+                ObligationView(
+                    id: "ob-nda",
+                    kind: .action,
+                    source: .granola,
+                    sourceKey: "granola:m-vendor-sync",
+                    sourceLabel: "Vendor sync",
+                    url: URL(string: "https://notes.granola.example.com/d/m-vendor-sync"),
+                    title: "You said you would send the signed NDA to Harbor Labs today.",
+                    asker: "Vendor sync",
+                    why: "In the meeting you promised the signed NDA by the end of today.",
+                    due: .today,
+                    dueAt: millis + 6 * hour,
+                    createdAt: millis - 20 * hour
+                ),
+                ObligationView(
+                    id: "ob-review",
+                    kind: .action,
+                    source: .github,
+                    sourceKey: "github:northwind/web#482",
+                    sourceLabel: "northwind/web",
+                    url: URL(string: "https://github.example.com/northwind/web/pull/482"),
+                    title: "Asked for your review on northwind/web #482, Move invoices to the new ledger, before today’s release.",
+                    asker: "Sam Okafor",
+                    why: "Sam requested your review and the release is scheduled for today.",
+                    due: .today,
+                    dueAt: millis + 5 * hour,
+                    createdAt: millis - 3 * hour
+                ),
+                ObligationView(
+                    id: "ob-sow",
+                    kind: .reply,
+                    source: .mail,
+                    sourceKey: "mail:acct-work:t-sow",
+                    sourceLabel: "Northwind Legal",
+                    accountID: "acct-work",
+                    threadID: "t-sow",
+                    title: "Asks you to confirm the revised start date in the SOW by Friday.",
+                    asker: "Dana Whitfield",
+                    askerAddress: "dana@northwindlegal.example.com",
+                    why: "Dana asks for a yes or no on the new start date before Friday.",
+                    excerpt: "Can you confirm the revised start date of November 9 in the SOW by Friday? Legal needs the signed copy before the kickoff.",
+                    due: .soon,
+                    dueAt: millis + 2 * day,
+                    draftReady: true,
+                    createdAt: millis - 19 * hour
+                ),
+                ObligationView(
+                    id: "ob-q3",
+                    kind: .action,
+                    source: .slack,
+                    sourceKey: "slack:C-release:p1",
+                    sourceLabel: "#release",
+                    url: URL(string: "https://slack.example.com/archives/C-release/p1"),
+                    title: "Asks for the Q3 numbers before the Friday review.",
+                    asker: "Priya Raman",
+                    why: "Priya needs the numbers for the deck the review uses.",
+                    excerpt: "Can you drop the Q3 numbers in the deck before Friday’s review?",
+                    due: .soon,
+                    dueAt: millis + 3 * day,
+                    workID: "w-q3-deck",
+                    workTitle: "Q3 review deck",
+                    createdAt: millis - 4 * hour
+                ),
+                ObligationView(
+                    id: "ob-jira",
+                    kind: .action,
+                    source: .atlassian,
+                    sourceKey: "atlassian:LAB-212",
+                    sourceLabel: "LAB-212",
+                    url: URL(string: "https://northwind.atlassian.example.com/browse/LAB-212"),
+                    title: "Assigned to you: Add the ledger export to the invoices page.",
+                    asker: "LAB-212",
+                    due: .later,
+                    dueAt: millis + day + 2 * hour,
+                    createdAt: millis - 5 * hour
+                ),
+                ObligationView(
+                    id: "ob-wait",
+                    kind: .waiting,
+                    source: .mail,
+                    sourceKey: "mail:acct-work:t-venue",
+                    accountID: "acct-work",
+                    threadID: "t-venue",
+                    title: "You asked Sarah for the final head count for the offsite.",
+                    asker: "Sarah Chen",
+                    askerAddress: "sarah.chen@northwind.example.com",
+                    due: .soon,
+                    dueAt: millis + 4 * day,
+                    createdAt: millis - day
+                ),
+                ObligationView(
+                    id: "ob-done",
+                    kind: .reply,
+                    state: .done,
+                    source: .mail,
+                    sourceKey: "mail:acct-home:t-dentist",
+                    accountID: "acct-home",
+                    threadID: "t-dentist",
+                    title: "Asks you to confirm Thursday’s appointment.",
+                    asker: "Cedar Dental",
+                    askerAddress: "front-desk@cedardental.example.com",
+                    due: .today,
+                    createdAt: millis - 6 * hour,
+                    closedAt: millis - 40 * minute,
+                    closeReason: .sentReply
+                ),
+            ]
+        )
     }
 }
 #endif
