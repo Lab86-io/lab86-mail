@@ -31,6 +31,10 @@ export interface APNsPayload {
   promptKind?: 'reflection' | 'tomorrow';
   /** Tells the woken app to refresh one-time codes before doing anything else. */
   codeAvailable?: true;
+  /** The notification type (`obligation`, `urgent_mail`, ...). The app routes a tap by it. */
+  type?: string;
+  /** Needs you: the obligation that the push names. A tap opens that item. */
+  obligationId?: string;
 }
 
 interface APNsConfiguration {
@@ -145,6 +149,8 @@ export function buildAPNsPayload(envelope: NotificationEnvelope): APNsPayload {
     notificationId: envelope.id,
     route,
     ...(envelope.codeAvailable ? ({ codeAvailable: true } as const) : {}),
+    ...(envelope.type ? { type: envelope.type } : {}),
+    ...(envelope.obligationId ? { obligationId: envelope.obligationId } : {}),
     ...(suggestionId ? { suggestionId } : {}),
     ...(accountId ? { accountId } : {}),
     ...(threadId ? { threadId } : {}),
