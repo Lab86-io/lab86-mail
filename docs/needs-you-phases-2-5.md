@@ -206,3 +206,53 @@ Brief lane (I3). `BriefLetterLayout.classify` reads `needs-you` as an
 `entity_list` (the Answer item shape) or as a `stack` of an `entity_list`
 and a `text`. The closing line is the last `text` child under the region.
 If S2 stores the line in another place, change `closedLine(in:)` only.
+
+## M notes (macOS, 2026-10-30)
+
+What was built. The Mac shows Needs you as a list beside the detail, as
+Mail shows the reading pane. The files are in `Lab86MailMac/NeedsYou/`:
+
+- `MacNeedsYouSplitView.swift`: the `HSplitView`, the list, the detail, the
+  Undo notice, the push target, and the keys.
+- `MacNeedsYouRow.swift`: the row with the hover verb, the Later popover,
+  and the detail of an Albatross question or approval.
+- `MacNeedsYouLayout.swift`: the pure rules. The visible rows, the key
+  moves, the selection after a row leaves, the key actions, the copy items,
+  the hover verb, and the words and states of the Needs You menu.
+- `MacNeedsYouCommands.swift`: the Needs You menu.
+
+What was reused as it is. The models, the grouping, the labels, the store,
+`NeedsYouPresentation`, `NeedsYouLeadView`, `NeedsYouCodeLine`,
+`NeedsYouDueColumn`, `NeedsYouExtraRow`, `ObligationDetailView(id:)`, the
+navigation model, the push router, and the brief lane. The brief view is
+shared, so M4 needs no Mac code.
+
+The shell (`MacShellView.swift`). `MacRootDestinationView` shows the split
+for `.needsYou` and the shared switch for the other tabs. The shell adds
+the five lines from the I notes. The sidebar row shows "N now" at its
+trailing edge.
+
+The keys. The list is one focusable view. A click on a row gives it the
+keyboard. Up, Down, j, and k move the selection across the groups. Home
+and End go to the first and the last row. Return opens the selected row;
+an Albatross row opens its thread. The key e marks Done. The key l opens
+the Later popover beside the row. Command-C copies the code of an open code
+row, through `.copyable` and the menu item. After a row leaves the list,
+the selection moves to the row after it, then to the row before it.
+
+The Needs You menu. Mark Done (Shift-Command-D), Later with its three
+times, Not Mine, Copy Code (Command-C), Start in Albatross, and Open in
+Mail (or Slack, Jira, ...). The items work only while the page is up with
+no sheet over it, and only on a row that has the action. The bare keys
+are not menu items: a bare letter as a menu key equivalent fires inside
+every text field. The menu is part of `MacGoCommands`. The shared app file
+needs no change.
+
+Not built. Command-Return for Send reply. The shared `ObligationDetailView`
+holds the edited draft text, so a menu item cannot reach it. A small seam
+in that view (a trigger token for the first button) would make it possible.
+
+Tests. `Lab86MailTests/MacNeedsYouLayoutTests.swift` covers the rules
+above, the menu requests, the sidebar row, and the push tap on the Mac.
+`NativeTourMacTests` gains the screen `mac-needs-you`, drawn from a seeded
+snapshot with invented people.
