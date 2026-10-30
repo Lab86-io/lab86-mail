@@ -211,6 +211,12 @@ export interface ObligationAlbatrossResponse {
   /** True when a new Albatross was made. */
   created: boolean;
   obligation: ObligationView;
+  /**
+   * Set when the item reached a run of that Albatross: a run that works now
+   * got it as a note, or a new run started with it. A new Albatross makes its
+   * plan first and has no run yet.
+   */
+  runId?: string;
 }
 
 /** One closed item for "Closed by itself since the last letter". */

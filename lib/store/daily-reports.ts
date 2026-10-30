@@ -8,6 +8,7 @@ import { DEFAULT_JEV_PREFERENCES } from '../jev/contract';
 import { type BriefHiddenItems, briefJevDigest, projectBriefMail } from '../jev/report';
 import { loadJevPolicy, markJevBriefItems } from '../jev/service';
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
+import { needsYouSectionOf } from '../obligations/brief-region';
 import { compositionFromReport } from '../shared/brief-composition';
 import { parseBriefDocument } from '../shared/brief-document';
 import { parseTriageHandoffs } from '../shared/triage-handoff';
@@ -436,6 +437,8 @@ export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()):
       ...(Array.isArray(sections.waiting) ? { waiting: items(sections.waiting) } : {}),
       ...(sections.since ? { since: sections.since } : {}),
       ...(sections.weekly ? { weekly: sections.weekly } : {}),
+      // Needs you (phase 3): the ledger region of a flag user's edition.
+      ...needsYouSectionOf(sections),
       tasks,
       calendar,
       mcp,

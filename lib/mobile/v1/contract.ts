@@ -1,4 +1,12 @@
 import { z } from 'zod';
+import {
+  OBLIGATION_CLOSE_REASONS,
+  OBLIGATION_DUES,
+  OBLIGATION_KINDS,
+  OBLIGATION_SOURCES,
+  OBLIGATION_STATES,
+  PUSH_LEVELS,
+} from '../../obligations/contract';
 
 const identifier = z.string().trim().min(1).max(240);
 const optionalIdentifier = identifier.optional();
@@ -820,6 +828,102 @@ export const ComposeFromFieldsSchema = z
 
 export const ComposeFromErrorCodeSchema = z.enum(['from_unknown', 'from_unverified', 'from_unsupported']);
 
+// Needs you (docs/needs-you-phases-2-5.md, phase 5). The JSON is the shape of
+// lib/obligations/contract.ts, field for field; the routes are
+// app/api/mobile/v1/needs-you/**. Times are epoch milliseconds. Response
+// objects drop keys that are not in the schema, so a strict decoder stays
+// safe when the server adds a field.
+const epochMs = z.number().int().nonnegative();
+export const ObligationKindSchema = z.enum(OBLIGATION_KINDS);
+export const ObligationStateSchema = z.enum(OBLIGATION_STATES);
+export const ObligationSourceSchema = z.enum(OBLIGATION_SOURCES);
+export const ObligationDueSchema = z.enum(OBLIGATION_DUES);
+export const ObligationPushLevelSchema = z.enum(PUSH_LEVELS);
+export const ObligationCloseReasonSchema = z.enum(OBLIGATION_CLOSE_REASONS);
+
+export const ObligationViewSchema = z.object({
+  id: identifier,
+  kind: ObligationKindSchema,
+  state: ObligationStateSchema,
+  source: ObligationSourceSchema,
+  sourceKey: z.string().min(1),
+  sourceLabel: z.string().optional(),
+  url: z.string().optional(),
+  accountId: optionalIdentifier,
+  threadId: z.string().min(1).optional(),
+  messageId: z.string().min(1).optional(),
+  title: z.string(),
+  asker: z.string(),
+  askerAddress: z.string().optional(),
+  why: z.string().optional(),
+  excerpt: z.string().optional(),
+  due: ObligationDueSchema,
+  dueAt: epochMs.optional(),
+  workId: optionalIdentifier,
+  workTitle: z.string().optional(),
+  eventId: z.string().min(1).optional(),
+  eventStart: epochMs.optional(),
+  pushLevel: ObligationPushLevelSchema,
+  probability: z.number(),
+  code: z
+    .object({
+      value: z.string().min(1),
+      issuer: z.string().optional(),
+      expiresAt: epochMs.optional(),
+    })
+    .optional(),
+  snoozedUntil: epochMs.optional(),
+  draftReady: z.boolean().optional(),
+  createdAt: epochMs,
+  updatedAt: epochMs,
+  closedAt: epochMs.optional(),
+  closeReason: ObligationCloseReasonSchema.optional(),
+});
+
+export const NeedsYouSnapshotSchema = z.object({
+  enabled: z.boolean(),
+  timezone: z.string().min(1),
+  items: z.array(ObligationViewSchema),
+});
+
+// The body of POST /api/mobile/v1/needs-you/{id}. `later` needs `until`;
+// `rsvp` (calendar invitations) needs `response`.
+export const ObligationActionRequestSchema = z
+  .object({
+    action: z.enum(['done', 'later', 'not_mine', 'undo', 'rsvp']),
+    until: epochMs.optional(),
+    response: z.enum(['yes', 'no', 'maybe']).optional(),
+  })
+  .strict();
+
+export const ObligationActionResponseSchema = z.object({
+  obligation: ObligationViewSchema,
+  undoUntil: epochMs.optional(),
+});
+
+export const ObligationDraftResponseSchema = z.object({
+  draft: z.object({
+    to: z.array(z.string()),
+    cc: z.array(z.string()),
+    subject: z.string(),
+    body: z.string(),
+  }),
+});
+
+export const ObligationReplyRequestSchema = z.object({ body: z.string().trim().min(1).max(20_000) }).strict();
+
+export const ObligationReplyResponseSchema = z.object({
+  obligation: ObligationViewSchema,
+  undoUntil: epochMs.optional(),
+});
+
+export const ObligationAlbatrossResponseSchema = z.object({
+  workId: identifier,
+  created: z.boolean(),
+  obligation: ObligationViewSchema,
+  runId: optionalIdentifier,
+});
+
 export const MobileContractV1 = {
   version: 1 as const,
   schemas: {
@@ -847,6 +951,14 @@ export const MobileContractV1 = {
     RecipientSuggestion: RecipientSuggestionSchema,
     RecipientSuggestionPage: RecipientSuggestionPageSchema,
     WorkShape: WorkShapeSchema,
+    NeedsYouSnapshot: NeedsYouSnapshotSchema,
+    ObligationView: ObligationViewSchema,
+    ObligationActionRequest: ObligationActionRequestSchema,
+    ObligationActionResponse: ObligationActionResponseSchema,
+    ObligationDraftResponse: ObligationDraftResponseSchema,
+    ObligationReplyRequest: ObligationReplyRequestSchema,
+    ObligationReplyResponse: ObligationReplyResponseSchema,
+    ObligationAlbatrossResponse: ObligationAlbatrossResponseSchema,
     ...MobileCommandVariantSchemas,
   },
 };
