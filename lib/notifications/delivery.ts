@@ -44,6 +44,8 @@ export interface NotificationEnvelope {
   collapseId?: string;
   /** The time-sensitive interruption level, as urgent mail uses. */
   timeSensitive?: true;
+  /** Needs you: the obligation that the push names, so a tap opens that item. */
+  obligationId?: string;
 }
 
 function linkSecret() {

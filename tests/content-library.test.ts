@@ -353,7 +353,7 @@ test('chunk overlap, typed classification and evidence validation preserve retri
   const chunks = contentChunks('x'.repeat(8000));
   expect(chunks).toHaveLength(3);
   expect(chunks[0].slice(-400)).toBe(chunks[1].slice(0, 400));
-  expect(Object.keys(contentQuestions([]))).toEqual(['kind', 'actionable', 'resolved', 'work']);
+  expect(Object.keys(contentQuestions([]))).toEqual(['kind', 'actionable', 'resolved', 'due', 'work']);
   expect(
     sourceLink({ source: 'slack', connectionId: 's', externalId: 'x', url: 'javascript:alert(1)' }),
   ).toBeNull();

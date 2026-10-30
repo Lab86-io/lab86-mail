@@ -37,6 +37,8 @@ export interface NativeDeliveryOptions {
   collapseId?: string;
   /** The time-sensitive interruption level (Needs you). */
   timeSensitive?: true;
+  /** The obligation that the push names (Needs you). A summary push names none. */
+  obligationId?: string;
 }
 
 interface NativeDeliveryDependencies {
@@ -100,6 +102,7 @@ export async function dispatchNativeNotification(
     ...(options.codeAvailable ? ({ codeAvailable: true } as const) : {}),
     ...(options.collapseId ? { collapseId: options.collapseId } : {}),
     ...(options.timeSensitive ? ({ timeSensitive: true } as const) : {}),
+    ...(options.obligationId ? { obligationId: options.obligationId } : {}),
   };
   let sent = 0;
   let failed = 0;

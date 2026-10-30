@@ -119,6 +119,16 @@ struct BriefDocumentView: View {
                 editionKey: editionKey,
                 onAction: perform
             )
+        case .needsYou(let items, let closedLine):
+            BriefNeedsYouSection(
+                items: items,
+                closedLine: closedLine,
+                entities: entities,
+                hiddenRefs: allHiddenRefs,
+                completedRefs: completedRefs,
+                editionKey: editionKey,
+                onAction: perform
+            )
         case .weekAhead(let text):
             WeekAheadText(text: text)
         case .areas(let items):
@@ -568,6 +578,8 @@ extension BriefDocumentView {
                 environment.navigation.openWork(id: workID, title: title)
             case .primaryView(let view):
                 environment.navigation.openPrimaryView(view)
+            case .obligation(let id):
+                environment.navigation.openNeedsYou(.id(id))
             case .externalURL(let url):
                 openURL(url)
             }
@@ -1747,6 +1759,7 @@ extension BriefActionPayload {
         until = number("until")
         previousDueAt = number("previousDueAt")
         summary = string("summary")
+        obligationID = string("obligationId")
     }
 
     var refKey: String? {

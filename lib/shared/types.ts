@@ -3,6 +3,7 @@ import type { BriefEditionBudget } from '../brief/budget';
 import type { EditorialPlan } from '../brief/editorial';
 import type { WeeklyReviewSection } from '../brief/weekly-document';
 import type { JevAssessment, JevBriefDigest } from '../jev/contract';
+import type { BriefNeedsYouRegion } from '../obligations/contract';
 import type { BriefComposition } from './brief-composition';
 import type { BriefDocumentV2 } from './brief-document';
 import type { TriageHandoffV1 } from './triage-handoff';
@@ -687,6 +688,9 @@ export interface DailyReport {
     since?: DailyReportSinceLastEdition;
     // The weekly review edition (FEATURES item 9; lib/brief/weekly.ts).
     weekly?: WeeklyReviewSection;
+    // Needs you (phase 3): the ledger lane of a flag user's edition. It takes
+    // the place of `answer` in the document (lib/obligations/brief-region.ts).
+    needsYou?: BriefNeedsYouRegion;
     noiseSummary?: string;
   };
   stats: {

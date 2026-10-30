@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { contentChunks, contentLabelsSchema, MAX_CONTENT_CHARS } from '../lib/content/contract';
+import { ownerFactText } from '../lib/obligations/rules';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import {
@@ -13,6 +14,7 @@ import {
 import { documentModel } from './documents';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 import { readThreadBodies, resolvedBody } from './mailBodies';
+import { closeSourceObligations, hasOpenObligation, syncContentObligation } from './obligations';
 
 const caller = { internalSecret: v.optional(v.string()), userId: v.string() };
 export async function contentPreferences(ctx: any, userId: string) {
@@ -235,6 +237,9 @@ export const upsert = mutation({
     let changed = 0;
     for (const input of args.items) {
       const key = `${input.source}:${input.connectionId}:${input.externalId}`;
+      // Needs you: a mail thread in Trash or Spam, or a deleted connector
+      // item, closes its open obligations (resolved, evidence).
+      if (input.deleted) await closeSourceObligations(ctx, args.userId, key);
       const row = await ctx.db
         .query('contentItems')
         .withIndex('by_user_key', (q) => q.eq('userId', args.userId).eq('key', key))
@@ -317,6 +322,7 @@ export const reconcileScan = mutation({
       .paginate({ cursor: args.cursor || null, numItems: 5 });
     for (const row of page.page) {
       if (row.deleted || row.scanGeneration === args.generation) continue;
+      await closeSourceObligations(ctx, args.userId, row.key);
       await ctx.db.patch(row._id, {
         deleted: true,
         text: '',
@@ -395,6 +401,9 @@ export const localPage = query({
           row.raw?.description,
           row.raw?.fields?.description ? JSON.stringify(row.raw.fields.description) : '',
           row.raw?.notes ? JSON.stringify(row.raw.notes) : '',
+          // GitHub and Bitbucket (lib/mcp/sync.ts): what the item asks of
+          // the owner, in words, so jev_content can label it for the owner.
+          ownerFactText(row.raw?.ownerFacts),
         ]
           .filter(Boolean)
           .join('\n');
@@ -532,7 +541,10 @@ export const mailChanges = query({
             q.eq('userId', args.userId).eq('key', `mail:${row.accountId}:${row.providerThreadId}`),
           )
           .unique();
-        if (indexed && !indexed.deleted)
+        // A thread with an open Needs you item gets the tombstone too, so
+        // the upsert closes the item.
+        const sourceKey = `mail:${row.accountId}:${row.providerThreadId}`;
+        if ((indexed && !indexed.deleted) || (await hasOpenObligation(ctx, args.userId, sourceKey)))
           items.push({
             source: 'mail',
             connectionId: row.accountId,
@@ -688,6 +700,10 @@ export const completeItem = mutation({
     lease: v.string(),
     labels: v.optional(v.any()),
     vectors: v.optional(v.array(v.array(v.float64()))),
+    // Needs you: true when the user is in LAB86_NEEDS_YOU. The labels then
+    // sync the item's obligation in this transaction, and the answer names
+    // the ids to push.
+    needsYou: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -735,7 +751,12 @@ export const completeItem = mutation({
       lease: undefined,
       leaseUntil: undefined,
     });
-    return true;
+    if (!args.needsYou) return true;
+    // A pass without labels (a failed classification) leaves the ledger as it is.
+    const obligationIds = labels
+      ? await syncContentObligation(ctx, { userId: args.userId, item: { ...row, labels }, push: true })
+      : [];
+    return { ok: true, obligationIds };
   },
 });
 export const search = query({

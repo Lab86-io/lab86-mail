@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import type {
   ObligationAction,
   ObligationActionResponse,
+  ObligationAlbatrossResponse,
   ObligationDraftResponse,
   ObligationReplyResponse,
   ObligationView,
@@ -19,7 +20,9 @@ import {
   laterOptions,
   type NeedsYouGroup,
   needsYouSummary,
+  withObligationOverrides,
 } from '@/lib/obligations/groups';
+import { actionToastTitle, canSendReply, primaryAction } from '@/lib/obligations/labels';
 import { cn } from '@/lib/utils';
 import { AlbatrossDetail, type DraftState, EmptyDetail, ObligationDetail } from './NeedsYouDetail';
 import { ClosedGroupHead, GroupHead, type NeedsYouListEntry, NeedsYouRow } from './NeedsYouRow';
@@ -75,6 +78,10 @@ export interface NeedsYouViewProps {
   onSendReply: (obligation: ObligationView, body: string) => Promise<ObligationReplyResponse>;
   onOpenSource: (obligation: ObligationView) => void;
   onAlbatrossAction: (action: NotificationAction) => Promise<void> | void;
+  /** "Start in Albatross": the response names the Albatross to open. */
+  onStartAlbatross: (obligation: ObligationView) => Promise<ObligationAlbatrossResponse>;
+  /** Opens one Albatross thread: "Open thread", and after a start. */
+  onOpenWork: (workId: string) => void;
   onOpenActivity?: () => void;
   notify?: NeedsYouNotifier;
   copyText?: (text: string) => Promise<void>;
@@ -117,6 +124,8 @@ export function NeedsYouView({
   onSendReply,
   onOpenSource,
   onAlbatrossAction,
+  onStartAlbatross,
+  onOpenWork,
   onOpenActivity,
   notify = sonnerNeedsYouNotifier,
   copyText = defaultCopy,
@@ -164,14 +173,7 @@ export function NeedsYouView({
 
   // What the user just did shows at once; the server row replaces it when it
   // catches up.
-  const merged = useMemo(
-    () =>
-      items.map((item) => {
-        const override = overrides.get(item.id);
-        return override && override.updatedAt > item.updatedAt ? override : item;
-      }),
-    [items, overrides],
-  );
+  const merged = useMemo(() => withObligationOverrides(items, overrides), [items, overrides]);
   const groups = useMemo(() => groupNeedsYou(merged, extras, now, timezone), [merged, extras, now, timezone]);
   const summary = useMemo(() => needsYouSummary(groups), [groups]);
   const later = useMemo(() => laterOptions(now, timezone), [now, timezone]);
@@ -292,29 +294,55 @@ export function NeedsYouView({
   );
 
   const done = useCallback(
-    (obligation: ObligationView) =>
-      close(
+    (obligation: ObligationView) => {
+      const action: ObligationAction = { action: 'done' };
+      return close(
         obligation,
-        { action: 'done' },
-        'Done',
-        obligation.kind === 'reply' ? 'No reply sent.' : undefined,
-      ),
+        action,
+        actionToastTitle(action),
+        canSendReply(obligation) ? 'No reply sent.' : undefined,
+      );
+    },
     [close],
   );
   const snooze = useCallback(
-    (obligation: ObligationView, option: LaterOption) =>
-      close(
-        obligation,
-        { action: 'later', until: option.until },
-        'Later',
-        `Back ${option.label.toLowerCase()}.`,
-      ),
+    (obligation: ObligationView, option: LaterOption) => {
+      const action: ObligationAction = { action: 'later', until: option.until };
+      return close(obligation, action, actionToastTitle(action), `Back ${option.label.toLowerCase()}.`);
+    },
     [close],
   );
   const notMine = useCallback(
-    (obligation: ObligationView) =>
-      close(obligation, { action: 'not_mine' }, 'Not mine', 'This thread will not ask you again.'),
+    (obligation: ObligationView) => {
+      const action: ObligationAction = { action: 'not_mine' };
+      return close(obligation, action, actionToastTitle(action), 'This thread will not ask you again.');
+    },
     [close],
+  );
+  const rsvp = useCallback(
+    (obligation: ObligationView, response: 'yes' | 'no' | 'maybe') => {
+      const action: ObligationAction = { action: 'rsvp', response };
+      return close(obligation, action, actionToastTitle(action), 'Your answer went to the calendar.');
+    },
+    [close],
+  );
+  // The row stays open until the run reports the step done; the thread opens.
+  const startAlbatross = useCallback(
+    (obligation: ObligationView) =>
+      perform(
+        obligation.id,
+        async () => {
+          const response = await onStartAlbatross(obligation);
+          applyOverride(response.obligation);
+          notify.info(
+            response.created ? 'Started a new Albatross' : 'Started in Albatross',
+            response.obligation.workTitle?.trim() || undefined,
+          );
+          onOpenWork(response.workId);
+        },
+        'Could not start this in Albatross. Nothing has changed.',
+      ),
+    [perform, onStartAlbatross, applyOverride, notify, onOpenWork],
   );
   const sendReply = useCallback(
     (obligation: ObligationView) => {
@@ -380,7 +408,7 @@ export function NeedsYouView({
   useEffect(() => {
     if (!selected || selected.type !== 'obligation') return;
     const { obligation } = selected;
-    if (obligation.kind !== 'reply' || isClosedObligation(obligation)) return;
+    if (!canSendReply(obligation) || isClosedObligation(obligation)) return;
     if (drafts.has(obligation.id) || draftRequests.current.has(obligation.id)) return;
     draftRequests.current.add(obligation.id);
     setDrafts((current) =>
@@ -410,11 +438,20 @@ export function NeedsYouView({
       if (entry.type === 'albatross') return void albatross(entry.item);
       const { obligation } = entry;
       if (isClosedObligation(obligation)) return;
-      if (obligation.kind === 'code') return copy(obligation);
-      if (obligation.kind === 'reply') return void sendReply(obligation);
-      void done(obligation);
+      switch (primaryAction(obligation)) {
+        case 'copy':
+          return copy(obligation);
+        case 'send_reply':
+          return void sendReply(obligation);
+        case 'rsvp':
+          return void rsvp(obligation, 'yes');
+        case 'start_albatross':
+          return void startAlbatross(obligation);
+        default:
+          return void done(obligation);
+      }
     },
-    [albatross, copy, sendReply, done],
+    [albatross, copy, sendReply, rsvp, startAlbatross, done],
   );
 
   const actOnKey = useCallback(
@@ -571,6 +608,14 @@ export function NeedsYouView({
                             onKeyDown={(event) => onRowKey(event, entry)}
                             onDone={openObligation ? () => void done(openObligation) : undefined}
                             onCopy={openObligation?.kind === 'code' ? () => copy(openObligation) : undefined}
+                            onRsvp={
+                              openObligation?.kind === 'rsvp'
+                                ? (response) => void rsvp(openObligation, response)
+                                : undefined
+                            }
+                            onStartAlbatross={
+                              openObligation?.workId ? () => void startAlbatross(openObligation) : undefined
+                            }
                             registerRef={(node) => {
                               if (node) rowRefs.current.set(entry.id, node);
                               else rowRefs.current.delete(entry.id);
@@ -655,6 +700,9 @@ export function NeedsYouView({
                   }
                   onCopy={() => copy(selected.obligation)}
                   onOpenSource={() => onOpenSource(selected.obligation)}
+                  onRsvp={(response) => void rsvp(selected.obligation, response)}
+                  onStartAlbatross={() => void startAlbatross(selected.obligation)}
+                  onOpenWork={onOpenWork}
                   onRetry={retryRef.current ? retry : undefined}
                 />
               )}

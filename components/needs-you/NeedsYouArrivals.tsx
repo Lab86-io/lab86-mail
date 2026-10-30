@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { useClientStore } from '@/lib/client-state';
 import type { ObligationView } from '@/lib/obligations/contract';
 import { laterOptions } from '@/lib/obligations/groups';
-import { dueSentence, kindLabel, spacedCode } from '@/lib/obligations/labels';
+import { dueSentence, kindLabel, sourceWords, spacedCode } from '@/lib/obligations/labels';
 import { postObligationAction, requestNeedsYouItem, useNeedsYouSnapshot } from './data';
 import { NeedsYouGate } from './NeedsYouGate';
 import { sonnerNeedsYouNotifier } from './NeedsYouView';
@@ -38,7 +38,7 @@ export interface NeedsYouToastProps {
 /** The in-app toast for a new Now item. A code shows the code and Copy code. */
 export function NeedsYouToast({ obligation, now, timezone, onOpen, onLater, onCopy }: NeedsYouToastProps) {
   const code = obligation.kind === 'code' ? obligation.code : null;
-  const source = ['Mail', kindLabel(obligation), dueSentence(obligation, now, timezone)]
+  const source = [sourceWords(obligation), kindLabel(obligation), dueSentence(obligation, now, timezone)]
     .filter(Boolean)
     .join(' · ');
   return (

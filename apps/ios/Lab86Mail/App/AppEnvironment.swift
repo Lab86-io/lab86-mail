@@ -57,6 +57,9 @@ final class AppEnvironment {
     // The live thread list (docs/albatross-threads.md): the rows behind Back,
     // the poll, the seen mark, and the verbs a row offers in place.
     let threads = ThreadsStore()
+    // Needs you (docs/needs-you.md, phase 5): the open obligations, the
+    // actions on them, and the flag that shows the sidebar row.
+    let needsYou = NeedsYouStore()
     // The composer draft of each Albatross thread, kept across Back.
     let composerDrafts = ComposerDraftStore()
     // The three newest thread models stay warm, so a return is instant and a

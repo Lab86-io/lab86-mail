@@ -11,6 +11,7 @@ import { useClientStore } from '@/lib/client-state';
 import type { ObligationAction, ObligationView } from '@/lib/obligations/contract';
 import {
   postObligationAction,
+  postObligationAlbatross,
   postObligationDraft,
   postObligationReply,
   useNeedsYouOpenRequest,
@@ -40,6 +41,7 @@ function ConnectedNeedsYou({
   const setPrimaryView = useClientStore((state) => state.setPrimaryView);
   const setThreadAccount = useClientStore((state) => state.setThreadAccount);
   const setSelectedThread = useClientStore((state) => state.setSelectedThread);
+  const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
   const openRequest = useNeedsYouOpenRequest((state) => state.request);
   const clearOpenRequest = useNeedsYouOpenRequest((state) => state.clear);
   useEffect(() => {
@@ -65,6 +67,18 @@ function ConnectedNeedsYou({
     },
     [setThreadAccount, setSelectedThread, setPrimaryView],
   );
+  const onStartAlbatross = useCallback(
+    (obligation: ObligationView) => postObligationAlbatross(obligation.id),
+    [],
+  );
+  // The same landing as a capture: the thread itself, not the list.
+  const onOpenWork = useCallback(
+    (workId: string) => {
+      setSelectedWorkId(workId);
+      setPrimaryView('albatrosses');
+    },
+    [setSelectedWorkId, setPrimaryView],
+  );
 
   const snapshot = data.snapshot;
   return (
@@ -82,6 +96,8 @@ function ConnectedNeedsYou({
         onSendReply={onSendReply}
         onOpenSource={onOpenSource}
         onAlbatrossAction={onAction}
+        onStartAlbatross={onStartAlbatross}
+        onOpenWork={onOpenWork}
         onOpenActivity={onOpenActivity || (() => setPrimaryView('activity'))}
       />
       <DailyCheckin checkin={data.notifications.checkin} open={checkinOpen} onOpenChange={setCheckinOpen} />

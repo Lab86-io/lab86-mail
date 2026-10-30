@@ -3,6 +3,8 @@ import { mapConcurrent } from '../classifier/client';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import type { JevAssessment } from '../jev/contract';
 import { loadJevPolicy } from '../jev/service';
+import { needsYouFlagFor } from '../obligations/contract';
+import { deliverObligationPushes } from '../obligations/delivery';
 import { contentVersion, syncCloudContent } from './cloud-sync';
 import { type ContentItem } from './contract';
 import { classifyContent, contentChunks, embedContent } from './intelligence';
@@ -117,6 +119,10 @@ const defaults = {
   loadJevPolicy,
   syncMailAttachments,
   syncMcpContent,
+  // Needs you (phase 2): the labels of a user in LAB86_NEEDS_YOU open and
+  // close obligations, and the new ones push.
+  needsYouFor: needsYouFlagFor as (userId: string) => boolean,
+  deliverObligations: deliverObligationPushes as (userId: string, ids: string[]) => Promise<unknown>,
 };
 export async function runContentCycle(userId: string, deps = defaults) {
   const lease = await deps.convexMutation<any>(ref.claimSync, { userId, connectionId: '__cycle' });
@@ -174,6 +180,9 @@ export async function runContentCycle(userId: string, deps = defaults) {
     const items = await deps.convexMutation<
       Array<ContentItem & { lease: string; embeddingVersion?: string }>
     >(ref.claimItems, { userId });
+    // Callers that give their own dependencies without the flag keep the old behavior.
+    const needsYou = deps.needsYouFor?.(userId) ?? false;
+    const obligationIds: string[] = [];
     await mapConcurrent(items, 4, async (item) => {
       const [classification, embeddings] = await Promise.allSettled([
         item.labels
@@ -185,15 +194,19 @@ export async function runContentCycle(userId: string, deps = defaults) {
           ? Promise.resolve(undefined)
           : deps.embedContent(userId, contentChunks(item.text)),
       ]);
-      await deps.convexMutation(ref.completeItem, {
+      const done = await deps.convexMutation<boolean | { obligationIds?: string[] }>(ref.completeItem, {
         userId,
         id: item._id,
         version: item.version,
         lease: item.lease,
         labels: classification.status === 'fulfilled' ? classification.value : undefined,
         vectors: embeddings.status === 'fulfilled' ? embeddings.value : undefined,
+        ...(needsYou ? { needsYou: true } : {}),
       });
+      if (done && typeof done === 'object') obligationIds.push(...(done.obligationIds ?? []));
     });
+    // Best effort: an item is in the app either way.
+    if (obligationIds.length) await deps.deliverObligations?.(userId, obligationIds)?.catch(() => undefined);
     // IO-1: the preparation claim reads the 100 newest content items. Run it
     // when this cycle indexed or labelled something, else at most every
     // PREPARE_IDLE_MS, so time-based eligibility still gets its turn.

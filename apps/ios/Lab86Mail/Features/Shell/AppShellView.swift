@@ -42,12 +42,19 @@ struct AppShellView: View {
             await environment.refreshTodayWidget()
             await environment.notifications.refreshAuthorizationStatus()
             await environment.notifications.retryPendingTextResponses()
+            // The cached flag decides where a push tap goes before the first
+            // Needs you read lands (phase 5).
+            environment.needsYou.activate(ownerID: ownerID)
+            environment.navigation.needsYouEnabled = environment.needsYou.isEnabled
             environment.navigation.consumeAppIntentRequests()
             await consumeMailNotificationAction()
             await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
+            await environment.needsYou.load(environment.backend)
+            environment.navigation.needsYouEnabled = environment.needsYou.isEnabled
             BackgroundRefreshCoordinator.shared.schedule()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            environment.navigation.needsYouEnabled = environment.needsYou.isEnabled
             environment.navigation.consumeAppIntentRequests()
             BackgroundRefreshCoordinator.shared.schedule()
             // The thread list poll comes back with the app (K3).
@@ -58,6 +65,9 @@ struct AppShellView: View {
                 await environment.notifications.retryPendingTextResponses()
                 await consumeMailNotificationAction()
                 await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
+                // Needs you reads again on return (phase 5).
+                await environment.needsYou.refreshOnForeground(environment.backend)
+                environment.navigation.needsYouEnabled = environment.needsYou.isEnabled
                 // Data older than five minutes, or from another day, reads
                 // again (K3). The domains read at once.
                 if await environment.store.refreshIfStale() {
@@ -310,6 +320,9 @@ struct AppShellView: View {
             if plan.domains.contains(.work) {
                 environment.navigation.refreshOpenWork()
             }
+            // A Needs you push names its mail thread, as a mail push does;
+            // the list reads again whenever the feature is on.
+            await environment.needsYou.refreshAfterPush(environment.backend)
             return outboxSucceeded && environment.store.errorMessage == nil
         }
     }
@@ -336,7 +349,10 @@ private struct SourceList: View {
     // push the glyph into its label.
     @ScaledMetric(relativeTo: .body) private var glyphWidth: CGFloat = 20
 
-    private var primaries: [PrimaryTab] { PrimaryTab.sourceList(showsFiles: environment.trust.showsFiles) }
+    private var primaries: [PrimaryTab] {
+        PrimaryTab.sourceList(showsFiles: environment.trust.showsFiles, showsNeedsYou: environment.needsYou.isEnabled)
+    }
+    private var needsYouNowCount: Int { environment.needsYou.nowCount() }
     private var areas: [AreaSummary] { environment.store.areas }
     private var labels: [MailLabelSummary] { environment.store.mailLabels }
 
@@ -552,6 +568,7 @@ private struct SourceList: View {
 
     private var areaIdentity: [String] {
         areas.map { "\($0.id):\($0.name)" } + labels.map { "label:\($0.id):\($0.name)" }
+            + ["needs-you:\(environment.needsYou.isEnabled)"]
     }
 
     private func refresh() {
@@ -661,6 +678,14 @@ private struct SourceList: View {
                     restingWeight: selected ? .semibold : .regular
                 )
                 Spacer(minLength: 0)
+                if destination == .needsYou, needsYouNowCount > 0 {
+                    Text("\(needsYouNowCount) now")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
             .foregroundStyle(.primary)
             .padding(.horizontal, 12)

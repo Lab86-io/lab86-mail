@@ -4,6 +4,7 @@
 
 import { horizonClock } from '@/lib/albatross/horizon';
 import {
+  CHANGE_NOW_WINDOW_MS,
   CLOSED_STATES,
   NEEDS_YOU_GROUP_LABELS,
   NEEDS_YOU_GROUP_ORDER,
@@ -54,6 +55,30 @@ export function settleExpiredCodes(items: readonly ObligationView[], now: number
   });
 }
 
+/**
+ * What the user just did shows at once; the server row replaces it when it
+ * catches up (a newer `updatedAt`).
+ */
+export function withObligationOverrides(
+  items: readonly ObligationView[],
+  overrides: ReadonlyMap<string, ObligationView>,
+): ObligationView[] {
+  return items.map((item) => {
+    const override = overrides.get(item.id);
+    return override && override.updatedAt > item.updatedAt ? override : item;
+  });
+}
+
+/**
+ * The items of one Work thread, in time order (phase 3 W4): the oldest first,
+ * ties by id. An item snoozed until later stays out, as on the page.
+ */
+export function threadObligations(items: readonly ObligationView[], now: number): ObligationView[] {
+  return items
+    .filter((item) => !(item.state === 'snoozed' && (item.snoozedUntil ?? 0) > now))
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+}
+
 /** The soonest expiry of an open code after `now`, so the page can wake at that time. */
 export function nextCodeExpiry(items: readonly ObligationView[], now: number): number | undefined {
   let next: number | undefined;
@@ -99,7 +124,28 @@ function groupWithBounds(obligation: ObligationView, now: number, bounds: DayBou
   }
   if (obligation.state === 'snoozed' && (obligation.snoozedUntil ?? 0) > now) return null;
   if (obligation.kind === 'waiting') return 'waiting';
-  if (obligation.kind === 'code' || obligation.pushLevel === 'time_sensitive') return 'now';
+  if (obligation.kind === 'code') return 'now';
+  if (obligation.kind === 'change') return changeGroup(obligation, now, bounds);
+  if (obligation.pushLevel === 'time_sensitive') return 'now';
+  return dueGroup(obligation, now, bounds);
+}
+
+/**
+ * Phase 1.1: a change sits in Now only while it is time-sensitive and new
+ * (inside CHANGE_NOW_WINDOW_MS). An older time-sensitive change goes to
+ * Today. Any other change goes by its due day and never into Now, even when
+ * its due time has passed.
+ */
+function changeGroup(obligation: ObligationView, now: number, bounds: DayBounds): NeedsYouGroupId {
+  if (obligation.pushLevel === 'time_sensitive') {
+    return now - obligation.createdAt < CHANGE_NOW_WINDOW_MS ? 'now' : 'today';
+  }
+  const group = dueGroup(obligation, now, bounds);
+  return group === 'now' ? 'today' : group;
+}
+
+/** The group by the due time, or by Jev's due word without one. An overdue item is Now. */
+function dueGroup(obligation: ObligationView, now: number, bounds: DayBounds): NeedsYouGroupId {
   if (obligation.dueAt !== undefined) {
     if (obligation.dueAt < now) return 'now';
     if (obligation.dueAt < bounds.startOfTomorrow) return 'today';

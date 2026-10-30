@@ -6,6 +6,7 @@ import { describeModelError } from '../ai/log-error';
 import { BriefBudgetExhaustedError, currentBriefMeter } from '../brief/budget';
 import { api, convexQuery } from '../hosted/convex';
 import { prepareBriefContext } from '../narrative/service';
+import { editionNeedsYou, placeNeedsYouLane, withBriefNeedsYou } from '../obligations/brief-region';
 import { compositionFromReport } from '../shared/brief-composition';
 import type { BriefDocumentV2 } from '../shared/brief-document';
 import { normalizeBriefTimezone } from '../shared/brief-edition';
@@ -302,6 +303,14 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
   // prose is written, so the letter can say how long a thread has waited.
   const previous = await findPreviousEdition(reportId, structured.generatedAt);
   structured = carryOverItems(structured, previous);
+  // Needs you (phase 3): a user in LAB86_NEEDS_YOU gets the ledger lane in
+  // the place of `answer` (lib/obligations/brief-region.ts).
+  structured = await withBriefNeedsYou(
+    structured,
+    input.userId,
+    sinceWindowStart(previous, structured.generatedAt),
+    previous?.generatedAt ?? null,
+  );
 
   const composition = compositionFromReport(structured);
   const html = buildNativeDailyReportArtifact(structured, composition);
@@ -514,12 +523,19 @@ export async function composeBudgetBrief(
   );
 
   // The look back is part of the letter: "What Albatross did" follows the lede.
-  const document = composeBudgetBriefDocument({
-    report: { ...report, sections: { ...report.sections, since } },
-    prose,
-    areas,
-    timezone,
-  });
+  // Needs you takes the place of the Answer lane when the edition has it.
+  const document = placeNeedsYouLane(
+    composeBudgetBriefDocument({
+      report: { ...report, sections: { ...report.sections, since } },
+      prose,
+      areas,
+      timezone,
+    }),
+    editionNeedsYou(report),
+    // The closed line reads the previous edition time that the region
+    // stores, so each live refresh says the same words.
+    { generatedAt: report.generatedAt || now, timezone },
+  );
   return {
     document,
     prose,

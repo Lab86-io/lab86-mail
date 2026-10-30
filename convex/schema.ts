@@ -3166,6 +3166,8 @@ export default defineSchema({
       v.literal('waiting'),
       v.literal('change'),
       v.literal('code'),
+      v.literal('rsvp'),
+      v.literal('prepare'),
     ),
     state: v.union(
       v.literal('open'),
@@ -3175,9 +3177,35 @@ export default defineSchema({
       v.literal('dismissed'),
       v.literal('expired'),
     ),
-    source: v.literal('mail'),
-    // `mail:<accountId>:<threadId>` (lib/obligations/contract.ts mailSourceKey).
+    source: v.union(
+      v.literal('mail'),
+      v.literal('slack'),
+      v.literal('atlassian'),
+      v.literal('granola'),
+      v.literal('drive'),
+      v.literal('github'),
+      v.literal('bitbucket'),
+      v.literal('calendar'),
+    ),
+    // `mail:<accountId>:<threadId>` (lib/obligations/contract.ts mailSourceKey),
+    // a content item key, or `calendar:<accountId>:<eventId>`.
     sourceKey: v.string(),
+    // Phases 2 to 4: where in the source, and a link that opens it there.
+    sourceLabel: v.optional(v.string()),
+    url: v.optional(v.string()),
+    workTitle: v.optional(v.string()),
+    eventId: v.optional(v.string()),
+    eventStart: v.optional(v.number()),
+    // Calendar items: the calendar of the event, for the RSVP write.
+    calendarId: v.optional(v.string()),
+    // Phase 1.1: the time of the source message or item. The age rules of a
+    // change read it.
+    sourceAt: v.optional(v.number()),
+    // The next time the sweep must look at this open row: a time-sensitive
+    // change leaves Now, a change ages out, a calendar item's event starts.
+    sweepAt: v.optional(v.number()),
+    // The follow-up push of a `waiting` item after its due time went out.
+    followUpAt: v.optional(v.number()),
     accountId: v.optional(v.string()),
     threadId: v.optional(v.string()),
     // The evidence message: the reply anchor and the deep link.
@@ -3199,8 +3227,9 @@ export default defineSchema({
     pushCount: v.optional(v.number()),
     notificationId: v.optional(v.id('albatrossNotifications')),
     // A push that waits: quiet hours, or the hourly limit (then a summary).
+    // `follow_up`: the one push of a `waiting` item when its due time passes.
     pushHeldUntil: v.optional(v.number()),
-    pushHoldReason: v.optional(v.union(v.literal('quiet_hours'), v.literal('limit'))),
+    pushHoldReason: v.optional(v.union(v.literal('quiet_hours'), v.literal('limit'), v.literal('follow_up'))),
     // Set when the hourly summary push named this row.
     summarizedAt: v.optional(v.number()),
     codeId: v.optional(v.id('mailOneTimeCodes')),
@@ -3228,6 +3257,8 @@ export default defineSchema({
         v.literal('not_mine'),
         v.literal('code_used'),
         v.literal('expired'),
+        v.literal('event_passed'),
+        v.literal('aged_out'),
       ),
     ),
     // A close by the user stays closed until the source has a new message.
@@ -3257,7 +3288,9 @@ export default defineSchema({
     .index('by_user_closed', ['userId', 'closedAt'])
     .index('by_user_pushed', ['userId', 'pushedAt'])
     .index('by_user_push_held', ['userId', 'pushHeldUntil'])
-    .index('by_push_held', ['pushHeldUntil']),
+    .index('by_push_held', ['pushHeldUntil'])
+    .index('by_sweep', ['sweepAt'])
+    .index('by_closed', ['closedAt']),
 
   albatrossNotificationPreferences: defineTable({
     userId: v.string(),

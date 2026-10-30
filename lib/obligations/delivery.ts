@@ -43,9 +43,12 @@ const defaultDependencies: ObligationDeliveryDependencies = {
   dispatch: dispatchNativeNotification,
 };
 
+// The collapse id of an obligation push is the obligation id (claimPush), so
+// the payload names the item too. The summary push names no item.
 export function pushOptions(push: ClaimedPush): NativeDeliveryOptions {
   return {
     collapseId: push.collapseId,
+    obligationId: push.collapseId,
     ...(push.codeAvailable ? ({ codeAvailable: true } as const) : {}),
     ...(push.timeSensitive ? ({ timeSensitive: true } as const) : {}),
   };

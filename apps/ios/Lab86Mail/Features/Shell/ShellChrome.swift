@@ -26,6 +26,8 @@ struct RootDestinationView: View {
         switch environment.navigation.selectedTab {
         case .today:
             TodayView()
+        case .needsYou:
+            NeedsYouView()
         case .tasks:
             if let route = environment.navigation.projectRoute {
                 ProjectDetailView(project: route.project)

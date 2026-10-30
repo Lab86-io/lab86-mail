@@ -1111,6 +1111,27 @@ struct Lab86MailTests {
     }
 
     @Test
+    func todayBriefNavigationOpensTheNeedsYouItemOfTheBriefLane() {
+        var payload = BriefActionPayload(view: "notifications")
+        payload.obligationID = "ob_1"
+        #expect(TodayBriefNavigationIntent.resolve(action: "open_view", payload: payload) == .obligation("ob_1"))
+        payload.obligationID = "  "
+        #expect(TodayBriefNavigationIntent.resolve(action: "open_view", payload: payload) == .primaryView("notifications"))
+        var calendar = BriefActionPayload(view: "calendar")
+        calendar.obligationID = "ob_1"
+        #expect(TodayBriefNavigationIntent.resolve(action: "open_view", payload: calendar) == .primaryView("calendar"))
+        let decoded = BriefActionPayload(rawMessageBody: ["view": "notifications", "obligationId": "ob_2"])
+        #expect(TodayBriefNavigationIntent.resolve(action: "open_view", payload: decoded) == .obligation("ob_2"))
+        let action = BriefDocumentAction(
+            action: "open_view",
+            label: "Needs you",
+            payload: ["view": .string("notifications"), "obligationId": .string("ob_3")],
+            style: "quiet"
+        )
+        #expect(BriefActionPayload(action: action, sourceRef: nil).obligationID == "ob_3")
+    }
+
+    @Test
     func todayBriefNavigationResolvesPrimaryViewsAndOnlyValidHTTPSURLs() throws {
         #expect(
             TodayBriefNavigationIntent.resolve(

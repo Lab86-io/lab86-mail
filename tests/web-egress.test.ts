@@ -230,6 +230,14 @@ const REVIEWED_SITES: Record<string, Review> = {
     why: 'api.bitbucket.org, and the page.next link of its answer.',
   },
   'lib/mcp/github.ts :: target': { kind: 'first_party', why: 'api.github.com endpoints.' },
+  'lib/mcp/sync.ts :: githubGraphqlUrl(baseUrl)': {
+    kind: 'first_party',
+    why: 'Needs you owner facts: the GraphQL endpoint of the saved GitHub base (api.github.com or the GitHub Enterprise /api/graphql).',
+  },
+  'lib/mcp/sync.ts :: statusesUrl': {
+    kind: 'first_party',
+    why: 'Needs you owner facts: build statuses on api.bitbucket.org for a pull request that the Bitbucket loader returned.',
+  },
   'lib/mcp/provider-oauth.ts :: endpoint.tokenUrl': {
     kind: 'first_party',
     why: 'Atlassian, Bitbucket, and Slack token URLs.',

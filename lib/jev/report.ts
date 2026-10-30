@@ -5,8 +5,9 @@ import { composeBudgetBriefDocument } from '../mail/brief-budget-document';
 import { assignBriefLane, budgetForTier, selectBriefItems } from '../mail/brief-score';
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { labelsHaveRole } from '../mail/search/folders';
+import { editionNeedsYou, placeNeedsYouLane } from '../obligations/brief-region';
 import { compositionFromReport } from '../shared/brief-composition';
-import type { BriefNode } from '../shared/brief-document';
+import type { BriefDocumentV2, BriefNode } from '../shared/brief-document';
 import { emailFromHeader } from '../shared/format';
 import { truncateText } from '../shared/text';
 import type { DailyReport, DailyReportItem, Thread } from '../shared/types';
@@ -81,6 +82,13 @@ export function briefJevDigest(assessment: JevAssessment | JevBriefDigest): JevB
  *
  * Saved dismissals apply to any latest edition, so the current edition hides
  * them after a reload. Live mail facts apply only in the first 24 hours. */
+function withNeedsYouLane(letter: BriefDocumentV2, report: DailyReport): BriefDocumentV2 {
+  return placeNeedsYouLane(letter, editionNeedsYou(report), {
+    generatedAt: report.generatedAt,
+    timezone: letter.timezone,
+  });
+}
+
 export function projectBriefMail(
   report: DailyReport,
   threads: Thread[],
@@ -365,15 +373,20 @@ export function projectBriefMail(
     collectAreas(region.tree);
   });
   // A weekly review keeps its own layout; its counts follow the live items.
+  // A daily edition of a Needs you user keeps that lane in the place of
+  // Answer, as the composed letter has it (lib/obligations/brief-region.ts).
   const letter =
     report.kind === 'weekly'
       ? composeWeeklyReviewDocument(next, report.document?.timezone)
-      : composeBudgetBriefDocument({
-          report: next,
-          timezone: report.document?.timezone,
-          prose: { ...next.prose!, lines },
-          areas,
-        });
+      : withNeedsYouLane(
+          composeBudgetBriefDocument({
+            report: next,
+            timezone: report.document?.timezone,
+            prose: { ...next.prose!, lines },
+            areas,
+          }),
+          next,
+        );
   next.document = letter;
   if (report.kind === 'weekly') next.narrative = letter.summary;
   if (report.editorial) {

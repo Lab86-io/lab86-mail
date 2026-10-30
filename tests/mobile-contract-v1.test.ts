@@ -231,6 +231,11 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
       '/api/mobile/v1/contacts/resync',
       '/api/mobile/v1/contacts/status',
       '/api/mobile/v1/mail/threads',
+      '/api/mobile/v1/needs-you',
+      '/api/mobile/v1/needs-you/{id}',
+      '/api/mobile/v1/needs-you/{id}/albatross',
+      '/api/mobile/v1/needs-you/{id}/draft',
+      '/api/mobile/v1/needs-you/{id}/reply',
       '/api/mobile/v1/today/summary',
     ]);
     expect(document.components.schemas).not.toHaveProperty('SyncChange');
