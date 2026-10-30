@@ -515,3 +515,101 @@ Brief lane (I3). `BriefLetterLayout.classify` reads `needs-you` as an
 `entity_list` (the Answer item shape) or as a `stack` of an `entity_list`
 and a `text`. The closing line is the last `text` child under the region.
 If S2 stores the line in another place, change `closedLine(in:)` only.
+
+## Integration notes (2026-10-30)
+
+The integrator merged S1, S2, W, and I into `claude/needs-you-2` in that
+order. Only this document had merge conflicts. All notes sections stay. This
+section replaces the parts of the S2 and I notes that it names.
+
+### What changed after the merge
+
+1. Albatross link. The S1 sync writes `workId` and `workTitle` only when the
+   source gives an Albatross. A sync with no label keeps the link that "Start
+   in Albatross" set. An integration test holds this for mail and Slack.
+2. One snapshot loader. `loadNeedsYouSnapshot` in `convex/obligations.ts`
+   gives the snapshot to `obligations:needsYou` (web) and to
+   `obligationViews:snapshotFor` (mobile, brief). The S2 copy and its
+   `withSourceFields` mapping are gone. Each view comes from `viewOf`.
+3. Mobile actions. `POST /api/mobile/v1/needs-you/[id]` accepts
+   `{ action: 'rsvp', response }`. A second `bun run mobile:openapi` gives no
+   change. The iOS store reads the server line from `error.message` of the
+   mobile error envelope. It used to read `error` as a string.
+4. Push payload. The APNs payload has `type` when the notification has one,
+   and `obligationId` when the push names one item. The summary push names no
+   item. `codeAvailable` did not change.
+5. The brief lane. See the next section.
+6. TestFlight. `start-xcode-cloud.mjs` names a pending Apple Developer
+   Program License Agreement after a 500 at the build start.
+
+### The brief lane: one shape
+
+Real daily editions are editorial documents. Web and iOS render an editorial
+region node by node. They use the letter renderers only for a document with
+the letter layout. Thus the lane has one letter region and one editorial
+module, and the server makes the module from the region.
+
+- Letter region `needs-you`. The summary is the count sentence, for example
+  "8 open · 2 now · 2 due today". A count of zero is not in the sentence. The
+  tree is an `entity_list` with the title "Needs you". Each item has the item
+  shape of the `answer` lane and `framing.lane` `now` or `today`. A closed
+  line makes the tree a `stack` of the list and one `text` node with the role
+  `caption`. A lane with no items is a `stack` of the caption only. There is
+  no `needs-you-note` region. That region id stopped the letter layout on
+  both clients.
+- Closed line. "Closed by itself since yesterday’s letter: A (Asker); B." A
+  lane with no items starts with "None is due today. N open items are on the
+  Needs you page." The region stores `previousGeneratedAt`. Thus the
+  composed letter and each live refresh write the same words.
+- Editorial module `needs-you`. The lane is one module, as "What Albatross
+  did" is. Its story is a `group` with the title "Needs you" and the count
+  sentence as the kicker. The children are the Now rows, a `kicker` text
+  "Due today", the rows due today, and the closed line as a `caption`. The
+  rows have no `framing.lane`, so the generic renderers show no lane word.
+  The story is two levels deep, so the writer can put it at any plan level.
+- Clients. Web and iOS render the group with no lane code. Older iOS builds
+  render it too. The web letter shows a lane that has a closed line and no
+  rows.
+- Live refresh. `projectBriefMail` (`lib/jev/report.ts`) recomposed the
+  letter without the lane, so each read showed Answer again. It now places
+  the lane.
+- Region limit. `defaultEditorialPlan` puts the last sections into one
+  region when a full letter and the two live sections make more than 12.
+- Fallback letter. `briefLetterFromReport` shows the lane in the place of
+  Answer when the edition has `sections.needsYou`. `DailyReport.sections`
+  has `needsYou?: BriefNeedsYouRegion`.
+- `open_view` with `view: 'notifications'` and an `obligationId` opens that
+  item. Web: `BriefCanvas` and the artifact frame of `DailyReport`. iOS: the
+  Needs you page (`TodayBriefNavigationIntent.obligation`).
+- Previews: `/dev/brief-preview?layout=needs-you` (letter) and
+  `/dev/brief-preview?layout=needs-you-editorial` (editorial).
+
+### Open items
+
+1. The brief has no action that closes an obligation. "Done" in the lane
+   needs a new brief action on web, iOS, and the server (W).
+2. The Work thread shows its items in one block after the messages. Items
+   between the messages need a `thread.extras` slot in
+   `components/shell/AIBar.tsx` (W).
+3. The thread rail row (`ThreadRail.tsx`, `lib/albatross/thread-list-view.ts`)
+   reads the run state, not the obligations (W).
+4. The step line of the Albatross card ("Step 2 of 4 · ... · Your turn")
+   needs step data on `ObligationView`. The contract has none (W).
+5. The brief lane holds obligations only. Albatross questions and approvals
+   (the extras of the page) are not in the lane. The W fixture shows one.
+6. `framing.age` is "Day N" from `createdAt`, or empty on the first day. For a
+   connected item, `framing.reason` is the place ("Slack, #release"). The W
+   design shows the time ("9:12 AM") and "GitHub · 8:05 AM" in `age`.
+7. The iOS letter form shows no count sentence and no "Due today" label.
+   Real editions are editorial and show both. A stored letter document is
+   rare: old editions, or an editorial layout that did not compose.
+8. The deterministic HTML artifact (`buildNativeDailyReportArtifact`,
+   `compositionFromReport`) shows the old lanes, not Needs you. The web and
+   iOS show it when the composition fails and the edition has no document.
+9. The prose writer reads `sections.answer`, not the ledger. The lede can
+   name a thread that the page shows under Needs you. The editorial writer
+   reads the lane module.
+10. The macOS shell must add the steps of "What the Mac shell must add" in
+    the I notes (M).
+11. Swift edits of the integrator (`NeedsYouStore.swift`, the `open_view`
+    route, their tests) compile only in the Native acceptance workflow.
