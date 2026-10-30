@@ -34,8 +34,39 @@ export interface ObligationCaller {
 export interface ObligationRecord {
   obligation: ObligationView;
   sourceMessageId: string | null;
+  /** Calendar items: the calendar of the event, for the RSVP write. */
+  calendarId?: string | null;
   undo: { until: number; pendingId: string | null } | null;
   draft: ObligationDraftResponse['draft'] | null;
+}
+
+/** The event that an RSVP answers, and the answer. */
+export interface RsvpTarget {
+  accountId: string;
+  calendarId: string;
+  eventId: string;
+  response: 'yes' | 'no' | 'maybe';
+}
+
+/** The calendar write module, loaded only when an RSVP is sent. */
+export const loadCalendarWrites = () => import('../calendar/mutate');
+
+/** Sends an RSVP through the existing calendar path (lib/calendar/mutate.ts rsvpCalendarEvent). */
+export async function sendCalendarRsvp(
+  caller: ObligationCaller,
+  target: RsvpTarget,
+  load: () => Promise<
+    Pick<Awaited<ReturnType<typeof loadCalendarWrites>>, 'rsvpCalendarEvent'>
+  > = loadCalendarWrites,
+) {
+  const { rsvpCalendarEvent } = await load();
+  await rsvpCalendarEvent({
+    userId: caller.userId,
+    accountId: target.accountId,
+    calendarId: target.calendarId,
+    eventId: target.eventId,
+    status: target.response,
+  });
 }
 
 type ActResult =
@@ -55,7 +86,7 @@ export interface ObligationServiceDependencies {
   act(input: {
     userId: string;
     id: string;
-    action: 'done' | 'later' | 'not_mine' | 'undo';
+    action: 'done' | 'later' | 'not_mine' | 'undo' | 'rsvp';
     until?: number;
     correction?: JevCorrection;
     sendCancelled?: boolean;
@@ -72,6 +103,8 @@ export interface ObligationServiceDependencies {
     caller: ObligationCaller,
     target: ReplyTarget & { body: string },
   ): Promise<{ pendingId?: string; fireAt?: number }>;
+  /** Sends a calendar answer. Left out: the existing calendar path (sendCalendarRsvp). */
+  rsvp?(caller: ObligationCaller, target: RsvpTarget): Promise<unknown>;
 }
 
 const actionSchema = z.discriminatedUnion('action', [
@@ -79,6 +112,7 @@ const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('later'), until: z.number().finite() }).strict(),
   z.object({ action: z.literal('not_mine') }).strict(),
   z.object({ action: z.literal('undo') }).strict(),
+  z.object({ action: z.literal('rsvp'), response: z.enum(['yes', 'no', 'maybe']) }).strict(),
 ]);
 
 const replySchema = z.object({ body: z.string().trim().min(1).max(20_000) }).strict();
@@ -125,7 +159,11 @@ export async function runObligationAction(
   deps: ObligationServiceDependencies,
 ): Promise<ObligationActionResponse> {
   const parsed = actionSchema.safeParse(body);
-  if (!parsed.success) throw new ObligationApiError('Send done, later with a time, not_mine, or undo.', 400);
+  if (!parsed.success)
+    throw new ObligationApiError(
+      'Send done, later with a time, not_mine, undo, or rsvp with yes, no, or maybe.',
+      400,
+    );
   const action = parsed.data;
   const record = await load(caller, id, deps);
   const base = { userId: caller.userId, id };
@@ -138,9 +176,24 @@ export async function runObligationAction(
       throw new ObligationApiError('The reply already went out.', 409);
     result = await deps.act({ ...base, action: 'undo', ...(pendingId ? { sendCancelled: true } : {}) });
   } else if (action.action === 'not_mine') {
-    const correction =
-      record.obligation.kind === 'code' ? undefined : deps.correctionFor(mailTarget(record.obligation));
+    // Only mail has a Jev correction. A code, a connected source, or a calendar item just closes.
+    const mail = record.obligation.source === 'mail' && record.obligation.kind !== 'code';
+    const correction = mail ? deps.correctionFor(mailTarget(record.obligation)) : undefined;
     result = await deps.act({ ...base, action: 'not_mine', ...(correction ? { correction } : {}) });
+  } else if (action.action === 'rsvp') {
+    const view = record.obligation;
+    if (view.kind !== 'rsvp' || !view.accountId || !view.eventId || !record.calendarId)
+      throw new ObligationApiError('Only an invitation has an answer.', 400);
+    if (!isOpen(view)) throw new ObligationApiError('This item is already closed.', 409);
+    const target = {
+      accountId: view.accountId,
+      calendarId: record.calendarId,
+      eventId: view.eventId,
+      response: action.response,
+    };
+    // The answer goes first. A failed write leaves the item open; the error says why.
+    await (deps.rsvp ? deps.rsvp(caller, target) : sendCalendarRsvp(caller, target));
+    result = await deps.act({ ...base, action: 'rsvp' });
   } else if (action.action === 'later') {
     result = await deps.act({ ...base, action: 'later', until: action.until });
   } else {

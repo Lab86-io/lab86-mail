@@ -96,6 +96,19 @@ export function hasObligation(
 export function assessmentDue(assessment: Pick<JevAssessment, 'due'> | null | undefined): JevDue {
   return assessment?.due ?? 'none';
 }
+/**
+ * The key of Jev's `routine_notice` answer in `probabilities` (Needs you,
+ * phase 1.1). The question is optional: it does not change the question
+ * version, so an assessment stored before it has no value.
+ */
+export const ROUTINE_NOTICE_QUESTION = 'routine_notice';
+/** The `routine_notice` probability, or undefined for an assessment from before the question. */
+export function routineNoticeProbability(
+  assessment: Pick<JevAssessment, 'probabilities'> | null | undefined,
+): number | undefined {
+  const value = assessment?.probabilities?.[ROUTINE_NOTICE_QUESTION];
+  return typeof value === 'number' ? value : undefined;
+}
 export function attentionMatches(assessment: JevAssessment | null | undefined, view: AttentionView) {
   if (!assessment) return false;
   if (view === 'important_changes') return assessment.meaningfulChange;

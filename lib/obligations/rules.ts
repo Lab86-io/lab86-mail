@@ -5,11 +5,20 @@
 // the source: the subject, the evidence message, and fixed copy.
 
 import { addDays } from 'date-fns';
-import { assessmentDue, type JevAssessment } from '../jev/contract';
+import { assessmentDue, type JevAssessment, routineNoticeProbability } from '../jev/contract';
 import { isVipSender } from '../notifications/mail-push';
 import { emailFromHeader } from '../shared/format';
 import { parseIsoInTimezone } from '../shared/timezones';
-import { type ObligationDue, type ObligationKind, PUSH_PROBABILITY, type PushLevel } from './contract';
+import {
+  CHANGE_AUTO_CLOSE_MS,
+  CHANGE_NOW_WINDOW_MS,
+  OBLIGATION_SOURCE_LABELS,
+  type ObligationDue,
+  type ObligationKind,
+  type ObligationSource,
+  PUSH_PROBABILITY,
+  type PushLevel,
+} from './contract';
 
 /** One message of the thread, as Jev read it (oldest to newest). */
 export interface ObligationSourceMessage {
@@ -41,6 +50,11 @@ export interface MailObligationSettings {
   excluded?: boolean;
   /** The probability that a push needs. The default is PUSH_PROBABILITY. */
   pushProbability?: number;
+  /**
+   * The 30-day fill (phase 1.1): the rows open in-app only, and no row is
+   * time-sensitive, however new its source is.
+   */
+  fill?: boolean;
 }
 
 /** One obligation that a thread wants, before it is stored. */
@@ -55,17 +69,80 @@ export interface WantedObligation {
   dueAt?: number;
   probability: number;
   pushLevel: PushLevel;
-  /** The evidence message: the reply anchor and the deep link. */
-  messageId: string;
+  /** The evidence message: the reply anchor and the deep link. Mail and codes only. */
+  messageId?: string;
   workId?: string;
+  /** The time of the source message or item. The age rules of a change read it. */
+  sourceAt?: number;
+  /** Where in the source ("#release", "LAB-212", the meeting title). */
+  sourceLabel?: string;
+  /** An https link that opens the item in its own app. */
+  url?: string;
+  /** Calendar items: the event (the series for a repeated event), its calendar, and its start. */
+  eventId?: string;
+  calendarId?: string;
+  eventStart?: number;
 }
 
 const TITLE_CHARS = 160;
 const EXCERPT_CHARS = 400;
 const SOON_MS = 3 * 86_400_000;
 
-/** Subject kinds whose change pushes at the time-sensitive level. */
-const TIME_SENSITIVE_CHANGES = new Set(['finance', 'booking', 'account']);
+/**
+ * Phase 1.1: a change is time-sensitive only when it is new and it reports a
+ * problem. A problem is a failed payment, a cancelled or moved booking, or a
+ * locked account or a revoked credential. These cues find the problem in the
+ * subject and the start of the evidence, by the subject kind of the verdict.
+ */
+const PROBLEM_CUES: Record<string, RegExp> = {
+  finance:
+    /\b(fail(?:ed|ure|s)?|declined?|unsuccessful|past due|overdue|insufficient funds|bounced|payment (?:problem|issue)|(?:could ?n[o']?t|unable to|did not|didn't) (?:be )?(?:process|charge|collect|complete)\w*)\b/i,
+  booking:
+    /\b(cancel(?:l?ed|lation|s)|resched\w*|moved|postponed|delayed|now departs|new (?:time|date)|time (?:has )?changed|no longer (?:available|scheduled|takes place)|rebooked|diverted)\b/i,
+  account:
+    /\b(lock(?:ed)?|suspend(?:ed)?|disabled|revoked|deactivated|compromised|unauthori[sz]ed|terminated|banned|blocked|restricted|expired)\b/i,
+};
+
+/**
+ * Phase 1.1 cues of a routine notice: terms, privacy, and policy updates,
+ * renewal and billing reminders, and feature news. Only a verdict without the
+ * `routine_notice` answer (stored before the question existed) reads them.
+ */
+const ROUTINE_CUE =
+  /\b(terms of (?:service|use)|terms and conditions|privacy (?:policy|notice|statement)|(?:services?|user|cardholder|customer|account) agreement|(?:updat\w*|chang\w*) (?:to )?(?:our|the|your) (?:terms|policies|policy|agreement|privacy)|policy updates?|will (?:automatically )?renew|renews? (?:on|soon)|renewal (?:notice|reminder)|auto-?renew\w*|new features?|introducing|what's new|service (?:notice|announcement)|billing reminder|statement is (?:ready|available))\b/i;
+
+/** A `routine_notice` answer at or above this value drops the notice. */
+export const ROUTINE_NOTICE_HIGH = 0.75;
+
+/** The start of the evidence that the cues read: the opening, not the footer. */
+function cueText(subject: string, evidence: string) {
+  return `${subject}\n${clip(ownText(evidence) || evidence, 600)}`;
+}
+
+/** True when the subject and the evidence of a change name a problem of its subject kind. */
+export function changeIsProblem(subjectKind: string, subject: string, evidence: string): boolean {
+  const cue = PROBLEM_CUES[subjectKind];
+  return Boolean(cue?.test(cueText(subject, evidence)));
+}
+
+function anyProblem(text: string) {
+  return Object.values(PROBLEM_CUES).some((cue) => cue.test(text));
+}
+
+/**
+ * True when the latest inbound message is a routine notice: a terms,
+ * privacy, or policy update, a renewal or billing reminder, or a feature
+ * announcement with no problem to fix (phase 1.1). Jev answers the
+ * `routine_notice` question. A verdict from before the question reads the
+ * routine cues of the subject and the evidence, and a problem cue cancels
+ * them.
+ */
+export function isRoutineNotice(assessment: JevAssessment, subject: string): boolean {
+  const probability = routineNoticeProbability(assessment);
+  if (probability !== undefined) return probability >= ROUTINE_NOTICE_HIGH;
+  const text = cueText(subject, assessment.changeEvidence?.text ?? '');
+  return ROUTINE_CUE.test(text) && !anyProblem(text);
+}
 
 /** Cuts text at a word end and adds an ellipsis when it is too long. */
 export function clip(text: string, max: number): string {
@@ -350,6 +427,8 @@ export function mailObligations(
   const due = assessmentDue(assessment);
   const person = assessment.purpose === 'conversation';
   const workRecent = Boolean(facts.workId && (settings.recentWorkIds || []).includes(facts.workId));
+  // Phase 1.1: a routine notice never opens a change or an action.
+  const routine = isRoutineNotice(assessment, facts.subject);
   const wanted: WantedObligation[] = [];
   const build = (
     kind: ObligationKind,
@@ -373,9 +452,11 @@ export function mailObligations(
       pushLevel: 'none',
       messageId: message?.id ?? evidence.messageId,
       ...(facts.workId ? { workId: facts.workId } : {}),
+      sourceAt: message?.date ?? now,
     };
   };
   for (const obligation of assessment.obligations) {
+    if (routine && obligation.kind === 'action') continue;
     const item = build(obligation.kind, obligation.evidence, obligation.probability);
     if (obligation.kind !== 'waiting' && person && obligation.probability >= bar) {
       const dueSoon =
@@ -385,12 +466,21 @@ export function mailObligations(
     }
     wanted.push(item);
   }
-  if (assessment.meaningfulChange && assessment.changeEvidence) {
+  if (assessment.meaningfulChange && assessment.changeEvidence && !routine) {
     const probability = assessment.probabilities.change ?? 1;
     const item = build('change', assessment.changeEvidence, probability);
-    if (TIME_SENSITIVE_CHANGES.has(assessment.subjectKind) && probability >= bar)
-      item.pushLevel = 'time_sensitive';
-    wanted.push(item);
+    const age = now - (item.sourceAt ?? now);
+    // A change older than CHANGE_AUTO_CLOSE_MS has aged out: it does not open.
+    if (age < CHANGE_AUTO_CLOSE_MS) {
+      if (
+        !settings.fill &&
+        age < CHANGE_NOW_WINDOW_MS &&
+        probability >= bar &&
+        changeIsProblem(assessment.subjectKind, facts.subject, assessment.changeEvidence.text)
+      )
+        item.pushLevel = 'time_sensitive';
+      wanted.push(item);
+    }
   }
   return wanted;
 }
@@ -426,4 +516,482 @@ export function codeObligation(code: CodeFacts): WantedObligation {
     pushLevel: 'time_sensitive',
     messageId: code.messageId,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Connected sources (phase 2): Slack, Atlassian, Granola, Drive, GitHub, and
+// Bitbucket. Jev labels each content item (lib/content/intelligence.ts); an
+// actionable item that is not resolved is an `action` of the owner.
+// ---------------------------------------------------------------------------
+
+/** A content item older than this opens no obligation (the same window as the mail fill). */
+export const CONTENT_OBLIGATION_WINDOW_MS = 30 * 86_400_000;
+/** A probability at or above this opens an item. The noulHigh of Jev 1.13. */
+export const OPEN_PROBABILITY = 0.75;
+
+/** The obligation source of a content index source, or undefined for mail, attachments, and documents. */
+export function contentObligationSource(source: string): ObligationSource | undefined {
+  switch (source) {
+    case 'slack':
+      return 'slack';
+    case 'jira':
+    case 'atlassian':
+      return 'atlassian';
+    case 'granola':
+      return 'granola';
+    case 'google_drive':
+    case 'onedrive':
+      return 'drive';
+    case 'github':
+      return 'github';
+    case 'bitbucket':
+      return 'bitbucket';
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * What the GitHub and Bitbucket loaders know about the owner and one item
+ * (lib/mcp/sync.ts). The content text says it in words, so Jev can classify
+ * the item for the owner.
+ */
+export type OwnerFact = 'review_requested' | 'mentioned' | 'assigned' | 'checks_failed' | 'authored';
+
+const OWNER_FACT_LINES: Record<OwnerFact, string> = {
+  review_requested: 'A review of this pull request is requested from the owner.',
+  mentioned: 'The owner is mentioned in this item.',
+  assigned: 'This item is assigned to the owner.',
+  checks_failed: "Checks failed on the owner's branch.",
+  authored: 'The owner opened this item.',
+};
+
+const OWNER_FACT_TITLES: Partial<Record<OwnerFact, string>> = {
+  checks_failed: 'Fix the failed checks',
+  review_requested: 'Review',
+  assigned: 'Assigned to you',
+  mentioned: 'Mentioned',
+};
+
+/** The known owner facts in a stored list, in a fixed order. Unknown values are left out. */
+export function ownerFacts(value: unknown): OwnerFact[] {
+  const list = Array.isArray(value) ? value : [];
+  return (Object.keys(OWNER_FACT_LINES) as OwnerFact[]).filter((fact) => list.includes(fact));
+}
+
+/** The owner facts as sentences for the content text. */
+export function ownerFactText(value: unknown): string {
+  return ownerFacts(value)
+    .map((fact) => OWNER_FACT_LINES[fact])
+    .join('\n');
+}
+
+/** The content labels that the rules read (lib/content/contract.ts). */
+export interface ContentLabelFacts {
+  kind: string;
+  actionable: boolean;
+  resolved: boolean;
+  workId: string | null;
+  due?: ObligationDue;
+  actionableProbability?: number;
+}
+
+/** One content item, with the facts of its source row. */
+export interface ContentItemFacts {
+  /** The content index source ("slack", "jira", "google_drive", ...). */
+  source: string;
+  title: string;
+  text: string;
+  url?: string;
+  modifiedAt: number;
+  deleted: boolean;
+  /** The person who wrote the item, from the source row. */
+  author?: string;
+  /** Where in the source: a channel, an issue key, a repository and number. */
+  sourceLabel?: string;
+  ownerFacts?: OwnerFact[];
+}
+
+/** The connector row of one content item (convex/schema.ts `mcpItems`), as the rules read it. */
+export interface ConnectorRowFacts {
+  externalId: string;
+  kind?: string;
+  author?: string;
+  repository?: string;
+  raw?: any;
+}
+
+/** Where in the source an item is: "#release", "LAB-212", "northwind/web #482", a meeting or file title. */
+export function connectorSourceLabel(
+  source: string,
+  title: string,
+  row?: ConnectorRowFacts,
+): string | undefined {
+  const raw = row?.raw && typeof row.raw === 'object' ? row.raw : {};
+  if (source === 'slack')
+    return raw.directMessage ? 'Direct message' : raw.channelName ? `#${raw.channelName}` : 'Slack';
+  if (source === 'jira') return typeof raw.key === 'string' && raw.key ? raw.key : undefined;
+  if (source === 'github') {
+    const match = /^github:[a-z_]+:(.+)#(\d+)$/.exec(row?.externalId || '');
+    return match ? `${match[1]} #${match[2]}` : row?.repository;
+  }
+  if (source === 'bitbucket') {
+    const repository = raw.destination?.repository?.full_name || raw.source?.repository?.full_name;
+    return repository && raw.id !== undefined ? `${repository} #${raw.id}` : repository || undefined;
+  }
+  return title || undefined;
+}
+
+/** The rule facts of one content item and its connector row. */
+export function contentItemFacts(
+  item: { source: string; title: string; text: string; url?: string; modifiedAt: number; deleted: boolean },
+  row?: ConnectorRowFacts,
+): ContentItemFacts {
+  const raw = row?.raw && typeof row.raw === 'object' ? row.raw : {};
+  const facts = ownerFacts(raw.ownerFacts);
+  const label = connectorSourceLabel(item.source, item.title, row);
+  return {
+    source: item.source,
+    title: item.title,
+    text: item.text,
+    ...(item.url ? { url: item.url } : {}),
+    modifiedAt: item.modifiedAt,
+    deleted: item.deleted,
+    ...(row?.author ? { author: row.author } : {}),
+    ...(label ? { sourceLabel: label } : {}),
+    ...(facts.length ? { ownerFacts: facts } : {}),
+  };
+}
+
+function httpsUrl(value: string | undefined) {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The `action` that one labelled content item wants, or null. It follows the
+ * rule table of docs/needs-you.md: an item that Jev labels actionable for the
+ * owner, and not resolved, is an action. It pushes by the same rules as a
+ * mail action: the asker is a person, the item passes the push bar, and it
+ * is due today or soon, the asker is a VIP, or the item belongs to an
+ * Albatross that the user used in the last 7 days. Noise, a deleted item, an
+ * item older than CONTENT_OBLIGATION_WINDOW_MS, and an item that a Not mine
+ * excludes give none.
+ */
+export function contentObligation(
+  item: ContentItemFacts,
+  labels: ContentLabelFacts,
+  settings: MailObligationSettings,
+  now: number,
+): WantedObligation | null {
+  const source = contentObligationSource(item.source);
+  if (!source || settings.excluded || item.deleted) return null;
+  if (!labels.actionable || labels.resolved || labels.kind === 'noise') return null;
+  if (now - item.modifiedAt > CONTENT_OBLIGATION_WINDOW_MS) return null;
+  const sourceName = OBLIGATION_SOURCE_LABELS[source];
+  const author = item.author?.trim();
+  const asker = clip(author || sourceName, 80);
+  const askerAddress = emailFromHeader(author) || undefined;
+  const due = labels.due ?? 'none';
+  const dueAt = dueAtFromEvidence(item.text, due, settings.timezone, item.modifiedAt);
+  const probability = labels.actionableProbability ?? PUSH_PROBABILITY;
+  const facts = item.ownerFacts ?? [];
+  const lead = facts.map((fact) => OWNER_FACT_TITLES[fact]).find(Boolean);
+  const topic = clip(item.title || sourceName, 120);
+  // The content text starts with the item title: the request is in the body.
+  const body =
+    item.title && item.text.startsWith(item.title) ? item.text.slice(item.title.length) : item.text;
+  const title = lead ? `${lead}: ${topic}` : (requestLine(body, 'action') ?? `Action needed: ${topic}`);
+  const workId = labels.workId && !labels.workId.startsWith('proposal:') ? labels.workId : undefined;
+  const excerpt = clip(item.text, EXCERPT_CHARS);
+  const wanted: WantedObligation = {
+    kind: 'action',
+    title: clip(title, TITLE_CHARS),
+    asker,
+    ...(askerAddress ? { askerAddress } : {}),
+    why: `This ${sourceName} item asks you to do something that is not done yet.`,
+    ...(excerpt ? { excerpt } : {}),
+    due,
+    ...(dueAt !== undefined ? { dueAt } : {}),
+    probability,
+    pushLevel: 'none',
+    ...(workId ? { workId } : {}),
+    sourceAt: item.modifiedAt,
+    ...(item.sourceLabel ? { sourceLabel: clip(item.sourceLabel, 120) } : {}),
+    ...(httpsUrl(item.url) ? { url: httpsUrl(item.url) } : {}),
+  };
+  // Drive and Granola name no person who asked: their items are in-app only.
+  const person = source !== 'drive' && source !== 'granola';
+  const bar = settings.pushProbability ?? PUSH_PROBABILITY;
+  if (!settings.fill && person && probability >= bar) {
+    const dueSoon = due === 'today' || due === 'soon' || (dueAt !== undefined && dueAt <= now + SOON_MS);
+    const vip = isVipSender(askerAddress, settings.vipSenders);
+    const workRecent = Boolean(workId && (settings.recentWorkIds || []).includes(workId));
+    if (dueSoon || vip || workRecent) wanted.pushLevel = 'normal';
+  }
+  return wanted;
+}
+
+// ---------------------------------------------------------------------------
+// Calendar (phase 4): invitations without an answer (`rsvp`), and meetings
+// in the next 24 hours that need preparation (`prepare`).
+// ---------------------------------------------------------------------------
+
+/** An invitation opens an `rsvp` item when its event starts in this window. */
+export const RSVP_WINDOW_MS = 14 * 86_400_000;
+/** Jev asks the `prepare` question for events that start in this window. */
+export const PREPARE_WINDOW_MS = 24 * 3_600_000;
+/** A closed row stays this long, then the sweep removes it. */
+export const CLOSED_RETENTION_MS = 30 * 86_400_000;
+
+export interface CalendarPerson {
+  email?: string;
+  name?: string;
+  /** Participants: yes, no, maybe, or noreply. */
+  status?: string;
+}
+
+/** One calendar event row (convex/schema.ts `calendarEvents`), as the rules read it. */
+export interface CalendarEventFacts {
+  accountId: string;
+  providerCalendarId: string;
+  providerEventId: string;
+  masterEventId?: string;
+  title: string;
+  description?: string;
+  location?: string;
+  status?: string;
+  startAt: number;
+  endAt: number;
+  allDay?: boolean;
+  organizer?: CalendarPerson | null;
+  participants?: CalendarPerson[] | null;
+  htmlLink?: string;
+}
+
+/** The event that an item names: the series of a repeated event, else the event. */
+export function calendarEventId(event: Pick<CalendarEventFacts, 'providerEventId' | 'masterEventId'>) {
+  return event.masterEventId || event.providerEventId;
+}
+
+/** The source key of one calendar item: `calendar:<accountId>:<eventId>`. */
+export function calendarSourceKey(accountId: string, eventId: string) {
+  return `calendar:${accountId}:${eventId}`;
+}
+
+function personEmail(person: CalendarPerson | null | undefined) {
+  return String(person?.email || '')
+    .trim()
+    .toLowerCase();
+}
+
+function personName(person: CalendarPerson | null | undefined) {
+  return String(person?.name || '').trim() || personEmail(person);
+}
+
+/** The owner's own participant row, by the mailbox addresses. */
+export function ownParticipant(
+  event: Pick<CalendarEventFacts, 'participants'>,
+  selfAddresses: readonly string[],
+): CalendarPerson | undefined {
+  const self = new Set(selfAddresses.map((address) => address.toLowerCase()));
+  return (event.participants || []).find((person) => self.has(personEmail(person)));
+}
+
+/** The other people of an event: participants that are not the owner and not a room. */
+export function otherPeople(
+  event: Pick<CalendarEventFacts, 'participants' | 'organizer'>,
+  selfAddresses: readonly string[],
+): CalendarPerson[] {
+  const self = new Set(selfAddresses.map((address) => address.toLowerCase()));
+  return (event.participants || []).filter((person) => {
+    const email = personEmail(person);
+    return email && !self.has(email) && !/resource\.calendar\.google\.com$/.test(email);
+  });
+}
+
+function cancelled(event: Pick<CalendarEventFacts, 'status'>) {
+  return /^cancel/i.test(String(event.status || ''));
+}
+
+function eventDue(startAt: number, now: number): ObligationDue {
+  if (startAt - now <= PREPARE_WINDOW_MS) return 'today';
+  if (startAt - now <= SOON_MS) return 'soon';
+  return 'later';
+}
+
+/**
+ * The `rsvp` item of one event, or null: an invitation from another person
+ * that still waits for the owner's answer, for an event that starts in the
+ * next 14 days. It is in-app only: the invitation mail is the first notice.
+ */
+export function rsvpObligation(
+  event: CalendarEventFacts,
+  selfAddresses: readonly string[],
+  now: number,
+): WantedObligation | null {
+  if (cancelled(event) || event.startAt <= now || event.startAt > now + RSVP_WINDOW_MS) return null;
+  const organizerEmail = personEmail(event.organizer);
+  const self = new Set(selfAddresses.map((address) => address.toLowerCase()));
+  if (!organizerEmail || self.has(organizerEmail)) return null;
+  const own = ownParticipant(event, selfAddresses);
+  if (!own || (own.status && own.status !== 'noreply')) return null;
+  const asker = clip(personName(event.organizer), 80);
+  const title = clip(event.title || '(no title)', 120);
+  const url = httpsUrl(event.htmlLink);
+  return {
+    kind: 'rsvp',
+    title: `Answer the invitation: ${title}`,
+    asker,
+    askerAddress: organizerEmail,
+    why: `${asker} invited you. You have not answered yet.`,
+    ...(event.description ? { excerpt: clip(event.description, EXCERPT_CHARS) } : {}),
+    due: eventDue(event.startAt, now),
+    dueAt: event.startAt,
+    probability: 1,
+    pushLevel: 'none',
+    sourceAt: event.startAt,
+    sourceLabel: title,
+    ...(url ? { url } : {}),
+    eventId: calendarEventId(event),
+    calendarId: event.providerCalendarId,
+    eventStart: event.startAt,
+  };
+}
+
+/**
+ * True when Jev must ask the `prepare` question about an event: it starts in
+ * the next 24 hours, it is not cancelled or all-day, other people attend,
+ * and the owner did not decline.
+ */
+export function prepareCandidate(
+  event: CalendarEventFacts,
+  selfAddresses: readonly string[],
+  now: number,
+): boolean {
+  if (cancelled(event) || event.allDay) return false;
+  if (event.startAt <= now || event.startAt > now + PREPARE_WINDOW_MS) return false;
+  if (!otherPeople(event, selfAddresses).length) return false;
+  return ownParticipant(event, selfAddresses)?.status !== 'no';
+}
+
+/**
+ * The `prepare` item of one event after Jev's answer, or null below
+ * OPEN_PROBABILITY. Other people attend, so it pushes at the push bar.
+ */
+export function prepareObligation(
+  event: CalendarEventFacts,
+  probability: number,
+  selfAddresses: readonly string[],
+  settings: Pick<MailObligationSettings, 'pushProbability' | 'fill'>,
+  now: number,
+): WantedObligation | null {
+  if (probability < OPEN_PROBABILITY || !prepareCandidate(event, selfAddresses, now)) return null;
+  const self = new Set(selfAddresses.map((address) => address.toLowerCase()));
+  const organizer =
+    personEmail(event.organizer) && !self.has(personEmail(event.organizer))
+      ? event.organizer
+      : otherPeople(event, selfAddresses)[0];
+  const asker = clip(personName(organizer), 80);
+  const title = clip(event.title || '(no title)', 120);
+  const url = httpsUrl(event.htmlLink);
+  const bar = settings.pushProbability ?? PUSH_PROBABILITY;
+  return {
+    kind: 'prepare',
+    title: `Prepare for ${title}`,
+    asker,
+    ...(personEmail(organizer) ? { askerAddress: personEmail(organizer) } : {}),
+    why: 'Something must be ready before this event starts.',
+    ...(event.description ? { excerpt: clip(event.description, EXCERPT_CHARS) } : {}),
+    due: 'today',
+    dueAt: event.startAt,
+    probability,
+    pushLevel: !settings.fill && probability >= bar ? 'normal' : 'none',
+    sourceAt: event.startAt,
+    sourceLabel: title,
+    ...(url ? { url } : {}),
+    eventId: event.providerEventId,
+    calendarId: event.providerCalendarId,
+    eventStart: event.startAt,
+  };
+}
+
+/** A stable revision of the parts of an event that the `prepare` question reads. */
+export function prepareRevision(event: CalendarEventFacts): string {
+  const source = JSON.stringify([
+    event.title,
+    event.description || '',
+    event.location || '',
+    event.startAt,
+    (event.participants || []).map(personEmail).sort(),
+  ]);
+  let hash = 2166136261;
+  for (let i = 0; i < source.length; i++) hash = Math.imul(hash ^ source.charCodeAt(i), 16777619);
+  return `prepare-1:${(hash >>> 0).toString(16)}:${source.length}`;
+}
+
+// ---------------------------------------------------------------------------
+// The sweep (phase 1.1 and 4): times when a row changes by itself.
+// ---------------------------------------------------------------------------
+
+/** The fields of a row that the sweep reads. */
+export interface SweepRow {
+  kind: ObligationKind;
+  state: string;
+  pushLevel: PushLevel;
+  sourceAt?: number;
+  openedAt: number;
+  eventStart?: number;
+  snoozedUntil?: number;
+}
+
+/**
+ * The next time the sweep must look at an open row, or undefined:
+ * - a time-sensitive change leaves Now after CHANGE_NOW_WINDOW_MS;
+ * - a change closes as `aged_out` after CHANGE_AUTO_CLOSE_MS;
+ * - a calendar item closes as `event_passed` when its event starts.
+ */
+export function sweepAtFor(row: SweepRow): number | undefined {
+  if (row.state !== 'open' && row.state !== 'snoozed') return undefined;
+  if (row.kind === 'change') {
+    const start = row.sourceAt ?? row.openedAt;
+    return start + (row.pushLevel === 'time_sensitive' ? CHANGE_NOW_WINDOW_MS : CHANGE_AUTO_CLOSE_MS);
+  }
+  if ((row.kind === 'rsvp' || row.kind === 'prepare') && row.eventStart !== undefined) return row.eventStart;
+  return undefined;
+}
+
+export type SweepStep =
+  | { action: 'none' }
+  | { action: 'defer'; sweepAt: number }
+  | { action: 'demote'; sweepAt: number }
+  | { action: 'close'; state: 'resolved' | 'expired'; closeReason: 'aged_out' | 'event_passed' };
+
+/**
+ * What the sweep does with one due row. A calendar item closes when its
+ * event starts, also when it is snoozed. A change that the user put off to a
+ * later time waits for that time.
+ */
+export function sweepStep(row: SweepRow, at: number): SweepStep {
+  if (row.state !== 'open' && row.state !== 'snoozed') return { action: 'none' };
+  if (row.kind === 'rsvp' || row.kind === 'prepare')
+    return row.eventStart !== undefined && at >= row.eventStart
+      ? { action: 'close', state: 'expired', closeReason: 'event_passed' }
+      : row.eventStart !== undefined
+        ? { action: 'defer', sweepAt: row.eventStart }
+        : { action: 'none' };
+  if (row.kind !== 'change') return { action: 'none' };
+  if (row.state === 'snoozed' && (row.snoozedUntil ?? 0) > at)
+    return { action: 'defer', sweepAt: row.snoozedUntil! };
+  const start = row.sourceAt ?? row.openedAt;
+  if (at >= start + CHANGE_AUTO_CLOSE_MS)
+    return { action: 'close', state: 'resolved', closeReason: 'aged_out' };
+  if (row.pushLevel === 'time_sensitive' && at >= start + CHANGE_NOW_WINDOW_MS)
+    return { action: 'demote', sweepAt: start + CHANGE_AUTO_CLOSE_MS };
+  return { action: 'defer', sweepAt: sweepAtFor(row)! };
 }

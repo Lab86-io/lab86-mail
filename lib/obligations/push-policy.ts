@@ -100,7 +100,8 @@ export function summaryCopy(count: number, more: boolean) {
 
 export interface HeldPush {
   id: string;
-  reason: 'quiet_hours' | 'limit';
+  /** `follow_up`: the one push of a `waiting` item after its due time. It waits like a quiet-hours hold. */
+  reason: 'quiet_hours' | 'limit' | 'follow_up';
 }
 
 export type ReleasePlan =

@@ -4,6 +4,13 @@ import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { needsYouFlagFor } from '../obligations/contract';
 import { deliverObligationPushes } from '../obligations/delivery';
 import type { DailyReport } from '../shared/types';
+import {
+  buildPrepareQuestions,
+  JEV_CALENDAR_FEATURE,
+  type JevCalendarEvent,
+  prepareProbability,
+  prepareState,
+} from './calendar';
 import type { JevCorrection, JevPreferences } from './contract';
 import {
   assessmentFromResponse,
@@ -148,7 +155,67 @@ export async function runJevSweep(userId: string, dependencies: JevSweepDependen
     if (!moreRemaining) break;
   }
   if (classified) dependencies.afterClassified?.(userId);
+  // Needs you, phase 4: the `prepare` question for the events of the next 24
+  // hours. Best effort: a failure here never fails the mail sweep.
+  if (needsYou) await runPrepareSweep(userId, runtime, dependencies).catch(() => undefined);
   return { classified, moreRemaining };
+}
+
+/**
+ * Asks Jev the `prepare` question for the events that Convex claims (at most
+ * six each sweep, each revision once) and stores the answers. A new `prepare`
+ * item that passes the push bar pushes.
+ */
+export async function runPrepareSweep(
+  userId: string,
+  runtime: Awaited<ReturnType<typeof resolveClassifierRuntime>>,
+  dependencies: Pick<
+    JevSweepDependencies,
+    'convexMutation' | 'evaluateClassifier' | 'recordClassifierUsage' | 'deliverObligations'
+  >,
+) {
+  const { convexMutation, evaluateClassifier, recordClassifierUsage } = dependencies;
+  const claim = await convexMutation<{ events: JevCalendarEvent[] }>(api.obligations.claimPrepareEvents, {
+    userId,
+  });
+  if (!claim.events.length) return { asked: 0, stored: 0 };
+  const results = await mapConcurrent(claim.events, 3, async (event) => {
+    const target = {
+      accountId: event.accountId,
+      providerCalendarId: event.providerCalendarId,
+      providerEventId: event.providerEventId,
+      revision: event.revision,
+    };
+    try {
+      const result = await evaluateClassifier({
+        apiKey: runtime.apiKey,
+        model: runtime.model,
+        state: prepareState(event),
+        questions: buildPrepareQuestions(),
+        timeoutMs: 10_000,
+      });
+      await recordClassifierUsage(runtime, JEV_CALENDAR_FEATURE, result);
+      const probability = prepareProbability(result);
+      return probability === undefined ? target : { ...target, probability };
+    } catch (error) {
+      // The claim counted the attempt; the event is asked again later.
+      await recordClassifierUsage(
+        runtime,
+        JEV_CALENDAR_FEATURE,
+        undefined,
+        undefined,
+        classifierFailureText(error),
+      );
+      return target;
+    }
+  });
+  const stored = await convexMutation<{ obligationIds: string[] }>(api.obligations.storePrepare, {
+    userId,
+    results,
+  });
+  if (stored.obligationIds.length && dependencies.deliverObligations)
+    await dependencies.deliverObligations(userId, stored.obligationIds).catch(() => undefined);
+  return { asked: claim.events.length, stored: stored.obligationIds.length };
 }
 
 /** Mark only a successfully persisted display edition, never a candidate pass. */

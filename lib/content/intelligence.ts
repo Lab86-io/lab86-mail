@@ -36,6 +36,17 @@ export function contentQuestions(
       type: 'noul',
       instructions: `${untrusted}Does the latest evidence explicitly resolve or cancel the request or task in this item? Acknowledgment alone is insufficient.`,
     },
+    // Needs you (phase 2): the due bucket of the owner's task, as for mail.
+    due: {
+      type: 'choice',
+      instructions: `${untrusted}By the evidence, when must the owner identified by ownerIdentities act on this item? Judge from the dates in the content and any deadline it states. When the owner owes nothing, answer none.`,
+      criteria: {
+        today: 'The owner must act today, or the stated deadline is already past.',
+        soon: 'The owner must act in the next three days.',
+        later: 'The owner must act, but the stated deadline is more than three days away.',
+        none: 'The owner owes nothing, or the content states no time to act.',
+      },
+    },
     work: {
       type: 'choice',
       instructions: `${untrusted}Does this item clearly concern one of the supplied existing work items? Shared broad topics alone are insufficient. Choose none if ambiguous.`,
@@ -48,6 +59,8 @@ export function contentQuestions(
     },
   };
 }
+/** The answers of the content `due` question (Needs you, phase 2). */
+const CONTENT_DUES = ['today', 'soon', 'later', 'none'] as const;
 const inferenceDefaults = {
   resolveClassifierRuntime,
   resolveOpenRouterUtilityRuntime,
@@ -83,6 +96,12 @@ export async function classifyContent(
   )
     throw new Error('Invalid content classification.');
   const match = work.choice === 'none' ? null : works[Number(work.choice.slice(1))]?.id || null;
+  // `due` is optional: a missing or unclear answer stores no value.
+  const due = result.answers.due;
+  const dueChoice =
+    due?.type === 'choice' && due.confidence >= 0.5 && CONTENT_DUES.includes(due.choice as never)
+      ? (due.choice as (typeof CONTENT_DUES)[number])
+      : undefined;
   return {
     kind: kind.choice,
     actionable: actionable.noul >= 0.85 && kind.choice !== 'noise',
@@ -91,6 +110,8 @@ export async function classifyContent(
     confidence: kind.confidence,
     model: result.model,
     evaluatedAt: Date.now(),
+    actionableProbability: actionable.noul,
+    ...(dueChoice ? { due: dueChoice } : {}),
   };
 }
 export async function embedContent(
