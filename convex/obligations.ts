@@ -1573,24 +1573,29 @@ function calendarFillCycle(value: unknown): CalendarFillCycle | undefined {
 /** One page of a fill pass: the next page of the saved pass, or the first page of a new one. */
 export async function calendarFillPage(ctx: MutationCtx, userId: string, at: number, saved?: unknown) {
   const cycle = calendarFillCycle(saved);
-  const lower = cycle?.lower ?? at;
-  const upper = cycle?.upper ?? at + RSVP_WINDOW_MS;
-  const query = () =>
+  const read = (lower: number, upper: number, cursor: string | null) =>
     ctx.db
       .query('calendarEvents')
-      .withIndex('by_user_start', (q) => q.eq('userId', userId).gt('startAt', lower).lte('startAt', upper));
-  let result: Awaited<ReturnType<ReturnType<typeof query>['paginate']>>;
+      .withIndex('by_user_start', (q) => q.eq('userId', userId).gt('startAt', lower).lte('startAt', upper))
+      .paginate({ numItems: CALENDAR_FILL_EVENTS, cursor });
+  const lower = cycle?.lower ?? at;
+  const upper = cycle?.upper ?? at + RSVP_WINDOW_MS;
+  let result: Awaited<ReturnType<typeof read>>;
   try {
-    result = await query().paginate({ numItems: CALENDAR_FILL_EVENTS, cursor: cycle?.cursor ?? null });
-  } catch {
-    // A cursor that Convex no longer accepts starts a new pass at now.
-    return { synced: 0, next: undefined };
+    result = await read(lower, upper, cycle?.cursor ?? null);
+  } catch (error) {
+    // Only a saved pass holds a cursor, and Convex can stop accepting it.
+    // Convex allows one `paginate` in each function run, so the caller clears
+    // the pass and starts a new run at once. Without a saved pass, the
+    // failure goes up to the caller.
+    if (!cycle) throw error;
+    return { synced: 0, next: undefined, restart: true };
   }
   const synced = await syncCalendarObligations(ctx, userId, result.page, { at });
   const next: CalendarFillCycle | undefined = result.isDone
     ? undefined
     : { lower, upper, cursor: result.continueCursor };
-  return { synced, next };
+  return { synced, next, restart: false };
 }
 
 /** The scheduled calendar fill of a flag user runs at most this often. */
@@ -1647,6 +1652,9 @@ export const fillCalendar = internalMutation({
       )
       .unique();
     const page = await calendarFillPage(ctx, args.userId, at, row?.doc?.cycle);
+    // A saved pass that Convex no longer accepts: the next run starts a new pass now.
+    if (page.restart)
+      await ctx.scheduler.runAfter(0, internal.obligations.fillCalendar, { userId: args.userId });
     if (row) {
       const { cycle: _cycle, from: _from, ...doc } = row.doc ?? {};
       await ctx.db.patch(row._id, {

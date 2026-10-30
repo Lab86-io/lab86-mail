@@ -776,10 +776,13 @@ describe('calendar (phase 4)', () => {
     expect((await fillState(t))?.doc?.cycle).toBeUndefined();
   });
 
-  test('a saved pass that Convex no longer accepts starts again at now', async () => {
+  test('a saved pass that Convex no longer accepts starts a new pass at once, in the next run', async () => {
     const t = harness();
     await connect(t);
     await flag(t);
+    // An invitation in the window. The sync opens its row; remove it, so only the fill can open it again.
+    await t.mutation(calendar.upsertEventBatch, batch([event({ providerEventId: 'fresh' })]));
+    for (const row of await rows(t)) await t.run((ctx) => ctx.db.delete(row._id));
     await t.run((ctx) =>
       ctx.db.insert('userDocs', {
         userId: USER,
@@ -790,9 +793,13 @@ describe('calendar (phase 4)', () => {
         updatedAt: CLOCK,
       }),
     );
+    // Convex allows one paginate per run: this run clears the pass and schedules the next run.
     expect(await t.mutation(internal.obligations.fillCalendar, { userId: USER })).toEqual({ synced: 0 });
-    const state = await fillState(t);
-    expect(state?.doc).toEqual({ at: CLOCK });
+    expect((await fillState(t))?.doc).toEqual({ at: CLOCK });
+    expect(await rows(t)).toEqual([]);
+    await drain(t);
+    expect((await rows(t)).map((row) => `${row.kind}:${row.eventId}`)).toEqual(['rsvp:fresh']);
+    expect((await fillState(t))?.doc).toEqual({ at: CLOCK });
   });
 
   test('a cancel closes the rsvp by evidence; a deleted or pruned event closes its items', async () => {
