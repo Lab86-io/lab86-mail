@@ -559,7 +559,12 @@ export function NeedsYouView({
                             timezone={timezone}
                             selected={selectedId === entry.id}
                             focusable={focusable === entry.id}
-                            draftReady={obligation ? drafts.get(obligation.id)?.status === 'ready' : false}
+                            draftReady={
+                              obligation
+                                ? obligation.draftReady === true ||
+                                  drafts.get(obligation.id)?.status === 'ready'
+                                : false
+                            }
                             copied={copiedId === entry.id}
                             busy={busy(entry.id)}
                             onOpen={() => open(entry)}
