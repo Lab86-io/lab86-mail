@@ -28,9 +28,11 @@ import {
   fillContentObligations,
   markRulesVersion,
   needsYouEnabled,
-  openMailThreads,
+  openMailThreadPage,
   recordNeedsYouFlag,
+  recordRepairPage,
   syncThreadObligations,
+  takeCalendarFill,
   takeRulesUpgrade,
 } from './obligations';
 import {
@@ -347,10 +349,18 @@ export const claimPending = mutation({
     if (args.needsYou !== undefined && (await recordNeedsYouFlag(ctx, args.userId, args.needsYou)))
       // The flag turned on: fill the ledger from the stored verdicts, in-app only.
       await ctx.scheduler.runAfter(0, internal.jev.backfillObligations, { userId: args.userId });
-    else if (args.needsYou && (await takeRulesUpgrade(ctx, args.userId)))
+    else if (args.needsYou) {
       // Phase 1.1: the rows of a user in the flag follow older rules. Apply
-      // the new rules once, in-app only (repairObligations).
-      await ctx.scheduler.runAfter(0, internal.jev.repairObligations, { userId: args.userId });
+      // the new rules, a page at a time, in-app only (repairObligations). A
+      // stopped repair resumes at its last page.
+      const upgrade = await takeRulesUpgrade(ctx, args.userId);
+      if (upgrade)
+        await ctx.scheduler.runAfter(0, internal.jev.repairObligations, { userId: args.userId, ...upgrade });
+      else if (await takeCalendarFill(ctx, args.userId))
+        // Phase 4: an unchanged invitation that enters the 14-day window opens
+        // its row. At most once an hour for each user.
+        await ctx.scheduler.runAfter(0, internal.obligations.fillCalendar, { userId: args.userId });
+    }
     if (!(await loadJevSettings(ctx, args.userId)).preferences.enabled)
       return { items: [], moreRemaining: false };
     const limit = Math.max(1, Math.min(20, args.limit ?? 12));
@@ -671,17 +681,21 @@ export const backfillObligations = internalMutation({
  * new rules to the threads of the open mail rows: a routine notice, an old
  * change, or a change that is not a problem leaves Now or closes. A row that
  * the new rules drop closes at the time the rules would have closed it, so it
- * does not fill "Closed today". It never pushes. Then the backfill passes of
- * the connected sources and the calendar run. A second run changes nothing.
- * The Jev claim starts it once; it can also run by hand:
+ * does not fill "Closed today". It never pushes. One page reads at most
+ * BACKFILL_THREADS threads, in source key order after `after`, records its
+ * progress, and schedules the next page. After the last page, the rules
+ * version changes and the backfill passes of the connected sources and the
+ * calendar run. A second run changes nothing. The Jev claim starts it; it can
+ * also run by hand:
  *   npx convex run jev:repairObligations '{"userId": "<clerk user id>"}'
  */
 export const repairObligations = internalMutation({
-  args: { userId: v.string() },
+  args: { userId: v.string(), after: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    if (!(await needsYouEnabled(ctx, args.userId))) return { synced: 0 };
+    if (!(await needsYouEnabled(ctx, args.userId))) return { synced: 0, done: true };
     const at = Date.now();
-    const threads = await openMailThreads(ctx, args.userId);
+    const page = await openMailThreadPage(ctx, args.userId, BACKFILL_THREADS, args.after);
+    const threads = page.threads;
     const { accounts, live } = await userAccounts(ctx, args.userId);
     const ledger = await obligationContext(ctx, args.userId, accounts);
     let synced = 0;
@@ -713,11 +727,20 @@ export const repairObligations = internalMutation({
       });
       synced++;
     }
+    if (page.next !== undefined) {
+      await recordRepairPage(ctx, args.userId, page.next, at);
+      await ctx.scheduler.runAfter(0, internal.jev.repairObligations, {
+        userId: args.userId,
+        after: page.next,
+      });
+      return { synced, done: false };
+    }
+    await markRulesVersion(ctx, args.userId);
     await ctx.scheduler.runAfter(0, internal.jev.backfillObligations, {
       userId: args.userId,
       pass: BACKFILL_CONTENT_PASS,
     });
-    return { synced };
+    return { synced, done: true };
   },
 });
 

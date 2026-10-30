@@ -103,9 +103,11 @@ function harness(overrides: Partial<NeedsYouViewProps> = {}): Harness {
                       : 'user_done',
                 updatedAt: at,
               };
+      // As the server: an undo and a calendar answer have no undo window.
       return {
         obligation: next,
-        undoUntil: action.action === 'undo' ? undefined : Date.now() + UNDO_WINDOW_MS,
+        undoUntil:
+          action.action === 'undo' || action.action === 'rsvp' ? undefined : Date.now() + UNDO_WINDOW_MS,
       };
     },
     onLoadDraft: async (obligation) => {
@@ -531,7 +533,11 @@ describe('the detail', () => {
     expect(buttonNamed(renderer, 'No')).toBeDefined();
     await act(async () => buttonNamed(renderer, 'Maybe').props.onClick());
     expect(h.actions).toEqual([{ id: 'ob_rsvp', action: { action: 'rsvp', response: 'maybe' } }]);
-    expect(h.toasts[0]).toMatchObject({ kind: 'undo', title: 'Answered maybe' });
+    // The answer already went to the calendar: no undo window, so a plain toast and no Undo.
+    expect(h.toasts).toEqual([
+      { kind: 'info', title: 'Answered maybe', description: 'Your answer went to the calendar.' },
+    ]);
+    expect(h.undo).toBeNull();
   });
 
   test('a prepare item shows the event, its time, and the people, with Done first', async () => {

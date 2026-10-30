@@ -129,7 +129,7 @@ struct ObligationDetailView: View {
     }
 
     private func loadDraft(_ obligation: ObligationView) async {
-        guard obligation.kind == .reply, obligation.draftReady, !obligation.isClosed, !draftRequested else { return }
+        guard NeedsYouPresentation.canSendReply(obligation), obligation.draftReady, !obligation.isClosed, !draftRequested else { return }
         draftRequested = true
         guard let prepared = await store.prepareDraft(id: obligation.id, transport: environment.backend) else { return }
         draft = prepared
@@ -174,7 +174,7 @@ private struct ObligationDetailBody: View {
                 if obligation.excerpt != nil || obligation.askerAddress != nil {
                     ObligationExcerptCard(obligation: obligation, onOpen: onOpenSource)
                 }
-                if obligation.kind == .reply, !obligation.isClosed {
+                if NeedsYouPresentation.canSendReply(obligation), !obligation.isClosed {
                     ObligationDraftCard(obligation: obligation, draft: draft, text: $draftText)
                 }
                 if obligation.workTitle != nil || obligation.workID != nil {
@@ -463,7 +463,7 @@ private struct ObligationActionBar: View {
                     VStack(alignment: .leading, spacing: 12) { buttons }
                 }
                 quietLinks
-                Text(NeedsYouLabels.actionNote(kind: obligation.kind))
+                Text(NeedsYouLabels.actionNote(obligation))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

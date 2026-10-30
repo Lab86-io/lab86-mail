@@ -260,6 +260,31 @@ describe('phase 1.1 change rules (invented equivalents of the production fill)',
     const items = mailObligations(verdict, facts('Plan', 'Can you confirm by Friday?', fresh), settings, at);
     expect(items.map((item) => item.kind)).toEqual(['reply']);
   });
+
+  test('the cues of an old verdict never drop the action of a person', () => {
+    for (const [subject, text] of [
+      ['Introducing Priya', 'Please set up a call with Priya next week.'],
+      ['Please sign the services agreement', 'Please sign the services agreement by Friday.'],
+    ]) {
+      const verdict = assessment({
+        purpose: 'conversation',
+        obligations: [{ kind: 'action', evidence: { messageId: 'm1', text }, probability: 0.9 }],
+        probabilities: { reply: 0.02, action: 0.9, waiting: 0.02, change: 0.02 },
+      });
+      expect(isRoutineNotice(verdict, subject)).toBe(false);
+      const items = mailObligations(
+        verdict,
+        facts(subject, text, fresh, 'Maya Chen <maya@northwind.test>'),
+        settings,
+        at,
+      );
+      expect(items.map((item) => item.kind)).toEqual(['action']);
+    }
+    // The same subject from a service is still a routine notice by the cues.
+    expect(isRoutineNotice(change('general', 'Introducing the new dashboard.'), 'Introducing Dash')).toBe(
+      true,
+    );
+  });
 });
 
 describe('connected sources (phase 2)', () => {

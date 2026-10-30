@@ -94,6 +94,23 @@ struct NeedsYouPresentationTests {
         #expect(NeedsYouPrimaryAction.startInAlbatross.label == "Start in Albatross")
     }
 
+    @Test func onlyAMailReplySendsFromTheApp() {
+        let slack = item(source: .slack, accountID: nil, threadID: nil)
+        let github = item(source: .github, accountID: nil, threadID: nil, workID: "work_1")
+        #expect(NeedsYouPresentation.canSendReply(item()))
+        #expect(!NeedsYouPresentation.canSendReply(slack))
+        #expect(!NeedsYouPresentation.canSendReply(github))
+        #expect(!NeedsYouPresentation.canSendReply(item(kind: .action)))
+        // As on the web: Start in Albatross with a work, else Done.
+        #expect(NeedsYouPresentation.primaryAction(slack) == .done)
+        #expect(NeedsYouPresentation.primaryAction(github) == .startInAlbatross)
+        #expect(!NeedsYouPresentation.showsDone(slack))
+        #expect(NeedsYouPresentation.showsDone(github))
+        #expect(NeedsYouPresentation.showsStartInAlbatross(slack))
+        #expect(!NeedsYouPresentation.showsStartInAlbatross(github))
+        #expect(NeedsYouPresentation.showsLater(slack))
+    }
+
     @Test func theOtherButtonsAndTheQuietLinks() {
         #expect(NeedsYouPresentation.showsDone(item()))
         #expect(!NeedsYouPresentation.showsDone(item(kind: .action)))

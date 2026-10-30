@@ -96,15 +96,22 @@ enum NeedsYouPresentation {
         .joined(separator: " · ")
     }
 
+    /// A mail reply is the only reply the app sends, with a prepared draft
+    /// (`canSendReply`). A Slack, Jira, or GitHub reply opens in its own app.
+    static func canSendReply(_ obligation: ObligationView) -> Bool {
+        obligation.kind == .reply && obligation.source == .mail
+    }
+
     /// The first button. An RSVP has its three answers instead; a closed
-    /// item has none.
+    /// item has none. A reply from another source starts in Albatross or
+    /// closes with Done, as the web does.
     static func primaryAction(_ obligation: ObligationView) -> NeedsYouPrimaryAction? {
         if obligation.isClosed { return nil }
+        if canSendReply(obligation) { return .sendReply }
         switch obligation.kind {
-        case .reply: return .sendReply
         case .code: return .copyCode
         case .rsvp: return nil
-        case .action, .change, .prepare, .waiting, .unknown:
+        case .reply, .action, .change, .prepare, .waiting, .unknown:
             return obligation.workID != nil ? .startInAlbatross : .done
         }
     }

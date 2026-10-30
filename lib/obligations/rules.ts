@@ -135,11 +135,13 @@ function anyProblem(text: string) {
  * announcement with no problem to fix (phase 1.1). Jev answers the
  * `routine_notice` question. A verdict from before the question reads the
  * routine cues of the subject and the evidence, and a problem cue cancels
- * them.
+ * them. The cues read notices only: mail from a person ("Introducing Priya",
+ * "Please sign the services agreement") is never a routine notice by cue.
  */
 export function isRoutineNotice(assessment: JevAssessment, subject: string): boolean {
   const probability = routineNoticeProbability(assessment);
   if (probability !== undefined) return probability >= ROUTINE_NOTICE_HIGH;
+  if (assessment.purpose === 'conversation') return false;
   const text = cueText(subject, assessment.changeEvidence?.text ?? '');
   return ROUTINE_CUE.test(text) && !anyProblem(text);
 }

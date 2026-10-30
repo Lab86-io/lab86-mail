@@ -151,7 +151,7 @@ struct NeedsYouStoreTests {
         #expect(store.undo == nil)
     }
 
-    @Test("Later, Not mine, and an RSVP send their bodies; the window closes when it passes")
+    @Test("Later, Not mine, and an RSVP send their bodies; an RSVP has no Undo; the window closes when it passes")
     func otherActions() async throws {
         let server = StubBackendServer()
         defer { server.tearDown() }
@@ -159,7 +159,8 @@ struct NeedsYouStoreTests {
         let path1 = NeedsYouStore.actionPath(id: "ob_1")
         let path2 = NeedsYouStore.actionPath(id: "ob_2")
         server.routes[path1] = .object(["obligation": Self.row("ob_1", ["state": .string("snoozed"), "snoozedUntil": .number(Self.now + 3 * 3_600_000)])])
-        server.routes[path2] = .object(["obligation": Self.row("ob_2", ["state": .string("done"), "closeReason": .string("event_passed")]), "undoUntil": .number(Self.now + 10_000)])
+        // As the server: the calendar answer already went out, so an RSVP gives no undo window.
+        server.routes[path2] = .object(["obligation": Self.row("ob_2", ["state": .string("done"), "closeReason": .string("event_passed")])])
         let store = NeedsYouStore(defaults: try makeDefaults())
         await store.load(server.backend)
         let at = Date(timeIntervalSince1970: Self.now / 1_000)
@@ -172,7 +173,18 @@ struct NeedsYouStoreTests {
 
         #expect(await store.act(.rsvp(.yes), on: "ob_2", transport: server.backend, now: at))
         #expect(server.recorded.last?.body == .object(["action": .string("rsvp"), "response": .string("yes")]))
-        #expect(store.undo?.word == "Answered yes")
+        // The row closes, and no Undo is offered for an answer that already went out.
+        #expect(store.item(id: "ob_2")?.state == .done)
+        #expect(store.item(id: "ob_2")?.closeReason == .eventPassed)
+        #expect(store.undo == nil)
+        let requests = server.recorded.count
+        #expect(await store.undoLast(transport: server.backend, now: at) == false)
+        #expect(server.recorded.count == requests)
+
+        server.routes[path1] = .object(["obligation": Self.row("ob_1", ["state": .string("dismissed"), "closeReason": .string("not_mine")]), "undoUntil": .number(Self.now + 10_000)])
+        #expect(await store.act(.notMine, on: "ob_1", transport: server.backend, now: at))
+        #expect(server.recorded.last?.body == .object(["action": .string("not_mine")]))
+        #expect(store.undo?.word == "Not mine")
         store.expireUndo(now: Date(timeIntervalSince1970: (Self.now + 9_000) / 1_000))
         #expect(store.undo != nil)
         store.expireUndo(now: Date(timeIntervalSince1970: (Self.now + 11_000) / 1_000))
@@ -180,9 +192,7 @@ struct NeedsYouStoreTests {
         // Undo after the window makes no request.
         #expect(await store.undoLast(transport: server.backend) == false)
 
-        server.routes[path1] = .object(["obligation": Self.row("ob_1", ["state": .string("dismissed"), "closeReason": .string("not_mine")]), "undoUntil": .number(Self.now + 10_000)])
         #expect(await store.act(.notMine, on: "ob_1", transport: server.backend, now: at))
-        #expect(server.recorded.last?.body == .object(["action": .string("not_mine")]))
         #expect(store.undo?.word == "Not mine")
         store.dismissUndo()
         #expect(store.undo == nil)

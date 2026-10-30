@@ -242,8 +242,19 @@ enum NeedsYouLabels {
             "This closes itself when you use the code or when it expires."
         case .waiting:
             "This closes itself when the reply arrives. Done closes it now. Undo for 10 seconds."
-        case .action, .change, .prepare, .rsvp, .unknown:
+        case .rsvp:
+            "Yes, No, and Maybe answer the invitation in your calendar. An answer has no Undo."
+        case .action, .change, .prepare, .unknown:
             "Done closes this. Undo for 10 seconds."
         }
+    }
+
+    /// The quiet line of one item. Only a mail reply sends from the app
+    /// (`canSendReply`); a reply from another source says where to reply.
+    static func actionNote(_ obligation: ObligationView) -> String {
+        if obligation.kind == .reply, !NeedsYouPresentation.canSendReply(obligation) {
+            return "Reply in \(obligation.source.label). Done closes this. Undo for 10 seconds."
+        }
+        return actionNote(kind: obligation.kind)
     }
 }

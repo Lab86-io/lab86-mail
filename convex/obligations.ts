@@ -1550,6 +1550,51 @@ export async function fillCalendarObligations(ctx: MutationCtx, userId: string, 
   return syncCalendarObligations(ctx, userId, events, { at });
 }
 
+/** The scheduled calendar fill of a flag user runs at most this often. */
+export const CALENDAR_FILL_EVERY_MS = 3_600_000;
+const CALENDAR_FILL_KIND = 'needsYouCalendarFill';
+
+/**
+ * True when the scheduled calendar fill of one user is due, and records the
+ * time. Calendar sync reaches only the events that change, so an unchanged
+ * invitation that enters the 14-day window opens its `rsvp` row only on a
+ * fill. The time has its own row: the flag row stays as it is, so the page
+ * that reads the flag does not read again.
+ */
+export async function takeCalendarFill(ctx: MutationCtx, userId: string, at = now()) {
+  const row = await ctx.db
+    .query('userDocs')
+    .withIndex('by_user_kind_key', (q) =>
+      q.eq('userId', userId).eq('kind', CALENDAR_FILL_KIND).eq('key', 'default'),
+    )
+    .unique();
+  if (row && at - (Number(row.doc?.at) || 0) < CALENDAR_FILL_EVERY_MS) return false;
+  if (row) await ctx.db.patch(row._id, { doc: { at }, updatedAt: at });
+  else
+    await ctx.db.insert('userDocs', {
+      userId,
+      kind: CALENDAR_FILL_KIND,
+      key: 'default',
+      doc: { at },
+      createdAt: at,
+      updatedAt: at,
+    });
+  return true;
+}
+
+/**
+ * The scheduled calendar fill of one flag user (phase 4): the invitations of
+ * the next 14 days, at most CALENDAR_FILL_EVENTS events, in-app only. The Jev
+ * claim starts it at most once in CALENDAR_FILL_EVERY_MS.
+ */
+export const fillCalendar = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    if (!(await needsYouEnabled(ctx, args.userId))) return { synced: 0 };
+    return { synced: await fillCalendarObligations(ctx, args.userId) };
+  },
+});
+
 // ---------------------------------------------------------------------------
 // The `prepare` question (phase 4). The Node Jev sweep claims the events of
 // the next 24 hours with other people, asks Jev, and stores the answers here.
@@ -1790,49 +1835,115 @@ export const sweep = internalMutation({
 
 // ---------------------------------------------------------------------------
 // The phase 1.1 repair. It applies the new rules to the open mail rows of one
-// user, then fills the connected sources and the calendar, in-app only. It
-// never pushes. It is idempotent: a second run finds the rows as the first
-// run left them. The Jev claim starts it once for each user in the flag
-// whose rules version is older (OBLIGATION_RULES_VERSION).
+// user, a page at a time, then fills the connected sources and the calendar,
+// in-app only. It never pushes. It is idempotent: a second run finds the rows
+// as the first run left them. The Jev claim starts it for each user in the
+// flag whose rules version is older (OBLIGATION_RULES_VERSION). The version
+// changes only after the last page, so a repair that stops (a page failed)
+// resumes at its last saved page.
 // ---------------------------------------------------------------------------
 
-/** The version of the rules that the rows of a user follow. A higher value starts the repair once. */
+/** The version of the rules that the rows of a user follow. A higher value starts the repair. */
 export const OBLIGATION_RULES_VERSION = 2;
-/** Open mail rows that one repair pass reads. */
-export const REPAIR_ROWS = 100;
+/** Mail rows (all kinds and states) that one repair page reads, at most. */
+export const REPAIR_SCAN = 200;
+/** A repair with no page for this long has stopped: the next claim resumes it. */
+export const REPAIR_LEASE_MS = 30 * 60_000;
+/** The source keys of the mail rows: `mail:<accountId>:<threadId>`, all below `mail;`. */
+const MAIL_KEYS_FROM = 'mail:';
+const MAIL_KEYS_TO = 'mail;';
 
-/** True when the flag row of the user says an older rules version. It records the new one. */
-export async function takeRulesUpgrade(ctx: MutationCtx, userId: string) {
+/**
+ * The start of the repair for a flag user whose rows follow older rules, or
+ * null. It gives the source key that the repair resumes after (none: from the
+ * start). It records the time, so the claims that follow wait while the pages
+ * run; a repair with no page for REPAIR_LEASE_MS resumes.
+ */
+export async function takeRulesUpgrade(
+  ctx: MutationCtx,
+  userId: string,
+  at = now(),
+): Promise<{ after?: string } | null> {
   const row = await flagRow(ctx, userId);
-  if (row?.doc?.enabled !== true || (row.doc.rulesVersion ?? 1) >= OBLIGATION_RULES_VERSION) return false;
-  await ctx.db.patch(row._id, { doc: { ...row.doc, rulesVersion: OBLIGATION_RULES_VERSION } });
-  return true;
+  const doc = row?.doc;
+  if (!row || doc?.enabled !== true || (doc.rulesVersion ?? 1) >= OBLIGATION_RULES_VERSION) return null;
+  if (typeof doc.repairAt === 'number' && at - doc.repairAt < REPAIR_LEASE_MS) return null;
+  await ctx.db.patch(row._id, { doc: { ...doc, repairAt: at } });
+  return typeof doc.repairAfter === 'string' ? { after: doc.repairAfter } : {};
 }
 
-/** Records the rules version for a user whose ledger the backfill fills with the new rules. */
+/** Records the progress of the repair: the next page reads the source keys after `after`. */
+export async function recordRepairPage(ctx: MutationCtx, userId: string, after: string, at = now()) {
+  const row = await flagRow(ctx, userId);
+  if (row) await ctx.db.patch(row._id, { doc: { ...row.doc, repairAt: at, repairAfter: after } });
+}
+
+/**
+ * Records the rules version for a user whose rows follow the new rules: the
+ * repair finished, or the backfill fills the ledger with the new rules. The
+ * progress of the repair goes.
+ */
 export async function markRulesVersion(ctx: MutationCtx, userId: string) {
   const row = await flagRow(ctx, userId);
-  if (row && (row.doc?.rulesVersion ?? 1) < OBLIGATION_RULES_VERSION)
-    await ctx.db.patch(row._id, { doc: { ...row.doc, rulesVersion: OBLIGATION_RULES_VERSION } });
+  if (!row) return;
+  const { repairAt, repairAfter, ...doc } = row.doc ?? {};
+  if (
+    (doc.rulesVersion ?? 1) >= OBLIGATION_RULES_VERSION &&
+    repairAt === undefined &&
+    repairAfter === undefined
+  )
+    return;
+  await ctx.db.patch(row._id, { doc: { ...doc, rulesVersion: OBLIGATION_RULES_VERSION } });
 }
 
-/** The open mail rows of a user, one thread each, newest first. */
-export async function openMailThreads(ctx: MutationCtx, userId: string) {
-  const [open, snoozed] = await Promise.all([
-    ctx.db
-      .query('obligations')
-      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'open'))
-      .order('desc')
-      .take(REPAIR_ROWS),
-    ctx.db
-      .query('obligations')
-      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'snoozed'))
-      .order('desc')
-      .take(REPAIR_ROWS),
-  ]);
-  const threads = new Map<string, { accountId: string; threadId: string }>();
-  for (const row of [...open, ...snoozed])
-    if (row.source === 'mail' && row.kind !== 'code' && row.accountId && row.threadId)
-      threads.set(row.sourceKey, { accountId: row.accountId, threadId: row.threadId });
-  return [...threads.values()];
+/** One page of the open mail threads of a user, and the source key that the next page reads after. */
+export interface MailThreadPage {
+  threads: Array<{ accountId: string; threadId: string }>;
+  /** Undefined when no mail row is left after this page. */
+  next?: string;
+}
+
+/**
+ * At most `limit` open mail threads of a user, in source key order after
+ * `after`. The order is stable: a row that the repair closes keeps its place
+ * in the index, so a page never skips a thread because an earlier page closed
+ * rows. A page reads at most REPAIR_SCAN rows. A full read can stop inside
+ * the rows of its last thread, so the next page reads that thread again.
+ */
+export async function openMailThreadPage(
+  ctx: MutationCtx,
+  userId: string,
+  limit: number,
+  after?: string,
+): Promise<MailThreadPage> {
+  const rows = await ctx.db
+    .query('obligations')
+    .withIndex('by_user_source', (q) =>
+      q
+        .eq('userId', userId)
+        .gt('sourceKey', after ?? MAIL_KEYS_FROM)
+        .lt('sourceKey', MAIL_KEYS_TO),
+    )
+    .take(REPAIR_SCAN);
+  // The rows of one thread are next to each other (the index orders by key).
+  const keys: string[] = [];
+  const open = new Map<string, { accountId: string; threadId: string }>();
+  for (const row of rows) {
+    if (keys[keys.length - 1] !== row.sourceKey) keys.push(row.sourceKey);
+    if (isOpen(row.state) && row.source === 'mail' && row.kind !== 'code' && row.accountId && row.threadId)
+      open.set(row.sourceKey, { accountId: row.accountId, threadId: row.threadId });
+  }
+  const full = rows.length === REPAIR_SCAN;
+  const complete = full && keys.length > 1 ? keys.slice(0, -1) : keys;
+  const threads: MailThreadPage['threads'] = [];
+  let last: string | undefined;
+  for (const key of complete) {
+    const target = open.get(key);
+    if (target) {
+      if (threads.length === limit) return { threads, next: last ?? after ?? MAIL_KEYS_FROM };
+      threads.push(target);
+    }
+    last = key;
+  }
+  return full ? { threads, next: last } : { threads };
 }

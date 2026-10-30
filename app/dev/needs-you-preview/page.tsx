@@ -81,9 +81,11 @@ function NeedsYouPreviewInner() {
           updatedAt: at,
         };
       setItems((list) => list.map((item) => (item.id === next.id ? next : item)));
+      // As the server: an undo and a calendar answer have no undo window.
       return {
         obligation: next,
-        undoUntil: action.action === 'undo' ? undefined : Date.now() + UNDO_WINDOW_MS,
+        undoUntil:
+          action.action === 'undo' || action.action === 'rsvp' ? undefined : Date.now() + UNDO_WINDOW_MS,
       };
     },
     [fixture, fixtureNow],

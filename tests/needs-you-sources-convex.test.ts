@@ -2,9 +2,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, setSystemTime, test 
 import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
+import { BACKFILL_THREADS } from '../convex/jev';
 import {
+  CALENDAR_FILL_EVERY_MS,
   OBLIGATION_RULES_VERSION,
   obligationView,
+  openMailThreadPage,
+  REPAIR_LEASE_MS,
+  REPAIR_SCAN,
   syncCalendarObligations,
   syncThreadObligations,
   type ThreadSync,
@@ -656,6 +661,44 @@ describe('calendar (phase 4)', () => {
     });
   });
 
+  test('an unchanged invitation opens its rsvp on the hourly fill when it enters the 14-day window', async () => {
+    const t = harness();
+    await connect(t);
+    await flag(t);
+    // Twenty days ahead: the sync opens no row, and the event does not change again.
+    await t.mutation(
+      calendar.upsertEventBatch,
+      batch([event({ startAt: CLOCK + 20 * DAY, endAt: CLOCK + 20 * DAY + HOUR })]),
+    );
+    expect(await rows(t)).toEqual([]);
+    // A week later the event is in the window. The claim of a flag user fills the calendar.
+    const week = CLOCK + 7 * DAY;
+    setSystemTime(new Date(week));
+    await t.mutation(jev.claimPending, { ...scope, limit: 1, needsYou: true });
+    await drain(t);
+    const [row] = await rows(t);
+    expect(row).toMatchObject({
+      kind: 'rsvp',
+      state: 'open',
+      eventStart: CLOCK + 20 * DAY,
+      pushLevel: 'none',
+    });
+    // At most once an hour: a claim within the hour does not fill again.
+    await t.run((ctx) => ctx.db.delete(row._id));
+    setSystemTime(new Date(week + CALENDAR_FILL_EVERY_MS - 1));
+    await t.mutation(jev.claimPending, { ...scope, limit: 1, needsYou: true });
+    await drain(t);
+    expect(await rows(t)).toEqual([]);
+    setSystemTime(new Date(week + CALENDAR_FILL_EVERY_MS));
+    await t.mutation(jev.claimPending, { ...scope, limit: 1, needsYou: true });
+    await drain(t);
+    expect((await rows(t)).map((entry) => `${entry.kind}:${entry.state}`)).toEqual(['rsvp:open']);
+    // A user without the flag fills nothing.
+    expect(await t.mutation(internal.obligations.fillCalendar, { userId: 'someone-else' })).toEqual({
+      synced: 0,
+    });
+  });
+
   test('a cancel closes the rsvp by evidence; a deleted or pruned event closes its items', async () => {
     const t = harness();
     await connect(t);
@@ -1253,7 +1296,10 @@ describe('the phase 1.1 repair and the fill', () => {
     );
     // The flag off: nothing.
     await t.mutation(jev.claimPending, { ...scope, limit: 1, needsYou: false });
-    expect(await t.mutation(internal.jev.repairObligations, { userId: USER })).toEqual({ synced: 0 });
+    expect(await t.mutation(internal.jev.repairObligations, { userId: USER })).toEqual({
+      synced: 0,
+      done: true,
+    });
   });
 
   test('the fill makes no time-sensitive row, and fills the labelled content and the invitations', async () => {
@@ -1300,5 +1346,184 @@ describe('the phase 1.1 repair and the fill', () => {
       'slack:action:none',
     ]);
     expect(all.every((row) => row.pushedAt === undefined)).toBe(true);
+  });
+
+  const notice = 'We are updating the Bluefin Pay services agreement on Dec 1.';
+
+  /** Routine notices with a phase 1 verdict (no routine answer), and an open change row each. */
+  async function routineThreads(t: TestConvex<typeof schema>, threads: string[]) {
+    await t.mutation(api.mailCorpus.upsertCorpusBatch, {
+      internalSecret: SECRET,
+      userId: USER,
+      accountId: ACCOUNT,
+      grantId: `grant-${ACCOUNT}`,
+      provider: 'google',
+      threads: [],
+      messages: threads.map((thread) => ({
+        providerMessageId: `msg-${thread}`,
+        providerThreadId: thread,
+        subject: 'Updates to our services agreement',
+        from: 'Bluefin Pay <notice@bluefin.test>',
+        to: 'owner@example.test',
+        receivedAt: CLOCK - 2 * HOUR,
+        snippet: notice,
+        textBody: notice,
+        searchText: notice,
+        labels: ['INBOX'],
+      })),
+    });
+    await t.run(async (ctx) => {
+      const corpus = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_account_thread', (q) => q.eq('userId', USER))
+        .collect();
+      for (const row of corpus) {
+        const messageId = row.latestMessageId as string;
+        await ctx.db.patch(row._id, {
+          llmPending: undefined,
+          jev: assessment({
+            sourceMessageId: messageId,
+            purpose: 'transaction',
+            subjectKind: 'finance',
+            obligations: [],
+            meaningfulChange: true,
+            changeEvidence: { messageId, text: notice },
+            probabilities: { reply: 0.02, action: 0.02, waiting: 0.02, change: 0.95 },
+          }),
+        });
+        await openMailRow(ctx, row.providerThreadId, { messageId, pushLevel: 'time_sensitive' });
+      }
+    });
+  }
+
+  function openMailRow(ctx: any, thread: string, patch: Record<string, unknown> = {}) {
+    return ctx.db.insert('obligations', {
+      userId: USER,
+      kind: 'change',
+      state: 'open',
+      source: 'mail',
+      sourceKey: mailSourceKey(ACCOUNT, thread),
+      accountId: ACCOUNT,
+      threadId: thread,
+      title: 'Changed',
+      asker: 'Bluefin Pay',
+      due: 'none',
+      probability: 0.95,
+      pushLevel: 'none',
+      openedAt: CLOCK - HOUR,
+      createdAt: CLOCK - HOUR,
+      updatedAt: CLOCK - HOUR,
+      ...patch,
+    });
+  }
+
+  async function flagDoc(t: TestConvex<typeof schema>) {
+    return (await t.run((ctx) => ctx.db.query('userDocs').collect())).find(
+      (row) => row.kind === 'needsYouFlag',
+    )?.doc;
+  }
+
+  test('the repair reads a page of threads at a time, skips none as rows close, and saves the version last', async () => {
+    const t = harness();
+    await connect(t);
+    const threads = Array.from(
+      { length: 2 * BACKFILL_THREADS + 10 },
+      (_, i) => `th-${String(i).padStart(3, '0')}`,
+    );
+    await routineThreads(t, threads);
+    await t.run((ctx) =>
+      ctx.db.insert('userDocs', {
+        userId: USER,
+        kind: 'needsYouFlag',
+        key: 'default',
+        doc: { enabled: true },
+        createdAt: NOW,
+        updatedAt: NOW,
+      }),
+    );
+    // One page: at most BACKFILL_THREADS threads, and the next page waits.
+    expect(await t.mutation(internal.jev.repairObligations, { userId: USER })).toEqual({
+      synced: BACKFILL_THREADS,
+      done: false,
+    });
+    await drain(t);
+    // Each page closed its rows; the next page still read every thread after it.
+    const all = await rows(t);
+    expect(all).toHaveLength(threads.length);
+    expect(all.every((row) => row.state === 'resolved' && row.closeReason === 'evidence')).toBe(true);
+    const pages: Array<{ name: string; args: any[]; state: { kind: string } }> = await t.run((ctx) =>
+      (ctx.db as any).system.query('_scheduled_functions').collect(),
+    );
+    const repairs = pages.filter((job) => job.name.includes('repairObligations'));
+    expect(repairs.map((job) => [job.args[0].after, job.state.kind])).toEqual([
+      [mailSourceKey(ACCOUNT, threads[BACKFILL_THREADS - 1]), 'success'],
+      [mailSourceKey(ACCOUNT, threads[2 * BACKFILL_THREADS - 1]), 'success'],
+    ]);
+    // The version changes only after the last page, and the progress goes.
+    expect(await flagDoc(t)).toEqual({ enabled: true, rulesVersion: OBLIGATION_RULES_VERSION });
+    expect(await t.run((ctx) => ctx.db.query('albatrossNotifications').collect())).toEqual([]);
+  });
+
+  test('a stopped repair resumes at its last page; a claim waits while a repair runs', async () => {
+    const t = harness();
+    await connect(t);
+    await routineThreads(t, ['th-a', 'th-b', 'th-c']);
+    // A repair stopped after the page that ended at th-a, five minutes ago.
+    const stopped = {
+      enabled: true,
+      repairAt: CLOCK - 5 * 60_000,
+      repairAfter: mailSourceKey(ACCOUNT, 'th-a'),
+    };
+    await t.run((ctx) =>
+      ctx.db.insert('userDocs', {
+        userId: USER,
+        kind: 'needsYouFlag',
+        key: 'default',
+        doc: stopped,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }),
+    );
+    await t.mutation(jev.claimPending, { ...scope, limit: 1, needsYou: true });
+    await drain(t);
+    expect((await rows(t)).every((row) => row.state === 'open')).toBe(true);
+    expect(await flagDoc(t)).toEqual(stopped);
+    // No page for the lease: the next claim resumes after th-a, not from the start.
+    setSystemTime(new Date(CLOCK - 5 * 60_000 + REPAIR_LEASE_MS));
+    await t.mutation(jev.claimPending, { ...scope, limit: 1, needsYou: true });
+    await drain(t);
+    const byThread = Object.fromEntries((await rows(t)).map((row) => [row.threadId, row.state]));
+    expect(byThread).toEqual({ 'th-a': 'open', 'th-b': 'resolved', 'th-c': 'resolved' });
+    expect(await flagDoc(t)).toEqual({ enabled: true, rulesVersion: OBLIGATION_RULES_VERSION });
+  });
+
+  test('a page that reads REPAIR_SCAN rows reads its last thread again on the next page', async () => {
+    const t = harness();
+    const closed = Array.from({ length: REPAIR_SCAN - 1 }, (_, i) => `c-${String(i).padStart(3, '0')}`);
+    await t.run(async (ctx) => {
+      for (const thread of closed) await openMailRow(ctx, thread, { state: 'resolved', closedAt: CLOCK });
+      // The 200th row is a closed change of th-z; its open reply is the 201st.
+      await openMailRow(ctx, 'th-z', { state: 'resolved', closedAt: CLOCK });
+      await openMailRow(ctx, 'th-z', { kind: 'reply' });
+    });
+    const first = await t.run((ctx) => openMailThreadPage(ctx, USER, BACKFILL_THREADS));
+    expect(first).toEqual({ threads: [], next: mailSourceKey(ACCOUNT, closed[closed.length - 1]) });
+    const second = await t.run((ctx) => openMailThreadPage(ctx, USER, BACKFILL_THREADS, first.next));
+    expect(second).toEqual({ threads: [{ accountId: ACCOUNT, threadId: 'th-z' }] });
+    // A full page of threads stops before the next open thread.
+    await t.run(async (ctx) => {
+      await openMailRow(ctx, 'th-x', { state: 'snoozed', snoozedUntil: CLOCK + DAY });
+      await openMailRow(ctx, 'th-y');
+      await openMailRow(ctx, 'th-y', { kind: 'code' });
+    });
+    const limited = await t.run((ctx) => openMailThreadPage(ctx, USER, 1, first.next));
+    expect(limited).toEqual({
+      threads: [{ accountId: ACCOUNT, threadId: 'th-x' }],
+      next: mailSourceKey(ACCOUNT, 'th-x'),
+    });
+    expect(await t.run((ctx) => openMailThreadPage(ctx, USER, 1, limited.next))).toEqual({
+      threads: [{ accountId: ACCOUNT, threadId: 'th-y' }],
+      next: mailSourceKey(ACCOUNT, 'th-y'),
+    });
   });
 });

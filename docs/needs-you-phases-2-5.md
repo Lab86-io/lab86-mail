@@ -183,9 +183,16 @@ These notes record the decisions of builder S1. The code is the authority.
   time, or at the end of its age limit. Thus these rows do not fill
   "Closed today". Then the fill steps of the connected sources and the
   calendar start. A second repair changes nothing.
-- The Jev claim starts the repair one time for each user in the flag. The
+- The repair operates in pages. One page reads a maximum of 40 threads
+  (`BACKFILL_THREADS`) in the order of the source key. A closed row keeps
+  its position in this order, so no page skips a thread. Each page records
+  its last key (`repairAfter`) and the time (`repairAt`) in the flag record,
+  and starts the next page.
+- The Jev claim starts the repair for each user in the flag. The
   condition is a flag record with an older `rulesVersion`
-  (`OBLIGATION_RULES_VERSION` = 2). No manual step is necessary. To start
+  (`OBLIGATION_RULES_VERSION` = 2). The last page records the new version.
+  If a page fails, the next claim after 30 minutes (`REPAIR_LEASE_MS`)
+  continues at `repairAfter`. No manual step is necessary. To start
   it manually:
   `npx convex run jev:repairObligations '{"userId": "<id>"}'`.
 
@@ -249,6 +256,12 @@ These notes record the decisions of builder S1. The code is the authority.
   the invitation mail is the first notice. An answer from a different
   location closes it as `done` (`event_passed`). A cancel or a removed
   event closes it as `resolved`.
+- A calendar write syncs only a changed event. Thus the Jev claim of a
+  flag user starts `obligations:fillCalendar` a maximum of one time each
+  hour (`CALENDAR_FILL_EVERY_MS`). The fill reads a maximum of 200 events
+  of the next 14 days. An unchanged invitation that comes into the 14-day
+  window then opens its `rsvp` row. One `userDocs` row of the type
+  `needsYouCalendarFill` keeps the time of the last fill.
 - `prepare`: the Jev sweep of a flag user claims a maximum of 6 events of
   the next 24 hours with other persons
   (`obligations:claimPrepareEvents`). Then it sends the `prepare` question

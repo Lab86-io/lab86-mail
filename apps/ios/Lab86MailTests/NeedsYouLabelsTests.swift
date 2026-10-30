@@ -16,6 +16,7 @@ struct NeedsYouLabelsTests {
     private func item(
         kind: ObligationKind = .reply,
         state: ObligationState = .open,
+        source: ObligationSource = .mail,
         due: ObligationDue = .none,
         dueAt: ObligationMillis? = nil,
         pushLevel: ObligationPushLevel = .normal,
@@ -27,6 +28,7 @@ struct NeedsYouLabelsTests {
             id: "ob",
             kind: kind,
             state: state,
+            source: source,
             sourceKey: "mail:acct:thread",
             title: "Asks for a reply.",
             asker: "Ada Example",
@@ -176,6 +178,11 @@ struct NeedsYouLabelsTests {
         #expect(NeedsYouLabels.actionNote(kind: .waiting).contains("when the reply arrives"))
         #expect(NeedsYouLabels.actionNote(kind: .action) == "Done closes this. Undo for 10 seconds.")
         #expect(NeedsYouLabels.actionNote(kind: .change) == "Done closes this. Undo for 10 seconds.")
-        #expect(NeedsYouLabels.actionNote(kind: .rsvp) == "Done closes this. Undo for 10 seconds.")
+        #expect(NeedsYouLabels.actionNote(kind: .rsvp) == "Yes, No, and Maybe answer the invitation in your calendar. An answer has no Undo.")
+        // Only a mail reply sends from the app; another source says where to reply.
+        #expect(NeedsYouLabels.actionNote(item()).contains("Send reply answers in the thread"))
+        #expect(NeedsYouLabels.actionNote(item(source: .slack)) == "Reply in Slack. Done closes this. Undo for 10 seconds.")
+        #expect(NeedsYouLabels.actionNote(item(source: .atlassian)) == "Reply in Jira. Done closes this. Undo for 10 seconds.")
+        #expect(NeedsYouLabels.actionNote(item(kind: .action, source: .slack)) == "Done closes this. Undo for 10 seconds.")
     }
 }

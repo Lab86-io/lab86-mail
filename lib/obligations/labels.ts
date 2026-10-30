@@ -374,7 +374,8 @@ export function actionNote(
     case 'waiting':
       return 'This closes itself when the reply arrives. Done closes it now. Undo for 10 seconds.';
     case 'rsvp':
-      return 'Yes, No, and Maybe answer the invitation in your calendar. Undo for 10 seconds.';
+      // The answer goes to the calendar at once: an RSVP has no undo window.
+      return 'Yes, No, and Maybe answer the invitation in your calendar. An answer has no Undo.';
     case 'prepare':
       return 'Done closes this. It closes itself when the event starts. Undo for 10 seconds.';
     default:

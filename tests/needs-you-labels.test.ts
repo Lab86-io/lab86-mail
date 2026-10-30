@@ -238,7 +238,9 @@ describe('the quiet line under the actions', () => {
     expect(actionNote(item({ kind: 'waiting' }))).toContain('when the reply arrives');
     expect(actionNote(item({ kind: 'action' }))).toBe('Done closes this. Undo for 10 seconds.');
     expect(actionNote(item({ kind: 'change' }))).toBe('Done closes this. Undo for 10 seconds.');
-    expect(actionNote(item({ kind: 'rsvp' }))).toContain('Yes, No, and Maybe answer the invitation');
+    expect(actionNote(item({ kind: 'rsvp' }))).toBe(
+      'Yes, No, and Maybe answer the invitation in your calendar. An answer has no Undo.',
+    );
     expect(actionNote(item({ kind: 'prepare' }))).toContain('closes itself when the event starts');
     expect(
       actionNote(item({ kind: 'action', workId: 'w', workTitle: 'Q3 review deck', asker: 'Priya Raman' })),
