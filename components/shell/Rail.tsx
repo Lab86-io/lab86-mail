@@ -11,6 +11,7 @@ import { History, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Ring } from '@/components/loading-ui/ring';
+import { RailNeedsYouRow } from '@/components/needs-you/RailNeedsYouRow';
 import { useFilesSurface } from '@/components/settings/surfaces';
 import { Button } from '@/components/ui/button';
 import {
@@ -318,6 +319,13 @@ export function Rail({
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
+              <RailNeedsYouRow
+                active={!chatActive && visiblePrimaryView === 'notifications'}
+                onSelect={() => {
+                  setPrimaryView('notifications');
+                  closeMobileSidebar();
+                }}
+              />
               {SURFACES.map(({ view, label, Icon }) => (
                 <SidebarMenuItem key={view}>
                   <SidebarMenuButton

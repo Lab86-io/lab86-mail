@@ -38,9 +38,9 @@ export function useNowMs(intervalMs = 30_000, wakeAt?: number): number {
  * Albatross items, and the groups. `enabled` is false until the snapshot says
  * the user is in the flag.
  */
-export function useNeedsYou() {
+export function useNeedsYou(options: { execution?: boolean } = {}) {
   const raw = useNeedsYouSnapshot();
-  const notifications = useNotifications();
+  const notifications = useNotifications(options);
   const [wakeFrom, setWakeFrom] = useState(() => Date.now());
   const wakeAt = useMemo(() => nextCodeExpiry(raw?.items ?? [], wakeFrom), [raw, wakeFrom]);
   const nowMs = useNowMs(30_000, wakeAt);
