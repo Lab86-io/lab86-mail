@@ -64,6 +64,13 @@ final class MacRequests {
     // ⇧⌘U "Mark as Unread" / "Mark as Read". The open thread flips its mark.
     private(set) var toggleUnreadToken = 0
 
+    // The Needs You menu (docs/needs-you.md, phase 5). The page acts on the
+    // row named by `needsYouSelectedID`, which the page writes while it is
+    // on screen and clears when it leaves.
+    private(set) var needsYouActionToken = 0
+    private(set) var needsYouAction: MacNeedsYouAction = .done
+    var needsYouSelectedID: String?
+
     // The Albatrosses section of the source list: its filter (T12) and its
     // disclosure, shared with the View menu and kept across launches.
     private(set) var threadFilter: WorkFilter
@@ -126,6 +133,11 @@ final class MacRequests {
 
     func requestToggleUnread() {
         toggleUnreadToken += 1
+    }
+
+    func requestNeedsYouAction(_ action: MacNeedsYouAction) {
+        needsYouAction = action
+        needsYouActionToken += 1
     }
 
     /// The header pull-down and the View menu write the same filter.

@@ -724,6 +724,454 @@
         }
       }
     },
+    "/api/mobile/v1/needs-you": {
+      "get": {
+        "operationId": "getMobileNeedsYou",
+        "description": "The Needs you items: open, snoozed, and closed today. enabled is false for a user outside the rollout; the app then hides the screen.",
+        "responses": {
+          "200": {
+            "description": "The Needs you snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NeedsYouSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/needs-you/{id}": {
+      "post": {
+        "operationId": "postMobileNeedsYouAction",
+        "description": "Done, Later (until), Not mine, Undo (inside undoUntil), or an RSVP answer (response) for one item.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObligationActionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The item after the action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObligationActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item, or a user outside the Needs you rollout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/needs-you/{id}/draft": {
+      "post": {
+        "operationId": "postMobileNeedsYouDraft",
+        "description": "The prepared reply of a mail reply item. The server keeps it for the current message.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The prepared reply",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObligationDraftResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item, or a user outside the Needs you rollout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/needs-you/{id}/reply": {
+      "post": {
+        "operationId": "postMobileNeedsYouReply",
+        "description": "Sends the reply in the thread with the undo-send delay and closes the item as sent_reply.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObligationReplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The closed item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObligationReplyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item, or a user outside the Needs you rollout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/needs-you/{id}/albatross": {
+      "post": {
+        "operationId": "postMobileNeedsYouAlbatross",
+        "description": "Start in Albatross: the item goes into its Albatross and reaches a run, or a new Albatross starts from it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Albatross of the item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObligationAlbatrossResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item, or a user outside the Needs you rollout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/mobile/v1/today/summary": {
       "get": {
         "operationId": "getMobileTodaySummary",
@@ -2202,6 +2650,960 @@
       "WorkShape": {
         "type": "string",
         "enum": ["quick", "list", "project", "practice", "decision", "monitor", "recurring"]
+      },
+      "NeedsYouSnapshot": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": ["reply", "action", "waiting", "change", "code", "rsvp", "prepare"]
+                },
+                "state": {
+                  "type": "string",
+                  "enum": ["open", "snoozed", "done", "resolved", "dismissed", "expired"]
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "mail",
+                    "slack",
+                    "atlassian",
+                    "granola",
+                    "drive",
+                    "github",
+                    "bitbucket",
+                    "calendar"
+                  ]
+                },
+                "sourceKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sourceLabel": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "accountId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "threadId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "messageId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "title": {
+                  "type": "string"
+                },
+                "asker": {
+                  "type": "string"
+                },
+                "askerAddress": {
+                  "type": "string"
+                },
+                "why": {
+                  "type": "string"
+                },
+                "excerpt": {
+                  "type": "string"
+                },
+                "due": {
+                  "type": "string",
+                  "enum": ["today", "soon", "later", "none"]
+                },
+                "dueAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "workId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "workTitle": {
+                  "type": "string"
+                },
+                "eventId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "eventStart": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "pushLevel": {
+                  "type": "string",
+                  "enum": ["none", "normal", "time_sensitive"]
+                },
+                "probability": {
+                  "type": "number"
+                },
+                "code": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "issuer": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["value"],
+                  "additionalProperties": false
+                },
+                "snoozedUntil": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "draftReady": {
+                  "type": "boolean"
+                },
+                "createdAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "updatedAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "closedAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "closeReason": {
+                  "type": "string",
+                  "enum": [
+                    "sent_reply",
+                    "user_done",
+                    "user_done_no_reply",
+                    "evidence",
+                    "not_mine",
+                    "code_used",
+                    "expired",
+                    "event_passed",
+                    "aged_out"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "state",
+                "source",
+                "sourceKey",
+                "title",
+                "asker",
+                "due",
+                "pushLevel",
+                "probability",
+                "createdAt",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["enabled", "timezone", "items"],
+        "additionalProperties": false
+      },
+      "ObligationView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["reply", "action", "waiting", "change", "code", "rsvp", "prepare"]
+          },
+          "state": {
+            "type": "string",
+            "enum": ["open", "snoozed", "done", "resolved", "dismissed", "expired"]
+          },
+          "source": {
+            "type": "string",
+            "enum": ["mail", "slack", "atlassian", "granola", "drive", "github", "bitbucket", "calendar"]
+          },
+          "sourceKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceLabel": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "threadId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "messageId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "asker": {
+            "type": "string"
+          },
+          "askerAddress": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "due": {
+            "type": "string",
+            "enum": ["today", "soon", "later", "none"]
+          },
+          "dueAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "workId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "workTitle": {
+            "type": "string"
+          },
+          "eventId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "eventStart": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "pushLevel": {
+            "type": "string",
+            "enum": ["none", "normal", "time_sensitive"]
+          },
+          "probability": {
+            "type": "number"
+          },
+          "code": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string",
+                "minLength": 1
+              },
+              "issuer": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": ["value"],
+            "additionalProperties": false
+          },
+          "snoozedUntil": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "draftReady": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "closedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "closeReason": {
+            "type": "string",
+            "enum": [
+              "sent_reply",
+              "user_done",
+              "user_done_no_reply",
+              "evidence",
+              "not_mine",
+              "code_used",
+              "expired",
+              "event_passed",
+              "aged_out"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "state",
+          "source",
+          "sourceKey",
+          "title",
+          "asker",
+          "due",
+          "pushLevel",
+          "probability",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "ObligationActionRequest": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["done", "later", "not_mine", "undo", "rsvp"]
+          },
+          "until": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "response": {
+            "type": "string",
+            "enum": ["yes", "no", "maybe"]
+          }
+        },
+        "required": ["action"],
+        "additionalProperties": false
+      },
+      "ObligationActionResponse": {
+        "type": "object",
+        "properties": {
+          "obligation": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["reply", "action", "waiting", "change", "code", "rsvp", "prepare"]
+              },
+              "state": {
+                "type": "string",
+                "enum": ["open", "snoozed", "done", "resolved", "dismissed", "expired"]
+              },
+              "source": {
+                "type": "string",
+                "enum": ["mail", "slack", "atlassian", "granola", "drive", "github", "bitbucket", "calendar"]
+              },
+              "sourceKey": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceLabel": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "threadId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "messageId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "asker": {
+                "type": "string"
+              },
+              "askerAddress": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              },
+              "excerpt": {
+                "type": "string"
+              },
+              "due": {
+                "type": "string",
+                "enum": ["today", "soon", "later", "none"]
+              },
+              "dueAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "workId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "workTitle": {
+                "type": "string"
+              },
+              "eventId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "eventStart": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "pushLevel": {
+                "type": "string",
+                "enum": ["none", "normal", "time_sensitive"]
+              },
+              "probability": {
+                "type": "number"
+              },
+              "code": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "issuer": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["value"],
+                "additionalProperties": false
+              },
+              "snoozedUntil": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "draftReady": {
+                "type": "boolean"
+              },
+              "createdAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "updatedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "closedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "closeReason": {
+                "type": "string",
+                "enum": [
+                  "sent_reply",
+                  "user_done",
+                  "user_done_no_reply",
+                  "evidence",
+                  "not_mine",
+                  "code_used",
+                  "expired",
+                  "event_passed",
+                  "aged_out"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "state",
+              "source",
+              "sourceKey",
+              "title",
+              "asker",
+              "due",
+              "pushLevel",
+              "probability",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          },
+          "undoUntil": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["obligation"],
+        "additionalProperties": false
+      },
+      "ObligationDraftResponse": {
+        "type": "object",
+        "properties": {
+          "draft": {
+            "type": "object",
+            "properties": {
+              "to": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "cc": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "subject": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              }
+            },
+            "required": ["to", "cc", "subject", "body"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["draft"],
+        "additionalProperties": false
+      },
+      "ObligationReplyRequest": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false
+      },
+      "ObligationReplyResponse": {
+        "type": "object",
+        "properties": {
+          "obligation": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["reply", "action", "waiting", "change", "code", "rsvp", "prepare"]
+              },
+              "state": {
+                "type": "string",
+                "enum": ["open", "snoozed", "done", "resolved", "dismissed", "expired"]
+              },
+              "source": {
+                "type": "string",
+                "enum": ["mail", "slack", "atlassian", "granola", "drive", "github", "bitbucket", "calendar"]
+              },
+              "sourceKey": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceLabel": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "threadId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "messageId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "asker": {
+                "type": "string"
+              },
+              "askerAddress": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              },
+              "excerpt": {
+                "type": "string"
+              },
+              "due": {
+                "type": "string",
+                "enum": ["today", "soon", "later", "none"]
+              },
+              "dueAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "workId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "workTitle": {
+                "type": "string"
+              },
+              "eventId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "eventStart": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "pushLevel": {
+                "type": "string",
+                "enum": ["none", "normal", "time_sensitive"]
+              },
+              "probability": {
+                "type": "number"
+              },
+              "code": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "issuer": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["value"],
+                "additionalProperties": false
+              },
+              "snoozedUntil": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "draftReady": {
+                "type": "boolean"
+              },
+              "createdAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "updatedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "closedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "closeReason": {
+                "type": "string",
+                "enum": [
+                  "sent_reply",
+                  "user_done",
+                  "user_done_no_reply",
+                  "evidence",
+                  "not_mine",
+                  "code_used",
+                  "expired",
+                  "event_passed",
+                  "aged_out"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "state",
+              "source",
+              "sourceKey",
+              "title",
+              "asker",
+              "due",
+              "pushLevel",
+              "probability",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          },
+          "undoUntil": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["obligation"],
+        "additionalProperties": false
+      },
+      "ObligationAlbatrossResponse": {
+        "type": "object",
+        "properties": {
+          "workId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "obligation": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["reply", "action", "waiting", "change", "code", "rsvp", "prepare"]
+              },
+              "state": {
+                "type": "string",
+                "enum": ["open", "snoozed", "done", "resolved", "dismissed", "expired"]
+              },
+              "source": {
+                "type": "string",
+                "enum": ["mail", "slack", "atlassian", "granola", "drive", "github", "bitbucket", "calendar"]
+              },
+              "sourceKey": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceLabel": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "threadId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "messageId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "asker": {
+                "type": "string"
+              },
+              "askerAddress": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              },
+              "excerpt": {
+                "type": "string"
+              },
+              "due": {
+                "type": "string",
+                "enum": ["today", "soon", "later", "none"]
+              },
+              "dueAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "workId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "workTitle": {
+                "type": "string"
+              },
+              "eventId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "eventStart": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "pushLevel": {
+                "type": "string",
+                "enum": ["none", "normal", "time_sensitive"]
+              },
+              "probability": {
+                "type": "number"
+              },
+              "code": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "issuer": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["value"],
+                "additionalProperties": false
+              },
+              "snoozedUntil": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "draftReady": {
+                "type": "boolean"
+              },
+              "createdAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "updatedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "closedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "closeReason": {
+                "type": "string",
+                "enum": [
+                  "sent_reply",
+                  "user_done",
+                  "user_done_no_reply",
+                  "evidence",
+                  "not_mine",
+                  "code_used",
+                  "expired",
+                  "event_passed",
+                  "aged_out"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "state",
+              "source",
+              "sourceKey",
+              "title",
+              "asker",
+              "due",
+              "pushLevel",
+              "probability",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          },
+          "runId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "required": ["workId", "created", "obligation"],
+        "additionalProperties": false
       },
       "MailArchiveCommand": {
         "type": "object",

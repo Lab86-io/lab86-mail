@@ -34,6 +34,7 @@ struct RootView: View {
         .task(id: environment.sessionStore.ownerID) {
             // The plan and the Files choice belong to the signed-in owner.
             environment.trust.activate(ownerID: environment.sessionStore.ownerID)
+            environment.needsYou.activate(ownerID: environment.sessionStore.ownerID)
             if environment.sessionStore.ownerID != nil {
                 await environment.trust.refreshSurfaces()
             }

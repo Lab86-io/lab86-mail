@@ -26,7 +26,7 @@ struct MacShellView: View {
                 }
         } detail: {
             NavigationStack {
-                RootDestinationView()
+                MacRootDestinationView()
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -94,11 +94,18 @@ struct MacShellView: View {
             await environment.store.bootstrap(cacheOwner: ownerID)
             await environment.notifications.refreshAuthorizationStatus()
             await environment.notifications.retryPendingTextResponses()
+            // The cached flag decides where a push tap goes before the first
+            // Needs you read lands (phase 5).
+            environment.needsYou.activate(ownerID: ownerID)
+            environment.navigation.needsYouEnabled = environment.needsYou.isEnabled
             environment.navigation.consumeAppIntentRequests()
             await ShellNotificationActions.consumePendingMailAction(environment: environment)
             await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
+            await environment.needsYou.load(environment.backend)
+            environment.navigation.needsYouEnabled = environment.needsYou.isEnabled
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            environment.navigation.needsYouEnabled = environment.needsYou.isEnabled
             environment.navigation.consumeAppIntentRequests()
             environment.threads.resumeFollowing(environment.backend)
             Task {
@@ -107,6 +114,9 @@ struct MacShellView: View {
                 await environment.notifications.retryPendingTextResponses()
                 await ShellNotificationActions.consumePendingMailAction(environment: environment)
                 await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
+                // Needs you reads again on return (phase 5).
+                await environment.needsYou.refreshOnForeground(environment.backend)
+                environment.navigation.needsYouEnabled = environment.needsYou.isEnabled
                 // The Mac process stays up for days: the Files choice, the
                 // trial note, and the source line are read again on return.
                 await activationRefresh.run(environment)
@@ -123,6 +133,9 @@ struct MacShellView: View {
                     _ = await environment.refreshAccounts(ownerID: ownerID)
                 }
                 await environment.store.bootstrap(cacheOwner: ownerID)
+                // A Needs you push wakes the Mac as a mail push does; the
+                // list reads again whenever the feature is on.
+                await environment.needsYou.refreshAfterPush(environment.backend)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .lab86MailNotificationAction)) { _ in
@@ -184,6 +197,21 @@ struct MacShellView: View {
         let current = MacGoCommandState.current(environment)
         guard let target = MacThreadListLayout.target(move, from: current, in: rows) else { return }
         environment.navigation.openWork(id: target.id, title: target.title)
+    }
+}
+
+// The Mac's own surfaces take the place of the shared ones where the window
+// has room for two panes: Needs you shows its list beside the detail (phase
+// 5), as Mail shows the reading pane. Everything else is the shared switch.
+struct MacRootDestinationView: View {
+    @Environment(AppEnvironment.self) private var environment
+
+    var body: some View {
+        if environment.navigation.selectedTab == .needsYou {
+            MacNeedsYouSplitView()
+        } else {
+            RootDestinationView()
+        }
     }
 }
 
@@ -250,8 +278,12 @@ struct MacSourceList: View {
     @State private var newAreaName = ""
     @State private var isCreatingArea = false
 
-    // Files shows only while Settings, Advanced turns it on (round 2).
-    private var primaries: [PrimaryTab] { PrimaryTab.sourceList(showsFiles: environment.trust.showsFiles) }
+    // Files shows only while Settings, Advanced turns it on (round 2). Needs
+    // you shows only while the snapshot says the feature is on (phase 5).
+    private var primaries: [PrimaryTab] {
+        PrimaryTab.sourceList(showsFiles: environment.trust.showsFiles, showsNeedsYou: environment.needsYou.isEnabled)
+    }
+    private var needsYouNowCount: Int { environment.needsYou.nowCount() }
     private var labels: [MailLabelSummary] { environment.store.mailLabels }
     private var areas: [AreaSummary] { environment.store.areas }
 
@@ -371,10 +403,23 @@ struct MacSourceList: View {
                 navigation.pendingMailCategory = category
             }
         } label: {
-            Label(destination.title, systemImage: destination.symbol)
-                .fontWeight(selected ? .semibold : .regular)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(.rect)
+            HStack(spacing: 8) {
+                Label(destination.title, systemImage: destination.symbol)
+                    .fontWeight(selected ? .semibold : .regular)
+                Spacer(minLength: 0)
+                // The Now count beside the Needs you row, as the web rail's
+                // bell count and the iOS sidebar show it.
+                if destination == .needsYou, needsYouNowCount > 0 {
+                    Text("\(needsYouNowCount) now")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .listRowBackground(

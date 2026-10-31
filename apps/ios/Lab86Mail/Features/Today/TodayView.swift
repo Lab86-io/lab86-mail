@@ -767,6 +767,8 @@ struct TodayView: View {
                 environment.navigation.openWork(id: workID, title: title)
             case .primaryView(let view):
                 environment.navigation.openPrimaryView(view)
+            case .obligation(let id):
+                environment.navigation.openNeedsYou(.id(id))
             case .externalURL(let url):
                 openURL(url)
             }
@@ -880,6 +882,8 @@ struct TodayProblemLine: View {
 enum TodayBriefNavigationIntent: Equatable {
     case work(workID: String, areaID: String?, title: String?)
     case primaryView(String)
+    // The Needs you page, open at one item (the brief lane's `open_view`).
+    case obligation(String)
     case externalURL(URL)
 
     static func resolve(action: String, payload: BriefActionPayload) -> Self? {
@@ -889,6 +893,13 @@ enum TodayBriefNavigationIntent: Equatable {
             return .work(workID: workID, areaID: payload.areaID, title: payload.title)
         case "open_view":
             guard let view = payload.view else { return nil }
+            // The brief's Needs you lane names its item. The old Notifications
+            // sheet has no item to open, so the Needs you page takes it.
+            if let obligationID = payload.obligationID?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !obligationID.isEmpty,
+               ["notifications", "needs-you"].contains(view.lowercased()) {
+                return .obligation(obligationID)
+            }
             return .primaryView(view)
         case "open_url":
             guard let rawURL = payload.url,

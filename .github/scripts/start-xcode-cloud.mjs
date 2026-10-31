@@ -129,6 +129,33 @@ export async function startBuildRunWithConditionPropagation(
   }
 }
 
+export const PLA_NOT_ACCEPTED_CODE = 'FORBIDDEN_ERROR.PLA_NOT_ACCEPTED';
+
+// When the Account Holder has not accepted the latest Program License
+// Agreement, Apple blocks the membership resources that Xcode Cloud uses to
+// sign an archive. The build start then fails with a bare 500 UNEXPECTED_ERROR.
+// A membership endpoint gives the real cause, so ask one after a 5xx failure.
+export async function explainBuildStartFailure(error, appStoreConnect) {
+  if (!(error instanceof AppStoreConnectRequestError) || !(error.status >= 500)) return error;
+  try {
+    await appStoreConnect('/v1/bundleIds?limit=1&fields[bundleIds]=identifier');
+  } catch (probeError) {
+    const agreementIsPending =
+      probeError instanceof AppStoreConnectRequestError &&
+      probeError.status === 403 &&
+      probeError.message.includes(PLA_NOT_ACCEPTED_CODE);
+    if (agreementIsPending) {
+      return new Error(
+        'Xcode Cloud did not start the build because the team Account Holder has not accepted the latest ' +
+          'Apple Developer Program License Agreement (App Store Connect reports ' +
+          `${PLA_NOT_ACCEPTED_CODE}). Accept it at https://developer.apple.com/account, then rerun this job.`,
+        { cause: error },
+      );
+    }
+  }
+  return error;
+}
+
 export function createBuildRunPayload(workflowID, branchRefID) {
   return {
     data: {
@@ -512,12 +539,17 @@ export async function main() {
   // own creation date on the resolved build run, so this clock is the
   // fallback rather than the string "undefined".
   const requestedAt = new Date().toISOString();
-  const response = await startBuildRunWithConditionPropagation(() =>
-    appStoreConnect('/v1/ciBuildRuns', {
-      method: 'POST',
-      body: JSON.stringify(createBuildRunPayload(workflowID, branchRefID)),
-    }),
-  );
+  let response;
+  try {
+    response = await startBuildRunWithConditionPropagation(() =>
+      appStoreConnect('/v1/ciBuildRuns', {
+        method: 'POST',
+        body: JSON.stringify(createBuildRunPayload(workflowID, branchRefID)),
+      }),
+    );
+  } catch (error) {
+    throw await explainBuildStartFailure(error, appStoreConnect);
+  }
 
   const buildRun = await resolveBuildRunSource(
     response.data,

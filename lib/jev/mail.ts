@@ -11,6 +11,7 @@ import {
   type JevAssessment,
   jevAssessmentSchema,
   jevReason,
+  ROUTINE_NOTICE_QUESTION,
 } from './contract';
 
 export interface JevMailMessage {
@@ -202,6 +203,12 @@ export function buildMailQuestions(
     change: noul(
       'Does the latest inbound message report a newly occurring material problem or changed terms affecting an existing commitment, account, order or booking? Include payment failure, cancellation, rescheduling, overdue bill or account lock. Exclude ordinary receipts/confirmations, optional offers, hypothetical risks, and support discussion of an already established problem without a new change.',
     ),
+    // Needs you, phase 1.1: a routine notice never opens an item. The answer
+    // is optional and does not change the question version: an older verdict
+    // has no value and reads as "no".
+    [ROUTINE_NOTICE_QUESTION]: noul(
+      'Is the latest inbound message a routine notice (a terms, privacy, or policy update, a renewal or billing reminder, or a feature announcement) with no problem the owner must fix? A security notice that only confirms a sign-in, a new device, or an access that the owner gave also counts as routine. A failed payment, a cancelled or moved booking, a locked account, or a revoked credential is a problem, not a routine notice.',
+    ),
     // Needs you (docs/needs-you.md): the due bucket orders the obligations.
     // It does not change the question version: an older verdict reads as `none`.
     due: choice(
@@ -289,6 +296,9 @@ export function assessmentFromResponse(
     if (key === 'change') changeEvidence = evidence;
     else obligations.push({ kind: key, evidence, probability: answer.noul });
   }
+  // `routine_notice` is optional: a response without it stores no value.
+  const routine = response.answers[ROUTINE_NOTICE_QUESTION];
+  if (routine?.type === 'noul') probabilities[ROUTINE_NOTICE_QUESTION] = routine.noul;
   // `due` is optional: a response without it (or an unclear one) gives no due.
   const dueAnswer = response.answers.due;
   const due =

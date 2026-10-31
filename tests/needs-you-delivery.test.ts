@@ -268,14 +268,36 @@ describe('APNs collapse id and the time-sensitive level', () => {
           return { providerId: 'p' };
         }) as any,
       },
-      { collapseId: 'ob_1', timeSensitive: true, codeAvailable: true },
+      { collapseId: 'ob_1', timeSensitive: true, codeAvailable: true, obligationId: 'ob_1' },
     );
     expect(envelopes[0]).toMatchObject({
       collapseId: 'ob_1',
       timeSensitive: true,
       codeAvailable: true,
       type: 'obligation',
+      obligationId: 'ob_1',
     });
+  });
+
+  test('the payload names the type and the obligation for the push tap, and keeps the code flag', () => {
+    const code = buildAPNsPayload({
+      ...envelope,
+      obligationId: 'ob_1',
+      codeAvailable: true,
+      timeSensitive: true,
+    });
+    expect(code).toMatchObject({ type: 'obligation', obligationId: 'ob_1', codeAvailable: true });
+    // The hourly summary names no item: a tap opens the page.
+    const summary = buildAPNsPayload({ ...envelope, collapseId: SUMMARY_COLLAPSE_ID });
+    expect(summary.type).toBe('obligation');
+    expect('obligationId' in summary).toBe(false);
+    expect('codeAvailable' in summary).toBe(false);
+    // A push without a type or an item keeps the phase 1 keys only.
+    const { type: _type, ...plain } = envelope;
+    const bare = buildAPNsPayload(plain);
+    expect('type' in bare).toBe(false);
+    expect('obligationId' in bare).toBe(false);
+    expect(bare).toMatchObject({ notificationId: 'n1', accountId: 'a', threadId: 't' });
   });
 });
 
@@ -343,13 +365,14 @@ describe('delivery (lib/obligations/delivery.ts)', () => {
       {
         userId: 'u',
         notificationId: 'n1',
-        options: { collapseId: 'ob1', codeAvailable: true, timeSensitive: true },
+        options: { collapseId: 'ob1', obligationId: 'ob1', codeAvailable: true, timeSensitive: true },
       },
     ]);
     expect(
       pushOptions({ notificationId: 'n', collapseId: 'c', codeAvailable: false, timeSensitive: false }),
     ).toEqual({
       collapseId: 'c',
+      obligationId: 'c',
     });
   });
 
@@ -372,7 +395,7 @@ describe('delivery (lib/obligations/delivery.ts)', () => {
       failed: 1,
     });
     expect(dispatched).toEqual([
-      { userId: 'u1', notificationId: 'n1', options: { collapseId: 'ob1' } },
+      { userId: 'u1', notificationId: 'n1', options: { collapseId: 'ob1', obligationId: 'ob1' } },
       { userId: 'u2', notificationId: 'n2', options: { collapseId: SUMMARY_COLLAPSE_ID } },
     ]);
   });

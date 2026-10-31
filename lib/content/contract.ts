@@ -13,6 +13,12 @@ export const contentLabelsSchema = z.object({
   confidence: z.number().min(0).max(1),
   model: z.string(),
   evaluatedAt: z.number(),
+  // Needs you (phase 2). Optional: labels stored before them have no value.
+  // `due` is Jev's answer to "when must the owner act"; a missing value is
+  // `none`. `actionableProbability` is the raw `actionable` answer, for the
+  // push bar.
+  due: z.enum(['today', 'soon', 'later', 'none']).optional(),
+  actionableProbability: z.number().min(0).max(1).optional(),
 });
 export type ContentLabels = z.infer<typeof contentLabelsSchema>;
 export interface ContentItem {

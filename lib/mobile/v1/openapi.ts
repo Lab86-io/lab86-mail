@@ -24,6 +24,18 @@ const errorResponses = {
   '500': { description: 'Server failure', content: jsonContent('MobileErrorEnvelope') },
 };
 
+const notFoundResponse = {
+  description: 'Unknown item, or a user outside the Needs you rollout',
+  content: jsonContent('MobileErrorEnvelope'),
+};
+
+const obligationIdParameter = {
+  name: 'id',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', minLength: 1, maxLength: 240 },
+} as const;
+
 export function mobileOpenAPIV1() {
   const components = Object.fromEntries(
     Object.entries(MobileContractV1.schemas).map(([name, schema]) => [name, schemaFor(schema)]),
@@ -233,6 +245,77 @@ export function mobileOpenAPIV1() {
               content: jsonContent('MobileSendAsPage'),
             },
             '404': { description: 'Unknown mailbox', content: jsonContent('MobileErrorEnvelope') },
+            ...errorResponses,
+          },
+        },
+      },
+      '/api/mobile/v1/needs-you': {
+        get: {
+          operationId: 'getMobileNeedsYou',
+          description:
+            'The Needs you items: open, snoozed, and closed today. enabled is false for a user outside the rollout; the app then hides the screen.',
+          responses: {
+            '200': { description: 'The Needs you snapshot', content: jsonContent('NeedsYouSnapshot') },
+            ...errorResponses,
+          },
+        },
+      },
+      '/api/mobile/v1/needs-you/{id}': {
+        post: {
+          operationId: 'postMobileNeedsYouAction',
+          description:
+            'Done, Later (until), Not mine, Undo (inside undoUntil), or an RSVP answer (response) for one item.',
+          parameters: [obligationIdParameter],
+          requestBody: { required: true, content: jsonContent('ObligationActionRequest') },
+          responses: {
+            '200': {
+              description: 'The item after the action',
+              content: jsonContent('ObligationActionResponse'),
+            },
+            '404': notFoundResponse,
+            ...errorResponses,
+          },
+        },
+      },
+      '/api/mobile/v1/needs-you/{id}/draft': {
+        post: {
+          operationId: 'postMobileNeedsYouDraft',
+          description:
+            'The prepared reply of a mail reply item. The server keeps it for the current message.',
+          parameters: [obligationIdParameter],
+          responses: {
+            '200': { description: 'The prepared reply', content: jsonContent('ObligationDraftResponse') },
+            '404': notFoundResponse,
+            ...errorResponses,
+          },
+        },
+      },
+      '/api/mobile/v1/needs-you/{id}/reply': {
+        post: {
+          operationId: 'postMobileNeedsYouReply',
+          description:
+            'Sends the reply in the thread with the undo-send delay and closes the item as sent_reply.',
+          parameters: [obligationIdParameter],
+          requestBody: { required: true, content: jsonContent('ObligationReplyRequest') },
+          responses: {
+            '200': { description: 'The closed item', content: jsonContent('ObligationReplyResponse') },
+            '404': notFoundResponse,
+            ...errorResponses,
+          },
+        },
+      },
+      '/api/mobile/v1/needs-you/{id}/albatross': {
+        post: {
+          operationId: 'postMobileNeedsYouAlbatross',
+          description:
+            'Start in Albatross: the item goes into its Albatross and reaches a run, or a new Albatross starts from it.',
+          parameters: [obligationIdParameter],
+          responses: {
+            '200': {
+              description: 'The Albatross of the item',
+              content: jsonContent('ObligationAlbatrossResponse'),
+            },
+            '404': notFoundResponse,
             ...errorResponses,
           },
         },

@@ -30,6 +30,12 @@ import { PracticeBody } from '@/components/albatross/shapes/PracticeBody';
 import { ProjectBody } from '@/components/albatross/shapes/ProjectBody';
 import { shapeFinishes, shapeShowsPlan } from '@/components/albatross/shapes/ShapeFrame';
 import { ShapePicker } from '@/components/albatross/shapes/ShapePicker';
+import {
+  postObligationAction,
+  postObligationAlbatross,
+  useWorkObligations,
+} from '@/components/needs-you/data';
+import { sonnerNeedsYouNotifier } from '@/components/needs-you/NeedsYouView';
 import { SecureItemSheet, type SecureSheetRequest } from '@/components/settings/SecureItemSheet';
 import { AssistantChat } from '@/components/shell/AIBar';
 import { type AllowSendFn, useAllowSend } from '@/components/thread/use-allow-send';
@@ -102,6 +108,9 @@ import {
 } from '@/lib/albatross/work-view';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import type { ObligationAction, ObligationView } from '@/lib/obligations/contract';
+import { withObligationOverrides } from '@/lib/obligations/groups';
+import { actionToastTitle } from '@/lib/obligations/labels';
 import type { SecureItemView } from '@/lib/secure/contract';
 import { cn } from '@/lib/utils';
 import { undoPersonalDetails } from '../ai-elements/form-question-card';
@@ -124,6 +133,7 @@ import { PagePane, type PageSession } from './thread/PagePane';
 import { PlanIntro, PlanLine, PlanOutro } from './thread/PlanIntro';
 import { RunBlock } from './thread/RunBlock';
 import { ThreadJumpPill } from './thread/ThreadJumpPill';
+import { ThreadObligations } from './thread/ThreadObligations';
 import { useSavedFileLoader } from './thread/use-saved-file';
 import { useWorkShape, type WorkShapeState } from './thread/use-work-shape';
 import { WorkQuestions } from './thread/WorkQuestions';
@@ -209,6 +219,10 @@ export interface ThreadModel {
   documentDone?: { busy: boolean; error: string | null };
   /** A Work question (no run owns it) whose answer is in flight, or the line of a failed answer. */
   workQuestion?: { busyId: string | null; error: { questionId: string; text: string } | null };
+  /** Needs you (phase 3): the items of this Albatross, open or closed today, as messages from their sources. */
+  obligations?: readonly ObligationView[];
+  /** The item with an action in flight, and the line of the last failed action. */
+  obligationBusy?: { id: string | null; error: { id: string; text: string } | null };
 }
 
 export interface ThreadHandlers {
@@ -261,6 +275,10 @@ export interface ThreadHandlers {
   loadFile?: (url: string) => Promise<ArrayBuffer>;
   /** The send permission of a sealed file, through the identity check. The harness passes none. */
   allowSend?: AllowSendFn;
+  /** Needs you: Done, Later, Not mine, and an RSVP answer on one item of this thread. */
+  onObligationAction?: (obligation: ObligationView, action: ObligationAction) => void;
+  /** "Handle it": a run starts in this thread with the item as its input. */
+  onObligationHandle?: (obligation: ObligationView) => void;
   /** The dev harness: a fixture transport, preview mode, and the messages to show. */
   chat?: { transport?: ChatTransport<UIMessage>; preview?: boolean; initialMessages?: UIMessage[] };
 }
@@ -504,6 +522,17 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
             intro: documentOpen ? undefined : intro,
             outro: (
               <>
+                {model.obligations?.length && handlers.onObligationAction && handlers.onObligationHandle ? (
+                  <ThreadObligations
+                    items={model.obligations}
+                    now={model.nowMs}
+                    timeZone={model.timeZone}
+                    busyId={model.obligationBusy?.id ?? null}
+                    error={model.obligationBusy?.error ?? null}
+                    onAction={handlers.onObligationAction}
+                    onHandle={handlers.onObligationHandle}
+                  />
+                ) : null}
                 {handlers.onAnswerWorkQuestion ? (
                   <WorkQuestions
                     questions={workQuestions}
@@ -1128,6 +1157,78 @@ export function WorkThread({ workId }: { workId: string }) {
     busyId: null,
     error: null,
   });
+  // Needs you items of this thread (phase 3). What the user just did shows at
+  // once; the live row replaces it when the server catches up.
+  const liveObligations = useWorkObligations(workId);
+  const [obligationOverrides, setObligationOverrides] = useState<ReadonlyMap<string, ObligationView>>(
+    () => new Map(),
+  );
+  const [obligationBusy, setObligationBusy] = useState<NonNullable<ThreadModel['obligationBusy']>>({
+    id: null,
+    error: null,
+  });
+  const obligations = useMemo(
+    () => (liveObligations ? withObligationOverrides(liveObligations, obligationOverrides) : []),
+    [liveObligations, obligationOverrides],
+  );
+  const overrideObligation = useCallback((obligation: ObligationView) => {
+    setObligationOverrides((current) => new Map(current).set(obligation.id, obligation));
+  }, []);
+  const obligationAct = useCallback(
+    async (obligation: ObligationView, action: ObligationAction) => {
+      setObligationBusy({ id: obligation.id, error: null });
+      try {
+        const response = await postObligationAction(obligation.id, action);
+        overrideObligation(response.obligation);
+        setObligationBusy({ id: null, error: null });
+        const title = actionToastTitle(action);
+        const until = response.undoUntil;
+        if (until && until > Date.now()) {
+          sonnerNeedsYouNotifier.undo({
+            title,
+            until,
+            onUndo: async () => {
+              const undone = await postObligationAction(obligation.id, { action: 'undo' });
+              overrideObligation(undone.obligation);
+            },
+          });
+        } else sonnerNeedsYouNotifier.info(title);
+      } catch (caught) {
+        setObligationBusy({
+          id: null,
+          error: {
+            id: obligation.id,
+            text: caught instanceof Error && caught.message ? caught.message : 'Could not save this change.',
+          },
+        });
+      }
+    },
+    [overrideObligation],
+  );
+  const obligationHandle = useCallback(
+    async (obligation: ObligationView) => {
+      setObligationBusy({ id: obligation.id, error: null });
+      try {
+        const response = await postObligationAlbatross(obligation.id);
+        overrideObligation(response.obligation);
+        setObligationBusy({ id: null, error: null });
+        sonnerNeedsYouNotifier.info('Started in Albatross', obligation.title);
+        if (response.workId !== workId) setSelectedWorkId(response.workId);
+      } catch (caught) {
+        setObligationBusy({
+          id: null,
+          error: {
+            id: obligation.id,
+            text:
+              caught instanceof Error && caught.message
+                ? caught.message
+                : 'Could not start this in Albatross.',
+          },
+        });
+      }
+    },
+    [overrideObligation, workId, setSelectedWorkId],
+  );
   // An answered Work question keeps its busy form until the live detail drops it,
   // so the user cannot send the same answer twice.
   useEffect(() => {
@@ -1723,6 +1824,8 @@ export function WorkThread({ workId }: { workId: string }) {
     sentDrafts,
     documentDone,
     workQuestion,
+    obligations,
+    obligationBusy,
   };
   // The rail beside the thread (lead decision 3): 300 px on desktops, 272 px on
   // laptops, where it also yields to an open region; none below 1024 px.
@@ -1765,7 +1868,14 @@ export function WorkThread({ workId }: { workId: string }) {
           />
         ) : null}
         <div className="min-h-0 min-w-0 flex-1">
-          <WorkThreadView model={model} handlers={handlers} />
+          <WorkThreadView
+            model={model}
+            handlers={{
+              ...handlers,
+              onObligationAction: (obligation, action) => void obligationAct(obligation, action),
+              onObligationHandle: (obligation) => void obligationHandle(obligation),
+            }}
+          />
         </div>
       </div>
       <SecureItemSheet

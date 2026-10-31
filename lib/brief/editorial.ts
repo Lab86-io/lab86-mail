@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { NEEDS_YOU_LANE_ID, NEEDS_YOU_LANE_TITLE, needsYouEditorialStory } from '../obligations/brief-region';
 import {
   type BriefDocumentV2,
   BriefDocumentV2Schema,
@@ -133,6 +134,21 @@ export function editorialModules(report: DailyReport, letter: BriefDocumentV2): 
   const modules: EditorialModule[] = [];
   for (const region of letter.regions) {
     const tree = region.tree;
+    // Needs you stays one module, as the look back does: the writer places
+    // the whole lane, so its title, count, "Due today" split, and closed line
+    // stay together on every client (lib/obligations/brief-region.ts).
+    if (region.id === NEEDS_YOU_LANE_ID) {
+      const story = needsYouEditorialStory(region);
+      if (story)
+        modules.push({
+          id: NEEDS_YOU_LANE_ID,
+          section: region.id,
+          title: NEEDS_YOU_LANE_TITLE,
+          summary: region.summary,
+          presentations: { story },
+        });
+      continue;
+    }
     if (tree.kind !== 'entity_list') {
       const title =
         region.id === 'yesterday'
@@ -263,6 +279,11 @@ export function editorialModules(report: DailyReport, letter: BriefDocumentV2): 
   return modules.filter((module, index) => modules.findIndex((entry) => entry.id === module.id) === index);
 }
 
+/** An editorial plan, and so a document, holds at most this many regions. */
+export const EDITORIAL_REGION_LIMIT = 12;
+/** A stack in an editorial plan holds at most this many children. */
+const EDITORIAL_STACK_LIMIT = 24;
+
 export function defaultEditorialPlan(modules: EditorialModule[]): EditorialPlan {
   const sections = new Map<string, EditorialModule[]>();
   for (const module of modules) {
@@ -270,30 +291,58 @@ export function defaultEditorialPlan(modules: EditorialModule[]): EditorialPlan 
     group.push(module);
     sections.set(module.section, group);
   }
-  return {
-    version: 1,
-    regions: [...sections].map(([section, entries]) => ({
-      id: section.replaceAll('_', '-'),
-      summary: truncateText(entries.map((entry) => entry.summary).join(' '), 1000),
-      tree:
-        entries.length === 1 && entries[0].presentations.story.kind === 'live_section'
-          ? { kind: 'module', id: entries[0].id, footprint: 'feature' }
-          : {
-              kind: 'stack',
-              density: 'standard',
-              children: entries.map((entry) => ({
-                kind: 'module',
-                id: entry.id,
-                presentation: entry.presentations.timeline
-                  ? 'timeline'
-                  : entry.presentations.checklist
-                    ? 'checklist'
-                    : 'story',
-                footprint: section === 'lede' || section === 'prepared_work' ? 'feature' : 'standard',
-              })),
-            },
-    })),
-  };
+  const regions: EditorialPlan['regions'] = [...sections].map(([section, entries]) => ({
+    id: section.replaceAll('_', '-'),
+    summary: truncateText(entries.map((entry) => entry.summary).join(' '), 1000),
+    tree:
+      entries.length === 1 && entries[0].presentations.story.kind === 'live_section'
+        ? { kind: 'module', id: entries[0].id, footprint: 'feature' }
+        : {
+            kind: 'stack',
+            density: 'standard',
+            children: entries.map((entry) => ({
+              kind: 'module',
+              id: entry.id,
+              presentation: entry.presentations.timeline
+                ? 'timeline'
+                : entry.presentations.checklist
+                  ? 'checklist'
+                  : 'story',
+              footprint: section === 'lede' || section === 'prepared_work' ? 'feature' : 'standard',
+            })),
+          },
+  }));
+  return { version: 1, regions: fitEditorialRegions(regions) };
+}
+
+/**
+ * A full letter (12 regions) and the two live sections make 14 sections, and
+ * the plan schema allows 12. The last sections then share one region, in
+ * their order, so the fallback plan always composes.
+ */
+function fitEditorialRegions(regions: EditorialPlan['regions']): EditorialPlan['regions'] {
+  if (regions.length <= EDITORIAL_REGION_LIMIT) return regions;
+  const kept = regions.slice(0, EDITORIAL_REGION_LIMIT - 1);
+  const rest = regions.slice(EDITORIAL_REGION_LIMIT - 1);
+  const children = rest.flatMap((region) =>
+    region.tree.kind === 'stack' ? region.tree.children : [region.tree],
+  );
+  // More children than a stack holds: the rest stack in groups of the limit.
+  const chunks: EditorialNode[] = [];
+  for (let index = 0; index < children.length; index += EDITORIAL_STACK_LIMIT)
+    chunks.push({
+      kind: 'stack',
+      density: 'standard',
+      children: children.slice(index, index + EDITORIAL_STACK_LIMIT),
+    });
+  return [
+    ...kept,
+    {
+      id: rest[0].id,
+      summary: truncateText(rest.map((region) => region.summary).join(' '), 1000),
+      tree: chunks.length === 1 ? chunks[0] : { kind: 'stack', density: 'standard', children: chunks },
+    },
+  ];
 }
 
 /** The host records the evidence version after authoring, never from model claims. */

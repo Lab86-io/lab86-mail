@@ -40,6 +40,11 @@ enum NotificationResponseApplier {
                 ]
             )
         }
+        if let tap = plan.obligationTap {
+            // The route alone cannot tell a Needs you push from a mail push:
+            // the thread keys travel with it, and the shell decides.
+            tap.write(to: defaults)
+        }
         if let route = plan.route {
             // A response that launches the app arrives before the shell exists
             // to hear an announcement, so the route is written down first. The
