@@ -27,7 +27,8 @@ interface RowProps {
 }
 
 function Row({ active, onSelect }: RowProps) {
-  const { isLoading, summary } = useNeedsYou();
+  // Counts only: no current-move read.
+  const { isLoading, summary } = useNeedsYou({ execution: false });
   const badge = isLoading ? null : railNeedsYouBadge(summary);
   return (
     <SidebarMenuItem>

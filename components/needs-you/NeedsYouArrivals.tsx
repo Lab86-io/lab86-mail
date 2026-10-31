@@ -135,7 +135,8 @@ export function newArrivals(
 }
 
 function ArrivalsInner() {
-  const { enabled, isLoading, groups, nowMs, snapshot } = useNeedsYou();
+  // Groups only: no current-move read.
+  const { enabled, isLoading, groups, nowMs, snapshot } = useNeedsYou({ execution: false });
   const setPrimaryView = useClientStore((state) => state.setPrimaryView);
   const seen = useRef<Set<string> | null>(null);
   const timezone = snapshot?.timezone ?? 'UTC';

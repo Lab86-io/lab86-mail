@@ -71,7 +71,8 @@ function LegacyCenter(props: CenterProps) {
 
 /** The bell with Needs you: the count of the Now group. */
 function NeedsYouCenter(props: CenterProps) {
-  const { enabled, isLoading, summary, notifications } = useNeedsYou();
+  // Counts only: no current-move read.
+  const { enabled, isLoading, summary, notifications } = useNeedsYou({ execution: false });
   const count = isLoading ? 0 : enabled ? summary.now : notifications.projection.count;
   return <BellButton {...props} count={count} needsYou={enabled} />;
 }

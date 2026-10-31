@@ -19,8 +19,13 @@ export interface CurrentMove {
   phase: 'active' | 'upcoming' | 'unscheduled';
 }
 
-/** Both the footer and page subscribe to these exact owners and bounds. */
-export function useNotifications() {
+/**
+ * Both the footer and page subscribe to these exact owners and bounds.
+ * `execution: false` skips the current-move read (up to 200 work rows, again
+ * every 30 seconds) for callers that show only counts.
+ */
+export function useNotifications(options: { execution?: boolean } = {}) {
+  const withExecution = options.execution !== false;
   const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
   const [nowMs, setNowMs] = useState(() => Date.now());
   const center = useQuery(
@@ -38,14 +43,15 @@ export function useNotifications() {
     | (DailyCheckinData & { createdAt?: number })
     | null
     | undefined;
-  const execution = useQuery(api.albatrossWorkV2.executionSnapshot, isAuthenticated ? { nowMs } : 'skip') as
-    | { currentMove: CurrentMove | null }
-    | undefined;
+  const execution = useQuery(
+    api.albatrossWorkV2.executionSnapshot,
+    isAuthenticated && withExecution ? { nowMs } : 'skip',
+  ) as { currentMove: CurrentMove | null } | undefined;
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !withExecution) return;
     const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => globalThis.clearInterval(timer);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, withExecution]);
   const isLoading =
     authLoading ||
     (isAuthenticated && [center, questions, approvals, checkin].some((value) => value === undefined));

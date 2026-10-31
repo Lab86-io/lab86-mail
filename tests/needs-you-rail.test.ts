@@ -16,3 +16,16 @@ test('the rail shows Needs you first, above the surfaces, and it opens the Needs
   expect(row).toBeLessThan(surfaces);
   expect(rail.slice(row, surfaces)).toContain("setPrimaryView('notifications')");
 });
+
+test('count-only callers skip the current-move read; the hook skips it and its timer when asked', () => {
+  for (const file of [
+    'components/needs-you/RailNeedsYouRow.tsx',
+    'components/shell/NotificationCenter.tsx',
+    'components/needs-you/NeedsYouArrivals.tsx',
+  ])
+    expect(readFileSync(file, 'utf8')).toContain('useNeedsYou({ execution: false })');
+  expect(readFileSync('components/needs-you/useNeedsYou.ts', 'utf8')).toContain('useNotifications(options)');
+  const hook = readFileSync('components/notifications/useNotifications.ts', 'utf8');
+  expect(hook).toContain("isAuthenticated && withExecution ? { nowMs } : 'skip'");
+  expect(hook).toContain('if (!isAuthenticated || !withExecution) return;');
+});
