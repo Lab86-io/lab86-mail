@@ -1228,15 +1228,18 @@ function composeComparison(content: CompositionContent, options: ComposeSlideOpt
   const count = items.length;
   const gutter = 4;
   const width = (88 - (count - 1) * gutter) / count;
+  // The accent marks the recommended choice. With none, it goes on the last item.
+  const recommended = items.findIndex((item) => isRecommended(item));
+  const accented = recommended === -1 ? count - 1 : recommended;
   items.forEach((item, i) => {
     const x = 6 + i * (width + gutter);
-    const last = i === count - 1;
-    s.rect(`panel-${i}`, [x, 30, width, 58], last ? v.c.accent : v.c.surface, {
+    const accent = i === accented;
+    s.rect(`panel-${i}`, [x, 30, width, 58], accent ? v.c.accent : v.c.surface, {
       shape: v.editorial ? 'rect' : 'roundRect',
       radius: 10,
     });
-    const ink = last ? v.c.accentInk : v.c.ink;
-    const soft = last ? v.c.onAccentBody : v.c.muted;
+    const ink = accent ? v.c.accentInk : v.c.ink;
+    const soft = accent ? v.c.onAccentBody : v.c.muted;
     if (item.meta) {
       // Heading, figure, body: the reference comparison panel.
       s.text(`item-${i}-label`, item.label, [x + 3, 34, width - 6, 6], {
@@ -1279,6 +1282,12 @@ function composeComparison(content: CompositionContent, options: ComposeSlideOpt
   });
   pageNumber(s, options, v.c.muted);
   return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content) };
+}
+
+/** Does the heading or the figure of a comparison item name it as the recommended choice? */
+function isRecommended(item: { label: string; meta?: string }) {
+  const words = `${item.label} ${item.meta ?? ''}`;
+  return /\brecommend(ed|ation)?\b/i.test(words) && !/\bnot recommended\b/i.test(words);
 }
 
 function composeList(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {

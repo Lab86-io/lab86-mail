@@ -421,3 +421,32 @@ test('additional image compositions reserve text space and auto layout responds 
       expect(fallback.elements.some((element) => element.type === 'image')).toBe(false);
     }
 });
+
+test('the accent goes on the recommended choice, and on the last item when there is none', () => {
+  const theme = buildDeckTheme('editorial', 'serif');
+  const content = (items: CompositionContent['items']): CompositionContent & { role: 'comparison' } => ({
+    role: 'comparison',
+    title: 'Two options and a cost',
+    kicker: '',
+    body: '',
+    items,
+  });
+  const panelFills = (items: CompositionContent['items']) =>
+    composeSlide(content(items), { theme, slideId: 's', index: 0, total: 1 })
+      .elements.filter((element) => element.id.includes('panel-'))
+      .map((element) => (element as Extract<DeckElementV2, { type: 'shape' }>).fill);
+  const { accent, surface } = theme.colors;
+  expect(
+    panelFills([
+      { label: 'Option A', meta: 'Status quo', detail: 'Keep the printer.' },
+      { label: 'Option B', meta: 'Recommended', detail: 'Split the work.' },
+      { label: 'Coordination', meta: 'Manageable', detail: 'One role for six months.' },
+    ]),
+  ).toEqual([surface, accent, surface]);
+  expect(
+    panelFills([
+      { label: 'Option A', meta: 'Not recommended', detail: 'Keep the printer.' },
+      { label: 'Option B', detail: 'Split the work.' },
+    ]),
+  ).toEqual([surface, accent]);
+});
