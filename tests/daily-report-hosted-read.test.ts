@@ -452,6 +452,21 @@ test('one edition from history stays a snapshot, and a placeholder is not an edi
   });
 });
 
+test('the store with no Convex also skips an empty failed edition', async () => {
+  setDailyReportReaderForTest({ configured: () => false });
+  await runWithAiRequestContext({ userId: 'local-failed-reader', agent: 'ai' }, async () => {
+    await kvUpsert('dailyReport', 'older', { ...report(5), sections: {} });
+    await kvUpsert('dailyReport', 'failed', {
+      ...report(9),
+      narrative: BRIEF_EDITION_NOT_WRITTEN,
+      sections: {},
+    });
+    const view = await readBriefView();
+    expect(view.report?.generatedAt).toBe(report(5).generatedAt);
+    expect(view.failedNewer).toBe(true);
+  });
+});
+
 test('without Convex the page reads the same rules from the local store', async () => {
   await runWithAiRequestContext({ userId: 'local-reader', agent: 'ai' }, async () => {
     expect((await readBriefView()).report).toBeNull();
