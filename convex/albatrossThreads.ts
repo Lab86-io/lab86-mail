@@ -115,7 +115,9 @@ export const activity = query({
     }
     const threads: Record<string, ThreadStateView> = {};
     for (const row of states) threads[row.workId] = stateView(row, ts);
-    return { runs, threads, now: ts };
+    // No clock in the answer: the same data gives the same answer, so a re-run
+    // sends the client nothing.
+    return { runs, threads };
   },
 });
 

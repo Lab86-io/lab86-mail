@@ -45,6 +45,25 @@ afterEach(() => {
 const harness = () => convexTest(schema, modules);
 type Harness = ReturnType<typeof harness>;
 
+/** A process that stopped: its lease row is past its time. */
+async function endLease(t: Harness, id: Id<'albatrossStepRuns'>) {
+  await t.run(async (ctx) => {
+    const row = await ctx.db
+      .query('albatrossStepRunLive')
+      .withIndex('by_run', (q) => q.eq('runId', id))
+      .first();
+    if (row) await ctx.db.patch(row._id, { leaseUntil: 1 });
+  });
+}
+
+const liveRowOf = (t: Harness, id: Id<'albatrossStepRuns'>) =>
+  t.run((ctx) =>
+    ctx.db
+      .query('albatrossStepRunLive')
+      .withIndex('by_run', (q) => q.eq('runId', id))
+      .first(),
+  );
+
 async function seedWork(t: Harness, overrides: Record<string, unknown> = {}, owner = userId) {
   return t.run((ctx) =>
     ctx.db.insert('albatrossIntents', {
@@ -331,11 +350,11 @@ describe('the lease', () => {
     const { runId } = await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(workId));
     const id = runId as Id<'albatrossStepRuns'>;
     await claimRun(t, runId!);
-    await t.run((ctx) => ctx.db.patch(id, { availableAt: 1 }));
+    await endLease(t, id);
     await t.mutation(internal.albatrossStepRuns.expireLost, {});
     expect(await t.query(api.albatrossStepRuns.get, { ...caller, id })).toMatchObject({ state: 'queued' });
     await claimRun(t, runId!, 'second');
-    await t.run((ctx) => ctx.db.patch(id, { availableAt: 1 }));
+    await endLease(t, id);
     await t.mutation(internal.albatrossStepRuns.expireLost, {});
     expect(await t.query(api.albatrossStepRuns.get, { ...caller, id })).toMatchObject({
       state: 'failed',
@@ -343,6 +362,176 @@ describe('the lease', () => {
     });
     const due = await t.query(internal.albatrossStepRuns.due, {});
     expect(due.some((row) => row._id === id)).toBe(false);
+  });
+
+  describe('the lease and the live text live on a small row', () => {
+    async function started(t: Harness) {
+      const workId = String(await seedWork(t));
+      const { runId } = await t.mutation(api.albatrossStepRuns.enqueue, enqueueArgs(workId));
+      const id = runId as Id<'albatrossStepRuns'>;
+      await claimRun(t, runId!, 'tok');
+      return { id, workId, fence: { ...caller, id, token: 'tok' } };
+    }
+
+    test('a heartbeat renews the small row and does not write the run row', async () => {
+      const t = harness();
+      const { id, fence } = await started(t);
+      const before = await t.run((ctx) => ctx.db.get(id));
+      const lease = await liveRowOf(t, id);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(await t.mutation(api.albatrossStepRuns.heartbeat, fence)).toBe(true);
+      expect(await t.run((ctx) => ctx.db.get(id))).toEqual(before);
+      expect((await liveRowOf(t, id))!.leaseUntil).toBeGreaterThan(lease!.leaseUntil);
+    });
+
+    test('streamed text writes only the small row, and the run row only once for firstVisibleAt', async () => {
+      const t = harness();
+      const { id, fence } = await started(t);
+      const before = await t.run((ctx) => ctx.db.get(id));
+      expect(before!.firstVisibleAt).toBeUndefined();
+      await t.mutation(api.albatrossStepRuns.progress, { ...fence, liveText: 'I look for the' });
+      const first = await t.run((ctx) => ctx.db.get(id));
+      expect(first!.firstVisibleAt).toBeNumber();
+      expect(first!.updatedAt).toBe(before!.updatedAt);
+      expect(await t.query(api.albatrossStepRuns.liveText, { ...caller, id })).toMatchObject({
+        text: 'I look for the',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await t.mutation(api.albatrossStepRuns.progress, { ...fence, liveText: 'I look for the invoice' });
+      // Set once: the second write leaves the run row as it was.
+      expect(await t.run((ctx) => ctx.db.get(id))).toEqual(first);
+      expect(await t.query(api.albatrossStepRuns.liveText, { ...caller, id })).toMatchObject({
+        text: 'I look for the invoice',
+      });
+    });
+
+    test('a message takes the place of the text, and null clears it', async () => {
+      const t = harness();
+      const { id, fence } = await started(t);
+      await t.mutation(api.albatrossStepRuns.progress, { ...fence, liveText: 'Words' });
+      await t.mutation(api.albatrossStepRuns.progress, {
+        ...fence,
+        message: { id: 'm1', at: 1, text: 'Words.', sources: [] },
+      });
+      expect(await t.query(api.albatrossStepRuns.liveText, { ...caller, id })).toBeNull();
+      await t.mutation(api.albatrossStepRuns.progress, { ...fence, liveText: 'More' });
+      await t.mutation(api.albatrossStepRuns.progress, { ...fence, liveText: null });
+      expect(await t.query(api.albatrossStepRuns.liveText, { ...caller, id })).toBeNull();
+    });
+
+    test('live text belongs to its owner', async () => {
+      const t = harness();
+      const { id, fence } = await started(t);
+      await t.mutation(api.albatrossStepRuns.progress, { ...fence, liveText: 'Private words' });
+      expect(
+        await t.query(api.albatrossStepRuns.liveText, { internalSecret: SECRET, userId: 'other', id }),
+      ).toBeNull();
+    });
+
+    test('an open tool row becomes its line, keeps its place, and the view hides its key', async () => {
+      const t = harness();
+      const { id, fence } = await started(t);
+      await t.mutation(api.albatrossStepRuns.progress, {
+        ...fence,
+        lines: [
+          { text: 'Started on the step.' },
+          { key: 'call-1', text: 'Reads irs.gov.', open: true },
+          { key: 'call-2', text: 'Checks your calendar.', open: true },
+        ],
+      });
+      const open = await t.run((ctx) => ctx.db.get(id));
+      expect(open!.log.map((row) => row.key)).toEqual([undefined, 'call-1', 'call-2']);
+      expect(open!.firstVisibleAt).toBeNumber();
+      await t.mutation(api.albatrossStepRuns.progress, {
+        ...fence,
+        lines: [{ key: 'call-1', text: 'Read irs.gov.' }, { key: 'call-2' }],
+      });
+      const view = await t.query(api.albatrossStepRuns.get, { ...caller, id });
+      expect(view!.log.map((row) => row.text)).toEqual(['Started on the step.', 'Read irs.gov.']);
+      expect(Object.keys(view!.log[1]).sort()).toEqual(['at', 'text']);
+      expect(view!.firstVisibleAt).toBe(open!.firstVisibleAt!);
+    });
+
+    test('a run that ends drops its open rows and its small row', async () => {
+      const t = harness();
+      const { id, fence } = await started(t);
+      await t.mutation(api.albatrossStepRuns.progress, {
+        ...fence,
+        lines: [{ text: 'Started.' }, { key: 'call-1', text: 'Reads a page.', open: true }],
+      });
+      await t.mutation(api.albatrossStepRuns.settle, { ...fence, outcome: 'done', summary: 'Done.' });
+      const view = await t.query(api.albatrossStepRuns.get, { ...caller, id });
+      expect(view!.log.map((row) => row.text)).toEqual(['Started.']);
+      expect(await liveRowOf(t, id)).toBeNull();
+    });
+
+    test('a stop drops the small row and the open rows', async () => {
+      const t = harness();
+      const { id, fence } = await started(t);
+      await t.mutation(api.albatrossStepRuns.progress, {
+        ...fence,
+        lines: [{ key: 'call-1', text: 'Reads a page.', open: true }],
+      });
+      await t.mutation(api.albatrossStepRuns.cancel, { ...caller, id });
+      expect(await liveRowOf(t, id)).toBeNull();
+      expect((await t.query(api.albatrossStepRuns.get, { ...caller, id }))!.log).toEqual([]);
+    });
+
+    test('a live lease keeps the run: recovery skips it and no other process claims it', async () => {
+      const t = harness();
+      const { id } = await started(t);
+      await t.run((ctx) => ctx.db.patch(id, { availableAt: 1 }));
+      await t.mutation(internal.albatrossStepRuns.expireLost, {});
+      expect(await t.query(api.albatrossStepRuns.get, { ...caller, id })).toMatchObject({ state: 'running' });
+      expect(await claimRun(t, id, 'thief')).toBeNull();
+      // A run at work is not due, so the recovery tick does not deliver it.
+      await t.run((ctx) => ctx.db.patch(id, { availableAt: Date.now() + 60_000 }));
+      expect((await t.query(internal.albatrossStepRuns.due, {})).some((row) => row._id === id)).toBe(false);
+    });
+
+    test('a run row with no lease row, from a process before this table, is lost as before', async () => {
+      const t = harness();
+      const { id } = await started(t);
+      await t.run(async (ctx) => {
+        const row = await ctx.db
+          .query('albatrossStepRunLive')
+          .withIndex('by_run', (q) => q.eq('runId', id))
+          .first();
+        await ctx.db.delete(row!._id);
+        await ctx.db.patch(id, { availableAt: 1 });
+      });
+      await t.mutation(internal.albatrossStepRuns.expireLost, {});
+      expect(await t.query(api.albatrossStepRuns.get, { ...caller, id })).toMatchObject({ state: 'queued' });
+    });
+
+    test('a heartbeat on such a row moves its due time once, so recovery leaves it alone', async () => {
+      const t = harness();
+      const { id, fence } = await started(t);
+      await t.run(async (ctx) => {
+        const row = await ctx.db
+          .query('albatrossStepRunLive')
+          .withIndex('by_run', (q) => q.eq('runId', id))
+          .first();
+        await ctx.db.delete(row!._id);
+        await ctx.db.patch(id, { availableAt: Date.now() + 1_000 });
+      });
+      expect(await t.mutation(api.albatrossStepRuns.heartbeat, fence)).toBe(true);
+      const moved = await t.run((ctx) => ctx.db.get(id));
+      expect(moved!.availableAt).toBeGreaterThan(Date.now() + 60 * 60_000);
+      expect((await liveRowOf(t, id))!.token).toBe('tok');
+    });
+
+    test('an ended lease row with no running owner goes away', async () => {
+      const t = harness();
+      const { id, fence } = await started(t);
+      await t.mutation(api.albatrossStepRuns.settle, { ...fence, outcome: 'done', summary: 'Done.' });
+      await t.run((ctx) =>
+        ctx.db.insert('albatrossStepRunLive', { userId, runId: id, token: 'old', leaseUntil: 1 }),
+      );
+      await t.mutation(internal.albatrossStepRuns.expireLost, {});
+      expect(await liveRowOf(t, id)).toBeNull();
+      expect(await t.query(api.albatrossStepRuns.get, { ...caller, id })).toMatchObject({ state: 'done' });
+    });
   });
 
   test('targets returns only active runs that are due', async () => {

@@ -1279,6 +1279,8 @@ export const USER_INLINE_TABLES = [
   'albatrossDailyCheckins',
   'albatrossBrowserSessions',
   'albatrossStepRuns',
+  // One small row for each run at work.
+  'albatrossStepRunLive',
   'albatrossBrowserContexts',
   'personalDetails',
   // One small row for each Albatross thread (docs/albatross-threads.md).
