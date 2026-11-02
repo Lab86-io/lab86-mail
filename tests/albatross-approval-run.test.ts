@@ -151,14 +151,18 @@ describe('settleRunAfterDecision', () => {
 
   test('a settlement that cannot close gives its claim back', async () => {
     const calls: any[] = [];
-    const h = harness(state({ approved: 0 }), {
-      convexMutation: mock(async (_fn: unknown, args: any) => {
-        calls.push(args);
-        if (args?.runId && calls.length === 1) return true;
-        if (args?.id) throw new Error('Convex is busy');
-        return true;
-      }) as never,
-    });
+    // Nothing went ahead, so the run closes, and that write fails.
+    const h = harness(
+      { ...state(), approved: 0 },
+      {
+        convexMutation: mock(async (_fn: unknown, args: any) => {
+          calls.push(args);
+          if (args?.runId && calls.length === 1) return true;
+          if (args?.id) throw new Error('Convex is busy');
+          return true;
+        }) as never,
+      },
+    );
     expect(await settleRunAfterDecision(input, h.deps)).toEqual({ action: 'none' });
     expect(calls).toEqual([
       { userId: 'user-1', runId: 'run-1' },
