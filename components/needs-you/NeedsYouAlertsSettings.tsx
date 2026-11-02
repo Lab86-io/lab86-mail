@@ -85,7 +85,13 @@ export function BrowserAlertsRow({
     try {
       if (enabled) {
         await enableBrowserPush();
-        await onEnabled?.().catch(() => undefined);
+        try {
+          await onEnabled?.();
+        } catch (error) {
+          // The setting did not save, so the row must not say that alerts are on.
+          await disableBrowserPush().catch(() => undefined);
+          throw error;
+        }
       } else await disableBrowserPush();
       setState(enabled ? 'on' : 'off');
       toast.success(enabled ? 'Alerts are on in this browser' : 'Alerts are off in this browser');

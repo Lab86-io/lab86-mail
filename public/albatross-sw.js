@@ -36,8 +36,10 @@ function isAppPage(client) {
 async function openInApp(clients, url) {
   const app = clients.find((client) => 'focus' in client && isAppPage(client));
   if (app) {
-    app.postMessage({ type: 'albatross:open-link', url });
-    return app.focus();
+    try {
+      app.postMessage({ type: 'albatross:open-link', url });
+      return await app.focus();
+    } catch (_) {}
   }
   const other = clients.find((client) => 'focus' in client && 'navigate' in client);
   if (other) {
@@ -54,12 +56,16 @@ self.addEventListener('notificationclick', (event) => {
   const url = event.notification.data?.url || '/';
   const inApp = event.notification.data?.inApp === true;
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
       if (inApp) return openInApp(clients, url);
       for (const client of clients) {
         if ('focus' in client) {
-          client.navigate(url);
-          return client.focus();
+          try {
+            await client.navigate(url);
+            return await client.focus();
+          } catch (_) {
+            break;
+          }
         }
       }
       return self.clients.openWindow ? self.clients.openWindow(url) : undefined;

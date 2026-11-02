@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { runWithAiRequestContext } from '../lib/ai/context';
+import { BRIEF_EDITION_NOT_WRITTEN } from '../lib/brief/generation';
 import {
   getDailyReportFacts,
   getLatestDailyReport,
@@ -290,6 +291,32 @@ test('a composing row with no job settles, and a failed job read leaves it as it
     const unknown = await readBriefView();
     expect(unknown.report?.artifactStatus).toBe('composing');
     expect(unknown.pending).toEqual({ reportId: composing._id, phase: 'composing' });
+  });
+});
+
+test('an empty failed row does not hide an older edition, and the page says that it failed', async () => {
+  const failed = {
+    _id: 'failed',
+    generatedAt: 200,
+    status: 'ready',
+    narrative: BRIEF_EDITION_NOT_WRITTEN,
+    sections: {},
+    stats: {},
+  };
+  viewReader({ rows: [failed, ready(100)] });
+  await context(async () => {
+    const view = await readBriefView();
+    expect(view.report?._id).toBe('edition-100');
+    expect(view.failedNewer).toBe(true);
+    // The note and the edition move together, so a known revision stays honest.
+    const again = await readBriefView(view.revision);
+    expect(again.unchanged).toBe(true);
+  });
+  viewReader({ rows: [failed] });
+  await context(async () => {
+    const only = await readBriefView();
+    expect(only.report?._id).toBe('failed');
+    expect(only.failedNewer).toBeUndefined();
   });
 });
 

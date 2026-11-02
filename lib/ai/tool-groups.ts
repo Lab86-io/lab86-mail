@@ -274,11 +274,16 @@ export function planToolGroups(
   allToolNames: Iterable<string>,
   requestedGroups: readonly string[],
   scopeGroups: readonly string[] = [],
+  access: { needsYou?: boolean } = {},
 ): ToolGroupPlan {
   const defined = new Set(allToolNames);
   const core = coreToolNames(defined);
-  const scope = dedupe(scopeGroups.filter(isToolGroupName));
-  const requested = dedupe(requestedGroups.filter(isToolGroupName)).filter((name) => !scope.includes(name));
+  // A user outside the flag never gets these tools, even when the model asks for the group.
+  const allowed = (name: ToolGroupName) => name !== 'needs_you' || access.needsYou !== false;
+  const scope = dedupe(scopeGroups.filter(isToolGroupName)).filter(allowed);
+  const requested = dedupe(requestedGroups.filter(isToolGroupName))
+    .filter((name) => !scope.includes(name))
+    .filter(allowed);
   const sizeOf = (name: ToolGroupName) => TOOL_GROUPS[name].tools.filter((tool) => defined.has(tool)).length;
   let budget = MAX_ACTIVE_TOOLS - core.length - scope.reduce((sum, name) => sum + sizeOf(name), 0);
   // Keep the newest requests that fit, walking back from the most recent one.
@@ -304,8 +309,9 @@ export function activeToolNames(
   allToolNames: Iterable<string>,
   requestedGroups: readonly string[],
   scopeGroups: readonly string[] = [],
+  access: { needsYou?: boolean } = {},
 ): string[] {
-  return planToolGroups(allToolNames, requestedGroups, scopeGroups).active;
+  return planToolGroups(allToolNames, requestedGroups, scopeGroups, access).active;
 }
 
 function dedupe(names: ToolGroupName[]): ToolGroupName[] {
@@ -465,18 +471,27 @@ export function enableToolsDescription(groups: readonly ToolGroupName[] = TOOL_G
  */
 export function enableToolsResult(
   groups: readonly string[],
-  context?: { allToolNames: Iterable<string>; scopeGroups: readonly string[]; earlier: readonly string[] },
+  context?: {
+    allToolNames: Iterable<string>;
+    scopeGroups: readonly string[];
+    earlier: readonly string[];
+    needsYou?: boolean;
+  },
 ) {
   const requested = dedupe(groups.filter(isToolGroupName));
   const plan = context
-    ? planToolGroups(context.allToolNames, [...context.earlier, ...requested], context.scopeGroups)
+    ? planToolGroups(context.allToolNames, [...context.earlier, ...requested], context.scopeGroups, {
+        needsYou: context.needsYou,
+      })
     : null;
   const enabled = plan ? requested.filter((name) => plan.groups.includes(name)) : requested;
   const evicted = plan ? plan.evicted : [];
   const notLoaded = requested.filter((name) => evicted.includes(name));
   // Groups this call pushed out: loaded before it, not loaded after it.
   const before = context
-    ? planToolGroups(context.allToolNames, context.earlier, context.scopeGroups).groups
+    ? planToolGroups(context.allToolNames, context.earlier, context.scopeGroups, {
+        needsYou: context.needsYou,
+      }).groups
     : [];
   const dropped = evicted.filter((name) => before.includes(name) && !requested.includes(name));
   const parts = [

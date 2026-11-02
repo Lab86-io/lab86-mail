@@ -567,6 +567,25 @@ describe('the service worker', () => {
     expect(shown[1].options).toMatchObject({ tag: 'n1', renotify: false });
   });
 
+  test('a tab that cannot take the link does not lose the click: a new tab opens', async () => {
+    const stuck = tab('https://mail.example.test/', {
+      focus: async () => {
+        throw new Error('gone');
+      },
+    });
+    const app = worker([stuck]);
+    await click(app.listeners, item);
+    expect(app.opened).toEqual([item.url]);
+    const moved = tab('https://mail.example.test/settings', {
+      navigate: async () => {
+        throw new Error('gone');
+      },
+    });
+    const plain = worker([moved]);
+    await click(plain.listeners, { url: '/x', inApp: false });
+    expect(plain.opened).toEqual(['/x']);
+  });
+
   test('a new version takes over at once, so a tab that it controls can move', async () => {
     const { listeners, shown } = worker([]);
     listeners.install({});
@@ -672,6 +691,7 @@ describe('the link in the tab', () => {
 });
 
 describe('the browser path of Settings', () => {
+  let unsubscribed = 0;
   function browser(patch: Partial<BrowserPushEnvironment> = {}, current: any = null) {
     const calls: any[] = [];
     const subscription =
@@ -679,6 +699,10 @@ describe('the browser path of Settings', () => {
       ({
         endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser',
         toJSON: () => ({ endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser', keys: {} }),
+        unsubscribe: async () => {
+          unsubscribed += 1;
+          return true;
+        },
       } as any);
     const registration: any = {
       pushManager: {
@@ -750,12 +774,15 @@ describe('the browser path of Settings', () => {
     await expect(enableBrowserPush(browser({ publicKey: undefined }).env)).rejects.toThrow(
       'Web Push is not configured on this deployment.',
     );
+    unsubscribed = 0;
     const refused = (body: string) =>
       browser({ fetch: (async () => new Response(body, { status: 400 })) as any }).env;
     await expect(
       enableBrowserPush(refused('{"error":"complete push subscription required"}')),
     ).rejects.toThrow('complete push subscription required');
     await expect(enableBrowserPush(refused('not json'))).rejects.toThrow('Could not enable Web Push.');
+    // The server refused it, so this browser does not stay subscribed.
+    expect(unsubscribed).toBe(2);
   });
 
   test('disable tells the server first, then removes the subscription', async () => {

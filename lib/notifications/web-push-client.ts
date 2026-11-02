@@ -72,7 +72,11 @@ export async function enableBrowserPush(env: BrowserPushEnvironment = browserPus
     body: JSON.stringify(subscription.toJSON()),
   });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error || 'Could not enable Web Push.');
+  if (!response.ok) {
+    // The server refused it, so this browser must not stay subscribed.
+    await subscription.unsubscribe().catch(() => undefined);
+    throw new Error(body?.error || 'Could not enable Web Push.');
+  }
 }
 
 /** Removes this browser. The server stops first, so after a failure the switch shows the true state. */

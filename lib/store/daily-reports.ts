@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { parseBriefEditionBudget } from '../brief/budget';
 import { editorialPlanSchema } from '../brief/editorial';
-import { isBriefEditionGenerating, isBriefEditionReadable } from '../brief/generation';
+import {
+  isBriefEditionEmptyFailure,
+  isBriefEditionGenerating,
+  isBriefEditionReadable,
+} from '../brief/generation';
 import { applySinceOperationStates, loadOperationStates, sinceOperationIds } from '../brief/since';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import {
@@ -365,10 +369,22 @@ const BRIEF_READABLE_SCAN = 4;
 
 // The newest edition that a reader can read: one row per step, so a ready row
 // costs one read and the small `partial` row costs almost nothing.
-async function readNewestReadableRow(): Promise<DailyReport | null> {
+async function readNewestReadableRow(): Promise<{ row: DailyReport | null; failedNewer: boolean }> {
+  // A row that a failed job closed with nothing to read does not hide an older
+  // edition. With no older edition, the page shows the failure itself.
+  let failed: DailyReport | null = null;
+  const found = (row: DailyReport | null) => ({
+    row: row ?? failed,
+    failedNewer: Boolean(row && failed),
+  });
   if (!readDependencies.configured()) {
     const rows = await readReportRows<DailyReport>(BRIEF_READABLE_SCAN, false);
-    return rows.find(isBriefEditionReadable) ?? null;
+    for (const row of rows) {
+      if (!isBriefEditionReadable(row)) continue;
+      if (!isBriefEditionEmptyFailure(row)) return found(row);
+      failed ??= row;
+    }
+    return found(null);
   }
   const userId = requireStoreUserId();
   let cursor: string | null = null;
@@ -382,12 +398,15 @@ async function readNewestReadableRow(): Promise<DailyReport | null> {
         summaryOnly: false,
       });
     const row = result.page[0];
-    if (!row) return null;
-    if (isBriefEditionReadable(row)) return row;
-    if (result.isDone) return null;
+    if (!row) return found(null);
+    if (isBriefEditionReadable(row)) {
+      if (!isBriefEditionEmptyFailure(row)) return found(row);
+      failed ??= row;
+    }
+    if (result.isDone) return found(null);
     cursor = result.continueCursor;
   }
-  return null;
+  return found(null);
 }
 
 async function loadBriefEditionHead(): Promise<BriefEditionHead | null> {
@@ -425,7 +444,7 @@ export async function readBriefView(known?: string | null): Promise<BriefViewRes
   // A failed job read must not hide a readable edition. It is not the same as
   // no active job, so it must not settle a row that still composes.
   let headKnown = true;
-  const [head, row] = await Promise.all([
+  const [head, { row, failedNewer }] = await Promise.all([
     loadBriefEditionHead().catch(() => {
       headKnown = false;
       return null;
@@ -452,10 +471,10 @@ export async function readBriefView(known?: string | null): Promise<BriefViewRes
       ? { ...live, artifactStatus: 'rendered' as const }
       : live;
   const report = briefWebEdition(settled);
-  const revision = viewRevision(report);
+  const revision = viewRevision({ report, failedNewer });
   return known && known === revision
     ? { stamp, pending, revision, unchanged: true }
-    : { stamp, pending, revision, report };
+    : { stamp, pending, revision, report, ...(failedNewer ? { failedNewer } : {}) };
 }
 
 /** One edition from history, in the slim web form. It stays a snapshot. */
