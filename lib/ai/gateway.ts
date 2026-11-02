@@ -36,6 +36,7 @@ import {
 } from './model-catalog';
 import { classifyModel, toDirectModelId, toOpenRouterModelId } from './model-router';
 import { createOpenRouterProvider } from './openrouter-policy';
+import { streamIdleTimeoutFetch } from './provider-idle-timeout';
 
 type AiProvider = 'openrouter' | 'openai' | 'anthropic';
 type AiSource = 'lab86' | 'byok';
@@ -742,6 +743,8 @@ function isAgentFallbackEligible(err: any, feature: string, runtime: ResolvedAiR
   if (isTransientGenerateParseError(err)) return true;
   const statusCode = Number(err?.statusCode);
   if (Number.isFinite(statusCode) && (statusCode === 429 || statusCode >= 500)) return true;
+  // A broken response body: the connection dropped in the middle of a stream.
+  if (err instanceof TypeError && /^(terminated|network error)$/i.test(err.message)) return true;
   const body = typeof err?.responseBody === 'string' ? err.responseBody : '';
   return /Provider returned error|server had an error|temporarily unavailable|rate.?limit|code"?\s*:\s*502/i.test(
     body,
@@ -830,8 +833,9 @@ function platformRuntime(speed: AiSpeed, preference?: PlatformPreference): Route
 export function modelFromKey(provider: AiProvider, apiKey: string, modelName: string) {
   // A user's own OpenRouter key gets the same no-training data policy.
   if (provider === 'openrouter') return createOpenRouterProvider(apiKey).chat(toOpenRouterModelId(modelName));
-  if (provider === 'openai') return createOpenAI({ apiKey })(directModelIdFor(modelName));
-  return createAnthropic({ apiKey })(directModelIdFor(modelName));
+  if (provider === 'openai')
+    return createOpenAI({ apiKey, fetch: streamIdleTimeoutFetch() })(directModelIdFor(modelName));
+  return createAnthropic({ apiKey, fetch: streamIdleTimeoutFetch() })(directModelIdFor(modelName));
 }
 
 function modelFor(provider: AiProvider, speed: AiSpeed) {

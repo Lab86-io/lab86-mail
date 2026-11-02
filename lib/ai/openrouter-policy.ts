@@ -1,4 +1,5 @@
 import { createOpenAI } from '@ai-sdk/openai';
+import { streamIdleTimeoutFetch } from './provider-idle-timeout';
 
 // OpenRouter data policy (Google Limited Use, CASA). Every request that goes
 // to OpenRouter sets the provider preference `data_collection: 'deny'`. Then
@@ -75,6 +76,6 @@ export function createOpenRouterProvider(apiKey: string, options: { fetch?: type
       'HTTP-Referer': process.env.LAB86_MAIL_PUBLIC_URL || 'https://mail.lab86.io',
       'X-Title': 'lab86-mail',
     },
-    fetch: openRouterFetch(options.fetch),
+    fetch: openRouterFetch(streamIdleTimeoutFetch(options.fetch)),
   });
 }
