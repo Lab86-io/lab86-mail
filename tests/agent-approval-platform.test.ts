@@ -230,6 +230,25 @@ describe('server-enforced approval for tools that reach another person', () => {
     });
   });
 
+  test('the same bad args are refused the second time with no run', async () => {
+    const handler = handlerSpy('schedule_send');
+    const lifted = liftToolsForAgent('batch', 'UTC');
+    const bad = { to: 'sam@example.test' };
+    await expect(lifted.schedule_send.execute(bad, {})).rejects.toThrow();
+    await expect(lifted.schedule_send.execute(bad, {})).rejects.toThrow('already rejected');
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  test('a handler failure reaches the caller and the log', async () => {
+    const spy = spyOn(TOOLS.schedule_send, 'handler').mockRejectedValue(new Error('provider refused'));
+    restores.push(() => spy.mockRestore());
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    restores.push(() => warn.mockRestore());
+    const lifted = liftToolsForAgent('batch', 'UTC');
+    await expect(lifted.schedule_send.execute(SEND, {})).rejects.toThrow('provider refused');
+    expect(warn.mock.calls.some((call) => call[0] === '[agent-tool-error]')).toBe(true);
+  });
+
   test('a denied answer never runs the call', async () => {
     const handler = handlerSpy('schedule_send');
     const { events } = await run(
