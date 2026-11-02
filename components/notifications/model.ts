@@ -185,7 +185,12 @@ export function projectNotifications(input: {
       unreadNotificationIds: [],
       action: row.intentId ? { kind: 'work', workId: row.intentId } : { kind: 'albatrosses' },
       actionLabel: 'Open the Albatross',
-      approval: { id: row._id, status: row.status, kind: row.kind, staleClaim: Boolean(row.staleClaimAt) },
+      approval: {
+        id: row._id,
+        status: row.status,
+        kind: row.kind,
+        ...(row.staleClaimAt ? { staleClaim: true } : {}),
+      },
     });
   }
   if (input.checkin && ['scheduled', 'open'].includes(input.checkin.status)) {
