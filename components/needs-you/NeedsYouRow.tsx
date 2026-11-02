@@ -319,7 +319,7 @@ export function NeedsYouRow({
         <RowLead entry={entry} />
         <span className="min-w-0">
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="truncate font-display text-[14px] font-medium leading-[18px] text-[var(--color-text)]">
+            <span className="max-w-[75%] shrink-0 truncate font-display text-[14px] font-medium leading-[18px] text-[var(--color-text)]">
               {words.name}
             </span>
             <span
