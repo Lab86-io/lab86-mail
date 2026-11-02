@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { z } from 'zod';
-import { GOAL_CHECK_FIRST, GOAL_RUNNER_RULES, goalRunnerContext } from '../lib/albatross/goal-run-prompt';
+import {
+  GOAL_CHECK_FIRST,
+  GOAL_RUNNER_RULES,
+  goalRunnerContext,
+  goalTaskMessage,
+} from '../lib/albatross/goal-run-prompt';
 import { SEALED_FILE_NOTE } from '../lib/albatross/goal-runs';
 import {
   fallbackHandoff,
@@ -501,8 +506,20 @@ describe('a goal run', () => {
       'Make a new one only when the user asks for a new one.',
       'Propose values that you can find or compute',
       'Send mail. There is no send tool.',
+      // A step for the checklist alone is a wasted model call.
+      'Send your checklist together with your first other tool calls, in the same step',
+      'Send it together with your next tool call, in the same step. Do not use a step only for the checklist.',
+      // The model told the user that it corrected a proof, with no call.
+      'Say that you changed the goal only after goal_update returns ok. Never say it when you did not call the tool.',
+      // The model used unsure to say that it did not send the mail.
+      'Do not use it to say what you did not do or cannot do. Never write that you did not send a message',
     ])
       expect(GOAL_RUNNER_RULES).toContain(rule);
+    expect(GOAL_RUNNER_RULES).not.toContain('Before your first other tool call');
+    expect(goalTaskMessage('The July invoice', false)).toContain(
+      'Send your checklist with your first tool calls.',
+    );
+    expect(goalTaskMessage('The July invoice', true)).not.toContain('Send your checklist first');
     expect(GOAL_RUNNER_RULES).not.toMatch(/\bAI\b(?!")/);
     expect(GOAL_RUNNER_RULES).not.toContain('!');
   });
