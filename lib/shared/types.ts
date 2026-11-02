@@ -116,7 +116,8 @@ export interface AuditEntry {
   userId?: string | null;
   account: AccountEmail | null;
   args: Record<string, unknown>;
-  result: 'ok' | 'error';
+  // `rejected`: the handler returned `ok: false`, so the call did not do the work.
+  result: 'ok' | 'rejected' | 'error';
   detail?: string;
   agent: 'user' | 'ai' | 'codex';
 }
