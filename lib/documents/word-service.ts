@@ -28,16 +28,10 @@ import {
   type WordEdit,
 } from './word-package';
 
-/** The bytes of an image that this user has in Files. */
-async function readSavedImage(userId: string, fileId: string) {
-  const row = await getSavedFileRow(userId, fileId);
-  if (!row) throw new OfficeError('That image is not in Files.', 404);
-  return readSavedFileBytes(row);
-}
-
 const defaults = {
   requireOffice,
-  readSavedImage,
+  getSavedFileRow,
+  readSavedFileBytes,
   getDocument,
   exportDocument,
   renderTemplate,
@@ -66,6 +60,14 @@ const sha256Of = (bytes: Uint8Array) => createHash('sha256').update(bytes).diges
 
 export function createWordService(overrides: Partial<typeof defaults> = {}) {
   const deps = { ...defaults, ...overrides };
+  /** The bytes of an image that this user has in Files. */
+  const imagesOf = (userId: string) => ({
+    readImage: async (fileId: string) => {
+      const row = await deps.getSavedFileRow(userId, fileId);
+      if (!row) throw new OfficeError('That image is not in Files.', 404);
+      return deps.readSavedFileBytes(row);
+    },
+  });
   const load = async (userId: string, documentId: string) => {
     const file = await deps.getOfficeFile(userId, documentId);
     if (!file?.version?.url || file.extension !== 'docx')
@@ -92,7 +94,7 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
       deps.requireOffice();
       options.signal?.throwIfAborted();
       let title = input.title.trim() || 'Untitled document';
-      const images = { readImage: (fileId: string) => deps.readSavedImage(userId, fileId) };
+      const images = imagesOf(userId);
       let bytes: Uint8Array;
       if (input.template) {
         if (input.sourceDocumentId) throw new OfficeError('Use a template or a source document, not both.');
@@ -237,9 +239,7 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
           await verifyOfficePackage(updated, 'docx');
           template = { kind: 'invoice', dataJson: JSON.stringify(data), renderedSha256: sha256Of(updated) };
         } else {
-          updated = await editWordPackage(bytes, edits, {
-            readImage: (fileId) => deps.readSavedImage(userId, fileId),
-          });
+          updated = await editWordPackage(bytes, edits, imagesOf(userId));
           if (fills.length && file.template) notes.push(CHANGED_SINCE_RENDER_NOTE);
         }
         const sha256 = validateOfficeArchive(updated, 'docx');

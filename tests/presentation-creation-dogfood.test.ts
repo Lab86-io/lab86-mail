@@ -11,7 +11,7 @@ import { checkDeck } from '../lib/documents/deck-quality';
 import { exportDocument } from '../lib/documents/export';
 import { type AlbatrossDocumentRecord, documentModelText } from '../lib/documents/model';
 import { presentationSessionFromMessages } from '../lib/documents/presentation-choices';
-import { presentationBriefV2Schema } from '../lib/documents/presentation-design';
+import { legacyBriefFromV2, presentationBriefV2Schema } from '../lib/documents/presentation-design';
 import { __setDocumentToolDepsForTest, documentCreate, documentGet } from '../lib/tools/documents';
 import { harborBrief, passingSlideReviews, retroBrief, VALLEY } from './fixtures/presentation-briefs';
 import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
@@ -343,6 +343,37 @@ describe('presentation creation dogfood', () => {
     expect(slide.notes).toContain('Depth: Spring 3.7m, Fall 4m');
     expect(slide.elements.some((element: any) => element.text === '3.7m')).toBe(true);
     expect(proposal.summary).toContain('Their data is in the speaker notes.');
+  });
+
+  test('a table in a version 2 brief keeps its rows in the legacy renderer', () => {
+    const brief = harborBrief();
+    brief.slides[1] = {
+      ...brief.slides[1],
+      role: 'table',
+      items: [],
+      notes: 'Original note.',
+      table: {
+        headers: ['Berth', 'Depth', 'Status'],
+        rows: [
+          ['North', '12 m', 'Open'],
+          ['South', '9 m', 'Closed'],
+        ],
+        source: 'Harbor survey',
+      },
+    };
+    const { brief: legacy, visualsMoved } = legacyBriefFromV2(brief);
+    expect(visualsMoved).toBe(true);
+    const slide = legacy.slides[1];
+    expect(slide.layout).toBe('columns');
+    expect(slide.items).toEqual([
+      { label: 'North', detail: '12 m, Open' },
+      { label: 'South', detail: '9 m, Closed' },
+    ]);
+    expect(slide.notes).toBe(
+      'Original note.\nBerth | Depth | Status\nNorth | 12 m | Open\nSouth | 9 m | Closed\nSource: Harbor survey',
+    );
+    const named = { ...brief, palette: 'grove' as const };
+    expect(legacyBriefFromV2(named).brief.palette).toBe('forest');
   });
 
   test('artwork that hangs degrades to typography inside its own time budget', async () => {

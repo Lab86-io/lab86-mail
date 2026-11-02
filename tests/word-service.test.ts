@@ -104,21 +104,26 @@ test('an image from Files is read for the owner of the file', async () => {
   const seen: string[] = [];
   const service = createWordService({
     ...f.dependencies,
-    readSavedImage: async (userId: string, fileId: string) => {
+    getSavedFileRow: async (userId: string, fileId: string) => {
       seen.push(`${userId}:${fileId}`);
-      return new Uint8Array(data);
+      return fileId === 'not-yours' ? null : { url: 'https://s.test/image', size: data.length };
     },
+    readSavedFileBytes: async () => new Uint8Array(data),
   } as any);
   await service.edit('owner', 'word-1', 1, [
     { op: 'insert_image', fileId: 'file-1', width: 10, height: 10, alt: 'Logo' },
   ]);
-  expect(seen).toEqual(['owner:file-1']);
   expect((await readWordPackage(f.uploaded()!)).images).toBe(1);
   await service.create('owner', {
     title: 'New',
     edits: [{ op: 'insert_image', fileId: 'file-2', width: 10, height: 10, alt: '' }],
   });
   expect(seen).toEqual(['owner:file-1', 'owner:file-2']);
+  await expect(
+    service.edit('owner', 'word-1', 1, [
+      { op: 'insert_image', fileId: 'not-yours', width: 10, height: 10, alt: '' },
+    ]),
+  ).rejects.toThrow('That image is not in Files.');
 });
 
 test('saved-file edits use revision compare-and-swap and surface concurrent failures without claiming success', async () => {
