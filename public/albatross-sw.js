@@ -13,9 +13,10 @@ self.addEventListener('push', (event) => {
       body: data.body || 'Albatross needs your input.',
       icon: '/apple-touch-icon.png',
       badge: '/favicon.ico',
-      // A later push with the same tag replaces this one (Needs you: the obligation id).
+      // A later push with the same tag replaces this one (Needs you: the obligation id),
+      // and it alerts again, as an APNs collapse id does. Other pushes stay silent on replace.
       tag: data.tag || data.notificationId || 'albatross',
-      renotify: false,
+      renotify: Boolean(data.tag),
       data: { url: data.url || '/', inApp: data.inApp === true },
     }),
   );

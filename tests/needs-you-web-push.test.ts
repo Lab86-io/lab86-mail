@@ -162,8 +162,10 @@ describe('dispatchWebNotification', () => {
       await sendWebPush(envelopes[0], subscription('one'));
     } finally {
       restore();
-      process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY = env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-      process.env.VAPID_PRIVATE_KEY = env.VAPID_PRIVATE_KEY;
+      for (const key of ['NEXT_PUBLIC_VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY'] as const) {
+        if (env[key] === undefined) delete process.env[key];
+        else process.env[key] = env[key];
+      }
     }
     expect(sent[0][1]).not.toContain(CODE);
     expect(JSON.parse(sent[0][1])).toEqual({
@@ -546,6 +548,24 @@ describe('the service worker', () => {
   }
 
   const item = { url: '/?view=notifications&obligation=ob_1', inApp: true };
+
+  test('a push with a tag alerts again when it replaces one, and other pushes stay silent', async () => {
+    const { listeners, shown } = worker([]);
+    const push = async (payload: Record<string, unknown>) => {
+      let done: Promise<unknown> = Promise.resolve();
+      listeners.push({
+        data: { json: () => payload },
+        waitUntil: (promise: Promise<unknown>) => {
+          done = promise;
+        },
+      });
+      await done;
+    };
+    await push({ title: 'Needs you', tag: 'ob_1' });
+    await push({ title: 'Check-in', notificationId: 'n1' });
+    expect(shown[0].options).toMatchObject({ tag: 'ob_1', renotify: true });
+    expect(shown[1].options).toMatchObject({ tag: 'n1', renotify: false });
+  });
 
   test('a new version takes over at once, so a tab that it controls can move', async () => {
     const { listeners, shown } = worker([]);
