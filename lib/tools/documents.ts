@@ -22,10 +22,14 @@ import {
   DOCUMENT_KINDS,
   type DocumentKind,
   documentModelText,
-  isSheetWorkbookModel,
   MAX_DOC_LIST_LEVEL,
 } from '@/lib/documents/model';
-import { saveDocxBytesAsPdf, saveOfficePdf } from '@/lib/documents/office-pdf';
+import {
+  OfficeBlanksError,
+  OfficeRevisionError,
+  saveDocxBytesAsPdf,
+  saveOfficePdf,
+} from '@/lib/documents/office-pdf';
 import { OfficeError } from '@/lib/documents/office-security';
 import {
   presentationAuthoringSchema,
@@ -576,19 +580,31 @@ export const documentApplyInstruction = defineTool({
   },
 });
 
+// A tool call replays by its name and arguments. The revision in the arguments makes a new call
+// after an edit a new key, so a replay never returns the file or the report of an older revision.
+const REVISION_INPUT = z
+  .number()
+  .int()
+  .min(1)
+  .describe('The current revision of the file, from the newest create, edit, or read result.');
+
 export const documentReviewSlides = defineTool({
   name: 'document_review_slides',
   description:
-    'Render and visually inspect every slide of an existing presentation using the selected vision model. Repair layout, contrast and orientation without changing content or chart data, then inspect the repaired slides again. Use after document_edit or to resume a saved draft whose visualReview status is needs_review. Saves repairs with revision conflict protection; never recreates the presentation.',
+    'Render and visually inspect every slide of an existing presentation using the selected vision model. Repair layout, contrast and orientation without changing content or chart data, then inspect the repaired slides again. Use after document_edit or to resume a saved draft whose visualReview status is needs_review. Send the current revision. Saves repairs with revision conflict protection; never recreates the presentation.',
   category: 'documents',
   risk: 'write_self',
   mutating: true,
-  input: z.object({ documentId: z.string().min(1) }),
+  input: z.object({
+    documentId: z.string().min(1),
+    revision: REVISION_INPUT,
+  }),
   output: z.object({
     ok: z.boolean(),
+    status: z.literal('conflict').optional(),
     documentId: z.string(),
     revision: z.number(),
-    visualReview: deckVisualReportSchema,
+    visualReview: deckVisualReportSchema.optional(),
     summary: z.string(),
     openPath: z.string(),
   }),
@@ -597,6 +613,15 @@ export const documentReviewSlides = defineTool({
     ctx.abortSignal?.throwIfAborted();
     const document = await dependencies.getDocument(userId, args.documentId);
     if (!document || document.model.kind !== 'deck') throw new Error('Presentation not found.');
+    if (document.currentRevision !== args.revision)
+      return {
+        ok: false,
+        status: 'conflict' as const,
+        documentId: document.documentId,
+        revision: document.currentRevision,
+        summary: `Nothing was checked. The presentation is at revision ${document.currentRevision}. Read it, then send that revision.`,
+        openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
+      };
     const reviewed = await dependencies.reviewDeckVisuals(upgradeDeckModel(document.model), {
       userId,
       abortSignal: ctx.abortSignal,
@@ -667,17 +692,34 @@ function unreadableProposal(error: unknown): never {
   throw error;
 }
 
+function exportRefusal(documentId: string, status: 'conflict' | 'blanks', message: string, extra = {}) {
+  return { ok: false as const, status, documentId, message, ...extra };
+}
+
 /** A Word file converts as saved; a text document converts from its DOCX export. */
-async function exportPdf(userId: string, documentId: string) {
+async function exportPdf(userId: string, documentId: string, revision: number) {
   let saved: Awaited<ReturnType<typeof saveOfficePdf>>;
   try {
-    saved = await dependencies.saveOfficePdf(userId, documentId);
+    saved = await dependencies.saveOfficePdf(userId, documentId, undefined, { revision });
   } catch (error) {
+    if (error instanceof OfficeRevisionError)
+      return exportRefusal(documentId, 'conflict', error.message, { revision: error.current });
+    if (error instanceof OfficeBlanksError)
+      return exportRefusal(documentId, 'blanks', error.message, { blanks: error.blanks });
     if (!(error instanceof OfficeError) || error.status !== 404) throw error;
     const document = await dependencies.getDocument(userId, documentId);
     if (!document) throw new Error('Document not found.');
     if (document.kind !== 'doc')
       throw new Error('PDF export works for Word files and text documents. Use the native format.');
+    if (document.currentRevision !== revision)
+      return exportRefusal(
+        documentId,
+        'conflict',
+        new OfficeRevisionError(document.currentRevision).message,
+        {
+          revision: document.currentRevision,
+        },
+      );
     const exported = await dependencies.exportDocument(document);
     saved = await dependencies.saveDocxBytesAsPdf(userId, exported.bytes, document.title);
   }
@@ -697,13 +739,14 @@ async function exportPdf(userId: string, documentId: string) {
 export const documentExport = defineTool({
   name: 'document_export',
   description:
-    'Return the authenticated download URL for a file in DOCX, XLSX, or PPTX. Odoo workbook server downloads are values/formulas projections, not full-fidelity exports; use the editor download for the engine export. With format pdf, the document server makes a PDF of a Word file (from word_document_create) or of a text document, and the PDF is saved in Files: the result fileId can go on a draft as an attachment or into the package. The PDF shows the saved revision; fill the blanks first.',
+    'Build a file and return its authenticated download URL in DOCX, XLSX, or PPTX. The server opens the built file first, so a success means that the file opens. Odoo workbook server downloads are values/formulas projections, not full-fidelity exports; use the editor download for the engine export. With format pdf, the document server makes a PDF of a Word file (from word_document_create) or of a text document, and the PDF is saved in Files: the result fileId can go on a draft as an attachment or into the package. Send the current revision. A file with empty blanks gets no PDF: the result names them, so fill them first.',
   category: 'documents',
   // The pdf format saves a file in Files. Checkpointing keeps a retry from saving it twice.
   risk: 'write_self',
   mutating: true,
   input: z.object({
     documentId: z.string().min(1),
+    revision: REVISION_INPUT,
     format: z
       .enum(['native', 'pdf'])
       .optional()
@@ -728,17 +771,34 @@ export const documentExport = defineTool({
       contentType: z.string(),
       sha256: z.string(),
     }),
+    z.object({
+      ok: z.literal(false),
+      status: z.enum(['conflict', 'blanks']),
+      documentId: z.string(),
+      message: z.string(),
+      revision: z.number().optional(),
+      blanks: z.array(z.string()).optional(),
+    }),
   ]),
   async handler(args, ctx) {
-    if (args.format === 'pdf') return exportPdf(requireUserId(ctx.userId), args.documentId);
+    if (args.format === 'pdf') return exportPdf(requireUserId(ctx.userId), args.documentId, args.revision);
     const document = await dependencies.getDocument(requireUserId(ctx.userId), args.documentId);
     if (!document) throw new Error('Document not found.');
-    const engine = isSheetWorkbookModel(document.model);
+    if (document.currentRevision !== args.revision)
+      return exportRefusal(
+        document.documentId,
+        'conflict',
+        `The file is at revision ${document.currentRevision}. Read it again and send that revision.`,
+        { revision: document.currentRevision },
+      );
+    // Build once now, so that a file that does not build fails here and not at the download.
+    const exported = await dependencies.exportDocument(document);
+    const projection = exported.fidelity === 'projection';
     return {
       ok: true,
       downloadPath: `/api/documents/${encodeURIComponent(document.documentId)}/export`,
-      fidelity: engine ? ('projection' as const) : ('full' as const),
-      warning: engine
+      fidelity: exported.fidelity,
+      warning: projection
         ? 'This server download carries values and formulas only. Open the spreadsheet and use Download Excel to export through Odoo with its supported workbook features.'
         : undefined,
       openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,

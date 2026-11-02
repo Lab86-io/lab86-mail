@@ -13,10 +13,13 @@
 
 import { z } from 'zod';
 import { exportDocument } from '../documents/export';
-import { exportOfficePdf } from '../documents/office-pdf';
+import { type AlbatrossDocumentModel, isSheetWorkbookModel } from '../documents/model';
+import { exportOfficePdf, OfficeBlanksError } from '../documents/office-pdf';
 import { OFFICE_MIME, type OfficeExtension, readOfficeResponse } from '../documents/office-security';
 import { getOfficeFile } from '../documents/office-service';
 import { getDocument } from '../documents/service';
+import { workbookProjectionLosses } from '../documents/sheet-workbook';
+import { emptyWordBlanks } from '../documents/word-package';
 import { consumeSendGrants } from '../secure/send-grants';
 import { sanitizeFilename } from '../shared/files';
 import type { DraftAttachment } from '../shared/types';
@@ -111,6 +114,32 @@ function nameOf(input: DraftAttachmentInput, fallback: string) {
   return input.name?.trim() ? sanitizeFilename(input.name.trim()) : sanitizeFilename(fallback);
 }
 
+async function wordBlanksOf(
+  file: NonNullable<Awaited<ReturnType<typeof getOfficeFile>>>,
+  deps: Pick<typeof draftAttachmentDeps, 'readOffice'>,
+) {
+  if (file.extension !== 'docx' || !file.version?.url) return [];
+  return deps
+    .readOffice(file.version.url)
+    .then(emptyWordBlanks)
+    .catch(() => []);
+}
+
+/**
+ * The server's copy of an engine workbook holds values and formulas only. The
+ * sender gets the warning at attach time: the model reads it in the draft, and
+ * the composer shows it under the file.
+ */
+function workbookWarning(model: AlbatrossDocumentModel | undefined): { warning?: string } {
+  if (!model || !isSheetWorkbookModel(model)) return {};
+  const losses = workbookProjectionLosses(model);
+  return losses.length
+    ? {
+        warning: `This workbook goes with values and formulas only. These do not go with it: ${losses.join(', ')}. To send them, open the spreadsheet, use Download Excel, and attach that file.`,
+      }
+    : {};
+}
+
 /**
  * Checks each attachment against the user's own files and fills in the name,
  * the type, and the size. Throws DraftAttachmentError for a file that is not
@@ -154,6 +183,9 @@ export async function checkDraftAttachments(
       const file = await deps.getOfficeFile(userId, input.fileId);
       if (!file) throw new DraftAttachmentError('One of the files is not in Files any more.', 404);
       const pdf = format === 'pdf';
+      // An invoice with an empty number must not reach a draft as a finished PDF.
+      const blanks = await wordBlanksOf(file, deps);
+      if (pdf && blanks.length) throw new DraftAttachmentError(new OfficeBlanksError(blanks).message, 409);
       out.push({
         source: 'file',
         fileId: file.documentId,
@@ -162,6 +194,7 @@ export async function checkDraftAttachments(
         name: nameOf(input, withExtension(file.title, pdf ? 'pdf' : file.extension)),
         contentType: pdf ? 'application/pdf' : OFFICE_MIME[file.extension],
         ...(!pdf && file.version?.size ? { size: file.version.size } : {}),
+        ...(blanks.length ? { warning: `This Word file still has empty blanks: ${blanks.join(', ')}.` } : {}),
       });
     } else {
       if (format === 'pdf')
@@ -176,6 +209,7 @@ export async function checkDraftAttachments(
         format: 'native',
         name: nameOf(input, withExtension(document.title, extension)),
         contentType: OFFICE_MIME[extension],
+        ...workbookWarning(document.model),
       });
     }
   }
@@ -258,7 +292,11 @@ export async function resolveDraftAttachments(
       attachments.push(sendAttachment(attachment.name || row.name, row.contentType || '', bytes));
     } else if (attachment.provider === 'office') {
       if (attachment.format === 'pdf') {
-        const pdf = await deps.exportOfficePdf(userId, attachment.fileId);
+        const pdf = await deps.exportOfficePdf(userId, attachment.fileId).catch((error) => {
+          // The blanks can come back after the attach, when an editor clears a value.
+          if (error instanceof OfficeBlanksError) throw new DraftAttachmentError(error.message, 409);
+          throw error;
+        });
         count(pdf.bytes.byteLength);
         attachments.push(sendAttachment(attachment.name || pdf.name, 'application/pdf', pdf.bytes));
         continue;

@@ -256,6 +256,13 @@ export async function readWordBlanks(bytes: Uint8Array) {
   }
 }
 
+/** The names of the empty blanks, in page order. A file that this reader cannot open has none. */
+export async function emptyWordBlanks(bytes: Uint8Array): Promise<string[]> {
+  return readWordBlanks(bytes)
+    .then((blanks) => blanks.filter((blank) => !blank.filled).map((blank) => blank.name))
+    .catch(() => []);
+}
+
 export async function readWordPackage(bytes: Uint8Array) {
   const { zip, dom, document, body } = await open(bytes);
   try {

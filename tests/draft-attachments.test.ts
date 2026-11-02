@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import './tools/harness';
-import { exportOfficePdf } from '../lib/documents/office-pdf';
+import { attachmentMeta } from '../components/thread/attachment-rows';
+import { exportOfficePdf, OfficeBlanksError } from '../lib/documents/office-pdf';
+import { renderTemplate } from '../lib/documents/templates';
 import {
   checkDraftAttachments,
   DRAFT_ATTACHMENTS_MAX,
@@ -98,6 +100,97 @@ function fake(overrides: Partial<typeof draftAttachmentDeps> = {}) {
   } as Partial<typeof draftAttachmentDeps>);
   return calls;
 }
+
+describe('what a recipient would not get', () => {
+  const engineWorkbook = (sheet: Record<string, unknown> = {}, workbook: Record<string, unknown> = {}) => ({
+    kind: 'sheet',
+    version: 2,
+    engine: 'o-spreadsheet',
+    engineVersion: '19.0.50',
+    workbook: {
+      version: 1,
+      sheets: [{ id: 's', name: 'Budget', colNumber: 5, rowNumber: 5, cells: { A1: '1' }, ...sheet }],
+      ...workbook,
+    },
+  });
+  const attach = (doc: unknown) => {
+    fake({ getDocument: (async () => doc) as any });
+    return checkDraftAttachments('test_user_tools', [{ provider: 'albatross', fileId: 'doc_1' }]);
+  };
+
+  test('a workbook with charts carries a warning; a plain one does not', async () => {
+    const charted = await attach({
+      ...albatrossDoc,
+      model: engineWorkbook({ figures: [{ id: 'f1' }], styles: { A1: 1 } }, { pivots: { 1: {} } }),
+    });
+    expect(charted[0].warning).toContain('values and formulas only');
+    expect(charted[0].warning).toContain('charts and images');
+    expect(charted[0].warning).toContain('pivots');
+    expect(charted[0].warning).toContain('formatting');
+    expect(charted[0].warning).toContain('Download Excel');
+    expect((await attach({ ...albatrossDoc, model: engineWorkbook() }))[0].warning).toBeUndefined();
+    expect(
+      (await attach({ ...albatrossDoc, kind: 'doc', model: { kind: 'doc', version: 1, blocks: [] } }))[0]
+        .warning,
+    ).toBeUndefined();
+  });
+
+  test('the warning reaches the model in the saved draft and the composer in the row note', () => {
+    const row = {
+      source: 'file',
+      fileId: 'doc_1',
+      provider: 'albatross',
+      format: 'native',
+      name: 'Budget.xlsx',
+      warning: 'This workbook goes with values and formulas only.',
+    } as DraftAttachment;
+    expect(attachmentMeta(row).note).toBe('This workbook goes with values and formulas only.');
+    expect(attachmentMeta({ ...row, warning: undefined }).note).toBeNull();
+  });
+
+  test('a Word file with blanks cannot go as a PDF, and goes as Word with a warning', async () => {
+    const { bytes } = await renderTemplate('invoice', {
+      from: { name: 'Mara Ellison' },
+      billTo: { name: 'Harbor Design' },
+      items: [{ title: 'July', hours: 10, rate: 90 }],
+      payment: 'Net 30',
+    });
+    fake({ readOffice: (async () => bytes) as any });
+    await expect(
+      checkDraftAttachments('test_user_tools', [{ provider: 'office', fileId: 'office_1', format: 'pdf' }]),
+    ).rejects.toThrow('"Invoice number", "Invoice date"');
+    const native = await checkDraftAttachments('test_user_tools', [
+      { provider: 'office', fileId: 'office_1' },
+    ]);
+    expect(native[0].warning).toContain('Invoice number');
+  });
+
+  test('blanks that come back after the attach stop the send with their names', async () => {
+    fake({
+      exportOfficePdf: (async () => {
+        throw new OfficeBlanksError(['Invoice number']);
+      }) as any,
+    });
+    const list: DraftAttachment[] = [
+      { source: 'file', fileId: 'office_1', provider: 'office', format: 'pdf', name: 'Invoice 42.pdf' },
+    ];
+    const sent = resolveDraftAttachments('test_user_tools', list, { recipients: ['a@example.test'] });
+    await expect(sent).rejects.toBeInstanceOf(DraftAttachmentError);
+    await expect(sent).rejects.toThrow('"Invoice number"');
+  });
+
+  test('an unreadable Word file does not block the attach', async () => {
+    fake({
+      readOffice: (async () => {
+        throw new Error('Storage is down.');
+      }) as any,
+    });
+    const list = await checkDraftAttachments('test_user_tools', [
+      { provider: 'office', fileId: 'office_1', format: 'pdf' },
+    ]);
+    expect(list[0].format).toBe('pdf');
+  });
+});
 
 describe('checking draft attachments', () => {
   test('each provider resolves to the user’s own file with its name, type, and size', async () => {

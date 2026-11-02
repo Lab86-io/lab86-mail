@@ -56,7 +56,10 @@ describe('document tools', () => {
       reviewDeckVisuals: passingVisualReview,
       updateDocument: save as any,
     });
-    const result = await runTool(documentReviewSlides.handler, { documentId: deck.documentId });
+    const result = await runTool(documentReviewSlides.handler, {
+      documentId: deck.documentId,
+      revision: deck.currentRevision,
+    });
     expect(result).toMatchObject({
       documentId: deck.documentId,
       revision: 3,
@@ -68,9 +71,9 @@ describe('document tools', () => {
       actor: 'ai',
     });
     conflict = true;
-    await expect(runTool(documentReviewSlides.handler, { documentId: deck.documentId })).rejects.toThrow(
-      'changed during visual review',
-    );
+    await expect(
+      runTool(documentReviewSlides.handler, { documentId: deck.documentId, revision: deck.currentRevision }),
+    ).rejects.toThrow('changed during visual review');
   });
 
   test('visual review never commits after cancellation and refuses non-presentations', async () => {
@@ -79,9 +82,9 @@ describe('document tools', () => {
     });
     const controller = new AbortController();
     __setDocumentToolDepsForTest({ getDocument: (async () => record()) as any, updateDocument: save });
-    await expect(runTool(documentReviewSlides.handler, { documentId: 'document-1' })).rejects.toThrow(
-      'Presentation not found',
-    );
+    await expect(
+      runTool(documentReviewSlides.handler, { documentId: 'document-1', revision: 2 }),
+    ).rejects.toThrow('Presentation not found');
     __setDocumentToolDepsForTest({
       getDocument: (async () => record({ kind: 'deck', model: referenceDeck('editorial') })) as any,
       updateDocument: save,
@@ -91,9 +94,25 @@ describe('document tools', () => {
       },
     });
     await expect(
-      runTool(documentReviewSlides.handler, { documentId: 'document-1' }, { abortSignal: controller.signal }),
+      runTool(
+        documentReviewSlides.handler,
+        { documentId: 'document-1', revision: 2 },
+        { abortSignal: controller.signal },
+      ),
     ).rejects.toThrow('Stopped');
     expect(save).not.toHaveBeenCalled();
+  });
+  test('visual review of a stale revision checks nothing and names the current revision', async () => {
+    const review = mock(passingVisualReview);
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => record({ kind: 'deck', model: referenceDeck('editorial') })) as any,
+      reviewDeckVisuals: review,
+    });
+    const result = await runTool(documentReviewSlides.handler, { documentId: 'document-1', revision: 1 });
+    expect(result).toMatchObject({ ok: false, status: 'conflict', revision: 2 });
+    expect(result.summary).toContain('at revision 2');
+    expect(review).not.toHaveBeenCalled();
+    expect(documentReviewSlides.output.safeParse(result).success).toBe(true);
   });
   test.each([
     documentSuggestChanges,
@@ -332,7 +351,7 @@ describe('document tools', () => {
     const read = await runTool(documentGet.handler, { documentId: 'document-1' });
     expect(read.document.documentId).toBe('document-1');
     expect(typeof read.text).toBe('string');
-    const exported = await runTool(documentExport.handler, { documentId: 'document-1' });
+    const exported = await runTool(documentExport.handler, { documentId: 'document-1', revision: 2 });
     expect(exported).toMatchObject({ downloadPath: '/api/documents/document-1/export' });
     const published = await runTool(documentPublishGoogle.handler, {
       documentId: 'document-1',
@@ -343,7 +362,7 @@ describe('document tools', () => {
     await expect(runTool(documentGet.handler, { documentId: 'missing' })).rejects.toThrow(
       'Document not found',
     );
-    await expect(runTool(documentExport.handler, { documentId: 'missing' })).rejects.toThrow(
+    await expect(runTool(documentExport.handler, { documentId: 'missing', revision: 1 })).rejects.toThrow(
       'Document not found',
     );
     await expect(

@@ -191,6 +191,36 @@ describe('real files with control characters', () => {
   });
 });
 
+describe('chart number formats', () => {
+  test('a chart shows 3.7 as 3.7 in the PowerPoint file, as the slide does', async () => {
+    const model = structuredClone(referenceDeck('editorial'));
+    const slide = model.slides[0];
+    slide.elements = [
+      {
+        id: 'chart',
+        type: 'chart',
+        chart: 'bar',
+        x: 5,
+        y: 5,
+        width: 60,
+        height: 60,
+        categories: ['Spring', 'Fall'],
+        series: [{ name: 'Depth', values: [3.7, 12.25] }],
+        values: true,
+        unit: ' R&D <m>"',
+      },
+    ] as typeof slide.elements;
+    const exported = await exportDocument(record('deck', model));
+    await expectEveryPartParses(exported.bytes);
+    const zip = await JSZip.loadAsync(exported.bytes);
+    const chartPart = Object.keys(zip.files).find((name) => /^ppt\/charts\/chart\d+\.xml$/.test(name))!;
+    const chart = await zip.file(chartPart)!.async('string');
+    expect(chart).toContain('<c:v>3.7</c:v>');
+    expect(chart).toContain('General');
+    expect(chart).not.toMatch(/formatCode="0(?:&quot;|")/);
+  });
+});
+
 describe('document_create opens the file', () => {
   const saved = () =>
     mock(async (input: any) => ({

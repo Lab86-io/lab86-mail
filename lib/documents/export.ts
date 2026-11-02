@@ -337,6 +337,8 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
         const ink = presentationColor(theme.colors.ink, '17202A');
         const muted = presentationColor(theme.colors.muted, '94A3B8');
         const body = deckExportFace(theme, 'body');
+        // General shows each number as written, as the slide does: 3.7 stays 3.7, not 4.
+        const numberFormat = element.unit ? `General"${element.unit.replace(/"/g, '')}"` : 'General';
         slide.addChart(
           type,
           element.series.map((series) => ({
@@ -364,8 +366,8 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
             valAxisLabelFontSize: 9,
             valAxisMaxVal:
               Math.ceil((Math.max(1, ...element.series.flatMap((series) => series.values)) * 1.1) / 10) * 10,
-            valAxisLabelFormatCode: element.unit ? `0"${element.unit.replace(/"/g, '')}"` : '0',
-            dataLabelFormatCode: element.unit ? `0"${element.unit.replace(/"/g, '')}"` : '0',
+            valAxisLabelFormatCode: numberFormat,
+            dataLabelFormatCode: numberFormat,
             valGridLine: { color: muted, style: 'dash', size: 0.5 },
             catGridLine: { style: 'none' },
             catAxisLineShow: false,

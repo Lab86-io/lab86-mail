@@ -604,7 +604,9 @@ describe('document editing through the agent AI SDK toolset', () => {
     expect(result).toMatchObject({ status: 'applied', revision: 5 });
     expect(update).toHaveBeenCalledTimes(1);
     expect(update.mock.calls[0][0].model.workbook.sheets[0].cells.B1).toBe('=1+1');
-    expect(await documentExport.handler({ documentId: 'owned-file' }, toolContext())).toMatchObject({
+    expect(
+      await documentExport.handler({ documentId: 'owned-file', revision: 4 }, toolContext()),
+    ).toMatchObject({
       fidelity: 'projection',
       warning: expect.stringContaining('values and formulas only'),
     });
