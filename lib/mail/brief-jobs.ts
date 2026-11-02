@@ -53,6 +53,9 @@ export async function waitForBriefJob(userId: string, id: string, signal?: Abort
   }
 }
 
+const RETRY_NOTE = 'The writer will retry automatically.';
+const FINAL_NOTE = 'The writer is unavailable. The edition was published without it.';
+
 // The wait in the queue counts once. The wait before a retry is backoff, not a queue.
 function queueStage(
   meter: BriefEditionMeter,
@@ -62,9 +65,6 @@ function queueStage(
   if (Number(job.attempts) === 1 && typeof job.createdAt === 'number')
     meter.addStageTime('queued', startedAt - job.createdAt);
 }
-
-const RETRY_NOTE = 'The writer will retry automatically.';
-const FINAL_NOTE = 'The writer is unavailable. The edition was published without it.';
 
 // Another attempt is pointless when the writer has no model access at all.
 async function writerHasNoAccess(userId: string, feature: string) {
