@@ -2,29 +2,42 @@
 
 import { BRIEF_LETTER_MEASURE_PX } from '@/lib/brief/letter';
 import { cn } from '@/lib/utils';
+import './brief-canvas/brief-layout.css';
 
 const SKELETON_ROW_KEYS = ['answer-1', 'answer-2', 'today-1', 'today-2', 'know-1', 'know-2', 'know-3'];
 
 /* The loading shape of the letter: one lede block and a few rows in the same
  * measure the letter uses, so nothing moves when the text lands. Standalone,
- * a masthead plate sits above it. */
+ * the page has the geometry of the canvas: the painting box of the masthead, its
+ * credit and source lines, and the wide letter below them. */
 export function BriefSkeleton({ rows = 3, masthead = false }: { rows?: number; masthead?: boolean }) {
   return (
     <div
       data-brief-skeleton
-      className={cn('w-full', masthead ? 'h-full overflow-hidden bg-[var(--color-bg)]' : '')}
+      className={cn(
+        'w-full',
+        masthead && '@container/brief-canvas brief-canvas h-full overflow-hidden bg-[var(--color-content)]',
+      )}
     >
       {masthead ? (
-        <div className="relative h-[min(36vh,300px)] min-h-[220px] overflow-hidden bg-[var(--color-bg-subtle)]">
-          <div className="absolute inset-0 shimmer" />
-          <div className="absolute inset-0 grid place-items-center px-8">
-            <div className="h-12 w-[min(60vw,420px)] rounded-md bg-white/28" />
+        <>
+          <div className="brief-masthead brief-masthead--canvas">
+            <div className="relative h-[250px] overflow-hidden bg-[var(--color-bg-subtle)] @[680px]:h-[300px]">
+              <div className="absolute inset-0 shimmer" />
+              <div className="absolute inset-0 grid place-items-center px-8">
+                <div className="h-12 w-[min(60vw,420px)] rounded-md bg-white/28" />
+              </div>
+            </div>
           </div>
-        </div>
+          <div className="daily-brief-layout space-y-2">
+            <div className="ml-auto h-3 w-1/3 rounded shimmer" />
+            <div className="h-3 w-1/4 rounded shimmer" />
+          </div>
+        </>
       ) : null}
       <div
-        className={cn('mx-auto w-full', masthead ? 'px-5 py-10' : 'py-2')}
-        style={{ maxWidth: BRIEF_LETTER_MEASURE_PX }}
+        className={masthead ? 'daily-brief-layout w-full' : 'mx-auto w-full py-2'}
+        style={masthead ? undefined : { maxWidth: BRIEF_LETTER_MEASURE_PX }}
       >
         <div className="space-y-3">
           <div className="h-6 w-full rounded shimmer" />

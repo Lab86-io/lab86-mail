@@ -1,9 +1,12 @@
 'use client';
 
 import { notFound, useSearchParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
+import { DailyReport } from '@/components/report/DailyReport';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
+import { type BriefPreviewState, briefPreviewFetch } from '@/lib/brief/preview-states';
 import { needsYouEditorialFixture, needsYouLetterFixture } from '@/lib/obligations/fixtures';
 import {
   areaPulseDocumentFixture,
@@ -22,14 +25,52 @@ import {
  *   ?embedded=1               the shape Today renders: no masthead, parent scroll
  *   ?noise=42                 the footer count of the letter
  *   ?frame=robert-gilt        pins one picture frame on the masthead
+ *   ?state=first-load         the real Today page over stubbed reads: its skeleton
+ *   ?state=on-the-way         the last edition, a new edition on the way
+ *   ?state=plain-letter       the plain letter of the new edition
+ *   ?state=swap               the last edition, swapped for the new one after 3 s
+ *   ?state=nothing            nothing to read: the vortex
+ *   ?scroll=600               scrolls the page down once, to check that a swap keeps it
  * Not linked from anywhere; 404s outside development. */
 export default function BriefPreviewPage() {
   if (process.env.NODE_ENV === 'production') notFound();
   return <BriefPreviewInner />;
 }
 
+// The real page over a stubbed fetch. It mounts after the stub is in place.
+function TodayStatePreview({ state, scroll }: { state: BriefPreviewState; scroll: number }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    window.fetch = briefPreviewFetch(state, window.fetch.bind(window));
+    setReady(true);
+  }, [state]);
+  useEffect(() => {
+    if (!ready || !scroll) return;
+    const timer = window.setTimeout(() => {
+      const article = window.document.querySelector('[data-brief-document-version]');
+      if (article) article.scrollTop = scroll;
+    }, 1_000);
+    return () => window.clearTimeout(timer);
+  }, [ready, scroll]);
+  if (!ready) return null;
+  return (
+    <QueryProvider clerkEnabled={false}>
+      <div className="h-dvh">
+        <DailyReport />
+      </div>
+    </QueryProvider>
+  );
+}
+
 function BriefPreviewInner() {
   useApplyThemeExtras();
+  const params = useSearchParams();
+  const state = params.get('state') as BriefPreviewState | null;
+  if (state) return <TodayStatePreview state={state} scroll={Number(params.get('scroll') ?? 0)} />;
+  return <BriefFixturePreview />;
+}
+
+function BriefFixturePreview() {
   const params = useSearchParams();
   const embedded = params.get('embedded') === '1';
   const layout = params.get('layout') ?? 'letter';
