@@ -62,6 +62,8 @@ const APP_LOCAL_KEYS = [
   'react-resizable-panels:lab86-mail-shell-v2:it',
 ];
 const APP_SESSION_KEYS = ['albatross.notifications.v1:user_123'];
+// The persisted edition holds mail text, so sign-out must clear it.
+const PERSISTED_EDITION_KEY = 'lab86-brief-latest-v1';
 const THIRD_PARTY_KEYS = ['__clerk_environment', 'theme', 'react-resizable-panels:other-app', 'ph_session'];
 
 function seeded(keys: string[]) {
@@ -80,6 +82,13 @@ describe('app storage keys', () => {
     for (const key of [...APP_LOCAL_KEYS, ...APP_SESSION_KEYS]) expect(isAppStorageKey(key)).toBe(true);
   });
 
+  test('the persisted edition is an app key', () => {
+    expect(isAppStorageKey(PERSISTED_EDITION_KEY)).toBe(true);
+    const local = seeded([PERSISTED_EDITION_KEY]);
+    clearAppStorage({ local, session: seeded([]) });
+    expect(local.getItem(PERSISTED_EDITION_KEY)).toBeNull();
+  });
+
   test('keys that other code owns do not count', () => {
     for (const key of THIRD_PARTY_KEYS) expect(isAppStorageKey(key)).toBe(false);
   });
@@ -92,6 +101,7 @@ describe('app storage keys', () => {
     expect(source('components/tasks/TasksSurface.tsx')).toContain(`\`board-view:\${boardId}\``);
     expect(source('components/calendar/engine/calendar-context.tsx')).toContain("'calendar-settings-v2'");
     expect(source('components/shell/AppShell.tsx')).toContain(`\`lab86-mail-shell-v2:\${permutation}\``);
+    expect(source('lib/brief/edition-cache.ts')).toContain(`'${PERSISTED_EDITION_KEY}'`);
     expect(source('components/notifications/NotificationsSurface.tsx')).toContain(
       `\`albatross.notifications.v1:\${userId}\``,
     );
