@@ -146,6 +146,27 @@ describe('chart colors by contrast', () => {
   });
 });
 
+test('a theme with no color that reads gives the label color, and the check flags it', () => {
+  const flat = {
+    ...theme,
+    colors: {
+      ...theme.colors,
+      ink: '#777777',
+      background: '#7A7A7A',
+      surface: '#808080',
+      muted: '#787878',
+      accent: '#7C7C7C',
+      accentInk: '#747474',
+    },
+  };
+  const element = chart({ colors: ['#7D7D7D'] });
+  const one = slide({ background: '#777777' }, element);
+  const inks = chartInks(one, flat, element);
+  expect(inks.series).toEqual([inks.label]);
+  expect(inks.ok).toBe(false);
+  expect(checkSlide(one, flat).map((issue) => issue.kind)).toEqual(['low-contrast']);
+});
+
 describe('both renderers use those colors', () => {
   const bare = (hex: string) => hex.replace('#', '');
 
