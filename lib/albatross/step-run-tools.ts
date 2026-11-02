@@ -566,7 +566,12 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
       description: base.description,
       inputSchema: base.inputSchema,
       execute: async (args: any, options?: any) => {
-        if (queued && (name === 'calendar_rsvp_event' || approvalConditionMet(name, args))) {
+        // The lifted gate repairs the args and checks the tool schema, so a call
+        // that cannot run gets its field errors and no approval.
+        const asks = base.needsApproval
+          ? await base.needsApproval(args, options)
+          : approvalConditionMet(name, args);
+        if (queued && asks) {
           const approvalId = await host.enqueueApproval({
             kind: queued.kind,
             title: queued.title(args),

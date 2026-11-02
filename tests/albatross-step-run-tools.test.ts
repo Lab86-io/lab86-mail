@@ -1,5 +1,6 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { z } from 'zod';
+import { liftToolsForAgent } from '../lib/ai/loop';
 import { AgentBrowser, type AgentPage } from '../lib/albatross/browser-agent';
 import type { RunSource } from '../lib/albatross/goal-run-contract';
 import {
@@ -15,6 +16,7 @@ import {
   stepHandoffInputSchema,
   touchedArtifact,
 } from '../lib/albatross/step-run-tools';
+import { TOOLS } from '../lib/tools';
 
 const SNAPSHOT = [
   '- textbox "Email" [ref=e1]',
@@ -319,6 +321,34 @@ describe('buildRunnerTools', () => {
     await tools.calendar_create_event.execute({ title: 'Team lunch', attendees: 'Sam' });
     expect(lifted.calendar_create_event.execute).toHaveBeenCalledTimes(1);
     expect(approvals).toHaveLength(0);
+  });
+
+  test('with the real lifted gate, only a call that can run asks', async () => {
+    const handler = spyOn(TOOLS.calendar_create_event, 'handler').mockResolvedValue({ ok: true } as any);
+    const { host, approvals } = makeHost();
+    const tools = buildRunnerTools(liftToolsForAgent('batch', 'UTC'), host);
+    const event = {
+      account: 'a',
+      title: 'Team lunch',
+      startIso: '2031-01-02T10:00',
+      endIso: '2031-01-02T11:00',
+    };
+    try {
+      // A row with no address and a list as JSON text.
+      await expect(
+        tools.calendar_create_event.execute({ ...event, attendees: [{ name: 'Sam' }] }, {}),
+      ).rejects.toThrow();
+      expect(approvals).toHaveLength(0);
+      const result = await tools.calendar_create_event.execute(
+        { ...event, attendees: JSON.stringify([{ email: 'sam@example.com' }]) },
+        {},
+      );
+      expect(result).toMatchObject({ status: 'queued_for_approval' });
+      expect(approvals).toHaveLength(1);
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      handler.mockRestore();
+    }
   });
 
   test('the invite title falls back to the summary, then to "event"', async () => {
