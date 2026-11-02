@@ -57,7 +57,7 @@ export interface NotificationItem {
   action: NotificationAction | null;
   actionLabel: string;
   /** Set on an approval item: what the Approve and Decline control acts on. */
-  approval?: { id: string; status: string; kind?: string };
+  approval?: { id: string; status: string; kind?: string; staleClaim?: boolean };
 }
 
 export interface NotificationProjection {
