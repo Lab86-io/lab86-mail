@@ -33,6 +33,7 @@ export function RunMessages({
   tabs = [],
   timeZone,
   onOpenSource,
+  rise = true,
   className,
 }: {
   messages: readonly RunMessage[];
@@ -42,6 +43,8 @@ export function RunMessages({
   tabs?: readonly DocumentTab[];
   timeZone?: string;
   onOpenSource?: (behaviour: SourceBehaviour, source: RunSource) => void;
+  /** False when the live text streamed the message: its words are on screen already. */
+  rise?: boolean;
   className?: string;
 }) {
   const [showAll, setShowAll] = useState(false);
@@ -80,7 +83,8 @@ export function RunMessages({
           title={formatRunTime(message.at, undefined, timeZone)}
           className={cn(
             'flex min-w-0 flex-col gap-1.5',
-            !initial.current?.has(message.id) &&
+            rise &&
+              !initial.current?.has(message.id) &&
               'animate-[sd-rise_150ms_cubic-bezier(0.165,0.84,0.44,1)_both] motion-reduce:animate-none',
           )}
         >

@@ -7,11 +7,11 @@
 // "Show finished". The filter is the rail's filter; the Later shelf and the
 // staleness review stay as they were.
 
-import { LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlbatrossMark } from '@/components/albatross/AlbatrossMark';
 import { ReviewBatch } from '@/components/albatross/Forgiveness';
 import { LaterShelf } from '@/components/albatross/LaterShelf';
+import { Skeleton } from '@/components/ui/skeleton';
 import { reviewBatch, type WorkShape } from '@/lib/albatross/forgiveness';
 import { isDormant, laterShelf, type WorkHorizon } from '@/lib/albatross/horizon';
 import {
@@ -157,13 +157,9 @@ export function AlbatrossesSurface() {
   const actions = useThreadActions(openThread);
   const draftIds = useThreadDraftIds();
 
-  if (works === undefined || rows === undefined) {
-    return (
-      <div className="flex h-full items-center justify-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
-        <LoaderCircle className="size-4 animate-spin" /> Loading
-      </div>
-    );
-  }
+  // The frame stays. Only the rows wait, and the keeper in the rail makes this
+  // the first load of a session, not each switch (ThreadListKeeper.tsx).
+  const loading = works === undefined || rows === undefined;
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
@@ -176,7 +172,7 @@ export function AlbatrossesSurface() {
               {LIST_COPY.title}
             </h1>
             <p data-list-count className="flex-1 text-[14px] text-[var(--color-text-muted)]">
-              {listCountSentence(counts.needsYou, counts.working)}
+              {loading ? null : listCountSentence(counts.needsYou, counts.working)}
             </p>
             {closedCount ? (
               <button
@@ -232,7 +228,10 @@ export function AlbatrossesSurface() {
               <ReviewBatch items={stale} />
             </div>
           ) : null}
-          {visibleGroups.length === 0 && later.length === 0 ? <EmptyState filter={filter} /> : null}
+          {loading ? <ThreadListPlaceholder /> : null}
+          {!loading && visibleGroups.length === 0 && later.length === 0 ? (
+            <EmptyState filter={filter} />
+          ) : null}
           {visibleGroups.map((group) => (
             <ThreadGroupSection key={group.key} groupKey={group.key}>
               {group.rows.map((row) => (
@@ -283,6 +282,23 @@ export function AlbatrossesSurface() {
         </div>
       </div>
     </section>
+  );
+}
+
+/** A quiet line: the frame is the content here, not the wait. */
+export const PLACEHOLDER_CLASS = 'rounded-sm bg-[var(--color-border)] motion-reduce:animate-none';
+
+/** Rows of the first load: the same space as real rows, so nothing moves when they come. */
+export function ThreadListPlaceholder() {
+  return (
+    <ul data-slot="thread-list-placeholder" aria-hidden className="mb-8 flex flex-col gap-1">
+      {['w-1/2', 'w-2/3', 'w-2/5', 'w-3/5'].map((width) => (
+        <li key={width} className="flex flex-col gap-2 px-3.5 py-2.5">
+          <Skeleton className={cn(PLACEHOLDER_CLASS, 'h-3', width)} />
+          <Skeleton className={cn(PLACEHOLDER_CLASS, 'h-2.5 w-4/5 opacity-70')} />
+        </li>
+      ))}
+    </ul>
   );
 }
 

@@ -10,6 +10,7 @@ import {
 import { History, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { ThreadListKeeper } from '@/components/albatross/ThreadListKeeper';
 import { Ring } from '@/components/loading-ui/ring';
 import { RailNeedsYouRow } from '@/components/needs-you/RailNeedsYouRow';
 import { useFilesSurface } from '@/components/settings/surfaces';
@@ -44,7 +45,7 @@ import { UsersIcon } from '@/components/ui/users';
 import { api } from '@/convex/_generated/api';
 import { railAreaRows } from '@/lib/albatross/area-home';
 import { orderedAreaImageSources } from '@/lib/albatross/area-image';
-import { railWorkBadge } from '@/lib/albatross/work-state';
+import { needsYouBadge } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { mailSearchShortcutLabel } from '@/lib/mail/search/focus-contract';
@@ -218,8 +219,8 @@ export function Rail({
   // before the Clerk token lands would error.
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const areasResult = useConvexQuery({
-    query: api.albatross.listAreasOverview,
-    args: convexAuthed ? { status: 'active' } : 'skip',
+    query: api.albatross.railAreas,
+    args: convexAuthed ? {} : 'skip',
   });
   const railAreas =
     areasResult.status === 'success'
@@ -237,10 +238,10 @@ export function Rail({
 
   // The Albatrosses badge. Words, never a count of everything being carried.
   const workResult = useConvexQuery({
-    query: api.albatrossWorkV2.allWork,
+    query: api.albatrossWorkV2.railNeedsYouCount,
     args: convexAuthed ? {} : 'skip',
   });
-  const workBadge = workResult.status === 'success' ? railWorkBadge((workResult.data as any[]) || []) : null;
+  const workBadge = workResult.status === 'success' ? needsYouBadge(workResult.data?.needsYou ?? 0) : null;
 
   const openArea = (areaId: string | null) => {
     // A fresh area context should not carry a stale open thread with it.
@@ -265,250 +266,253 @@ export function Rail({
   }, [accounts, authedAccounts, account, setAccount, setPrimaryAccount]);
 
   return (
-    <Sidebar
-      collapsible="icon"
-      className="rail-wash bg-[var(--rail-bg)] font-display"
-      onMobileCloseAutoFocus={(event) => {
-        if (!paletteOpen) return;
-        event.preventDefault();
-        document.querySelector<HTMLInputElement>('[data-global-search-input]')?.focus();
-      }}
-      onClickCapture={(event) => {
-        if (!isMobile) return;
-        const target = event.target as HTMLElement | null;
-        if (!target || target.closest('input, textarea, select, [contenteditable="true"]')) return;
-        if (target.closest('button, a, [role="button"], [role="menuitem"]')) {
-          window.setTimeout(() => setOpenMobile(false), 0);
-        }
-      }}
-    >
-      <SidebarHeader className="gap-3">
-        {/* Albatross is the product; Lab86 is the company that makes it. The
+    <>
+      <ThreadListKeeper />
+      <Sidebar
+        collapsible="icon"
+        className="rail-wash bg-[var(--rail-bg)] font-display"
+        onMobileCloseAutoFocus={(event) => {
+          if (!paletteOpen) return;
+          event.preventDefault();
+          document.querySelector<HTMLInputElement>('[data-global-search-input]')?.focus();
+        }}
+        onClickCapture={(event) => {
+          if (!isMobile) return;
+          const target = event.target as HTMLElement | null;
+          if (!target || target.closest('input, textarea, select, [contenteditable="true"]')) return;
+          if (target.closest('button, a, [role="button"], [role="menuitem"]')) {
+            window.setTimeout(() => setOpenMobile(false), 0);
+          }
+        }}
+      >
+        <SidebarHeader className="gap-3">
+          {/* Albatross is the product; Lab86 is the company that makes it. The
             wordmark only shows when the rail is expanded; the trigger centres
             itself when collapsed so it doubles as the expand button. */}
-        <div className="flex items-center justify-between gap-2 px-1 pt-1 transition-[padding,gap] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0">
-          <span className="max-w-40 overflow-hidden whitespace-nowrap opacity-100 transition-[max-width,opacity,transform] delay-150 duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:delay-0 motion-reduce:transition-none">
-            <span className="block font-display text-[17px] font-semibold leading-none tracking-tight text-[var(--color-text)]">
-              Albatross
+          <div className="flex items-center justify-between gap-2 px-1 pt-1 transition-[padding,gap] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0">
+            <span className="max-w-40 overflow-hidden whitespace-nowrap opacity-100 transition-[max-width,opacity,transform] delay-150 duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:delay-0 motion-reduce:transition-none">
+              <span className="block font-display text-[17px] font-semibold leading-none tracking-tight text-[var(--color-text)]">
+                Albatross
+              </span>
+              <span className="mt-0.5 block text-[10.5px] leading-none text-[var(--color-text-faint)]">
+                by Lab86
+              </span>
             </span>
-            <span className="mt-0.5 block text-[10.5px] leading-none text-[var(--color-text-faint)]">
-              by Lab86
-            </span>
-          </span>
-          <div
-            data-rail-utilities
-            className="flex shrink-0 items-center gap-1 group-data-[collapsible=icon]:flex-col"
-          >
-            <NotificationCenter
-              onOpen={() => {
-                setPrimaryView('notifications');
-                closeMobileSidebar();
-              }}
-            />
-            <SidebarTrigger
-              title="Toggle navigation rail"
-              className="size-8 shrink-0 group-data-[collapsible=icon]:order-first text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
-            />
-          </div>
-        </div>
-
-        <RailPrimaryActions searchShortcut={searchShortcut} onSearch={() => setPaletteOpen(true)} />
-      </SidebarHeader>
-
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <RailNeedsYouRow
-                active={!chatActive && visiblePrimaryView === 'notifications'}
-                onSelect={() => {
+            <div
+              data-rail-utilities
+              className="flex shrink-0 items-center gap-1 group-data-[collapsible=icon]:flex-col"
+            >
+              <NotificationCenter
+                onOpen={() => {
                   setPrimaryView('notifications');
                   closeMobileSidebar();
                 }}
               />
-              {SURFACES.map(({ view, label, Icon }) => (
-                <SidebarMenuItem key={view}>
-                  <SidebarMenuButton
-                    isActive={view === 'chat' ? chatActive : !chatActive && visiblePrimaryView === view}
-                    tooltip={label}
-                    data-rail-target={view}
-                    onClick={() => {
-                      if (view === 'albatrosses') setSelectedWorkId(null);
-                      setPrimaryView(view);
-                      closeMobileSidebar();
-                    }}
-                    className="rail-selection"
-                  >
-                    <Icon />
-                    <span>{label}</span>
-                    {/* Words, never a count. A number here would be a tally of
-                        everything the user is still carrying. */}
-                    {view === 'albatrosses' && workBadge ? (
-                      <span className="ml-auto whitespace-nowrap text-[10.5px] text-[var(--color-text-muted)] group-data-[collapsible=icon]:hidden">
-                        {workBadge}
-                      </span>
-                    ) : null}
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+              <SidebarTrigger
+                title="Toggle navigation rail"
+                className="size-8 shrink-0 group-data-[collapsible=icon]:order-first text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
+              />
+            </div>
+          </div>
 
-        <SidebarGroup>
-          <RailDivider />
-          <SidebarGroupLabel className="text-[11px]">Areas</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {areaRows.map((area) => {
-                const active = visiblePrimaryView === 'areas' && selectedAreaId === area._id;
-                return (
-                  <SidebarMenuItem key={area._id}>
-                    <SidebarMenuButton
-                      isActive={active}
-                      tooltip={area.name}
-                      onClick={() => openArea(area._id)}
-                      className="rail-selection"
-                    >
-                      <AreaRailIcon area={area} />
-                      <span className="truncate">{area.name}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-              {areaOverflow > 0 ? (
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="All areas"
-                    onClick={() => openArea(null)}
-                    className="text-[var(--color-text-muted)]"
-                  >
-                    <div className="grid size-4 shrink-0 place-items-center" aria-hidden />
-                    <span>{areaOverflow} more</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ) : null}
-              <SidebarMenuItem>
-                {/* Naming a part of your life is a one-field act. It used to
-                    throw the user out of the app into a settings tab. */}
-                {addingArea ? (
-                  <form
-                    className="px-2 py-1"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void createArea();
-                    }}
-                  >
-                    <input
-                      // biome-ignore lint/a11y/noAutofocus: the field only exists because the user just asked for it.
-                      autoFocus
-                      value={newAreaName}
-                      onChange={(event) => setNewAreaName(event.target.value)}
-                      onBlur={() => {
-                        if (!newAreaName.trim()) setAddingArea(false);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Escape') {
-                          setNewAreaName('');
-                          setAddingArea(false);
-                        }
-                      }}
-                      placeholder="Work, Money, Home…"
-                      aria-label="Name the new area"
-                      disabled={creatingArea}
-                      className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[12.5px] outline-none focus:border-[var(--color-accent)]"
-                    />
-                  </form>
-                ) : (
-                  <SidebarMenuButton
-                    tooltip="New area"
-                    onClick={() => setAddingArea(true)}
-                    className="text-[var(--color-text-muted)]"
-                  >
-                    <PlusIcon size={16} />
-                    <span>New area</span>
-                  </SidebarMenuButton>
-                )}
-              </SidebarMenuItem>
-              {/* A failed query must not silently erase the section. */}
-              {areasResult.status === 'error' ? (
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    tooltip="Reload to retry"
-                    onClick={() => window.location.reload()}
-                    className="text-[var(--color-text-muted)]"
-                  >
-                    <div className="grid size-4 shrink-0 place-items-center" aria-hidden />
-                    <span>Areas didn&apos;t load — reload</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ) : null}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+          <RailPrimaryActions searchShortcut={searchShortcut} onSearch={() => setPaletteOpen(true)} />
+        </SidebarHeader>
 
-        <SidebarGroup>
-          <RailDivider />
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={visiblePrimaryView === 'activity'}
-                  tooltip="Activity"
-                  onClick={() => {
-                    setPrimaryView('activity');
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <RailNeedsYouRow
+                  active={!chatActive && visiblePrimaryView === 'notifications'}
+                  onSelect={() => {
+                    setPrimaryView('notifications');
                     closeMobileSidebar();
                   }}
-                >
-                  <History className="size-4 shrink-0" aria-hidden />
-                  <span>Activity</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
+                />
+                {SURFACES.map(({ view, label, Icon }) => (
+                  <SidebarMenuItem key={view}>
+                    <SidebarMenuButton
+                      isActive={view === 'chat' ? chatActive : !chatActive && visiblePrimaryView === view}
+                      tooltip={label}
+                      data-rail-target={view}
+                      onClick={() => {
+                        if (view === 'albatrosses') setSelectedWorkId(null);
+                        setPrimaryView(view);
+                        closeMobileSidebar();
+                      }}
+                      className="rail-selection"
+                    >
+                      <Icon />
+                      <span>{label}</span>
+                      {/* Words, never a count. A number here would be a tally of
+                        everything the user is still carrying. */}
+                      {view === 'albatrosses' && workBadge ? (
+                        <span className="ml-auto whitespace-nowrap text-[10.5px] text-[var(--color-text-muted)] group-data-[collapsible=icon]:hidden">
+                          {workBadge}
+                        </span>
+                      ) : null}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
 
-      <SidebarFooter>
-        {reconnectAccounts.length ? (
-          <div className="flex flex-col gap-0.5 px-2 group-data-[collapsible=icon]:hidden">
-            {reconnectAccounts.map((mailbox) => (
-              <Link
-                key={mailbox.accountId}
-                href="/settings"
-                onClick={closeMobileSidebar}
-                title={mailbox.reconnectReason || 'Reconnect needed'}
-                className="truncate text-[11.5px] font-medium text-[var(--color-danger)] hover:underline"
-              >
-                Reconnect needed: {mailbox.displayName || mailbox.email}
+          <SidebarGroup>
+            <RailDivider />
+            <SidebarGroupLabel className="text-[11px]">Areas</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {areaRows.map((area) => {
+                  const active = visiblePrimaryView === 'areas' && selectedAreaId === area._id;
+                  return (
+                    <SidebarMenuItem key={area._id}>
+                      <SidebarMenuButton
+                        isActive={active}
+                        tooltip={area.name}
+                        onClick={() => openArea(area._id)}
+                        className="rail-selection"
+                      >
+                        <AreaRailIcon area={area} />
+                        <span className="truncate">{area.name}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+                {areaOverflow > 0 ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="All areas"
+                      onClick={() => openArea(null)}
+                      className="text-[var(--color-text-muted)]"
+                    >
+                      <div className="grid size-4 shrink-0 place-items-center" aria-hidden />
+                      <span>{areaOverflow} more</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
+                <SidebarMenuItem>
+                  {/* Naming a part of your life is a one-field act. It used to
+                    throw the user out of the app into a settings tab. */}
+                  {addingArea ? (
+                    <form
+                      className="px-2 py-1"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void createArea();
+                      }}
+                    >
+                      <input
+                        // biome-ignore lint/a11y/noAutofocus: the field only exists because the user just asked for it.
+                        autoFocus
+                        value={newAreaName}
+                        onChange={(event) => setNewAreaName(event.target.value)}
+                        onBlur={() => {
+                          if (!newAreaName.trim()) setAddingArea(false);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Escape') {
+                            setNewAreaName('');
+                            setAddingArea(false);
+                          }
+                        }}
+                        placeholder="Work, Money, Home…"
+                        aria-label="Name the new area"
+                        disabled={creatingArea}
+                        className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[12.5px] outline-none focus:border-[var(--color-accent)]"
+                      />
+                    </form>
+                  ) : (
+                    <SidebarMenuButton
+                      tooltip="New area"
+                      onClick={() => setAddingArea(true)}
+                      className="text-[var(--color-text-muted)]"
+                    >
+                      <PlusIcon size={16} />
+                      <span>New area</span>
+                    </SidebarMenuButton>
+                  )}
+                </SidebarMenuItem>
+                {/* A failed query must not silently erase the section. */}
+                {areasResult.status === 'error' ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="Reload to retry"
+                      onClick={() => window.location.reload()}
+                      className="text-[var(--color-text-muted)]"
+                    >
+                      <div className="grid size-4 shrink-0 place-items-center" aria-hidden />
+                      <span>Areas didn&apos;t load — reload</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarGroup>
+            <RailDivider />
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={visiblePrimaryView === 'activity'}
+                    tooltip="Activity"
+                    onClick={() => {
+                      setPrimaryView('activity');
+                      closeMobileSidebar();
+                    }}
+                  >
+                    <History className="size-4 shrink-0" aria-hidden />
+                    <span>Activity</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+
+        <SidebarFooter>
+          {reconnectAccounts.length ? (
+            <div className="flex flex-col gap-0.5 px-2 group-data-[collapsible=icon]:hidden">
+              {reconnectAccounts.map((mailbox) => (
+                <Link
+                  key={mailbox.accountId}
+                  href="/settings"
+                  onClick={closeMobileSidebar}
+                  title={mailbox.reconnectReason || 'Reconnect needed'}
+                  className="truncate text-[11.5px] font-medium text-[var(--color-danger)] hover:underline"
+                >
+                  Reconnect needed: {mailbox.displayName || mailbox.email}
+                </Link>
+              ))}
+            </div>
+          ) : null}
+          <nav
+            aria-label="Account controls"
+            className="flex items-center justify-between gap-2 border-t border-[var(--color-list-divider)] px-1 pt-3 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0"
+          >
+            <Button asChild variant="ghost" size="icon" title="Settings">
+              <Link href="/settings" aria-label="Settings" onClick={closeMobileSidebar}>
+                <Settings className="size-4" aria-hidden />
               </Link>
-            ))}
-          </div>
-        ) : null}
-        <nav
-          aria-label="Account controls"
-          className="flex items-center justify-between gap-2 border-t border-[var(--color-list-divider)] px-1 pt-3 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0"
-        >
-          <Button asChild variant="ghost" size="icon" title="Settings">
-            <Link href="/settings" aria-label="Settings" onClick={closeMobileSidebar}>
-              <Settings className="size-4" aria-hidden />
-            </Link>
-          </Button>
-          <div className="rail-profile grid size-9 shrink-0 place-items-center" title="Profile">
-            {clerkEnabled ? (
-              <UserButton />
-            ) : (
-              <div
-                className="grid size-6 place-items-center rounded-full bg-[var(--color-avatar-bg)] text-[var(--color-text-muted)]"
-                title="Local preview"
-              >
-                <UserIcon size={13} />
-              </div>
-            )}
-          </div>
-        </nav>
-      </SidebarFooter>
-    </Sidebar>
+            </Button>
+            <div className="rail-profile grid size-9 shrink-0 place-items-center" title="Profile">
+              {clerkEnabled ? (
+                <UserButton />
+              ) : (
+                <div
+                  className="grid size-6 place-items-center rounded-full bg-[var(--color-avatar-bg)] text-[var(--color-text-muted)]"
+                  title="Local preview"
+                >
+                  <UserIcon size={13} />
+                </div>
+              )}
+            </div>
+          </nav>
+        </SidebarFooter>
+      </Sidebar>
+    </>
   );
 }
 

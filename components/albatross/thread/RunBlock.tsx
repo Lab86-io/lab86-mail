@@ -69,6 +69,7 @@ import { AllowSecureBlock, type AllowSecureNote } from './AllowSecureBlock';
 import { NotSure } from './NotSure';
 import { openPackageBehaviour, PackageRows } from './PackageRows';
 import { RunChecklist } from './RunChecklist';
+import { LIVE_ROWS_OPEN, LiveRunRows } from './RunLive';
 import { RunMessages } from './RunMessages';
 
 export interface RunBlockProps {
@@ -124,6 +125,8 @@ export interface RunBlockProps {
   onDoneContinue?: (run: ThreadRunView) => void;
   /** Goal runs: a press on a source chip. */
   onOpenSource?: (behaviour: SourceBehaviour, source: RunSource, run: ThreadRunView) => void;
+  /** The text the model writes now (RunLive.tsx). The caller holds its subscription. */
+  liveText?: ReactNode;
   className?: string;
 }
 
@@ -158,7 +161,10 @@ export function RunBlock(props: RunBlockProps) {
   const lines = logLines(run);
   const working = run.state === 'queued' || run.state === 'running';
   const newest = lines.length ? lines[lines.length - 1] : null;
-  const disclosure = logDisclosure(lines.length);
+  // A run at work shows its newest rows open. The older rows and the whole log of a finished run fold.
+  const liveRows = working ? lines.slice(-LIVE_ROWS_OPEN) : [];
+  const foldedLines = working ? lines.slice(0, -LIVE_ROWS_OPEN) : lines;
+  const disclosure = logDisclosure(foldedLines.length);
   const stopped = stoppedReason(run, { goal });
   const question = run.state === 'handed_off' && run.outcome === 'needs_answer' ? run.question : null;
   const showPageRow = !pageOpen && runUsesPage(run) && Boolean(props.onOpenPage);
@@ -182,7 +188,10 @@ export function RunBlock(props: RunBlockProps) {
     [goal, run, props.sentDrafts],
   );
   const when = goal ? runWhenLine(run, { timeZone }) : null;
-  const showLiveLine = working && (!goal || !run.checklist.length || !checklistOpen || !doingLine(run));
+  const doing = goal ? doingLine(run) : null;
+  const showLiveLine =
+    working &&
+    (run.state === 'queued' || (!liveRows.length && !(doing && checklistOpen)) || (doing && !checklistOpen));
   const liveText = goal ? liveLine(run, { pastCap: props.pastCap }) : (newest?.text ?? RUN_STATE_COPY.queued);
 
   const header = (
@@ -223,8 +232,12 @@ export function RunBlock(props: RunBlockProps) {
     </p>
   ) : null;
 
-  const log = lines.length ? (
-    <Task defaultOpen={working && !goal} className="min-w-0">
+  const rowsNode = liveRows.length ? (
+    <LiveRunRows rows={liveRows} shimmerNewest={!showLiveLine} timeZone={timeZone} />
+  ) : null;
+
+  const log = foldedLines.length ? (
+    <Task defaultOpen={false} className="min-w-0">
       <TaskTrigger title={disclosure.label}>
         <button type="button" className={FOLD_TRIGGER_CLASS}>
           <span>{disclosure.label}</span>
@@ -239,8 +252,7 @@ export function RunBlock(props: RunBlockProps) {
       </TaskTrigger>
       <TaskContent>
         <div className="max-h-60 overflow-y-auto">
-          {/* While a step run works, the live line above is the newest line. */}
-          {(working && !goal && lines.length > 1 ? lines.slice(0, -1) : lines).map((line) => (
+          {foldedLines.map((line) => (
             <TaskItem key={`${line.at}:${line.text}`} className="flex gap-2 py-0.5">
               <time className="shrink-0 tabular-nums text-[var(--color-text-faint)]">
                 {formatLogTime(line.at, undefined, timeZone)}
@@ -488,13 +500,16 @@ export function RunBlock(props: RunBlockProps) {
         onOpenSource={
           props.onOpenSource ? (behaviour, source) => props.onOpenSource?.(behaviour, source, run) : undefined
         }
+        rise={!props.liveText}
       />
+      {props.liveText}
       {summaryNode}
       {handoffNode}
       {packageNode}
       <NotSure lines={run.unsure} />
       <RunChecklist items={run.checklist} open={checklistOpen} onOpenChange={setChecklistOpen} />
       {live}
+      {rowsNode}
       {stoppedNode}
       {failedNode}
       {log}
@@ -506,7 +521,9 @@ export function RunBlock(props: RunBlockProps) {
     </>
   ) : (
     <>
+      {props.liveText}
       {live}
+      {rowsNode}
       {log}
       {stoppedNode}
       {failedNode}
