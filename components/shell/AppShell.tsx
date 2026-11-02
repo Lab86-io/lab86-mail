@@ -2,15 +2,7 @@
 
 import { AnimatePresence, motion } from 'motion/react';
 import dynamic from 'next/dynamic';
-import {
-  Component,
-  type CSSProperties,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 import { AlbatrossCompanion } from '@/components/albatross/AlbatrossCompanion';
 import { RecordMailboxesConnected } from '@/components/hosted/HostedOnboarding';
@@ -34,12 +26,12 @@ import {
   workIdFromSearch,
 } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
-import { AIBarTrigger, AssistantChat } from './AIBar';
 import { AssistantWorkspace } from './AssistantWorkspace';
 import { MobileNavigation } from './MobileNavigation';
 import { Rail } from './Rail';
 import { ShortcutsBinding } from './ShortcutsBinding';
 import { ShortcutsSheet } from './ShortcutsSheet';
+import { SurfaceErrorBoundary } from './SurfaceErrorBoundary';
 import {
   loadActivitySurface,
   loadAlbatrossesSurface,
@@ -61,24 +53,51 @@ import { WakeNudgeHost } from './WakeNudge';
 function SurfacePaper() {
   return <div data-surface-loading className="h-full w-full bg-[var(--color-content)]" />;
 }
-const surface = { loading: SurfacePaper, ssr: false };
+// The assistant is the largest part of the shell, and it floats over the page.
+// It loads beside the surface and does not hold up the first paint.
+const AIBarTrigger = dynamic(() => import('./AIBar').then((mod) => mod.AIBarTrigger), { ssr: false });
+const AssistantChat = dynamic(() => import('./AIBar').then((mod) => mod.AssistantChat), { ssr: false });
 const Today = dynamic(() => loadToday().then((mod) => mod.Today), {
   loading: () => <BriefSkeleton masthead />,
   ssr: false,
 });
-const Inbox = dynamic(() => loadInbox().then((mod) => mod.Inbox), surface);
-const ThreadView = dynamic(() => loadThreadView().then((mod) => mod.ThreadView), surface);
-const ActivitySurface = dynamic(() => loadActivitySurface().then((mod) => mod.ActivitySurface), surface);
-const AlbatrossesSurface = dynamic(
-  () => loadAlbatrossesSurface().then((mod) => mod.AlbatrossesSurface),
-  surface,
-);
-const AreaHome = dynamic(() => loadAreaHome().then((mod) => mod.AreaHome), surface);
-const WorkThread = dynamic(() => loadWorkThread().then((mod) => mod.WorkThread), surface);
-const CalendarSurface = dynamic(() => loadCalendarSurface().then((mod) => mod.CalendarSurface), surface);
-const FilesSurface = dynamic(() => loadFilesSurface().then((mod) => mod.FilesSurface), surface);
-const NeedsYouSurface = dynamic(() => loadNeedsYouSurface().then((mod) => mod.NeedsYouSurface), surface);
-const TasksSurface = dynamic(() => loadTasksSurface().then((mod) => mod.TasksSurface), surface);
+const Inbox = dynamic(() => loadInbox().then((mod) => mod.Inbox), { loading: SurfacePaper, ssr: false });
+const ThreadView = dynamic(() => loadThreadView().then((mod) => mod.ThreadView), {
+  loading: SurfacePaper,
+  ssr: false,
+});
+const ActivitySurface = dynamic(() => loadActivitySurface().then((mod) => mod.ActivitySurface), {
+  loading: SurfacePaper,
+  ssr: false,
+});
+const AlbatrossesSurface = dynamic(() => loadAlbatrossesSurface().then((mod) => mod.AlbatrossesSurface), {
+  loading: SurfacePaper,
+  ssr: false,
+});
+const AreaHome = dynamic(() => loadAreaHome().then((mod) => mod.AreaHome), {
+  loading: SurfacePaper,
+  ssr: false,
+});
+const WorkThread = dynamic(() => loadWorkThread().then((mod) => mod.WorkThread), {
+  loading: SurfacePaper,
+  ssr: false,
+});
+const CalendarSurface = dynamic(() => loadCalendarSurface().then((mod) => mod.CalendarSurface), {
+  loading: SurfacePaper,
+  ssr: false,
+});
+const FilesSurface = dynamic(() => loadFilesSurface().then((mod) => mod.FilesSurface), {
+  loading: SurfacePaper,
+  ssr: false,
+});
+const NeedsYouSurface = dynamic(() => loadNeedsYouSurface().then((mod) => mod.NeedsYouSurface), {
+  loading: SurfacePaper,
+  ssr: false,
+});
+const TasksSurface = dynamic(() => loadTasksSurface().then((mod) => mod.TasksSurface), {
+  loading: SurfacePaper,
+  ssr: false,
+});
 
 // Each visible-pane permutation gets its own persisted layout so the inbox
 // doesn't snap to weird sizes when the reader or AI sidebar mounts/unmounts.
@@ -364,7 +383,9 @@ export function AppShell({
                           transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
                           className="h-full min-w-0"
                         >
-                          <ThreadView />
+                          <SurfaceErrorBoundary surface="This conversation">
+                            <ThreadView />
+                          </SurfaceErrorBoundary>
                         </motion.div>
                       </ReflowPanel>
                     </Panel>
@@ -384,7 +405,9 @@ export function AppShell({
                       transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
                       className="absolute inset-0 z-20 h-full w-full bg-[var(--color-bg)] shadow-[var(--shadow-pop)]"
                     >
-                      <ThreadView />
+                      <SurfaceErrorBoundary surface="This conversation">
+                        <ThreadView />
+                      </SurfaceErrorBoundary>
                     </motion.div>
                   ) : null}
                   {readerSheet ? (
@@ -396,14 +419,18 @@ export function AppShell({
                       transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
                       className="absolute inset-y-0 right-0 z-30 w-[min(560px,calc(100%-96px))]"
                     >
-                      <ThreadView variant="sheet" />
+                      <SurfaceErrorBoundary surface="This conversation">
+                        <ThreadView variant="sheet" />
+                      </SurfaceErrorBoundary>
                     </motion.div>
                   ) : null}
                 </AnimatePresence>
               </TooltipProvider>
             </ChatWorkspace>
           </div>
-          <AIBarTrigger />
+          <SurfaceErrorBoundary surface="The assistant" quiet>
+            <AIBarTrigger />
+          </SurfaceErrorBoundary>
           <AlbatrossCompanion />
           <WakeNudgeHost />
           <NeedsYouArrivals />
@@ -441,7 +468,11 @@ function ChatWorkspace({
       onPresentationChange={setPresentation}
       onClose={() => setOpen(false)}
       mobile={mobile}
-      assistant={<AssistantChat clerkEnabled={clerkEnabled} userName={userName} />}
+      assistant={
+        <SurfaceErrorBoundary surface="The assistant">
+          <AssistantChat clerkEnabled={clerkEnabled} userName={userName} />
+        </SurfaceErrorBoundary>
+      }
     >
       <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">{children}</div>
     </AssistantWorkspace>
@@ -488,49 +519,31 @@ function PrimarySurface({ view, selectedWorkId }: { view: PrimaryView; selectedW
         </SurfaceErrorBoundary>
       );
     case 'calendar':
-      return <CalendarSurface />;
+      return (
+        <SurfaceErrorBoundary surface="Calendar">
+          <CalendarSurface />
+        </SurfaceErrorBoundary>
+      );
     case 'files':
-      return <FilesSurface />;
+      return (
+        <SurfaceErrorBoundary surface="Files">
+          <FilesSurface />
+        </SurfaceErrorBoundary>
+      );
     case 'tasks':
       // The board left the rail. It stays routable for saved links and for the
       // people who turn it back on in Settings.
-      return <TasksSurface />;
+      return (
+        <SurfaceErrorBoundary surface="Tasks">
+          <TasksSurface />
+        </SurfaceErrorBoundary>
+      );
     default:
-      return <Inbox />;
-  }
-}
-
-// A live-data surface must never take the whole shell down with it (a thrown
-// Convex query error propagates as a render error). Catch, explain, offer retry.
-class SurfaceErrorBoundary extends Component<
-  { surface: string; children: ReactNode },
-  { error: Error | null }
-> {
-  state = { error: null as Error | null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-
-  render() {
-    if (!this.state.error) return this.props.children;
-    return (
-      <div className="flex h-full items-center justify-center p-8">
-        <div className="max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 text-center">
-          <p className="text-[14px] font-medium">{this.props.surface} hit an error.</p>
-          <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
-            {this.state.error.message.slice(0, 300)}
-          </p>
-          <button
-            type="button"
-            onClick={() => this.setState({ error: null })}
-            className="mt-4 rounded-md border border-[var(--color-border)] px-3 py-1.5 text-[12.5px] hover:bg-[var(--color-bg-subtle)]"
-          >
-            Try again
-          </button>
-        </div>
-      </div>
-    );
+      return (
+        <SurfaceErrorBoundary surface="Mail">
+          <Inbox />
+        </SurfaceErrorBoundary>
+      );
   }
 }
 

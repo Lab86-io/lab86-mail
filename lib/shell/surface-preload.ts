@@ -49,3 +49,15 @@ export function whenBrowserIdle(work: () => void, target: IdleWindow = window as
   const handle = target.setTimeout(work, 1_500);
   return () => target.clearTimeout(handle);
 }
+
+/** True for a failed load of on-demand code. After a release an open tab can ask for an old chunk. */
+export function isChunkLoadError(error: unknown): boolean {
+  const name = error instanceof Error ? error.name : '';
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return (
+    name === 'ChunkLoadError' ||
+    /loading (css )?chunk|failed to load chunk|dynamically imported module|importing a module script failed/i.test(
+      message,
+    )
+  );
+}
