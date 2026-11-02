@@ -248,7 +248,8 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'Continuation requires the original user message ID.' }, { status: 400 });
     // Every pre-flight read is independent of the others, so they run together:
     // the model call waits for the slowest one, not for the sum.
-    const [areaDiscoveryContext, attachedContexts, modelMessages] = await Promise.all([
+    const chatId = agentChatId(body.sessionId);
+    const [areaDiscoveryContext, attachedContexts, modelMessages, recovery, priorRuns] = await Promise.all([
       !briefContext && body.areaDiscovery
         ? readAreaDiscoveryContext({
             userId: user.userId,
@@ -272,9 +273,6 @@ export async function POST(req: NextRequest) {
         .then(sanitizeToolPairs)
         // The trim above keeps the recent messages whole, however large their tool results are.
         .then((messages) => boundToolResults(messages)),
-    ]);
-    const chatId = agentChatId(body.sessionId);
-    const [recovery, priorRuns] = await Promise.all([
       body.continuation === true ? readRecoveryContext(user.userId, runId) : '',
       // Each turn reads what the earlier runs of this chat wrote. A reload loses
       // the reply and a new message starts a new run, so the model cannot see them.
