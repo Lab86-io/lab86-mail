@@ -20,6 +20,8 @@ export interface StepRunNavigatorDeps {
   openWindow: (url: string) => void;
   pushPath: (path: string) => void;
   dispatch: (eventName: string) => void;
+  /** Selects one approval on the page that decides it. */
+  requestApproval?: (id: string) => void;
 }
 
 /** The handlers a surface supplies for the behaviours that stay on its own page. */
@@ -29,6 +31,8 @@ export interface StepRunSurfaceHandlers {
   markDone?: () => void;
   showArtifacts?: () => void;
   resume?: () => void;
+  /** True when this surface has the Approve control in view, so the user stays. */
+  showApproval?: (id: string | null) => boolean;
 }
 
 /** A draft opens by id: the composer gets its fields and keeps the same draft id. */
@@ -129,6 +133,8 @@ export async function performNextBehaviour(
     case 'open_document':
       return openDocumentPath(deps, behaviour.url, behaviour.id);
     case 'open_approval':
+      if (surface.showApproval?.(behaviour.id)) return true;
+      if (behaviour.id) deps.requestApproval?.(`approval:${behaviour.id}`);
       deps.getState().setPrimaryView('notifications');
       return true;
     case 'open_url': {

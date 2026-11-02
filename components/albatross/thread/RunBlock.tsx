@@ -12,9 +12,11 @@
 import { type ReactNode, useMemo, useState } from 'react';
 import { FormQuestionCard, type FormReceipt } from '@/components/ai-elements/form-question-card';
 import { Task, TaskContent, TaskItem, TaskTrigger } from '@/components/ai-elements/task';
+import { ApprovalDecision } from '@/components/albatross/ApprovalDecision';
 import { BlankSentence } from '@/components/albatross/BlankSentence';
 import { ShimmerText } from '@/components/odysseyui/text-shimmer';
 import { Button } from '@/components/ui/button';
+import { approvalDetailParts } from '@/lib/albatross/approval-decision';
 import { handoffBlanks } from '@/lib/albatross/blanks';
 import type { RunSource } from '@/lib/albatross/goal-run-contract';
 import {
@@ -55,6 +57,7 @@ import {
   questionReceiptLine,
   RUN_STATE_COPY,
   runBlockAction,
+  runBlockDecidesHere,
   runBlockDismisses,
   runBlockDoneContinue,
   runBlockMarksDone,
@@ -154,10 +157,19 @@ export function RunBlock(props: RunBlockProps) {
   } = props;
   const goal = isGoalRun(run);
   const state = runStateLine(run);
-  const action = handoffShownElsewhere ? ({ kind: 'none' } as const) : runBlockAction(run, { startable });
-  const dismisses = !handoffShownElsewhere && runBlockDismisses(run);
-  const marksDone = !handoffShownElsewhere && runBlockMarksDone(run, { startable });
-  const doneContinue = !handoffShownElsewhere && runBlockDoneContinue(run);
+  // The approvals of this run decide here: the user does not leave the thread.
+  const approvals = run.approvals ?? [];
+  const decidesHere = runBlockDecidesHere(run);
+  const shownApproval = (kind: string, id: string | null | undefined) =>
+    kind === 'approval' && approvals.some((row) => row.id === id);
+  const baseAction = handoffShownElsewhere ? ({ kind: 'none' } as const) : runBlockAction(run, { startable });
+  const action =
+    decidesHere && baseAction.kind === 'next' && baseAction.behaviour.kind === 'open_approval'
+      ? ({ kind: 'none' } as const)
+      : baseAction;
+  const dismisses = !handoffShownElsewhere && !decidesHere && runBlockDismisses(run);
+  const marksDone = !handoffShownElsewhere && !decidesHere && runBlockMarksDone(run, { startable });
+  const doneContinue = !handoffShownElsewhere && !decidesHere && runBlockDoneContinue(run);
   const lines = logLines(run);
   const working = run.state === 'queued' || run.state === 'running';
   const newest = lines.length ? lines[lines.length - 1] : null;
@@ -186,7 +198,7 @@ export function RunBlock(props: RunBlockProps) {
   const rows = useMemo(
     () => (goal ? packageRows(run, { sent: props.sentDrafts }) : []),
     [goal, run, props.sentDrafts],
-  );
+  ).filter((row) => !shownApproval(row.item.kind, row.item.id));
   const when = goal ? runWhenLine(run, { timeZone }) : null;
   const doing = goal ? doingLine(run) : null;
   const showLiveLine =
@@ -281,10 +293,11 @@ export function RunBlock(props: RunBlockProps) {
       <p className="text-[13.5px] leading-relaxed">{run.summary}</p>
     ) : null;
 
+  const artifactRows = run.artifacts.filter((artifact) => !shownApproval(artifact.kind, artifact.id));
   const artifactsNode =
-    !goal && run.artifacts.length ? (
+    !goal && artifactRows.length ? (
       <ul className="divide-y divide-[var(--color-list-divider)] border-y border-[var(--color-list-divider)]">
-        {run.artifacts.map((artifact) => (
+        {artifactRows.map((artifact) => (
           <ArtifactRow
             key={`${artifact.kind}:${artifact.id ?? artifact.url ?? artifact.title}`}
             artifact={artifact}
@@ -374,6 +387,29 @@ export function RunBlock(props: RunBlockProps) {
         ) : null}
       </div>
     ) : null;
+
+  const approvalsNode = approvals.length ? (
+    <ul
+      data-slot="run-approvals"
+      className="divide-y divide-[var(--color-list-divider)] border-t border-[var(--color-list-divider)]"
+    >
+      {approvals.map((approval) => {
+        // The block already names its step, so only an older row shows where it came from.
+        const { what, from } = approvalDetailParts(approval.detail);
+        return (
+          <li key={approval.id} className="flex flex-col gap-1 pt-2.5 not-last:pb-2.5">
+            <span className="text-[13px] font-medium">{approval.title}</span>
+            {what || from ? (
+              <span className="text-[12.5px] leading-[1.45] text-[var(--color-text-muted)]">
+                {what || from}
+              </span>
+            ) : null}
+            <ApprovalDecision approval={approval} className="mt-1" />
+          </li>
+        );
+      })}
+    </ul>
+  ) : null;
 
   const pageRowNode = showPageRow ? (
     <button
@@ -506,6 +542,7 @@ export function RunBlock(props: RunBlockProps) {
       {summaryNode}
       {handoffNode}
       {packageNode}
+      {approvalsNode}
       <NotSure lines={run.unsure} />
       <RunChecklist items={run.checklist} open={checklistOpen} onOpenChange={setChecklistOpen} />
       {live}
@@ -532,6 +569,7 @@ export function RunBlock(props: RunBlockProps) {
       {questionNode}
       {allowNode}
       {handoffNode}
+      {approvalsNode}
       {pageRowNode}
       {actionsNode}
       {errorNode}

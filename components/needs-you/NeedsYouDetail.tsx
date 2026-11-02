@@ -2,6 +2,7 @@
 
 import { ArrowUpRight, Check } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
+import { ApprovalDecision } from '@/components/albatross/ApprovalDecision';
 import type { NotificationItem } from '@/components/notifications/model';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -11,6 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { APPROVAL_COPY, approvalDetailParts } from '@/lib/albatross/approval-decision';
 import type { ObligationView } from '@/lib/obligations/contract';
 import { isClosedObligation, type LaterOption } from '@/lib/obligations/groups';
 import {
@@ -565,6 +567,34 @@ export function AlbatrossDetail({
   onAction: () => void;
   onRetry?: () => void;
 }) {
+  if (item.approval) {
+    const { what, from } = approvalDetailParts(item.body);
+    return (
+      <>
+        <SourceLine
+          parts={[
+            { key: 'source', node: 'Albatross' },
+            { key: 'kind', node: <span className="text-[var(--color-accent)]">{item.source}</span> },
+          ]}
+          when={item.createdAt ? whenLabel(item.createdAt, now, timezone) : ''}
+        />
+        <Title>{item.title}</Title>
+        {what ? (
+          <p className="mt-5 whitespace-pre-wrap break-words text-[14px] leading-[1.75] text-[var(--color-text)]">
+            {what}
+          </p>
+        ) : null}
+        {from ? <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">{from}</p> : null}
+        <div className="mt-auto flex flex-col gap-2.5 border-t border-[var(--color-border)] pt-5">
+          <ApprovalDecision
+            approval={item.approval}
+            note={APPROVAL_COPY.note}
+            end={item.action ? <QuietLink onClick={onAction}>{item.actionLabel}</QuietLink> : null}
+          />
+        </div>
+      </>
+    );
+  }
   return (
     <>
       <SourceLine

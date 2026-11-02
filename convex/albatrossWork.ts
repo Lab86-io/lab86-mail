@@ -618,11 +618,15 @@ export const decideApproval = mutation({
     decisionNote: v.optional(v.string()),
     result: v.optional(v.any()),
     undoExpiresAt: v.optional(v.number()),
+    // A person's decline. A row that another client claimed is on its way out.
+    onlyIfPending: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const approval = await ctx.db.get(args.approvalId);
     if (!approval || approval.userId !== userId) throw new Error('Approval not found.');
+    if (args.onlyIfPending && approval.status !== 'pending')
+      throw new Error(`Approval is already ${approval.status}.`);
     if (args.status === 'approved' && approval.status !== 'claiming' && approval.status !== 'pending') {
       throw new Error(`Approval is already ${approval.status}.`);
     }
@@ -665,6 +669,26 @@ export const claimApproval = mutation({
     const ts = now();
     await ctx.db.patch(args.approvalId, { status: 'claiming', updatedAt: ts });
     return { ok: true, approval: { ...approval, status: 'claiming', updatedAt: ts } };
+  },
+});
+
+/**
+ * A claimed approval whose call failed goes back to the queue, so the user can
+ * try again or decline it on any client. A row that is not claimed stays as it is.
+ */
+export const releaseApproval = mutation({
+  args: { ...callerArgs, approvalId: v.id('albatrossApprovals'), decisionNote: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const approval = await ctx.db.get(args.approvalId);
+    if (!approval || approval.userId !== userId) throw new Error('Approval not found.');
+    if (approval.status !== 'claiming') return { ok: false };
+    await ctx.db.patch(args.approvalId, {
+      status: 'pending',
+      decisionNote: bounded(args.decisionNote, 800),
+      updatedAt: now(),
+    });
+    return { ok: true };
   },
 });
 

@@ -10,11 +10,13 @@
 
 import { tool as aiTool } from 'ai';
 import { z } from 'zod';
-import { approvalConditionMet } from '../ai/approval';
+import { approvalConditionMet, approvalRecipientLine } from '../ai/approval';
 import { getAiRequestContext } from '../ai/context';
 import { runSecureFetch } from '../secure/fetch';
 import { SecureLeak, SecureNeedsAllow, SecureRefused, type SecureRunAccess } from '../secure/runner-access';
 import { truncateText } from '../shared/text';
+import { calendarCreateEvent, calendarRsvpEvent } from '../tools/calendar';
+import { repairToolArgs } from '../tools/registry';
 import { saveBrowserDownload } from '../web/file-pull';
 import { type AgentBrowser, BrowserHandoffRequired, type PageView } from './browser-agent';
 import {
@@ -135,14 +137,16 @@ export const GOAL_RUN_ONLY_TOOLS: ReadonlySet<string> = new Set([
 /** Calls that the queue holds for the user instead of running. */
 const QUEUED_FOR_APPROVAL: Record<
   string,
-  { kind: 'calendar_invite' | 'calendar_rsvp'; title: (args: any) => string }
+  { kind: 'calendar_invite' | 'calendar_rsvp'; input: z.ZodTypeAny; title: (args: any) => string }
 > = {
   calendar_create_event: {
     kind: 'calendar_invite',
+    input: calendarCreateEvent.input,
     title: (args) => `Send the invite: ${truncateText(String(args?.title || args?.summary || 'event'), 160)}`,
   },
   calendar_rsvp_event: {
     kind: 'calendar_rsvp',
+    input: calendarRsvpEvent.input,
     title: (args) =>
       `Answer the invite: ${truncateText(String(args?.status || args?.response || 'reply'), 60)}`,
   },
@@ -287,6 +291,8 @@ export interface RunnerToolHost {
   enqueueApproval(input: {
     kind: 'calendar_invite' | 'calendar_rsvp';
     title: string;
+    /** What goes out and to whom, for the approval row. Empty when the call names nobody. */
+    recipients: string;
     toolName: string;
     toolArgs: unknown;
   }): Promise<string>;
@@ -597,6 +603,33 @@ function addGoalTools(tools: Record<string, any>, host: RunnerToolHost) {
 }
 
 /**
+ * What goes out and to whom, from the repaired args: a list can arrive as JSON
+ * text. An answer to an invite has only ids, so it reads the event for its
+ * title and organizer. A failed read leaves the line without them.
+ */
+async function queuedRecipientLine(
+  name: string,
+  schema: z.ZodTypeAny,
+  args: unknown,
+  lifted: Record<string, any>,
+  options: unknown,
+  timeZone: string | undefined,
+): Promise<string> {
+  const repaired = repairToolArgs(schema, args) as Record<string, unknown>;
+  let event: { title?: unknown; organizer?: unknown } | null = null;
+  if (name === 'calendar_rsvp_event') {
+    try {
+      const { account, calendarId, eventId } = repaired ?? {};
+      const found = await lifted.calendar_event_detail?.execute?.({ account, calendarId, eventId }, options);
+      event = found?.event ?? null;
+    } catch {
+      event = null;
+    }
+  }
+  return approvalRecipientLine(name, repaired, { timeZone, event });
+}
+
+/**
  * The tool set of one run. `lifted` is the output of liftToolsForAgent for
  * this run; only the chosen registry tools are kept.
  */
@@ -621,6 +654,7 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
           const approvalId = await host.enqueueApproval({
             kind: queued.kind,
             title: queued.title(args),
+            recipients: await queuedRecipientLine(name, queued.input, args, lifted, options, host.timezone),
             toolName: name,
             toolArgs: args,
           });

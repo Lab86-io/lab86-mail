@@ -441,7 +441,10 @@ describe('runStepRun', () => {
       intentId: 'work-1',
       toolName: 'calendar_create_event',
       operationBatchId: 'run-1',
+      artifactKind: 'step_run',
     });
+    // Who gets it, next to where it came from, so the row can be decided as it stands.
+    expect(h.calls('albatrossWork:enqueueApproval')[0].detail).toMatch(/^To .+\. .*From the step "[^"]+"\.$/);
     expect(h.settled().next.target).toEqual({ kind: 'approval', id: 'approval-1' });
   });
 

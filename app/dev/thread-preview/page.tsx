@@ -15,6 +15,7 @@ import { PersonalDetailsList } from '@/components/settings/PersonalDetailsSectio
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import { useMediaQuery } from '@/hooks/use-media-query';
+import { seedApprovalPreview } from '@/lib/albatross/approval-fixtures';
 import {
   documentHandoffDetailFixture,
   documentHandoffRunsFixture,
@@ -37,6 +38,8 @@ import {
   goalInvoiceDocumentFixture,
   goalMessagesFixture,
   goalRunFixtures,
+  THREAD_FIXTURE_APPROVAL_ID,
+  threadApprovalRunFixture,
   threadDetailDoneStep,
   threadDetailFixture,
   threadDetailsFixture,
@@ -61,6 +64,8 @@ import { workObligationsFixture } from '@/lib/obligations/fixtures';
  *          | goalDocument   (docs/albatross-goal-runs.md; &tab=draft | invoice | hours | w9;
  *                           &allow=1 makes the compose route ask for a send permission)
  *          | needsYou       (docs/needs-you.md, screen 5: the Needs you items of the thread)
+ *          | approvalWaiting | approvalDeciding | approvalApproved | approvalDeclined | approvalFailed
+ *                           (an invite the run queued; Approve and Decline work in place)
  *   &region=page | details | document | none   (overrides the state's own region)
  * Not linked from anywhere; 404s outside development. */
 export default function ThreadPreviewPage() {
@@ -141,6 +146,11 @@ type StateName =
   | 'earlier'
   | 'settings'
   | 'checkResult'
+  | 'approvalWaiting'
+  | 'approvalDeciding'
+  | 'approvalApproved'
+  | 'approvalDeclined'
+  | 'approvalFailed'
   | 'document'
   | 'liveStep'
   | 'liveGoal'
@@ -382,6 +392,20 @@ function buildModel(
       session = threadSessionFixture('user');
       region = 'details';
       break;
+    case 'approvalWaiting':
+    case 'approvalDeciding':
+    case 'approvalFailed':
+      threadRuns = [threadApprovalRunFixture(NOW)];
+      messages = threadMessagesFixture(NOW, 'run_invite');
+      break;
+    case 'approvalApproved':
+      threadRuns = [threadApprovalRunFixture(NOW, 'approved')];
+      messages = threadMessagesFixture(NOW, 'run_invite');
+      break;
+    case 'approvalDeclined':
+      threadRuns = [threadApprovalRunFixture(NOW, 'rejected')];
+      messages = threadMessagesFixture(NOW, 'run_invite');
+      break;
     case 'checkResult':
     case 'document': {
       detail = documentHandoffDetailFixture(NOW);
@@ -612,6 +636,13 @@ function ThreadPreview() {
   useDocumentFetchStub();
   const params = useSearchParams();
   const state = (params.get('state') || 'needsAnswer') as StateName;
+  // The approval states: the store holds what this client did. Approve and Decline answer like the server.
+  useState(() =>
+    seedApprovalPreview(
+      THREAD_FIXTURE_APPROVAL_ID,
+      state.startsWith('approval') ? state.replace('approval', '').toLowerCase() : null,
+    ),
+  );
   const dark = params.get('dark') === '1';
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);

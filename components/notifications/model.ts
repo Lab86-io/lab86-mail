@@ -1,3 +1,4 @@
+import { APPROVAL_COPY } from '@/lib/albatross/approval-decision';
 import { isClosed } from '@/lib/albatross/work-state';
 import { migratePrimaryView, type PrimaryView } from '@/lib/shared/types';
 
@@ -27,6 +28,7 @@ export interface PendingApproval {
   detail?: string;
   intentId?: string;
   status: string;
+  kind?: string;
   createdAt?: number;
 }
 
@@ -53,6 +55,8 @@ export interface NotificationItem {
   unreadNotificationIds: string[];
   action: NotificationAction | null;
   actionLabel: string;
+  /** Set on an approval item: what the Approve and Decline control acts on. */
+  approval?: { id: string; status: string; kind?: string };
 }
 
 export interface NotificationProjection {
@@ -169,8 +173,9 @@ export function projectNotifications(input: {
       id,
       kind: 'approval',
       title: row.title,
-      body: row.detail || 'Review the proposed action before it goes ahead.',
-      context: row.status === 'claiming' ? 'Approval is being processed' : 'Waiting for your decision',
+      // Older rows name no recipient. New rows say what goes out and to whom.
+      body: row.detail || APPROVAL_COPY.fallback,
+      context: row.status === 'claiming' ? APPROVAL_COPY.approving : 'Waiting for your decision',
       source: 'Approval',
       createdAt: row.createdAt,
       attention: true,
@@ -178,7 +183,8 @@ export function projectNotifications(input: {
       notificationIds: [],
       unreadNotificationIds: [],
       action: row.intentId ? { kind: 'work', workId: row.intentId } : { kind: 'albatrosses' },
-      actionLabel: 'Review approval',
+      actionLabel: 'Open the Albatross',
+      approval: { id: row._id, status: row.status, kind: row.kind },
     });
   }
   if (input.checkin && ['scheduled', 'open'].includes(input.checkin.status)) {

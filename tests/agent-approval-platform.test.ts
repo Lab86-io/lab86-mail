@@ -5,13 +5,14 @@ import { MockLanguageModelV3 } from 'ai/test';
 import { POST } from '../app/api/agent/route';
 import {
   APPROVAL_GATED_TOOLS,
+  approvalRecipientLine,
   approvalSummary,
   createApprovalAutoContinueGuard,
   respondedApprovalIds,
   toolNeedsApproval,
 } from '../lib/ai/approval';
 import * as gateway from '../lib/ai/gateway';
-import { forwardAgentStream, liftToolsForAgent, runAgent } from '../lib/ai/loop';
+import { AGENT_TOOL_NAMES, forwardAgentStream, liftToolsForAgent, runAgent } from '../lib/ai/loop';
 import { sanitizeToolPairs } from '../lib/ai/message-sanitize';
 import { buildSystemPrompt, isWebOnlyTool, normalizeClientPlatform } from '../lib/ai/system-prompt';
 import * as narrative from '../lib/narrative/service';
@@ -475,5 +476,74 @@ describe('user-facing failure text', () => {
       .join('');
     expect(message).toContain('model provider');
     expect(message).not.toMatch(/\bAI\b/);
+  });
+});
+
+describe('approvalRecipientLine', () => {
+  const people = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({ email: `person${index}@example.com` }));
+
+  test('an invite names its people and, with a known zone, its time', () => {
+    const args = {
+      title: 'Kickoff',
+      startIso: '2031-01-02T18:00:00Z',
+      attendees: [{ email: 'dana@example.com', name: 'Dana Reyes' }, { email: 'sam@example.com' }],
+    };
+    expect(approvalRecipientLine('calendar_create_event', args, { timeZone: 'America/New_York' })).toBe(
+      'To Dana Reyes <dana@example.com>, sam@example.com. Starts Jan 2, 2031, 1:00 PM.',
+    );
+    // A server clock must not name the hour for the user.
+    expect(approvalRecipientLine('calendar_create_event', args)).toBe(
+      'To Dana Reyes <dana@example.com>, sam@example.com.',
+    );
+  });
+
+  test('a long list names twelve people and counts the rest, where the card names four', () => {
+    const args = { attendees: people(14) };
+    const line = approvalRecipientLine('calendar_create_event', args);
+    expect(line).toContain('person11@example.com');
+    expect(line).not.toContain('person12@example.com');
+    expect(line).toContain('and 2 more');
+    const card = approvalSummary('calendar_create_event', args);
+    expect(card.metadata.find((row) => row.label === 'Invitees')?.value).toContain('and 10 more');
+  });
+
+  test('an answer to an invite says who gets it', () => {
+    expect(approvalRecipientLine('calendar_rsvp_event', { status: 'maybe' })).toBe(
+      'Your answer: Maybe. The organizer gets it by email.',
+    );
+    expect(
+      approvalRecipientLine(
+        'calendar_rsvp_event',
+        { status: 'yes' },
+        { event: { title: 'Kickoff', organizer: 'dana@example.com' } },
+      ),
+    ).toBe('Your answer: Yes to “Kickoff”. dana@example.com gets it by email.');
+    expect(approvalRecipientLine('calendar_rsvp_event', {})).toBe(
+      'Your answer: a reply. The organizer gets it by email.',
+    );
+  });
+
+  test('an email names its recipient and subject, and other calls have no line', () => {
+    expect(approvalRecipientLine('send_message', { to: 'dana@example.com', subject: 'Kickoff' })).toBe(
+      'To dana@example.com. Subject: Kickoff.',
+    );
+    expect(approvalRecipientLine('send_message', {})).toBe('');
+    expect(approvalRecipientLine('external_action', { to: 'dana@example.com' })).toBe('');
+    expect(approvalRecipientLine('calendar_create_event', {})).toBe('');
+  });
+});
+
+describe('deciding an approval from chat', () => {
+  // The card shows the call's args, and these calls hold only an approval id:
+  // it could not say what goes out or to whom. The chat lists approvals, and
+  // the user decides on the surfaces that show the recipient.
+  test('the agent can list approvals but cannot decide them', () => {
+    expect(AGENT_TOOL_NAMES.has('albatross_list_approval_queue')).toBe(true);
+    expect(AGENT_TOOL_NAMES.has('albatross_approve_action')).toBe(false);
+    expect(AGENT_TOOL_NAMES.has('albatross_reject_action')).toBe(false);
+    const card = approvalSummary('albatross_approve_action', { approvalId: 'ap1' });
+    expect(card.metadata).toEqual([]);
+    expect(card.title).toBe('Approve this action');
   });
 });

@@ -2455,7 +2455,12 @@ struct ApprovalSummary: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let title: String
     let detail: String
+    /// What goes out and to whom, as the queue wrote it. Older rows have none.
+    let queueDetail: String?
     let status: String
+
+    /// The line under the title: the queue's words, else the older fallback.
+    var line: String { queueDetail ?? detail }
 
     init?(json: JSONValue) {
         guard let id = json["_id"]?.stringValue ?? json["id"]?.stringValue else { return nil }
@@ -2466,6 +2471,7 @@ struct ApprovalSummary: Identifiable, Hashable, Codable, Sendable {
         detail = json["summary"]?.stringValue
             ?? json["description"]?.stringValue
             ?? "Albatross needs your approval before continuing."
+        queueDetail = json["detail"]?.stringValue?.nilIfBlank
         status = json["status"]?.stringValue ?? "pending"
     }
 }

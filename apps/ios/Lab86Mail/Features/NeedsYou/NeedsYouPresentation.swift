@@ -177,7 +177,7 @@ enum NeedsYouPresentation {
             )
         }
         let approvalRows = approvals.map { item in
-            NeedsYouExtra(id: "approval:\(item.id)", kind: .approval, title: item.title, line: item.detail)
+            NeedsYouExtra(id: "approval:\(item.id)", kind: .approval, title: item.title, line: item.line)
         }
         return questionRows + approvalRows
     }

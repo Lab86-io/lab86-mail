@@ -14,8 +14,11 @@ import { NeedsYouView } from '@/components/needs-you/NeedsYouView';
 import { ThreadNeedsYouStrip } from '@/components/needs-you/ThreadNeedsYouStrip';
 import { TodayNeedsYou } from '@/components/needs-you/TodayNeedsYou';
 import type { NotificationItem } from '@/components/notifications/model';
+import { projectNotifications } from '@/components/notifications/model';
+import { NotificationsView } from '@/components/notifications/NotificationsSurface';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
+import { seedApprovalPreview } from '@/lib/albatross/approval-fixtures';
 import type {
   ObligationAction,
   ObligationActionResponse,
@@ -25,7 +28,12 @@ import type {
   ObligationView,
 } from '@/lib/obligations/contract';
 import { UNDO_WINDOW_MS } from '@/lib/obligations/contract';
-import { NEEDS_YOU_FIXTURE_NOW, needsYouFixture } from '@/lib/obligations/fixtures';
+import {
+  NEEDS_YOU_FIXTURE_APPROVAL_ID,
+  NEEDS_YOU_FIXTURE_NOW,
+  needsYouApprovalFixture,
+  needsYouFixture,
+} from '@/lib/obligations/fixtures';
 import { isClosedObligation } from '@/lib/obligations/groups';
 import { mailThreadKey, obligationsByThread } from '@/lib/obligations/surfaces';
 
@@ -38,6 +46,9 @@ import { mailThreadKey, obligationsByThread } from '@/lib/obligations/surfaces';
  *   ?state=loading    the skeleton
  *   ?toast=1          the arrival toast for Dana's reply
  *   ?toast=code       the arrival toast for a code
+ *   ?approval=waiting | deciding | approved | declined | failed
+ *                     an invite a run queued, in that state; &select=approval:ap_kickoff opens it
+ *   &surface=notifications   the same approval on the older Notifications page
  *   ?surface=today    the live list of Today (with &state=empty)
  *   ?surface=mail     the reader strip and the inbox row mark
  *   ?surface=calendar the event dialog card and the block mark
@@ -64,7 +75,18 @@ function useFixtureServer(state: string | null) {
   const [items, setItems] = useState<ObligationView[]>(() =>
     state === 'empty' ? fixture.items.filter(isClosedObligation) : fixture.items,
   );
-  const extras = state === 'empty' ? [] : fixture.extras;
+  const approvalState = useSearchParams().get('approval');
+  // One approval in the state the query names. The buttons answer like the server.
+  useState(() => seedApprovalPreview(NEEDS_YOU_FIXTURE_APPROVAL_ID, approvalState));
+  const extras = useMemo(
+    () =>
+      state === 'empty'
+        ? []
+        : approvalState
+          ? [needsYouApprovalFixture(), ...fixture.extras]
+          : fixture.extras,
+    [state, approvalState, fixture],
+  );
   // The fixture clock moves with the real one, so a close made now reads as "now".
   const fixtureNow = useCallback(() => now + (Date.now() - startedAt.current), []);
 
@@ -172,6 +194,40 @@ function NeedsYouPreviewInner() {
   if (surface === 'today') return <TodaySurfacePreview server={server} />;
   if (surface === 'mail') return <MailSurfacePreview server={server} />;
   if (surface === 'calendar') return <CalendarSurfacePreview server={server} />;
+
+  if (params.get('surface') === 'notifications') {
+    const approval = needsYouApprovalFixture();
+    const projection = projectNotifications({
+      notifications: [],
+      questions: [],
+      approvals: [
+        {
+          _id: NEEDS_YOU_FIXTURE_APPROVAL_ID,
+          title: approval.title,
+          detail: approval.body,
+          status: 'pending',
+          kind: 'calendar_invite',
+          intentId: 'work_q3_deck',
+          createdAt: approval.createdAt,
+        },
+      ],
+      checkin: null,
+    });
+    return (
+      <div className="h-dvh">
+        <NotificationsView
+          projection={projection}
+          now={now}
+          openRequest={select ? { id: select, at: 1 } : null}
+          onRead={async () => undefined}
+          onDismiss={async () => undefined}
+          onAction={() => {
+            toast('Albatross action');
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="h-dvh">

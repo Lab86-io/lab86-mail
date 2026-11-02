@@ -177,8 +177,13 @@ function row(label: string, value: string) {
   return value ? [{ label, value }] : [];
 }
 
-/** The approval card for one gated call. */
-export function approvalSummary(toolName: string, input: unknown, timeZone?: string): ApprovalSummary {
+/** The approval card for one gated call. `maxPeople` is how many invitees it names. */
+export function approvalSummary(
+  toolName: string,
+  input: unknown,
+  timeZone?: string,
+  options: { maxPeople?: number } = {},
+): ApprovalSummary {
   const args = rec(input);
   const attendees = attendeeList(args.attendees);
   switch (toolName) {
@@ -209,7 +214,7 @@ export function approvalSummary(toolName: string, input: unknown, timeZone?: str
           ...row('Event', eventName(args)),
           ...row('Starts', whenText(args.startIso, timeZone)),
           ...row('Ends', whenText(args.endIso, timeZone)),
-          ...row('Invitees', joinPeople(attendees)),
+          ...row('Invitees', joinPeople(attendees, options.maxPeople)),
           ...row('Calendar', text(args.account)),
         ],
         confirmLabel: 'Send invitations',
@@ -234,7 +239,7 @@ export function approvalSummary(toolName: string, input: unknown, timeZone?: str
           ...row('New title', renamed),
           ...row('Starts', whenText(args.startIso, timeZone)),
           ...row('Ends', whenText(args.endIso, timeZone)),
-          ...row('Invitees', joinPeople(attendees)),
+          ...row('Invitees', joinPeople(attendees, options.maxPeople)),
         ],
         confirmLabel: notify ? 'Update and notify' : 'Update event',
         denyLabel: 'Cancel',
@@ -356,6 +361,54 @@ export function approvalSummary(toolName: string, input: unknown, timeZone?: str
 }
 
 const RSVP_ANSWERS: Record<string, string> = { yes: 'Yes', no: 'No', maybe: 'Maybe' };
+
+/** How many people a queued approval names before "and 3 more". */
+const QUEUED_PEOPLE_MAX = 12;
+
+function personText(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  return attendeeList([value])[0] ?? '';
+}
+
+/**
+ * What goes out and to whom, for the row of a call that waits in the approval
+ * queue. The caller repairs the args first (repairToolArgs in
+ * lib/tools/registry.ts). The time shows only with a known zone, because a
+ * server clock must not name the hour for the user. Empty when the call names
+ * nobody.
+ */
+export function approvalRecipientLine(
+  toolName: string,
+  input: unknown,
+  options: { timeZone?: string; event?: { title?: unknown; organizer?: unknown } | null } = {},
+): string {
+  const args = rec(input);
+  const summary = approvalSummary(toolName, input, options.timeZone, { maxPeople: QUEUED_PEOPLE_MAX });
+  const value = (label: string) => summary.metadata.find((entry) => entry.label === label)?.value ?? '';
+  const sentences = (...parts: string[]) => parts.filter(Boolean).join(' ');
+  switch (toolName) {
+    case 'calendar_create_event': {
+      const to = value('Invitees');
+      const starts = options.timeZone ? value('Starts') : '';
+      return sentences(to ? `To ${to}.` : '', starts ? `Starts ${starts}.` : '');
+    }
+    case 'calendar_rsvp_event': {
+      const eventTitle = text(options.event?.title);
+      const organizer = personText(options.event?.organizer);
+      return sentences(
+        `Your answer: ${value('Answer') || 'a reply'}${eventTitle ? ` to “${eventTitle}”` : ''}.`,
+        `${organizer || 'The organizer'} gets it by email.`,
+      );
+    }
+    case 'send_message':
+      return sentences(
+        text(args.to) ? `To ${text(args.to)}.` : '',
+        text(args.subject) ? `Subject: ${text(args.subject)}.` : '',
+      );
+    default:
+      return '';
+  }
+}
 
 type ChatMessageLike = { role?: string; parts?: unknown[] };
 

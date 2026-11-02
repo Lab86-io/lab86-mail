@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useState } from 'react';
+import { ApprovalDecisionPills, useApprovalView } from '@/components/albatross/ApprovalDecision';
 import type { NotificationItem } from '@/components/notifications/model';
 import { Avatar } from '@/components/ui/avatar';
 import {
@@ -24,6 +25,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { type ApprovalView, approvalRowLine } from '@/lib/albatross/approval-decision';
 import type { ObligationSource, ObligationView } from '@/lib/obligations/contract';
 import type { LaterOption, NeedsYouEntry, NeedsYouGroup } from '@/lib/obligations/groups';
 import { isClosedObligation } from '@/lib/obligations/groups';
@@ -137,11 +139,23 @@ function albatrossDue(item: NotificationItem): DueLabel {
   return { text: 'Your turn', tone: 'plain' };
 }
 
-/** The words of one row, so the row and the tests agree. */
-export function rowWords(entry: NeedsYouListEntry, now: number, timezone: string) {
+/** The words of one row, so the row and the tests agree. An approval row says what goes out and to whom. */
+export function rowWords(entry: NeedsYouListEntry, now: number, timezone: string, approval?: ApprovalView) {
   if (entry.type === 'albatross') {
     const { item } = entry;
     const checkin = item.kind === 'checkin';
+    if (approval) {
+      return {
+        name: item.title,
+        // The title is long, and the round lead already says Albatross.
+        source: '',
+        line: approval.line ?? approvalRowLine(item.body),
+        meta: [item.createdAt ? whenLabel(item.createdAt, now, timezone) : null, item.source]
+          .filter(Boolean)
+          .join(' · '),
+        due: { text: approval.word, tone: approval.tone } as DueLabel,
+      };
+    }
     return {
       name: checkin ? 'Daily check-in' : item.context.replace(/ · you put this down$/, ''),
       source: 'Albatross',
@@ -278,7 +292,9 @@ export function NeedsYouRow({
   flush,
   registerRef,
 }: NeedsYouRowProps) {
-  const words = rowWords(entry, now, timezone);
+  const approval = entry.type === 'albatross' ? entry.item.approval : undefined;
+  const approvalView = useApprovalView(approval);
+  const words = rowWords(entry, now, timezone, approvalView);
   const obligation = entry.type === 'obligation' ? entry.obligation : null;
   const closed = obligation ? isClosedObligation(obligation) : false;
   const code = obligation?.kind === 'code' && !closed ? obligation.code : null;
@@ -324,13 +340,15 @@ export function NeedsYouRow({
             <span className="max-w-[75%] shrink-0 truncate font-display text-[14px] font-medium leading-[18px] text-[var(--color-text)]">
               {words.name}
             </span>
-            <span
-              data-needs-you-source
-              className="flex min-w-0 shrink items-baseline gap-[7px] text-[11px] leading-[18px] text-[var(--color-text-muted)]"
-            >
-              <span aria-hidden className="size-[3px] shrink-0 rounded-full bg-[var(--color-text-faint)]" />
-              <span className="truncate">{words.source}</span>
-            </span>
+            {words.source ? (
+              <span
+                data-needs-you-source
+                className="flex min-w-0 shrink items-baseline gap-[7px] text-[11px] leading-[18px] text-[var(--color-text-muted)]"
+              >
+                <span aria-hidden className="size-[3px] shrink-0 rounded-full bg-[var(--color-text-faint)]" />
+                <span className="truncate">{words.source}</span>
+              </span>
+            ) : null}
           </span>
           {code ? (
             <span className="mt-[3px] flex items-baseline gap-3">
@@ -375,6 +393,17 @@ export function NeedsYouRow({
           ) : null}
         </span>
       </button>
+      {approval && approvalView?.canDecide ? (
+        <ApprovalDecisionPills
+          approval={approval}
+          size="row"
+          className={cn(
+            'absolute bottom-[9px]',
+            flush ? 'right-0' : 'right-3',
+            pillsAlways ? 'flex' : 'hidden group-hover:flex group-focus-within:flex',
+          )}
+        />
+      ) : null}
       {undo ? (
         <span className={cn('absolute top-[9px] flex items-baseline gap-2', flush ? 'right-0' : 'right-3')}>
           <span className={cn('text-[11.5px] leading-[22px]', DUE_TONE.done)}>{undoWord ?? due.text}</span>

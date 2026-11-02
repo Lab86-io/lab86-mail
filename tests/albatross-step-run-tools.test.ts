@@ -334,6 +334,7 @@ describe('buildRunnerTools', () => {
       {
         kind: 'calendar_invite',
         title: 'Send the invite: Team lunch',
+        recipients: 'To sam@example.com.',
         toolName: 'calendar_create_event',
         toolArgs: args,
       },
@@ -353,6 +354,65 @@ describe('buildRunnerTools', () => {
     expect(lifted.calendar_create_event.execute).not.toHaveBeenCalled();
     expect(approvals).toHaveLength(1);
     expect(result).toMatchObject({ status: 'queued_for_approval' });
+  });
+
+  test('the queued row names people from the repaired args: a list can arrive as JSON text', async () => {
+    const lifted = { calendar_create_event: baseTool({ ok: true, eventId: 'evt-1' }) };
+    const { host, approvals } = makeHost({ timezone: 'America/Chicago' });
+    const tools = buildRunnerTools(lifted, host);
+    await tools.calendar_create_event.execute({
+      account: 'a',
+      title: 'Team lunch',
+      startIso: '2031-01-02T18:00:00Z',
+      endIso: '2031-01-02T19:00:00Z',
+      attendees: JSON.stringify([
+        { email: 'sam@example.com', name: 'Sam Lee' },
+        { email: 'kai@example.com' },
+      ]),
+    });
+    expect(approvals[0].recipients).toBe(
+      'To Sam Lee <sam@example.com>, kai@example.com. Starts Jan 2, 2031, 12:00 PM.',
+    );
+    // The stored call keeps what the model sent; invokeTool repairs it when it runs.
+    expect(typeof approvals[0].toolArgs.attendees).toBe('string');
+  });
+
+  test('a queued answer to an invite reads the event, so the row names it and the organizer', async () => {
+    const lifted = {
+      calendar_rsvp_event: baseTool({ ok: true }),
+      calendar_event_detail: baseTool({
+        event: { title: 'Team lunch', organizer: { name: 'Dana Reyes', email: 'dana@example.com' } },
+      }),
+    };
+    const { host, approvals } = makeHost();
+    const tools = buildRunnerTools(lifted, host);
+    const args = { account: 'a', calendarId: 'c', eventId: 'e', status: 'yes' };
+    await tools.calendar_rsvp_event.execute(args);
+    expect(lifted.calendar_event_detail.execute).toHaveBeenCalledTimes(1);
+    expect(lifted.calendar_event_detail.execute.mock.calls[0][0]).toEqual({
+      account: 'a',
+      calendarId: 'c',
+      eventId: 'e',
+    });
+    expect(approvals[0].recipients).toBe(
+      'Your answer: Yes to “Team lunch”. Dana Reyes <dana@example.com> gets it by email.',
+    );
+  });
+
+  test('when the event read fails, the answer still queues with honest words', async () => {
+    const lifted = {
+      calendar_rsvp_event: baseTool({ ok: true }),
+      calendar_event_detail: {
+        ...baseTool(null),
+        execute: mock(async () => {
+          throw new Error('Calendar event not found in the local corpus.');
+        }),
+      },
+    };
+    const { host, approvals } = makeHost();
+    const tools = buildRunnerTools(lifted, host);
+    await tools.calendar_rsvp_event.execute({ account: 'a', calendarId: 'c', eventId: 'e', status: 'no' });
+    expect(approvals[0].recipients).toBe('Your answer: No. The organizer gets it by email.');
   });
 
   test('attendees as other text go to the tool for its field errors, with no approval', async () => {

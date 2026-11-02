@@ -131,6 +131,42 @@ describe('only web pages open in a new window', () => {
   });
 });
 
+describe('open_approval', () => {
+  test('the thread has the control in view, so the user stays', async () => {
+    const { deps, views } = fakeDeps();
+    const shown: Array<string | null> = [];
+    const opened = await performNextBehaviour({ kind: 'open_approval', id: 'ap1' }, deps, {
+      showApproval: (id) => {
+        shown.push(id);
+        return true;
+      },
+    });
+    expect(opened).toBe(true);
+    expect(shown).toEqual(['ap1']);
+    expect(views).toEqual([]);
+  });
+
+  test('another surface goes to the page, with that approval selected', async () => {
+    const { deps, views } = fakeDeps();
+    const requested: string[] = [];
+    deps.requestApproval = (id) => requested.push(id);
+    expect(
+      await performNextBehaviour({ kind: 'open_approval', id: 'ap1' }, deps, { showApproval: () => false }),
+    ).toBe(true);
+    expect(requested).toEqual(['approval:ap1']);
+    expect(views).toEqual(['notifications']);
+  });
+
+  test('with no id the page opens with nothing selected', async () => {
+    const { deps, views } = fakeDeps();
+    const requested: string[] = [];
+    deps.requestApproval = (id) => requested.push(id);
+    expect(await performNextBehaviour({ kind: 'open_approval', id: null }, deps)).toBe(true);
+    expect(requested).toEqual([]);
+    expect(views).toEqual(['notifications']);
+  });
+});
+
 describe('performNextBehaviour', () => {
   test('routes each behaviour and reports what it could not do', async () => {
     const { deps, calls, views } = fakeDeps();

@@ -1,3 +1,4 @@
+import { approvalRecipientLine } from '@/lib/ai/approval';
 import type { WorkHorizon as StoredWorkHorizon } from '@/lib/albatross/horizon';
 import type { CurrentUser } from '@/lib/auth/current-user';
 import { api, type ConvexCallArgs, convexMutation } from '@/lib/hosted/convex';
@@ -283,7 +284,7 @@ export async function executeMobileCommand(
           userId: user.userId,
           kind: 'calendar_invite',
           title: `Create “${command.payload.title}” and invite attendees`,
-          detail: `${command.payload.attendees.length} attendee${command.payload.attendees.length === 1 ? '' : 's'} will be notified.`,
+          detail: approvalRecipientLine('calendar_create_event', toolArguments),
           artifactKind: 'calendarEvent',
           artifactId: command.idempotencyKey,
           toolName: 'calendar_create_event',

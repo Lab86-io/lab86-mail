@@ -4,7 +4,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { openPackageBehaviour, type PackageRowHandlers } from '../components/albatross/thread/PackageRows';
 import { RunBlock } from '../components/albatross/thread/RunBlock';
 import type { ThreadRunView } from '../lib/albatross/thread-contract';
-import { goalRunFixtures, threadRunFixtures } from '../lib/albatross/thread-fixtures';
+import {
+  goalRunFixtures,
+  threadApprovalRunFixture,
+  threadRunFixtures,
+} from '../lib/albatross/thread-fixtures';
 
 /* The run block of a goal run (docs/research/goal-runs-web-design-2026-10-15.md,
  * §3): messages with source chips, the checklist with its state words, the
@@ -262,5 +266,67 @@ describe('a step run is unchanged', () => {
     expect(buttons(ready)).toContain('Mark step done');
     expect(ready.querySelector('[data-slot="run-messages"]')).toBeNull();
     expect(ready.querySelector('[data-slot="package-rows"]')).toBeNull();
+  });
+});
+
+describe('an approval in the thread', () => {
+  test('the block decides in place: who gets it, Approve, Decline, and no other button', () => {
+    const doc = render(threadApprovalRunFixture(NOW));
+    const approvals = doc.querySelector('[data-slot="run-approvals"]');
+    expect(approvals?.textContent).toContain('To Sam Rivera <sam@firstaidclass.example.com>');
+    // The block already names its step.
+    expect(approvals?.textContent).not.toContain('From the step');
+    expect(buttons(doc).filter((label) => label !== 'What Albatross did2')).toEqual(['Approve', 'Decline']);
+  });
+
+  test('its artifact row does not repeat the approval', () => {
+    const doc = render(threadApprovalRunFixture(NOW));
+    expect(doc.body.textContent?.match(/Send the invite: Course review/g)).toHaveLength(1);
+  });
+
+  test('a row that another client claimed offers nothing', () => {
+    const claiming = render(threadApprovalRunFixture(NOW, 'claiming'));
+    expect(buttons(claiming)).not.toContain('Approve');
+    expect(claiming.body.textContent).toContain('Albatross sends it now.');
+  });
+
+  test('a decided approval says what happened, and its run offers no second press', () => {
+    const approved = render(threadApprovalRunFixture(NOW, 'approved'));
+    expect(approved.querySelector('[data-approval-state]')?.textContent).toBe(
+      'Approved. The invite went out.',
+    );
+    expect(buttons(approved)).not.toContain('Approve');
+    const declined = render(threadApprovalRunFixture(NOW, 'rejected'));
+    expect(declined.querySelector('[data-approval-state]')?.textContent).toBe('Declined. Nothing went out.');
+  });
+
+  test('an older run with no approvals keeps the opening button and Dismiss', () => {
+    const doc = render({ ...threadApprovalRunFixture(NOW), approvals: undefined });
+    expect(doc.querySelector('[data-slot="run-approvals"]')).toBeNull();
+    expect(buttons(doc)).toContain('Approve the invite');
+    expect(buttons(doc)).toContain('Dismiss');
+  });
+
+  test('a goal package hides only the approval row, and its other rows stay', () => {
+    const goal = goalRunFixtures(NOW).goalPackage;
+    const doc = render({
+      ...goal,
+      items: [
+        ...goal.items,
+        { kind: 'approval', id: 'ap_pack', title: 'Send the invite: Pack', state: 'check' },
+      ],
+      approvals: [
+        {
+          id: 'ap_pack',
+          kind: 'calendar_invite',
+          status: 'pending',
+          title: 'Send the invite: Pack',
+          detail: null,
+        },
+      ],
+    });
+    expect(doc.querySelectorAll('[data-package-item="approval"]').length).toBe(0);
+    expect(doc.querySelectorAll('[data-package-item]').length).toBe(goal.items.length);
+    expect(doc.querySelector('[data-slot="run-approvals"]')?.textContent).toContain('Send the invite: Pack');
   });
 });
