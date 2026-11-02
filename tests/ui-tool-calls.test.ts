@@ -58,3 +58,19 @@ describe('a UI tool that fails in the browser', () => {
     expect(result.hint).not.toMatch(/\bopened\b/);
   });
 });
+
+test('a saved Google edit stays out of the seed, so its proposal restores after a reload', () => {
+  const handled = new Set<string>();
+  seedHandledToolCalls(handled, [
+    {
+      parts: [
+        { type: 'tool-ui_open_compose', toolCallId: 'ui-1' },
+        { type: 'tool-google_document_edit', toolCallId: 'google-1' },
+        { type: 'dynamic-tool', toolName: 'google_document_edit', toolCallId: 'google-2' },
+      ],
+    },
+  ]);
+  expect(handled.has('ui-1')).toBe(true);
+  expect(handled.has('google-1')).toBe(false);
+  expect(handled.has('google-2')).toBe(false);
+});

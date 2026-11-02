@@ -66,6 +66,10 @@ describe('natural keys for create calls', () => {
     ).toBe(key);
     expect(checkpointKey('calendar_create_event', { ...EVENT, startIso: '2031-01-02T12:00' })).not.toBe(key);
     expect(checkpointKey('calendar_create_event', { ...EVENT, title: 'Other meeting' })).not.toBe(key);
+    // A time with an offset is one instant: the sign counts, and the form does not.
+    const at = (startIso: string) => checkpointKey('calendar_create_event', { ...EVENT, startIso });
+    expect(at('2031-01-02T10:00+05:00')).not.toBe(at('2031-01-02T10:00-05:00'));
+    expect(at('2031-01-02T10:00+05:00')).toBe(at('2031-01-02T05:00:00Z'));
     expect(checkpointKey('calendar_create_event', { ...EVENT, account: 'acct_2' })).not.toBe(key);
     // Cards from different mail stay different.
     const card = { title: 'Reply', source: { kind: 'email', threadId: 't1' } };
@@ -390,6 +394,48 @@ describe('what earlier runs of this chat wrote', () => {
       } as any),
     );
   }
+
+  test('the transcript count goes to the oldest rows, so the unseen write is the one reported', async () => {
+    const row = (id: string, createdAt: number, status: string) => ({
+      runId: 'run-1',
+      toolName: 'calendar_create_event',
+      status,
+      createdAt,
+      output: status === 'succeeded' ? { ok: true, eventId: id } : undefined,
+    });
+    const read: any = async () => [
+      row('evt_b', NOW - 1_000, 'unknown'),
+      row('evt_a', NOW - 2_000, 'succeeded'),
+    ];
+    const note = await readPriorRunContext(
+      {
+        userId: caller.userId,
+        runId: 'run-2',
+        chatId: 'chat-1',
+        now: NOW,
+        transcript: [
+          { id: 'run-1', role: 'user', parts: [{ type: 'text', text: 'Book two events.' }] },
+          {
+            id: 'a1',
+            role: 'assistant',
+            metadata: { runId: 'run-1' },
+            parts: [
+              {
+                type: 'tool-calendar_create_event',
+                toolCallId: 'one',
+                state: 'output-available',
+                output: { eventId: 'evt_a' },
+              },
+            ],
+          },
+          { id: 'run-2', role: 'user', parts: [{ type: 'text', text: 'Did it work?' }] },
+        ],
+      },
+      read,
+    );
+    expect(note).toContain('"status":"unknown"');
+    expect(note).not.toContain('evt_a');
+  });
 
   test('a reload, a retype, and a new run: the model hears what already ran', async () => {
     const { t, read } = harness();

@@ -175,6 +175,8 @@ describe('the chat client', () => {
     expect(source).not.toContain('} catch {}');
     expect(source).toContain('clientToolFailuresRef.current.push(name);');
     expect(source).toContain('toast.error(uiToolFailureText(name));');
-    expect(source).toContain('clientToolFailures: clientToolFailuresRef.current.splice(0),');
+    expect(source).toContain(
+      'clientToolFailures: takeToolFailures(clientToolFailuresRef, sentToolFailuresRef),',
+    );
   });
 });

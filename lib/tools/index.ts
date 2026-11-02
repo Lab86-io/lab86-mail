@@ -157,6 +157,7 @@ import { getVoiceProfileTool, learnVoiceProfileTool, updateVoiceProfileTool } fr
 import { githubSearch, mcpConnectionStatus, mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
 import { forget, listMemories, recall, remember } from './memories';
 import { NARRATIVE_TOOLS } from './narrative';
+import { NEEDS_YOU_TOOLS } from './needs-you';
 import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
 import { pdfFormFields, pdfFormFill } from './pdf-forms';
 import { personalDetailsGet, personalDetailsSave } from './personal-details';
@@ -439,6 +440,7 @@ const allTools: AnyTool[] = [
   // chat (weather, charts, tables, code, media, maps, drafts…).
   ...DISPLAY_TOOLS,
   ...NARRATIVE_TOOLS,
+  ...NEEDS_YOU_TOOLS,
 ];
 
 export const TOOLS: Record<string, AnyTool> = Object.fromEntries(allTools.map((t) => [t.name, t]));

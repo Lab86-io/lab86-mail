@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { modelFromKey } from '../lib/ai/gateway';
-import { ProviderStreamIdleError, streamIdleTimeoutFetch } from '../lib/ai/provider-idle-timeout';
+import {
+  DIRECT_STREAM_IDLE_TIMEOUT_MS,
+  ProviderStreamIdleError,
+  STREAM_IDLE_TIMEOUT_MS,
+  streamIdleTimeoutFetch,
+} from '../lib/ai/provider-idle-timeout';
 
 const STREAM_BODY = JSON.stringify({ model: 'm', stream: true });
 
@@ -18,6 +24,16 @@ describe('the providers of a user key', () => {
 });
 
 describe('streamIdleTimeoutFetch', () => {
+  test('a direct vendor gets the longer limit: its silence during reasoning can be normal', () => {
+    expect(DIRECT_STREAM_IDLE_TIMEOUT_MS).toBeGreaterThan(STREAM_IDLE_TIMEOUT_MS);
+    const source = [readFileSync('lib/ai/gateway.ts', 'utf8'), readFileSync('lib/ai/client.ts', 'utf8')].join(
+      '',
+    );
+    expect(
+      source.match(/fetch: streamIdleTimeoutFetch\(undefined, DIRECT_STREAM_IDLE_TIMEOUT_MS\)/g),
+    ).toHaveLength(4);
+  });
+
   test('a stream with no headers fails with the typed error', async () => {
     let seen: AbortSignal | null | undefined;
     const fetcher = streamIdleTimeoutFetch(

@@ -235,6 +235,10 @@ export const TOOL_GROUPS = {
       'PDF forms in Files: save a mail attachment in Files, read the fillable fields, and fill them into a new PDF (a W-9, an application)',
     tools: ['mail_attachment_save', 'pdf_form_fields', 'pdf_form_fill'],
   },
+  needs_you: {
+    label: 'Needs you: read what the user owes, and mark an item done, later, or not mine',
+    tools: ['needs_you_list', 'needs_you_done', 'needs_you_later', 'needs_you_not_mine'],
+  },
 } as const satisfies Record<string, { label: string; tools: readonly string[] }>;
 
 export type ToolGroupName = keyof typeof TOOL_GROUPS;
@@ -351,21 +355,29 @@ const CONNECTOR_REQUEST =
   /\b(?:github|bitbucket|granola|meeting notes?|pull requests?|prs?|repos?|repository)\b/i;
 /** A card of numbers or sources. */
 const DATA_CARD_REQUEST = /\b(?:charts?|graphs?|plots?|stats|statistics|citations?|cite)\b/i;
+/** A question on what the user owes: "What needs my attention?", "What do I owe?". */
+const NEEDS_YOU_REQUEST =
+  /\b(?:needs?|requires?)\s+my\s+attention\b|\bwhat\s+(?:needs|requires)\s+me\b|\bneeds\s+you\b|\bwhat\s+do\s+i\s+owe\b|\bwaiting\s+on\s+me\b|\bon\s+my\s+plate\b|\bmy\s+obligations\b|\bwhat\s+(?:do|must|should)\s+i\s+(?:need\s+to|have\s+to)\s+(?:do|answer|reply|respond)\b|\bwhat\s+must\s+i\s+do\b/i;
 
 /**
  * Groups that the request text asks for, before the first step: an invoice, a
  * letter, or a memo loads documents_more; a tax form, or a form, a PDF, or an
- * attachment to fill, sign, or save loads pdf_forms and personal_forms; the
+ * attachment to fill, sign, or save loads pdf_forms and personal_forms; a
+ * question on what the user owes loads needs_you for a user in its flag; the
  * other patterns above load the group of their name. So these tools are there
  * even when the model does not call enable_tools, and a request for them costs
  * no extra step. The loop treats them as the oldest enable_tools request, so
  * the tool cap drops them first.
  */
-export function requestToolGroups(text: string | null | undefined): ToolGroupName[] {
+export function requestToolGroups(
+  text: string | null | undefined,
+  scope: { needsYou?: boolean } = {},
+): ToolGroupName[] {
   const value = text || '';
   const groups: ToolGroupName[] = [];
   if (TEMPLATE_DOCUMENT_REQUEST.test(value)) groups.push('documents_more');
   if (TAX_FORM.test(value) || FORM_ACTION.test(value)) groups.push('pdf_forms', 'personal_forms');
+  if (scope.needsYou && NEEDS_YOU_REQUEST.test(value)) groups.push('needs_you');
   if (DOCUMENT_REQUEST.test(value)) groups.push('documents');
   if (PRESENTATION_REQUEST.test(value)) groups.push('documents', 'presentations');
   if (WORK_PROGRESS_REQUEST.test(value)) groups.push('work_progress');

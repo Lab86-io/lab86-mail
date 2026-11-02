@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { ToolRetrySafe } from '../lib/ai/tool-errors';
+import { ToolFailedBeforeWrite, ToolRetrySafe } from '../lib/ai/tool-errors';
 import * as albatross from '../lib/tools/albatross';
 import { invokeTool } from '../lib/tools/registry';
 import { runTool } from './tools/harness';
@@ -69,6 +69,8 @@ const approvalOrder: string[] = [];
 const toolInvocations: Array<{ tool: string; args: any }> = [];
 const queryFailures = new Set<string>();
 const failingCardTitles = new Set<string>();
+const provenFailure = { value: false };
+const listApplicationsFails = { value: false };
 let approvalFixture: any = null;
 let connectedAccountsFixture: any[] = [];
 let areaFixture: any = null;
@@ -172,7 +174,10 @@ async function convexQueryMock(fn: string, args: any) {
   if (fn === apiMock.albatrossRoutines.listForProject)
     return [{ routineId: 'routine_1', projectId: args.projectId }];
   if (fn === apiMock.albatrossWorkV2.workDetail) return workDetailFixture;
-  if (fn === apiMock.albatrossWork.listPlanApplications) return planApplications;
+  if (fn === apiMock.albatrossWork.listPlanApplications) {
+    if (listApplicationsFails.value) throw new Error('Convex read failed');
+    return planApplications;
+  }
   return null;
 }
 
@@ -189,7 +194,10 @@ async function invokeToolMock(tool: any, args: any, ctx?: any) {
     return tool.handler(args, ctx);
   }
   if (tool.name === 'tasks_create_card') {
-    if (failingCardTitles.has(args.title)) throw new Error('Board write failed');
+    if (failingCardTitles.has(args.title)) {
+      if (provenFailure.value) throw new ToolRetrySafe('Board refused the card');
+      throw new Error('Board write failed');
+    }
     return { ok: true, cardId: `card_${sequence}`, operationId: `operation_card_${sequence}` };
   }
   if (tool.name === 'calendar_create_event') {
@@ -404,22 +412,43 @@ describe('Albatross plan apply failures (WRK-4, WRK-1)', () => {
     expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWork.recordPlanApplication)).toBe(false);
   });
 
-  test('a partly failed plan can run again with the same arguments', async () => {
+  test('a partly failed plan can run again only when each failed step proved that it wrote nothing', async () => {
+    const run = (input: Record<string, unknown>) =>
+      runTool(albatross.albatrossApplyIntentPlan.handler, {
+        intentId: 'intent_move',
+        projectMode: 'task_only',
+        plan,
+        ...input,
+      }).catch((error) => error);
+    // A plain failure can hide a write: the checkpoint must stay uncertain.
     failingCardTitles.add('Pack the kitchen');
-    const failed = await runTool(albatross.albatrossApplyIntentPlan.handler, {
-      intentId: 'intent_move',
-      projectMode: 'task_only',
-      plan,
-    }).catch((error) => error);
-    expect(failed).toBeInstanceOf(ToolRetrySafe);
+    const uncertain = await run({});
+    expect(uncertain).toBeInstanceOf(Error);
+    expect(uncertain).not.toBeInstanceOf(ToolRetrySafe);
+    // A failure that proves that nothing was written can run again.
     failingCardTitles.clear();
     failingCardTitles.add('Book the truck');
-    const none = await runTool(albatross.albatrossApplyIntentPlan.handler, {
-      intentId: 'intent_move',
-      projectMode: 'task_only',
-      plan: { ...plan, digitalActions: [plan.digitalActions[0]] },
-    }).catch((error) => error);
-    expect(none).toBeInstanceOf(ToolRetrySafe);
+    provenFailure.value = true;
+    try {
+      const proven = await run({ plan: { ...plan, digitalActions: [plan.digitalActions[0]] } });
+      expect(proven).toBeInstanceOf(ToolRetrySafe);
+    } finally {
+      provenFailure.value = false;
+    }
+  });
+
+  test('a plan does not run when its earlier attempts cannot be read', async () => {
+    listApplicationsFails.value = true;
+    try {
+      const error = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+        intentId: 'intent_move',
+        projectMode: 'task_only',
+        plan,
+      }).catch((caught) => caught);
+      expect(error).toBeInstanceOf(ToolFailedBeforeWrite);
+    } finally {
+      listApplicationsFails.value = false;
+    }
   });
 
   test('nothing is recorded when no step could be created', async () => {

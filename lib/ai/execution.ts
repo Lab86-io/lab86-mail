@@ -50,8 +50,14 @@ const CREATE_KEY_FIELDS: Readonly<Record<string, readonly string[]>> = {
 /** The same words apart from case, spaces, and punctuation; the same local time with or without zero seconds. */
 function naturalValue(value: unknown): unknown {
   if (typeof value !== 'string') return value;
-  const time = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::00(?:\.0+)?)?$/.exec(value.trim());
+  const trimmed = value.trim();
+  const time = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::00(?:\.0+)?)?$/.exec(trimmed);
   if (time) return time[1];
+  // A time with an offset is one instant. The text path below would drop its sign.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(trimmed)) {
+    const instant = Date.parse(trimmed);
+    if (Number.isFinite(instant)) return new Date(instant).toISOString();
+  }
   return value
     .normalize('NFKC')
     .toLowerCase()
@@ -319,15 +325,19 @@ export async function readPriorRunContext(
     rows = pages.flatMap((page) => page?.page ?? []);
   }
   const shown = callsShownInTranscript(input.transcript);
+  // The transcript shows the calls of a run in call order, so its count goes to
+  // the oldest rows. The rows left are the ones to report, the newest first.
   const hidden = rows
     .filter((row) => (row.createdAt || 0) >= since)
     .filter((row) => !(input.skipCurrentRun && row.runId === input.runId))
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
     .filter((row) => {
       const call = `${row.runId}:${row.toolName}`;
       const left = shown.get(call) ?? 0;
       if (left > 0) shown.set(call, left - 1);
       return left === 0;
     })
+    .reverse()
     .slice(0, PRIOR_RUN_ROW_LIMIT);
   const payload = boundedMetadata(hidden, 6_000);
   return payload.length

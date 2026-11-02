@@ -12,10 +12,16 @@ export function isWebOnlyTool(name: string): boolean {
   return name.startsWith('ui_');
 }
 
-/** Tool groups that have at least one tool on this platform. */
-export function toolGroupsForPlatform(platform: ClientPlatform = 'web') {
+/**
+ * Tool groups that have at least one tool on this platform. The needs_you
+ * group shows only to a user in its flag, so the prompt of any other user does
+ * not change.
+ */
+export function toolGroupsForPlatform(platform: ClientPlatform = 'web', scope: { needsYou?: boolean } = {}) {
   return TOOL_GROUP_NAMES.filter(
-    (name) => platform === 'web' || TOOL_GROUPS[name].tools.some((tool) => !isWebOnlyTool(tool)),
+    (name) =>
+      (name !== 'needs_you' || scope.needsYou) &&
+      (platform === 'web' || TOOL_GROUPS[name].tools.some((tool) => !isWebOnlyTool(tool))),
   );
 }
 
@@ -40,7 +46,12 @@ export interface SystemPromptOptions {
   secureStore?: boolean;
   /** The client renders ask_secure_detail. */
   askSecureDetail?: boolean;
+  /** The user is in LAB86_NEEDS_YOU. */
+  needsYou?: boolean;
 }
+
+const NEEDS_YOU_LINE = `- A question on what the user owes or what needs attention reads needs_you_list first (needs_you group). A code item says that a code exists and never gives its value: send the user to the Needs you page to copy it.
+`;
 
 const SECRETS_REFUSED =
   "Passwords, sign-in codes, card numbers, bank numbers, and ID numbers (Social Security, driver's license, passport) are refused: say that Albatross cannot keep them yet, and do not repeat them back.";
@@ -188,8 +199,8 @@ Salvage Today (replanning when the day breaks):
 
 Tool guidance:
 - About 180 tools in total: mail read/mutate, drafts and scheduled sends, summarize/triage/draft, memory, calendar, tasks/boards, Albatross Work and Areas, documents and files, connected tools, contacts, browserbase web research, undo, display cards${native ? '' : ', and UI control'}.
-${toolGroupsPromptLine(toolGroupsForPlatform(platform))}
-- Mail indexing coverage varies by account. corpus_search searches EVERY connected account in one call — use it by default; reach for search_threads only when the user names a specific mailbox. sender_profile answers "who is this person / when did we last talk" in one call; corpus_count counts indexed matches; thread_timeline replays a thread's history without refetching it. Zero search results or indexed matches do not establish that an account has never synced or has no email. Read list_accounts and its sync status before explaining indexing limitations; report failed retrieval as unavailable evidence, never as zero messages.
+${toolGroupsPromptLine(toolGroupsForPlatform(platform, { needsYou: options.needsYou }))}
+${options.needsYou ? NEEDS_YOU_LINE : ''}- Mail indexing coverage varies by account. corpus_search searches EVERY connected account in one call — use it by default; reach for search_threads only when the user names a specific mailbox. sender_profile answers "who is this person / when did we last talk" in one call; corpus_count counts indexed matches; thread_timeline replays a thread's history without refetching it. Zero search results or indexed matches do not establish that an account has never synced or has no email. Read list_accounts and its sync status before explaining indexing limitations; report failed retrieval as unavailable evidence, never as zero messages.
 - Work the problem with tools until you can answer with evidence. When several lookups are independent (two searches, a calendar window and a thread, a sender profile and a count), call them in the SAME step so they run in parallel instead of one after another. Do not repeat a search that already returned nothing with a near-identical query; change the approach or ask.
 - Before a batch of tool calls, write one short sentence about what you are doing ("Checking your calendar and the Atlas thread."). Do not narrate every single call afterwards; report once with the result.
 - Mutating mail tools (archive, trash, label) WILL execute on call, so only call them when explicitly instructed. schedule_send shows the user an approval card by itself and sends only after they approve; do not call ask_approval first for it. If the user denies it, do not retry it.${native ? '' : ' UI tools are safe and should be used to open compose/reply panes.'}

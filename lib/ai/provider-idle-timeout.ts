@@ -7,8 +7,14 @@
 // tool limit (380 s). This fetch sees only the model response, which has ended
 // before a tool result waits, and its timer runs only while a read is open.
 
-/** OpenRouter and the direct vendors send keep-alive events far more often than this. */
+/** OpenRouter sends keep-alive comments far more often than this. */
 export const STREAM_IDLE_TIMEOUT_MS = 120_000;
+
+/**
+ * A direct vendor stream has no documented keep-alive during reasoning, so a
+ * long silence can be normal. This limit only ends a stream that is truly stuck.
+ */
+export const DIRECT_STREAM_IDLE_TIMEOUT_MS = 300_000;
 
 /** A model stream that sent nothing for the limit. A 504 lets the runtime chain try the next model. */
 export class ProviderStreamIdleError extends Error {

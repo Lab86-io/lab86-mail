@@ -1845,6 +1845,37 @@ export const nativeDeliveryContext = query({
   },
 });
 
+/**
+ * What a browser push of one notification needs (lib/notifications/web-delivery.ts).
+ * A user with no subscription costs one index read.
+ */
+export const webDeliveryContext = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    notificationId: v.id('albatrossNotifications'),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const notification = await ctx.db.get(args.notificationId);
+    if (!notification || notification.userId !== args.userId) return null;
+    const subscriptions = await ctx.db
+      .query('webPushSubscriptions')
+      .withIndex('by_user_status', (q) => q.eq('userId', args.userId).eq('status', 'active'))
+      .take(20);
+    if (!subscriptions.length) return { notification, subscriptions: [], deliveries: [] };
+    const deliveries = await ctx.db
+      .query('notificationDeliveries')
+      .withIndex('by_notification', (q) => q.eq('notificationId', args.notificationId))
+      .take(5);
+    return {
+      notification,
+      subscriptions: subscriptions.map(({ endpoint, p256dh, auth }) => ({ endpoint, p256dh, auth })),
+      deliveries: deliveries.map(({ channel, status }) => ({ channel, status })),
+    };
+  },
+});
+
 export const notificationResponseContext = query({
   args: {
     internalSecret: v.optional(v.string()),

@@ -2,7 +2,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { captureGenerationIdFetch } from './generation-cost';
 import { createOpenRouterProvider } from './openrouter-policy';
-import { streamIdleTimeoutFetch } from './provider-idle-timeout';
+import { DIRECT_STREAM_IDLE_TIMEOUT_MS, streamIdleTimeoutFetch } from './provider-idle-timeout';
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
@@ -25,10 +25,16 @@ export const openrouter = OPENROUTER_KEY
   ? createOpenRouterProvider(OPENROUTER_KEY, { fetch: captureGenerationIdFetch() })
   : null;
 export const openai = OPENAI_KEY
-  ? createOpenAI({ apiKey: OPENAI_KEY, fetch: streamIdleTimeoutFetch() })
+  ? createOpenAI({
+      apiKey: OPENAI_KEY,
+      fetch: streamIdleTimeoutFetch(undefined, DIRECT_STREAM_IDLE_TIMEOUT_MS),
+    })
   : null;
 export const anthropic = ANTHROPIC_KEY
-  ? createAnthropic({ apiKey: ANTHROPIC_KEY, fetch: streamIdleTimeoutFetch() })
+  ? createAnthropic({
+      apiKey: ANTHROPIC_KEY,
+      fetch: streamIdleTimeoutFetch(undefined, DIRECT_STREAM_IDLE_TIMEOUT_MS),
+    })
   : null;
 
 /** Which platform providers have a key. A test can pass its own set. */

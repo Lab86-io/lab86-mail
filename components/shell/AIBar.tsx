@@ -315,6 +315,12 @@ export function focusThreadComposer() {
   document.querySelector<HTMLTextAreaElement>('[data-thread-composer] textarea')?.focus();
 }
 
+/** Moves the failure notes into the request, and keeps them until the request reaches the agent. */
+function takeToolFailures(queue: { current: string[] }, sent: { current: string[] }) {
+  sent.current = queue.current.splice(0);
+  return sent.current;
+}
+
 // One conversation owner across corner, split, and chat-only presentations.
 // AssistantWorkspace owns the outer frame; transport, tool cards, attachments
 // and composer state stay mounted here when that presentation changes.
@@ -435,13 +441,25 @@ export function AssistantChat({
     [chatScopeKind, chatScopeWorkId, sharedBriefContext],
   );
   const clientToolFailuresRef = useRef<string[]>([]);
+  const sentToolFailuresRef = useRef<string[]>([]);
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: '/api/agent',
         // The assertion only matters under Bun's types, where fetch also has preconnect.
         fetch: (async (input, init) => {
-          const response = await fetch(input, init);
+          // A request that does not reach the agent keeps its failure notes for the next one.
+          const restoreFailures = () =>
+            clientToolFailuresRef.current.unshift(...sentToolFailuresRef.current.splice(0));
+          let response: Response;
+          try {
+            response = await fetch(input, init);
+          } catch (error) {
+            restoreFailures();
+            throw error;
+          }
+          if (response.ok) sentToolFailuresRef.current = [];
+          else restoreFailures();
           activeRunId.current = response.headers.get('x-agent-run-id');
           return response;
         }) as typeof fetch,
@@ -449,7 +467,7 @@ export function AssistantChat({
           // This client renders ask_form and ask_secure_detail; the server offers them only to clients that say so.
           clientCapabilities: ['ask_form', 'ask_secure_detail'],
           // UI tools that failed here since the last request. The server answered them blindly.
-          clientToolFailures: clientToolFailuresRef.current.splice(0),
+          clientToolFailures: takeToolFailures(clientToolFailuresRef, sentToolFailuresRef),
           // A Work thread reply runs to its end on the server and is saved there
           // (docs/albatross-threads.md, T5); the base lets that save merge correctly.
           sessionId: sessionIdRef.current ?? undefined,

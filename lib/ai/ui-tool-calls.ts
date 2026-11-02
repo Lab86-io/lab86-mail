@@ -6,11 +6,17 @@ export function isUiToolName(name: unknown): name is string {
   return typeof name === 'string' && /^ui_[a-z_]{1,40}$/.test(name);
 }
 
+/** A saved Google edit is a proposal that the editor reads back, so it restores after a reload. */
+function restoresAfterReload(part: any) {
+  return part?.toolName === 'google_document_edit' || part?.type === 'tool-google_document_edit';
+}
+
 function toolCallIds(messages: readonly unknown[]): string[] {
   const ids: string[] = [];
   for (const message of messages as any[]) {
     if (!Array.isArray(message?.parts)) continue;
-    for (const part of message.parts) if (typeof part?.toolCallId === 'string') ids.push(part.toolCallId);
+    for (const part of message.parts)
+      if (typeof part?.toolCallId === 'string' && !restoresAfterReload(part)) ids.push(part.toolCallId);
   }
   return ids;
 }
