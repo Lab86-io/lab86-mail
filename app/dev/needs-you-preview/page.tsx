@@ -5,8 +5,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { showArrivalToast } from '@/components/needs-you/NeedsYouArrivals';
 import { NeedsYouView } from '@/components/needs-you/NeedsYouView';
+import { projectNotifications } from '@/components/notifications/model';
+import { NotificationsView } from '@/components/notifications/NotificationsSurface';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
+import { seedApprovalPreview } from '@/lib/albatross/approval-fixtures';
 import type {
   ObligationAction,
   ObligationActionResponse,
@@ -16,7 +19,12 @@ import type {
   ObligationView,
 } from '@/lib/obligations/contract';
 import { UNDO_WINDOW_MS } from '@/lib/obligations/contract';
-import { NEEDS_YOU_FIXTURE_NOW, needsYouFixture } from '@/lib/obligations/fixtures';
+import {
+  NEEDS_YOU_FIXTURE_APPROVAL_ID,
+  NEEDS_YOU_FIXTURE_NOW,
+  needsYouApprovalFixture,
+  needsYouFixture,
+} from '@/lib/obligations/fixtures';
 import { isClosedObligation } from '@/lib/obligations/groups';
 
 /* Dev-only harness: the Needs you page from fixtures, so every state can be
@@ -28,6 +36,9 @@ import { isClosedObligation } from '@/lib/obligations/groups';
  *   ?state=loading    the skeleton
  *   ?toast=1          the arrival toast for Dana's reply
  *   ?toast=code       the arrival toast for a code
+ *   ?approval=waiting | deciding | approved | declined | failed
+ *                     an invite a run queued, in that state; &select=approval:ap_kickoff opens it
+ *   &surface=notifications   the same approval on the older Notifications page
  * Actions change local state and answer like the server: Done, Later, Not
  * mine, Undo, the draft, Send reply, Yes/No/Maybe, and Start in Albatross
  * all work. Not linked from anywhere;
@@ -55,7 +66,18 @@ function NeedsYouPreviewInner() {
   const [items, setItems] = useState<ObligationView[]>(() =>
     state === 'empty' ? fixture.items.filter(isClosedObligation) : fixture.items,
   );
-  const extras = state === 'empty' ? [] : fixture.extras;
+  const approvalState = params.get('approval');
+  // One approval in the state the query names. The buttons answer like the server.
+  useState(() => seedApprovalPreview(NEEDS_YOU_FIXTURE_APPROVAL_ID, approvalState));
+  const extras = useMemo(
+    () =>
+      state === 'empty'
+        ? []
+        : approvalState
+          ? [needsYouApprovalFixture(), ...fixture.extras]
+          : fixture.extras,
+    [state, approvalState, fixture],
+  );
   // The fixture clock moves with the real one, so a close made now reads as "now".
   const fixtureNow = useCallback(() => now + (Date.now() - startedAt.current), []);
 
@@ -148,6 +170,40 @@ function NeedsYouPreviewInner() {
     );
     return () => clearTimeout(timer);
   }, [toastParam, fixture]);
+
+  if (params.get('surface') === 'notifications') {
+    const approval = needsYouApprovalFixture();
+    const projection = projectNotifications({
+      notifications: [],
+      questions: [],
+      approvals: [
+        {
+          _id: NEEDS_YOU_FIXTURE_APPROVAL_ID,
+          title: approval.title,
+          detail: approval.body,
+          status: 'pending',
+          kind: 'calendar_invite',
+          intentId: 'work_q3_deck',
+          createdAt: approval.createdAt,
+        },
+      ],
+      checkin: null,
+    });
+    return (
+      <div className="h-dvh">
+        <NotificationsView
+          projection={projection}
+          now={now}
+          openRequest={select ? { id: select, at: 1 } : null}
+          onRead={async () => undefined}
+          onDismiss={async () => undefined}
+          onAction={() => {
+            toast('Albatross action');
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="h-dvh">

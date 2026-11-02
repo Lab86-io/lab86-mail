@@ -7,6 +7,7 @@
 
 import { useConvex, useConvexAuth, useQuery } from 'convex/react';
 import { useMemo } from 'react';
+import { requestNeedsYouItem } from '@/components/needs-you/data';
 import { ShimmerText } from '@/components/odysseyui/text-shimmer';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
@@ -136,6 +137,7 @@ export function useHandoffRowActions() {
       },
       pushPath: (path: string) => window.history.pushState(window.history.state, '', path),
       dispatch: (eventName: string) => window.dispatchEvent(new Event(eventName)),
+      requestApproval: requestNeedsYouItem,
     };
     const openWork = (workId: string) => openWorkPage(deps, workId);
     const act = (row: ReadyForYouRow) => {

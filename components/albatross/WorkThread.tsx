@@ -22,6 +22,7 @@ import {
   SecureApiError,
   useSecureDetails,
 } from '@/components/ai-elements/use-secure-details';
+import { focusApprovalControl } from '@/components/albatross/ApprovalDecision';
 import { LapsePrompt, ReleaseSheet } from '@/components/albatross/Forgiveness';
 import { HorizonControl } from '@/components/albatross/HorizonControl';
 import { SplitSheet } from '@/components/albatross/SplitSheet';
@@ -33,6 +34,7 @@ import { ShapePicker } from '@/components/albatross/shapes/ShapePicker';
 import {
   postObligationAction,
   postObligationAlbatross,
+  requestNeedsYouItem,
   useWorkObligations,
 } from '@/components/needs-you/data';
 import { sonnerNeedsYouNotifier } from '@/components/needs-you/NeedsYouView';
@@ -1325,6 +1327,7 @@ export function WorkThread({ workId }: { workId: string }) {
       },
       pushPath: (path: string) => window.history.pushState(window.history.state, '', path),
       dispatch: (eventName: string) => window.dispatchEvent(new Event(eventName)),
+      requestApproval: requestNeedsYouItem,
     }),
     [],
   );
@@ -1435,6 +1438,7 @@ export function WorkThread({ workId }: { workId: string }) {
           showQuestion: () => undefined,
           markDone: () => handlers.onMarkDone(run.stepKey),
           resume: () => handlers.onResume(run),
+          showApproval: focusApprovalControl,
         })
           .catch(() => false)
           .then((opened) => {

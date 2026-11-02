@@ -224,3 +224,56 @@ describe('notification attention projection', () => {
     expect(html).not.toContain('border-beam');
   });
 });
+
+describe('an approval on the older page', () => {
+  const invite = {
+    _id: 'a1',
+    title: 'Send the invite: Kickoff',
+    detail: 'To Dana Reyes <dana@example.com>. From the goal "Kickoff".',
+    status: 'pending',
+    kind: 'calendar_invite',
+    intentId: 'w1',
+    createdAt: 100,
+  };
+  const projected = (status = 'pending') =>
+    projectNotifications({ ...base, approvals: [{ ...invite, status }] });
+  const view = (extra: Partial<Parameters<typeof NotificationsView>[0]> = {}) =>
+    renderToStaticMarkup(
+      <NotificationsView
+        projection={projected()}
+        onRead={async () => undefined}
+        onDismiss={async () => undefined}
+        onAction={() => undefined}
+        {...extra}
+      />,
+    );
+
+  test('the item carries what the control acts on, and an older row still reads', () => {
+    expect(projected().attention[0].approval).toEqual({
+      id: 'a1',
+      status: 'pending',
+      kind: 'calendar_invite',
+    });
+    expect(projected().attention[0].actionLabel).toBe('Open the Albatross');
+    const older = projectNotifications({
+      ...base,
+      approvals: [{ _id: 'a2', title: 'Old', status: 'pending' }],
+    });
+    expect(older.attention[0].body).toBe('Check what goes out before you approve it.');
+    expect(projected('claiming').attention[0].context).toBe('Albatross sends it now.');
+    expect(projected('approved').attention).toEqual([]);
+  });
+
+  test('the row names who gets it and offers Approve and Decline', () => {
+    const html = view();
+    expect(html).toContain('To Dana Reyes.');
+    expect(html).toContain('>Approve<');
+    expect(html).toContain('>Decline<');
+  });
+
+  test('a claiming row offers no press', () => {
+    const html = view({ projection: projected('claiming') });
+    expect(html).not.toContain('>Approve<');
+    expect(html).toContain('Albatross sends it now.');
+  });
+});

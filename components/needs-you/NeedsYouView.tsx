@@ -3,8 +3,10 @@
 import { ArrowUpRight } from 'lucide-react';
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { useRetainedApprovals } from '@/components/albatross/ApprovalDecision';
 import type { NotificationAction, NotificationItem } from '@/components/notifications/model';
 import { Button } from '@/components/ui/button';
+import { decideApproval } from '@/lib/albatross/approval-decision';
 import type {
   ObligationAction,
   ObligationActionResponse,
@@ -174,8 +176,16 @@ export function NeedsYouView({
   // What the user just did shows at once; the server row replaces it when it
   // catches up.
   const merged = useMemo(() => withObligationOverrides(items, overrides), [items, overrides]);
-  const groups = useMemo(() => groupNeedsYou(merged, extras, now, timezone), [merged, extras, now, timezone]);
-  const summary = useMemo(() => needsYouSummary(groups), [groups]);
+  // A row the user just decided stays to say what happened. The counts leave it out.
+  const shownExtras = useRetainedApprovals(extras, now);
+  const groups = useMemo(
+    () => groupNeedsYou(merged, shownExtras, now, timezone),
+    [merged, shownExtras, now, timezone],
+  );
+  const summary = useMemo(
+    () => needsYouSummary(groupNeedsYou(merged, extras, now, timezone)),
+    [merged, extras, now, timezone],
+  );
   const later = useMemo(() => laterOptions(now, timezone), [now, timezone]);
   const listGroups: ListGroup[] = useMemo(
     () =>
@@ -435,7 +445,10 @@ export function NeedsYouView({
 
   const primary = useCallback(
     (entry: NeedsYouListEntry) => {
-      if (entry.type === 'albatross') return void albatross(entry.item);
+      if (entry.type === 'albatross') {
+        if (entry.item.approval) return void decideApproval(entry.item.approval, 'approve');
+        return void albatross(entry.item);
+      }
       const { obligation } = entry;
       if (isClosedObligation(obligation)) return;
       switch (primaryAction(obligation)) {
