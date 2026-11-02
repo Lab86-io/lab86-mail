@@ -109,6 +109,12 @@ describe('the edition job', () => {
     const weekly = worker({ edition: 'weekly' }, async () => done);
     await runBriefJob('owner', 'job', weekly.deps as any);
     expect(weekly.telemetry[0].queued).toBe(100);
+    // A weekly attempt that fails counts too.
+    const stopped = worker({ edition: 'weekly' }, async () => {
+      throw new Error('The sources stopped');
+    });
+    await runBriefJob('owner', 'job', stopped.deps as any);
+    expect(stopped.telemetry[0].queued).toBe(100);
   });
 });
 

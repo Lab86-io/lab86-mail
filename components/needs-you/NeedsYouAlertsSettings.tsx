@@ -8,6 +8,7 @@ import { MailSettingsRow } from '@/components/settings/mail-settings-ui';
 import { Switch } from '@/components/ui/switch';
 import type { NotificationPreferences } from '@/lib/notifications/preferences';
 import {
+  abandonBrowserPush,
   type BrowserPushState,
   disableBrowserPush,
   enableBrowserPush,
@@ -84,8 +85,14 @@ export function BrowserAlertsRow({
     setBusy(true);
     try {
       if (enabled) {
-        await enableBrowserPush();
-        await onEnabled?.().catch(() => undefined);
+        const { created } = await enableBrowserPush();
+        try {
+          await onEnabled?.();
+        } catch (error) {
+          // The setting did not save, so a new subscription must not stay.
+          if (created) await abandonBrowserPush();
+          throw error;
+        }
       } else await disableBrowserPush();
       setState(enabled ? 'on' : 'off');
       toast.success(enabled ? 'Alerts are on in this browser' : 'Alerts are off in this browser');

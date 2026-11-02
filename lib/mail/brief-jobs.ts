@@ -176,9 +176,14 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
             // published as final, then announced.
             const meter = new BriefEditionMeter({ prior: saved?.budget });
             queueStage(meter, job, startedAt);
-            report = await runWithBriefMeter(meter, () =>
-              deps.weekly({ userId, reportId: job.reportId, now: job.createdAt }),
-            );
+            try {
+              report = await runWithBriefMeter(meter, () =>
+                deps.weekly({ userId, reportId: job.reportId, now: job.createdAt }),
+              );
+            } catch (error) {
+              await deps.telemetry(userId, job, meter.record(true), meter.stages());
+              throw error;
+            }
             await deps.telemetry(userId, job, meter.record(false), meter.stages());
           } else if (saved?.artifactStatus === 'ready' && saved.editorial?.mode === 'generated')
             report = saved;

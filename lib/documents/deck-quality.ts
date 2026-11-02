@@ -159,6 +159,90 @@ function backgroundUnder(slide: DeckSlideV2, theme: DeckTheme, element: DeckElem
   return slide.background ?? theme.colors.background;
 }
 
+/** Text on a slide needs this contrast against its ground. */
+const TEXT_CONTRAST = 4.5;
+/** A chart mark (a bar, a line, a slice) needs this contrast against its ground. */
+const MARK_CONTRAST = 3;
+
+type ChartElement = Extract<DeckElementV2, { type: 'chart' }>;
+
+/** The color part of the way from one hex color to another. Null when a color is not hex. */
+function mixColors(from: string, to: string, part: number) {
+  const start = hexToRgb(from);
+  const end = hexToRgb(to);
+  if (!start || !end) return null;
+  const channels = start.map((channel, i) =>
+    Math.round((channel + (end[i] - channel) * part) * 255)
+      .toString(16)
+      .padStart(2, '0'),
+  );
+  return `#${channels.join('').toUpperCase()}`;
+}
+
+export interface ChartInks {
+  /** The color under the chart. */
+  ground: string;
+  /** Category names, value labels, and the legend. */
+  label: string;
+  /** Axis numbers. */
+  quiet: string;
+  /** Grid lines. They do not need to stand out, so they stay close to the ground. */
+  grid: string;
+  /** The chart's palette, in order. A color that does not read on the ground moves toward the label. */
+  series: string[];
+  /** False when the theme has no color for a label or a series that reads on the ground. */
+  ok: boolean;
+}
+
+/**
+ * The colors of a chart, from the ground that it sits on. A layout can put a
+ * chart on a dark slide in a light palette, where the ink of the theme does not
+ * read. The PPTX export, the web renderer, and checkSlide all use this function.
+ */
+export function chartInks(slide: DeckSlideV2, theme: DeckTheme, element: ChartElement): ChartInks {
+  const c = theme.colors;
+  const under = backgroundUnder(slide, theme, element, slide.elements.indexOf(element));
+  const ground = under ?? slide.background ?? c.background;
+  // A color that is not hex cannot be measured, so it stays.
+  const ratio = (color: string) => contrastRatio(color, ground) ?? Number.POSITIVE_INFINITY;
+  const labels = [c.ink, c.background, c.surface, c.accentInk, c.muted];
+  const label =
+    labels.find((color) => ratio(color) >= TEXT_CONTRAST) ??
+    labels.reduce((best, color) => (ratio(color) > ratio(best) ? color : best));
+  // A color that is not hex cannot be measured. A theme color takes its place, at
+  // the same position, so each series keeps a color of its own.
+  const fallback = [c.accent, c.ink, c.muted, c.surface];
+  const own = element.colors?.length
+    ? element.colors.map((color, index) =>
+        contrastRatio(color, ground) === null ? fallback[index % fallback.length] : color,
+      )
+    : fallback;
+  // A color that does not read moves toward the label only until it reads. It
+  // keeps its own hue, so two series stay different from each other.
+  const readable = (color: string) => {
+    if (ratio(color) >= MARK_CONTRAST) return color;
+    for (let part = 0.1; part < 1; part += 0.1) {
+      const mixed = mixColors(color, label, part);
+      if (mixed && ratio(mixed) >= MARK_CONTRAST) return mixed;
+    }
+    return label;
+  };
+  const series = own.map(readable);
+  const mutedReads = ratio(c.muted) >= TEXT_CONTRAST;
+  return {
+    ground,
+    label,
+    quiet: mutedReads ? c.muted : label,
+    grid: mutedReads ? c.muted : (mixColors(ground, label, 0.3) ?? label),
+    series,
+    // On an image there is no ground to measure, so nobody can say that it reads.
+    ok:
+      under !== null &&
+      ratio(label) >= TEXT_CONTRAST &&
+      series.every((color) => ratio(color) >= MARK_CONTRAST),
+  };
+}
+
 export function checkSlide(slide: DeckSlideV2, theme: DeckTheme): DeckIssue[] {
   const issues: DeckIssue[] = [];
   const push = (
@@ -204,6 +288,13 @@ export function checkSlide(slide: DeckSlideV2, theme: DeckTheme): DeckIssue[] {
           );
       }
     }
+    if (element.type === 'chart' && !chartInks(slide, theme, element).ok)
+      push(
+        'low-contrast',
+        'error',
+        [element.id],
+        `Chart "${element.id}" has no color that reads on its ground: labels need ${TEXT_CONTRAST}:1 and marks need ${MARK_CONTRAST}:1.`,
+      );
   });
   if (words > MAX_WORDS_PER_SLIDE)
     push(

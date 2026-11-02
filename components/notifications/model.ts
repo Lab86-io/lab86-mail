@@ -30,6 +30,7 @@ export interface PendingApproval {
   status: string;
   kind?: string;
   createdAt?: number;
+  staleClaimAt?: number;
 }
 
 export type NotificationAction =
@@ -56,7 +57,7 @@ export interface NotificationItem {
   action: NotificationAction | null;
   actionLabel: string;
   /** Set on an approval item: what the Approve and Decline control acts on. */
-  approval?: { id: string; status: string; kind?: string };
+  approval?: { id: string; status: string; kind?: string; staleClaim?: boolean };
 }
 
 export interface NotificationProjection {
@@ -184,7 +185,12 @@ export function projectNotifications(input: {
       unreadNotificationIds: [],
       action: row.intentId ? { kind: 'work', workId: row.intentId } : { kind: 'albatrosses' },
       actionLabel: 'Open the Albatross',
-      approval: { id: row._id, status: row.status, kind: row.kind },
+      approval: {
+        id: row._id,
+        status: row.status,
+        kind: row.kind,
+        ...(row.staleClaimAt ? { staleClaim: true } : {}),
+      },
     });
   }
   if (input.checkin && ['scheduled', 'open'].includes(input.checkin.status)) {

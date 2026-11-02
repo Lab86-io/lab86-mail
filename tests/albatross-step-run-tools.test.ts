@@ -795,6 +795,12 @@ describe('goal run tools', () => {
       'Changed the goal: “The client has the invoice”.',
     );
     expect(describeToolCall('goal_update', { proofs: ['x'] }, {})).toBe('Changed what proves the goal.');
+    const outcome =
+      'A kickoff note for the Bramble Press review is drafted in an email to Dana Reyes for the user to read and send, with the scope, the people, and the first milestones in it, and the dates from the thread.';
+    const line = describeToolCall('goal_update', { outcome }, {}) as string;
+    expect(line.length).toBeLessThanOrEqual(200);
+    expect(line).toEndWith(' in…”.');
+    expect(describeToolCall('goal_update', { outcome: 'x'.repeat(400) }, {})).toEndWith('x…”.');
     expect(describeToolCall('presentation_plan', {}, {})).toBe('Planned the presentation.');
     expect(describeToolCall('document_review_slides', {}, {})).toBe('Checked the slides.');
     expect(describeToolCall('web_research', { question: 'W-9 rules' }, {})).toBe('Researched “W-9 rules”.');

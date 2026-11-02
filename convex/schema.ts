@@ -1610,6 +1610,7 @@ export default defineSchema({
     decidedAt: v.optional(v.number()),
     decisionNote: v.optional(v.string()),
     createdAt: v.number(),
+    staleClaimAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])

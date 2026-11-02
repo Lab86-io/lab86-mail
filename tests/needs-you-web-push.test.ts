@@ -11,6 +11,7 @@ import {
 } from '../lib/notifications/delivery';
 import { CODE_PUSH_BODY, CODE_PUSH_TITLE, dispatchWebNotification } from '../lib/notifications/web-delivery';
 import {
+  abandonBrowserPush,
   type BrowserPushEnvironment,
   browserPushEnvironment,
   disableBrowserPush,
@@ -567,6 +568,52 @@ describe('the service worker', () => {
     expect(shown[1].options).toMatchObject({ tag: 'n1', renotify: false });
   });
 
+  test('a tab that cannot take the link does not lose the click', async () => {
+    // The message cannot reach the tab: a new tab opens. The app tab does not load a page.
+    const silent = tab('https://mail.example.test/', {
+      postMessage: () => {
+        throw new Error('gone');
+      },
+    });
+    const app = worker([silent]);
+    await click(app.listeners, item);
+    expect(app.opened).toEqual([item.url]);
+    expect(silent.calls).toEqual([]);
+    // A tab that cannot move: a new tab opens.
+    const stuck = tab('https://mail.example.test/settings', {
+      navigate: async () => {
+        throw new Error('gone');
+      },
+    });
+    const plain = worker([stuck]);
+    await click(plain.listeners, { url: '/x', inApp: false });
+    expect(plain.opened).toEqual(['/x']);
+  });
+
+  test('a focus that fails after the link went through opens no second tab', async () => {
+    const away = tab('https://mail.example.test/', {
+      focus: async () => {
+        throw new Error('not allowed');
+      },
+    });
+    const app = worker([away]);
+    await click(app.listeners, item);
+    expect(app.opened).toEqual([]);
+    expect(away.calls).toEqual([{ type: 'albatross:open-link', url: item.url }]);
+  });
+
+  test('the tab that navigate returns takes the focus', async () => {
+    const replaced = tab('https://mail.example.test/other');
+    const old = tab('https://mail.example.test/settings', {
+      navigate: async () => replaced,
+    });
+    const run = worker([old]);
+    await click(run.listeners, { url: '/x', inApp: false });
+    expect(replaced.calls).toEqual(['focus']);
+    // The focus starts before the page load, while the click permission lasts.
+    expect(old.calls).toEqual(['focus']);
+  });
+
   test('a new version takes over at once, so a tab that it controls can move', async () => {
     const { listeners, shown } = worker([]);
     listeners.install({});
@@ -672,6 +719,7 @@ describe('the link in the tab', () => {
 });
 
 describe('the browser path of Settings', () => {
+  let unsubscribed = 0;
   function browser(patch: Partial<BrowserPushEnvironment> = {}, current: any = null) {
     const calls: any[] = [];
     const subscription =
@@ -679,6 +727,10 @@ describe('the browser path of Settings', () => {
       ({
         endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser',
         toJSON: () => ({ endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser', keys: {} }),
+        unsubscribe: async () => {
+          unsubscribed += 1;
+          return true;
+        },
       } as any);
     const registration: any = {
       pushManager: {
@@ -750,12 +802,79 @@ describe('the browser path of Settings', () => {
     await expect(enableBrowserPush(browser({ publicKey: undefined }).env)).rejects.toThrow(
       'Web Push is not configured on this deployment.',
     );
+    unsubscribed = 0;
     const refused = (body: string) =>
       browser({ fetch: (async () => new Response(body, { status: 400 })) as any }).env;
     await expect(
       enableBrowserPush(refused('{"error":"complete push subscription required"}')),
     ).rejects.toThrow('complete push subscription required');
     await expect(enableBrowserPush(refused('not json'))).rejects.toThrow('Could not enable Web Push.');
+    // The server refused it, so this browser does not stay subscribed.
+    expect(unsubscribed).toBe(2);
+  });
+
+  test('a request that never reaches the server leaves no subscription', async () => {
+    unsubscribed = 0;
+    const offline = browser({
+      fetch: (async () => {
+        throw new Error('offline');
+      }) as any,
+    }).env;
+    await expect(enableBrowserPush(offline)).rejects.toThrow('offline');
+    expect(unsubscribed).toBe(1);
+  });
+
+  test('after a failed save, this browser leaves even when the server cannot hear it', async () => {
+    let gone = 0;
+    const current = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser',
+      unsubscribe: async () => {
+        gone += 1;
+        return true;
+      },
+    };
+    const { env } = browser(
+      {
+        fetch: (async () => {
+          throw new Error('offline');
+        }) as any,
+      },
+      current,
+    );
+    await abandonBrowserPush(env);
+    expect(gone).toBe(1);
+    await abandonBrowserPush(browser().env);
+  });
+
+  test('a server that does not answer cannot hold back the local removal', async () => {
+    let gone = 0;
+    const current = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser',
+      unsubscribe: async () => {
+        gone += 1;
+        return true;
+      },
+    };
+    const { env } = browser({ fetch: (() => new Promise(() => undefined)) as any }, current);
+    void abandonBrowserPush(env);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(gone).toBe(1);
+  });
+
+  test('a failure keeps a subscription that this browser already had', async () => {
+    let gone = 0;
+    const had = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser',
+      toJSON: () => ({ endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser', keys: {} }),
+      unsubscribe: async () => {
+        gone += 1;
+        return true;
+      },
+    };
+    const refused = browser({ fetch: (async () => new Response('{}', { status: 500 })) as any }, had).env;
+    await expect(enableBrowserPush(refused)).rejects.toThrow('Could not enable Web Push.');
+    expect(gone).toBe(0);
+    expect(await enableBrowserPush(browser({}, had).env)).toEqual({ created: false });
   });
 
   test('disable tells the server first, then removes the subscription', async () => {

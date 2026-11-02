@@ -62,17 +62,45 @@ export async function enableBrowserPush(env: BrowserPushEnvironment = browserPus
   if (permission !== 'granted') throw new Error('Notification permission was not granted.');
   if (!env.publicKey) throw new Error('Web Push is not configured on this deployment.');
   const registration = await env.serviceWorker.register('/albatross-sw.js');
+  // subscribe can return the subscription that this browser has. A failure below
+  // removes only one that this attempt made.
+  const created = !(await registration.pushManager.getSubscription());
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(env.publicKey, env.decode),
   });
-  const response = await env.fetch('/api/notifications/push', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(subscription.toJSON()),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error || 'Could not enable Web Push.');
+  // The browser subscribed first. Any failure after this leaves no subscription behind.
+  try {
+    const response = await env.fetch('/api/notifications/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(subscription.toJSON()),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || 'Could not enable Web Push.');
+  } catch (error) {
+    if (created) await subscription.unsubscribe().catch(() => undefined);
+    throw error;
+  }
+  return { created };
+}
+
+/**
+ * Removes this browser after a failed save or at the end of a session. Both parts start
+ * together, so a slow server cannot hold back the local removal. After that removal the
+ * push service answers 404 or 410, and the next send drops the row on the server.
+ */
+export async function abandonBrowserPush(env: BrowserPushEnvironment = browserPushEnvironment()) {
+  const subscription = await currentSubscription(env);
+  if (!subscription) return;
+  await Promise.allSettled([
+    env.fetch('/api/notifications/push', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint: subscription.endpoint }),
+    }),
+    subscription.unsubscribe(),
+  ]);
 }
 
 /** Removes this browser. The server stops first, so after a failure the switch shows the true state. */

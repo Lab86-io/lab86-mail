@@ -1,5 +1,4 @@
 import {
-  tool as aiTool,
   createUIMessageStream,
   createUIMessageStreamResponse,
   jsonSchema,
@@ -21,6 +20,7 @@ import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { documentCreateModelInput } from '../tools/documents';
 import { invokeTool, repairToolArgs, toolRisk } from '../tools/registry';
+import { agentTool as aiTool } from './agent-tool';
 import { APPROVAL_RISKS, approvalConditionMet, approvalSummary, type ToolRisk } from './approval';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { executeCheckpointedTool, readRecoveryContext, toolExecutionKey } from './execution';
@@ -752,6 +752,7 @@ export function liftToolsForAgent(
         allToolNames: Object.keys(lifted),
         scopeGroups: options.scopeGroups ?? [],
         earlier: [...(options.preloadGroups ?? []), ...requestedGroups],
+        needsYou: options.needsYou,
       });
       requestedGroups.push(...groups);
       return result;
@@ -1052,10 +1053,11 @@ export function activeToolsForStep(
   steps: ReadonlyArray<{ content?: unknown }>,
   presentationSession?: PresentationSession,
   preloadGroups: readonly string[] = [],
+  needsYou?: boolean,
 ): string[] {
   const next = presentationSession ? nextPresentationCheckpoint(presentationSession) : 'brief';
   const requested = [...preloadGroups, ...enabledGroupsFromSteps(steps)];
-  return activeToolNames(toolNames, requested, initialGroups).filter(
+  return activeToolNames(toolNames, requested, initialGroups, { needsYou }).filter(
     (name) =>
       name !== PRESENTATION_CHOICE_TOOL ||
       (!!next && next !== 'cancelled' && !hasPendingPresentationQuestion(steps)),
@@ -1133,6 +1135,7 @@ async function streamAgentTurn(
   const feature = 'agent';
   const runtimes = await resolveAgentRuntimes({ userId: options.userId, speed: 'primary', feature });
   const promptCacheKey = options.userId ? `agent:${options.userId}` : undefined;
+  const needsYou = options.userId ? needsYouFlagFor(options.userId) : false;
   let lastError: unknown;
   let messages = options.messages;
   let system = options.system;
@@ -1164,6 +1167,7 @@ async function streamAgentTurn(
           earlierSteps,
           options.presentationSession,
           options.preloadGroups,
+          needsYou,
         ),
         prepareStep: ({ steps, messages: stepMessages }) => {
           const bounded = boundToolResults(stepMessages);
@@ -1174,6 +1178,7 @@ async function streamAgentTurn(
               withEarlier(steps),
               options.presentationSession,
               options.preloadGroups,
+              needsYou,
             ),
             ...(bounded === stepMessages ? {} : { messages: bounded }),
           };

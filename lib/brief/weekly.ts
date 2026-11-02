@@ -7,6 +7,7 @@ import { normalizeBriefTimezone } from '../shared/brief-edition';
 import { shortFrom } from '../shared/format';
 import type { DailyReport, DailyReportItem, Thread } from '../shared/types';
 import { saveDailyReport } from '../store/daily-reports';
+import { withBriefStage } from './budget';
 import {
   composeWeeklyReviewDocument,
   nextMondayMorning,
@@ -54,12 +55,14 @@ export async function generateWeeklyReview(
   const now = input.now ?? Date.now();
   const timezone = normalizeBriefTimezone(await deps.timezone(input.userId).catch(() => undefined));
   const weekStart = now - WEEK_MS;
-  const [completions, attention, tasks, calendar] = await Promise.all([
-    deps.loadCompletions(input.userId, weekStart).catch(() => [] as any[]),
-    deps.loadAttention(input.userId).catch(() => [] as Thread[]),
-    deps.loadTasks(input.userId, now),
-    deps.loadCalendar(input.userId, now),
-  ]);
+  const [completions, attention, tasks, calendar] = await withBriefStage('sources', () =>
+    Promise.all([
+      deps.loadCompletions(input.userId, weekStart).catch(() => [] as any[]),
+      deps.loadAttention(input.userId).catch(() => [] as Thread[]),
+      deps.loadTasks(input.userId, now),
+      deps.loadCalendar(input.userId, now),
+    ]),
+  );
   const done: WeeklyDoneItem[] = [];
   const seen = new Set<string>();
   for (const row of completions || []) {
@@ -134,9 +137,9 @@ export async function generateWeeklyReview(
     artifactSource: 'document-v2',
     model: 'local',
   };
-  report.document = composeWeeklyReviewDocument(report, timezone);
+  report.document = await withBriefStage('composition', () => composeWeeklyReviewDocument(report, timezone));
   report.narrative = report.document.summary;
   report.prose = { lede: report.document.summary, weekAhead: '', model: 'local' };
-  await deps.save(report);
+  await withBriefStage('save', () => deps.save(report));
   return report;
 }

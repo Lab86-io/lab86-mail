@@ -138,9 +138,9 @@ describe('the subscriptions', () => {
   });
 
   test('the live text of a run is a polite live region', () => {
-    expect(read('components/albatross/thread/RunLive.tsx')).toContain(
-      'data-slot="run-live-text" aria-live="polite"',
-    );
+    const live = read('components/albatross/thread/RunLive.tsx');
+    expect(live).toContain('data-slot="run-live-region" aria-live="polite"');
+    expect(live).not.toContain('data-slot="run-live-text" aria-live');
   });
 
   test('the rail reads its small queries, not the overview and the Work list', () => {

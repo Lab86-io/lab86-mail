@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { BRIEF_EDITION_NOT_WRITTEN } from '../lib/brief/generation';
 import { classifyOpsError } from '../lib/ops/health';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
@@ -62,9 +63,7 @@ async function publishJobArtifact(ctx: MutationCtx, job: any, now: number, error
         doc: {
           ...doc,
           status: 'ready',
-          ...(empty
-            ? { narrative: 'This edition could not be written. Write a new edition to try again.' }
-            : {}),
+          ...(empty ? { narrative: BRIEF_EDITION_NOT_WRITTEN } : {}),
         },
         updatedAt: now,
       });

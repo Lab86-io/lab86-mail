@@ -309,6 +309,22 @@ describe('tool groups', () => {
     expect((await strict.validate({ attendees: 'Sam' })).success).toBe(false);
   });
 
+  test('a user outside the flag does not get the needs_you tools, even when the model asks', () => {
+    const inFlag = planToolGroups(allNames, ['needs_you'], [], { needsYou: true });
+    expect(inFlag.active).toContain('needs_you_list');
+    const outside = planToolGroups(allNames, ['needs_you'], ['needs_you'], { needsYou: false });
+    expect(outside.groups).not.toContain('needs_you');
+    expect(outside.active).not.toContain('needs_you_list');
+    const lifted = enableToolsResult(['needs_you'], {
+      allToolNames: allNames,
+      scopeGroups: [],
+      earlier: [],
+      needsYou: false,
+    });
+    expect(lifted.enabled).toEqual([]);
+    expect(lifted.summary).toContain('Could not load needs_you: not available for this user.');
+  });
+
   test('model-facing input schemas carry no regex patterns (OpenAI Responses rejects lookarounds)', () => {
     const schema = modelInputSchema(
       z.object({ attendees: z.array(z.object({ email: z.email(), name: z.string().optional() })) }),

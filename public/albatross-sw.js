@@ -36,16 +36,48 @@ function isAppPage(client) {
 async function openInApp(clients, url) {
   const app = clients.find((client) => 'focus' in client && isAppPage(client));
   if (app) {
-    app.postMessage({ type: 'albatross:open-link', url });
-    return app.focus();
-  }
-  const other = clients.find((client) => 'focus' in client && 'navigate' in client);
-  if (other) {
+    let delivered = false;
     try {
-      const moved = await other.navigate(url);
-      return await (moved || other).focus();
+      app.postMessage({ type: 'albatross:open-link', url });
+      delivered = true;
     } catch (_) {}
+    // The tab has the link. The click permission ends at focus, so a new tab cannot open.
+    if (delivered) return focusQuietly(app);
   }
+  // An app tab may hold a draft, so a page load never goes there.
+  const other = clients.find((client) => 'focus' in client && 'navigate' in client && !isAppPage(client));
+  if (other) return moveTab(other, url);
+  return openNewTab(url);
+}
+
+async function focusQuietly(client) {
+  try {
+    await client.focus();
+  } catch (_) {}
+}
+
+// The click permission is short and a page load can be slow, so the focus starts
+// first. A page load can replace the tab, so the tab that navigate returns gets it too.
+async function moveTab(client, url) {
+  let navigated;
+  try {
+    navigated = client.navigate(url);
+  } catch (_) {
+    return openNewTab(url);
+  }
+  const focused = focusQuietly(client);
+  let moved;
+  try {
+    moved = await navigated;
+  } catch (_) {
+    await focused;
+    return openNewTab(url);
+  }
+  await focused;
+  if (moved && moved !== client) await focusQuietly(moved);
+}
+
+function openNewTab(url) {
   return self.clients.openWindow ? self.clients.openWindow(url) : undefined;
 }
 
@@ -54,15 +86,10 @@ self.addEventListener('notificationclick', (event) => {
   const url = event.notification.data?.url || '/';
   const inApp = event.notification.data?.inApp === true;
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
       if (inApp) return openInApp(clients, url);
-      for (const client of clients) {
-        if ('focus' in client) {
-          client.navigate(url);
-          return client.focus();
-        }
-      }
-      return self.clients.openWindow ? self.clients.openWindow(url) : undefined;
+      const client = clients.find((candidate) => 'focus' in candidate);
+      return client ? moveTab(client, url) : openNewTab(url);
     }),
   );
 });

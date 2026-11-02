@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { runWithAiRequestContext } from '../lib/ai/context';
+import { BRIEF_EDITION_NOT_WRITTEN } from '../lib/brief/generation';
 import {
   getDailyReportFacts,
   getLatestDailyReport,
@@ -293,6 +294,49 @@ test('a composing row with no job settles, and a failed job read leaves it as it
   });
 });
 
+test('an empty failed row does not hide an older edition, and the page says that it failed', async () => {
+  const failed = {
+    _id: 'failed',
+    generatedAt: 200,
+    status: 'ready',
+    narrative: BRIEF_EDITION_NOT_WRITTEN,
+    sections: {},
+    stats: {},
+  };
+  viewReader({ rows: [failed, ready(100)] });
+  await context(async () => {
+    const view = await readBriefView();
+    expect(view.report?._id).toBe('edition-100');
+    expect(view.failedNewer).toBe(true);
+    // The note and the edition move together, so a known revision stays honest.
+    const again = await readBriefView(view.revision);
+    expect(again.unchanged).toBe(true);
+  });
+  viewReader({ rows: [failed] });
+  await context(async () => {
+    const only = await readBriefView();
+    expect(only.report?._id).toBe('failed');
+    expect(only.failedNewer).toBeUndefined();
+  });
+});
+
+test('failed days do not use up the scan: the older edition still shows', async () => {
+  const failed = (id: string) => ({
+    _id: id,
+    generatedAt: 200,
+    status: 'ready',
+    narrative: BRIEF_EDITION_NOT_WRITTEN,
+    sections: {},
+    stats: {},
+  });
+  viewReader({ rows: [failed('a'), failed('b'), failed('c'), failed('d'), failed('e'), ready(100)] });
+  await context(async () => {
+    const view = await readBriefView();
+    expect(view.report?._id).toBe('edition-100');
+    expect(view.failedNewer).toBe(true);
+  });
+});
+
 test('a dead run of partial rows stops the scan, and nothing readable is a null report', async () => {
   const partial = (id: string) => ({ _id: id, generatedAt: 200, status: 'partial', sections: {} });
   const calls: Array<{ name: string; args: any }> = [];
@@ -422,6 +466,21 @@ test('one edition from history stays a snapshot, and a placeholder is not an edi
     expect((await readBriefEditionView('missing')).report).toBeNull();
     expect(await getDailyReportFacts('missing')).toBeNull();
     expect((await getDailyReportFacts('old'))?.html).toBeUndefined();
+  });
+});
+
+test('the store with no Convex also skips an empty failed edition', async () => {
+  setDailyReportReaderForTest({ configured: () => false });
+  await runWithAiRequestContext({ userId: 'local-failed-reader', agent: 'ai' }, async () => {
+    await kvUpsert('dailyReport', 'older', { ...report(5), sections: {} });
+    await kvUpsert('dailyReport', 'failed', {
+      ...report(9),
+      narrative: BRIEF_EDITION_NOT_WRITTEN,
+      sections: {},
+    });
+    const view = await readBriefView();
+    expect(view.report?.generatedAt).toBe(report(5).generatedAt);
+    expect(view.failedNewer).toBe(true);
   });
 });
 

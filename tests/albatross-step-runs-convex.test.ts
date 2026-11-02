@@ -984,6 +984,33 @@ describe('the approvals of a run', () => {
     expect(await state()).toMatchObject({ open: 0, approved: 1 });
   });
 
+  test('a claim from a process that died goes back to the queue, and a newer claim stays', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const runId = String(await seedHandoff(t, workId, approve));
+    const approvalId = await t.mutation(api.albatrossWork.enqueueApproval, queueArgs(workId, runId, 'a'));
+    const claimed: any = await t.mutation(api.albatrossWork.claimApproval, { ...caller, approvalId });
+    const read = () => t.query(api.albatrossWork.getApproval, { ...caller, approvalId });
+    const expire = (claimedAt: number) =>
+      t.mutation(internal.albatrossWork.expireApprovalClaim, { approvalId, claimedAt });
+    // Not this claim: nothing changes.
+    expect(await expire(claimed.approval.updatedAt - 1)).toBe(false);
+    expect(await read()).toMatchObject({ status: 'claiming' });
+    expect(await expire(claimed.approval.updatedAt)).toBe(true);
+    const row: any = await read();
+    expect(row.status).toBe('pending');
+    expect(row.staleClaimAt).toBeGreaterThan(0);
+    const queue: any[] = await t.query(api.albatrossWork.listApprovals, { ...caller, status: 'pending' });
+    expect(queue.map((item) => String(item._id))).toContain(String(approvalId));
+    await t.mutation(api.albatrossWork.decideApproval, {
+      ...caller,
+      approvalId,
+      status: 'rejected',
+      onlyIfPending: true,
+    });
+    expect(await read()).toMatchObject({ status: 'rejected' });
+  });
+
   test('the settlement claim needs a handoff with nothing that waits, and goes once', async () => {
     const t = harness();
     const workId = String(await seedWork(t));

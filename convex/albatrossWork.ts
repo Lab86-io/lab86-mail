@@ -1,9 +1,10 @@
 import { v } from 'convex/values';
 import { assertWorkOpen, isTerminalWork } from '../lib/albatross/work-lifecycle';
 import { truncateText } from '../lib/shared/text';
+import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { mutation, query } from './_generated/server';
+import { internalMutation, mutation, query } from './_generated/server';
 import { normalizeSourceRefs, normalizeText } from './albatrossModel';
 import { now, requireInternalSecret } from './lib';
 
@@ -543,6 +544,12 @@ export const enqueueApproval = mutation({
   },
 });
 
+/**
+ * A claim lasts as long as one tool call. No tool call runs this long, so a
+ * claim older than this came from a process that died.
+ */
+const APPROVAL_CLAIM_STALE_MS = 10 * 60_000;
+
 export const listApprovals = query({
   args: {
     ...callerArgs,
@@ -668,7 +675,27 @@ export const claimApproval = mutation({
     }
     const ts = now();
     await ctx.db.patch(args.approvalId, { status: 'claiming', updatedAt: ts });
+    await ctx.scheduler.runAfter(APPROVAL_CLAIM_STALE_MS, internal.albatrossWork.expireApprovalClaim, {
+      approvalId: args.approvalId,
+      claimedAt: ts,
+    });
     return { ok: true, approval: { ...approval, status: 'claiming', updatedAt: ts } };
+  },
+});
+
+/**
+ * A claim that never ended goes back to the queue, so a client has a press again.
+ * The earlier try may have gone out, so the row keeps that fact for the words on
+ * every later state. A claim that ended, or a newer claim, stays as it is.
+ */
+export const expireApprovalClaim = internalMutation({
+  args: { approvalId: v.id('albatrossApprovals'), claimedAt: v.number() },
+  handler: async (ctx, args) => {
+    const approval = await ctx.db.get(args.approvalId);
+    if (!approval || approval.status !== 'claiming' || approval.updatedAt !== args.claimedAt) return false;
+    const ts = now();
+    await ctx.db.patch(args.approvalId, { status: 'pending', staleClaimAt: ts, updatedAt: ts });
+    return true;
   },
 });
 

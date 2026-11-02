@@ -96,6 +96,8 @@ export interface BriefViewResponse extends BriefHeadResponse {
   revision: string | null;
   report?: BriefWebEdition | null;
   unchanged?: boolean;
+  /** The page shows an older edition, because the newest has nothing in it. */
+  failedNewer?: boolean;
 }
 
 /** One state change of the active job moves this stamp. Progress within a state does not. */

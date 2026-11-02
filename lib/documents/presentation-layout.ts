@@ -178,7 +178,8 @@ export async function designPresentationLayouts(
                         userId: input.userId,
                         feature: 'presentation_layout',
                         speed: 'primary',
-                        reasoningEffort: 'high',
+                        // At high, a slide with many elements passed the 40 s limit of its call.
+                        reasoningEffort: 'medium',
                         maxOutputTokens: 6000,
                         maxRetries: 0,
                         abortSignal: requestSignal,

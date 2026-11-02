@@ -11,6 +11,7 @@ import {
 } from '../lib/documents/presentation-design';
 import {
   copyFields,
+  preservesNumericClaims,
   replaceSlideCopy,
   reviewPresentation,
   slideReviewSchema,
@@ -468,6 +469,176 @@ describe('every-slide presentation review', () => {
     }) as any);
     expect(result.brief).toEqual(brief);
   });
+  describe('the headline against the data of its slide', () => {
+    const chartBrief = () => {
+      const brief = harborBrief();
+      brief.slides = [
+        {
+          ...brief.slides[0],
+          role: 'chart',
+          title: 'Unit sales have risen for two straight quarters',
+          body: '',
+          items: [],
+          chart: {
+            type: 'column',
+            categories: ['Q4 2025', 'Q1 2026', 'Q2 2026'],
+            series: [{ name: 'Units', values: [63, 52, 58] }],
+            unit: 'K',
+            source: 'Sales log',
+          },
+        } as (typeof brief.slides)[number],
+      ];
+      return brief;
+    };
+    const reviewWith = (title: string) => {
+      let system = '';
+      let prompt = '';
+      const generate = (async (options: any) => {
+        system = options.system;
+        prompt = options.prompt;
+        return {
+          object: {
+            reviews: [
+              {
+                slideId: 'slide-1',
+                purpose: 'p',
+                contentAssessment: 'c',
+                layoutAssessment: 'l',
+                fixes: [{ field: 'title', text: title }],
+              },
+            ],
+          },
+        };
+      }) as any;
+      return reviewPresentation(chartBrief(), { userId: 'u', instruction: 'Review' }, generate).then(
+        (result) => ({ ...result, system: () => system, prompt: () => prompt }),
+      );
+    };
+
+    test('the review has the rule, and it reads the chart values', async () => {
+      const { system, prompt } = await reviewWith('Unit sales fell, then rose');
+      expect(system()).toContain('Check each headline against the data of its own slide.');
+      expect(system()).toContain('return a fix for the title that says what the data shows');
+      expect(JSON.parse(prompt()).slides[0].chart.series[0].values).toEqual([63, 52, 58]);
+    });
+
+    test('a fix may use the numbers of the slide data, and the old headline stays in notes', async () => {
+      const { brief } = await reviewWith('Unit sales fell from 63 to 52 in Q1 2026, then rose to 58');
+      expect(brief.slides[0].title).toBe('Unit sales fell from 63 to 52 in Q1 2026, then rose to 58');
+      expect(brief.slides[0].notes).toContain(
+        'Original title:\nUnit sales have risen for two straight quarters',
+      );
+    });
+
+    test('the data of a slide counts with its unit, its sign, and its items', () => {
+      // Words from the review check: a value with its unit, and an item figure.
+      expect(preservesNumericClaims('old title 58 58%', 'Sales reached 58%')).toBe(true);
+      expect(preservesNumericClaims('old title 58', 'Sales reached 58%')).toBe(false);
+      // A minus sign counts. A hyphen in a range or a label is no minus sign.
+      expect(preservesNumericClaims('values -20', 'Profit was 20')).toBe(false);
+      expect(preservesNumericClaims('values -20', 'Profit was -20')).toBe(true);
+      expect(preservesNumericClaims('values \u221220', 'Profit was -20')).toBe(true);
+      expect(preservesNumericClaims('from 3 to 4 in Q1-2026', 'Between 3-4 in Q1-2026')).toBe(true);
+      // A size letter counts: a billion is not a million. A word after a number is no size.
+      expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2B')).toBe(false);
+      expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2m')).toBe(true);
+      expect(preservesNumericClaims('in 12 markets', 'In 12 markets')).toBe(true);
+      // The same size in other words is the same number.
+      expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2 million')).toBe(true);
+      expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2 M')).toBe(true);
+      expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2 billion')).toBe(false);
+      expect(preservesNumericClaims('3.2k users', '3.2 thousand users')).toBe(true);
+      expect(preservesNumericClaims('3.2 thousand users', '3.2 trillion users')).toBe(false);
+    });
+
+    test('a fix may use an item figure, and a chart value with its unit', async () => {
+      const brief = chartBrief();
+      const metric = {
+        ...brief.slides[0],
+        title: 'Revenue reached 5M',
+        items: [{ label: 'Revenue', detail: 'This year', meta: '3.2M' }],
+        chart: { ...(brief.slides[0] as any).chart, unit: '%', series: [{ name: 'Share', values: [58] }] },
+      } as (typeof brief.slides)[number];
+      const fixed = (title: string) => {
+        const generate = (async () => ({
+          object: {
+            reviews: [
+              {
+                slideId: 'slide-1',
+                purpose: 'p',
+                contentAssessment: 'c',
+                layoutAssessment: 'l',
+                fixes: [{ field: 'title', text: title }],
+              },
+            ],
+          },
+        })) as any;
+        const input = { ...brief, slides: [structuredClone(metric)] };
+        return reviewPresentation(input, { userId: 'u', instruction: 'Review' }, generate);
+      };
+      expect((await fixed('Revenue reached 3.2M')).brief.slides[0].title).toBe('Revenue reached 3.2M');
+      expect((await fixed('Share reached 58%')).brief.slides[0].title).toBe('Share reached 58%');
+    });
+
+    test('only a headline fix may use the numbers of the slide data', async () => {
+      const brief = chartBrief();
+      const slide = {
+        ...brief.slides[0],
+        body: 'Steady growth this year',
+        chart: { ...(brief.slides[0] as any).chart, unit: '%', series: [{ name: 'Share', values: [58] }] },
+      } as (typeof brief.slides)[number];
+      const generate = (async () => ({
+        object: {
+          reviews: [
+            {
+              slideId: 'slide-1',
+              purpose: 'p',
+              contentAssessment: 'c',
+              layoutAssessment: 'l',
+              fixes: [
+                { field: 'body', text: 'Share reached 58% this year' },
+                { field: 'title', text: 'Share reached 58%' },
+              ],
+            },
+          ],
+        },
+      })) as any;
+      const { brief: reviewed } = await reviewPresentation(
+        { ...brief, slides: [slide] },
+        { userId: 'u', instruction: 'Review' },
+        generate,
+      );
+      expect(reviewed.slides[0].title).toBe('Share reached 58%');
+      expect(reviewed.slides[0].body).toBe('Steady growth this year');
+    });
+
+    test('a fix with a number from nowhere is refused', async () => {
+      const { brief } = await reviewWith('Unit sales fell from 63 to 49');
+      expect(brief.slides[0].title).toBe('Unit sales have risen for two straight quarters');
+    });
+  });
+
+  test('speaker notes name a changed field in plain words', () => {
+    const brief = harborBrief();
+    const slide = {
+      ...brief.slides[0],
+      items: [
+        { label: 'First', detail: 'One', meta: 'A' },
+        { label: 'Second', detail: 'Two', meta: 'B' },
+      ],
+      chart: { type: 'column', categories: ['Q1'], series: [{ name: 'U', values: [1] }], source: 'Log' },
+    } as (typeof brief.slides)[number];
+    replaceSlideCopy(slide, 'items.1.meta', 'C');
+    replaceSlideCopy(slide, 'items.0.label', 'One first');
+    replaceSlideCopy(slide, 'items.0.detail', 'Only one');
+    replaceSlideCopy(slide, 'chart.source', 'Sales log');
+    expect(slide.notes).toContain('Original item 2 figure:\nB');
+    expect(slide.notes).toContain('Original item 1 heading:\nFirst');
+    expect(slide.notes).toContain('Original item 1 detail:\nOne');
+    expect(slide.notes).toContain('Original chart source:\nLog');
+    expect(slide.notes).not.toContain('items.');
+  });
+
   test('review failures get bounded retries and a truthful fallback with recoverable copy', async () => {
     const brief = harborBrief();
     const original = 'Supporting evidence for this decision. '.repeat(30);

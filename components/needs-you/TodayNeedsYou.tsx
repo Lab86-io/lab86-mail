@@ -506,8 +506,8 @@ function LayerChooser({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       node: enabled ? <LiveTodayNeedsYou /> : null,
-      // A user outside the flag has no stored lane, so the hide costs nothing
-      // while the snapshot loads; a user in the flag sees no lane flash.
+      // A user outside the flag has no live list, so a stored lane stays: an edition
+      // moved its threads out of the other lanes. A user in the flag sees no lane flash.
       hideNeedsYou: loading || enabled,
     }),
     [enabled, loading],

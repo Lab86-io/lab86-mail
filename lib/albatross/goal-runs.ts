@@ -35,8 +35,11 @@ export function isGoalRun(
 // ---------------------------------------------------------------------------
 
 /** The kind of a first contract, from the words of the goal. */
-export function goalContractKind(text: string): 'send' | 'buy' | 'book' | 'general' {
+export function goalContractKind(text: string): 'send' | 'draft' | 'buy' | 'book' | 'general' {
   const words = text.toLowerCase();
+  // A run cannot send, so "draft a mail" has no proof that the mail left the
+  // account. "Draft it and send it" still asks for the send.
+  if (/\bdraft(s|ed)?\b/.test(words) && !/\bsend\b/.test(words)) return 'draft';
   if (/\b(buy|purchase|order|pay for)\b/.test(words)) return 'buy';
   if (/\b(book|reserve|appointment|registration|register)\b/.test(words)) return 'book';
   if (/\b(send|email|e-mail|mail|reply|respond|invoice|submit|write to)\b/.test(words)) return 'send';

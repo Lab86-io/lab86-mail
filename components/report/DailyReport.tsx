@@ -26,7 +26,11 @@ import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { briefFreshness, briefIsStale, briefStaleNote } from '@/lib/albatross/today';
 import { callTool } from '@/lib/api-client';
 import { hasLiveBriefSection } from '@/lib/brief/editorial';
-import { BRIEF_RETRY_NOTE, isBriefEditionRetrying } from '@/lib/brief/generation';
+import {
+  BRIEF_LAST_EDITION_FAILED_NOTE,
+  BRIEF_RETRY_NOTE,
+  isBriefEditionRetrying,
+} from '@/lib/brief/generation';
 import { BRIEF_LETTER_FAILED_COPY, briefLetterFromReport } from '@/lib/brief/letter';
 import {
   BRIEF_LIVE_REFRESH_MS,
@@ -1014,6 +1018,15 @@ export function DailyReport({
           className={cn('text-[12px] text-[var(--color-text-muted)]', !embedded && 'px-5 pt-3')}
         >
           {BRIEF_RETRY_NOTE}
+        </p>
+      ) : null}
+
+      {reportQuery.data?.failedNewer && !retrying && !busy && !selectedId ? (
+        <p
+          role="status"
+          className={cn('text-[12px] text-[var(--color-text-muted)]', !embedded && 'px-5 pt-3')}
+        >
+          {BRIEF_LAST_EDITION_FAILED_NOTE}
         </p>
       ) : null}
 
