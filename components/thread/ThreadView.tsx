@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { toastWithUndo } from '@/components/inbox/mail-undo-toast';
+import { ThreadNeedsYou } from '@/components/needs-you/ThreadNeedsYouStrip';
 import { MAIL_PUSH_QUERY_KEY, saveMailPushSettings } from '@/components/settings/MailAlertsSettings';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { ProofOffer } from '@/components/thread/ProofOffer';
@@ -624,6 +625,9 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
             </IconBtn>
           </div>
         </div>
+
+        {/* Needs you: what this thread owes, with its actions, for users in the flag. */}
+        <ThreadNeedsYou accountId={account || null} threadId={threadId} />
 
         <div className="scrollable flex-1 px-5 pb-24 pt-4">
           {/* The thread object has no top-level _id (getThread returns

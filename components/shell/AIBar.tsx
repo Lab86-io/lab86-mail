@@ -121,9 +121,11 @@ import {
   addMergedThreadMessages,
   type FormAnswer,
   formQuestionSchema,
+  interleaveThreadExtras,
   mergeThreadTimeline,
   type PersonalDetailView,
   type ThreadRunView,
+  type ThreadTimelineExtra,
 } from '@/lib/albatross/thread-contract';
 import { noteReceipt, steerNoteMessage, withSteerFailed } from '@/lib/albatross/thread-notes';
 import {
@@ -286,6 +288,8 @@ export interface ThreadChatProps {
   scrollButton?: ReactNode;
   /** The dev harness: messages to show in preview mode, where nothing loads. */
   initialMessages?: UIMessage[];
+  /** Cards between the messages, placed by time: the Needs you items of the thread. */
+  extras?: readonly ThreadChatExtra[];
   /** A run the composer can steer (docs/albatross-threads.md, T7–T9): the route line, Ask instead, Stop and redirect. */
   steer?: ThreadSteer;
   /** The reply of this thread still runs on the server (T5): a placeholder shows until the saved reply arrives. */
@@ -297,6 +301,11 @@ export interface ThreadChatProps {
     draft: { get: () => string; set: (text: string) => void };
     scroll: ChatContainerScrollMemory;
   };
+}
+
+/** One card in the thread, placed by its time (docs/needs-you-phases-2-5.md, open item 2). */
+export interface ThreadChatExtra extends ThreadTimelineExtra {
+  node: ReactNode;
 }
 
 export interface ThreadSteer {
@@ -1237,6 +1246,7 @@ export function AssistantChat({
   const earlierCount = timeline
     ? timeline.filter((item) => item.kind === 'message' && item.at === null).length
     : 0;
+  const timelineWithExtras = timeline ? interleaveThreadExtras(timeline, thread?.extras ?? []) : null;
   const messageIndex = new Map(messages.map((message, index) => [message.id, index]));
   const tail = (
     <>
@@ -1419,7 +1429,7 @@ export function AssistantChat({
         </header>
       )}
 
-      {thread && timeline ? (
+      {thread && timelineWithExtras ? (
         <ChatContainer
           className="relative flex-1"
           scrollButton={thread.scrollButton ?? null}
@@ -1429,7 +1439,14 @@ export function AssistantChat({
             <ChatPartContext.Provider value={partHandlers}>
               {thread.intro}
               {earlierCount ? <TimelineDivider label={EARLIER_CHAT_DIVIDER} /> : null}
-              {timeline.map((item, index) => {
+              {timelineWithExtras.map((item, index) => {
+                if (item.kind === 'extra') {
+                  return (
+                    <ChatContainerMessage key={`extra:${item.extra.id}`} data-timeline-extra={item.extra.id}>
+                      {item.extra.node}
+                    </ChatContainerMessage>
+                  );
+                }
                 if (item.kind === 'run') {
                   return (
                     <ChatContainerMessage key={`run:${item.run.id}`} data-timeline-run={item.run.id}>

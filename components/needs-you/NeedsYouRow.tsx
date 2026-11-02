@@ -15,10 +15,17 @@ import {
   SquareKanban,
 } from 'lucide-react';
 import type { KeyboardEvent, ReactNode } from 'react';
+import { useState } from 'react';
 import type { NotificationItem } from '@/components/notifications/model';
 import { Avatar } from '@/components/ui/avatar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import type { ObligationSource, ObligationView } from '@/lib/obligations/contract';
-import type { NeedsYouEntry, NeedsYouGroup } from '@/lib/obligations/groups';
+import type { LaterOption, NeedsYouEntry, NeedsYouGroup } from '@/lib/obligations/groups';
 import { isClosedObligation } from '@/lib/obligations/groups';
 import {
   agoLabel,
@@ -189,6 +196,22 @@ export interface NeedsYouRowProps {
   onCopy?: () => void;
   onRsvp?: (response: 'yes' | 'no' | 'maybe') => void;
   onStartAlbatross?: () => void;
+  /** The Later menu on the row, beside Done. Without options the row has no Later pill. */
+  laterOptions?: readonly LaterOption[];
+  onLater?: (option: LaterOption) => void;
+  /** An Albatross question or approval: the one action of its row ("Answer"). */
+  onAlbatrossAction?: () => void;
+  albatrossActionLabel?: string;
+  /** Reply in place (the Today list). Without it, the Reply pill opens the row. */
+  onReply?: () => void;
+  /** A closed row inside its Undo window shows Undo in place of the due word. */
+  onUndo?: () => void;
+  /** The word beside Undo, when it is not the close reason ("Later"). */
+  undoWord?: string;
+  /** The pills stay in view, not only on hover: a touch screen, or a list outside the page. */
+  pillsAlways?: boolean;
+  /** No side padding: the row sits in a measure that already has its inset (the Today list). */
+  flush?: boolean;
   registerRef: (node: HTMLButtonElement | null) => void;
 }
 
@@ -203,6 +226,8 @@ export function rowPills(
   obligation: ObligationView,
   handlers: Pick<NeedsYouRowProps, 'onOpen' | 'onDone' | 'onCopy' | 'onRsvp' | 'onStartAlbatross'> & {
     copied?: boolean;
+    /** Reply in place; without it, Reply opens the row. */
+    onReply?: () => void;
   },
 ): Pill[] {
   if (isClosedObligation(obligation)) return [];
@@ -212,7 +237,7 @@ export function rowPills(
     if (handlers.onCopy)
       pills.push({ label: handlers.copied ? 'Copied' : 'Copy', onClick: handlers.onCopy, primary: true });
   } else if (primary === 'send_reply') {
-    pills.push({ label: 'Reply', onClick: handlers.onOpen, primary: true });
+    pills.push({ label: 'Reply', onClick: handlers.onReply ?? handlers.onOpen, primary: true });
   } else if (primary === 'rsvp') {
     const { onRsvp } = handlers;
     if (onRsvp) {
@@ -242,6 +267,15 @@ export function NeedsYouRow({
   onCopy,
   onRsvp,
   onStartAlbatross,
+  laterOptions,
+  onLater,
+  onAlbatrossAction,
+  albatrossActionLabel,
+  onReply,
+  onUndo,
+  undoWord,
+  pillsAlways,
+  flush,
   registerRef,
 }: NeedsYouRowProps) {
   const words = rowWords(entry, now, timezone);
@@ -249,9 +283,22 @@ export function NeedsYouRow({
   const closed = obligation ? isClosedObligation(obligation) : false;
   const code = obligation?.kind === 'code' && !closed ? obligation.code : null;
   const pills = obligation
-    ? rowPills(obligation, { onOpen, onDone, onCopy, onRsvp, onStartAlbatross, copied })
-    : [];
+    ? rowPills(obligation, { onOpen, onDone, onCopy, onRsvp, onStartAlbatross, copied, onReply })
+    : onAlbatrossAction
+      ? [{ label: albatrossActionLabel || 'Answer', onClick: onAlbatrossAction, primary: true }]
+      : [];
+  const later = obligation && !closed && obligation.kind !== 'code' && onLater && laterOptions?.length;
+  const [laterOpen, setLaterOpen] = useState(false);
+  const undo = Boolean(onUndo) && (closed || Boolean(undoWord));
+  const hasPills = pills.length > 0 || Boolean(later);
   const due = words.due;
+  const pillClass = (primary?: boolean) =>
+    cn(
+      'h-[22px] whitespace-nowrap rounded-[8px] border bg-[var(--color-bg-elevated)] px-2 text-[12px] font-medium leading-5 transition-colors hover:bg-[var(--color-control-hover)] disabled:opacity-60',
+      primary
+        ? 'border-[color-mix(in_oklab,var(--color-accent)_40%,var(--color-border))] text-[var(--color-accent)]'
+        : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
+    );
   return (
     <li
       data-needs-you-row={entry.id}
@@ -265,7 +312,8 @@ export function NeedsYouRow({
         onClick={onOpen}
         onKeyDown={onKeyDown}
         className={cn(
-          'grid w-full grid-cols-[28px_minmax(0,1fr)_auto] items-start gap-x-3 px-5 py-[11px] text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:rounded-ui focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
+          'grid w-full grid-cols-[28px_minmax(0,1fr)_auto] items-start gap-x-3 py-[11px] text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:rounded-ui focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
+          flush ? 'px-0' : 'px-5',
           selected && 'bg-[var(--color-selected-soft)]',
           closed && 'opacity-[0.72]',
         )}
@@ -273,7 +321,7 @@ export function NeedsYouRow({
         <RowLead entry={entry} />
         <span className="min-w-0">
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="truncate font-display text-[14px] font-medium leading-[18px] text-[var(--color-text)]">
+            <span className="max-w-[75%] shrink-0 truncate font-display text-[14px] font-medium leading-[18px] text-[var(--color-text)]">
               {words.name}
             </span>
             <span
@@ -314,7 +362,9 @@ export function NeedsYouRow({
           className={cn(
             'whitespace-nowrap pt-px text-right text-[11.5px] leading-[18px] tabular-nums',
             DUE_TONE[due.tone],
-            pills.length > 0 && 'group-hover:invisible group-focus-within:invisible',
+            hasPills && !pillsAlways && 'group-hover:invisible group-focus-within:invisible',
+            laterOpen && 'invisible',
+            (hasPills && pillsAlways) || undo ? 'invisible' : undefined,
           )}
         >
           {due.text}
@@ -325,28 +375,68 @@ export function NeedsYouRow({
           ) : null}
         </span>
       </button>
-      {pills.length > 0 ? (
-        <span className="absolute right-3 top-[9px] hidden gap-1 group-hover:flex group-focus-within:flex">
+      {undo ? (
+        <span className={cn('absolute top-[9px] flex items-baseline gap-2', flush ? 'right-0' : 'right-3')}>
+          <span className={cn('text-[11.5px] leading-[22px]', DUE_TONE.done)}>{undoWord ?? due.text}</span>
+          <button
+            type="button"
+            data-needs-you-undo
+            onClick={(event) => {
+              event.stopPropagation();
+              onUndo?.();
+            }}
+            className={pillClass(true)}
+          >
+            Undo
+          </button>
+        </span>
+      ) : hasPills ? (
+        <span
+          className={cn(
+            'absolute top-[9px] gap-1',
+            flush ? 'right-0' : 'right-3',
+            // The menu is a portal: focus leaves the row, and the pills must stay.
+            pillsAlways || laterOpen ? 'flex' : 'hidden group-hover:flex group-focus-within:flex',
+          )}
+        >
           {pills.map((pill) => (
             <button
               key={pill.label}
               type="button"
-              tabIndex={-1}
+              tabIndex={pillsAlways ? 0 : -1}
               disabled={busy}
               onClick={(event) => {
                 event.stopPropagation();
                 pill.onClick();
               }}
-              className={cn(
-                'h-[22px] whitespace-nowrap rounded-[8px] border bg-[var(--color-bg-elevated)] px-2 text-[12px] font-medium leading-5 transition-colors hover:bg-[var(--color-control-hover)] disabled:opacity-60',
-                pill.primary
-                  ? 'border-[color-mix(in_oklab,var(--color-accent)_40%,var(--color-border))] text-[var(--color-accent)]'
-                  : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
-              )}
+              className={pillClass(pill.primary)}
             >
               {pill.label}
             </button>
           ))}
+          {later ? (
+            <DropdownMenu open={laterOpen} onOpenChange={setLaterOpen}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  data-needs-you-later
+                  tabIndex={pillsAlways ? 0 : -1}
+                  disabled={busy}
+                  onClick={(event) => event.stopPropagation()}
+                  className={pillClass()}
+                >
+                  Later
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {laterOptions.map((option) => (
+                  <DropdownMenuItem key={option.id} onSelect={() => onLater(option)}>
+                    {option.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
         </span>
       ) : null}
     </li>

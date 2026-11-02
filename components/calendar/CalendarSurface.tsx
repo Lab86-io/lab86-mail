@@ -11,6 +11,7 @@ import { DndProvider } from '@/components/calendar/engine/dnd-context';
 import type { IEvent, IUser } from '@/components/calendar/engine/interfaces';
 import { SyncStatus } from '@/components/calendar/SyncStatus';
 import { usePullToResync } from '@/components/calendar/usePullToResync';
+import { CalendarNeedsYouProvider } from '@/components/needs-you/CalendarNeedsYou';
 import { Button } from '@/components/ui/button';
 import { CalendarDaysIcon } from '@/components/ui/calendar-days';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -364,21 +365,23 @@ export function CalendarSurface() {
           persistence={persistence}
           writableCalendars={writableCalendars}
         >
-          <CalendarSearchSelection />
-          <DndProvider>
-            <CalendarHeader />
-            <CalendarColorBar calendars={calendars} colorByCalendar={colorByCalendar} status={syncStatus} />
-            {/* Pull on touch: the body offsets with resistance and springs
+          <CalendarNeedsYouProvider>
+            <CalendarSearchSelection />
+            <DndProvider>
+              <CalendarHeader />
+              <CalendarColorBar calendars={calendars} colorByCalendar={colorByCalendar} status={syncStatus} />
+              {/* Pull on touch: the body offsets with resistance and springs
                 back. A pull past the threshold posts a resync. */}
-            <div
-              data-pull-offset={pull.offset || undefined}
-              className="flex min-h-0 flex-1 flex-col"
-              style={pull.style}
-              {...pull.handlers}
-            >
-              <CalendarBody />
-            </div>
-          </DndProvider>
+              <div
+                data-pull-offset={pull.offset || undefined}
+                className="flex min-h-0 flex-1 flex-col"
+                style={pull.style}
+                {...pull.handlers}
+              >
+                <CalendarBody />
+              </div>
+            </DndProvider>
+          </CalendarNeedsYouProvider>
         </CalendarProvider>
       </div>
     </div>

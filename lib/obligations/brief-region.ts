@@ -557,3 +557,36 @@ export async function withBriefNeedsYou(
     return report;
   }
 }
+
+/**
+ * The document without the stored Needs you lane: the letter region
+ * `needs-you`, the editorial region `editorial-needs-you`, and the lane module
+ * (a `group` with the lane title) wherever the writer placed it. Today shows
+ * the live list in its place, so nothing shows twice. A region that becomes
+ * empty goes.
+ */
+export function withoutNeedsYouLane(document: BriefDocumentV2): BriefDocumentV2 {
+  const isLane = (node: BriefNode) => node.kind === 'group' && node.title === NEEDS_YOU_LANE_TITLE;
+  const prune = (node: BriefNode): BriefNode | null => {
+    if (isLane(node)) return null;
+    if (!('children' in node) || !Array.isArray(node.children)) return node;
+    const children = node.children.map(prune).filter((child): child is BriefNode => child !== null);
+    if (children.length === node.children.length) return node;
+    if (!children.length) return null;
+    // A split needs two children and a grid at least two: the one child stands alone.
+    if (children.length === 1 && (node.kind === 'split' || node.kind === 'grid')) return children[0];
+    return { ...node, children } as BriefNode;
+  };
+  let changed = false;
+  const regions = document.regions.flatMap((region) => {
+    if (region.id === NEEDS_YOU_LANE_ID || region.id === `editorial-${NEEDS_YOU_LANE_ID}`) {
+      changed = true;
+      return [];
+    }
+    const tree = prune(region.tree);
+    if (tree === region.tree) return [region];
+    changed = true;
+    return tree ? [{ ...region, tree }] : [];
+  });
+  return changed ? { ...document, regions } : document;
+}
