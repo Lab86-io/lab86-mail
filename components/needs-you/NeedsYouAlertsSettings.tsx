@@ -85,12 +85,12 @@ export function BrowserAlertsRow({
     setBusy(true);
     try {
       if (enabled) {
-        await enableBrowserPush();
+        const { created } = await enableBrowserPush();
         try {
           await onEnabled?.();
         } catch (error) {
-          // The setting did not save, so the row must not say that alerts are on.
-          await abandonBrowserPush();
+          // The setting did not save, so a new subscription must not stay.
+          if (created) await abandonBrowserPush();
           throw error;
         }
       } else await disableBrowserPush();

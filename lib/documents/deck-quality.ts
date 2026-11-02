@@ -209,9 +209,14 @@ export function chartInks(slide: DeckSlideV2, theme: DeckTheme, element: ChartEl
   const label =
     labels.find((color) => ratio(color) >= TEXT_CONTRAST) ??
     labels.reduce((best, color) => (ratio(color) > ratio(best) ? color : best));
-  // A color that is not hex cannot be measured, and the renderers would replace it.
-  const given = (element.colors ?? []).filter((color) => contrastRatio(color, ground) !== null);
-  const own = given.length ? given : [c.accent, c.ink, c.muted, c.surface];
+  // A color that is not hex cannot be measured. A theme color takes its place, at
+  // the same position, so each series keeps a color of its own.
+  const fallback = [c.accent, c.ink, c.muted, c.surface];
+  const own = element.colors?.length
+    ? element.colors.map((color, index) =>
+        contrastRatio(color, ground) === null ? fallback[index % fallback.length] : color,
+      )
+    : fallback;
   // A color that does not read moves toward the label only until it reads. It
   // keeps its own hue, so two series stay different from each other.
   const readable = (color: string) => {

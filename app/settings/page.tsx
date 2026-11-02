@@ -671,11 +671,11 @@ function NotificationsSection() {
     setPushBusy(true);
     setPushMessage(null);
     try {
-      await enableBrowserPush();
+      const { created } = await enableBrowserPush();
       try {
         await rememberWebPush();
       } catch (error) {
-        await abandonBrowserPush();
+        if (created) await abandonBrowserPush();
         throw error;
       }
       setPushMessage('Web Push is enabled on this browser.');

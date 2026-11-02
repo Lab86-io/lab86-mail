@@ -539,6 +539,10 @@ describe('every-slide presentation review', () => {
       expect(preservesNumericClaims('values -20', 'Profit was -20')).toBe(true);
       expect(preservesNumericClaims('values \u221220', 'Profit was -20')).toBe(true);
       expect(preservesNumericClaims('from 3 to 4 in Q1-2026', 'Between 3-4 in Q1-2026')).toBe(true);
+      // A size letter counts: a billion is not a million. A word after a number is no size.
+      expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2B')).toBe(false);
+      expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2m')).toBe(true);
+      expect(preservesNumericClaims('in 12 markets', 'In 12 markets')).toBe(true);
     });
 
     test('a fix may use an item figure, and a chart value with its unit', async () => {

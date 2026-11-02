@@ -610,7 +610,8 @@ describe('the service worker', () => {
     const run = worker([old]);
     await click(run.listeners, { url: '/x', inApp: false });
     expect(replaced.calls).toEqual(['focus']);
-    expect(old.calls).toEqual([]);
+    // The focus starts before the page load, while the click permission lasts.
+    expect(old.calls).toEqual(['focus']);
   });
 
   test('a new version takes over at once, so a tab that it controls can move', async () => {
@@ -843,6 +844,22 @@ describe('the browser path of Settings', () => {
     await abandonBrowserPush(env);
     expect(gone).toBe(1);
     await abandonBrowserPush(browser().env);
+  });
+
+  test('a failure keeps a subscription that this browser already had', async () => {
+    let gone = 0;
+    const had = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser',
+      toJSON: () => ({ endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser', keys: {} }),
+      unsubscribe: async () => {
+        gone += 1;
+        return true;
+      },
+    };
+    const refused = browser({ fetch: (async () => new Response('{}', { status: 500 })) as any }, had).env;
+    await expect(enableBrowserPush(refused)).rejects.toThrow('Could not enable Web Push.');
+    expect(gone).toBe(0);
+    expect(await enableBrowserPush(browser({}, had).env)).toEqual({ created: false });
   });
 
   test('disable tells the server first, then removes the subscription', async () => {

@@ -56,15 +56,25 @@ async function focusQuietly(client) {
   } catch (_) {}
 }
 
-// A page load can replace the tab, so the tab that navigate returns takes the focus.
+// The click permission is short and a page load can be slow, so the focus starts
+// first. A page load can replace the tab, so the tab that navigate returns gets it too.
 async function moveTab(client, url) {
-  let moved;
+  let navigated;
   try {
-    moved = await client.navigate(url);
+    navigated = client.navigate(url);
   } catch (_) {
     return openNewTab(url);
   }
-  return focusQuietly(moved || client);
+  const focused = focusQuietly(client);
+  let moved;
+  try {
+    moved = await navigated;
+  } catch (_) {
+    await focused;
+    return openNewTab(url);
+  }
+  await focused;
+  if (moved && moved !== client) await focusQuietly(moved);
 }
 
 function openNewTab(url) {

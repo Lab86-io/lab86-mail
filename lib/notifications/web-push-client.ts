@@ -62,6 +62,9 @@ export async function enableBrowserPush(env: BrowserPushEnvironment = browserPus
   if (permission !== 'granted') throw new Error('Notification permission was not granted.');
   if (!env.publicKey) throw new Error('Web Push is not configured on this deployment.');
   const registration = await env.serviceWorker.register('/albatross-sw.js');
+  // subscribe can return the subscription that this browser has. A failure below
+  // removes only one that this attempt made.
+  const created = !(await registration.pushManager.getSubscription());
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(env.publicKey, env.decode),
@@ -76,9 +79,10 @@ export async function enableBrowserPush(env: BrowserPushEnvironment = browserPus
     const body = await response.json().catch(() => null);
     if (!response.ok) throw new Error(body?.error || 'Could not enable Web Push.');
   } catch (error) {
-    await subscription.unsubscribe().catch(() => undefined);
+    if (created) await subscription.unsubscribe().catch(() => undefined);
     throw error;
   }
+  return { created };
 }
 
 /** Removes this browser after a failed save. Each part runs even when the other fails. */

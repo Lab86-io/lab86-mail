@@ -135,10 +135,13 @@ function slideDataText(slide: Slide) {
 /** Editorial repair may omit detail into notes, but may not invent numeric claims. */
 export function preservesNumericClaims(original: string, replacement: string) {
   // A minus sign counts: -20 is not 20. A hyphen in 3-4 or Q1-2026 is no minus sign.
+  // A size letter counts too: 3.2M is not 3.2B.
   const numbers = (text: string): string[] =>
-    (text.replace(/\u2212/g, '-').match(/(?<![\w.])-?\d[\d,.%]*|\d[\d,.%]*/g) || []).map((number) =>
-      number.replace(/[,.]+$/, ''),
-    );
+    (
+      text
+        .replace(/\u2212/g, '-')
+        .match(/(?<![\w.])-?\d[\d,.%]*(?:[kmbt](?![a-z]))?|\d[\d,.%]*(?:[kmbt](?![a-z]))?/gi) || []
+    ).map((number) => number.replace(/[,.]+$/, '').toLowerCase());
   return numbers(replacement).every((number) => numbers(original).includes(number));
 }
 

@@ -141,6 +141,11 @@ describe('chart colors by contrast', () => {
     const inks = chartInks(one, theme, element);
     expect(inks.series).not.toContain('not-a-color');
     for (const color of inks.series) expect(contrastRatio(color, ink) ?? 0).toBeGreaterThanOrEqual(3);
+    // Each series keeps a color of its own.
+    const two = chart({ colors: ['not-a-color', '#FFFFFF'] });
+    const mixed = chartInks(slide({ background: ink }, two), theme, two).series;
+    expect(mixed).toHaveLength(2);
+    expect(new Set(mixed).size).toBe(2);
   });
 
   test('the check flags a chart when no color of the theme reads on its ground', () => {
