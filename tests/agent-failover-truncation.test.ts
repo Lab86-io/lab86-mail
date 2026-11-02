@@ -7,6 +7,7 @@ import * as gateway from '../lib/ai/gateway';
 import { forwardAgentStream, runAgent } from '../lib/ai/loop';
 import { ProviderStreamIdleError, streamIdleTimeoutFetch } from '../lib/ai/provider-idle-timeout';
 import { MAX_TOOL_RESULT_BYTES } from '../lib/ai/tool-result-cap';
+import * as convex from '../lib/hosted/convex';
 import * as narrative from '../lib/narrative/service';
 import { TOOLS } from '../lib/tools';
 
@@ -415,6 +416,77 @@ describe('what a tool result costs the model', () => {
     expect(names.length).toBeLessThanOrEqual(80);
     expect(names).toContain('enable_tools');
     expect(names).not.toContain('document_edit');
+  });
+});
+
+describe('a write in a signed-in run', () => {
+  const ARCHIVE = { account: 'acct_1', threadId: 't1' };
+  const signedIn = { userId: 'owner', chatId: 'chat-1' };
+
+  function checkpoints(claim: Record<string, unknown> = { claimed: true }, onBegin?: () => void) {
+    const spy = spyOn(convex, 'convexMutation').mockImplementation((async (_fn: unknown, args: any) => {
+      if (args.status) return null;
+      onBegin?.();
+      return claim;
+    }) as never);
+    restores.push(() => spy.mockRestore());
+    const calls = () => spy.mock.calls.map((call) => call[1] as any);
+    return {
+      begin: () => calls().find((args) => args.toolName),
+      finish: () => calls().find((args) => args.status),
+    };
+  }
+
+  test('the checkpoint keeps the chat of the run, and a success stores its output', async () => {
+    const archive = handlerSpy('archive_thread', { ok: true, operationId: 'op_1' });
+    const rows = checkpoints();
+    await run([model(callTool('archive_thread', ARCHIVE), answer('Done.'))], { extra: signedIn });
+    expect(archive).toHaveBeenCalledTimes(1);
+    expect(rows.begin()).toMatchObject({
+      userId: 'owner',
+      runId: 'failover-run',
+      chatId: 'chat-1',
+      toolName: 'archive_thread',
+    });
+    expect(rows.finish()).toMatchObject({ status: 'succeeded', output: { ok: true, operationId: 'op_1' } });
+  });
+
+  test('a call that says it failed stores `rejected`', async () => {
+    handlerSpy('archive_thread', { ok: false });
+    const rows = checkpoints();
+    await run([model(callTool('archive_thread', ARCHIVE), answer('Done.'))], { extra: signedIn });
+    expect(rows.finish().status).toBe('rejected');
+  });
+
+  test('a thrown write stores its class and code, not its words', async () => {
+    const archive = handlerSpy('archive_thread');
+    archive.mockRejectedValue(
+      Object.assign(new Error('Could not reach sam@example.test'), { statusCode: 503 }),
+    );
+    const rows = checkpoints();
+    await run([model(callTool('archive_thread', ARCHIVE), answer('Done.'))], { extra: signedIn });
+    expect(rows.finish()).toMatchObject({ status: 'unknown', errorClass: 'provider', errorCode: 'http_503' });
+    expect(JSON.stringify(rows.finish())).not.toContain('sam@example.test');
+  });
+
+  test('a stored success runs nothing, and the model reads the stored output', async () => {
+    const archive = handlerSpy('archive_thread');
+    checkpoints({ claimed: false, status: 'succeeded', output: { ok: true, stored: 'from-checkpoint' } });
+    const mock = model(callTool('archive_thread', ARCHIVE), answer('Done.'));
+    await run([mock], { extra: signedIn });
+    expect(archive).not.toHaveBeenCalled();
+    expect(promptOf(mock, 1)).toContain('from-checkpoint');
+  });
+
+  test('a stop before the call runs records that nothing was written', async () => {
+    const archive = handlerSpy('archive_thread');
+    const stop = new AbortController();
+    const rows = checkpoints({ claimed: true }, () => stop.abort());
+    await run([model(callTool('archive_thread', ARCHIVE), answer('Done.'))], {
+      extra: { ...signedIn, signal: stop.signal },
+    });
+    expect(archive).not.toHaveBeenCalled();
+    expect(rows.finish()?.status).toBe('rejected');
   });
 });
 

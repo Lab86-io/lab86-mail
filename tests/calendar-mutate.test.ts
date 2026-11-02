@@ -443,6 +443,28 @@ describe('createCalendarEvent', () => {
     });
   });
 
+  test('an unclear provider failure with no recovered event proves nothing', async () => {
+    await withHarness(async (h) => {
+      setupBase(h);
+      h.onNylas('POST', /\/v3\/grants\/grant_1\/events$/, () => ({
+        status: 502,
+        json: { request_id: 'req_e', error: { type: 'server_error', message: 'Server Error' } },
+      }));
+      h.onNylas('GET', /\/v3\/grants\/grant_1\/events$/, () => ({
+        json: { request_id: 'req_r', data: [] },
+      }));
+      const failed = await createCalendarEvent({
+        userId: 'user_1',
+        accountId: 'acct_1',
+        title: 'Coffee',
+        startAt: START_AT,
+        endAt: END_AT,
+      }).catch((error) => error);
+      expect(failed.message).toContain("Couldn't create the event");
+      expect(isToolRetrySafe(failed)).toBe(false);
+    });
+  }, 9_000);
+
   test('a read that fails before the provider call proves that nothing was written', async () => {
     await withHarness(async (h) => {
       setupBase(h);

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { modelFromKey } from '../lib/ai/gateway';
 import { ProviderStreamIdleError, streamIdleTimeoutFetch } from '../lib/ai/provider-idle-timeout';
 
 const STREAM_BODY = JSON.stringify({ model: 'm', stream: true });
@@ -8,6 +9,13 @@ function hanging(signal?: AbortSignal | null) {
     signal?.addEventListener('abort', () => reject(signal.reason));
   });
 }
+
+describe('the providers of a user key', () => {
+  test('each direct vendor builds its model, and the fetch waits for a stream with the limit', () => {
+    expect(modelFromKey('openai', 'test-key', 'openai/gpt-5.5').modelId).toBe('gpt-5.5');
+    expect(modelFromKey('anthropic', 'test-key', 'anthropic/claude-sonnet-4.6').modelId).toContain('claude');
+  });
+});
 
 describe('streamIdleTimeoutFetch', () => {
   test('a stream with no headers fails with the typed error', async () => {
