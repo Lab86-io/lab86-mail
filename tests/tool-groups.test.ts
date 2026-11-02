@@ -244,7 +244,7 @@ describe('tool groups', () => {
   });
 
   test('the system prompt names every group', () => {
-    const prompt = buildSystemPrompt();
+    const prompt = buildSystemPrompt({}, { needsYou: true });
     for (const group of TOOL_GROUP_NAMES) expect(prompt).toContain(group);
     expect(prompt).toContain('call enable_tools with the group first');
   });
