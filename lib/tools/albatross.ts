@@ -6,6 +6,7 @@ import {
   registerUndoExecutor,
   undoOperation,
 } from '@/lib/ai/operations';
+import { ToolRetrySafe } from '@/lib/ai/tool-errors';
 import { captureFromChat } from '@/lib/albatross/capture-from-chat';
 import { HORIZON_KINDS } from '@/lib/albatross/horizon';
 import { generateIntentPlan } from '@/lib/albatross/intent-plan';
@@ -21,7 +22,7 @@ import {
 import { summarizeWorkPlanRevision } from '@/lib/albatross/work-revision';
 import { WORK_SHAPES } from '@/lib/albatross/work-shape';
 import { resolveWorkByTitle } from '@/lib/albatross/work-title-match';
-import { unappliedActions } from '@/lib/albatross/work-v2';
+import { assignStableActionKeys, unappliedActions } from '@/lib/albatross/work-v2';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { truncateText } from '@/lib/shared/text';
 import { calendarCreateEvent, calendarRsvpEvent } from './calendar';
@@ -1097,6 +1098,33 @@ export const albatrossApplyIntentPlan = defineTool({
     if (current?.work && isTerminalWork(current.work))
       throw new Error('This Albatross is closed. No more plan actions can be applied.');
     const operationBatchId = args.operationBatchId || ctx.operationBatchId || deps.newOperationBatchId();
+    // A retry in chat sends the whole plan again. It makes only what earlier
+    // attempts did not record, as the REST route does (WRK-4). Keys stay stable,
+    // so each artifact records the action it came from.
+    const applications = await deps
+      .convexQuery<any[]>(albatrossApi().listPlanApplications, {
+        userId,
+        intentId: args.intentId,
+        limit: 100,
+      })
+      .catch(() => []);
+    const earlier = Array.isArray(applications) ? applications : [];
+    const declaredActions = assignStableActionKeys(args.plan.digitalActions ?? []);
+    const pendingActions = unappliedActions(declaredActions, earlier);
+    if (declaredActions.length && !pendingActions.length)
+      return {
+        ok: true,
+        operationBatchId,
+        operations: [],
+        approvals: [],
+        unresolved: [],
+        preview: null,
+        alreadyApplied: true,
+      };
+    const earlierProjectId = earlier.find((row) => row?.status !== 'undone' && row?.projectId)?.projectId as
+      | string
+      | undefined;
+    const existingProjectId = args.existingProjectId ?? earlierProjectId;
     const [account, areaBoardId] = await Promise.all([
       args.account ? Promise.resolve(args.account) : resolveDefaultAccount(userId),
       resolveAreaBoardId(userId, args.areaId),
@@ -1106,13 +1134,13 @@ export const albatrossApplyIntentPlan = defineTool({
       intentText: args.intentText,
       intentTitle: args.intentTitle,
       areaId: args.areaId,
-      projectMode: args.existingProjectId ? 'task_only' : args.projectMode,
+      projectMode: existingProjectId ? 'task_only' : args.projectMode,
       projectTitle: args.projectTitle,
       account,
-      plan: args.plan as any,
+      plan: { ...args.plan, digitalActions: pendingActions } as any,
     });
 
-    let projectId: string | undefined = args.existingProjectId;
+    let projectId: string | undefined = existingProjectId;
     const operations: any[] = [];
     const artifacts: any[] = [];
     const approvalIds: string[] = [];
@@ -1274,7 +1302,7 @@ export const albatrossApplyIntentPlan = defineTool({
     if (failures.length && !artifacts.length) {
       // The provider detail goes to the server log only; the user reads plain words.
       console.error('[albatross-apply] no plan step was made', args.intentId, planFailureDetail(failures));
-      throw new Error(planApplyFailureMessage(0, failures.length));
+      throw new ToolRetrySafe(planApplyFailureMessage(0, failures.length));
     }
     const applicationId = await deps.convexMutation<string>(albatrossApi().recordPlanApplication, {
       userId,
@@ -1297,7 +1325,7 @@ export const albatrossApplyIntentPlan = defineTool({
       // The created artifacts are recorded. The caller sees the failure and
       // does not mark the plan applied, so a retry creates only what is missing.
       console.error('[albatross-apply] plan steps failed', args.intentId, planFailureDetail(failures));
-      throw new Error(planApplyFailureMessage(artifacts.length, failures.length));
+      throw new ToolRetrySafe(planApplyFailureMessage(artifacts.length, failures.length));
     }
 
     return {

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { ToolRetrySafe } from '../lib/ai/tool-errors';
 import * as albatross from '../lib/tools/albatross';
 import { invokeTool } from '../lib/tools/registry';
 import { runTool } from './tools/harness';
@@ -147,6 +148,8 @@ async function convexMutationMock(fn: string, args: any) {
   return { ok: true };
 }
 
+let planApplications: any[] = [];
+
 async function convexQueryMock(fn: string, args: any) {
   if (queryFailures.has(fn)) throw new Error(`Query failed: ${fn}`);
   if (fn === apiMock.accounts.listConnectedAccounts) return connectedAccountsFixture;
@@ -169,7 +172,7 @@ async function convexQueryMock(fn: string, args: any) {
   if (fn === apiMock.albatrossRoutines.listForProject)
     return [{ routineId: 'routine_1', projectId: args.projectId }];
   if (fn === apiMock.albatrossWorkV2.workDetail) return workDetailFixture;
-  if (fn === apiMock.albatrossWork.listPlanApplications) return [];
+  if (fn === apiMock.albatrossWork.listPlanApplications) return planApplications;
   return null;
 }
 
@@ -240,6 +243,7 @@ beforeEach(() => {
   toolInvocations.length = 0;
   queryFailures.clear();
   failingCardTitles.clear();
+  planApplications = [];
   approvalFixture = null;
   connectedAccountsFixture = [];
   areaFixture = null;
@@ -362,6 +366,60 @@ describe('Albatross plan apply failures (WRK-4, WRK-1)', () => {
     );
     // The recorded document keeps its id, so the plan binds it (WRK-5).
     expect(recorded?.args.artifacts[1]).toMatchObject({ kind: 'document', stepKey: 'step-3' });
+  });
+
+  test('a chat retry makes only the steps that earlier attempts did not record', async () => {
+    planApplications = [
+      {
+        status: 'partially_applied',
+        projectId: 'project_earlier',
+        artifacts: [{ actionKey: 'a1' }, { actionKey: 'a3' }],
+      },
+      { status: 'undone', projectId: 'project_undone', artifacts: [{ actionKey: 'a2' }] },
+    ];
+    await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_move',
+      projectMode: 'project',
+      projectTitle: 'Move',
+      plan,
+    });
+    expect(toolInvocations.map((call) => call.args.title)).toEqual(['Pack the kitchen']);
+    // The project of the earlier attempt stays: the retry does not make a second one.
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWork.createProject)).toBe(false);
+    const recorded = mutationCalls.find((call) => call.fn === apiMock.albatrossWork.recordPlanApplication);
+    expect(recorded?.args.projectId).toBe('project_earlier');
+  });
+
+  test('a chat retry with nothing left does not run a step or record an empty application', async () => {
+    planApplications = [
+      { status: 'applied', artifacts: [{ actionKey: 'a1' }, { actionKey: 'a2' }, { actionKey: 'a3' }] },
+    ];
+    const result = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_move',
+      projectMode: 'task_only',
+      plan,
+    });
+    expect(result).toMatchObject({ ok: true, alreadyApplied: true, operations: [] });
+    expect(toolInvocations).toEqual([]);
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWork.recordPlanApplication)).toBe(false);
+  });
+
+  test('a partly failed plan can run again with the same arguments', async () => {
+    failingCardTitles.add('Pack the kitchen');
+    const failed = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_move',
+      projectMode: 'task_only',
+      plan,
+    }).catch((error) => error);
+    expect(failed).toBeInstanceOf(ToolRetrySafe);
+    failingCardTitles.clear();
+    failingCardTitles.add('Book the truck');
+    const none = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_move',
+      projectMode: 'task_only',
+      plan: { ...plan, digitalActions: [plan.digitalActions[0]] },
+    }).catch((error) => error);
+    expect(none).toBeInstanceOf(ToolRetrySafe);
   });
 
   test('nothing is recorded when no step could be created', async () => {
