@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { type AiUsageCostInput, estimateAiUsageCost } from '../ai/budget';
+import { addBriefStages, type BriefStage, type BriefStageTimes } from './stages';
 
 // The edition budget (FEATURES item 5). Each edition gets a time budget
 // (default 10 minutes of writer time, summed over its attempts) and a cost
@@ -91,6 +92,7 @@ export class BriefEditionMeter {
   private openSince = 0;
   /** Writer time of this attempt from calls that closed. */
   private closedMs = 0;
+  private stageTimes: BriefStageTimes = {};
   exhausted: BriefBudgetLimit | null = null;
 
   constructor(
@@ -185,6 +187,16 @@ export class BriefEditionMeter {
     if (this.prior.costUsd + this.costUsd >= this.costBudgetUsd) this.stop('cost');
   }
 
+  /** Adds time to a stage of this attempt. Stages can repeat: the edition saves more than once. */
+  addStageTime(stage: BriefStage, ms: number) {
+    this.stageTimes[stage] = (this.stageTimes[stage] ?? 0) + Math.max(0, ms);
+  }
+
+  /** The stage times of this attempt, in whole milliseconds. */
+  stages(): BriefStageTimes {
+    return addBriefStages(this.stageTimes, null) ?? {};
+  }
+
   record(fallback: boolean): BriefEditionBudget {
     return {
       timeMs: Math.round(this.elapsedMs()),
@@ -213,6 +225,18 @@ export async function runWithBriefMeter<T>(meter: BriefEditionMeter, fn: () => P
 
 export function currentBriefMeter(): BriefEditionMeter | undefined {
   return meterStorage.getStore();
+}
+
+/** Runs one stage of an edition and adds its time to the meter. Outside an edition it only runs. */
+export async function withBriefStage<T>(stage: BriefStage, run: () => Promise<T> | T): Promise<T> {
+  const meter = currentBriefMeter();
+  if (!meter) return run();
+  const startedAt = Date.now();
+  try {
+    return await run();
+  } finally {
+    meter.addStageTime(stage, Date.now() - startedAt);
+  }
 }
 
 /**

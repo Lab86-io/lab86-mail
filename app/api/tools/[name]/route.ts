@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { createServerTiming } from '@/lib/ops/server-timing';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { errorAnswerMessage } from '@/lib/security/error-answer';
 import { getTool } from '@/lib/tools';
@@ -33,42 +34,50 @@ export function createToolPost(deps = dependencies) {
       | 'codex'
       | 'user';
 
+    // The stage names are fixed. The tool name and args stay out of the header.
+    const timing = createServerTiming();
     try {
-      const user = await deps.user();
+      const user = await timing.measure('auth', () => deps.user());
       if (tool.name !== 'generate_daily_report')
-        await deps.rate({
-          userId: user.userId,
-          key: `tool:${tool.name}`,
-          limit: tool.mutating ? 60 : 180,
-          windowMs: 60_000,
-        });
+        await timing.measure('rate_limit', () =>
+          deps.rate({
+            userId: user.userId,
+            key: `tool:${tool.name}`,
+            limit: tool.mutating ? 60 : 180,
+            windowMs: 60_000,
+          }),
+        );
       const timezone = req.headers.get('x-user-timezone') || undefined;
-      const result = await deps.invoke(tool, body, {
-        agent,
-        account: body?.account,
-        userId: user.userId,
-        userEmail: user.email,
-        userName: user.name,
-        operationBatchId:
-          typeof body?.operationBatchId === 'string' ? body.operationBatchId.slice(0, 180) : undefined,
-        userTimezone: timezone,
-        ...(tool.name === 'generate_daily_report' ? { abortSignal: req.signal } : {}),
-      });
-      return NextResponse.json({ ok: true, result });
+      const result = await timing.measure('handler', () =>
+        deps.invoke(tool, body, {
+          agent,
+          account: body?.account,
+          userId: user.userId,
+          userEmail: user.email,
+          userName: user.name,
+          operationBatchId:
+            typeof body?.operationBatchId === 'string' ? body.operationBatchId.slice(0, 180) : undefined,
+          userTimezone: timezone,
+          ...(tool.name === 'generate_daily_report' ? { abortSignal: req.signal } : {}),
+        }),
+      );
+      return timing.apply(NextResponse.json({ ok: true, result }));
     } catch (err: any) {
-      if (err instanceof RateLimitError) return rateLimitJson(err);
+      if (err instanceof RateLimitError) return timing.apply(rateLimitJson(err));
       const status = err instanceof AuthRequiredError ? 401 : err instanceof ToolValidationError ? 400 : 500;
-      return NextResponse.json(
-        {
-          ok: false,
-          error: errorAnswerMessage(
-            status,
-            err,
-            'The action could not finish. Try again.',
-            `[tools/${name}] failed`,
-          ),
-        },
-        { status },
+      return timing.apply(
+        NextResponse.json(
+          {
+            ok: false,
+            error: errorAnswerMessage(
+              status,
+              err,
+              'The action could not finish. Try again.',
+              `[tools/${name}] failed`,
+            ),
+          },
+          { status },
+        ),
       );
     }
   };

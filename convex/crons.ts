@@ -188,6 +188,10 @@ crons.interval('mcp oauth state cleanup', { minutes: 30 }, internal.mcp.sweepExp
 // passes the threshold in 24 hours. It only tells; it never stops a user.
 crons.hourly('model cost alarm', { minuteUTC: 17 }, internal.aiCostAlarm.tick, {});
 
+// The failure alarm: one email to the owner when model calls, tools, runs, or
+// brief editions fail, and one when they recover (docs/ops-signals.md).
+crons.interval('ops health alarm', { minutes: 15 }, internal.opsHealth.tick, {});
+
 // Retention for tables that otherwise grow with no limit: expired one-time
 // codes, processed webhook payloads older than 14 days, lapsed rate-limit
 // windows, and expired OAuth states. The sweep reschedules itself while a

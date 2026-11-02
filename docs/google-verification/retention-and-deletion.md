@@ -118,6 +118,9 @@ references (`data/agentUploads.json`).
 | `rateLimits` | Window start plus two windows | `convex/rateLimits.ts:21`; `convex/retention.ts:71-76` |
 | `googleSecurityEvents` (event names and counts, no subject data) | 30 days | `convex/googleSecurity.ts` (`sweepExpired`); daily cron `google security event sweep` in `convex/crons.ts` |
 | `googleSecurityAudit` (user id, connection, action) | 30 days; account deletion deletes the rows of the user | `convex/googleSecurity.ts`; `convex/accounts.ts` (`USER_INLINE_TABLES`) |
+| `opsHealthBuckets` (hourly counts and error classes, no user id) | 14 days | `convex/retention.ts` (`sweep`); [ops signals](../ops-signals.md) |
+| `opsToolRollups`, `speedRollups` (daily counts, tool names, and speed histograms, no user id) | 90 days | `convex/retention.ts` (`sweep`); [ops signals](../ops-signals.md) |
+| `opsHealthWatch` (one row for each alarm kind: hourly counts and the open incident, no user id) | The counts stay 50 hours; the row has no user data | `convex/opsHealth.ts`; [ops signals](../ops-signals.md) |
 
 ## Mailbox disconnect
 

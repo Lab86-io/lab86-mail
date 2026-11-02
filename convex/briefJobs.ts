@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { classifyOpsError } from '../lib/ops/health';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -6,6 +7,7 @@ import type { MutationCtx } from './_generated/server';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { BRIEF_JOB_LEASE_MS, BRIEF_JOB_MAX_ATTEMPTS } from './briefJobState';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
+import { recordOpsHealth } from './opsHealth';
 
 const caller = { internalSecret: v.optional(v.string()), userId: v.string() };
 const owned = { ...caller, id: v.id('briefJobs'), token: v.string() };
@@ -80,6 +82,25 @@ async function publishJobArtifact(ctx: MutationCtx, job: any, now: number, error
           : { status: 'error', error: error || 'The writer is unavailable.', updatedAt: now },
       );
   }
+}
+
+// The failure alarm counts each finished edition once. Telemetry has the
+// result of the last attempt, so an edition that a retry repaired is a success.
+async function recordEditionResult(ctx: MutationCtx, job: any, now: number, error?: string) {
+  if (job.kind !== 'daily' || !job.reportId) return;
+  const telemetry = await ctx.db
+    .query('briefEditionTelemetry')
+    .withIndex('by_user_report', (q) => q.eq('userId', job.userId).eq('reportId', job.reportId))
+    .first();
+  const fellBack = Boolean(error) || telemetry?.fallback === true;
+  await recordOpsHealth(ctx, {
+    kind: 'brief_fallback',
+    ok: !fellBack,
+    ...(fellBack
+      ? { errorClass: telemetry?.exhausted ? 'budget' : error ? classifyOpsError(error) : 'fallback' }
+      : {}),
+    at: now,
+  });
 }
 
 export const enqueue = mutation({
@@ -282,6 +303,7 @@ export const settle = mutation({
         ...(args.error ? { error: truncateText(args.error, 300) } : {}),
       });
       await publishJobArtifact(ctx, job, now, args.error);
+      await recordEditionResult(ctx, job, now, args.error);
       return true;
     }
     const retryAt = now + Math.min(300_000, 5_000 * 2 ** Math.min(job.attempts, 6));

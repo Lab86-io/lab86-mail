@@ -65,6 +65,7 @@ import { RefreshCWIcon } from '@/components/ui/refresh-cw';
 import { RowIcon } from '@/components/ui/row-icon';
 import { SearchIcon } from '@/components/ui/search';
 import { api } from '@/convex/_generated/api';
+import { useSurfaceReady } from '@/hooks/use-surface-ready';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { isAttentionView } from '@/lib/jev/contract';
@@ -532,6 +533,7 @@ export function Inbox() {
   // an empty live result alone must not flash "Nothing here" while the HTTP
   // page (which can still backfill brand-new accounts) is in flight.
   const showInitialLoading = !items.length && (isLoading || liveInbox.status === 'pending');
+  useSurfaceReady('mail', !showInitialLoading);
 
   // --- Infinite scroll: prefetch ahead + pipelined batches -----------------
   // Fresh layout read instead of a cached observer entry, so the decision is

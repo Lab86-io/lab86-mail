@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useBriefFrameCspOptions, useFrameNonce } from '@/hooks/use-frame-nonce';
+import { useSurfaceReady } from '@/hooks/use-surface-ready';
 import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { briefFreshness, briefIsStale, briefStaleNote } from '@/lib/albatross/today';
@@ -935,6 +936,7 @@ export function DailyReport({
   const generating = waitingForNew || isBriefEditionGenerating(report);
   const retrying = isBriefEditionRetrying(report);
   const showGeneratingState = generating;
+  useSurfaceReady('today', reportQuery.isSuccess && !showGeneratingState);
   // The letter from the stored sections, for editions without a document of
   // their own: older editions and the ones whose composition failed.
   const fallbackLetter = useMemo(() => {
