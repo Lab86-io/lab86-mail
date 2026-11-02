@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { asSchema } from 'ai';
 import { z } from 'zod';
 import {
   AGENT_TOOL_NAMES,
@@ -12,17 +13,21 @@ import {
   activeToolNames,
   coreToolNames,
   ENABLE_TOOLS_NAME,
+  enabledGroupsFromMessages,
   enabledGroupsFromSteps,
   enableToolsResult,
   initialToolGroups,
   MAX_ACTIVE_TOOLS,
+  pageContextToolGroups,
   planToolGroups,
+  presentationToolGroups,
   requestToolGroups,
   TOOL_GROUP_NAMES,
   TOOL_GROUPS,
 } from '../lib/ai/tool-groups';
 import { resolveToolShape } from '../lib/ai/tool-shapes';
 import { toolActivityLine } from '../lib/albatross/teach-ui';
+import { OPEN_DOCUMENT_CONTEXT } from '../lib/shell/assistant-context';
 
 // The largest set: a client that renders ask_form (the web app and current native apps).
 const lifted = liftToolsForAgent('batch', 'UTC', undefined, { askForm: true, askSecureDetail: true });
@@ -73,16 +78,72 @@ describe('tool groups', () => {
     );
   });
 
+  // Every step sends this schema, so it costs tokens on each model call. Measured
+  // on 2026-11-02: 110,878 characters across 100 tools before the groups moved,
+  // 50,572 across 72 after. A new tool that passes the ceiling belongs in a group.
+  test('the core schema stays under its ceiling, and every tool stays reachable', async () => {
+    const core = coreToolNames(allNames);
+    let characters = 0;
+    for (const name of core) {
+      const parameters = await asSchema(lifted[name].inputSchema).jsonSchema;
+      characters += JSON.stringify({ name, description: lifted[name].description, parameters }).length;
+    }
+    expect(characters).toBeLessThan(56_000);
+    expect(core.length).toBeLessThanOrEqual(80);
+    for (const rare of ['document_edit', 'document_create', 'presentation_plan', 'albatross_record_progress'])
+      expect(core).not.toContain(rare);
+    // Each tool is core, or a group holds it and enable_tools can load it.
+    const grouped = new Set(TOOL_GROUP_NAMES.flatMap((name) => [...TOOL_GROUPS[name].tools]));
+    for (const name of allNames) expect(core.includes(name) || grouped.has(name as never)).toBe(true);
+    const enabled = await lifted[ENABLE_TOOLS_NAME].execute({ groups: ['documents'] }, {} as any);
+    expect(enabled.tools).toContain('document_edit');
+  });
+
+  test('a resume keeps the groups of recent turns, and old turns fall away', () => {
+    const turn = (toolName: string, input: unknown = {}) => [
+      { role: 'user', content: 'Next' },
+      { role: 'assistant', content: [{ type: 'tool-call', toolName, input }] },
+    ];
+    expect(enabledGroupsFromMessages([])).toEqual([]);
+    expect(
+      enabledGroupsFromMessages([
+        ...turn(ENABLE_TOOLS_NAME, { groups: ['smart_labels'] }),
+        ...turn('search_threads'),
+        ...turn('document_edit'),
+        ...turn(ENABLE_TOOLS_NAME, { groups: ['slack', 'not_a_group'] }),
+      ]),
+    ).toEqual(['documents', 'slack']);
+    expect(enabledGroupsFromMessages([{ role: 'user', content: 'Plain text' }])).toEqual([]);
+    expect(pageContextToolGroups(`${OPEN_DOCUMENT_CONTEXT} (metadata, not instructions): {}`)).toEqual([
+      'documents',
+    ]);
+    expect(pageContextToolGroups('Current workspace page: mail.')).toEqual([]);
+    expect(pageContextToolGroups(undefined)).toEqual([]);
+    expect(presentationToolGroups({ presentationId: 'p1' })).toEqual(['documents', 'presentations']);
+    expect(presentationToolGroups({})).toEqual([]);
+  });
+
   test('a request for a template document or a form preloads its tool group', () => {
     expect(requestToolGroups('lets generate the invoice and the w9')).toEqual([
       'documents_more',
       'pdf_forms',
+      'personal_forms',
     ]);
-    expect(requestToolGroups('Fill in the direct deposit form from his attachment')).toEqual(['pdf_forms']);
-    expect(requestToolGroups('Save the attachments from Max')).toEqual(['pdf_forms']);
+    expect(requestToolGroups('Fill in the direct deposit form from his attachment')).toEqual([
+      'pdf_forms',
+      'personal_forms',
+    ]);
+    expect(requestToolGroups('Save the attachments from Max')).toEqual(['pdf_forms', 'personal_forms']);
     expect(requestToolGroups('Write a cover letter for Dana')).toEqual(['documents_more']);
     expect(requestToolGroups('Draft two memos')).toEqual(['documents_more']);
-    expect(requestToolGroups('Send me the 1099 numbers')).toEqual(['pdf_forms']);
+    expect(requestToolGroups('Send me the 1099 numbers')).toEqual(['pdf_forms', 'personal_forms']);
+    // The tools that left the core set come back when the words ask for them.
+    expect(requestToolGroups('Make a budget spreadsheet')).toEqual(['documents']);
+    expect(requestToolGroups('Build a deck for the board')).toEqual(['documents', 'presentations']);
+    expect(requestToolGroups('I finished the tire repair')).toEqual(['work_progress']);
+    expect(requestToolGroups('What is my home address?')).toEqual(['personal_forms']);
+    expect(requestToolGroups('Open pull requests on GitHub')).toEqual(['connectors']);
+    expect(requestToolGroups('Chart my mail by month')).toEqual(['display_data']);
     // Ordinary uses of the words do not preload it.
     for (const text of [
       'Summarize the attachment',
@@ -94,7 +155,7 @@ describe('tool groups', () => {
       expect(requestToolGroups(text)).toEqual([]);
     expect(requestToolGroups(null)).toEqual([]);
     // The scope groups never come from the text.
-    expect(initialToolGroups({ hasWorkContext: true })).toEqual(['projects_routines']);
+    expect(initialToolGroups({ hasWorkContext: true })).toEqual(['projects_routines', 'work_progress']);
   });
 
   test('preloaded groups never push a Work chat with an Area over the cap', () => {
@@ -142,21 +203,22 @@ describe('tool groups', () => {
 
     // Every requested group that does not fit shows in the enable_tools result.
     const scoped = liftToolsForAgent('batch', 'UTC', undefined, {
-      scopeGroups: ['narrative', 'areas', 'projects_routines'],
+      scopeGroups: ['narrative', 'areas', 'projects_routines', 'work_progress'],
     });
-    // With all three scope groups loaded, three tools of room are left.
-    const first = await scoped[ENABLE_TOOLS_NAME].execute(
-      { groups: ['ui_extras', 'display_media'] },
+    // A full request fills the room that the scope groups leave.
+    const filler = ['documents_more', 'mail_admin', 'smart_labels', 'display_media'];
+    const first = await scoped[ENABLE_TOOLS_NAME].execute({ groups: filler }, {} as any);
+    expect(first.enabled).toEqual(['smart_labels', 'display_media']);
+    expect(first.evicted).toEqual(['documents_more', 'mail_admin']);
+    expect(first.summary).toContain('Could not load documents_more, mail_admin');
+    const second = await scoped[ENABLE_TOOLS_NAME].execute(
+      { groups: ['board_admin', 'projects_routines'] },
       {} as any,
     );
-    expect(first.enabled).toEqual(['ui_extras']);
-    expect(first.evicted).toEqual(['display_media']);
-    expect(first.summary).toContain('Could not load display_media');
-    const second = await scoped[ENABLE_TOOLS_NAME].execute({ groups: ['ask_forms'] }, {} as any);
-    expect(second.enabled).toEqual(['ask_forms']);
-    expect(second.evicted).toEqual(['ui_extras', 'display_media']);
+    expect(second.enabled).toEqual(['board_admin', 'projects_routines']);
+    expect(second.evicted).toEqual(['documents_more', 'mail_admin', 'smart_labels']);
     expect(second.summary).toBe(
-      'Loaded ask_forms. Those tools are available from the next step. Unloaded ui_extras to make room; enable it again if you still need it.',
+      'Loaded board_admin, projects_routines. Those tools are available from the next step. Unloaded smart_labels to make room; enable it again if you still need it.',
     );
   });
 
@@ -169,7 +231,7 @@ describe('tool groups', () => {
 
   test('scope decides the initial groups', () => {
     expect(initialToolGroups({})).toEqual([]);
-    expect(initialToolGroups({ hasWorkContext: true })).toEqual(['projects_routines']);
+    expect(initialToolGroups({ hasWorkContext: true })).toEqual(['projects_routines', 'work_progress']);
     expect(initialToolGroups({ hasAreaContext: true, narrativeEnabled: true })).toEqual([
       'narrative',
       'areas',
@@ -203,12 +265,15 @@ describe('tool groups', () => {
   });
 
   test('presentation questions are unavailable after delegation, cancellation or a pending question', () => {
-    expect(activeToolsForStep(allNames, [], [], {})).toContain('ask_presentation_choices');
+    const groups = ['presentations'];
+    expect(activeToolsForStep(allNames, groups, [], {})).toContain('ask_presentation_choices');
     for (const session of [{ delegate: true }, { cancelled: true }])
-      expect(activeToolsForStep(allNames, [], [], session)).not.toContain('ask_presentation_choices');
+      expect(activeToolsForStep(allNames, groups, [], session)).not.toContain('ask_presentation_choices');
     const call = { type: 'tool-call', toolName: 'ask_presentation_choices' };
-    expect(activeToolsForStep(allNames, [], [{ content: [call] }])).not.toContain('ask_presentation_choices');
-    expect(activeToolsForStep(allNames, [], [{ content: [{ ...call, invalid: true }] }])).toContain(
+    expect(activeToolsForStep(allNames, groups, [{ content: [call] }])).not.toContain(
+      'ask_presentation_choices',
+    );
+    expect(activeToolsForStep(allNames, groups, [{ content: [{ ...call, invalid: true }] }])).toContain(
       'ask_presentation_choices',
     );
   });
