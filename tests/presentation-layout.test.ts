@@ -218,7 +218,7 @@ test('creative service repairs a rejected design, preserves order, and safely fa
   const generate = mock(async (options: any) => {
     const input = JSON.parse(options.prompt);
     expect(options.feature).toBe('presentation_layout');
-    expect(options.reasoningEffort).toBe('high');
+    expect(options.reasoningEffort).toBe('medium');
     expect(input.narrative).toHaveLength(2);
     const count = (attempts.get(input.slide.id) ?? 0) + 1;
     attempts.set(input.slide.id, count);
