@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { z } from 'zod';
 import type { AgentConnector, AgentPage } from '../lib/albatross/browser-agent';
+import { RunModelStepStall } from '../lib/albatross/run-model-stream';
 import {
   approvalKey,
   fallbackHandoff,
   isRetryableRunError,
   normalizeHandoff,
+  RUN_MODEL_STEP_TIMEOUT_MS,
   runStepRun,
   STEP_CHECK_COPY,
   type StepRunnerDependencies,
@@ -1053,6 +1055,46 @@ describe('a run shows its work as it happens', () => {
 
   test('the stall error may retry', () => {
     expect(isRetryableRunError(Object.assign(new Error('x'), { name: 'RunFirstStepStall' }))).toBe(true);
+    expect(isRetryableRunError(new RunModelStepStall(1000))).toBe(true);
+  });
+
+  test('a run gives each model call the step limit', async () => {
+    let limit: unknown;
+    const h = harness(async (opts) => {
+      limit = opts.stepTimeoutMs;
+      return handOff(opts);
+    });
+    await runStepRun('user-1', 'run-1', { ...h.deps, modelStepTimeoutMs: 77 });
+    expect(limit).toBe(77);
+    expect(RUN_MODEL_STEP_TIMEOUT_MS).toBe(180_000);
+  });
+
+  test('a stalled model step before any work goes to the next runtime', async () => {
+    const seen: string[] = [];
+    const h = harness(
+      async (opts) => {
+        seen.push(String(opts.model.name));
+        if (opts.model.name === 'slow') throw new RunModelStepStall(1000);
+        return handOff(opts);
+      },
+      {
+        runtimes: [
+          { provider: 'openrouter', modelName: 'slow', model: { name: 'slow' }, source: 'lab86' },
+          { provider: 'openrouter', modelName: 'next', model: { name: 'next' }, source: 'lab86' },
+        ],
+      },
+    );
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(seen).toEqual(['slow', 'next']);
+    expect(h.settled()).toMatchObject({ outcome: 'ready_for_you' });
+  });
+
+  test('a stalled model step with no other runtime ends the attempt and may retry', async () => {
+    const h = harness(async () => {
+      throw new RunModelStepStall(1000);
+    });
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(h.settled()).toMatchObject({ error: 'The run failed. Try again.', retryable: true });
   });
 });
 

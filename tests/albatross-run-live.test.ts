@@ -12,7 +12,7 @@ import {
   showableRunText,
 } from '../lib/albatross/run-live';
 import { createRunLiveWriter, type RunLivePayload } from '../lib/albatross/run-live-writer';
-import { streamRunModel } from '../lib/albatross/run-model-stream';
+import { RunModelStepStall, streamRunModel } from '../lib/albatross/run-model-stream';
 import { toolStartLine } from '../lib/albatross/run-tool-lines';
 import { RUNNER_REGISTRY_TOOLS } from '../lib/albatross/step-run-tools';
 
@@ -423,6 +423,196 @@ describe('streamRunModel', () => {
     await expect(
       streamRunModel({ model, maxRetries: 0, messages: [{ role: 'user', content: 'Go' }] }),
     ).rejects.toThrow('Provider returned error');
+  });
+
+  /** A stream that sends the chunks with a wait before each one, and the finish at the end. */
+  function slowStream(chunks: any[], waitMs: number, finish = true) {
+    return new ReadableStream<any>({
+      async start(controller) {
+        controller.enqueue({ type: 'stream-start', warnings: [] });
+        for (const chunk of chunks) {
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          try {
+            controller.enqueue(chunk);
+          } catch {
+            return;
+          }
+        }
+        if (!finish) return;
+        controller.enqueue({
+          type: 'finish',
+          finishReason: chunks.some((chunk) => chunk.type === 'tool-call')
+            ? { unified: 'tool-calls', raw: 'tool_calls' }
+            : { unified: 'stop', raw: 'stop' },
+          usage,
+        });
+        controller.close();
+      },
+    });
+  }
+
+  function writesArguments(count: number) {
+    return [
+      { type: 'tool-input-start', id: 'c1', toolName: 'lookup' },
+      ...Array.from({ length: count }, () => ({ type: 'tool-input-delta', id: 'c1', delta: ' ' })),
+    ];
+  }
+
+  const lookup = (execute: () => Promise<unknown>) => ({
+    lookup: tool({ description: 'Look it up', inputSchema: z.object({}), execute }),
+  });
+
+  test('a step that writes past its limit ends with the stall, though chunks still arrive', async () => {
+    const seen: string[] = [];
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({ stream: slowStream(writesArguments(200), 5) }),
+    });
+    const started = Date.now();
+    await expect(
+      streamRunModel({
+        model,
+        maxRetries: 0,
+        messages: [{ role: 'user', content: 'Go' }],
+        tools: lookup(async () => ({ ok: true })),
+        stepTimeoutMs: 40,
+        onActivity: () => seen.push('chunk'),
+      }),
+    ).rejects.toBeInstanceOf(RunModelStepStall);
+    expect(Date.now() - started).toBeLessThan(900);
+    expect(seen.length).toBeGreaterThan(1);
+  });
+
+  test('a long tool does not count against the step limit', async () => {
+    let call = 0;
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        call += 1;
+        return {
+          stream:
+            call === 1
+              ? slowStream([{ type: 'tool-call', toolCallId: 'c1', toolName: 'lookup', input: '{}' }], 1)
+              : slowStream(
+                  [
+                    { type: 'text-start', id: 't' },
+                    { type: 'text-delta', id: 't', delta: 'Done.' },
+                    { type: 'text-end', id: 't' },
+                  ],
+                  1,
+                ),
+        };
+      },
+    });
+    const result = await streamRunModel({
+      model,
+      maxRetries: 0,
+      messages: [{ role: 'user', content: 'Go' }],
+      stopWhen: stepCountIs(4),
+      tools: lookup(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        return { ok: true };
+      }),
+      stepTimeoutMs: 40,
+    });
+    expect(result.text).toBe('Done.');
+    expect(result.steps).toHaveLength(2);
+  });
+
+  test('each step has its own limit', async () => {
+    let call = 0;
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        call += 1;
+        return {
+          stream:
+            call < 3
+              ? slowStream(
+                  [
+                    ...writesArguments(6),
+                    { type: 'tool-input-end', id: 'c1' },
+                    { type: 'tool-call', toolCallId: `c${call}`, toolName: 'lookup', input: '{}' },
+                  ],
+                  10,
+                )
+              : slowStream(
+                  [
+                    { type: 'text-start', id: 't' },
+                    { type: 'text-delta', id: 't', delta: 'Done.' },
+                    { type: 'text-end', id: 't' },
+                  ],
+                  1,
+                ),
+        };
+      },
+    });
+    const result = await streamRunModel({
+      model,
+      maxRetries: 0,
+      messages: [{ role: 'user', content: 'Go' }],
+      stopWhen: stepCountIs(5),
+      tools: lookup(async () => ({ ok: true })),
+      stepTimeoutMs: 150,
+    });
+    expect(result.text).toBe('Done.');
+    expect(result.steps).toHaveLength(3);
+  });
+
+  test('the step clock also starts for a later step, and the caller gets prepareStep and each finish', async () => {
+    let call = 0;
+    const model = new MockLanguageModelV3({
+      doStream: async () => {
+        call += 1;
+        return call === 1
+          ? {
+              stream: slowStream(
+                [{ type: 'tool-call', toolCallId: 'c1', toolName: 'lookup', input: '{}' }],
+                1,
+              ),
+            }
+          : { stream: slowStream(writesArguments(200), 5) };
+      },
+    });
+    const finished: number[] = [];
+    let prepared = 0;
+    await expect(
+      streamRunModel({
+        model,
+        maxRetries: 0,
+        messages: [{ role: 'user', content: 'Go' }],
+        stopWhen: stepCountIs(4),
+        tools: lookup(async () => ({ ok: true })),
+        stepTimeoutMs: 40,
+        prepareStep: async () => {
+          prepared += 1;
+          return undefined;
+        },
+        onStepFinish: () => {
+          finished.push(call);
+        },
+      }),
+    ).rejects.toBeInstanceOf(RunModelStepStall);
+    expect(prepared).toBe(2);
+    expect(finished).toEqual([1]);
+  });
+
+  test('with no limit, a slow step keeps its time', async () => {
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: slowStream(
+          [
+            { type: 'text-start', id: 't' },
+            { type: 'text-delta', id: 't', delta: 'Done.' },
+            { type: 'text-end', id: 't' },
+          ],
+          20,
+        ),
+      }),
+    });
+    const result = await streamRunModel({
+      model,
+      maxRetries: 0,
+      messages: [{ role: 'user', content: 'Go' }],
+    });
+    expect(result.text).toBe('Done.');
   });
 
   test('a stop throws its reason', async () => {
