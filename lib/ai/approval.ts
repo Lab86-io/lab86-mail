@@ -81,6 +81,12 @@ function attendeeList(value: unknown): string[] {
     .filter(Boolean);
 }
 
+/** Attendees sent as text may still be a list that runs. Only no text means no attendees. */
+function mayInvite(value: unknown): boolean {
+  if (typeof value === 'string') return !['', '[]'].includes(value.replace(/\s/g, ''));
+  return attendeeList(value).length > 0;
+}
+
 /**
  * For a gated tool, whether this exact call needs the user's answer. Calendar
  * writes reach another person only when they invite or notify someone; a
@@ -90,9 +96,9 @@ export function approvalConditionMet(toolName: string, input: unknown): boolean 
   const args = rec(input);
   switch (toolName) {
     case 'calendar_create_event':
-      return attendeeList(args.attendees).length > 0;
+      return mayInvite(args.attendees);
     case 'calendar_update_event':
-      return attendeeList(args.attendees).length > 0 || args.notifyParticipants === true;
+      return mayInvite(args.attendees) || args.notifyParticipants === true;
     case 'calendar_delete_event':
     case 'calendar_delete_recurring_series':
       return args.notifyParticipants === true;

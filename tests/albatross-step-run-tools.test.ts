@@ -301,6 +301,17 @@ describe('buildRunnerTools', () => {
     expect(result.message).toContain('next.kind approve');
   });
 
+  test('a calendar invite with attendees as JSON text is queued too', async () => {
+    const lifted = { calendar_create_event: baseTool({ ok: true, eventId: 'evt-1' }) };
+    const { host, approvals } = makeHost();
+    const tools = buildRunnerTools(lifted, host);
+    const args = { title: 'Team lunch', attendees: JSON.stringify([{ email: 'sam@example.com' }]) };
+    const result = await tools.calendar_create_event.execute(args);
+    expect(lifted.calendar_create_event.execute).not.toHaveBeenCalled();
+    expect(approvals).toHaveLength(1);
+    expect(result).toMatchObject({ status: 'queued_for_approval' });
+  });
+
   test('the invite title falls back to the summary, then to "event"', async () => {
     const { host, approvals } = makeHost();
     const tools = buildRunnerTools({ calendar_create_event: baseTool({ ok: true }) }, host);
