@@ -3,7 +3,7 @@ import type { FunctionReference } from 'convex/server';
 import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
 import { describeModelError } from '../ai/log-error';
-import { BriefBudgetExhaustedError, currentBriefMeter } from '../brief/budget';
+import { BriefBudgetExhaustedError, currentBriefMeter, withBriefStage } from '../brief/budget';
 import { api, convexQuery } from '../hosted/convex';
 import { prepareBriefContext } from '../narrative/service';
 import { editionNeedsYou, placeNeedsYouLane, withBriefNeedsYou } from '../obligations/brief-region';
@@ -262,7 +262,7 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
   // does not wait for a source refresh.
   const sourceChecks =
     input.userId && !input.deterministic
-      ? await prepareBriefContext(input.userId).catch(() => [
+      ? await withBriefStage('sources', () => prepareBriefContext(input.userId as string)).catch(() => [
           { source: 'source discovery', status: 'unavailable' as const },
         ])
       : [];
@@ -270,17 +270,19 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
 
   let structured: DailyReport;
   try {
-    structured = await generateDailyReport({
-      kind: input.kind,
-      includeCalendar: true,
-      userId: input.userId,
-      now: input.now,
-      scope: input.deterministic ? 'first' : 'week',
-      ...(input.deterministic ? { noModel: true } : {}),
-      reportId,
-      tier,
-      silent: input.quiet === true,
-    });
+    structured = await withBriefStage('sources', () =>
+      generateDailyReport({
+        kind: input.kind,
+        includeCalendar: true,
+        userId: input.userId,
+        now: input.now,
+        scope: input.deterministic ? 'first' : 'week',
+        ...(input.deterministic ? { noModel: true } : {}),
+        reportId,
+        tier,
+        silent: input.quiet === true,
+      }),
+    );
     if (sourceChecks.some((check) => check.status === 'unavailable'))
       structured.errors = [...(structured.errors || []), briefSourceCoverage(sourceChecks)];
     if (input.light) structured.light = true;
@@ -315,13 +317,15 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
   const composition = compositionFromReport(structured);
   const html = buildNativeDailyReportArtifact(structured, composition);
   if (!input.quiet)
-    await saveDailyReport({
-      ...structured,
-      composition,
-      html,
-      artifactStatus: 'composing',
-      artifactSource: 'deterministic',
-    }).catch(() => undefined);
+    await withBriefStage('save', () =>
+      saveDailyReport({
+        ...structured,
+        composition,
+        html,
+        artifactStatus: 'composing',
+        artifactSource: 'deterministic',
+      }),
+    ).catch(() => undefined);
 
   // No model: the document still composes deterministically. The exact
   // availability error is recorded so the UI can explain the plain letter.
@@ -345,7 +349,7 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
       ? artifactError('ai_availability', composed.writerTerminalError)
       : undefined;
     const settled = withEditionBudget(availability ? withArtifactError(report, availability) : report);
-    await saveDailyReport(settled);
+    await withBriefStage('save', () => saveDailyReport(settled));
     return settled;
   } catch (err) {
     console.error('[agent-report] budget composition failed:', describeModelError(err));
@@ -361,7 +365,7 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
         artifactError('document_v2', err),
       ),
     );
-    await saveDailyReport(fallback);
+    await withBriefStage('save', () => saveDailyReport(fallback));
     return fallback;
   }
 }
@@ -494,32 +498,34 @@ export async function composeBudgetBrief(
     ]);
     return { items, pulses, weather, since };
   };
-  const { items, pulses, weather, since } = await gather();
+  const { items, pulses, weather, since } = await withBriefStage('composition', gather);
 
   const areas = budgetAreaLines(report.sections.albatross, pulses);
-  const prose = await writeBriefProse(
-    {
-      firstName: contextFirstName() || null,
-      kind: report.kind === 'morning' ? 'morning' : 'manual',
-      now,
-      timezone,
-      items,
-      calendar: report.sections.calendar ?? [],
-      tasks: (report.sections.tasks ?? [])
-        .filter((task) => !task.completedAt && typeof task.dueAt === 'number')
-        .map((task) => ({ title: task.title, dueAt: task.dueAt ?? null })),
-      areas: areas.map((area) => ({ name: area.name, line: area.line })),
-      connectedEvidence: report.sections.mcp ?? [],
-      tomorrowIntent: report.sections.albatross?.dailyAlignment?.tomorrowIntent ?? null,
-      reflection: report.sections.albatross?.dailyAlignment?.reflection ?? null,
-      weather,
-      since: {
-        previousGeneratedAt: deps.previous?.generatedAt ?? null,
-        completed: since.completions.map((row) => row.title).filter(Boolean),
-        agentActions: since.agentActions.map((row) => row.summary).filter(Boolean),
+  const prose = await withBriefStage('prose', () =>
+    writeBriefProse(
+      {
+        firstName: contextFirstName() || null,
+        kind: report.kind === 'morning' ? 'morning' : 'manual',
+        now,
+        timezone,
+        items,
+        calendar: report.sections.calendar ?? [],
+        tasks: (report.sections.tasks ?? [])
+          .filter((task) => !task.completedAt && typeof task.dueAt === 'number')
+          .map((task) => ({ title: task.title, dueAt: task.dueAt ?? null })),
+        areas: areas.map((area) => ({ name: area.name, line: area.line })),
+        connectedEvidence: report.sections.mcp ?? [],
+        tomorrowIntent: report.sections.albatross?.dailyAlignment?.tomorrowIntent ?? null,
+        reflection: report.sections.albatross?.dailyAlignment?.reflection ?? null,
+        weather,
+        since: {
+          previousGeneratedAt: deps.previous?.generatedAt ?? null,
+          completed: since.completions.map((row) => row.title).filter(Boolean),
+          agentActions: since.agentActions.map((row) => row.summary).filter(Boolean),
+        },
       },
-    },
-    { generate: deps.generate, userId },
+      { generate: deps.generate, userId },
+    ),
   );
 
   // The look back is part of the letter: "What Albatross did" follows the lede.
@@ -557,11 +563,13 @@ export async function composeDailyBrief(
   deps: ComposeBudgetBriefDeps = {},
 ): Promise<ComposedBudgetBrief> {
   const composed = await composeBudgetBrief(report, userId, deps);
-  const layout = await writeDailyEditorial(report, composed.document, {
-    userId,
-    generate: deps.generate,
-    evidence: composed.editorialEvidence,
-  });
+  const layout = await withBriefStage('editorial', () =>
+    writeDailyEditorial(report, composed.document, {
+      userId,
+      generate: deps.generate,
+      evidence: composed.editorialEvidence,
+    }),
+  );
   layout.editorial.plan.areas = composed.areas.map((area) => ({
     areaId: area.areaId.slice(0, 240),
     name: truncateText(area.name, 500),

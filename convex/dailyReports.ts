@@ -8,6 +8,7 @@ import {
   normalizeBriefSchedule,
   scheduledEditionFor,
 } from '../lib/brief/schedule';
+import { addBriefStages, BRIEF_STAGES, type BriefStage, type BriefStageTimes } from '../lib/brief/stages';
 import { type JevCorrection, jevCorrectionSchema, normalizeJevPreferences } from '../lib/jev/contract';
 import { internal } from './_generated/api';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -634,6 +635,16 @@ export const operationStates = query({
 // ---- Edition budget telemetry (FEATURES item 5) ----------------------------
 
 const budgetLimit = v.optional(v.union(v.literal('time'), v.literal('cost')));
+const editionStages = v.optional(
+  v.object({
+    queued: v.optional(v.number()),
+    sources: v.optional(v.number()),
+    composition: v.optional(v.number()),
+    prose: v.optional(v.number()),
+    editorial: v.optional(v.number()),
+    save: v.optional(v.number()),
+  }),
+);
 
 export const recordEditionTelemetry = mutation({
   args: {
@@ -649,17 +660,21 @@ export const recordEditionTelemetry = mutation({
     fallback: v.boolean(),
     exhausted: budgetLimit,
     attempts: v.number(),
+    // The stage times of this attempt. The row keeps the sum of all attempts.
+    stages: editionStages,
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const { internalSecret: _secret, ...row } = args;
+    const { internalSecret: _secret, stages, ...row } = args;
     const now = Date.now();
     const existing = await ctx.db
       .query('briefEditionTelemetry')
       .withIndex('by_user_report', (q) => q.eq('userId', args.userId).eq('reportId', args.reportId))
       .unique();
-    if (existing) await ctx.db.patch(existing._id, { ...row, updatedAt: now });
-    else await ctx.db.insert('briefEditionTelemetry', { ...row, createdAt: now, updatedAt: now });
+    const summed = addBriefStages(existing?.stages, stages);
+    const withStages = { ...row, ...(summed ? { stages: summed } : {}) };
+    if (existing) await ctx.db.patch(existing._id, { ...withStages, updatedAt: now });
+    else await ctx.db.insert('briefEditionTelemetry', { ...withStages, createdAt: now, updatedAt: now });
   },
 });
 
@@ -679,6 +694,7 @@ export function summarizeEditionTelemetry(
     outputTokens: number;
     fallback: boolean;
     exhausted?: 'time' | 'cost';
+    stages?: BriefStageTimes;
   }>,
 ) {
   const times = rows.map((row) => row.timeMs).sort((a, b) => a - b);
@@ -715,6 +731,15 @@ export function summarizeEditionTelemetry(
       time: rows.filter((row) => row.exhausted === 'time').length,
       cost: rows.filter((row) => row.exhausted === 'cost').length,
     },
+    stages: Object.fromEntries(
+      BRIEF_STAGES.map((stage) => {
+        const times = rows
+          .map((row) => row.stages?.[stage])
+          .filter((time): time is number => time !== undefined)
+          .sort((a, b) => a - b);
+        return [stage, { editions: times.length, p50: percentile(times, 0.5), p90: percentile(times, 0.9) }];
+      }),
+    ) as Record<BriefStage, { editions: number; p50: number; p90: number }>,
   };
 }
 

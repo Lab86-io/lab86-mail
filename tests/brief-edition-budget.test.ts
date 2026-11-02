@@ -386,6 +386,12 @@ describe('edition telemetry', () => {
       tokens: { input: 60, output: 15 },
       fallbackRate: 0.3333,
       exhausted: { time: 1, cost: 0 },
+      stages: Object.fromEntries(
+        ['queued', 'sources', 'composition', 'prose', 'editorial', 'save'].map((stage) => [
+          stage,
+          { editions: 0, p50: 0, p90: 0 },
+        ]),
+      ) as ReturnType<typeof summarizeEditionTelemetry>['stages'],
     });
     expect(summarizeEditionTelemetry([])).toMatchObject({ editions: 0, timeMs: { average: 0, p50: 0 } });
   });
