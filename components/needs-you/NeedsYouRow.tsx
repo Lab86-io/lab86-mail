@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import {
   CalendarDays,
   ChevronDown,
@@ -16,6 +15,7 @@ import {
   SquareKanban,
 } from 'lucide-react';
 import type { KeyboardEvent, ReactNode } from 'react';
+import { useState } from 'react';
 import type { NotificationItem } from '@/components/notifications/model';
 import { Avatar } from '@/components/ui/avatar';
 import {
