@@ -51,6 +51,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { useMediaQuery } from '@/hooks/use-media-query';
+import { useSurfaceReady } from '@/hooks/use-surface-ready';
 import { handoffBlanks } from '@/lib/albatross/blanks';
 import {
   DOCUMENT_HANDOFF_COPY,
@@ -1117,6 +1118,7 @@ export function WorkThread({ workId }: { workId: string }) {
     api.albatrossWorkV2.workDetail,
     isAuthenticated ? { workId: workId as Id<'albatrossIntents'> } : 'skip',
   ) as WorkDetailData | null | undefined;
+  useSurfaceReady('thread', detail !== undefined);
   const session = useQuery(
     api.albatrossBrowserSessions.activeSessionForWork,
     isAuthenticated ? { workId } : 'skip',
