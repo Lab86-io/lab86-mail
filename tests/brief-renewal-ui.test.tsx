@@ -355,10 +355,12 @@ test('the task and thread dismissal reads wait for an older page that needs them
 // The menu's cleanup reads `window`.
 function withWindow() {
   const target = globalThis as { window?: unknown };
-  const had = 'window' in target;
+  const before = Object.getOwnPropertyDescriptor(target, 'window');
   target.window = globalThis;
+  // Put back what was there, so no later file reads a window with no location.
   cleanups.push(async () => {
-    if (!had) delete target.window;
+    if (before) Object.defineProperty(target, 'window', before);
+    else delete target.window;
   });
 }
 

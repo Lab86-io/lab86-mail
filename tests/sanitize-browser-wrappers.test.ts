@@ -17,7 +17,8 @@ describe('in the browser', () => {
   });
 
   afterAll(() => {
-    g.window = previousWindow;
+    if (previousWindow === undefined) delete g.window;
+    else g.window = previousWindow;
   });
 
   test('outgoing html keeps formatting but drops scripts, handlers, and styles', () => {
