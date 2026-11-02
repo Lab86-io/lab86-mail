@@ -21,6 +21,7 @@ import { FilesSurface } from '@/components/files/FilesSurface';
 import { RecordMailboxesConnected } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
 import { NeedsYouArrivals } from '@/components/needs-you/NeedsYouArrivals';
+import { NeedsYouPushLinks } from '@/components/needs-you/NeedsYouPushLinks';
 import { NeedsYouSurface } from '@/components/needs-you/NeedsYouSurface';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { briefEditionIdFromSearch, requestBriefEdition } from '@/components/report/brief-edition-request';
@@ -375,6 +376,7 @@ export function AppShell({
           <AlbatrossCompanion />
           <WakeNudgeHost />
           <NeedsYouArrivals />
+          <NeedsYouPushLinks />
         </main>
       </SidebarProvider>
 

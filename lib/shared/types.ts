@@ -243,6 +243,14 @@ export function areaIdFromSearch(search: string): string | null {
   return new URLSearchParams(search).get('area') || null;
 }
 
+/** The service worker sends this to an open tab when the user clicks a Needs you notification. */
+export const NEEDS_YOU_PUSH_MESSAGE = 'albatross:open-link';
+
+/** `?obligation=<id>` opens one item on the Needs you page. */
+export function obligationIdFromSearch(search: string): string | null {
+  return new URLSearchParams(search).get('obligation') || null;
+}
+
 export function persistedPrimaryViewFromStorage(raw: string | null): PrimaryView | null {
   if (!raw) return null;
   try {
