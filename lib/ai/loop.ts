@@ -1,5 +1,4 @@
 import {
-  tool as aiTool,
   createUIMessageStream,
   createUIMessageStreamResponse,
   jsonSchema,
@@ -21,6 +20,7 @@ import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { documentCreateModelInput } from '../tools/documents';
 import { invokeTool, repairToolArgs, toolRisk } from '../tools/registry';
+import { agentTool as aiTool } from './agent-tool';
 import { APPROVAL_RISKS, approvalConditionMet, approvalSummary, type ToolRisk } from './approval';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { executeCheckpointedTool, readRecoveryContext, toolExecutionKey } from './execution';

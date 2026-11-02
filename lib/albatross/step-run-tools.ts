@@ -8,8 +8,8 @@
 // a calendar invite or an RSVP becomes an approval in the queue, and the run
 // hands it to the user.
 
-import { tool as aiTool } from 'ai';
 import { z } from 'zod';
+import { agentTool as aiTool } from '../ai/agent-tool';
 import { approvalConditionMet } from '../ai/approval';
 import { getAiRequestContext } from '../ai/context';
 import { runSecureFetch } from '../secure/fetch';
