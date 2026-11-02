@@ -1,14 +1,27 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { exportDocument } from './export';
 import { OfficeError, readOfficeResponse, validateOfficeArchive } from './office-security';
-import { createOfficeFile, getOfficeFile, requireOffice, storeOfficeBytes } from './office-service';
+import {
+  createOfficeFile,
+  getOfficeFile,
+  type OfficeTemplateRecord,
+  requireOffice,
+  storeOfficeBytes,
+} from './office-service';
 import { verifyOfficePackage } from './office-verify';
-import { getDocument } from './service';
+import { documentExecution, getDocument } from './service';
 import { type DocumentTemplate, renderTemplate } from './templates';
+import {
+  applyInvoiceBlanks,
+  InvoiceBlankError,
+  type InvoiceData,
+  invoiceDataSchema,
+} from './templates/invoice';
 import {
   createWordPackage,
   editWordPackage,
+  emptyWordBlanks,
   readWordBlanks,
   readWordPackage,
   type WordEdit,
@@ -19,6 +32,7 @@ const defaults = {
   getDocument,
   exportDocument,
   renderTemplate,
+  documentExecution,
   getOfficeFile,
   createOfficeFile,
   storeOfficeBytes,
@@ -28,6 +42,19 @@ const defaults = {
   now: () => Date.now(),
   wait: (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)),
 };
+function applyInvoiceFills(data: InvoiceData, fills: ReadonlyArray<Extract<WordEdit, { op: 'fill_blank' }>>) {
+  try {
+    return applyInvoiceBlanks(data, fills);
+  } catch (error) {
+    if (error instanceof InvoiceBlankError) throw new OfficeError(error.message);
+    throw error;
+  }
+}
+
+const CHANGED_SINCE_RENDER_NOTE =
+  'This file changed after the server rendered it, so the amounts and the totals did not update. Check them.';
+const sha256Of = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
 export function createWordService(overrides: Partial<typeof defaults> = {}) {
   const deps = { ...defaults, ...overrides };
   const load = async (userId: string, documentId: string) => {
@@ -51,8 +78,10 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
         template?: DocumentTemplate;
         data?: unknown;
       },
+      options: { signal?: AbortSignal } = {},
     ) {
       deps.requireOffice();
+      options.signal?.throwIfAborted();
       let title = input.title.trim() || 'Untitled document';
       let bytes: Uint8Array;
       if (input.template) {
@@ -74,7 +103,16 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
       const blanks = input.template
         ? (await readWordBlanks(bytes)).filter((blank) => !blank.filled).map((blank) => blank.name)
         : undefined;
+      // An invoice keeps its data, so that fill_blank can render it again with computed totals.
+      const data =
+        input.template === 'invoice' && !input.edits?.length
+          ? invoiceDataSchema.parse(input.data)
+          : undefined;
+      // Stop means that no file lands: check before the upload and before the commit.
+      options.signal?.throwIfAborted();
       const storageId = await deps.storeOfficeBytes(userId, bytes, 'docx');
+      options.signal?.throwIfAborted();
+      const execution = deps.documentExecution();
       const file = await deps.createOfficeFile({
         userId,
         title: `${title.replace(/\.docx$/i, '')}.docx`,
@@ -82,6 +120,10 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
         storageId,
         size: bytes.length,
         sha256,
+        ...(data
+          ? { template: { kind: 'invoice' as const, dataJson: JSON.stringify(data), renderedSha256: sha256 } }
+          : {}),
+        ...(execution ? { execution } : {}),
       });
       return {
         ok: true as const,
@@ -103,8 +145,15 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
         openPath: `/?view=files&office=${encodeURIComponent(documentId)}`,
       };
     },
-    async edit(userId: string, documentId: string, expectedRevision: number, edits: WordEdit[]) {
+    async edit(
+      userId: string,
+      documentId: string,
+      expectedRevision: number,
+      edits: WordEdit[],
+      options: { signal?: AbortSignal } = {},
+    ) {
       deps.requireOffice();
+      options.signal?.throwIfAborted();
       let { file, bytes } = await load(userId, documentId);
       if (file.currentRevision !== expectedRevision)
         throw new OfficeError('The document changed. Read the latest revision before editing.', 409);
@@ -129,6 +178,7 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
             const deadline = deps.now() + 55_000;
             let prepared = false;
             while (deps.now() < deadline) {
+              options.signal?.throwIfAborted();
               await deps.wait(500);
               const current = await deps.getOfficeFile(userId, documentId);
               if (current?.aiEdit?.id !== requestId || current.aiEdit.state === 'failed')
@@ -157,11 +207,35 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
               409,
             );
         }
-        const updated = await editWordPackage(bytes, edits);
+        const fills = edits.flatMap((edit) => (edit.op === 'fill_blank' ? [edit] : []));
+        const notes: string[] = [];
+        let updated: Uint8Array;
+        let template: OfficeTemplateRecord | undefined;
+        // The stored data matches the file only while no other save has changed the file.
+        if (fills.length && file.template?.renderedSha256 === file.version?.sha256 && file.template) {
+          if (fills.length !== edits.length)
+            throw new OfficeError(
+              'An invoice renders again from its data. Send fill_blank edits by themselves, and send other edits after them.',
+            );
+          const data = applyInvoiceFills(JSON.parse(file.template.dataJson), fills);
+          updated = (
+            await deps.renderTemplate('invoice', data, { title: file.title.replace(/\.docx$/i, '') })
+          ).bytes;
+          await verifyOfficePackage(updated, 'docx');
+          template = { kind: 'invoice', dataJson: JSON.stringify(data), renderedSha256: sha256Of(updated) };
+        } else {
+          updated = await editWordPackage(bytes, edits);
+          if (fills.length && file.template) notes.push(CHANGED_SINCE_RENDER_NOTE);
+        }
         const sha256 = validateOfficeArchive(updated, 'docx');
         if (sha256 === file.version?.sha256)
           throw new OfficeError('The requested edits did not change the document.');
+        const blanks = fills.length ? await emptyWordBlanks(updated) : undefined;
+        // Stop means that no revision lands: check before the upload and before the commit.
+        options.signal?.throwIfAborted();
         const storageId = await deps.storeOfficeBytes(userId, updated, 'docx');
+        options.signal?.throwIfAborted();
+        const execution = deps.documentExecution();
         const result = await deps.convexMutation<{ ok: boolean; revision?: number; code?: string }>(
           api.officeDocuments.saveEditedVersion,
           {
@@ -172,6 +246,8 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
             size: updated.length,
             sha256,
             ...(requestId ? { requestId } : {}),
+            ...(template ? { template } : {}),
+            ...(execution ? { execution } : {}),
           },
         );
         if (!result.ok)
@@ -188,6 +264,8 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
           documentId,
           revision: result.revision!,
           openPath: `/?view=files&office=${encodeURIComponent(documentId)}`,
+          ...(blanks ? { blanks } : {}),
+          ...(notes.length ? { notes } : {}),
         };
       } finally {
         if (requestId) await coordinate(complete ? 'complete' : 'fail').catch(() => undefined);

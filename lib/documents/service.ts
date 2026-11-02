@@ -16,7 +16,7 @@ import {
 import { assertModelWithinLimit } from './sheet-workbook';
 
 const documentsApi = api.documents;
-function documentExecution() {
+export function documentExecution() {
   const context = getAiRequestContext();
   return context.runId && context.toolExecutionKey
     ? { runId: context.runId, key: context.toolExecutionKey }

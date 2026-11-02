@@ -59,7 +59,7 @@ export const wordDocumentCreate = defineTool({
     template: z.enum(DOCUMENT_TEMPLATES).optional(),
     blanks: z.array(z.string()).optional(),
   }),
-  handler: async (input, ctx) => wordDocuments.create(owner(ctx.userId), input),
+  handler: async (input, ctx) => wordDocuments.create(owner(ctx.userId), input, { signal: ctx.abortSignal }),
 });
 export const wordDocumentGet = defineTool({
   name: 'word_document_get',
@@ -91,7 +91,7 @@ export const wordDocumentEdit = defineTool({
   risk: 'write_self',
   mutating: true,
   description:
-    'Edit a saved Word DOCX as an immutable revision: insert paragraphs/headings, tables and PNG/JPEG images; add comments; set headers/footers; replace text across formatted runs; change font/size/color/highlight, paragraph alignment/spacing/page breaks, and page size/orientation/margins; fill_blank writes a value into a named blank of a template document. Unrelated package content is preserved. Read word_document_get first. Paragraph indexes are zero-based and apply to the document after each preceding operation. Omitted after appends to the body. format_text formats entire selected paragraphs; page_setup affects the final section. An open connected Collabora editor is automatically saved, paused, and reopened. If autosaving changes the revision, read word_document_get again before retrying; never reuse stale paragraph indexes. Unresponsive editors and concurrent changes fail safely. All edits succeed together or none are saved.',
+    'Edit a saved Word DOCX as an immutable revision: insert paragraphs/headings, tables and PNG/JPEG images; add comments; set headers/footers; replace text across formatted runs; change font/size/color/highlight, paragraph alignment/spacing/page breaks, and page size/orientation/margins; fill_blank writes a value into a named blank of a template document, and for an invoice the server renders the file again and computes each amount and total (never fill a total; the result lists the blanks that stay empty). Unrelated package content is preserved. Read word_document_get first. Paragraph indexes are zero-based and apply to the document after each preceding operation. Omitted after appends to the body. format_text formats entire selected paragraphs; page_setup affects the final section. An open connected Collabora editor is automatically saved, paused, and reopened. If autosaving changes the revision, read word_document_get again before retrying; never reuse stale paragraph indexes. Unresponsive editors and concurrent changes fail safely. All edits succeed together or none are saved.',
   input: z.object({
     documentId: z.string().min(1),
     expectedRevision: z.number().int().min(1),
@@ -103,7 +103,11 @@ export const wordDocumentEdit = defineTool({
     documentId: z.string(),
     revision: z.number(),
     openPath: z.string(),
+    blanks: z.array(z.string()).optional(),
+    notes: z.array(z.string()).optional(),
   }),
   handler: async (input, ctx) =>
-    wordDocuments.edit(owner(ctx.userId), input.documentId, input.expectedRevision, input.edits),
+    wordDocuments.edit(owner(ctx.userId), input.documentId, input.expectedRevision, input.edits, {
+      signal: ctx.abortSignal,
+    }),
 });
