@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { runWithAiRequestContext } from '../lib/ai/context';
 import { AGENT_TOOL_NAMES, liftToolsForAgent } from '../lib/ai/loop';
+import {
+  __setDocumentAiDepsForTest,
+  DocumentGenerationError,
+  generateDocumentProposal,
+  unrequestedLoss,
+} from '../lib/documents/ai';
 import { DECK_THEMES, referenceDeck } from '../lib/documents/deck-fixtures';
 import { compositionArtwork } from '../lib/documents/deck-imagery';
 import { documentEditsSchema, prepareDocumentEdits } from '../lib/documents/edits';
@@ -22,6 +28,83 @@ import {
 import { invokeTool } from '../lib/tools/registry';
 import { poolArtworks } from './fixtures/presentation-briefs';
 import { toolContext, withToolContext } from './tools/harness';
+
+describe('a generated revision that drops content', () => {
+  const doc = (...texts: string[]) => ({
+    kind: 'doc' as const,
+    version: 1 as const,
+    blocks: texts.map((text, index) => ({ id: `b${index}`, type: 'paragraph' as const, text })),
+  });
+  const LONG = (word: string) => `${word} ${'in the harbor plan '.repeat(8)}`.trim();
+  const current = doc(LONG('Scope'), LONG('Budget'), LONG('Risks'), LONG('Dates'), LONG('Owners'));
+
+  test('a large unrelated loss is named, and a small or a requested one is not', () => {
+    const lost = doc(LONG('Scope'));
+    const loss = unrequestedLoss(current, lost, 'Fix the spelling in the first paragraph');
+    expect(loss).toContain('would remove 4 of 5 blocks');
+    expect(loss).toContain('Nothing was applied');
+    expect(loss).toContain('document_edit');
+    // One lost block out of five is an edit, not a loss.
+    expect(
+      unrequestedLoss(current, doc(LONG('Scope'), LONG('Budget'), LONG('Risks'), LONG('Dates')), 'Fix it'),
+    ).toBeNull();
+    // A request for a smaller file may drop content.
+    expect(unrequestedLoss(current, lost, 'Summarize this into one paragraph')).toBeNull();
+    expect(unrequestedLoss(current, lost, 'Rewrite it, much shorter')).toBeNull();
+  });
+
+  test('a translation with new ids keeps its size, so it is not a loss', () => {
+    const translated = {
+      ...doc(),
+      blocks: current.blocks.map((block, index) => ({
+        ...block,
+        id: `new${index}`,
+        text: `T ${block.text}`,
+      })),
+    };
+    expect(unrequestedLoss(current, translated, 'Translate this to Spanish')).toBeNull();
+  });
+
+  test('an emptied block counts as lost, and moved text with a new id does not', () => {
+    const emptied = doc(LONG('Scope'), '', '', '', '');
+    expect(unrequestedLoss(current, emptied, 'Fix it')).toContain('would remove 4 of 5');
+    const moved = {
+      ...current,
+      blocks: current.blocks.map((block, index) => ({ ...block, id: `new${index}` })),
+    };
+    expect(unrequestedLoss(current, moved, 'Fix it')).toBeNull();
+  });
+
+  test('a deck that loses slides is refused, unless the instruction names a count', () => {
+    const deck = referenceDeck('editorial');
+    const next = { ...deck, slides: deck.slides.slice(0, 1) };
+    expect(unrequestedLoss(deck, next, 'Fix the title')).toContain('slides');
+    expect(unrequestedLoss(deck, next, 'Make this a one slide deck')).toBeNull();
+    expect(unrequestedLoss(deck, next, 'Make this 1 slide')).toBeNull();
+  });
+
+  test('the generation refuses the loss, and the save never runs', async () => {
+    __setDocumentAiDepsForTest({
+      generateObjectForCurrentUser: (async () => ({
+        object: { title: 'Plan', summary: 'Changed.', model: doc(LONG('Scope')) },
+      })) as any,
+    });
+    const record = {
+      documentId: 'd',
+      title: 'Plan',
+      kind: 'doc' as const,
+      model: current,
+      currentRevision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      sourceRefs: [],
+    };
+    await expect(
+      generateDocumentProposal({ userId: 'u', kind: 'doc', instruction: 'Fix the typo', current: record }),
+    ).rejects.toBeInstanceOf(DocumentGenerationError);
+    __setDocumentAiDepsForTest();
+  });
+});
 
 test('the spreadsheet capability tool supplies exact chart command schemas before editing', async () => {
   const catalog = await spreadsheetCapabilitiesTool.handler(

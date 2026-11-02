@@ -20,6 +20,7 @@ import {
   createDefaultDocumentModel,
   type DeckModelV2,
   type DocumentKind,
+  deckElementText,
   deckModelSchema,
   deckModelV2Schema,
   docModelSchema,
@@ -44,6 +45,7 @@ import {
   presentationAuthoringV2Schema,
   presentationSlideCountMatches,
   RESTYLE_CLASSIFIER_GUIDANCE,
+  requestedPresentationSlideCount,
   restyleClassificationSchema,
   restyleOperationFor,
 } from './presentation-design';
@@ -470,6 +472,53 @@ async function proposeDeckRestyle(input: {
   return { title: input.current.title, summary: `${classification.data.summary}${note}`, model };
 }
 
+/** A request that may rightly drop much of a file. Anything else keeps what it did not ask to change. */
+const BROAD_REWRITE =
+  /\b(?:rewrite|re-write|redo|summari[sz]e|shorten|condense|trim|reduce|simplify|tighten|replace|start over|clear)\b/i;
+const LOSS_SHARE = 0.25;
+const SHRINK_LIMIT = 0.7;
+
+function modelUnits(model: AlbatrossDocumentModel) {
+  if (model.kind === 'doc')
+    return model.blocks.map((block) => ({ id: block.id, label: block.text, text: block.text.trim() }));
+  if (model.kind === 'deck')
+    return model.slides.map((slide) => ({
+      id: slide.id,
+      label: slide.title,
+      text: [slide.title, ...slide.elements.map(deckElementText)].join(' ').trim(),
+    }));
+  return [];
+}
+
+/**
+ * A generated model replaces the whole file, so a reply can lose content and still
+ * parse. A part counts as lost when its id and its text are both gone, or when its
+ * id stays with no text. A translation or a rewrite keeps the size of the file, so a
+ * large loss also needs a smaller file.
+ */
+export function unrequestedLoss(
+  current: AlbatrossDocumentModel,
+  next: AlbatrossDocumentModel,
+  instruction: string,
+): string | null {
+  if (BROAD_REWRITE.test(instruction)) return null;
+  if (current.kind === 'deck' && requestedPresentationSlideCount(instruction) !== undefined) return null;
+  const before = modelUnits(current).filter((unit) => unit.text);
+  const after = modelUnits(next);
+  const texts = after.map((unit) => unit.text);
+  const ids = new Map(after.map((unit) => [unit.id, unit.text]));
+  const lost = before.filter((unit) => !ids.get(unit.id) && !texts.some((text) => text.includes(unit.text)));
+  const size = (units: Array<{ text: string }>) => units.reduce((sum, unit) => sum + unit.text.length, 0);
+  if (lost.length < 2 || lost.length / before.length < LOSS_SHARE) return null;
+  if (size(after) >= size(before) * SHRINK_LIMIT) return null;
+  const unit = current.kind === 'deck' ? 'slides' : 'blocks';
+  const names = lost
+    .slice(0, 3)
+    .map((entry) => `"${truncateText(entry.label, 60)}"`)
+    .join(', ');
+  return `The generated revision would remove ${lost.length} of ${before.length} ${unit} that the instruction did not ask to change, for example ${names}. Nothing was applied. Use document_edit for a precise change.`;
+}
+
 async function generateDocumentProposalDraft(input: {
   userId: string;
   userEmail?: string;
@@ -565,7 +614,7 @@ async function generateDocumentProposalDraft(input: {
     system: `You are Albatross's document editor. Produce a complete, directly editable canonical model for the requested ${documentKindLabel(input.kind).toLowerCase()}.
 ${modelGuidance(input.kind, input.current?.model)}
 ${input.kind === 'deck' ? 'Preserve the existing art direction, background and text colors, spacing and visual hierarchy. Add real slide content with varied layouts; never put editing instructions into slides. All elements must fit within the 0–100 canvas. Never invent numbers; use metrics only when the grounding material supplies them.' : ''}
-Preserve accurate supplied facts, never invent citations or claim provider-side changes, and make the result useful without extra cleanup. Return the full model, a concise title, and a one-sentence summary of what changed.`,
+Preserve accurate supplied facts, never invent citations or claim provider-side changes, and make the result useful without extra cleanup.${input.current ? ' Keep every block or slide that the instruction does not change, with its id and its text.' : ''} Return the full model, a concise title, and a one-sentence summary of what changed.`,
     prompt: `${current}${sources}\n\nUser instruction:\n${truncateText(input.instruction.trim(), 20_000)}`,
   });
   try {
@@ -582,6 +631,10 @@ Preserve accurate supplied facts, never invent citations or claim provider-side 
       JSON.stringify(parsed.model) === JSON.stringify(modelSchema.parse(input.current.model))
     )
       throw new DocumentGenerationError('The generated revision contains no changes. Nothing was applied.');
+    if (input.current) {
+      const loss = unrequestedLoss(input.current.model, parsed.model, input.instruction);
+      if (loss) throw new DocumentGenerationError(loss);
+    }
     return parsed as {
       title: string;
       summary: string;
