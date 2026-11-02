@@ -386,7 +386,7 @@ describe('calendar commands', () => {
     });
   });
 
-  test('a single attendee produces a durable approval with singular human copy', async () => {
+  test('a single attendee produces a durable approval that names the attendee', async () => {
     let invoked = false;
     let approvalInput: Record<string, unknown> | undefined;
     const deps = dependencies({
@@ -414,7 +414,7 @@ describe('calendar commands', () => {
     expect(approvalInput).toMatchObject({
       userId: user.userId,
       kind: 'calendar_invite',
-      detail: '1 attendee will be notified.',
+      detail: 'To ari@example.com.',
       artifactId: 'calendar-invite-9',
       toolName: 'calendar_create_event',
     });
@@ -428,7 +428,7 @@ describe('calendar commands', () => {
     });
   });
 
-  test('multiple attendees pluralize the approval copy', async () => {
+  test('the approval names every attendee', async () => {
     let approvalInput: Record<string, unknown> | undefined;
     const deps = dependencies({
       enqueueApproval: async (input: Record<string, unknown>) => {
@@ -446,7 +446,7 @@ describe('calendar commands', () => {
       deps,
     );
 
-    expect(approvalInput?.detail).toBe('2 attendees will be notified.');
+    expect(approvalInput?.detail).toBe('To ari@example.com, sam@example.com.');
   });
 });
 

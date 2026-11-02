@@ -815,6 +815,7 @@ export async function runStepRun(
     const tools = buildRunnerTools(lifted, {
       browserAvailable,
       secure,
+      timezone,
       log,
       artifact: async (made) => {
         // A goal run's artifacts carry the app path that opens them.
@@ -832,9 +833,14 @@ export async function runStepRun(
             userId,
             kind: input.kind,
             title: input.title,
-            detail: goal
-              ? `From the goal "${truncateText(run.stepTitle, 160)}".`
-              : `From the step "${truncateText(run.stepTitle, 160)}".`,
+            detail: [
+              input.recipients,
+              goal
+                ? `From the goal "${truncateText(run.stepTitle, 160)}".`
+                : `From the step "${truncateText(run.stepTitle, 160)}".`,
+            ]
+              .filter(Boolean)
+              .join(' '),
             intentId: run.workId,
             operationBatchId: runId,
             artifactKind: 'step_run',
@@ -857,7 +863,6 @@ export async function runStepRun(
       ...(goal
         ? {
             goal: true,
-            timezone,
             checklist: async (items: Array<{ text: string; state: string }>) => {
               const checklist = cleanChecklist(items);
               if (checklist.length)

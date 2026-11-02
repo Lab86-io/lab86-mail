@@ -1092,6 +1092,7 @@ export default defineSchema({
     availableAt: v.number(),
     attempts: v.number(),
     parentRunId: v.optional(v.id('albatrossStepRuns')),
+    approvalSettledAt: v.optional(v.number()),
     resumeNote: v.optional(v.string()),
     outcome: v.optional(
       v.union(

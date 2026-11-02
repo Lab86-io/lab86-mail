@@ -5,11 +5,19 @@ import { useMutation } from 'convex/react';
 import { ArrowUpRight, Bell, Check, ChevronRight, CircleHelp, Clock3, ShieldCheck } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Component, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  ApprovalDecision,
+  ApprovalDecisionPills,
+  useApprovalView,
+  useRetainedApprovals,
+} from '@/components/albatross/ApprovalDecision';
 import { DailyCheckin } from '@/components/albatross/DailyCheckin';
+import { useNeedsYouOpenRequest } from '@/components/needs-you/data';
 import { requestBriefEdition } from '@/components/report/brief-edition-request';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { APPROVAL_COPY, approvalDetailParts, approvalRowLine } from '@/lib/albatross/approval-decision';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 import {
@@ -38,6 +46,39 @@ function timeLabel(timestamp?: number) {
   }).format(timestamp);
 }
 
+/** The line under an approval's title: who gets it, or what happened. */
+function ApprovalRowWords({ item }: { item: NotificationItem }) {
+  const view = useApprovalView(item.approval);
+  if (!view) return null;
+  return (
+    <span
+      className={cn(
+        'mt-1 block text-[11.5px] leading-[1.45]',
+        view.tone === 'done'
+          ? 'font-medium text-[var(--color-text)]'
+          : view.tone === 'hot'
+            ? 'font-medium text-[var(--color-danger)]'
+            : 'text-[var(--color-text-muted)]',
+      )}
+    >
+      {view.line ?? approvalRowLine(item.body)}
+    </span>
+  );
+}
+
+/** Approve and Decline on the row, on hover or focus, while a press can reach the server. */
+function ApprovalRowPills({ item }: { item: NotificationItem }) {
+  const view = useApprovalView(item.approval);
+  if (!item.approval || !view?.canDecide) return null;
+  return (
+    <ApprovalDecisionPills
+      approval={item.approval}
+      size="row"
+      className="absolute bottom-3 right-3 hidden group-hover/row:flex group-focus-within/row:flex"
+    />
+  );
+}
+
 export interface NotificationsViewProps {
   projection: NotificationProjection;
   currentMove?: CurrentMove | null;
@@ -48,6 +89,10 @@ export interface NotificationsViewProps {
   onDismiss: (item: NotificationItem) => Promise<void>;
   onAction: (action: NotificationAction) => Promise<void> | void;
   onOpenActivity?: () => void;
+  /** Set when another surface asks for one item (a handoff's approval). */
+  openRequest?: { id: string; at: number } | null;
+  /** The clock for how long a decided row stays. */
+  now?: number;
 }
 
 /** Pure presentation is shared with synthetic browser verification. */
@@ -61,6 +106,8 @@ export function NotificationsView({
   onDismiss,
   onAction,
   onOpenActivity,
+  openRequest,
+  now = Date.now(),
 }: NotificationsViewProps) {
   const [view, setView] = useState<NotificationViewState>(INITIAL_NOTIFICATION_VIEW);
   const [hydrated, setHydrated] = useState(false);
@@ -75,7 +122,9 @@ export function NotificationsView({
   const busyRef = useRef(false);
   const retryRef = useRef<(() => Promise<void>) | null>(null);
   const actionEpoch = useRef(0);
-  const allItems = [...projection.attention, ...projection.updates];
+  // The live queue drops a row at once. A row the user just decided stays to say what happened.
+  const attentionItems = useRetainedApprovals(projection.attention, now);
+  const allItems = [...attentionItems, ...projection.updates];
   const selected = allItems.find((item) => item.id === view.selectedId) || null;
   viewRef.current = { ...view, scrollTop: scrollTopRef.current };
 
@@ -103,6 +152,10 @@ export function NotificationsView({
       }
     };
   }, [storageKey]);
+
+  useEffect(() => {
+    if (openRequest) setView((current) => ({ ...current, selectedId: openRequest.id }));
+  }, [openRequest]);
 
   useEffect(() => {
     if (!hydrated || isLoading || pendingScrollRestore.current === null) return;
@@ -147,7 +200,7 @@ export function NotificationsView({
 
   // Reading an update may remove it from an unread filter. Keep the selected
   // detail visible until the user goes back, without retaining stale contents.
-  const attention = filterNotificationItems(projection.attention, view.filter);
+  const attention = filterNotificationItems([...attentionItems], view.filter);
   const updates = filterNotificationItems(projection.updates, view.filter);
   const visibleItems = [...attention, ...updates];
   const counts = notificationFilterCounts(projection);
@@ -257,7 +310,10 @@ export function NotificationsView({
           {items.map((item) => {
             const Glyph = glyphs[item.kind];
             return (
-              <li key={item.id} className="border-b border-[var(--color-list-divider,var(--color-border))]">
+              <li
+                key={item.id}
+                className="group/row relative border-b border-[var(--color-list-divider,var(--color-border))]"
+              >
                 <button
                   type="button"
                   ref={(node) => {
@@ -284,9 +340,13 @@ export function NotificationsView({
                     >
                       {item.title}
                     </span>
-                    <span className="mt-1 block truncate text-[11.5px] text-[var(--color-text-faint)]">
-                      {item.context}
-                    </span>
+                    {item.approval ? (
+                      <ApprovalRowWords item={item} />
+                    ) : (
+                      <span className="mt-1 block truncate text-[11.5px] text-[var(--color-text-faint)]">
+                        {item.context}
+                      </span>
+                    )}
                     <span className="mt-2 block text-[10.5px] text-[var(--color-text-faint)]">
                       {item.source}
                       {item.createdAt ? (
@@ -311,6 +371,7 @@ export function NotificationsView({
                     />
                   )}
                 </button>
+                <ApprovalRowPills item={item} />
               </li>
             );
           })}
@@ -469,7 +530,7 @@ export function NotificationsView({
               </Button>
               <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--color-text-muted)]">
                 {selected.source}
-                {selected.attention && (
+                {selected.attention && !selected.approval && (
                   <span className="border-l border-[var(--color-border)] pl-2 normal-case tracking-normal">
                     Waiting on you
                   </span>
@@ -478,9 +539,11 @@ export function NotificationsView({
               <h2 className="mt-3 text-[22px] font-medium leading-snug tracking-tight text-[var(--color-text)]">
                 {selected.title}
               </h2>
-              <p className="mt-3 text-[12px] leading-relaxed text-[var(--color-text-muted)]">
-                {selected.context}
-              </p>
+              {selected.approval ? null : (
+                <p className="mt-3 text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+                  {selected.context}
+                </p>
+              )}
               {selected.createdAt && (
                 <time
                   className="mt-1 text-[11px] text-[var(--color-text-faint)]"
@@ -490,9 +553,9 @@ export function NotificationsView({
                 </time>
               )}
               <p className="my-7 whitespace-pre-wrap break-words text-[14px] leading-[1.75] text-[var(--color-text)]">
-                {selected.body}
+                {selected.approval ? approvalDetailParts(selected.body).what || selected.body : selected.body}
               </p>
-              {selected.attention && (
+              {selected.attention && !selected.approval && (
                 <p className="mb-5 border-l-2 border-[var(--color-border-strong)] pl-3 text-[12px] leading-relaxed text-[var(--color-text-muted)]">
                   Opening this does not resolve it. It stays here until you handle it.
                 </p>
@@ -518,10 +581,14 @@ export function NotificationsView({
                     </Button>
                   </div>
                 )}
+                {selected.approval ? (
+                  <ApprovalDecision approval={selected.approval} note={APPROVAL_COPY.note} className="mb-3" />
+                ) : null}
                 <div className="flex flex-wrap items-center gap-2">
                   {selected.action && (
                     <Button
                       className="h-11"
+                      variant={selected.approval ? 'ghost' : 'default'}
                       disabled={busy}
                       onClick={() =>
                         void perform(async () => {
@@ -639,10 +706,16 @@ function ConnectedNotifications({ onOpenActivity }: { onOpenActivity?: () => voi
   const mark = useMutation(api.albatrossNotifications.markNotification);
   const setPrimaryView = useClientStore((state) => state.setPrimaryView);
   const { onAction, checkinOpen, setCheckinOpen } = useNotificationActions();
+  const openRequest = useNeedsYouOpenRequest((state) => state.request);
+  const clearOpenRequest = useNeedsYouOpenRequest((state) => state.clear);
+  useEffect(() => {
+    if (openRequest) clearOpenRequest();
+  }, [openRequest, clearOpenRequest]);
   return (
     <>
       <NotificationsView
         {...data}
+        openRequest={openRequest}
         storageKey={userId ? `albatross.notifications.v1:${userId}` : undefined}
         onRead={async (item) => {
           await Promise.all(

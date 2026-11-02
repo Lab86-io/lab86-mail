@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { JSDOM } from 'jsdom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
@@ -15,6 +15,7 @@ import { needsYouExtras } from '../components/needs-you/useNeedsYou';
 import type { NotificationItem } from '../components/notifications/model';
 import { bellWords } from '../components/shell/NotificationCenter';
 import { SHORTCUTS } from '../components/shell/ShortcutsSheet';
+import { useApprovalDecisions } from '../lib/albatross/approval-decision';
 import type {
   ObligationAction,
   ObligationAlbatrossResponse,
@@ -24,6 +25,7 @@ import { UNDO_WINDOW_MS } from '../lib/obligations/contract';
 import {
   NEEDS_YOU_FIXTURE_NOW,
   NEEDS_YOU_FIXTURE_TIMEZONE,
+  needsYouApprovalFixture,
   needsYouFixture,
 } from '../lib/obligations/fixtures';
 import type { NeedsYouEntry } from '../lib/obligations/groups';
@@ -715,5 +717,152 @@ describe('the bell and the toast', () => {
       threadId: 'thread:with:colons',
     });
     expect(mailThreadOf({ sourceKey: 'slack:x' })).toBeNull();
+  });
+});
+
+describe('an approval on the page', () => {
+  useBrowserGlobals();
+  const approval = needsYouApprovalFixture(NOW) as unknown as NotificationItem;
+  const entry: NeedsYouEntry<NotificationItem> = { type: 'albatross', id: approval.id, item: approval };
+  const withApproval = (over: Partial<NeedsYouViewProps> = {}) =>
+    harness({ extras: [approval, ...extras], ...over }).props;
+  const rowOf = (renderer: ReactTestRenderer) =>
+    renderer.root.findAll(
+      (node) => node.type === 'li' && node.props['data-needs-you-row'] === approval.id,
+    )[0];
+  const textOf = (node: ReactTestInstance | string): string =>
+    typeof node === 'string' ? node : node.children.map(textOf).join('');
+  const buttonsOf = (node: ReactTestInstance) =>
+    node.findAllByType('button').map((button) => {
+      const { children } = button.props;
+      return typeof children === 'string' ? children : '';
+    });
+
+  afterEach(() => {
+    useApprovalDecisions.setState({ decisions: {}, call: useApprovalDecisions.getInitialState().call });
+  });
+
+  test('the row says what goes out and to whom, without addresses', () => {
+    const line = rowWords(entry, NOW, TZ, {
+      state: 'waiting',
+      canDecide: true,
+      word: 'Your turn',
+      tone: 'plain',
+      line: null,
+    });
+    expect(line.name).toBe('Send the invite: Q3 review kickoff');
+    expect(line.line).toBe('To Dana Reyes, Priya Shah. Starts Nov 3, 2026, 2:00 PM.');
+    expect(line.source).toBe('');
+    expect(line.due.text).toBe('Your turn');
+  });
+
+  test('Approve and Decline are on the row, Approve first, and the row keeps its state word', async () => {
+    const renderer = await mount(withApproval());
+    expect(buttonsOf(rowOf(renderer)).filter(Boolean)).toEqual(['Approve', 'Decline']);
+    renderer.unmount();
+  });
+
+  test('Approve from the row sends the tool call and the row says what happened', async () => {
+    const calls: string[] = [];
+    useApprovalDecisions.setState({
+      call: async (name: string) => {
+        calls.push(name);
+        return { ok: true, followUp: { action: 'continued' } };
+      },
+    });
+    const renderer = await mount(withApproval());
+    const pill = rowOf(renderer)
+      .findAllByType('button')
+      .find((button) => button.props.children === 'Approve') as ReactTestInstance;
+    let stopped = false;
+    await act(async () =>
+      pill.props.onClick({
+        stopPropagation() {
+          stopped = true;
+        },
+      }),
+    );
+    expect(stopped).toBe(true);
+    expect(calls).toEqual(['albatross_approve_action']);
+    expect(textOf(rowOf(renderer))).toContain(
+      'Approved. The invite went out. Albatross goes on with the next part.',
+    );
+    expect(buttonsOf(rowOf(renderer)).filter(Boolean)).toEqual([]);
+    renderer.unmount();
+  });
+
+  test('a claiming row offers no press on the row or in the detail', async () => {
+    const claiming = {
+      ...approval,
+      approval: { ...(approval.approval as NonNullable<typeof approval.approval>), status: 'claiming' },
+    };
+    const renderer = await mount(
+      withApproval({ extras: [claiming, ...extras], openRequest: { id: claiming.id, at: 1 } }),
+    );
+    expect(buttonsOf(rowOf(renderer)).filter(Boolean)).toEqual([]);
+    const detail = renderer.root.findByProps({ 'aria-label': 'Details' });
+    expect(detail.findAll((node) => node.type === 'button' && node.props.children === 'Approve')).toEqual([]);
+    renderer.unmount();
+  });
+
+  test('the detail shows who gets it before the control, and a failure shows the real message', async () => {
+    useApprovalDecisions.setState({
+      call: async () => {
+        throw new Error('This was already declined.');
+      },
+    });
+    const renderer = await mount(withApproval({ openRequest: { id: approval.id, at: 1 } }));
+    const detail = () => renderer.root.findByProps({ 'aria-label': 'Details' });
+    const words = () =>
+      detail()
+        .findAll((node) => node.type === 'p')
+        .map((node) => node.children.filter((child) => typeof child === 'string').join(''));
+    expect(words()[0]).toContain('Dana Reyes <dana@northwindlegal.example.com>');
+    expect(words()).toContain('It goes out only after you approve it.');
+    await act(async () => buttonNamed(renderer, 'Decline').props.onClick({ stopPropagation() {} }));
+    const alert = detail().findAll((node) => node.type === 'p' && node.props.role === 'alert');
+    expect(alert[0].children).toEqual(['This was already declined.']);
+    // The row can try again.
+    expect(buttonNamed(renderer, 'Approve')).toBeTruthy();
+    renderer.unmount();
+  });
+
+  test('Cmd+Enter in the detail is Approve, and the live queue dropping the row keeps its words', async () => {
+    const calls: string[] = [];
+    useApprovalDecisions.setState({
+      call: async (name: string) => {
+        calls.push(name);
+        return { ok: true, followUp: { action: 'none' } };
+      },
+    });
+    const props = withApproval({ openRequest: { id: approval.id, at: 1 } });
+    const renderer = await mount(props);
+    const detail = renderer.root.findByProps({ 'aria-label': 'Details' });
+    await act(async () => detail.props.onKeyDown(key('Enter', { metaKey: true })));
+    expect(calls).toEqual(['albatross_approve_action']);
+    // The server removes it: the page keeps the row and leaves the count alone.
+    await act(async () => {
+      renderer.update(<NeedsYouView {...props} extras={extras} />);
+    });
+    expect(rowOf(renderer)).toBeTruthy();
+    expect(textOf(rowOf(renderer))).toContain('Approved. The invite went out.');
+    // The count leaves the decided row out: the fixture's three items are in Now.
+    expect(textOf(renderer.root.findByType('header'))).toContain('3 now');
+    renderer.unmount();
+  });
+
+  test('the note leaves after the decision, and the quiet link stays', async () => {
+    useApprovalDecisions.setState({
+      decisions: { [approval.approval?.id as string]: { state: 'declined', at: Date.now() } },
+    });
+    const renderer = await mount(withApproval({ openRequest: { id: approval.id, at: 1 } }));
+    const detail = renderer.root.findByProps({ 'aria-label': 'Details' });
+    const words = detail
+      .findAll((node) => node.type === 'p')
+      .map((node) => node.children.filter((child) => typeof child === 'string').join(''));
+    expect(words).toContain('Declined. Nothing went out.');
+    expect(words).not.toContain('It goes out only after you approve it.');
+    expect(buttonNamed(renderer, 'Open the Albatross')).toBeTruthy();
+    renderer.unmount();
   });
 });

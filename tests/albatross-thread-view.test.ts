@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { PERSONAL_DETAIL_LABELS, type ThreadRunView } from '../lib/albatross/thread-contract';
 import {
   classQuestionForm,
+  goalRunFixtures,
+  threadApprovalRunFixture,
   threadDetailDoneStep,
   threadDetailFixture,
   threadDetailsFixture,
@@ -28,6 +30,7 @@ import {
   questionReceiptLine,
   RUN_STATE_COPY,
   runBlockAction,
+  runBlockDecidesHere,
   runBlockDismisses,
   runBlockMarksDone,
   runStateLine,
@@ -116,6 +119,36 @@ describe('the primary action of a run block', () => {
     expect(runUsesPage(runs.finalPage)).toBe(true);
     expect(runUsesPage(runs.needsAnswer)).toBe(false);
     expect(runUsesPage(runs.done)).toBe(false);
+  });
+});
+
+describe('an approval decided in place', () => {
+  const pending = threadApprovalRunFixture(NOW);
+
+  test('a handoff with a waiting approval decides here', () => {
+    expect(runBlockDecidesHere(pending)).toBe(true);
+    expect(runBlockDecidesHere(threadApprovalRunFixture(NOW, 'claiming'))).toBe(true);
+  });
+
+  test('a decided approval, or an older run with no approvals, keeps the older buttons', () => {
+    expect(runBlockDecidesHere(threadApprovalRunFixture(NOW, 'approved'))).toBe(false);
+    expect(runBlockDecidesHere({ ...pending, approvals: undefined })).toBe(false);
+    expect(runBlockDecidesHere({ ...pending, next: null })).toBe(false);
+    expect(runBlockDecidesHere({ ...pending, state: 'closed' })).toBe(false);
+    const older: ThreadRunView = { ...pending, approvals: undefined };
+    expect(runBlockAction(older)).toMatchObject({
+      kind: 'next',
+      behaviour: { kind: 'open_approval' },
+    });
+  });
+
+  test('a goal package with an approval opens the package, not a button that says Approve', () => {
+    const goal = goalRunFixtures(NOW).goalPackage;
+    const action = runBlockAction({
+      ...goal,
+      next: { ...(goal.next as NonNullable<typeof goal.next>), kind: 'approve', label: 'Approve it' },
+    });
+    expect(action).toMatchObject({ kind: 'package', label: RUN_STATE_COPY.openPackage });
   });
 });
 

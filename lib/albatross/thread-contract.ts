@@ -316,8 +316,20 @@ export function threadQuestionForm(question: ThreadQuestion): FormQuestion {
 }
 
 /** A run in the thread: the step-runner view (with parentRunId and next.doneLabel) plus its question. */
+/** One approval a run queued, as the thread shows it. Oldest first. */
+export interface RunApprovalView {
+  id: string;
+  kind: string;
+  status: string;
+  title: string;
+  /** What goes out and to whom. Older rows name no recipient. */
+  detail: string | null;
+}
+
 export type ThreadRunView = StepRunView & {
   question: ThreadQuestion | null;
+  /** The approvals this run queued. An older server sends none. */
+  approvals?: RunApprovalView[];
 };
 
 /** GET /api/albatross/work/[workId]/runs */

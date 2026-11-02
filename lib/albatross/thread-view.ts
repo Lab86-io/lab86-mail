@@ -219,7 +219,11 @@ function goalHandoffAction(
   if (next?.kind === 'continue') return { kind: 'resume', label: RUN_STATE_COPY.continueButton };
   if (next?.kind === 'allow_secure') return { kind: 'none' };
   if (tabs.length) {
-    const label = next ? (primaryLabel(next) ?? RUN_STATE_COPY.openPackage) : RUN_STATE_COPY.openPackage;
+    // "Approve it" opens no tab: the control in the block answers the approval.
+    const label =
+      next && next.kind !== 'approve'
+        ? (primaryLabel(next) ?? RUN_STATE_COPY.openPackage)
+        : RUN_STATE_COPY.openPackage;
     return { kind: 'package', label, activeKey: activeTabKey(tabs, next) };
   }
   const behaviour = next ? nextBehaviour(next) : null;
@@ -270,6 +274,18 @@ export function runBlockDismisses(
   if (run.next?.kind === 'allow_secure') return false;
   if (run.outcome === 'needs_answer') return !run.question || run.question.status === 'pending';
   return true;
+}
+
+/**
+ * True while this handoff's one job is the user's answer on its approvals. The
+ * thread then decides in place: the opening button, "Mark step done", "Done,
+ * continue", and "Dismiss" all go away. Decline closes the handoff instead.
+ */
+export function runBlockDecidesHere(
+  run: Pick<ThreadRunView, 'state' | 'approvals'> & { next?: { kind?: string } | null },
+): boolean {
+  if (run.state !== 'handed_off' || run.next?.kind !== 'approve') return false;
+  return (run.approvals ?? []).some((row) => row.status === 'pending' || row.status === 'claiming');
 }
 
 /** True when the run's page waits for the user on the shared browser. */

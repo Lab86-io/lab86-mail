@@ -36,6 +36,29 @@ export interface NeedsYouExtraFixture extends NeedsYouExtraLike {
     | { kind: 'checkin'; checkinId: string }
     | { kind: 'albatrosses' };
   actionLabel: string;
+  approval?: { id: string; status: string; kind?: string };
+}
+
+/** One invite that a run queued, for the preview's approval states. Invented people only. */
+export const NEEDS_YOU_FIXTURE_APPROVAL_ID = 'ap_kickoff';
+
+export function needsYouApprovalFixture(now = NEEDS_YOU_FIXTURE_NOW): NeedsYouExtraFixture {
+  return {
+    id: `approval:${NEEDS_YOU_FIXTURE_APPROVAL_ID}`,
+    kind: 'approval',
+    title: 'Send the invite: Q3 review kickoff',
+    body: 'To Dana Reyes <dana@northwindlegal.example.com>, Priya Shah <priya@bramble-press.example.com>. Starts Nov 3, 2026, 2:00 PM. From the goal "Q3 review deck".',
+    context: 'Waiting for your decision',
+    source: 'Approval',
+    createdAt: now - 8 * 60_000,
+    attention: true,
+    unread: false,
+    notificationIds: [],
+    unreadNotificationIds: [],
+    action: { kind: 'work', workId: NEEDS_YOU_FIXTURE_WORK_ID },
+    actionLabel: 'Open the Albatross',
+    approval: { id: NEEDS_YOU_FIXTURE_APPROVAL_ID, status: 'pending', kind: 'calendar_invite' },
+  };
 }
 
 export interface NeedsYouFixture {

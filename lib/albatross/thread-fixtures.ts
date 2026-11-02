@@ -260,6 +260,52 @@ function log(now: number, texts: string[], endAt = now - MINUTE) {
   return texts.map((text, index) => ({ at: endAt - (texts.length - index) * 25_000, text }));
 }
 
+/** The approval of the invite fixture. Invented people only. */
+export const THREAD_FIXTURE_APPROVAL_ID = 'ap_course_invite';
+
+/** A run that queued a calendar invite and handed off `approve`, with its approval in one state. */
+export function threadApprovalRunFixture(
+  now = Date.now(),
+  status: 'pending' | 'claiming' | 'approved' | 'rejected' = 'pending',
+): ThreadRunView {
+  const decided = status === 'approved' || status === 'rejected';
+  return base(now, {
+    id: 'run_invite',
+    stepKey: 'step-3',
+    stepIdentity: 'step-3',
+    stepTitle: 'Invite Sam to the course review',
+    state: decided ? 'closed' : 'handed_off',
+    outcome: 'ready_for_you',
+    summary: 'Found a free hour for both of you and prepared the invite.',
+    log: log(now, ['Checked your calendar', 'Prepared the invite for your approval.']),
+    next: {
+      kind: 'approve',
+      label: 'Approve the invite',
+      detail: 'Approve it and Sam gets the invite.',
+      blanks: [],
+      doneLabel: null,
+      allow: null,
+      saveSignIn: null,
+      allowAnswer: null,
+      target: { kind: 'approval', id: THREAD_FIXTURE_APPROVAL_ID },
+    },
+    artifacts: [
+      { kind: 'approval', id: THREAD_FIXTURE_APPROVAL_ID, title: 'Send the invite: Course review' },
+    ],
+    finishedAt: now - MINUTE,
+    approvals: [
+      {
+        id: THREAD_FIXTURE_APPROVAL_ID,
+        kind: 'calendar_invite',
+        status,
+        title: 'Send the invite: Course review',
+        detail:
+          'To Sam Rivera <sam@firstaidclass.example.com>, Lee Park <lee@firstaidclass.example.com>. Starts Oct 21, 2026, 10:00 AM. From the step "Invite Sam to the course review".',
+      },
+    ],
+  });
+}
+
 export type ThreadRunFixtureName =
   | 'queued'
   | 'running'

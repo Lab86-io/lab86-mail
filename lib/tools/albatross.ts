@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { approvalRecipientLine } from '@/lib/ai/approval';
 import {
   newOperationBatchId,
   recordOperation,
@@ -7,6 +8,7 @@ import {
   undoOperation,
 } from '@/lib/ai/operations';
 import { ToolFailedBeforeWrite, ToolRetrySafe } from '@/lib/ai/tool-errors';
+import { type SettleRunInput, settleRunAfterDecision } from '@/lib/albatross/approval-run';
 import { captureFromChat } from '@/lib/albatross/capture-from-chat';
 import { HORIZON_KINDS } from '@/lib/albatross/horizon';
 import { generateIntentPlan } from '@/lib/albatross/intent-plan';
@@ -28,7 +30,14 @@ import { truncateText } from '@/lib/shared/text';
 import { calendarCreateEvent, calendarRsvpEvent } from './calendar';
 import { saveDraftTool, sendMessage } from './compose';
 import { documentCreateFromInstructions } from './documents';
-import { type AnyTool, defineTool, invokeTool, type ToolContext } from './registry';
+import {
+  type AnyTool,
+  defineTool,
+  invokeTool,
+  repairToolArgs,
+  type ToolContext,
+  ToolValidationError,
+} from './registry';
 import { tasksCreateCard } from './tasks';
 
 const defaultDeps = {
@@ -43,6 +52,8 @@ const defaultDeps = {
   proposeWorkSplit,
   commitWorkSplit,
   captureFromChat,
+  // An import cycle runs through the step runner, so this resolves at call time.
+  settleRunAfterDecision: (input: SettleRunInput) => settleRunAfterDecision(input),
   tools: {
     tasksCreateCard,
     calendarCreateEvent,
@@ -977,7 +988,37 @@ function approvalToolFor(name: string): AnyTool {
   if (name === 'send_message') return deps.tools.sendMessage;
   if (name === 'calendar_create_event') return deps.tools.calendarCreateEvent;
   if (name === 'calendar_rsvp_event') return deps.tools.calendarRsvpEvent;
-  throw new Error(`Approval tool not allowed: ${name}`);
+  throw new ToolValidationError('Albatross cannot run this action. Decline it to close it.');
+}
+
+/** The plain reason a row takes no decision now. The tool route shows this text to the user. */
+function notWaitingMessage(status: string): string {
+  switch (status) {
+    case 'claiming':
+      return 'Albatross already sends this. Wait a moment.';
+    case 'approved':
+      return 'This was already approved.';
+    case 'rejected':
+      return 'This was already declined.';
+    default:
+      return `This approval is ${status}, so it takes no decision now.`;
+  }
+}
+
+async function waitingApproval(userId: string, approvalId: string) {
+  const approval = await deps.convexQuery<any | null>(albatrossApi().getApproval, { userId, approvalId });
+  if (!approval) throw new ToolValidationError('This approval no longer exists.');
+  if (approval.status !== 'pending') throw new ToolValidationError(notWaitingMessage(approval.status));
+  return approval;
+}
+
+const APPROVAL_TOOL_NAMES = new Set(['send_message', 'calendar_create_event', 'calendar_rsvp_event']);
+
+/** What goes out and to whom for a plan's approval, or nothing for a tool that runs no approval. */
+function planApprovalRecipients(toolName: string | undefined, toolArgs: unknown, timeZone?: string): string {
+  if (!toolName || !APPROVAL_TOOL_NAMES.has(toolName)) return '';
+  const repaired = repairToolArgs(approvalToolFor(toolName).input, toolArgs);
+  return approvalRecipientLine(toolName, repaired, { timeZone });
 }
 
 export const albatrossSplitWork = defineTool({
@@ -1276,7 +1317,9 @@ export const albatrossApplyIntentPlan = defineTool({
         userId,
         kind: approvalKind(step),
         title: step.title,
-        detail: args.plan.outcome,
+        detail: [planApprovalRecipients(step.toolName, step.toolArgs, ctx.userTimezone), args.plan.outcome]
+          .filter(Boolean)
+          .join(' '),
         areaId: step.areaId || args.areaId,
         projectId,
         intentId: args.intentId,
@@ -1397,15 +1440,15 @@ export const albatrossApproveAction = defineTool({
     editedArgs: z.record(z.string(), z.any()).optional(),
     operationBatchId: z.string().optional(),
   }),
-  output: z.object({ ok: z.boolean(), result: z.any().optional(), approval: z.any().optional() }),
+  output: z.object({
+    ok: z.boolean(),
+    result: z.any().optional(),
+    approval: z.any().optional(),
+    followUp: z.any().optional(),
+  }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const approval = await deps.convexQuery<any | null>(albatrossApi().getApproval, {
-      userId,
-      approvalId: args.approvalId,
-    });
-    if (!approval) throw new Error('Approval not found.');
-    if (approval.status !== 'pending') throw new Error(`Approval is already ${approval.status}.`);
+    const approval = await waitingApproval(userId, args.approvalId);
     const tool = approvalToolFor(approval.toolName);
     await deps.convexMutation(albatrossApi().claimApproval, {
       userId,
@@ -1424,12 +1467,17 @@ export const albatrossApproveAction = defineTool({
             deps.newOperationBatchId(),
         ),
       );
+      if (result?.ok === false) {
+        throw new ToolValidationError(
+          String(result.error || result.message || 'The action did not go out. Try again.'),
+        );
+      }
     } catch (error) {
+      // The row waits again, so the user can try again or decline it.
       await deps
-        .convexMutation(albatrossApi().decideApproval, {
+        .convexMutation(albatrossApi().releaseApproval, {
           userId,
           approvalId: args.approvalId,
-          status: 'rejected',
           decisionNote: `Approval execution failed: ${error instanceof Error ? error.message : String(error)}`,
         })
         .catch(() => {});
@@ -1443,7 +1491,14 @@ export const albatrossApproveAction = defineTool({
       result,
       ...(result?.operationId ? { undoExpiresAt: Date.now() + 10_000 } : {}),
     });
-    return { ok: true, result, approval: decided.approval };
+    const followUp = await deps.settleRunAfterDecision({
+      userId,
+      userEmail: ctx.userEmail,
+      userName: ctx.userName,
+      timezone: ctx.userTimezone,
+      approval,
+    });
+    return { ok: true, result, approval: decided.approval, followUp };
   },
 });
 
@@ -1454,16 +1509,23 @@ export const albatrossRejectAction = defineTool({
   risk: 'write_self',
   mutating: true,
   input: z.object({ approvalId: z.string(), reason: z.string().optional() }),
-  output: z.object({ ok: z.boolean() }),
+  output: z.object({ ok: z.boolean(), followUp: z.any().optional() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const approval = await waitingApproval(userId, args.approvalId);
     await deps.convexMutation(albatrossApi().decideApproval, {
       userId,
       approvalId: args.approvalId,
       status: 'rejected',
       decisionNote: args.reason || 'Rejected from Albatross approval queue.',
+      onlyIfPending: true,
     });
-    return { ok: true };
+    // A decline in a mixed run: the continuation note must not name this item as sent.
+    const followUp = await deps.settleRunAfterDecision({
+      userId,
+      approval: { ...approval, title: undefined },
+    });
+    return { ok: true, followUp };
   },
 });
 
