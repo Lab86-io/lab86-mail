@@ -846,6 +846,21 @@ describe('the browser path of Settings', () => {
     await abandonBrowserPush(browser().env);
   });
 
+  test('a server that does not answer cannot hold back the local removal', async () => {
+    let gone = 0;
+    const current = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser',
+      unsubscribe: async () => {
+        gone += 1;
+        return true;
+      },
+    };
+    const { env } = browser({ fetch: (() => new Promise(() => undefined)) as any }, current);
+    void abandonBrowserPush(env);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(gone).toBe(1);
+  });
+
   test('a failure keeps a subscription that this browser already had', async () => {
     let gone = 0;
     const had = {

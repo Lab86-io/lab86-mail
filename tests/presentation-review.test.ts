@@ -547,6 +547,8 @@ describe('every-slide presentation review', () => {
       expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2 million')).toBe(true);
       expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2 M')).toBe(true);
       expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2 billion')).toBe(false);
+      expect(preservesNumericClaims('3.2k users', '3.2 thousand users')).toBe(true);
+      expect(preservesNumericClaims('3.2 thousand users', '3.2 trillion users')).toBe(false);
     });
 
     test('a fix may use an item figure, and a chart value with its unit', async () => {

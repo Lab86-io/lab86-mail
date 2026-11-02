@@ -398,7 +398,7 @@ describe('session end watcher', () => {
     expect(calls).toEqual([]);
   });
 
-  test('cleanup clears, deletes databases, clears again, then reloads', async () => {
+  test('cleanup clears, deletes databases, removes the push subscription, clears again, then reloads', async () => {
     const calls: string[] = [];
     await clearStorageAfterSessionEnd({
       clearStorage: () => calls.push('clear'),
@@ -406,8 +406,46 @@ describe('session end watcher', () => {
         calls.push('delete');
       },
       reload: () => calls.push('reload'),
+      revokeBrowserPush: async () => {
+        calls.push('revoke');
+      },
     });
-    expect(calls).toEqual(['clear', 'delete', 'clear', 'reload']);
+    expect(calls).toEqual(['clear', 'delete', 'revoke', 'clear', 'reload']);
+  });
+
+  test('a push cleanup that never ends holds neither the sign-out nor the reload', async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: () => void) =>
+      realSetTimeout(handler, 0)) as unknown as typeof setTimeout;
+    try {
+      const never = () => new Promise(() => undefined);
+      let reloaded = false;
+      await clearStorageAfterSessionEnd({
+        clearStorage: () => undefined,
+        deleteDatabases: async () => undefined,
+        reload: () => {
+          reloaded = true;
+        },
+        revokeBrowserPush: never,
+      });
+      expect(reloaded).toBe(true);
+      let signedOut = false;
+      await signOutAndClearStorage(
+        async () => {
+          signedOut = true;
+        },
+        {},
+        {
+          clearStorage: () => undefined,
+          deleteDatabases: async () => undefined,
+          navigate: () => undefined,
+          revokeBrowserPush: never,
+        },
+      );
+      expect(signedOut).toBe(true);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
   });
 
   test('cleanup uses window storage and reload by default', async () => {

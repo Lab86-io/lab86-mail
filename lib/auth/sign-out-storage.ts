@@ -173,6 +173,13 @@ export function resetAppSignOutForTest() {
   appSignOutInProgress = false;
 }
 
+async function revokeWithinLimit(revoke: () => Promise<unknown>) {
+  await Promise.race([
+    revoke().catch(() => undefined),
+    new Promise((resolve) => setTimeout(resolve, PUSH_REVOKE_WAIT_MS)),
+  ]);
+}
+
 /**
  * Clears app storage, then signs out with Clerk.
  *
@@ -194,10 +201,7 @@ export async function signOutAndClearStorage(
   await deleteDatabases().catch(() => undefined);
   // The server accepts this only from the owner, so it runs before the session ends.
   // Else the next account in this browser gets the pushes of this one.
-  await Promise.race([
-    revokeBrowserPush().catch(() => undefined),
-    new Promise((resolve) => setTimeout(resolve, PUSH_REVOKE_WAIT_MS)),
-  ]);
+  await revokeWithinLimit(revokeBrowserPush);
   try {
     await signOut(async () => {
       // The session is gone. Remove the keys that a component wrote in the meantime.
@@ -237,6 +241,7 @@ export interface SessionEndDeps {
   deleteDatabases?: () => Promise<unknown>;
   reload?: () => void;
   appSignOutInProgress?: () => boolean;
+  revokeBrowserPush?: () => Promise<unknown>;
 }
 
 /** Clears app storage after a session ends, then reloads so no in-memory state writes it back. */
@@ -244,10 +249,14 @@ export async function clearStorageAfterSessionEnd(deps: SessionEndDeps = {}): Pr
   const clearStorage = deps.clearStorage ?? (() => clearAppStorage());
   const deleteDatabases = deps.deleteDatabases ?? (() => deleteAppDatabases());
   const reload = deps.reload ?? reloadPage;
+  const revokeBrowserPush = deps.revokeBrowserPush ?? (() => abandonBrowserPush());
   // An app-started sign-out clears storage and loads its own page.
   if ((deps.appSignOutInProgress ?? isAppSignOutInProgress)()) return;
   clearStorage();
   await deleteDatabases().catch(() => undefined);
+  // The session can be gone, so the server can refuse. The local removal still ends the
+  // pushes, and the next send drops the row on the server.
+  await revokeWithinLimit(revokeBrowserPush);
   clearStorage();
   reload();
 }

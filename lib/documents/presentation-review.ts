@@ -140,7 +140,9 @@ export function preservesNumericClaims(original: string, replacement: string) {
     (
       text
         .replace(/\u2212/g, '-')
-        .replace(/(\d)\s*(thousand|million|billion|trillion)\b/gi, (_, digit, word) => `${digit}${word[0]}`)
+        .replace(/(\d)\s*(thousand|million|billion|trillion)\b/gi, (_, digit, word: string) => {
+          return `${digit}${word.toLowerCase() === 'thousand' ? 'k' : word[0]}`;
+        })
         .replace(/(\d)\s+([kmbt])(?![a-z])/gi, '$1$2')
         .match(/(?<![\w.])-?\d[\d,.%]*(?:[kmbt](?![a-z]))?|\d[\d,.%]*(?:[kmbt](?![a-z]))?/gi) || []
     ).map((number) => number.replace(/[,.]+$/, '').toLowerCase());

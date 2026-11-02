@@ -85,18 +85,22 @@ export async function enableBrowserPush(env: BrowserPushEnvironment = browserPus
   return { created };
 }
 
-/** Removes this browser after a failed save. Each part runs even when the other fails. */
+/**
+ * Removes this browser after a failed save or at the end of a session. Both parts start
+ * together, so a slow server cannot hold back the local removal. After that removal the
+ * push service answers 404 or 410, and the next send drops the row on the server.
+ */
 export async function abandonBrowserPush(env: BrowserPushEnvironment = browserPushEnvironment()) {
   const subscription = await currentSubscription(env);
   if (!subscription) return;
-  await env
-    .fetch('/api/notifications/push', {
+  await Promise.allSettled([
+    env.fetch('/api/notifications/push', {
       method: 'DELETE',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ endpoint: subscription.endpoint }),
-    })
-    .catch(() => undefined);
-  await subscription.unsubscribe().catch(() => undefined);
+    }),
+    subscription.unsubscribe(),
+  ]);
 }
 
 /** Removes this browser. The server stops first, so after a failure the switch shows the true state. */
