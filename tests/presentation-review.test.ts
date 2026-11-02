@@ -580,6 +580,38 @@ describe('every-slide presentation review', () => {
       expect((await fixed('Share reached 58%')).brief.slides[0].title).toBe('Share reached 58%');
     });
 
+    test('only a headline fix may use the numbers of the slide data', async () => {
+      const brief = chartBrief();
+      const slide = {
+        ...brief.slides[0],
+        body: 'Steady growth this year',
+        chart: { ...(brief.slides[0] as any).chart, unit: '%', series: [{ name: 'Share', values: [58] }] },
+      } as (typeof brief.slides)[number];
+      const generate = (async () => ({
+        object: {
+          reviews: [
+            {
+              slideId: 'slide-1',
+              purpose: 'p',
+              contentAssessment: 'c',
+              layoutAssessment: 'l',
+              fixes: [
+                { field: 'body', text: 'Share reached 58% this year' },
+                { field: 'title', text: 'Share reached 58%' },
+              ],
+            },
+          ],
+        },
+      })) as any;
+      const { brief: reviewed } = await reviewPresentation(
+        { ...brief, slides: [slide] },
+        { userId: 'u', instruction: 'Review' },
+        generate,
+      );
+      expect(reviewed.slides[0].title).toBe('Share reached 58%');
+      expect(reviewed.slides[0].body).toBe('Steady growth this year');
+    });
+
     test('a fix with a number from nowhere is refused', async () => {
       const { brief } = await reviewWith('Unit sales fell from 63 to 49');
       expect(brief.slides[0].title).toBe('Unit sales have risen for two straight quarters');

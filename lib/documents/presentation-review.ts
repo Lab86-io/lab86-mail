@@ -257,8 +257,9 @@ export async function reviewPresentation<T extends Brief>(
           if (!target || fix.text.length > target.limit) continue;
           // Reject invented or changed numeric claims. Originals are retained in
           // notes even for non-numeric edits so source detail remains recoverable.
-          // A corrected headline may use the numbers of the slide's own data.
-          if (!preservesNumericClaims(`${target.text} ${slideDataText(slide)}`, fix.text)) continue;
+          // Only a corrected headline may use the numbers of the slide's own data.
+          const allowed = fix.field === 'title' ? `${target.text} ${slideDataText(slide)}` : target.text;
+          if (!preservesNumericClaims(allowed, fix.text)) continue;
           replaceSlideCopy(slide, fix.field, fix.text);
         }
       }
