@@ -15,9 +15,11 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useNeedsYouSnapshot } from '@/components/needs-you/data';
 import {
   ANNOUNCE_EVERY_MS,
   announcementText,
+  applyObligationsToThreadRows,
   countThreads,
   holdThreadOrder,
   RAIL_EMPTY_COPY,
@@ -35,6 +37,7 @@ import {
   type ThreadFilter,
   type ThreadRow as ThreadRowData,
 } from '@/lib/albatross/threads';
+import { obligationsByWork } from '@/lib/obligations/surfaces';
 import { cn } from '@/lib/utils';
 import { ThreadRow } from './ThreadRow';
 
@@ -75,7 +78,7 @@ export const THREAD_RAIL_COPY = {
 } as const;
 
 export function ThreadRail({
-  rows,
+  rows: rawRows,
   laterCount = 0,
   openWorkId,
   filter,
@@ -99,6 +102,13 @@ export function ThreadRail({
   const listRef = useRef<HTMLDivElement>(null);
   const [held, setHeld] = useState(false);
   const shownRef = useRef<ThreadRowData[]>([]);
+  // Needs you items (phase 3, open item 3): a thread with an open item joins
+  // Needs you with "Your turn" and the item title. One shared snapshot read.
+  const snapshot = useNeedsYouSnapshot();
+  const rows = useMemo(() => {
+    if (!rawRows || !snapshot?.enabled) return rawRows;
+    return applyObligationsToThreadRows(rawRows, obligationsByWork(snapshot.items, nowMs));
+  }, [rawRows, snapshot, nowMs]);
   const counts = useMemo(() => countThreads(rows ?? []), [rows]);
 
   const visible = useMemo(() => {

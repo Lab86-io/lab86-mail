@@ -37,7 +37,7 @@ import {
 } from '@/components/needs-you/data';
 import { sonnerNeedsYouNotifier } from '@/components/needs-you/NeedsYouView';
 import { SecureItemSheet, type SecureSheetRequest } from '@/components/settings/SecureItemSheet';
-import { AssistantChat } from '@/components/shell/AIBar';
+import { AssistantChat, type ThreadChatExtra } from '@/components/shell/AIBar';
 import { type AllowSendFn, useAllowSend } from '@/components/thread/use-allow-send';
 import { Button } from '@/components/ui/button';
 import {
@@ -109,7 +109,7 @@ import {
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import type { ObligationAction, ObligationView } from '@/lib/obligations/contract';
-import { withObligationOverrides } from '@/lib/obligations/groups';
+import { laterOptions, threadObligations, withObligationOverrides } from '@/lib/obligations/groups';
 import { actionToastTitle } from '@/lib/obligations/labels';
 import type { SecureItemView } from '@/lib/secure/contract';
 import { cn } from '@/lib/utils';
@@ -133,7 +133,7 @@ import { PagePane, type PageSession } from './thread/PagePane';
 import { PlanIntro, PlanLine, PlanOutro } from './thread/PlanIntro';
 import { RunBlock } from './thread/RunBlock';
 import { ThreadJumpPill } from './thread/ThreadJumpPill';
-import { ThreadObligations } from './thread/ThreadObligations';
+import { ThreadObligationCard } from './thread/ThreadObligations';
 import { useSavedFileLoader } from './thread/use-saved-file';
 import { useWorkShape, type WorkShapeState } from './thread/use-work-shape';
 import { WorkQuestions } from './thread/WorkQuestions';
@@ -452,6 +452,29 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
   const documentDetail = documentHandoffDetail(documentRun);
   const documentStepNumber = documentRun ? stepNumberFor(steps, documentRun.stepKey) : null;
   const [documentChatOpen, setDocumentChatOpen] = useState(false);
+  // Needs you items of this Albatross as cards between the messages, each at
+  // its own time (docs/needs-you.md, screen 5; open item 2 of the integration notes).
+  const obligationExtras: ThreadChatExtra[] =
+    model.obligations?.length && handlers.onObligationAction && handlers.onObligationHandle
+      ? threadObligations(model.obligations, model.nowMs).map((obligation) => ({
+          id: `obligation:${obligation.id}`,
+          at: obligation.createdAt,
+          node: (
+            <ThreadObligationCard
+              obligation={obligation}
+              now={model.nowMs}
+              timeZone={model.timeZone}
+              busy={model.obligationBusy?.id === obligation.id}
+              error={
+                model.obligationBusy?.error?.id === obligation.id ? model.obligationBusy.error.text : null
+              }
+              laterOptions={laterOptions(model.nowMs, model.timeZone ?? 'UTC')}
+              onAction={(action) => handlers.onObligationAction?.(obligation, action)}
+              onHandle={() => handlers.onObligationHandle?.(obligation)}
+            />
+          ),
+        }))
+      : [];
   const intro = (
     <>
       {model.detail.execution.scheduledEndAt ? (
@@ -520,19 +543,10 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
             renderRun,
             // The "Your part" card names the step; the plan stays in Details.
             intro: documentOpen ? undefined : intro,
+            // Needs you items sit between the messages by time (open item 2).
+            extras: obligationExtras,
             outro: (
               <>
-                {model.obligations?.length && handlers.onObligationAction && handlers.onObligationHandle ? (
-                  <ThreadObligations
-                    items={model.obligations}
-                    now={model.nowMs}
-                    timeZone={model.timeZone}
-                    busyId={model.obligationBusy?.id ?? null}
-                    error={model.obligationBusy?.error ?? null}
-                    onAction={handlers.onObligationAction}
-                    onHandle={handlers.onObligationHandle}
-                  />
-                ) : null}
                 {handlers.onAnswerWorkQuestion ? (
                   <WorkQuestions
                     questions={workQuestions}

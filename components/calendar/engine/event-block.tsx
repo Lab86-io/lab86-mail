@@ -14,6 +14,7 @@ import {
 } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import { ResizableEvent } from '@/components/calendar/engine/resizable-event';
+import { EventNeedsYouMark } from '@/components/needs-you/CalendarNeedsYou';
 import { Avatar } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 
@@ -151,6 +152,7 @@ export function EventBlock({ event, className }: IProps) {
                 )}
 
                 <p className="truncate font-semibold">{event.title}</p>
+                <EventNeedsYouMark eventId={event.id} />
               </div>
 
               {showTime && (

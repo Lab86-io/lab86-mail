@@ -5,6 +5,8 @@ import { ArrowUpRight, CornerDownLeft, Loader2, X } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { requestNeedsYouItem } from '@/components/needs-you/data';
+import { useNeedsYou } from '@/components/needs-you/useNeedsYou';
 import { SearchResultIcon } from '@/components/palette/SearchResultIcon';
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -12,6 +14,7 @@ import { callTool, readSearchSource } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { DEFAULT_MAIL_QUERY, QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
 import { isGlobalMailSearchShortcut } from '@/lib/mail/search/focus-contract';
+import { needsYouPages, searchNeedsYouItems } from '@/lib/obligations/surfaces';
 import {
   isIndexedFile,
   matchesSearch,
@@ -191,7 +194,18 @@ function SearchContent({
     staleTime: 60_000,
     retry: false,
   });
-  const pages = scope === 'all' ? searchPages(trimmed) : [];
+  // Needs you (docs/research/needs-you-web-2-design-2026-11-02.md): the page
+  // under its own name, and each open item by title. Counts only: no
+  // current-move read.
+  const needsYou = useNeedsYou({ execution: false });
+  const pages = scope === 'all' ? needsYouPages(searchPages(trimmed), needsYou.enabled) : [];
+  const needsYouHits =
+    needsYou.enabled && scope === 'all' && trimmed.length >= 2
+      ? searchNeedsYouItems(
+          needsYou.groups.flatMap((group) => group.entries),
+          trimmed,
+        )
+      : [];
   const indexed = useQuery({
     queryKey: ['global-search', 'indexed-content', query],
     queryFn: ({ signal }) => searchIndexedContent(query, false, signal),
@@ -445,6 +459,42 @@ function SearchContent({
       </fieldset>
       <CommandList className="max-h-[min(430px,55dvh)] min-h-[160px] p-2">
         {pages.length ? <CommandGroup heading="Jump to">{pages.map(row)}</CommandGroup> : null}
+        {needsYouHits.length ? (
+          <CommandGroup heading="Needs you">
+            {needsYouHits.map((hit) => (
+              <CommandItem
+                key={hit.id}
+                value={hit.id}
+                data-needs-you-hit={hit.obligationId}
+                onSelect={() =>
+                  onNavigate(() => {
+                    requestNeedsYouItem(hit.obligationId);
+                    navigateSearchTarget(
+                      { kind: 'page', view: 'notifications' },
+                      useClientStore.getState(),
+                      go,
+                    );
+                  })
+                }
+                className="group mx-1 gap-3 rounded-lg px-3 py-2.5 data-[selected=true]:bg-[var(--color-accent-soft)] data-[selected=true]:text-[var(--color-text)]"
+              >
+                <div aria-hidden="true" className="grid size-8 shrink-0 place-items-center">
+                  <SearchResultIcon
+                    target={{ kind: 'page', view: 'notifications' }}
+                    active={selected === hit.id}
+                  />
+                </div>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-medium">{hit.title}</span>
+                  <span className="block truncate text-[11px] text-[var(--color-text-muted)]">
+                    {hit.detail}
+                  </span>
+                </span>
+                <CornerDownLeft className="size-3.5 opacity-0 group-data-[selected=true]:opacity-60" />
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        ) : null}
         {trimmed.length >= 2 ? (
           <>
             {scope === 'all' || scope === 'mail'

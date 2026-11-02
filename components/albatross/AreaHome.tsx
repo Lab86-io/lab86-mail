@@ -31,6 +31,7 @@ import { toast } from 'sonner';
 import { groupWork, type WorkListItem } from '@/components/albatross/AlbatrossesSurface';
 import { AlbatrossList, AlbatrossRow } from '@/components/albatross/primitives';
 import { InboxThreadRow, type ThreadRow } from '@/components/inbox/Inbox';
+import { useNeedsYouSnapshot } from '@/components/needs-you/data';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { OptionList } from '@/components/tool-ui/option-list';
 import { ProgressTracker } from '@/components/tool-ui/progress-tracker';
@@ -90,6 +91,7 @@ import { isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import { WORK_STATE_HINT, WORK_STATE_LABEL } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { areaChooserSentence, obligationNeedsYouRows, obligationsByWork } from '@/lib/obligations/surfaces';
 import { withFrameNonce } from '@/lib/security/frame-nonce';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import {
@@ -455,7 +457,7 @@ function AreaChooser() {
           <div className="border-b border-[var(--color-border)]/55 px-4 py-3">
             <p className="max-w-3xl text-[13px] leading-relaxed text-[var(--color-text-muted)]">
               {totals && totals.needsYou > 0
-                ? `${totals.needsYou} ${totals.needsYou === 1 ? 'item needs' : 'items need'} you across your areas.`
+                ? areaChooserSentence(totals.needsYou)
                 : totals && totals.plans + totals.events + totals.tasks > 0
                   ? `${totals.plans} active ${totals.plans === 1 ? 'plan' : 'plans'} · ${totals.events} ${totals.events === 1 ? 'event' : 'events'} · ${totals.tasks} ${totals.tasks === 1 ? 'task' : 'tasks'} linked to areas.`
                   : 'Your areas are quiet right now.'}
@@ -563,6 +565,8 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     api.albatrossRoutines.areaPulse,
     isAuthenticated ? { areaId: areaId as Id<'areas'> } : 'skip',
   ) as AreaPulseData | undefined;
+  // Needs you ledger items of this area's Albatrosses: the one shared snapshot read.
+  const needsYouSnapshot = useNeedsYouSnapshot();
 
   const loadedHome = result.status === 'success' ? (result.data as AreaHomeData) : null;
   const refreshArtifact = useCallback(async () => {
@@ -801,8 +805,17 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   // plans awaiting answers, overdue tasks, and suggested context to confirm.
   // A Work item and its plan share an intent id, so the same intent can arrive
   // from both sources — merge by identity, keeping the actionable work_input row.
+  // The ledger items that belong to an Albatross of this area join the same
+  // section, so "Needs you" means one thing here and on the page.
+  const ledgerRows = needsYouSnapshot?.enabled
+    ? obligationNeedsYouRows(
+        obligationsByWork(needsYouSnapshot.items, now),
+        (workRows ?? []).map((row) => String(row._id)),
+        new Map((workRows ?? []).map((row) => [String(row._id), String(row.title || '')])),
+      )
+    : [];
   const needsYou = mergeNeedsYouRows(
-    workNeedsYouRows(workRows),
+    [...workNeedsYouRows(workRows), ...ledgerRows],
     areaNeedsYouRows({ plans: home.plans, tasks: home.tasks, candidateFacts: home.facts.candidate }, now),
   );
   const needsYouBounded = home.counts.needsYouBounded || (workRows?.length ?? 0) >= 100;
@@ -1956,7 +1969,12 @@ function NeedsYouSection({ rows, bounded }: { rows: NeedsYouRow[]; bounded: bool
           <span
             className="size-1.5 shrink-0 rounded-full"
             style={{
-              backgroundColor: row.kind === 'overdue_task' ? 'var(--color-danger)' : 'var(--color-warning)',
+              backgroundColor:
+                row.kind === 'overdue_task'
+                  ? 'var(--color-danger)'
+                  : row.kind === 'obligation'
+                    ? 'var(--color-accent)'
+                    : 'var(--color-warning)',
             }}
             aria-hidden
           />
@@ -1969,6 +1987,10 @@ function NeedsYouSection({ rows, bounded }: { rows: NeedsYouRow[]; bounded: bool
           {row.kind === 'work_input' && row.workId ? (
             <Button type="button" variant="outline" size="xs" onClick={() => setSelectedWorkId(row.workId!)}>
               Answer
+            </Button>
+          ) : row.kind === 'obligation' && row.workId ? (
+            <Button type="button" variant="outline" size="xs" onClick={() => setSelectedWorkId(row.workId!)}>
+              Open thread
             </Button>
           ) : row.kind === 'plan_answers' && row.intentId ? (
             <Button

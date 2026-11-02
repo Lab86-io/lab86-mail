@@ -19,6 +19,7 @@ import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { extractConferencingUrl, formatTime } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import { NarrativeMeetingPrep } from '@/components/narrative/NarrativeMeetingPrep';
+import { EventNeedsYou } from '@/components/needs-you/CalendarNeedsYou';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -106,6 +107,8 @@ export function EventDetailsDialog({ event, children, open: controlledOpen, onOp
         </DialogHeader>
         <ScrollArea className="max-h-[70vh]">
           <div className="space-y-4 pr-3">
+            {/* Needs you: the invitation or the preparation this event waits for. */}
+            <EventNeedsYou eventId={event.id} />
             {open && event.accountId && event.calendarId && !event.pending && (
               <NarrativeMeetingPrep
                 key={JSON.stringify([
