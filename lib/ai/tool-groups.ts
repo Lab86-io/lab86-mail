@@ -1,21 +1,61 @@
 // Per-step tool selection for the chat agent.
 //
-// The agent defines ~175 tools, but a model step should carry far fewer:
-// OpenAI's direct Chat Completions API rejects more than 128 tool
+// The agent defines more than 200 tools, but a model step should carry far
+// fewer: OpenAI's direct Chat Completions API rejects more than 128 tool
 // definitions outright, and every definition is prefill the provider bills
 // and reads on every step. A CORE set is always active. The rest sits in
-// named groups that turn on for the chat scope (a Work or Area context) or
-// when the model asks for them through the `enable_tools` tool. The active
-// set never exceeds MAX_ACTIVE_TOOLS. Scope groups always stay; when a
-// requested group does not fit, the least recently requested group is
-// dropped first, and enable_tools reports what it dropped.
+// named groups that turn on for the chat scope (a Work or Area context), from
+// the words of the request, or when the model asks for them through the
+// `enable_tools` tool. The active set never exceeds MAX_ACTIVE_TOOLS. Scope
+// groups always stay; when a requested group does not fit, the least recently
+// requested group is dropped first, and enable_tools reports what it dropped.
+//
+// The core set stays small on purpose. A chat turn sends the whole core schema
+// on each step, and a test holds a ceiling on its size (tests/tool-groups.test.ts).
+// A new rare tool goes in a group, and a tool with a large schema needs a reason
+// to be core.
 
 import { z } from 'zod';
+import { OPEN_DOCUMENT_CONTEXT } from '../shell/assistant-context';
 
 export const MAX_ACTIVE_TOOLS = 128;
 export const ENABLE_TOOLS_NAME = 'enable_tools';
 
 export const TOOL_GROUPS = {
+  documents: {
+    label: 'Albatross documents, spreadsheets, and decks: create and edit them, and spreadsheet formula help',
+    tools: ['document_create', 'document_edit', 'spreadsheet_capabilities'],
+  },
+  presentations: {
+    label: 'Presentation plans and the visual picker questions; load it together with documents',
+    tools: ['presentation_plan', 'ask_presentation_choices'],
+  },
+  work_progress: {
+    label:
+      'Progress on an existing Albatross Work: read its context, handle a step, record progress, replan, complete, list items, metrics, and projects',
+    tools: [
+      'albatross_get_work_context',
+      'albatross_handle_step',
+      'albatross_record_progress',
+      'albatross_replan_work',
+      'albatross_complete_work',
+      'albatross_list_add',
+      'albatross_metric_log',
+      'albatross_list_projects',
+    ],
+  },
+  personal_forms: {
+    label: 'Personal details (read and save) and ask_form, one form with typed fields',
+    tools: ['personal_details_get', 'personal_details_save', 'ask_form'],
+  },
+  connectors: {
+    label: 'Connected tools: GitHub, Granola, Bitbucket, and other linked sources, and a task from an item',
+    tools: ['mcp_search', 'mcp_list_items', 'mcp_create_task', 'mcp_connection_status', 'github_search'],
+  },
+  display_data: {
+    label: 'Data and source cards: chart, stats, progress tracker, citations, and link preview',
+    tools: ['show_chart', 'show_stats', 'show_progress', 'show_citations', 'show_link_preview'],
+  },
   projects_routines: {
     label: 'Albatross projects, sprints, routines, approvals, and intent plans',
     tools: [
@@ -85,9 +125,12 @@ export const TOOL_GROUPS = {
     ],
   },
   board_admin: {
-    label: 'Task board and column administration, card deletion, and calendar links on cards',
+    label:
+      'Task board and column administration, card deletion, and files, links, and calendar events on cards',
     tools: [
       'tasks_delete_card',
+      'tasks_attach_file',
+      'tasks_attach_link',
       'tasks_attach_calendar_event_link',
       'tasks_create_board',
       'tasks_rename_board',
@@ -202,6 +245,9 @@ export type ToolGroupName = keyof typeof TOOL_GROUPS;
 export const TOOL_GROUP_NAMES = Object.keys(TOOL_GROUPS) as ToolGroupName[];
 
 const GROUPED_TOOL_NAMES = new Set<string>(TOOL_GROUP_NAMES.flatMap((name) => [...TOOL_GROUPS[name].tools]));
+const GROUP_OF_TOOL = new Map<string, ToolGroupName>(
+  TOOL_GROUP_NAMES.flatMap((name) => TOOL_GROUPS[name].tools.map((tool) => [tool as string, name] as const)),
+);
 
 export function isToolGroupName(value: unknown): value is ToolGroupName {
   return typeof value === 'string' && value in TOOL_GROUPS;
@@ -281,7 +327,7 @@ export function initialToolGroups(scope: {
   const groups: ToolGroupName[] = [];
   if (scope.narrativeEnabled) groups.push('narrative');
   if (scope.hasAreaContext) groups.push('areas');
-  if (scope.hasWorkContext) groups.push('projects_routines');
+  if (scope.hasWorkContext) groups.push('projects_routines', 'work_progress');
   return groups;
 }
 
@@ -294,6 +340,22 @@ const TAX_FORM = /\b(?:w-?9|w-?4|1099)s?\b/i;
 const FORM_ACTION =
   /\b(?:fill|fills|filled|complete|sign|save|pull|get)\b[^.?!\n]{0,40}\b(?:forms?|pdfs?|applications?|attachments?)\b/i;
 
+/** A request for an Albatross document or a spreadsheet. */
+const DOCUMENT_REQUEST =
+  /\b(?:documents?|docs?|reports?|proposals?|one-pagers?|write-?ups?|spreadsheets?|workbooks?|trackers?|xlsx|csv|excel)\b/i;
+/** A request for a deck. */
+const PRESENTATION_REQUEST = /\b(?:decks?|slides?|slideshows?|presentations?|powerpoint|pptx|pitch)\b/i;
+/** The user says that an existing outcome moved. */
+const WORK_PROGRESS_REQUEST =
+  /\b(?:finished|completed|i(?:'m| am)? done|waiting (?:for|on)|off track|behind schedule|replan)\b/i;
+/** A personal detail by name. */
+const PERSONAL_DETAIL_REQUEST =
+  /\bmy (?:home )?(?:address|phone|phone number|emergency contact|details|info|information)\b/i;
+/** A connected source by name. */
+const CONNECTOR_REQUEST =
+  /\b(?:github|bitbucket|granola|meeting notes?|pull requests?|prs?|repos?|repository)\b/i;
+/** A card of numbers or sources. */
+const DATA_CARD_REQUEST = /\b(?:charts?|graphs?|plots?|stats|statistics|citations?|cite)\b/i;
 /** A question on what the user owes: "What needs my attention?", "What do I owe?". */
 const NEEDS_YOU_REQUEST =
   /\b(?:needs?|requires?)\s+my\s+attention\b|\bwhat\s+(?:needs|requires)\s+me\b|\bneeds\s+you\b|\bwhat\s+do\s+i\s+owe\b|\bwaiting\s+on\s+me\b|\bon\s+my\s+plate\b|\bmy\s+obligations\b|\bwhat\s+(?:do|must|should)\s+i\s+(?:need\s+to|have\s+to)\s+(?:do|answer|reply|respond)\b|\bwhat\s+must\s+i\s+do\b/i;
@@ -301,10 +363,12 @@ const NEEDS_YOU_REQUEST =
 /**
  * Groups that the request text asks for, before the first step: an invoice, a
  * letter, a memo, or a report to write loads documents_more; a tax form, or a form, a PDF, or an
- * attachment to fill, sign, or save loads pdf_forms; a question on what the
- * user owes loads needs_you for a user in its flag. So these tools are there
- * even when the model does not call enable_tools. The loop treats them as the
- * oldest enable_tools request, so the tool cap drops them first.
+ * attachment to fill, sign, or save loads pdf_forms and personal_forms; a
+ * question on what the user owes loads needs_you for a user in its flag; the
+ * other patterns above load the group of their name. So these tools are there
+ * even when the model does not call enable_tools, and a request for them costs
+ * no extra step. The loop treats them as the oldest enable_tools request, so
+ * the tool cap drops them first.
  */
 export function requestToolGroups(
   text: string | null | undefined,
@@ -313,9 +377,25 @@ export function requestToolGroups(
   const value = text || '';
   const groups: ToolGroupName[] = [];
   if (TEMPLATE_DOCUMENT_REQUEST.test(value)) groups.push('documents_more');
-  if (TAX_FORM.test(value) || FORM_ACTION.test(value)) groups.push('pdf_forms');
+  if (TAX_FORM.test(value) || FORM_ACTION.test(value)) groups.push('pdf_forms', 'personal_forms');
   if (scope.needsYou && NEEDS_YOU_REQUEST.test(value)) groups.push('needs_you');
-  return groups;
+  if (DOCUMENT_REQUEST.test(value)) groups.push('documents');
+  if (PRESENTATION_REQUEST.test(value)) groups.push('documents', 'presentations');
+  if (WORK_PROGRESS_REQUEST.test(value)) groups.push('work_progress');
+  if (PERSONAL_DETAIL_REQUEST.test(value)) groups.push('personal_forms');
+  if (CONNECTOR_REQUEST.test(value)) groups.push('connectors');
+  if (DATA_CARD_REQUEST.test(value)) groups.push('display_data');
+  return dedupe(groups);
+}
+
+/** The page context says that the user has a document open, so its tools are one step closer. */
+export function pageContextToolGroups(extraSystem: string | null | undefined): ToolGroupName[] {
+  return extraSystem?.includes(OPEN_DOCUMENT_CONTEXT) ? ['documents'] : [];
+}
+
+/** The groups that a live presentation needs, on every turn until the deck exists. */
+export function presentationToolGroups(session: { presentationId?: unknown } | null | undefined) {
+  return session?.presentationId ? (['documents', 'presentations'] as ToolGroupName[]) : [];
 }
 
 /** Groups the model enabled through `enable_tools` calls in earlier steps, in call order. */
@@ -330,6 +410,37 @@ export function enabledGroupsFromSteps(steps: ReadonlyArray<{ content?: unknown 
       const requested = Array.isArray(record.input?.groups) ? record.input.groups : [];
       for (const name of requested) if (isToolGroupName(name)) groups.push(name);
     }
+  }
+  return groups;
+}
+
+/**
+ * Groups in use in recent turns, oldest first: the groups the model loaded, and
+ * the groups of the tools it called. A resume is a new request with no steps,
+ * so without this each resume starts with a bare core set and pays for one more
+ * step to load the same group. Older turns fall out of the window, so a long
+ * chat does not keep every group it ever used.
+ */
+export function enabledGroupsFromMessages(
+  messages: ReadonlyArray<{ role?: string; content?: unknown }>,
+  turns = 3,
+): ToolGroupName[] {
+  let first = 0;
+  let seen = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role !== 'user') continue;
+    seen += 1;
+    first = index;
+    if (seen === turns) break;
+  }
+  const groups: ToolGroupName[] = [];
+  for (const message of messages.slice(first)) {
+    if (!Array.isArray(message?.content)) continue;
+    for (const part of message.content as Array<{ type?: string; toolName?: string }>) {
+      const group = part?.type === 'tool-call' ? GROUP_OF_TOOL.get(String(part.toolName)) : undefined;
+      if (group) groups.push(group);
+    }
+    groups.push(...enabledGroupsFromSteps([{ content: message.content }]));
   }
   return groups;
 }
@@ -390,5 +501,5 @@ export function enableToolsResult(
 
 /** The prompt paragraph that tells the model which groups exist. */
 export function toolGroupsPromptLine(groups: readonly ToolGroupName[] = TOOL_GROUP_NAMES): string {
-  return `- A core tool set is always loaded. These groups load on demand through enable_tools: ${groups.join(', ')}. When a request needs one (smart labels, board or column admin, project routines, Area facts, a Word invoice, letter, memo, or report from a template, a PDF form to fill or a mail attachment to save in Files, document publishing or export, Drive or Google document files, code or media cards, structured asks, a toast or closing the bar), call enable_tools with the group first, in the same step as any independent lookups, then use the loaded tools.`;
+  return `- A core tool set is always loaded. These groups load on demand through enable_tools: ${groups.join(', ')}. When a request needs one (an Albatross document, a spreadsheet, or a deck, progress on an existing Work, personal details or a typed form, GitHub or Granola, a chart or citations, smart labels, board or column admin, project routines, Area facts, a Word invoice, letter, memo, or report from a template, a PDF form to fill or a mail attachment to save in Files, document publishing or export, Drive or Google document files, code or media cards, structured asks, a toast or closing the bar), call enable_tools with the group first, in the same step as any independent lookups, then use the loaded tools. When this prompt names a tool that you do not have yet, its group holds it.`;
 }

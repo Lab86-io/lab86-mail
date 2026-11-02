@@ -23,7 +23,7 @@ import { documentCreateModelInput } from '../tools/documents';
 import { invokeTool, repairToolArgs, toolRisk } from '../tools/registry';
 import { APPROVAL_RISKS, approvalConditionMet, approvalSummary, type ToolRisk } from './approval';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
-import { executeCheckpointedTool, toolExecutionKey } from './execution';
+import { executeCheckpointedTool, readRecoveryContext, toolExecutionKey } from './execution';
 import {
   agentProviderOptions,
   canFailOverAgentRuntime,
@@ -34,6 +34,7 @@ import {
 } from './gateway';
 import { newGenerationCapture, recordFailedModelCall, runWithGenerationCapture } from './generation-cost';
 import { describeModelError, redactModelErrorMessage } from './log-error';
+import { sanitizeToolPairs } from './message-sanitize';
 import { newOperationBatchId } from './operations';
 import {
   buildSystemPrompt,
@@ -41,14 +42,18 @@ import {
   isWebOnlyTool,
   toolGroupsForPlatform,
 } from './system-prompt';
+import { classifyToolError, stopIfAborted } from './tool-errors';
 import {
   activeToolNames,
   ENABLE_TOOLS_NAME,
+  enabledGroupsFromMessages,
   enabledGroupsFromSteps,
   enableToolsDescription,
   enableToolsInputSchema,
   enableToolsResult,
+  presentationToolGroups,
 } from './tool-groups';
+import { boundToolResults, toolModelOutput } from './tool-result-cap';
 import { resolveToolShape, type ToolShape } from './tool-shapes';
 import { agentToolTimeoutMs, withToolTimeout } from './tool-timeout';
 
@@ -420,6 +425,7 @@ export function liftToolsForAgent(
       // The agent writes the content, so its schema has no instructions field.
       // It offers the one deck brief that this user's renderer takes.
       inputSchema: modelInputSchema(name === 'document_create' ? documentCreateModelInput(deckV2) : t.input),
+      toModelOutput: ({ output }: { output: unknown }) => toolModelOutput(name, output),
       execute: async (args: unknown, options?: { abortSignal?: AbortSignal }) => {
         if (paused) return pausedToolResult(name, risk);
         // A stored call skips the SDK parse on resume. Repair here too, so the
@@ -485,8 +491,8 @@ export function liftToolsForAgent(
             instruction: `${(args as any)?.instruction ?? ''}\nConfirmed presentation choices (honor these): ${JSON.stringify({ brief: presentationSession.brief, design: presentationSession.design })}`,
           };
         }
-        const invoke = (key?: string, abortSignal?: AbortSignal) => {
-          abortSignal?.throwIfAborted();
+        const invoke = async (key?: string, abortSignal?: AbortSignal) => {
+          stopIfAborted(abortSignal);
           return invokeTool(t, args ?? {}, {
             agent: 'ai',
             userId: context.userId,
@@ -522,17 +528,24 @@ export function liftToolsForAgent(
                       name,
                       args: parsed.data,
                       mutating: t.mutating,
+                      chatId: context.chatId,
+                      signal,
                     },
                     (key) => invoke(key, signal),
                   )
                 : invoke(undefined, signal),
             name,
-            { timeoutMs: agentToolTimeoutMs(name, parsed.data), signal: options?.abortSignal },
+            {
+              timeoutMs: agentToolTimeoutMs(name, parsed.data),
+              signal: options?.abortSignal,
+              mutating: t.mutating,
+            },
           );
         } catch (error) {
           console.warn('[agent-tool-error]', {
             runId: context.runId,
             tool: name,
+            ...classifyToolError(error, options?.abortSignal),
             error: safeAuthErrorText(error),
           });
           throw error;
@@ -831,6 +844,8 @@ function providerFailureResult(error: any) {
 
 type UiChunk = { type: string; [key: string]: any };
 
+const TRUNCATED_REPLY_TEXT = 'The reply reached its length limit before it finished. Continue picks it up.';
+
 /** Chunk types that mean the model produced something the user can see. */
 const CONTENT_CHUNK_TYPES = new Set([
   'text-delta',
@@ -853,6 +868,24 @@ export interface ForwardAgentStreamResult {
   forwarded: boolean;
   /** The provider error captured by the stream, if any. */
   error: unknown;
+  /** True when the stream itself threw. Then the promises of the result never settle. */
+  thrown?: boolean;
+  /** True when text or a tool reached the client. Reasoning alone does not count. */
+  replied?: boolean;
+  /** True when a tool call got its full input, so its tool may have run. */
+  toolStarted?: boolean;
+  /** The error chunk, when `holdError` kept it back. The caller writes it unless it hands off. */
+  heldError?: UiChunk;
+  /** Chunks that close the parts the failed step left open, for a hand-off to the next runtime. */
+  closing?: UiChunk[];
+}
+
+const REPLY_CHUNK_TYPES = new Set(
+  [...CONTENT_CHUNK_TYPES].filter((type) => type !== 'reasoning-delta' && type !== 'tool-input-delta'),
+);
+
+function streamErrorChunk(error: unknown): UiChunk {
+  return { type: 'error', errorText: redactModelErrorMessage(errorText(error)) };
 }
 
 /**
@@ -860,8 +893,10 @@ export interface ForwardAgentStreamResult {
  *
  * Chunks are held back until the first content chunk, so a runtime that fails
  * before it says anything leaves no trace and the caller can try the next
- * runtime. Once content has been forwarded the stream is committed: later
- * errors are written through so the client can show them and offer Continue.
+ * runtime. Once content has been forwarded the stream is committed: a later
+ * error waits for the end of the stream, because the SDK starts the next step
+ * by itself when the failed step ran all its tools. An error that the SDK did
+ * not move past goes to the client, unless `holdError` asks the caller to choose.
  */
 export async function forwardAgentStream(
   writer: UiStreamWriter,
@@ -869,65 +904,115 @@ export async function forwardAgentStream(
   readError: () => unknown = () => undefined,
   resolveShape: ShapeResolver = resolveToolShape,
   timeZone?: string,
+  options: { holdError?: boolean; signal?: AbortSignal } = {},
 ): Promise<ForwardAgentStreamResult> {
   const pending: UiChunk[] = [];
   const calls = new Map<string, { toolName: string; input?: unknown }>();
   let forwarded = false;
-  let forwardedError: unknown;
+  let replied = false;
+  let toolStarted = false;
+  let stepOpen = false;
+  const openParts = new Map<string, UiChunk>();
+  let failure: { chunk: UiChunk; error: unknown } | undefined;
   const emit = (chunk: UiChunk) => {
     if (!forwarded && CONTENT_CHUNK_TYPES.has(chunk.type)) {
       forwarded = true;
       for (const held of pending) writer.write(held as any);
       pending.length = 0;
     }
+    if (REPLY_CHUNK_TYPES.has(chunk.type)) replied = true;
     if (forwarded) writer.write(chunk as any);
     else pending.push(chunk);
   };
-  for await (const chunk of chunks) {
-    if (chunk.type === 'error') {
-      forwardedError = readError() ?? new Error(chunk.errorText);
-      if (!forwarded) return { forwarded: false, error: readError() ?? new Error(chunk.errorText) };
-      writer.write(chunk as any);
-      continue;
-    }
-    if (chunk.type === 'tool-input-start' && chunk.toolCallId && chunk.toolName) {
-      calls.set(chunk.toolCallId, { toolName: chunk.toolName });
-    } else if (chunk.type === 'tool-input-available' && chunk.toolCallId && chunk.toolName) {
-      calls.set(chunk.toolCallId, { toolName: chunk.toolName, input: chunk.input });
-    }
-    emit(chunk);
-    // An approval stop carries the card text beside it, so native clients can
-    // say what the call will do. The web chat derives the same summary.
-    if (chunk.type === 'tool-approval-request' && chunk.toolCallId) {
-      const call = calls.get(chunk.toolCallId);
-      if (call)
-        emit({
-          type: 'data-tool-approval',
-          id: chunk.toolCallId,
-          data: {
-            approvalId: chunk.approvalId,
-            toolName: call.toolName,
-            ...approvalSummary(call.toolName, call.input, timeZone),
-          },
-        });
-    }
-    // Every tool result carries a display shape beside it, so web and native
-    // render the same card from the same data without re-deriving it.
-    if (chunk.type === 'tool-output-available' && chunk.toolCallId) {
-      const call = calls.get(chunk.toolCallId);
-      if (!call) continue;
-      let shape: ToolShape | null = null;
-      try {
-        shape = resolveShape(call.toolName, call.input, chunk.output);
-      } catch (error) {
-        console.warn('[agent] shape resolution failed', { tool: call.toolName, error: errorText(error) });
+  const noteOpenParts = (chunk: UiChunk) => {
+    if (chunk.type === 'start-step') stepOpen = true;
+    if (chunk.type === 'finish-step') stepOpen = false;
+    if (chunk.type === 'text-start' || chunk.type === 'reasoning-start')
+      openParts.set(`${chunk.type}:${chunk.id}`, {
+        type: chunk.type === 'text-start' ? 'text-end' : 'reasoning-end',
+        id: chunk.id,
+      });
+    if (chunk.type === 'text-end') openParts.delete(`text-start:${chunk.id}`);
+    if (chunk.type === 'reasoning-end') openParts.delete(`reasoning-start:${chunk.id}`);
+  };
+  try {
+    for await (const chunk of chunks) {
+      if (chunk.type === 'error') {
+        const error = readError() ?? new Error(chunk.errorText);
+        if (!forwarded) return { forwarded: false, error };
+        failure = { chunk, error };
+        continue;
       }
-      if (shape) {
-        emit({ type: 'data-tool-shape', id: chunk.toolCallId, data: shape });
+      // The SDK moved past the failure to its next step, so the turn goes on.
+      if (chunk.type === 'start-step') failure = undefined;
+      noteOpenParts(chunk);
+      if (chunk.type === 'tool-input-start' && chunk.toolCallId && chunk.toolName) {
+        calls.set(chunk.toolCallId, { toolName: chunk.toolName });
+      } else if (chunk.type === 'tool-input-available' && chunk.toolCallId && chunk.toolName) {
+        calls.set(chunk.toolCallId, { toolName: chunk.toolName, input: chunk.input });
+        toolStarted = true;
+      }
+      emit(chunk);
+      // An approval stop carries the card text beside it, so native clients can
+      // say what the call will do. The web chat derives the same summary.
+      if (chunk.type === 'tool-approval-request' && chunk.toolCallId) {
+        const call = calls.get(chunk.toolCallId);
+        if (call)
+          emit({
+            type: 'data-tool-approval',
+            id: chunk.toolCallId,
+            data: {
+              approvalId: chunk.approvalId,
+              toolName: call.toolName,
+              ...approvalSummary(call.toolName, call.input, timeZone),
+            },
+          });
+      }
+      // Every tool result carries a display shape beside it, so web and native
+      // render the same card from the same data without re-deriving it.
+      if (chunk.type === 'tool-output-available' && chunk.toolCallId) {
+        const call = calls.get(chunk.toolCallId);
+        if (!call) continue;
+        let shape: ToolShape | null = null;
+        try {
+          shape = resolveShape(call.toolName, call.input, chunk.output);
+        } catch (error) {
+          console.warn('[agent] shape resolution failed', { tool: call.toolName, error: errorText(error) });
+        }
+        if (shape) {
+          emit({ type: 'data-tool-shape', id: chunk.toolCallId, data: shape });
+        }
       }
     }
+  } catch (error) {
+    // A broken response body throws here: a lost connection or a stalled provider.
+    if (!forwarded) return { forwarded: false, error, thrown: true };
+    if (options.signal?.aborted) return { forwarded, error, thrown: true, replied, toolStarted };
+    failure = { chunk: streamErrorChunk(error), error };
+    if (!options.holdError) writer.write(failure.chunk as any);
+    return {
+      forwarded,
+      error,
+      thrown: true,
+      replied,
+      toolStarted,
+      ...(options.holdError ? { heldError: failure.chunk } : {}),
+      closing: closingChunks(openParts, stepOpen),
+    };
   }
-  return { forwarded, error: readError() ?? forwardedError };
+  if (failure && !options.holdError) writer.write(failure.chunk as any);
+  return {
+    forwarded,
+    error: failure?.error,
+    replied,
+    toolStarted,
+    ...(failure && options.holdError ? { heldError: failure.chunk } : {}),
+    closing: closingChunks(openParts, stepOpen),
+  };
+}
+
+function closingChunks(openParts: ReadonlyMap<string, UiChunk>, stepOpen: boolean): UiChunk[] {
+  return [...openParts.values(), ...(stepOpen ? [{ type: 'finish-step' }] : [])];
 }
 
 export type ShapeResolver = (toolName: string, input: unknown, output: unknown) => ToolShape | null;
@@ -997,25 +1082,72 @@ export function agentStepLimit(steps: ReadonlyArray<{ content?: unknown }>) {
   return presentation ? 40 : 20;
 }
 
+/** The token usage of the steps that finished before a stream broke. Its totals never settle then. */
+function usageOfSteps(steps: readonly any[]) {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  for (const step of steps) {
+    inputTokens += Number(step?.usage?.inputTokens) || 0;
+    outputTokens += Number(step?.usage?.outputTokens) || 0;
+  }
+  return inputTokens || outputTokens ? { inputTokens, outputTokens } : undefined;
+}
+
+/**
+ * The finished steps as history for the next runtime, so it reads their tool
+ * results and does not run those tools again. Each step already holds the
+ * messages of the steps before it. Reasoning stays behind, because a provider
+ * can reject the signed reasoning of another provider.
+ */
+function handOffMessages(steps: readonly any[]): ModelMessage[] {
+  const messages: ModelMessage[] = steps.at(-1)?.response?.messages ?? [];
+  const history = messages.map((message) => {
+    if (!Array.isArray(message.content)) return message;
+    const content = (message.content as any[])
+      .filter((part) => part?.type !== 'reasoning')
+      .map(({ providerOptions: _providerOptions, ...part }) => part);
+    return { ...message, content } as ModelMessage;
+  });
+  // The partial text of the failed step is already on the screen, and a provider
+  // can reject a prompt that ends with an assistant turn.
+  while (history.at(-1)?.role === 'assistant') history.pop();
+  return history;
+}
+
+const HANDOFF_NOTE =
+  'The previous model failed during this turn. The tool results above are real, and those calls already ran. Do not run them again. Continue from where they stop.';
+
 /**
  * Run the agent turn as a live stream. Walks the runtime chain: a runtime that
  * fails (or finishes empty) before any content was forwarded is dropped and
- * the next one starts. Resolves with the completed steps for post-turn work.
+ * the next one starts. A runtime that fails after reasoning alone, or after a
+ * tool started, also hands off: the next one reads the finished steps, and the
+ * checkpoint of each write stops a second run. A failure after text with no
+ * tool stays as the error with Continue, because a second answer would follow
+ * the visible partial one. Resolves with the completed steps for post-turn work.
  */
 async function streamAgentTurn(
   writer: UiStreamWriter,
   options: AgentStreamOptions,
-): Promise<{ steps: any[]; failed: boolean; aborted: boolean }> {
+): Promise<{ steps: any[]; failed: boolean; aborted: boolean; finishReason?: string }> {
   const feature = 'agent';
   const runtimes = await resolveAgentRuntimes({ userId: options.userId, speed: 'primary', feature });
   const promptCacheKey = options.userId ? `agent:${options.userId}` : undefined;
   let lastError: unknown;
+  let messages = options.messages;
+  let system = options.system;
+  // Steps of runtimes that failed. They count for the step limit and for the loaded tool groups.
+  const earlierSteps: any[] = [];
+  let handedOff = false;
 
   for (let index = 0; index < runtimes.length; index += 1) {
     const runtime = runtimes[index];
+    const hasNext = index < runtimes.length - 1;
     let streamError: unknown;
     const toolNames = Object.keys(options.tools);
     const initialGroups = options.toolGroups ?? [];
+    const finishedSteps: any[] = [];
+    const withEarlier = (steps: readonly any[]) => [...earlierSteps, ...steps];
     // Each step of the turn is one OpenRouter request. The capture keeps their
     // generation ids for the cost of a failed or stopped turn. Later steps
     // start where the stream is read, so the read runs inside the capture too.
@@ -1023,34 +1155,43 @@ async function streamAgentTurn(
     const { outcome, steps, usage, finishReason } = await runWithGenerationCapture(capture, async () => {
       const result = streamText({
         model: runtime.model,
-        system: options.system,
-        messages: options.messages,
+        system,
+        messages,
         tools: options.tools,
         activeTools: activeToolsForStep(
           toolNames,
           initialGroups,
-          [],
+          earlierSteps,
           options.presentationSession,
           options.preloadGroups,
         ),
-        prepareStep: ({ steps }) => ({
-          activeTools: activeToolsForStep(
-            toolNames,
-            initialGroups,
-            steps,
-            options.presentationSession,
-            options.preloadGroups,
-          ),
-        }),
+        prepareStep: ({ steps, messages: stepMessages }) => {
+          const bounded = boundToolResults(stepMessages);
+          return {
+            activeTools: activeToolsForStep(
+              toolNames,
+              initialGroups,
+              withEarlier(steps),
+              options.presentationSession,
+              options.preloadGroups,
+            ),
+            ...(bounded === stepMessages ? {} : { messages: bounded }),
+          };
+        },
         abortSignal: options.signal,
         // Multi-step flows (fetch a file → store → attach → send) need headroom
         // beyond the old 6-step cap.
-        stopWhen: ({ steps }) =>
-          steps.length >= agentStepLimit(steps) || hasPendingPresentationQuestion(steps),
+        stopWhen: ({ steps }) => {
+          const all = withEarlier(steps);
+          return all.length >= agentStepLimit(all) || hasPendingPresentationQuestion(all);
+        },
         // Tiered per-step ceiling (never unbounded → avoids the 65536 reservation
         // that OpenRouter 402s on); leaves room for reasoning + a reply.
         maxOutputTokens: maxOutputTokensForFeature(feature),
         providerOptions: agentProviderOptions(runtime, promptCacheKey),
+        onStepFinish: (step) => {
+          finishedSteps.push(step);
+        },
         onError: ({ error }) => {
           streamError = error;
           console.error('[agent-stream]', {
@@ -1076,15 +1217,60 @@ async function streamAgentTurn(
         () => streamError,
         resolveToolShape,
         options.timezone,
+        { holdError: hasNext, signal: options.signal },
       );
-      const steps = await Promise.resolve(result.steps).catch(() => [] as any[]);
+      // A stream that threw leaves the promises below open for good.
+      if (outcome.thrown)
+        return { outcome, steps: finishedSteps, usage: usageOfSteps(finishedSteps), finishReason: 'error' };
+      const steps = await Promise.resolve(result.steps).catch(() => finishedSteps);
       const usage = await Promise.resolve(result.totalUsage).catch(() => undefined);
       const finishReason = await Promise.resolve(result.finishReason).catch(() => 'error');
       return { outcome, steps, usage, finishReason };
     });
 
     if (outcome.forwarded) {
-      if (outcome.error || options.signal?.aborted)
+      const aborted = !!options.signal?.aborted;
+      const handOff =
+        !aborted &&
+        hasNext &&
+        !!outcome.error &&
+        !isAuthError(outcome.error) &&
+        (outcome.toolStarted || !outcome.replied) &&
+        canFailOverAgentRuntime(outcome.error, feature, runtime);
+      if (handOff) {
+        lastError = outcome.error;
+        await recordFailedAgentTurn(
+          runtime,
+          feature,
+          usage,
+          outcome.error,
+          capture.ids,
+          errorText(outcome.error),
+        );
+        console.warn('[agent] runtime failed after content; handing off', {
+          runId: options.runId,
+          provider: runtime.provider,
+          model: runtime.modelName,
+          fallback: runtimes[index + 1]?.modelName,
+          steps: steps.length,
+          error: describeModelError(outcome.error),
+        });
+        for (const chunk of outcome.closing ?? []) writer.write(chunk as any);
+        handedOff = true;
+        earlierSteps.push(...steps);
+        messages = sanitizeToolPairs([...messages, ...handOffMessages(steps)]);
+        if (outcome.toolStarted) {
+          // A call in the failed step can still run. Its checkpoint says so.
+          const recovery =
+            options.runId && options.userId
+              ? await readRecoveryContext(options.userId, options.runId).catch(() => '')
+              : '';
+          system = [options.system, recovery, HANDOFF_NOTE].filter(Boolean).join('\n\n');
+        }
+        continue;
+      }
+      if (outcome.heldError) writer.write(outcome.heldError as any);
+      if (outcome.error || aborted)
         // A failed or stopped turn records the real cost of its requests.
         await recordFailedAgentTurn(
           runtime,
@@ -1100,10 +1286,10 @@ async function streamAgentTurn(
         provider: runtime.provider,
         model: runtime.modelName,
         finishReason,
-        aborted: !!options.signal?.aborted,
+        aborted,
         error: outcome.error ? describeModelError(outcome.error) : undefined,
       });
-      return { steps, failed: !!outcome.error, aborted: !!options.signal?.aborted };
+      return { steps: withEarlier(steps), failed: !!outcome.error, aborted, finishReason };
     }
 
     lastError = outcome.error ?? new Error(`empty completion (${finishReason})`);
@@ -1116,7 +1302,6 @@ async function streamAgentTurn(
       redactModelErrorMessage(errorText(lastError)),
     );
     if (options.signal?.aborted || isAuthError(lastError)) throw lastError;
-    const hasNext = index < runtimes.length - 1;
     const eligible = outcome.error ? canFailOverAgentRuntime(outcome.error, feature, runtime) : true;
     if (hasNext && eligible) {
       console.warn('[agent] runtime produced nothing; trying fallback', {
@@ -1126,6 +1311,12 @@ async function streamAgentTurn(
         error: describeModelError(lastError),
       });
       continue;
+    }
+    // Content of an earlier runtime already reached the client. The turn failed
+    // after it, so the client offers Continue, as for a failure after content.
+    if (handedOff) {
+      writer.write(streamErrorChunk(lastError) as any);
+      return { steps: earlierSteps, failed: true, aborted: false, finishReason: 'error' };
     }
     throw lastError;
   }
@@ -1155,6 +1346,8 @@ function recordFailedAgentTurn(
 
 export interface AgentRunOpts {
   runId?: string;
+  /** The chat of this run. Each write checkpoint keeps it, so the next turn can read what ran. */
+  chatId?: string;
   messages: ModelMessage[];
   presentationSession?: PresentationSession;
   /** Bias the system prompt with extra context (selected thread, focused account). */
@@ -1225,6 +1418,7 @@ export function agentTimeContext(timezone: string, now = new Date()): string {
 
 export async function runAgent({
   runId = newOperationBatchId(),
+  chatId,
   messages,
   presentationSession,
   extraSystem,
@@ -1248,7 +1442,14 @@ export async function runAgent({
       'Models are not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
     );
   }
-  const requestContext = { userId, userEmail, userName, runId, agent: 'ai' as const };
+  const requestContext = { userId, userEmail, userName, runId, chatId, agent: 'ai' as const };
+  // A resume is a new request with no steps yet. The groups the model loaded
+  // stay loaded, as requests older than this one.
+  const preload = [
+    ...(preloadGroups ?? []),
+    ...presentationToolGroups(presentationSession),
+    ...enabledGroupsFromMessages(messages),
+  ];
   // Memories are injected at conversation start so remembered facts and
   // preferences are ALWAYS in play — the recall tool remains for ad-hoc
   // lookups, but the agent never starts blind. Memories and narrative context
@@ -1262,7 +1463,7 @@ export async function runAgent({
   const tools = liftToolsForAgent(operationBatchId, timezone, presentationSession, {
     userId,
     scopeGroups: toolGroups,
-    preloadGroups,
+    preloadGroups: preload,
     clientPlatform,
     pausedRisks,
     askForm,
@@ -1371,17 +1572,24 @@ export async function runAgent({
                   messages,
                   tools,
                   toolGroups,
-                  preloadGroups,
+                  preloadGroups: preload,
                   presentationSession,
                   timezone,
                   signal,
                 }),
               );
               completed = outcome.steps;
+              // A reply cut at the token cap is a failure that Continue can pick up.
+              // The web chat offers Continue on the error, and native clients on the reason.
+              const truncated = !outcome.aborted && !outcome.failed && outcome.finishReason === 'length';
+              if (truncated) writer.write({ type: 'error', errorText: TRUNCATED_REPLY_TEXT });
               writer.write(
                 outcome.aborted
                   ? { type: 'abort' }
-                  : { type: 'finish', finishReason: outcome.failed ? 'error' : 'stop' },
+                  : {
+                      type: 'finish',
+                      finishReason: truncated ? 'length' : outcome.failed ? 'error' : 'stop',
+                    },
               );
             } catch (err: any) {
               if (signal?.aborted) {

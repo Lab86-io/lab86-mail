@@ -6,12 +6,14 @@ import {
 } from 'ai';
 import { after, type NextRequest } from 'next/server';
 import { hydrateChatAttachments } from '@/lib/ai/chat-upload-content';
-import { readRecoveryContext, resolveAgentRunId } from '@/lib/ai/execution';
+import { agentChatId, readPriorRunContext, readRecoveryContext, resolveAgentRunId } from '@/lib/ai/execution';
 import { describeModelError } from '@/lib/ai/log-error';
 import { normalizeClientCapabilities, runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { normalizeClientPlatform } from '@/lib/ai/system-prompt';
-import { initialToolGroups, requestToolGroups } from '@/lib/ai/tool-groups';
+import { initialToolGroups, pageContextToolGroups, requestToolGroups } from '@/lib/ai/tool-groups';
+import { boundToolResults } from '@/lib/ai/tool-result-cap';
+import { clientToolFailureNote } from '@/lib/ai/ui-tool-calls';
 import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import {
   type DocumentContextAttachment,
@@ -65,6 +67,8 @@ interface AgentRequestBody {
   sessionId?: string;
   /** The `updatedAt` of the thread copy the client loaded, so the server save merges correctly. */
   threadBaseUpdatedAt?: number;
+  /** UI tools (`ui_*`) that the client could not run since its last request. */
+  clientToolFailures?: unknown;
 }
 
 export class InvalidContextAttachmentError extends Error {
@@ -244,7 +248,19 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'Continuation requires the original user message ID.' }, { status: 400 });
     // Every pre-flight read is independent of the others, so they run together:
     // the model call waits for the slowest one, not for the sum.
-    const [areaDiscoveryContext, attachedContexts, modelMessages] = await Promise.all([
+    const chatId = agentChatId(body.sessionId);
+    const readPriorRuns = () =>
+      readPriorRunContext({
+        userId: user.userId,
+        runId,
+        chatId,
+        transcript: answered,
+        skipCurrentRun: body.continuation === true,
+      }).catch((error) => {
+        console.warn('[agent-route] prior run read failed', describeModelError(error));
+        return '';
+      });
+    const [areaDiscoveryContext, attachedContexts, modelMessages, recovery, priorRuns] = await Promise.all([
       !briefContext && body.areaDiscovery
         ? readAreaDiscoveryContext({
             userId: user.userId,
@@ -265,9 +281,14 @@ export async function POST(req: NextRequest) {
       ),
       hydrateChatAttachments(user.userId, prepared.messages, req.signal)
         .then(convertToModelMessages)
-        .then(sanitizeToolPairs),
+        .then(sanitizeToolPairs)
+        // The trim above keeps the recent messages whole, however large their tool results are.
+        .then((messages) => boundToolResults(messages)),
+      body.continuation === true ? readRecoveryContext(user.userId, runId) : '',
+      // Each turn reads what the earlier runs of this chat wrote. A reload loses
+      // the reply and a new message starts a new run, so the model cannot see them.
+      readPriorRuns(),
     ]);
-    const recovery = body.continuation === true ? await readRecoveryContext(user.userId, runId) : '';
     const threadWorkId = threadReplyWorkId(
       body.sessionId,
       contextAttachments
@@ -288,8 +309,11 @@ export async function POST(req: NextRequest) {
       };
     // The browser leaving no longer stops a thread reply; the chat Stop button does (T11).
     const replyAbort = threadReply ? await beginThreadReply(threadReply) : null;
+    // The reply that this one stops can write until it stops, so read again after it.
+    const priorRunsNow = threadReply ? await readPriorRuns() : priorRuns;
     const stream = await runAgent({
       runId,
+      chatId,
       messages: modelMessages,
       presentationSession: presentationSessionFromMessages(body.messages),
       extraSystem:
@@ -301,6 +325,8 @@ export async function POST(req: NextRequest) {
           documentAttachment ? documentAttachmentContext(documentAttachment) : '',
           compactionNote,
           recovery,
+          priorRunsNow,
+          clientToolFailureNote(body.clientToolFailures),
         ]
           .filter(Boolean)
           .join('\n\n') || undefined,
@@ -316,9 +342,13 @@ export async function POST(req: NextRequest) {
         hasAreaContext: Boolean(body.areaDiscovery),
         narrativeEnabled: narrativeEnabled(user.userId),
       }),
-      preloadGroups: requestToolGroups(latestUser ? messageText(latestUser) : '', {
-        needsYou: needsYouFlagFor(user.userId),
-      }),
+      preloadGroups: [
+        ...requestToolGroups(latestUser ? messageText(latestUser) : '', {
+          needsYou: needsYouFlagFor(user.userId),
+        }),
+        ...pageContextToolGroups(body.extraSystem),
+        ...(documentAttachment ? (['documents'] as const) : []),
+      ],
       signal: replyAbort ? replyAbort.signal : req.signal,
     });
     after(async () => {

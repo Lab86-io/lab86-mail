@@ -175,7 +175,7 @@ export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext)
         userId: ctx.userId ?? null,
         account: ctx.account ?? null,
         args: parsed as Record<string, unknown>,
-        result: 'ok',
+        result: (result as { ok?: unknown } | null)?.ok === false ? 'rejected' : 'ok',
         detail: tool.mutating ? safeSummary(result) : undefined,
         agent: ctx.agent,
       }).catch((auditErr) => {

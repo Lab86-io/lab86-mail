@@ -116,9 +116,30 @@ export default defineSchema({
     key: v.string(),
     toolName: v.string(),
     mutating: v.boolean(),
-    status: v.union(v.literal('running'), v.literal('succeeded'), v.literal('failed'), v.literal('unknown')),
+    // `rejected`: the call said that it did not do the work (`ok: false`), or a
+    // typed error proved that a retry is safe. The same args can claim it again.
+    status: v.union(
+      v.literal('running'),
+      v.literal('succeeded'),
+      v.literal('rejected'),
+      v.literal('failed'),
+      v.literal('unknown'),
+    ),
     output: v.optional(v.any()),
     error: v.optional(v.string()),
+    // Why the call failed, with no personal data (lib/ai/tool-errors.ts).
+    errorClass: v.optional(
+      v.union(
+        v.literal('timeout'),
+        v.literal('provider'),
+        v.literal('schema'),
+        v.literal('aborted'),
+        v.literal('other'),
+      ),
+    ),
+    errorCode: v.optional(v.string()),
+    // The chat of this run, so the next turn of the chat can read what ran.
+    chatId: v.optional(v.string()),
     effect: v.optional(
       v.object({
         documentId: v.string(),
@@ -131,6 +152,7 @@ export default defineSchema({
   })
     .index('by_user_run_key', ['userId', 'runId', 'key'])
     .index('by_user_run_created', ['userId', 'runId', 'createdAt'])
+    .index('by_user_chat_created', ['userId', 'chatId', 'createdAt'])
     .index('by_user', ['userId']),
   // Deployment-wide operator settings (not per user), e.g. the selected mail classifier.
   deploymentSettings: defineTable({

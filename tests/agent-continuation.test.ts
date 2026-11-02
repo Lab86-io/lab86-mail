@@ -81,3 +81,43 @@ test('recoverable tool errors do not become fatal stream errors; a later stream 
   const interrupted = await forwardAgentStream(writer, chunks(true));
   expect((interrupted.error as Error).message).toBe('provider disconnected');
 });
+
+test('a call cut off at the token cap converts to a valid pair, and Continue tells the model it never ran', async () => {
+  const message = compactMessage({
+    id: 'assistant',
+    role: 'assistant',
+    parts: [{ type: 'tool-document_create', toolCallId: 'doc-1', state: 'input-streaming' }],
+  });
+  const converted = await convertToModelMessages([
+    { id: 'user', role: 'user', parts: [{ type: 'text', text: 'Make the deck' }] },
+    message,
+  ]);
+  const text = JSON.stringify(converted);
+  expect(text).toContain('cut off before it ran');
+  const call = (converted[1].content as any[]).find((part) => part.type === 'tool-call');
+  expect(call.input).toEqual({});
+});
+
+test('a reopened approval card still answers through the model conversion', async () => {
+  const message = compactMessage({
+    id: 'assistant',
+    role: 'assistant',
+    parts: [
+      {
+        type: 'tool-schedule_send',
+        toolCallId: 'send-1',
+        state: 'approval-responded',
+        input: { to: 'sam@example.test' },
+        approval: { id: 'approval-1', approved: true },
+      },
+    ],
+  });
+  const converted = await convertToModelMessages([
+    { id: 'user', role: 'user', parts: [{ type: 'text', text: 'Send it' }] },
+    message,
+  ]);
+  const text = JSON.stringify(converted);
+  expect(text).toContain('"tool-approval-request"');
+  expect(text).toContain('"tool-approval-response"');
+  expect(text).toContain('approval-1');
+});

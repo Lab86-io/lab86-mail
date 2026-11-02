@@ -1,4 +1,5 @@
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
+import { beforeWrite, stopIfAborted, ToolFailedBeforeWrite } from '@/lib/ai/tool-errors';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import { type NylasAccountRow, requireConnectedAccount } from '@/lib/nylas/provider';
@@ -40,6 +41,8 @@ export interface CreateEventInput {
   // Whether the provider emails participants. Callers must confirm with the
   // user before passing participants at all (spec: outward-facing confirms).
   notifyParticipants?: boolean;
+  // Ends an agent tool call. The create stops before the provider call when it fired.
+  signal?: AbortSignal;
 }
 
 export interface UpdateEventPatch {
@@ -65,7 +68,8 @@ export interface UnsubscribeCalendarInput {
   fallbackToHide?: boolean;
 }
 
-export async function createCalendarEvent(input: CreateEventInput) {
+/** The account and a calendar it can write to. Only reads, so a failure here wrote nothing. */
+async function resolveCreateTarget(input: CreateEventInput) {
   const account = await getAccount(input.userId, input.accountId);
   const accountId = account.accountId;
   if (input.conferencing === 'google_meet' && account.provider !== 'google') {
@@ -89,6 +93,11 @@ export async function createCalendarEvent(input: CreateEventInput) {
   } else {
     calendarId = await getPrimaryCalendarId(input.userId, accountId);
   }
+  return { account, accountId, calendarId };
+}
+
+export async function createCalendarEvent(input: CreateEventInput) {
+  const { account, accountId, calendarId } = await beforeWrite(() => resolveCreateTarget(input));
 
   let created: any;
   const createRequestId = newCreateRequestId();
@@ -108,6 +117,8 @@ export async function createCalendarEvent(input: CreateEventInput) {
       lab86CreatedBy: 'lab86-mail',
     },
   } as any;
+  // The agent tool limit may have passed during the reads above.
+  stopIfAborted(input.signal);
   try {
     const response = await requireNylas().events.create({
       identifier: account.grantId,
@@ -134,9 +145,14 @@ export async function createCalendarEvent(input: CreateEventInput) {
       console.error(
         `[calendar] create failed account=${accountId} provider=${account.provider} calendar=${calendarId}: ${providerError}`,
       );
-      throw new Error(
-        `Couldn't create the event on ${account.email || accountId} (${providerError}). The calendar may be read-only, or the account may need reconnecting.`,
-      );
+      const message = `Couldn't create the event on ${account.email || accountId} (${providerError}). The calendar may be read-only, or the account may need reconnecting.`;
+      // A clear refusal from the provider proves that no event exists.
+      if (!isAmbiguousCreateError(err))
+        throw new ToolFailedBeforeWrite(message, {
+          code: `nylas_${nylasErrorStatus(err)}`,
+          errorClass: 'provider',
+        });
+      throw new Error(message);
     }
   }
   if (!created?.id) {

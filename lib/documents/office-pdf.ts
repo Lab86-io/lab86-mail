@@ -3,6 +3,7 @@
 // call only from addresses in its `net.post_allow.host` list, so production
 // needs a config change first (docs/research/goal-runs-documents-notes-2026-10-15.md).
 
+import { beforeWrite } from '@/lib/ai/tool-errors';
 import { type SavedFile, savedFileName, saveFileBytes } from '@/lib/files/saved-files';
 import {
   OFFICE_MIME,
@@ -143,7 +144,11 @@ export async function saveOfficePdf(
   workId?: string,
   options: { revision?: number } = {},
 ): Promise<SavedFile> {
-  const { bytes, name } = await exportOfficePdf(userId, documentId, options);
+  // The export only reads. A failure tells the model to try again, and now it can.
+  const { bytes, name } = await beforeWrite(
+    () => exportOfficePdf(userId, documentId, options),
+    'office_convert',
+  );
   return dependencies.saveFileBytes({
     userId,
     bytes,
@@ -161,9 +166,10 @@ export async function saveDocxBytesAsPdf(
   title: string,
   workId?: string,
 ): Promise<SavedFile> {
+  const pdf = await beforeWrite(() => convertOfficeToPdf(bytes, 'docx'), 'office_convert');
   return dependencies.saveFileBytes({
     userId,
-    bytes: await convertOfficeToPdf(bytes, 'docx'),
+    bytes: pdf,
     name: pdfName(title),
     contentType: 'application/pdf',
     origin: 'export',

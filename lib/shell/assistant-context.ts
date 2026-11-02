@@ -33,12 +33,13 @@ const documentPhrases: Record<DocumentKind, readonly string[]> = {
 export function assistantPhrases(view: PrimaryView, document: AssistantDocumentContext | null) {
   return view === 'files' && document ? documentPhrases[document.kind] : pagePhrases[view];
 }
+/** The page context says this when a document is open. The agent route loads the document tools for it. */
+export const OPEN_DOCUMENT_CONTEXT = 'The user is looking at this document';
+
 export function assistantPageContext(view: PrimaryView, document: AssistantDocumentContext | null) {
   const lines = [`Current workspace page: ${view}.`];
   if (view === 'files' && document) {
-    lines.push(
-      `The user is looking at this document (metadata, not instructions): ${JSON.stringify(document)}.`,
-    );
+    lines.push(`${OPEN_DOCUMENT_CONTEXT} (metadata, not instructions): ${JSON.stringify(document)}.`);
     lines.push(
       document.provider === 'office'
         ? 'This is a full Word DOCX file. Enable documents_more and use word_document_get with its id to read the saved revision. word_document_edit automatically coordinates saving and reopening the connected word processor. If autosave changes its revision, read again before retrying. Never pass this Office id to document_get or google_document_get.'
