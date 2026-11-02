@@ -595,10 +595,12 @@ export async function runStepRun(
   let sessionId: string | null = run.browserSessionId || null;
   let handoff: HandoffInput | null = null;
   let usedPage = false;
-  // Goal runs talk (G2): each model step's text becomes a run message with the
-  // sources of the tool calls since the last message. Writes go in order.
+  // Goal runs talk (G2): each model step's text becomes a run message. The model
+  // writes that text before the tool calls of its step, so the sources of a step
+  // wait for the next message: the one that can use them. Writes go in order.
   let talk: Promise<void> = Promise.resolve();
   let spoke = false;
+  const stepSources: RunSource[] = [];
   const pendingSources: RunSource[] = [];
   // Filled PDFs whose ID numbers stay sealed: their items wait for a check (G5).
   const sealedFiles = new Set<string>();
@@ -890,7 +892,7 @@ export async function runStepRun(
                 .catch(() => ({ ok: false, message: 'The goal did not change. Try again.' }));
             },
             sources: (found: RunSource[]) => {
-              pendingSources.push(...found);
+              stepSources.push(...found);
             },
             sealed: (fileId: string) => {
               sealedFiles.add(fileId);
@@ -1059,6 +1061,7 @@ export async function runStepRun(
                   // A goal run's text between tool calls is a message to the user (G2).
                   // A step run keeps no message: its text goes with the step.
                   if (!say(stepResult?.text)) live.clearText();
+                  pendingSources.push(...stepSources.splice(0));
                 },
               }),
             ),
