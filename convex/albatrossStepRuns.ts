@@ -707,7 +707,7 @@ export const approvalRunState = query({
     const approvals = await ctx.db
       .query('albatrossApprovals')
       .withIndex('by_user_batch', (q) => q.eq('userId', userId).eq('operationBatchId', args.runId))
-      .take(50);
+      .take(RUN_APPROVALS_COUNT_MAX);
     return {
       run: stepRunView(run),
       open: approvals.filter((row) => row.status === 'pending' || row.status === 'claiming').length,
@@ -761,6 +761,8 @@ const STEER_TEXT_MAX = 2_000;
 const THREAD_RUNS_MAX = 30;
 /** Approvals the thread reads for one run. */
 const RUN_APPROVALS_MAX = 20;
+/** The settlement counts all of them: one that waits must not fall out of the count. */
+const RUN_APPROVALS_COUNT_MAX = 500;
 
 /**
  * Every run of a Work for the thread (docs/albatross-thread.md), oldest

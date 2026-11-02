@@ -398,8 +398,9 @@ export function NeedsYouRow({
           approval={approval}
           size="row"
           className={cn(
-            'absolute bottom-[9px] hidden group-hover:flex group-focus-within:flex',
+            'absolute bottom-[9px]',
             flush ? 'right-0' : 'right-3',
+            pillsAlways ? 'flex' : 'hidden group-hover:flex group-focus-within:flex',
           )}
         />
       ) : null}
