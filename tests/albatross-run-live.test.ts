@@ -79,10 +79,16 @@ describe('showableRunText', () => {
     expect(showableRunText('one')).toBe('');
   });
 
+  test('a few letters wait, so the row never shows one word alone', () => {
+    expect(showableRunText('I ')).toBe('');
+    expect(showableRunText('I will l')).toBe('');
+    expect(showableRunText('I will look at')).toBe('I will look');
+  });
+
   test('a secure reference waits until it closes, then redaction replaces it', () => {
     const clean = (text: string) => text.replace(/\{\{secure:[^}]*\}\}/g, '[saved value]');
-    expect(showableRunText('Use {{secure:abc', clean)).toBe('Use');
-    expect(showableRunText('Use {{secure:abc}} now ', clean)).toBe('Use [saved value] now');
+    expect(showableRunText('Please use {{secure:abc', clean)).toBe('Please use');
+    expect(showableRunText('Please use {{secure:abc}} now ', clean)).toBe('Please use [saved value] now');
   });
 
   test('the row holds a bounded part of a long text', () => {
