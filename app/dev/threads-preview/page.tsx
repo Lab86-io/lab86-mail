@@ -2,11 +2,12 @@
 
 import { notFound, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
-import { ThreadGroupSection } from '@/components/albatross/AlbatrossesSurface';
+import { ThreadGroupSection, ThreadListPlaceholder } from '@/components/albatross/AlbatrossesSurface';
 import { AlbatrossMark } from '@/components/albatross/AlbatrossMark';
 import { ThreadAnswerInPlace } from '@/components/albatross/ThreadAnswerInPlace';
 import { ThreadRail } from '@/components/albatross/ThreadRail';
 import { ThreadRow } from '@/components/albatross/ThreadRow';
+import { ThreadLoading } from '@/components/albatross/thread/RunLive';
 import type { WorkShapeState } from '@/components/albatross/thread/use-work-shape';
 import {
   THREAD_SPLIT_QUERY,
@@ -38,7 +39,9 @@ import { filterThreadRows, type ThreadFilter } from '@/lib/albatross/threads';
 /* Dev-only harness: the thread rail, the full list, and the in-place flows,
  * from fixtures, so each state can be seen and screenshotted without a backend.
  *   ?screen=rail    the rail beside an open thread (a run in progress, a note read)
+ *   ?screen=hop     the rail at once, while the thread of the row waits for its detail
  *   ?screen=list    the full list, no thread open
+ *   ?screen=first   the frame of the list on the first load of a session
  *   ?screen=answer  the full list with "Answer" open in place
  *   &dark=1         dark mode
  * Not linked from anywhere; 404s outside development. */
@@ -93,14 +96,18 @@ function ThreadsPreview() {
   return (
     <QueryProvider clerkEnabled={false}>
       <div className="app-paper h-dvh overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)]">
-        {screen === 'rail' ? <RailScreen /> : <ListScreen answer={screen === 'answer'} />}
+        {screen === 'rail' || screen === 'hop' ? (
+          <RailScreen hop={screen === 'hop'} />
+        ) : (
+          <ListScreen answer={screen === 'answer'} first={screen === 'first'} />
+        )}
       </div>
     </QueryProvider>
   );
 }
 
 /** The open thread: "Renew the car registration" with a run in progress and a note it read. */
-function RailScreen() {
+function RailScreen({ hop }: { hop: boolean }) {
   const wide = useMediaQuery(THREAD_SPLIT_QUERY);
   const [filter, setFilter] = useState<ThreadFilter>('all');
   const fixture = useMemo(() => threadListFixture(NOW), []);
@@ -197,14 +204,18 @@ function RailScreen() {
         onMarkUnread={noop}
       />
       <div className="min-h-0 min-w-0 flex-1">
-        <WorkThreadView model={model} handlers={handlers} />
+        {hop ? (
+          <ThreadLoading title="Renew the car registration" label="Loading the thread" />
+        ) : (
+          <WorkThreadView model={model} handlers={handlers} />
+        )}
       </div>
     </div>
   );
 }
 
 /** The full list, with "Answer" open in place when asked. */
-function ListScreen({ answer }: { answer: boolean }) {
+function ListScreen({ answer, first }: { answer: boolean; first: boolean }) {
   const [filter, setFilter] = useState<ThreadFilter>('all');
   const fixture = useMemo(() => threadListFixture(NOW), []);
   const runs = useMemo(() => threadRunFixtures(NOW), []);
@@ -277,10 +288,12 @@ function ListScreen({ answer }: { answer: boolean }) {
               Albatrosses
             </h1>
             <p className="flex-1 text-[14px] text-[var(--color-text-muted)]">
-              {listCountSentence(
-                groups.find((group) => group.key === 'needs_you')?.rows.length ?? 0,
-                groups.find((group) => group.key === 'working')?.rows.length ?? 0,
-              )}
+              {first
+                ? null
+                : listCountSentence(
+                    groups.find((group) => group.key === 'needs_you')?.rows.length ?? 0,
+                    groups.find((group) => group.key === 'working')?.rows.length ?? 0,
+                  )}
             </p>
             <span className="text-[12px] text-[var(--color-text-muted)]">Show finished</span>
           </div>
@@ -305,7 +318,8 @@ function ListScreen({ answer }: { answer: boolean }) {
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-6">
         <div className="mx-auto max-w-3xl">
-          {groups.map((group) => (
+          {first ? <ThreadListPlaceholder /> : null}
+          {(first ? [] : groups).map((group) => (
             <ThreadGroupSection key={group.key} groupKey={group.key}>
               {group.rows.map((row) => (
                 <li key={row.workId}>

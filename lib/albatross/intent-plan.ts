@@ -1,4 +1,5 @@
 import { type ModelMessage, stepCountIs, tool } from 'ai';
+import { after } from 'next/server';
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { describeModelError } from '@/lib/ai/log-error';
@@ -34,6 +35,18 @@ import { assertWorkOpen } from './work-lifecycle';
 import { WORK_SHAPE_GUIDE, WORK_SHAPES } from './work-shape';
 import { assignStableActionKeys, shouldComposeWorkBrief } from './work-v2';
 
+/**
+ * Keep work alive after the response. Outside a request, `after` throws, and
+ * the server process keeps the work alive.
+ */
+function deferWork(task: () => Promise<unknown>) {
+  try {
+    after(task);
+  } catch {
+    void task();
+  }
+}
+
 // Dependency seam mirroring lib/tools/albatross.ts: tests swap the network
 // edges (Convex, gateway, tool invocation) and exercise the real orchestration.
 // A JSON GET goes through Browserbase Fetch (raw), never from our server (D2).
@@ -46,6 +59,7 @@ const defaultDeps = {
   httpGetJson: (url: string): Promise<any> => readJson(url, { timeoutMs: 10_000 }),
   getNarrativeTaskContext,
   narrativeResearchTools,
+  defer: deferWork,
 };
 
 let deps = defaultDeps;
@@ -56,8 +70,8 @@ export function __setIntentPlanDepsForTest(overrides: Partial<typeof defaultDeps
 
 /* The real brain behind New Intent (issues #77/#78/#80 made live). One
  * structured generation turns a raw dump plus verified area context and
- * artifact search evidence into a grounded plan; a second pass composes the
- * HTML plan brief. Everything the model claims as evidence is clamped to refs
+ * artifact search evidence into a grounded plan, which saves and shows at once;
+ * a second pass composes the plan's page and attaches it later. Everything the model claims as evidence is clamped to refs
  * that actually appeared in the context pack — no hallucinated provenance. */
 
 const INTENT_KINDS = [
@@ -1164,9 +1178,6 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       }),
     );
 
-    let artifactHtml: string | undefined;
-    let document: BriefDocumentV2 | undefined;
-    let artifactSource: string | undefined;
     const openQuestions = questions.filter((question) => !question.answer);
     const composeBrief = shouldComposeWorkBrief({
       declaredProjectTitle: generation.projectTitle,
@@ -1174,49 +1185,42 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       physicalActions: generation.physicalActions,
       openQuestions: openQuestions.length,
     });
-    try {
-      if (!composeBrief) throw new Error('brief-not-required');
-      const artifactContext = {
-        title: generation.title,
-        outcome: generation.outcome,
-        summary: generation.summary,
-        digitalActions: digitalActions.map((action) => ({
-          key: action.key,
-          kind: action.kind,
-          title: action.title,
-          description: action.description,
-          priority: action.priority,
-          startIso: action.startIso,
-          endIso: action.endIso,
-          durationMinutes: action.durationMinutes,
-          account: action.account,
-          to: action.to,
-          subject: action.subject,
-          body: action.body,
-          documentKind: action.documentKind,
-          instructions: action.instructions,
-        })),
-        physicalActions: generation.physicalActions,
-        places: generation.places,
-        assumptions: generation.assumptions,
-        sources: sourceRefs,
-        services: briefServicesFromIds(planArtifactServiceIds(sourceRefs)),
-        openQuestions: openQuestions.map((question) => question.prompt),
-      };
-      // The plan page is always the native document. The sandboxed HTML
-      // artifact path is gone for Work; the legacy HTML stays only as the
-      // static companion older native clients render. It is built first so a
-      // composer failure still leaves the plan with a readable companion.
-      artifactHtml = buildPlanDocumentLegacyHtml(artifactContext);
-      document = await composePlanDocumentV2(artifactContext, input);
-      artifactSource = 'document-v2';
-    } catch (err) {
-      // The plan is still fully usable without its brief; don't fail the loop.
-      if (!(err instanceof Error && err.message === 'brief-not-required')) {
-        console.warn('[albatross-plan] artifact composition failed:', describeModelError(err));
-      }
-    }
+    const artifactContext: Record<string, any> | undefined = composeBrief
+      ? {
+          title: generation.title,
+          outcome: generation.outcome,
+          summary: generation.summary,
+          digitalActions: digitalActions.map((action) => ({
+            key: action.key,
+            kind: action.kind,
+            title: action.title,
+            description: action.description,
+            priority: action.priority,
+            startIso: action.startIso,
+            endIso: action.endIso,
+            durationMinutes: action.durationMinutes,
+            account: action.account,
+            to: action.to,
+            subject: action.subject,
+            body: action.body,
+            documentKind: action.documentKind,
+            instructions: action.instructions,
+          })),
+          physicalActions: generation.physicalActions,
+          places: generation.places,
+          assumptions: generation.assumptions,
+          sources: sourceRefs,
+          services: briefServicesFromIds(planArtifactServiceIds(sourceRefs)),
+          openQuestions: openQuestions.map((question) => question.prompt),
+        }
+      : undefined;
+    // The plan page is always the native document. The sandboxed HTML artifact
+    // path is gone for Work; the legacy HTML stays only as the static companion
+    // older native clients render.
+    const artifactHtml = artifactContext ? buildPlanDocumentLegacyHtml(artifactContext) : undefined;
 
+    // The user reads the plan now. The composer can take three minutes, and it
+    // has the plan's words to start from, so nothing waits for it.
     const planId = await deps.convexMutation<string>(deps.api.albatrossIntents.savePlan, {
       ...caller,
       intentId: input.intentId,
@@ -1234,13 +1238,17 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       assumptions: generation.assumptions,
       sourceRefs,
       artifactHtml,
-      document,
-      artifactSource,
+      documentPending: artifactContext ? true : undefined,
       artifactTitle: generation.title,
       mapQuery: generation.mapQuery ?? generation.places[0]?.mapsQuery ?? undefined,
       places: generation.places,
       contract: outcomeContractForPlan(generation),
     });
+
+    if (artifactContext) {
+      const context = artifactContext;
+      deps.defer(() => attachComposedDocument(planId, context, input));
+    }
 
     return {
       planId,
@@ -1264,6 +1272,29 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       .catch(() => {});
     throw err;
   }
+}
+
+/** Compose the page of a saved plan. A failure keeps the plan and ends the wait. */
+async function attachComposedDocument(
+  planId: string,
+  context: Record<string, any>,
+  input: GenerateIntentPlanInput,
+) {
+  let document: BriefDocumentV2 | undefined;
+  try {
+    document = await composePlanDocumentV2(context, input);
+  } catch (err) {
+    console.warn('[albatross-plan] artifact composition failed:', describeModelError(err));
+  }
+  await deps
+    .convexMutation(deps.api.albatrossIntents.attachPlanDocument, {
+      userId: input.userId,
+      planId,
+      ...(document ? { document, artifactSource: 'document-v2' } : {}),
+    })
+    .catch((err) => {
+      console.warn('[albatross-plan] attach failed:', describeModelError(err));
+    });
 }
 
 const PLAN_DOCUMENT_SYSTEM = `${BRIEF_DOCUMENT_V2_SYSTEM_PROMPT}

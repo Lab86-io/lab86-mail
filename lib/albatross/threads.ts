@@ -60,7 +60,6 @@ export interface ThreadWorkInput extends WorkStateInput {
 export interface ThreadActivity {
   runs: Record<string, RunActivity>;
   threads: Record<string, ThreadStateView>;
-  now: number;
 }
 
 export interface ThreadRow {
@@ -233,6 +232,16 @@ export function threadRow(
     unread: meaningful > seenBase,
     closed: isClosed(work),
   };
+}
+
+/**
+ * True when "seen" would change nothing: the thread has nothing unread, and it
+ * has a seen time. A log line moves `lastActivityAt`, but it is not news.
+ */
+export function threadNeedsNoSeenWrite(
+  row: Pick<ThreadRow, 'unread' | 'seenAt'> | null | undefined,
+): boolean {
+  return Boolean(row && !row.unread && row.seenAt !== null);
 }
 
 function rank(row: ThreadRow) {

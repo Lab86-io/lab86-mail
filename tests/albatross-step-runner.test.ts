@@ -18,6 +18,10 @@ import type { SecureInventoryEntry } from '../lib/secure/store';
 // The runner end to end, with a fake model that calls the run's tools the way
 // a real model would. Convex, the gateway, and the browser are fakes.
 
+/** The finished lines that the live writer sent. */
+const loggedLines = (calls: any[]): string[] =>
+  calls.flatMap((args) => (args.lines ?? []).flatMap((op: any) => (op.text && !op.open ? [op.text] : [])));
+
 const name = (fn: any) => getFunctionName(fn);
 
 const step = {
@@ -290,7 +294,7 @@ describe('runStepRun', () => {
     });
     expect(settled.budget.calls).toBe(1);
     expect(settled.budget.costUsd).toBeGreaterThan(0);
-    const lines = h.calls('albatrossStepRuns:progress').flatMap((args) => (args.line ? [args.line] : []));
+    const lines = loggedLines(h.calls('albatrossStepRuns:progress'));
     expect(lines).toContain('Started on the step.');
     expect(lines).toContain('Saved a draft: “The proposal”.');
     expect(h.calls('albatrossStepRuns:progress').some((args) => args.artifact?.kind === 'draft')).toBe(true);
@@ -855,6 +859,206 @@ describe('review round two', () => {
   });
 });
 
+describe('a run shows its work as it happens', () => {
+  const progress = (h: Harness) => h.calls('albatrossStepRuns:progress');
+  const handOff = async (opts: any) => {
+    await opts.tools.step_handoff.execute({
+      outcome: 'ready_for_you',
+      summary: 'I made a start.',
+      next: { kind: 'review', label: 'Check', detail: 'Check it.' },
+    });
+    return { text: '', usage, totalUsage: usage };
+  };
+
+  test('the first line goes out right after the claim, before any read', async () => {
+    const order: string[] = [];
+    const h = harness(handOff);
+    const mutate = h.deps.convexMutation as any;
+    const read = h.deps.convexQuery as any;
+    h.deps.convexMutation = (async (fn: any, args: any) => {
+      order.push(name(fn));
+      return mutate(fn, args);
+    }) as any;
+    // A read takes time: the line goes out while the first read still waits.
+    h.deps.convexQuery = (async (fn: any, args: any) => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      order.push(name(fn));
+      return read(fn, args);
+    }) as any;
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(order.slice(0, 3)).toEqual([
+      'albatrossStepRuns:claim',
+      'albatrossStepRuns:progress',
+      'albatrossWorkV2:workDetail',
+    ]);
+    expect(progress(h)[0].lines).toEqual([{ text: 'Started on the step.' }]);
+  });
+
+  test('a retry of a run with earlier work says it continues', async () => {
+    const h = harness(handOff, {
+      run: { attempts: 2, log: [{ at: 1, text: 'Saved a draft: “The proposal”.' }] },
+    });
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(progress(h)[0].lines).toEqual([{ text: 'Continued the step.' }]);
+  });
+
+  test('a retry after a first call that did nothing starts fresh, not as a continuation', async () => {
+    const h = harness(handOff, {
+      run: { attempts: 2, log: [{ at: 1, text: 'Started on the step.' }] },
+    });
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(progress(h)[0].lines).toEqual([{ text: 'Started on the step.' }]);
+    expect(h.generateOptions().system).not.toContain('An earlier attempt of this run stopped');
+  });
+
+  test('a tool at work has an open row, and its own line takes that place', async () => {
+    let clock = 10_000;
+    const h = harness(async (opts) => {
+      // Past the write window, so the open row goes out at once.
+      clock += 5_000;
+      await opts.tools.document_create.execute({ title: 'The proposal' }, { toolCallId: 'call-1' });
+      return handOff(opts);
+    });
+    await runStepRun('user-1', 'run-1', { ...h.deps, now: () => clock });
+    const ops = progress(h).flatMap((args) => args.lines ?? []);
+    expect(ops).toContainEqual({ key: 'call-1', text: 'Writes “The proposal”.', open: true });
+    expect(ops).toContainEqual({ key: 'call-1', text: 'Wrote “The proposal”.' });
+  });
+
+  test('a failed tool puts its failure in the place of its open row', async () => {
+    let clock = 10_000;
+    const h = harness(async (opts) => {
+      clock += 5_000;
+      await opts.tools.calendar_create_event.execute({}, { toolCallId: 'quiet' }).catch(() => undefined);
+      return handOff(opts);
+    });
+    const lifted = (h.deps.liftTools as any)();
+    await runStepRun('user-1', 'run-1', {
+      ...h.deps,
+      now: () => clock,
+      liftTools: (() => ({
+        ...lifted,
+        calendar_create_event: {
+          ...lifted.calendar_create_event,
+          execute: async () => {
+            clock += 5_000;
+            throw new Error('The calendar did not answer.');
+          },
+        },
+      })) as any,
+    });
+    const ops = progress(h).flatMap((args) => args.lines ?? []);
+    expect(ops).toContainEqual({ key: 'quiet', text: 'Adds a hold to your calendar.', open: true });
+    expect(ops).toContainEqual({ key: 'quiet', text: 'Could not add the hold to your calendar.' });
+  });
+
+  test('the words of a tool call pass through redaction before they show', async () => {
+    let clock = 10_000;
+    const h = harness(async (opts) => {
+      clock += 5_000;
+      await opts.tools.save_draft.execute(
+        { subject: 'Use {{secure:abc.number}} here' },
+        { toolCallId: 'call-1' },
+      );
+      return handOff(opts);
+    });
+    await runStepRun('user-1', 'run-1', { ...h.deps, now: () => clock });
+    const open = progress(h)
+      .flatMap((args) => args.lines ?? [])
+      .find((op) => op.open);
+    expect(open.text).toBe('Saves a draft: “Use [saved value] here”.');
+  });
+
+  test('the text of a step run shows while it comes, and goes when the step ends', async () => {
+    let clock = 10_000;
+    const h = harness(async (opts) => {
+      clock += 5_000;
+      opts.onActivity?.();
+      opts.onTextDelta?.('I look for the form. ');
+      opts.onStepFinish?.({ usage, text: 'I look for the form.' });
+      clock += 5_000;
+      return handOff(opts);
+    });
+    await runStepRun('user-1', 'run-1', { ...h.deps, now: () => clock });
+    const texts = progress(h).flatMap((args) => (args.liveText !== undefined ? [args.liveText] : []));
+    expect(texts).toEqual(['I look for the form.', null]);
+    expect(progress(h).some((args) => args.message)).toBe(false);
+  });
+
+  test('a saved value in the streamed text never leaves the runner', async () => {
+    const secret = 'SSN-112233';
+    let clock = 10_000;
+    const h = harness(
+      async (opts) => {
+        clock += 5_000;
+        opts.onTextDelta?.(`Your number is ${secret} on file. `);
+        return handOff(opts);
+      },
+      {
+        secure: {
+          cleanText: (text: string) => text.replaceAll(secret, '[saved value]'),
+          pendingAllow: () => null,
+          signInOffer: async () => null,
+        } as unknown as SecureRunAccess,
+      },
+    );
+    await runStepRun('user-1', 'run-1', { ...h.deps, now: () => clock });
+    const texts = progress(h).flatMap((args) => (args.liveText ? [args.liveText] : []));
+    expect(texts.join(' ')).not.toContain(secret);
+    expect(texts[0]).toContain('[saved value]');
+  });
+
+  test('a first call that stalls moves to the next runtime', async () => {
+    const seen: string[] = [];
+    const stalled = (opts: any) =>
+      new Promise<never>((_, reject) => {
+        opts.abortSignal.addEventListener('abort', () => reject(opts.abortSignal.reason), { once: true });
+      });
+    const h = harness(
+      async (opts) => {
+        seen.push(String(opts.model.name));
+        if (opts.model.name === 'slow') return stalled(opts);
+        return handOff(opts);
+      },
+      {
+        runtimes: [
+          { provider: 'openrouter', modelName: 'slow', model: { name: 'slow' }, source: 'lab86' },
+          { provider: 'openrouter', modelName: 'next', model: { name: 'next' }, source: 'lab86' },
+        ],
+      },
+    );
+    await runStepRun('user-1', 'run-1', { ...h.deps, firstStepTimeoutMs: 5 });
+    expect(seen).toEqual(['slow', 'next']);
+    expect(h.settled()).toMatchObject({ outcome: 'ready_for_you' });
+  });
+
+  test('a first call that stalls with no other runtime ends the attempt and may retry', async () => {
+    const h = harness(
+      (opts) =>
+        new Promise<never>((_, reject) => {
+          opts.abortSignal.addEventListener('abort', () => reject(opts.abortSignal.reason), { once: true });
+        }),
+    );
+    await runStepRun('user-1', 'run-1', { ...h.deps, firstStepTimeoutMs: 5 });
+    expect(h.settled()).toMatchObject({ error: 'The run failed. Try again.', retryable: true });
+  });
+
+  test('a first chunk ends the stall limit: a slow step after that keeps its time', async () => {
+    const h = harness(async (opts) => {
+      opts.onActivity?.();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(opts.abortSignal.aborted).toBe(false);
+      return handOff(opts);
+    });
+    await runStepRun('user-1', 'run-1', { ...h.deps, firstStepTimeoutMs: 5 });
+    expect(h.settled()).toMatchObject({ outcome: 'ready_for_you' });
+  });
+
+  test('the stall error may retry', () => {
+    expect(isRetryableRunError(Object.assign(new Error('x'), { name: 'RunFirstStepStall' }))).toBe(true);
+  });
+});
+
 describe('runner helpers', () => {
   test('fallbackHandoff prefers a draft, then a document, then Continue', () => {
     expect(fallbackHandoff('', [{ kind: 'draft', id: 'd', title: 'D', accountId: 'a' }])).toMatchObject({
@@ -1003,9 +1207,9 @@ describe('the thread round (docs/albatross-thread.md)', () => {
     expect(second.messages.map((message: any) => message.role)).toEqual(['user', 'user', 'assistant']);
     expect(second.messages[1].content).toContain('Use the Monday class.');
     expect(
-      h
-        .calls('albatrossStepRuns:progress')
-        .filter((args) => args.line === 'Read your note: Use the Monday class.'),
+      loggedLines(h.calls('albatrossStepRuns:progress')).filter(
+        (line) => line === 'Read your note: Use the Monday class.',
+      ),
     ).toHaveLength(1);
   });
 

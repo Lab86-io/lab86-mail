@@ -14,8 +14,9 @@
 // step's doneWhen. A claim the gate does not accept becomes a "check it"
 // handoff, so the UI never shows a verified check for a self-report.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import { generateText, hasToolCall, type ModelMessage, stepCountIs } from 'ai';
+import { hasToolCall, type ModelMessage, stepCountIs } from 'ai';
 import { runWithAiRequestContext } from '../ai/context';
 import {
   AiAccessError,
@@ -74,6 +75,9 @@ import {
 } from './goal-runs';
 import { localDateKey } from './local-time';
 import { MODEL_AUTHORED_TOOLS, type ObservedStep, observedEvidence } from './run-evidence';
+import { createRunLiveWriter } from './run-live-writer';
+import { type RunModelOptions, type RunModelResult, streamRunModel } from './run-model-stream';
+import { toolStartLine } from './run-tool-lines';
 import { completeWorkStep } from './step-execution';
 import {
   goalRunLimits,
@@ -100,6 +104,11 @@ import { workThreadSessionId } from './thread-contract';
 import { isTerminalWork } from './work-lifecycle';
 
 const HEARTBEAT_MS = 30_000;
+/**
+ * The longest wait for the first chunk of a model call. The time budgets are
+ * 15 and 30 minutes: without this, a stalled call uses all of it in silence.
+ */
+export const RUN_FIRST_STEP_TIMEOUT_MS = 120_000;
 
 export interface ClaimedRun {
   _id: string;
@@ -156,7 +165,8 @@ export interface StepRunnerDependencies {
   convexQuery: typeof convexQuery;
   convexMutation: typeof convexMutation;
   resolveAgentRuntimes: typeof resolveAgentRuntimes;
-  generateText: typeof generateText;
+  /** One model call. The default streams it, and gives the same result as generateText. */
+  generateText: (options: RunModelOptions) => Promise<RunModelResult>;
   liftTools: typeof liftToolsForAgent;
   pausedRisks: typeof pausedAssistantRisksStrict;
   resolveTimezone: typeof resolveBriefTimezone;
@@ -174,6 +184,7 @@ export interface StepRunnerDependencies {
   recordUsage: typeof recordAgentUsage;
   now: () => number;
   heartbeatMs: number;
+  firstStepTimeoutMs: number;
   reportError: typeof console.error;
   /** The account name and email (the users table), for personal details and the prompt. */
   readUser: (userId: string) => Promise<{ name: string | null; email: string | null }>;
@@ -213,7 +224,7 @@ const defaults: StepRunnerDependencies = {
   convexQuery,
   convexMutation,
   resolveAgentRuntimes,
-  generateText,
+  generateText: streamRunModel,
   liftTools: liftToolsForAgent,
   // A failed read fails the run: a background writer never guesses a switch.
   pausedRisks: pausedAssistantRisksStrict,
@@ -232,6 +243,7 @@ const defaults: StepRunnerDependencies = {
   recordUsage: recordAgentUsage,
   now: Date.now,
   heartbeatMs: HEARTBEAT_MS,
+  firstStepTimeoutMs: RUN_FIRST_STEP_TIMEOUT_MS,
   reportError: console.error,
   readUser: (userId) => readUserProfile(userId),
   listDetails: listPersonalDetails,
@@ -253,6 +265,16 @@ class RunDeadline extends Error {
     this.name = 'RunDeadline';
   }
 }
+
+class RunFirstStepStall extends Error {
+  constructor() {
+    super('The model did not start to answer in time.');
+    this.name = 'RunFirstStepStall';
+  }
+}
+
+/** The tool call that a log line comes from, so its line can take the place of its open row. */
+const toolCallKey = new AsyncLocalStorage<string>();
 
 interface SessionRow {
   sessionId: string;
@@ -502,6 +524,13 @@ function stopTimer(timer: ReturnType<typeof setInterval> | null) {
   if (timer) clearInterval(timer);
 }
 
+const RUN_START_LINES: ReadonlySet<string> = new Set([
+  'Started on the goal.',
+  'Continued the goal.',
+  'Started on the step.',
+  'Continued the step.',
+]);
+
 /**
  * Claim and run one queued step run. Every exit settles the run or leaves it
  * to the lease: a lost process never leaves a run "working" forever.
@@ -560,11 +589,19 @@ export async function runStepRun(
   const pendingSources: RunSource[] = [];
   // Filled PDFs whose ID numbers stay sealed: their items wait for a check (G5).
   const sealedFiles = new Set<string>();
+  // Log rows and the model's text: one write in two seconds at most.
+  let liveSecure: SecureRunAccess | null = null;
+  const live = createRunLiveWriter({
+    write: (payload) => deps.convexMutation(api.albatrossStepRuns.progress, { ...fence, ...payload }),
+    clean: (text) => redactRunText(text, liveSecure),
+    now: deps.now,
+  });
 
   const settle = async (input: SettleInput) => {
     stopTimer(heartbeat);
     heartbeat = null;
     await talk;
+    await live.flush();
     const record = meter.record(false);
     return deps.convexMutation<{ state: string | null }>(api.albatrossStepRuns.settle, {
       ...fence,
@@ -591,7 +628,7 @@ export async function runStepRun(
     });
   };
   const log = async (line: string) => {
-    await deps.convexMutation(api.albatrossStepRuns.progress, { ...fence, line }).catch(() => undefined);
+    live.line(line, toolCallKey.getStore());
   };
   const setSessionStatus = async (status: 'agent' | 'user', detail: string) => {
     if (!sessionId) return;
@@ -609,6 +646,25 @@ export async function runStepRun(
 
   try {
     if (!stepRunsEnabled()) return await settle({ error: 'Step runs are off.' });
+    // The first line goes out before the reads below, so the run shows at once.
+    // The first line of an attempt is no work: a retry after a stalled first call starts fresh.
+    const loggedWork = (run.log || []).some((row: { text: string }) => !RUN_START_LINES.has(row.text));
+    const earlierWork = run.attempts > 1 && (goal ? run.messages?.length : loggedWork);
+    const continuing = Boolean(
+      run.parentRunId ||
+        (goal && run.trigger === 'resume') ||
+        earlierWork ||
+        (run.attempts > 1 && run.artifacts?.length),
+    );
+    void log(
+      goal
+        ? continuing
+          ? 'Continued the goal.'
+          : 'Started on the goal.'
+        : continuing
+          ? 'Continued the step.'
+          : 'Started on the step.',
+    );
     const detail = await deps.convexQuery<any>(api.albatrossWorkV2.workDetail, {
       userId,
       workId: run.workId,
@@ -645,7 +701,7 @@ export async function runStepRun(
     // A retried attempt of this same run continues from what the first attempt
     // did (its log and its artifacts), instead of doing the step again.
     const previous: PreviousRun | null =
-      run.attempts > 1 && ((run.log || []).length || (run.artifacts || []).length)
+      run.attempts > 1 && (loggedWork || (run.artifacts || []).length)
         ? {
             summary: `An earlier attempt of this run stopped before it finished.${parent?.summary ? ` Before that: ${parent.summary}` : ''}`,
             log: run.log,
@@ -674,24 +730,30 @@ export async function runStepRun(
     });
     const profile = await deps.readUser(userId).catch(() => ({ name: null, email: null }));
     const secure = deps.secureAccess({ userId, runId, workId: run.workId, stepKey: run.stepKey, log });
+    liveSecure = secure;
     const secureItems = secure ? await deps.secureInventory(userId).catch(() => []) : null;
-    const say = (text: unknown) => {
-      if (!goal || typeof text !== 'string') return;
+    const say = (text: unknown): boolean => {
+      if (!goal || typeof text !== 'string') return false;
       const clean = truncateText(redactRunText(text, secure).trim(), RUN_MESSAGE_TEXT_MAX);
-      if (!clean) return;
+      if (!clean) return false;
       spoke = true;
+      // The message takes the place of the text that streamed, in one write.
+      live.forgetText();
       const message = {
         id: randomUUID(),
         at: deps.now(),
         text: clean,
         sources: cleanSources(pendingSources.splice(0)),
       };
-      talk = talk.then(() =>
-        deps.convexMutation(api.albatrossStepRuns.progress, { ...fence, message }).then(
-          () => undefined,
-          () => undefined,
-        ),
-      );
+      talk = talk
+        .then(() => live.flush())
+        .then(() =>
+          deps.convexMutation(api.albatrossStepRuns.progress, { ...fence, message }).then(
+            () => undefined,
+            () => undefined,
+          ),
+        );
+      return true;
     };
     const [aboutUser, threadNotes] = await Promise.all([
       deps
@@ -841,6 +903,27 @@ export async function runStepRun(
         : {}),
     });
     addSecureFetchTool(tools, secure);
+    // Each tool says what it does when it starts, in plain words, so a slow
+    // tool is not a silence. Its own line takes that row's place at the end.
+    for (const [toolName, spec] of Object.entries(tools)) {
+      const execute = spec?.execute;
+      if (typeof execute !== 'function') continue;
+      tools[toolName] = {
+        ...spec,
+        execute: (args: any, options?: any) => {
+          const key = String(options?.toolCallId || randomUUID());
+          const start = toolStartLine(toolName, args);
+          if (start) live.openTool(key, redactRunText(start, secure));
+          return toolCallKey.run(key, async () => {
+            try {
+              return await execute(args, options);
+            } finally {
+              live.closeTool(key);
+            }
+          });
+        },
+      };
+    }
 
     // A retried attempt of a goal run keeps its messages and its artifacts on the row.
     const retry =
@@ -897,23 +980,26 @@ export async function runStepRun(
     const feature = stepRunFeature(run.trigger);
     const runtimes = await deps.resolveAgentRuntimes({ userId, speed: 'primary', feature });
     const signal = AbortSignal.any([cancel.signal, deadline.signal, meter.signal, leakStop.signal]);
-    await log(
-      goal
-        ? resuming
-          ? 'Continued the goal.'
-          : 'Started on the goal.'
-        : resuming
-          ? 'Continued the step.'
-          : 'Started on the step.',
-    );
 
-    let result: Awaited<ReturnType<typeof generateText>> | null = null;
+    let result: RunModelResult | null = null;
     let lastError: unknown;
     // Notes the run already read. A failover attempt starts from the first
     // messages again, so it gets these notes at once.
     const receivedNotes: string[] = [];
     for (let index = 0; index < runtimes.length && !result; index += 1) {
       const runtime = runtimes[index];
+      // The text of a failed attempt goes: the next attempt writes its own.
+      live.clearText();
+      const stall = new AbortController();
+      let stallTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+        () => stall.abort(new RunFirstStepStall()),
+        deps.firstStepTimeoutMs,
+      );
+      (stallTimer as { unref?: () => void }).unref?.();
+      const modelAnswered = () => {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = null;
+      };
       try {
         result = await runWithAiRequestContext(
           {
@@ -953,13 +1039,17 @@ export async function runStepRun(
                   log,
                 }),
                 stopWhen: [hasToolCall('step_handoff'), stepCountIs(maxModelSteps)],
-                abortSignal: signal,
+                abortSignal: AbortSignal.any([signal, stall.signal]),
                 maxOutputTokens: maxOutputTokensForFeature(feature),
                 providerOptions: agentProviderOptions(runtime, `step-run:${userId}`),
+                onActivity: modelAnswered,
+                onTextDelta: (delta) => live.textDelta(delta),
                 onStepFinish: (stepResult: any) => {
+                  modelAnswered();
                   meter.addStep(runtime, stepResult?.usage);
                   // A goal run's text between tool calls is a message to the user (G2).
-                  say(stepResult?.text);
+                  // A step run keeps no message: its text goes with the step.
+                  if (!say(stepResult?.text)) live.clearText();
                 },
               }),
             ),
@@ -978,7 +1068,12 @@ export async function runStepRun(
           .catch(() => undefined);
         // Fail over only before the run did anything visible.
         const madeNothing = artifacts.length === (run.artifacts || []).length && !handoff && !spoke;
-        if (signal.aborted || !madeNothing || !canFailOverAgentRuntime(error, feature, runtime)) throw error;
+        const stalled = stall.signal.aborted && !signal.aborted;
+        if (stalled) lastError = stall.signal.reason;
+        if (signal.aborted || !madeNothing) throw error;
+        if (!stalled && !canFailOverAgentRuntime(error, feature, runtime)) throw error;
+      } finally {
+        modelAnswered();
       }
     }
     if (!result) throw lastError ?? new Error('No model runtime answered.');
@@ -1168,6 +1263,7 @@ export async function runStepRun(
   } finally {
     clearTimeout(deadlineTimer);
     stopTimer(heartbeat);
+    live.stop();
     meter.finish();
     if (connection) await (connection as Awaited<ReturnType<AgentConnector>>).close().catch(() => undefined);
   }
@@ -1196,6 +1292,7 @@ export function approvalKey(toolName: string, args: unknown): string {
 
 /** Provider hiccups and lost connections may retry once; argument and access errors may not. */
 export function isRetryableRunError(error: unknown): boolean {
+  if ((error as Error)?.name === 'RunFirstStepStall') return true;
   const message = String((error as any)?.message || error || '');
   const status = Number((error as any)?.statusCode ?? (error as any)?.status);
   if (status === 429 || status >= 500) return true;

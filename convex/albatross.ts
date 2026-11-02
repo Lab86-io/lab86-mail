@@ -1313,6 +1313,46 @@ export const listAreasOverview = query({
   },
 });
 
+/** Facts one area reads for its icon, for each status. */
+const RAIL_AREA_FACT_SCAN = 20;
+const RAIL_AREA_MAX = 500;
+
+// The rail's areas: names and icons, and no counts. Only an area with no stored
+// domain or icon reads a few of its own facts, because its icon comes from them.
+export const railAreas = query({
+  args: callerArgs,
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const areas = await ctx.db
+      .query('areas')
+      .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'active'))
+      .take(RAIL_AREA_MAX);
+    const rows = await Promise.all(
+      areas.map(async (area) => {
+        const factsFor = (status: 'verified' | 'candidate') =>
+          ctx.db
+            .query('areaFacts')
+            .withIndex('by_user_area_status', (q) =>
+              q.eq('userId', userId).eq('areaId', area._id).eq('status', status),
+            )
+            .take(RAIL_AREA_FACT_SCAN);
+        const facts =
+          area.primaryDomain || area.faviconUrl
+            ? []
+            : (await Promise.all([factsFor('verified'), factsFor('candidate')])).flat();
+        return {
+          _id: area._id,
+          name: area.name,
+          kind: area.kind,
+          priority: area.priority,
+          ...areaBrandingFromFacts(area, facts),
+        };
+      }),
+    );
+    return rows.sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99) || a.name.localeCompare(b.name));
+  },
+});
+
 // All of one user's area facts, optionally by status — the classifier loads
 // verified and candidate facts across every area in two indexed reads.
 export const listUserAreaFacts = query({

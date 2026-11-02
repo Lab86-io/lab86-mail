@@ -100,11 +100,17 @@ import {
   stepNumberFor,
   threadStateInput,
 } from '@/lib/albatross/thread-view';
-import { adjacentThread, filterThreadRows, nextNeedingYou } from '@/lib/albatross/threads';
+import {
+  adjacentThread,
+  filterThreadRows,
+  nextNeedingYou,
+  threadNeedsNoSeenWrite,
+} from '@/lib/albatross/threads';
 import {
   guideStepsWithOptimisticCompletion,
   postJson,
   type WorkDetailData,
+  withPlanArtifact,
   workDetailRecoveryPrompt,
   workIsOpen,
   workTitle,
@@ -135,6 +141,7 @@ import { openPackageBehaviour } from './thread/PackageRows';
 import { PagePane, type PageSession } from './thread/PagePane';
 import { PlanIntro, PlanLine, PlanOutro } from './thread/PlanIntro';
 import { RunBlock } from './thread/RunBlock';
+import { RunLiveTextConnected, ThreadLoading } from './thread/RunLive';
 import { ThreadJumpPill } from './thread/ThreadJumpPill';
 import { ThreadObligationCard } from './thread/ThreadObligations';
 import { useSavedFileLoader } from './thread/use-saved-file';
@@ -282,6 +289,8 @@ export interface ThreadHandlers {
   onObligationAction?: (obligation: ObligationView, action: ObligationAction) => void;
   /** "Handle it": a run starts in this thread with the item as its input. */
   onObligationHandle?: (obligation: ObligationView) => void;
+  /** The text the model writes now, for a run at work. The data layer subscribes in the node it returns. */
+  liveText?: (run: ThreadRunView) => ReactNode;
   /** The dev harness: a fixture transport, preview mode, and the messages to show. */
   chat?: { transport?: ChatTransport<UIMessage>; preview?: boolean; initialMessages?: UIMessage[] };
 }
@@ -398,6 +407,7 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
           onAllow={handlers.onAllow}
           onSaveSignIn={handlers.onSaveSignIn}
           onOpenSecureSettings={handlers.onOpenSecureSettings}
+          liveText={run.state === 'running' || run.state === 'queued' ? handlers.liveText?.(run) : undefined}
         />
       );
     },
@@ -697,6 +707,7 @@ export function WorkThreadView({ model, handlers }: { model: ThreadModel; handle
         onUndo={handlers.onUndoArtifact}
         onError={handlers.onError}
         onClose={wide ? undefined : () => handlers.onRegionChange(null)}
+        nowMs={model.nowMs}
         goal={
           goal
             ? {
@@ -1074,15 +1085,20 @@ export function WorkThread({ workId }: { workId: string }) {
   const railWide = useMediaQuery(THREAD_RAIL_WIDE_QUERY);
 
   // Seen (T2): on open and after each new activity, while the thread is on screen and the window has focus.
+  // A write here re-runs the activity query, so a thread with nothing new writes nothing.
   const markSeen = useMarkSeen();
   const lastActivityAt = row?.lastActivityAt ?? 0;
+  const nothingNew = useRef(false);
+  useEffect(() => {
+    nothingNew.current = threadNeedsNoSeenWrite(row);
+  });
   // biome-ignore lint/correctness/useExhaustiveDependencies: new activity marks the thread seen again
   useEffect(() => {
     if (!isAuthenticated) return;
     let timer: number | null = null;
     const visible = () => document.visibilityState === 'visible' && document.hasFocus();
     const touch = () => {
-      if (!visible()) return;
+      if (!visible() || nothingNew.current) return;
       if (timer !== null) window.clearTimeout(timer);
       timer = window.setTimeout(() => void markSeen(workId), 1_000);
     };
@@ -1132,7 +1148,8 @@ export function WorkThread({ workId }: { workId: string }) {
   }, [workId]);
   const detail = useQuery(
     api.albatrossWorkV2.workDetail,
-    isAuthenticated ? { workId: workId as Id<'albatrossIntents'> } : 'skip',
+    // The plan's page comes from getPlanArtifact, and only when Details opens.
+    isAuthenticated ? { workId: workId as Id<'albatrossIntents'>, omitPlanArtifact: true } : 'skip',
   ) as WorkDetailData | null | undefined;
   useSurfaceReady('thread', detail !== undefined);
   const session = useQuery(
@@ -1165,6 +1182,13 @@ export function WorkThread({ workId }: { workId: string }) {
   const [optimisticDone, setOptimisticDone] = useState<ReadonlySet<string>>(() => new Set());
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [region, setRegionState] = useState<ThreadRegion>(null);
+  const planId = detail?.plan?._id;
+  const planArtifact = useQuery(
+    api.albatrossIntents.getPlanArtifact,
+    isAuthenticated && region === 'details' && planId
+      ? { planId: planId as Id<'albatrossIntentPlans'> }
+      : 'skip',
+  );
   const [openDocument, setOpenDocument] = useState<DocumentTarget | null>(null);
   // Document mode with a package (goal runs): the tabs and the one in view.
   const [openTabs, setOpenTabs] = useState<NonNullable<ThreadModel['documentTabs']> | null>(null);
@@ -1733,6 +1757,7 @@ export function WorkThread({ workId }: { workId: string }) {
       onOpenSecureSettings: () => {
         window.location.assign('/settings?tab=secure');
       },
+      liveText: (run) => (isAuthenticated ? <RunLiveTextConnected runId={run.id} /> : null),
       // Steering (T7–T9, lead decisions 5 and 6). The thread keeps the note; the run reads it.
       onSteerNote: async (runId, note, noteId) => {
         try {
@@ -1765,6 +1790,7 @@ export function WorkThread({ workId }: { workId: string }) {
       allowWithCheck,
       detail,
       allowSend,
+      isAuthenticated,
       loadFile,
       navDeps,
       queryClient,
@@ -1778,10 +1804,53 @@ export function WorkThread({ workId }: { workId: string }) {
     ],
   );
 
+  // The rail beside the thread (lead decision 3): 300 px on desktops, 272 px on
+  // laptops, where it also yields to an open region; none below 1024 px.
+  const showRail = wide && region !== 'document' && (railWide || region === null);
+  const rail = showRail ? (
+    <ThreadRail
+      rows={rows}
+      laterCount={laterCount}
+      openWorkId={workId}
+      filter={listFilter}
+      onFilterChange={setListFilter}
+      nowMs={railNowMs}
+      areaName={railAreaName}
+      draftWorkIds={draftIds}
+      width={railWide ? 300 : 272}
+      onOpen={setSelectedWorkId}
+      onAction={(kind, target) => {
+        if (kind === 'answer') setAnsweringWorkId(target.workId);
+        else railActions.act(kind, target);
+      }}
+      onSteer={railActions.steer}
+      onMarkUnread={(target) => void railActions.markUnread(target)}
+      answeringWorkId={answeringWorkId}
+      renderAnswer={(target) => (
+        <ThreadAnswerInPlace
+          row={target}
+          onDone={() => setAnsweringWorkId(null)}
+          onCancel={() => setAnsweringWorkId(null)}
+          onOpenThread={() => {
+            setAnsweringWorkId(null);
+            setSelectedWorkId(target.workId);
+          }}
+        />
+      )}
+      onShowFinished={() => setSelectedWorkId(null)}
+      onShowLater={() => setSelectedWorkId(null)}
+    />
+  ) : null;
+
+  // The rail comes from the list's live rows, so it shows at once. Only the
+  // thread itself waits for its detail.
   if (detail === undefined) {
     return (
-      <div className="flex h-full items-center justify-center text-[12.5px] text-[var(--color-text-muted)]">
-        {THREAD_COPY.loading}
+      <div className="flex h-full min-h-0 min-w-0">
+        {rail}
+        <div className="min-h-0 min-w-0 flex-1">
+          <ThreadLoading title={row?.title} label={THREAD_COPY.loading} />
+        </div>
       </div>
     );
   }
@@ -1798,15 +1867,16 @@ export function WorkThread({ workId }: { workId: string }) {
     );
   }
 
+  const withPage = withPlanArtifact(detail, planArtifact);
   const visibleDetail: WorkDetailData = optimisticDone.size
     ? {
-        ...detail,
+        ...withPage,
         execution: {
-          ...detail.execution,
-          guideSteps: guideStepsWithOptimisticCompletion(detail.execution.guideSteps, optimisticDone),
+          ...withPage.execution,
+          guideSteps: guideStepsWithOptimisticCompletion(withPage.execution.guideSteps, optimisticDone),
         },
       }
-    : detail;
+    : withPage;
   // The projection's run rows fill the thread until the live query answers.
   const threadRuns: readonly ThreadRunView[] = liveRuns
     ? runs
@@ -1847,46 +1917,10 @@ export function WorkThread({ workId }: { workId: string }) {
     obligations,
     obligationBusy,
   };
-  // The rail beside the thread (lead decision 3): 300 px on desktops, 272 px on
-  // laptops, where it also yields to an open region; none below 1024 px.
-  const showRail = wide && region !== 'document' && (railWide || region === null);
   return (
     <>
       <div className="flex h-full min-h-0 min-w-0">
-        {showRail ? (
-          <ThreadRail
-            rows={rows}
-            laterCount={laterCount}
-            openWorkId={workId}
-            filter={listFilter}
-            onFilterChange={setListFilter}
-            nowMs={railNowMs}
-            areaName={railAreaName}
-            draftWorkIds={draftIds}
-            width={railWide ? 300 : 272}
-            onOpen={setSelectedWorkId}
-            onAction={(kind, target) => {
-              if (kind === 'answer') setAnsweringWorkId(target.workId);
-              else railActions.act(kind, target);
-            }}
-            onSteer={railActions.steer}
-            onMarkUnread={(target) => void railActions.markUnread(target)}
-            answeringWorkId={answeringWorkId}
-            renderAnswer={(target) => (
-              <ThreadAnswerInPlace
-                row={target}
-                onDone={() => setAnsweringWorkId(null)}
-                onCancel={() => setAnsweringWorkId(null)}
-                onOpenThread={() => {
-                  setAnsweringWorkId(null);
-                  setSelectedWorkId(target.workId);
-                }}
-              />
-            )}
-            onShowFinished={() => setSelectedWorkId(null)}
-            onShowLater={() => setSelectedWorkId(null)}
-          />
-        ) : null}
+        {rail}
         <div className="min-h-0 min-w-0 flex-1">
           <WorkThreadView
             model={model}

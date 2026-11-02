@@ -256,11 +256,11 @@ describe('a package row opens one way everywhere', () => {
 describe('a step run is unchanged', () => {
   const steps = threadRunFixtures(NOW);
 
-  test('the header names the step, the log opens while it works, and Mark step done stays', () => {
+  test('the header names the step, its newest rows stay open while it works, and Mark step done stays', () => {
     const running = render(steps.running, { stepNumber: 1 });
     expect(running.querySelector('header')?.textContent).toContain('Step 1');
     expect(running.querySelector('[data-slot="run-block"]')?.getAttribute('data-run-goal')).toBeNull();
-    expect(running.querySelector('[data-slot="run-live-line"]')).not.toBeNull();
+    expect(running.querySelector('[data-slot="run-live-rows"]')).not.toBeNull();
     const ready = render(steps.readyDraft, { stepNumber: 2 });
     expect(buttons(ready)).toContain('Read and send');
     expect(buttons(ready)).toContain('Mark step done');

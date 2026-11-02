@@ -228,14 +228,14 @@ describe('routes', () => {
                   seenAt: null,
                 },
               },
-              now: 5,
             }) as any,
     } as any);
     const answer = await get();
     expect(answer.headers.get('cache-control')).toBe('no-store');
+    // The route keeps its clock for the native clients; the Convex answer has none.
     expect(await answer.json()).toMatchObject({
       ok: true,
-      now: 5,
+      now: expect.any(Number),
       threads: [{ workId: 'w1', status: 'answering' }],
     });
   });

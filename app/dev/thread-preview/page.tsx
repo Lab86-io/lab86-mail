@@ -2,6 +2,7 @@
 
 import { notFound, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
+import { RunLiveText } from '@/components/albatross/thread/RunLive';
 import type { WorkShapeState } from '@/components/albatross/thread/use-work-shape';
 import {
   THREAD_SPLIT_QUERY,
@@ -56,6 +57,8 @@ import { workObligationsFixture } from '@/lib/obligations/fixtures';
  *   ?state=planning | running | steered | needsAnswer | answeredChat | signIn
  *          | finalPage | done | failed | stopped | details | earlier | settings
  *          | checkResult | document   (docs/albatross-document-handoff.md)
+ *          | liveStep | liveGoal   (the live text and the open tool rows of a run at work; &dark=1)
+ *          | planSaved  (the plan shows at once; Details says that its page is on the way)
  *          | goalQueued | goalRunning | goalNeedsAnswer | goalPackage | goalYourTurn
  *          | goalStopped | goalFailed | goalDone | goalDetails | goalEarlierSteps
  *          | goalDocument   (docs/albatross-goal-runs.md; &tab=draft | invoice | hours | w9;
@@ -72,6 +75,31 @@ export default function ThreadPreviewPage() {
 
 // A fixed clock keeps the times the same in every screenshot.
 const NOW = Date.UTC(2026, 9, 7, 14, 46, 0);
+
+/** Rows that end now, so the clock of the newest row runs. */
+function liveRows(lines: readonly string[]) {
+  const start = Date.now() - 12_000 - (lines.length - 1) * 40_000;
+  return lines.map((text, index) => ({ at: start + index * 40_000, text }));
+}
+const LIVE_STEP_ROWS = [
+  'Started on the step.',
+  'Searched your mail for “class schedule”.',
+  'Checked your calendar.',
+  'Reads riverside-driving.example.',
+];
+const LIVE_GOAL_ROWS = [
+  'Started on the goal.',
+  'Searched your mail for “Bramble Press invoice”.',
+  'Read a mail thread.',
+  'Read the fields of the form.',
+  'Saved “W-9” from irs.gov.',
+  'Writes “Invoice 12 for Bramble Press”.',
+];
+const LIVE_TEXT = {
+  liveStep: 'Monday, October 19 fits your calendar. I open that form now and fill in **your name** and',
+  liveGoal:
+    'The June invoice was number 11, so this one is number 12. The July hours are 78 from the Jira worklog, and the rate stays at',
+} as const;
 const TIME_ZONE = 'UTC';
 const noop = () => undefined;
 
@@ -124,6 +152,9 @@ type StateName =
   | 'approvalDeclined'
   | 'approvalFailed'
   | 'document'
+  | 'liveStep'
+  | 'liveGoal'
+  | 'planSaved'
   | 'goalQueued'
   | 'goalRunning'
   | 'goalNeedsAnswer'
@@ -192,6 +223,26 @@ function buildModel(
       threadRuns = [runs.running];
       session = threadSessionFixture('agent', 'Reading the class schedule');
       region = 'page';
+      break;
+    case 'liveStep':
+      threadRuns = [{ ...runs.running, browserSessionId: null, log: liveRows(LIVE_STEP_ROWS) }];
+      break;
+    case 'liveGoal':
+      detail = goalDetailFixture(NOW);
+      threadRuns = [
+        {
+          ...goal.goalRunning,
+          messages: goal.goalRunning.messages.slice(0, 2),
+          log: liveRows(LIVE_GOAL_ROWS),
+        },
+      ];
+      messages = goalMessagesFixture(NOW, 'run_goal_running');
+      break;
+    case 'planSaved':
+      detail = threadDetailFixture(NOW);
+      if (detail.plan) detail.plan.documentPendingUntil = NOW + 120_000;
+      messages = [];
+      region = 'details';
       break;
     case 'steered':
       threadRuns = [runs.steered];
@@ -592,6 +643,11 @@ function ThreadPreview() {
       state.startsWith('approval') ? state.replace('approval', '').toLowerCase() : null,
     ),
   );
+  const dark = params.get('dark') === '1';
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+    return () => document.documentElement.classList.remove('dark');
+  }, [dark]);
   const regionParam = regionFromSearch(params.get('region'));
   const wide = useMediaQuery(THREAD_SPLIT_QUERY);
   const [ready, setReady] = useState(false);
@@ -706,6 +762,9 @@ function ThreadPreview() {
             ...handlers,
             onObligationAction,
             onObligationHandle: noop,
+            ...(state === 'liveStep' || state === 'liveGoal'
+              ? { liveText: () => <RunLiveText text={LIVE_TEXT[state]} /> }
+              : {}),
             chat: { transport, preview: true, initialMessages: built.messages },
           }}
         />

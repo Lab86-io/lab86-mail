@@ -30,7 +30,7 @@ export function createThreadsGet(deps = defaults) {
       ]);
       const threads = buildThreadRows(works || [], activity);
       return Response.json(
-        { ok: true, threads, now: activity?.now ?? Date.now() },
+        { ok: true, threads, now: Date.now() },
         { headers: { 'cache-control': 'no-store' } },
       );
     } catch (error) {

@@ -12,14 +12,18 @@ import type { ThreadActivity } from '@/lib/albatross/threads';
 import { buildThreadRows, type ThreadRow } from '@/lib/albatross/threads';
 import type { WorkListItem } from './AlbatrossesSurface';
 
-export function useAllWork(): WorkListItem[] | undefined {
+export function useAllWork(enabled = true): WorkListItem[] | undefined {
   const { isAuthenticated } = useConvexAuth();
-  return useQuery(api.albatrossWorkV2.allWork, isAuthenticated ? {} : 'skip') as WorkListItem[] | undefined;
+  return useQuery(api.albatrossWorkV2.allWork, isAuthenticated && enabled ? {} : 'skip') as
+    | WorkListItem[]
+    | undefined;
 }
 
-export function useThreadActivity(): ThreadActivity | undefined {
+export function useThreadActivity(enabled = true): ThreadActivity | undefined {
   const { isAuthenticated } = useConvexAuth();
-  return useQuery(api.albatrossThreads.activity, isAuthenticated ? {} : 'skip') as ThreadActivity | undefined;
+  return useQuery(api.albatrossThreads.activity, isAuthenticated && enabled ? {} : 'skip') as
+    | ThreadActivity
+    | undefined;
 }
 
 /** The rows for a list of Work. Undefined until both queries answer. */

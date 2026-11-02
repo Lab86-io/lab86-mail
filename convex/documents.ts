@@ -242,6 +242,20 @@ export const get = query({
   },
 });
 
+/**
+ * The saved revision of a document, for an editor that a chat or a run can
+ * change. Null when no user is signed in, so the editor keeps its fallback.
+ */
+export const savedRevision = query({
+  args: { documentId: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.subject) return null;
+    const document = await ownedDocument(ctx, identity.subject, args.documentId);
+    return document && !document.archivedAt ? document.currentRevision : null;
+  },
+});
+
 export const getKind = query({
   args: {
     internalSecret: v.optional(v.string()),

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import {
   ArrowLeft,
   Check,
@@ -24,6 +25,7 @@ import { OfficeEditor } from '@/components/files/OfficeEditor';
 import { useDocumentPanel, useNarrowDocumentWorkspace } from '@/components/files/useDocumentPanel';
 import { useOutgoingEdits } from '@/components/files/useOutgoingEdits';
 import { Button } from '@/components/ui/button';
+import { api } from '@/convex/_generated/api';
 import { useClientStore } from '@/lib/client-state';
 import { documentDraftMatchesSave } from '@/lib/documents/autosave';
 import { discardDraft, peekDraft, pendingFlush, type RetainedDraft } from '@/lib/documents/draft-store';
@@ -45,6 +47,7 @@ import {
   exportXlsxBlob,
   type SpreadsheetSession,
 } from '@/lib/documents/odoo-spreadsheet-engine';
+import { newestDocumentAnswer } from '@/lib/documents/revision-order';
 import { cn } from '@/lib/utils';
 
 interface EditorDocument extends AlbatrossDocumentRecord {
@@ -120,8 +123,13 @@ function openDocumentChat() {
   useClientStore.getState().setAssistantPresentation('split');
 }
 
-/** The thread and the native workspace edit next to a chat that the editor cannot hear, so they check for a newer save. */
+/**
+ * The thread and the native workspace edit next to a chat that the editor
+ * cannot hear. They subscribe to the saved revision. With no live answer (not
+ * signed in to Convex yet, or no connection) they check at this interval.
+ */
 const SAVED_REVISION_CHECK_MS = 5_000;
+const LIVE_REVISION_BACKSTOP_MS = 20_000;
 
 export function DocumentEditor({
   documentId,
@@ -162,15 +170,42 @@ export function DocumentEditor({
     if (measured && narrow) setHistoryOpen(false);
   }, [measured, narrow]);
 
+  const watchesSaves = host === 'thread' || isNativeWorkspace();
+  const savedRevision = useConvexQuery({
+    query: api.documents.savedRevision,
+    args: watchesSaves ? { documentId } : 'skip',
+  });
+  const liveRevision =
+    savedRevision.status === 'success' && typeof savedRevision.data === 'number' ? savedRevision.data : null;
   const documentQuery = useQuery({
     queryKey: ['document', documentId],
-    queryFn: () => fetchJson<{ ok: true; document: EditorDocument }>(`/api/documents/${documentId}`),
+    queryFn: async () => {
+      const fresh = await fetchJson<{ ok: true; document: EditorDocument }>(`/api/documents/${documentId}`);
+      return newestDocumentAnswer(
+        queryClient.getQueryData<{ ok: true; document: EditorDocument }>(['document', documentId]),
+        fresh,
+      );
+    },
     staleTime: 10_000,
-    // A chat or a run may save a new revision. With no unsaved edits here, the
-    // editor takes it at once (the adopt effect below skips a dirty editor).
-    refetchInterval: (host === 'thread' || isNativeWorkspace()) && !dirty ? SAVED_REVISION_CHECK_MS : false,
+    // The live revision says when to read at once. It does not cover all: a new
+    // suggestion keeps the revision, the socket can drop and keep the last answer,
+    // and a read can fail. The slow check covers those.
+    refetchInterval:
+      watchesSaves && !dirty
+        ? liveRevision === null
+          ? SAVED_REVISION_CHECK_MS
+          : LIVE_REVISION_BACKSTOP_MS
+        : false,
   });
   const document = documentQuery.data?.document;
+  // A chat or a run may save a new revision. With no unsaved edits here, the
+  // editor takes it at once (the adopt effect below skips a dirty editor).
+  const refetchDocument = documentQuery.refetch;
+  const hasDocument = Boolean(document);
+  useEffect(() => {
+    if (hasDocument && liveRevision !== null && !dirty && liveRevision > revisionRef.current)
+      void refetchDocument();
+  }, [hasDocument, liveRevision, dirty, refetchDocument]);
   useAssistantDocument(
     document
       ? {

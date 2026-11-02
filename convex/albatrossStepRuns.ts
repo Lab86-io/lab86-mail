@@ -7,6 +7,7 @@ import {
   cleanUnsure,
 } from '../lib/albatross/goal-run-contract';
 import { cleanGoalUpdate, goalContractWatch, mergeGoalContract } from '../lib/albatross/goal-runs';
+import { applyRunLogOps, closeRunLog, RUN_LIVE_TEXT_MAX } from '../lib/albatross/run-live';
 import { shapePlans } from '../lib/albatross/shape-policy';
 import { CHAT_ANSWER_PREFIX } from '../lib/albatross/thread-contract';
 import { isTerminalWork } from '../lib/albatross/work-lifecycle';
@@ -38,6 +39,12 @@ import { recordRunLatency } from './speedRollups';
 
 /** A renewable ownership lease, never a run deadline (the run meter owns that). */
 export const STEP_RUN_LEASE_MS = 120_000;
+/**
+ * A running row is not due until this much later. The lease lives in
+ * albatrossStepRunLive, so a heartbeat does not write the run row, and a time
+ * budget ends long before this.
+ */
+export const STEP_RUN_HORIZON_MS = 6 * 60 * 60_000;
 /** A lost lease (a deploy, a crash) gets one more attempt; then the run fails. */
 export const STEP_RUN_MAX_ATTEMPTS = 2;
 const LOG_MAX = 30;
@@ -188,7 +195,7 @@ export function stepRunView(run: RunDoc) {
     trigger: run.trigger,
     outcome: run.outcome ?? null,
     summary: run.summary ?? null,
-    log: run.log,
+    log: run.log.map(({ at, text }) => ({ at, text })),
     next: run.next
       ? {
           kind: run.next.kind,
@@ -223,6 +230,7 @@ export function stepRunView(run: RunDoc) {
     createdAt: run.createdAt,
     // When the run began work: a redirect note was read then (T8).
     startedAt: run.startedAt ?? null,
+    ...(run.firstVisibleAt ? { firstVisibleAt: run.firstVisibleAt } : {}),
     updatedAt: run.updatedAt,
     finishedAt: run.finishedAt ?? null,
   };
@@ -399,6 +407,48 @@ async function ownedRun(
   return run;
 }
 
+async function liveRow(ctx: QueryCtx | MutationCtx, runId: Id<'albatrossStepRuns'>) {
+  return ctx.db
+    .query('albatrossStepRunLive')
+    .withIndex('by_run', (q) => q.eq('runId', runId))
+    .first();
+}
+
+/**
+ * Renew the lease on the small row, and change its text when `text` is given.
+ * A row that a process before this change claimed moves its due time once.
+ */
+async function renewLease(ctx: MutationCtx, run: RunDoc, token: string, ts: number, text?: string | null) {
+  const textPatch =
+    text === undefined
+      ? {}
+      : text
+        ? { text: truncateText(text, RUN_LIVE_TEXT_MAX), textAt: ts }
+        : { text: undefined, textAt: undefined };
+  const row = await liveRow(ctx, run._id);
+  if (row) await ctx.db.patch(row._id, { token, leaseUntil: ts + STEP_RUN_LEASE_MS, ...textPatch });
+  else
+    await ctx.db.insert('albatrossStepRunLive', {
+      userId: run.userId,
+      runId: run._id,
+      token,
+      leaseUntil: ts + STEP_RUN_LEASE_MS,
+      ...textPatch,
+    });
+  if (run.availableAt < ts + STEP_RUN_LEASE_MS)
+    await ctx.db.patch(run._id, { availableAt: ts + STEP_RUN_HORIZON_MS });
+}
+
+async function dropLive(ctx: MutationCtx, runId: Id<'albatrossStepRuns'>) {
+  const row = await liveRow(ctx, runId);
+  if (row) await ctx.db.delete(row._id);
+}
+
+/** The run row without its open rows, when it has any. */
+function closedLogPatch(run: RunDoc) {
+  return run.log.some((row) => row.key) ? { log: closeRunLog(run.log) } : {};
+}
+
 export const claim = mutation({
   args: fenceArgs,
   handler: async (ctx, args) => {
@@ -406,6 +456,9 @@ export const claim = mutation({
     const run = await ctx.db.get(args.id);
     const ts = now();
     if (!run || run.userId !== args.userId || !run.active || run.availableAt > ts) return null;
+    // A live lease: the process that owns the run still works on it.
+    const live = await liveRow(ctx, run._id);
+    if (run.state === 'running' && live && live.leaseUntil > ts) return null;
     const work = await workRow(ctx, run.userId, run.workId);
     if (!work || isTerminalWork(work)) {
       await ctx.db.patch(run._id, {
@@ -431,13 +484,15 @@ export const claim = mutation({
     const patch = {
       state: 'running' as const,
       token: args.token,
-      availableAt: ts + STEP_RUN_LEASE_MS,
+      availableAt: ts + STEP_RUN_HORIZON_MS,
       attempts: run.attempts + 1,
       startedAt: run.startedAt ?? ts,
       updatedAt: ts,
     };
     await ctx.db.patch(run._id, patch);
-    return { ...run, ...patch, _id: String(run._id) };
+    const claimed = { ...run, ...patch };
+    await renewLease(ctx, claimed, args.token, ts, null);
+    return { ...claimed, _id: String(run._id) };
   },
 });
 
@@ -447,19 +502,31 @@ export const heartbeat = mutation({
   handler: async (ctx, args) => {
     const run = await ownedRun(ctx, args);
     if (!run) return false;
-    await ctx.db.patch(run._id, { availableAt: now() + STEP_RUN_LEASE_MS });
+    await renewLease(ctx, run, args.token, now());
     return true;
   },
 });
 
 /**
- * One line of the live log, and optionally one artifact or the shared browser.
- * A goal run also writes its messages and its checklist here.
+ * Lines of the live log, and optionally one artifact or the shared browser. A
+ * goal run also writes its messages and its checklist here. `liveText` is the
+ * model's text so far. It goes only to the small live row, so a stream of text
+ * does not re-run the queries that read the run row. A message takes its place.
  */
 export const progress = mutation({
   args: {
     ...fenceArgs,
     line: v.optional(v.string()),
+    lines: v.optional(
+      v.array(
+        v.object({
+          key: v.optional(v.string()),
+          text: v.optional(v.string()),
+          open: v.optional(v.boolean()),
+        }),
+      ),
+    ),
+    liveText: v.optional(v.union(v.string(), v.null())),
     artifact: v.optional(artifactValidator),
     browserSessionId: v.optional(v.string()),
     message: v.optional(runMessageValidator),
@@ -469,9 +536,9 @@ export const progress = mutation({
     const run = await ownedRun(ctx, args);
     if (!run) return false;
     const ts = now();
-    const log = args.line?.trim()
-      ? [...run.log, { at: ts, text: truncateText(args.line.trim(), 200) }].slice(-LOG_MAX)
-      : run.log;
+    await renewLease(ctx, run, args.token, ts, args.message ? null : args.liveText);
+    const ops = [...(args.line?.trim() ? [{ text: args.line }] : []), ...(args.lines ?? [])];
+    const log = ops.length ? applyRunLogOps(run.log, ops, ts, LOG_MAX) : run.log;
     let artifacts = run.artifacts;
     if (args.artifact) {
       const entry = {
@@ -485,15 +552,21 @@ export const progress = mutation({
       ].slice(-ARTIFACT_MAX);
     }
     const checklist = args.checklist ? cleanChecklist(args.checklist) : null;
-    await ctx.db.patch(run._id, {
-      log,
-      artifacts,
-      ...(args.browserSessionId ? { browserSessionId: args.browserSessionId } : {}),
-      ...(args.message ? { messages: appendRunMessage(run.messages || [], args.message) } : {}),
-      ...(checklist?.length ? { checklist } : {}),
-      availableAt: ts + STEP_RUN_LEASE_MS,
-      updatedAt: ts,
-    });
+    const visible = Boolean(ops.some((op) => op.text?.trim()) || args.message || args.liveText);
+    const firstVisible = visible && !run.firstVisibleAt ? { firstVisibleAt: ts } : {};
+    const rowChanges =
+      ops.length || args.artifact || args.browserSessionId || args.message || checklist?.length;
+    if (rowChanges)
+      await ctx.db.patch(run._id, {
+        log,
+        artifacts,
+        ...(args.browserSessionId ? { browserSessionId: args.browserSessionId } : {}),
+        ...(args.message ? { messages: appendRunMessage(run.messages || [], args.message) } : {}),
+        ...(checklist?.length ? { checklist } : {}),
+        ...firstVisible,
+        updatedAt: ts,
+      });
+    else if (visible && !run.firstVisibleAt) await ctx.db.patch(run._id, firstVisible);
     return true;
   },
 });
@@ -518,7 +591,8 @@ export const updateGoal = mutation({
     const ts = now();
     const contract = mergeGoalContract(work.contract, update, work, ts);
     await ctx.db.patch(work._id, { contract, updatedAt: ts });
-    await ctx.db.patch(run._id, { availableAt: ts + STEP_RUN_LEASE_MS, updatedAt: ts });
+    await ctx.db.patch(run._id, { updatedAt: ts });
+    await renewLease(ctx, run, args.token, ts);
     return {
       ok: true,
       outcome: contract.outcome,
@@ -551,6 +625,7 @@ export const settle = mutation({
     const blanks = cleanBlanks(args.next?.blanks);
     const items = cleanHandoffItems(args.items);
     const unsure = cleanUnsure(args.unsure);
+    await dropLive(ctx, run._id);
     if (args.error && args.retryable && run.attempts < STEP_RUN_MAX_ATTEMPTS) {
       const retryAt = ts + 15_000 * run.attempts;
       await ctx.db.patch(run._id, {
@@ -558,6 +633,7 @@ export const settle = mutation({
         token: undefined,
         availableAt: retryAt,
         error: truncateText(args.error, 300),
+        ...closedLogPatch(run),
         ...(args.budget ? { budget: args.budget } : {}),
         updatedAt: ts,
       });
@@ -569,6 +645,7 @@ export const settle = mutation({
       state,
       active: false,
       token: undefined,
+      ...closedLogPatch(run),
       ...(args.outcome ? { outcome: args.outcome } : {}),
       ...(args.summary?.trim() ? { summary: truncateText(args.summary.trim(), 800) } : {}),
       ...(args.next
@@ -643,10 +720,12 @@ export const cancel = mutation({
     if (!run || run.userId !== userId) throw new Error('Run not found.');
     if (!run.active) return { cancelled: false, browserSessionId: run.browserSessionId ?? null };
     const ts = now();
+    await dropLive(ctx, run._id);
     await ctx.db.patch(run._id, {
       state: 'cancelled',
       active: false,
       token: undefined,
+      ...closedLogPatch(run),
       finishedAt: ts,
       updatedAt: ts,
     });
@@ -772,6 +851,20 @@ function runMadeApproval(run: RunDoc): boolean {
     Boolean(run.items?.some((item) => item.kind === 'approval'))
   );
 }
+
+/**
+ * The text the model writes now, for the open thread. It reads one small row,
+ * and a heartbeat does not change its answer, so the client gets no update.
+ */
+export const liveText = query({
+  args: { ...callerArgs, id: v.id('albatrossStepRuns') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const row = await liveRow(ctx, args.id);
+    if (!row || row.userId !== userId || !row.text) return null;
+    return { text: row.text, at: row.textAt ?? null };
+  },
+});
 
 /** Steer notes a run keeps. */
 const STEER_MAX = 10;
@@ -1077,31 +1170,54 @@ export const targets = internalQuery({
 /**
  * Lost leases: a run whose app process died (a deploy restarts the server)
  * stops renewing its lease. Recovery queues it again while it has attempts,
- * and fails it after that, so no run stays "working" forever.
+ * and fails it after that, so no run stays "working" forever. The lease rows
+ * find the runs. The due scan finds a row with no live lease, which a process
+ * before the lease table claimed.
  */
 export const expireLost = internalMutation({
   args: {},
   handler: async (ctx) => {
     const ts = now();
-    const lost = await ctx.db
-      .query('albatrossStepRuns')
-      .withIndex('by_active_available', (q) => q.eq('active', true).lte('availableAt', ts))
-      .take(50);
-    for (const run of lost) {
-      if (run.state !== 'running') continue;
+    const expire = async (run: RunDoc) => {
+      await dropLive(ctx, run._id);
       if (run.attempts >= STEP_RUN_MAX_ATTEMPTS) {
         await ctx.db.patch(run._id, {
           state: 'failed',
           active: false,
           token: undefined,
+          ...closedLogPatch(run),
           error: 'The run stopped before it finished. Start it again.',
           finishedAt: ts,
           updatedAt: ts,
         });
         await recordRunEnd(ctx, run, false, ts);
       } else {
-        await ctx.db.patch(run._id, { state: 'queued', token: undefined, updatedAt: ts });
+        await ctx.db.patch(run._id, {
+          state: 'queued',
+          token: undefined,
+          availableAt: ts,
+          ...closedLogPatch(run),
+          updatedAt: ts,
+        });
       }
+    };
+    const ended = await ctx.db
+      .query('albatrossStepRunLive')
+      .withIndex('by_lease', (q) => q.lte('leaseUntil', ts))
+      .take(50);
+    for (const row of ended) {
+      const run = await ctx.db.get(row.runId);
+      if (run?.state === 'running' && run.token === row.token) await expire(run);
+      else await ctx.db.delete(row._id);
+    }
+    const due = await ctx.db
+      .query('albatrossStepRuns')
+      .withIndex('by_active_available', (q) => q.eq('active', true).lte('availableAt', ts))
+      .take(50);
+    for (const run of due) {
+      if (run.state !== 'running') continue;
+      const live = await liveRow(ctx, run._id);
+      if (!live || live.leaseUntil <= ts) await expire(run);
     }
   },
 });

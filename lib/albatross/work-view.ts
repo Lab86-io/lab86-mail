@@ -78,6 +78,9 @@ export interface WorkDetailData {
     artifactHtml?: string;
     document?: BriefDocumentV2;
     artifactSource?: string;
+    /** The page of this plan comes later: the plan waits for it until this time. */
+    documentPendingUntil?: number;
+    documentFailedAt?: number;
     assumptions?: string[];
     sourceRefs?: Array<{ kind: string; id: string; label?: string; url?: string }>;
     digitalActions?: Array<{ actionKey?: string; key?: string; kind: string; title: string }>;
@@ -242,4 +245,23 @@ export async function postJson(url: string, body: Record<string, unknown>, fallb
     throw error;
   }
   return parsed;
+}
+
+/** The plan with the page that getPlanArtifact read. The detail query leaves the page out. */
+export function withPlanArtifact<T extends { plan?: any }>(
+  detail: T,
+  artifact:
+    | { planId: unknown; artifactHtml?: string | null; document?: unknown; artifactTitle?: string | null }
+    | null
+    | undefined,
+): T {
+  if (!artifact || !detail.plan || String(artifact.planId) !== String(detail.plan._id)) return detail;
+  return {
+    ...detail,
+    plan: {
+      ...detail.plan,
+      ...(artifact.artifactHtml ? { artifactHtml: artifact.artifactHtml } : {}),
+      ...(artifact.document ? { document: artifact.document } : {}),
+    },
+  };
 }
