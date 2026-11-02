@@ -146,6 +146,7 @@ describe('the plan page comes after the plan', () => {
     expect(await t.mutation(api.albatrossIntents.attachPlanDocument, { ...caller, planId })).toBe(false);
     const row = await planRow(t, planId);
     expect(row.documentPendingUntil).toBeUndefined();
+    expect(row.documentFailedAt).toBeGreaterThan(0);
     expect(row.artifactHtml).toBe('<p>x</p>');
     expect(row.outcome).toBe('Dana has the proposal');
   });

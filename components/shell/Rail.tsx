@@ -55,6 +55,7 @@ import { type RailSurfaceView, railSurfaces } from '@/lib/shell/rail-surfaces';
 import { NotificationCenter } from './NotificationCenter';
 import { RAIL_SURFACE_ICONS } from './navigation-icons';
 import { RailPrimaryActions } from './ShellActions';
+import { SurfaceErrorBoundary } from './SurfaceErrorBoundary';
 import { preloadSurface } from './surface-loaders';
 import { useApplyThemeExtras } from './ThemePanel';
 
@@ -268,7 +269,10 @@ export function Rail({
 
   return (
     <>
-      <ThreadListKeeper />
+      {/* The rail is outside the surface boundaries, and this read only keeps a cache warm. */}
+      <SurfaceErrorBoundary surface="The Albatross list" quiet>
+        <ThreadListKeeper />
+      </SurfaceErrorBoundary>
       <Sidebar
         collapsible="icon"
         className="rail-wash bg-[var(--rail-bg)] font-display"

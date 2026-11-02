@@ -27,7 +27,7 @@ export const LIVE_ROWS_OPEN = 3;
 
 export function RunLiveText({ text }: { text: string }) {
   return (
-    <div data-slot="run-live-text" className="min-w-0">
+    <div data-slot="run-live-text" aria-live="polite" className="min-w-0">
       <Markdown className={MESSAGE_CLASS} streaming>
         {text}
       </Markdown>

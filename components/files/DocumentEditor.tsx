@@ -47,6 +47,7 @@ import {
   exportXlsxBlob,
   type SpreadsheetSession,
 } from '@/lib/documents/odoo-spreadsheet-engine';
+import { newestDocumentAnswer } from '@/lib/documents/revision-order';
 import { cn } from '@/lib/utils';
 
 interface EditorDocument extends AlbatrossDocumentRecord {
@@ -178,7 +179,13 @@ export function DocumentEditor({
     savedRevision.status === 'success' && typeof savedRevision.data === 'number' ? savedRevision.data : null;
   const documentQuery = useQuery({
     queryKey: ['document', documentId],
-    queryFn: () => fetchJson<{ ok: true; document: EditorDocument }>(`/api/documents/${documentId}`),
+    queryFn: async () => {
+      const fresh = await fetchJson<{ ok: true; document: EditorDocument }>(`/api/documents/${documentId}`);
+      return newestDocumentAnswer(
+        queryClient.getQueryData<{ ok: true; document: EditorDocument }>(['document', documentId]),
+        fresh,
+      );
+    },
     staleTime: 10_000,
     // The live revision says when to read at once. It does not cover all: a new
     // suggestion keeps the revision, the socket can drop and keep the last answer,

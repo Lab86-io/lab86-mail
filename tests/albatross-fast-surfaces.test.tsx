@@ -14,6 +14,7 @@ import {
 import { threadNeedsNoSeenWrite } from '../lib/albatross/threads';
 import { needsYouBadge, railWorkBadge } from '../lib/albatross/work-state';
 import { withPlanArtifact } from '../lib/albatross/work-view';
+import { newestDocumentAnswer } from '../lib/documents/revision-order';
 
 const read = (path: string) => readFileSync(path, 'utf8');
 
@@ -119,6 +120,27 @@ describe('the subscriptions', () => {
     const rail = read('components/shell/Rail.tsx');
     expect(rail.indexOf('<ThreadListKeeper />')).toBeLessThan(rail.indexOf('<Sidebar\n'));
     expect(rail).toContain('</Sidebar>\n    </>');
+  });
+
+  test('a failed read of the kept list stays out of the shell', () => {
+    const rail = read('components/shell/Rail.tsx');
+    expect(rail).toMatch(/<SurfaceErrorBoundary surface="The Albatross list" quiet>\s*<ThreadListKeeper \/>/);
+  });
+
+  test('a document read that started before a save does not replace the saved revision', () => {
+    const answer = (currentRevision: number) => ({ document: { currentRevision } });
+    const saved = answer(5);
+    expect(newestDocumentAnswer(saved, answer(4))).toBe(saved);
+    const next = answer(6);
+    expect(newestDocumentAnswer(saved, next)).toBe(next);
+    expect(newestDocumentAnswer(undefined, next)).toBe(next);
+    expect(read('components/files/DocumentEditor.tsx')).toContain('newestDocumentAnswer(');
+  });
+
+  test('the live text of a run is a polite live region', () => {
+    expect(read('components/albatross/thread/RunLive.tsx')).toContain(
+      'data-slot="run-live-text" aria-live="polite"',
+    );
   });
 
   test('the rail reads its small queries, not the overview and the Work list', () => {
