@@ -29,9 +29,7 @@ describe('streamIdleTimeoutFetch', () => {
     const source = [readFileSync('lib/ai/gateway.ts', 'utf8'), readFileSync('lib/ai/client.ts', 'utf8')].join(
       '',
     );
-    expect(
-      source.match(/fetch: streamIdleTimeoutFetch\(undefined, DIRECT_STREAM_IDLE_TIMEOUT_MS\)/g),
-    ).toHaveLength(4);
+    expect(source.match(/fetch: directProviderFetch\(\)/g)).toHaveLength(4);
   });
 
   test('a stream with no headers fails with the typed error', async () => {

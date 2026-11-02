@@ -36,7 +36,7 @@ import {
 } from './model-catalog';
 import { classifyModel, toDirectModelId, toOpenRouterModelId } from './model-router';
 import { createOpenRouterProvider } from './openrouter-policy';
-import { DIRECT_STREAM_IDLE_TIMEOUT_MS, streamIdleTimeoutFetch } from './provider-idle-timeout';
+import { directProviderFetch } from './provider-idle-timeout';
 
 type AiProvider = 'openrouter' | 'openai' | 'anthropic';
 type AiSource = 'lab86' | 'byok';
@@ -834,12 +834,8 @@ export function modelFromKey(provider: AiProvider, apiKey: string, modelName: st
   // A user's own OpenRouter key gets the same no-training data policy.
   if (provider === 'openrouter') return createOpenRouterProvider(apiKey).chat(toOpenRouterModelId(modelName));
   if (provider === 'openai')
-    return createOpenAI({ apiKey, fetch: streamIdleTimeoutFetch(undefined, DIRECT_STREAM_IDLE_TIMEOUT_MS) })(
-      directModelIdFor(modelName),
-    );
-  return createAnthropic({ apiKey, fetch: streamIdleTimeoutFetch(undefined, DIRECT_STREAM_IDLE_TIMEOUT_MS) })(
-    directModelIdFor(modelName),
-  );
+    return createOpenAI({ apiKey, fetch: directProviderFetch() })(directModelIdFor(modelName));
+  return createAnthropic({ apiKey, fetch: directProviderFetch() })(directModelIdFor(modelName));
 }
 
 function modelFor(provider: AiProvider, speed: AiSpeed) {

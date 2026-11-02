@@ -97,3 +97,8 @@ export function streamIdleTimeoutFetch(
     );
   }) as typeof fetch;
 }
+
+/** The fetch of a direct vendor: the same watch, with the longer limit. */
+export function directProviderFetch(): typeof fetch {
+  return streamIdleTimeoutFetch(undefined, DIRECT_STREAM_IDLE_TIMEOUT_MS);
+}
