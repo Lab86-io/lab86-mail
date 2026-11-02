@@ -188,7 +188,6 @@ describe('the Today summary', () => {
     // The default reader runs the live edition read in the user's context.
     setDailyReportReaderForTest({
       configured: () => true,
-      load: (async () => report()) as any,
       loadDismissals: async () => ({}),
       loadClosedTracked: async () => new Set(),
       loadSelfAddresses: async () => new Set(),

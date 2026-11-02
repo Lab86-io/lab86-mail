@@ -23,6 +23,7 @@ import {
   restoreDailyReportThread,
 } from '../store/daily-report-dismissals';
 import {
+  getDailyReportFacts,
   getDailyReport as getDailyReportStore,
   getLatestDailyReport,
   listDailyReportSummaries,
@@ -124,7 +125,7 @@ export const getLatestDailyReportTool = defineTool({
   input: z.object({ kind: ReportKindSchema.optional() }).optional(),
   output: z.object({ report: z.any().nullable() }),
   async handler(input) {
-    const report = withDisplayAreaBrief(await getLatestDailyReport(input?.kind, true));
+    const report = withDisplayAreaBrief(await getLatestDailyReport(input?.kind));
     return { report: report ? attachDailyReportArt(report) : null };
   },
 });
@@ -335,7 +336,8 @@ export const getBriefSourcesTool = defineTool({
     const userId = signedInUser(ctx.userId);
     const [rows, report] = await Promise.all([
       loadBriefSourceRows(userId),
-      input?.reportId ? getDailyReportStore(input.reportId).catch(() => null) : Promise.resolve(null),
+      // The source line reads only the edition's source fields. Nothing to rebuild.
+      input?.reportId ? getDailyReportFacts(input.reportId).catch(() => null) : Promise.resolve(null),
     ]);
     return { health: briefSourceHealth(rows, { report }) };
   },

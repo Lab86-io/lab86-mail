@@ -196,7 +196,6 @@ describe('the live look back', () => {
     const asked: string[][] = [];
     setDailyReportReaderForTest({
       configured: () => true,
-      load: (async () => edition) as any,
       loadDismissals: async () => ({}),
       loadClosedTracked: async () => new Set(),
       loadSelfAddresses: async () => new Set(),
@@ -210,7 +209,7 @@ describe('the live look back', () => {
           ? { page: [edition], isDone: true, continueCursor: '' }
           : []) as any,
     });
-    const latest = await withToolContext(() => getLatestDailyReport(undefined, true));
+    const latest = await withToolContext(() => getLatestDailyReport());
     expect(asked).toEqual([['op-archive', 'op-hold']]);
     const tree = latest!.document!.regions.find((region) => region.id === 'since')!.tree as any;
     expect(tree.items).toHaveLength(1);

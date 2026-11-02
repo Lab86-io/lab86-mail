@@ -95,6 +95,7 @@ export function projectBriefMail(
   policy: { preferences: JevPreferences; corrections: JevCorrection[] },
   now = Date.now(),
   hidden: BriefHiddenItems = {},
+  options: { legacyArtifacts?: boolean } = {},
 ): DailyReport {
   const live = now - report.generatedAt <= 24 * 3600_000;
   const hiddenThreads = hidden.threads ?? new Set<string>();
@@ -403,6 +404,12 @@ export function projectBriefMail(
         delete next.editorial;
       }
     }
+  }
+  // Native reads the legacy artifact. The web view renders the document.
+  if (options.legacyArtifacts === false) {
+    delete next.composition;
+    delete next.html;
+    return next;
   }
   next.composition = compositionFromReport(next);
   next.html = buildNativeDailyReportArtifact(next, next.composition);
