@@ -5,6 +5,7 @@
 import { Packer } from 'docx';
 import { z } from 'zod';
 import { OfficeError } from '../office-security';
+import { xmlSafeDeep, xmlSafeText } from '../xml-text';
 import { TemplateCanvas } from './house';
 import { buildInvoice, invoiceDataSchema } from './invoice';
 import { buildLetter, letterDataSchema } from './letter';
@@ -78,12 +79,12 @@ export async function renderTemplate(
         .join('; ')}`,
     );
   const canvas = new TemplateCanvas();
-  const title = options.title?.trim() || template[0].toUpperCase() + template.slice(1);
+  const title = xmlSafeText(options.title ?? '').trim() || template[0].toUpperCase() + template.slice(1);
   const build = builders[template] as (
     canvas: TemplateCanvas,
     data: unknown,
     title: string,
   ) => ReturnType<typeof buildInvoice>;
-  const packed = await Packer.toBuffer(build(canvas, parsed.data, title));
+  const packed = await Packer.toBuffer(build(canvas, xmlSafeDeep(parsed.data), title));
   return finalizeTemplatePackage(new Uint8Array(packed), canvas, { fontRoot: options.fontRoot });
 }

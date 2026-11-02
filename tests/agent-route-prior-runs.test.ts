@@ -160,6 +160,16 @@ describe('the other parts of the request', () => {
   });
 });
 
+describe('a thread reply that stops an earlier one', () => {
+  test('it reads the earlier writes again after that reply stops', () => {
+    const route = readFileSync('app/api/agent/route.ts', 'utf8');
+    const begin = route.indexOf('await beginThreadReply(threadReply)');
+    const again = route.indexOf('threadReply ? await readPriorRuns() : priorRuns');
+    expect(begin).toBeGreaterThan(-1);
+    expect(again).toBeGreaterThan(begin);
+  });
+});
+
 describe('the chat client', () => {
   const source = readFileSync(new URL('../components/shell/AIBar.tsx', import.meta.url), 'utf8');
 

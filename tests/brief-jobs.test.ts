@@ -572,6 +572,18 @@ test('area recovery rewrites missing or local pulses even when the source revisi
   }
 });
 
+test('a caller polls again until the persisted job completes', async () => {
+  const query = spyOn(hosted, 'convexQuery')
+    .mockResolvedValueOnce({ state: 'running' })
+    .mockResolvedValueOnce({ state: 'completed', result: 'report' });
+  try {
+    expect(await waitForBriefJob('owner', 'job')).toMatchObject({ state: 'completed' });
+    expect(query).toHaveBeenCalledTimes(2);
+  } finally {
+    query.mockRestore();
+  }
+});
+
 test('aborting a caller stops polling without cancelling the persisted generation', async () => {
   const query = spyOn(hosted, 'convexQuery').mockResolvedValue({ state: 'running' });
   const mutation = spyOn(hosted, 'convexMutation').mockResolvedValue(null);

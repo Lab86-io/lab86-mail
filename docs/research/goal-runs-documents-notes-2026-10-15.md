@@ -153,13 +153,15 @@ Verdict: safe to turn on in production with current main, with a manual check.
 Deck flags:
 
 - `DECK_V2_AUTHORING` (server, run time): new and blank decks use the version 2 generator, and
-  restyle uses `proposeDeckRestyle`. When it is off, a version 2 brief fails with "Version 2
-  presentation authoring is disabled". The `document_create` tool tells the model to prefer the
-  version 2 brief, so decks from the model can fail in production now.
+  restyle uses `proposeDeckRestyle`. It takes a boolean, `all`, or a comma list of user ids. When
+  it is off for a user, the agent gets the legacy brief, and a version 2 brief composes through the
+  legacy renderer (changed on 2026-11-02; before that it failed).
 - `NEXT_PUBLIC_DECK_V2_AUTHORING` (client, set at build time): the Line, Image, and Chart insert
   items, Artwork, and the rich inspector and theme panel in the presentation editor. A restart is
   not sufficient; the variable must be set before the build.
-- The code does not need both. Set both, so that decks from the model and the editor tools agree.
+- The code does not need both. Set both to `all`, so that decks from the model and the editor tools
+  agree. During a rollout to named users, set only the server flag: the client flag has no user
+  list.
 
 ## Previews
 

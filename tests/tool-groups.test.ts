@@ -26,6 +26,7 @@ import {
   TOOL_GROUPS,
 } from '../lib/ai/tool-groups';
 import { resolveToolShape } from '../lib/ai/tool-shapes';
+import { STEP_RUNNER_RULES } from '../lib/albatross/step-run-prompt';
 import { toolActivityLine } from '../lib/albatross/teach-ui';
 import { OPEN_DOCUMENT_CONTEXT } from '../lib/shell/assistant-context';
 
@@ -335,12 +336,67 @@ describe('tool groups', () => {
     expect(prompt).toContain('call enable_tools with the group first');
   });
 
-  test('agent deck creation advertises only the modern native chart/table contract', () => {
-    const schema = JSON.stringify(lifted.document_create.inputSchema.jsonSchema);
-    expect(schema).toContain('"role"');
-    expect(schema).toContain('"chart"');
-    expect(schema).toContain('"table"');
-    expect(schema).not.toContain('"layout"');
+  test('agent deck creation offers one brief: the one this user can render', () => {
+    const previous = process.env.DECK_V2_AUTHORING;
+    process.env.DECK_V2_AUTHORING = 'user_v2';
+    try {
+      const on = liftToolsForAgent('b', 'UTC', undefined, { userId: 'user_v2' });
+      const schema = JSON.stringify(on.document_create.inputSchema.jsonSchema);
+      expect(schema).toContain('"role"');
+      expect(schema).toContain('"chart"');
+      expect(schema).toContain('"table"');
+      expect(schema).not.toContain('"layout"');
+      const off = liftToolsForAgent('b', 'UTC', undefined, { userId: 'user_other' });
+      const legacy = JSON.stringify(off.document_create.inputSchema.jsonSchema);
+      expect(legacy).toContain('"layout"');
+      expect(legacy).not.toContain('"role"');
+      expect(legacy).not.toContain('"audience"');
+    } finally {
+      if (previous === undefined) delete process.env.DECK_V2_AUTHORING;
+      else process.env.DECK_V2_AUTHORING = previous;
+    }
+  });
+
+  test('the agent schema has no instructions field, so no second model can write the file', () => {
+    const schema = lifted.document_create.inputSchema.jsonSchema as any;
+    expect(schema.properties.instructions).toBeUndefined();
+    expect(schema.properties.blocks).toBeDefined();
+    expect(schema.properties.sheet).toBeDefined();
+  });
+
+  test('a request to write a report loads the template tools; a mention of a report does not', () => {
+    expect(requestToolGroups('Draft the quarterly report for the client')).toContain('documents_more');
+    expect(requestToolGroups('Write a letter to the landlord')).toContain('documents_more');
+    expect(requestToolGroups('Did the build report pass?')).not.toContain('documents_more');
+  });
+
+  test('the prompt builds the deck rules for the renderer of this user', () => {
+    expect(buildSystemPrompt()).toContain('version 2 brief under presentation');
+    const legacy = buildSystemPrompt({}, { deckV2: false });
+    expect(legacy).toContain('Palette is ink, forest, or clay');
+    expect(legacy).not.toContain('version 2 brief under presentation');
+  });
+
+  test('one rule sends a letter to the template tool in the chat and in a step run', () => {
+    const rule = 'An invoice, a letter, a memo, or a report';
+    const chat = buildSystemPrompt();
+    expect(chat).toContain(`${rule} is always word_document_create with template and data`);
+    expect(STEP_RUNNER_RULES).toContain(`${rule}: word_document_create with template and data`);
+    expect(STEP_RUNNER_RULES).not.toContain('a letter, a list): document_create');
+    expect(chat).not.toContain('Use instructions and sourceContext');
+  });
+
+  test('the document guidance in the prompt stays short', () => {
+    const lines = buildSystemPrompt().split('\n');
+    const start = lines.findIndex((line) => line.startsWith('- Files, one rule'));
+    const end = lines.findIndex((line) => line.startsWith('- Presentation file:'));
+    const size = lines.slice(start, end + 1).join('\n').length;
+    expect(start).toBeGreaterThan(0);
+    // It was 12,668 characters before the one-path work. Each one is paid on each step.
+    expect(size).toBeLessThan(6_000);
+  });
+
+  test('the agent still reads the planner recovery schema', () => {
     const planner = JSON.stringify(lifted.presentation_plan.inputSchema.jsonSchema);
     expect(planner).toContain('"recovery"');
     expect(planner).toContain('"completedSlides"');

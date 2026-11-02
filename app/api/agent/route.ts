@@ -249,6 +249,17 @@ export async function POST(req: NextRequest) {
     // Every pre-flight read is independent of the others, so they run together:
     // the model call waits for the slowest one, not for the sum.
     const chatId = agentChatId(body.sessionId);
+    const readPriorRuns = () =>
+      readPriorRunContext({
+        userId: user.userId,
+        runId,
+        chatId,
+        transcript: answered,
+        skipCurrentRun: body.continuation === true,
+      }).catch((error) => {
+        console.warn('[agent-route] prior run read failed', describeModelError(error));
+        return '';
+      });
     const [areaDiscoveryContext, attachedContexts, modelMessages, recovery, priorRuns] = await Promise.all([
       !briefContext && body.areaDiscovery
         ? readAreaDiscoveryContext({
@@ -276,16 +287,7 @@ export async function POST(req: NextRequest) {
       body.continuation === true ? readRecoveryContext(user.userId, runId) : '',
       // Each turn reads what the earlier runs of this chat wrote. A reload loses
       // the reply and a new message starts a new run, so the model cannot see them.
-      readPriorRunContext({
-        userId: user.userId,
-        runId,
-        chatId,
-        transcript: answered,
-        skipCurrentRun: body.continuation === true,
-      }).catch((error) => {
-        console.warn('[agent-route] prior run read failed', describeModelError(error));
-        return '';
-      }),
+      readPriorRuns(),
     ]);
     const threadWorkId = threadReplyWorkId(
       body.sessionId,
@@ -307,6 +309,8 @@ export async function POST(req: NextRequest) {
       };
     // The browser leaving no longer stops a thread reply; the chat Stop button does (T11).
     const replyAbort = threadReply ? await beginThreadReply(threadReply) : null;
+    // The reply that this one stops can write until it stops, so read again after it.
+    const priorRunsNow = threadReply ? await readPriorRuns() : priorRuns;
     const stream = await runAgent({
       runId,
       chatId,
@@ -321,7 +325,7 @@ export async function POST(req: NextRequest) {
           documentAttachment ? documentAttachmentContext(documentAttachment) : '',
           compactionNote,
           recovery,
-          priorRuns,
+          priorRunsNow,
           clientToolFailureNote(body.clientToolFailures),
         ]
           .filter(Boolean)

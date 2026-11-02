@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
-import { composeDocumentPresentation, generateDocumentProposal } from '@/lib/documents/ai';
+import {
+  composeDocumentPresentation,
+  type DocumentProposal,
+  generateDocumentProposal,
+} from '@/lib/documents/ai';
 import { artworksForDeck } from '@/lib/documents/deck-imagery';
 import { checkSlide } from '@/lib/documents/deck-quality';
 import { assetsFromUploads, MAX_UPLOAD_ASSETS } from '@/lib/documents/deck-upload-assets';
@@ -13,8 +17,19 @@ import {
 import { type DocumentEditContext, documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
 import { exportDocument } from '@/lib/documents/export';
 import { publishDocumentToGoogle } from '@/lib/documents/google';
-import { DOCUMENT_KINDS, documentModelText, isSheetWorkbookModel } from '@/lib/documents/model';
-import { saveDocxBytesAsPdf, saveOfficePdf } from '@/lib/documents/office-pdf';
+import {
+  createDefaultDocumentModel,
+  DOCUMENT_KINDS,
+  type DocumentKind,
+  documentModelText,
+  MAX_DOC_LIST_LEVEL,
+} from '@/lib/documents/model';
+import {
+  OfficeBlanksError,
+  OfficeRevisionError,
+  saveDocxBytesAsPdf,
+  saveOfficePdf,
+} from '@/lib/documents/office-pdf';
 import { OfficeError } from '@/lib/documents/office-security';
 import {
   presentationAuthoringSchema,
@@ -29,10 +44,11 @@ import {
   listDocumentSummaries,
   updateDocument,
 } from '@/lib/documents/service';
+import { MAX_SHEET_CHANGES, sheetChangeSchema } from '@/lib/documents/sheet-workbook';
 import { spreadsheetCapabilities, spreadsheetCommandNames } from '@/lib/documents/spreadsheet-commands';
 import { applySpreadsheetChanges } from '@/lib/documents/spreadsheet-server';
 import { truncateText } from '@/lib/shared/text';
-import { defineTool } from './registry';
+import { defineTool, type ToolContext } from './registry';
 
 function requireUserId(userId: string | null | undefined) {
   if (!userId) throw new Error('Not authenticated.');
@@ -73,152 +89,305 @@ export function __setDocumentToolDepsForTest(overrides: Partial<typeof defaultDe
   dependencies = { ...defaultDependencies, ...overrides };
 }
 
+const documentBlockInputSchema = z.object({
+  type: z.enum(['paragraph', 'heading', 'bullet', 'numbered', 'quote']),
+  text: z.string().max(100_000),
+  level: z
+    .union([z.literal(1), z.literal(2), z.literal(3)])
+    .optional()
+    .describe('Heading level.'),
+  listLevel: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_DOC_LIST_LEVEL)
+    .optional()
+    .describe('List nesting. 0 is the top.'),
+});
+
+const documentSheetInputSchema = z.object({
+  newSheets: z.array(z.string().min(1).max(200)).max(20).optional().describe('Names of more sheets to add.'),
+  changes: z
+    .array(sheetChangeSchema)
+    .max(MAX_SHEET_CHANGES)
+    .min(1)
+    .describe('Cell values. sheet is "Sheet 1" or a name in newSheets. A formula starts with "=".'),
+});
+
+/** The fields of document_create that both the agent and a stored plan step can send. */
+const documentCreateFields = {
+  kind: z.enum(DOCUMENT_KINDS),
+  title: z.string().min(1).max(500),
+  blocks: z
+    .array(documentBlockInputSchema)
+    .min(1)
+    .max(5_000)
+    .optional()
+    .describe('kind=doc: the finished text of the document, in order.'),
+  sheet: documentSheetInputSchema.optional().describe('kind=sheet: the finished cells of the workbook.'),
+  sourceContext: z
+    .string()
+    .max(40_000)
+    .optional()
+    .describe('kind=deck: the evidence that the slide review reads.'),
+  sourceRefs: z.array(sourceRefSchema).max(100).optional(),
+  publishToGoogle: z.boolean().default(false),
+  googleConnectionId: z.string().max(500).optional(),
+  imageUploadIds: z.array(z.string().min(1).max(200)).max(MAX_UPLOAD_ASSETS).optional(),
+  artwork: z.enum(['auto', 'none']).optional(),
+};
+
+const PRESENTATION_FIELD_COPY =
+  'kind=deck: the finished slides. The server reviews each slide, repairs copy and layout, and composes the deck. Put source detail and citations in speaker notes.';
+
+/**
+ * The schema the agent sees for document_create. It has no instructions field,
+ * because the agent writes the content. It offers the one deck brief that the
+ * renderer of this user takes (docs/albatross-goal-runs.md).
+ */
+export function documentCreateModelInput(deckV2: boolean) {
+  return z.object({
+    ...documentCreateFields,
+    presentation: (deckV2 ? presentationAuthoringV2Schema : presentationAuthoringSchema)
+      .optional()
+      .describe(PRESENTATION_FIELD_COPY),
+  });
+}
+
+const presentationInputSchema = z.union([presentationAuthoringV2Schema, presentationAuthoringSchema]);
+
+const WRITE_IT_YOURSELF =
+  'document_create does not write the content. Write it yourself and send it: blocks for kind=doc, sheet for kind=sheet, presentation for kind=deck. For an invoice, a letter, a memo, or a report, use word_document_create with template and data.';
+
+type DocumentCreateArgs = {
+  kind: DocumentKind;
+  title: string;
+  instructions?: string;
+  blocks?: z.infer<typeof documentCreateFields.blocks>;
+  sheet?: z.infer<typeof documentCreateFields.sheet>;
+  sourceContext?: string;
+  sourceRefs?: z.infer<typeof documentCreateFields.sourceRefs>;
+  presentation?: z.infer<typeof presentationInputSchema>;
+  publishToGoogle?: boolean;
+  googleConnectionId?: string;
+  imageUploadIds?: string[];
+  artwork?: 'auto' | 'none';
+};
+
+function checkDocumentContent(args: DocumentCreateArgs, ctx: z.RefinementCtx) {
+  const wrongKind = (path: string, kind: DocumentKind) =>
+    ctx.addIssue({ code: 'custom', path: [path], message: `${path} content requires kind=${kind}.` });
+  if (args.presentation && args.kind !== 'deck') wrongKind('presentation', 'deck');
+  if (args.blocks && args.kind !== 'doc') wrongKind('blocks', 'doc');
+  if (args.sheet && args.kind !== 'sheet') wrongKind('sheet', 'sheet');
+  if (
+    args.presentation &&
+    args.instructions &&
+    !presentationSlideCountMatches(args.instructions, args.presentation.slides.length)
+  )
+    ctx.addIssue({
+      code: 'custom',
+      path: ['presentation', 'slides'],
+      message: 'Slide count does not match the instructions.',
+    });
+}
+
+/** The server's file for the model-written content, or null for a blank file. */
+async function contentModel(args: DocumentCreateArgs) {
+  if (args.blocks)
+    return {
+      kind: 'doc' as const,
+      version: 1 as const,
+      blocks: args.blocks.map((block, index) => ({ id: `block-${index + 1}`, ...block })),
+    };
+  if (args.sheet)
+    return dependencies.applySpreadsheetChanges(createDefaultDocumentModel('sheet'), {
+      kind: 'sheet-changes',
+      version: 1,
+      changes: args.sheet.changes,
+      ...(args.sheet.newSheets ? { newSheets: args.sheet.newSheets } : {}),
+    });
+  return null;
+}
+
+function errorCopy(error: unknown) {
+  return truncateText(error instanceof Error ? error.message : 'The file did not build.', 300);
+}
+
+/** Builds the file from the model and opens it again (lib/documents/office-verify.ts). */
+async function openBuiltFile(kind: DocumentKind, title: string, model: DocumentProposal['model']) {
+  if (model.kind === 'sheet-changes') return;
+  await dependencies.exportDocument({
+    documentId: 'check',
+    title,
+    kind,
+    model,
+    currentRevision: 1,
+    createdAt: 0,
+    updatedAt: 0,
+    sourceRefs: [],
+  });
+}
+
+async function createDocumentFile(args: DocumentCreateArgs, ctx: ToolContext) {
+  const userId = requireUserId(ctx.userId);
+  ctx.abortSignal?.throwIfAborted();
+  const notes: string[] = [];
+  let assets: Awaited<ReturnType<typeof assetsFromUploads>>['assets'] | undefined;
+  if (args.imageUploadIds?.length) {
+    if (args.kind === 'deck') {
+      const uploads = await dependencies.assetsFromUploads(userId, args.imageUploadIds);
+      assets = uploads.assets;
+      notes.push(...uploads.notes);
+    } else notes.push('Image uploads apply to presentations only and were not used.');
+  }
+  ctx.abortSignal?.throwIfAborted();
+  const proposal = args.presentation
+    ? await dependencies.composeDocumentPresentation({
+        userId,
+        instruction: args.instructions || '',
+        sourceContext: args.sourceContext,
+        userEmail: ctx.userEmail || undefined,
+        userName: ctx.userName || undefined,
+        presentation: args.presentation,
+        assets,
+        artwork: args.artwork,
+        abortSignal: ctx.abortSignal,
+      })
+    : args.instructions
+      ? await dependencies
+          .generateDocumentProposal({
+            userId,
+            userEmail: ctx.userEmail || undefined,
+            userName: ctx.userName || undefined,
+            kind: args.kind,
+            instruction: args.instructions,
+            sourceContext: args.sourceContext,
+            abortSignal: ctx.abortSignal,
+            ...(assets ? { assets } : {}),
+            ...(args.artwork ? { artwork: args.artwork } : {}),
+          })
+          .catch(unreadableProposal)
+      : null;
+  const model = proposal?.model ?? (await contentModel(args));
+  ctx.abortSignal?.throwIfAborted();
+  if (args.kind === 'deck' && proposal?.summary) notes.push(proposal.summary);
+  // A document or a workbook must open before it is saved. A deck must not lose minutes of work
+  // to one image that will not load, so it opens after the save and reports the result.
+  if (model && args.kind !== 'deck') await openBuiltFile(args.kind, args.title, model);
+  const document = await dependencies.createDocument({
+    userId,
+    kind: args.kind,
+    title: args.title || proposal?.title,
+    model: model ?? undefined,
+    sourceRefs: args.sourceRefs,
+    reason: proposal?.summary || 'agent_create',
+  });
+  if (model && args.kind === 'deck')
+    await openBuiltFile(args.kind, document.title, model).catch((error) => {
+      notes.push(`The deck is saved, but its PowerPoint file did not build. ${errorCopy(error)}`);
+    });
+  await dependencies.recordOperation({
+    userId,
+    tool: 'document_create',
+    surface: 'albatross',
+    summary: `Created ${args.kind} “${document.title}”`,
+    target: { kind: 'document', id: document.documentId },
+    inverse: { kind: 'documents.archive', payload: { documentId: document.documentId } },
+  });
+  let google: Awaited<ReturnType<typeof publishDocumentToGoogle>> | null = null;
+  let publishError: string | undefined;
+  if (args.publishToGoogle) {
+    try {
+      if (proposal?.visualReview?.status === 'needs_review')
+        throw new Error('Draft saved. Finish its visual review before publishing to Google.');
+      ctx.abortSignal?.throwIfAborted();
+      google = await dependencies.publishDocumentToGoogle({
+        userId,
+        document,
+        connectionId: args.googleConnectionId,
+      });
+    } catch (error) {
+      publishError =
+        error instanceof Error
+          ? truncateText(error.message, 500)
+          : 'Google publish failed after the Albatross document was created.';
+    }
+  }
+  return {
+    ok: true,
+    documentId: document.documentId,
+    title: document.title,
+    kind: document.kind,
+    revision: document.currentRevision,
+    openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
+    googleUrl: google?.webUrl,
+    publishError,
+    ...(proposal?.visualReview ? { visualReview: proposal.visualReview } : {}),
+    ...(notes.length ? { notes } : {}),
+  };
+}
+
+const documentCreateOutput = z.object({
+  ok: z.boolean(),
+  documentId: z.string(),
+  title: z.string(),
+  kind: z.enum(DOCUMENT_KINDS),
+  revision: z.number(),
+  openPath: z.string(),
+  googleUrl: z.string().optional(),
+  publishError: z.string().optional(),
+  visualReview: deckVisualReportSchema.optional(),
+  /** Plain notes on uploads that were skipped. */
+  notes: z.array(z.string()).optional(),
+});
+
+const DOCUMENT_CREATE_COPY =
+  'Create an editable Albatross document, spreadsheet, or presentation from content that you wrote. It makes a private draft, and it does not send or share it. kind=doc: send blocks. kind=sheet: send sheet, then add charts and pivots with document_edit. kind=deck: send presentation with the finished slides. Call presentation_plan with your evidence first and do its calculation and visual steps. imageUploadIds supplies up to eight chat images. artwork auto adds credited public-domain paintings to open image slots of a version 2 brief; artwork none leaves them out. For an invoice, a letter, a memo, or a report, use word_document_create instead. Send no content for a blank file.';
+
 export const documentCreate = defineTool({
   name: 'document_create',
-  description:
-    'Create an editable Albatross document, spreadsheet, or presentation. For researched decks, provide presentation with the finished slide content: it composes through review of every slide and bounded copy/layout repair. Prefer the version 2 brief with audience, purpose, tone, palette (editorial, signal, grove, lagoon, dusk, rose, sand, slate), fontPair (serif, sans, literary, humanist, grotesk, mono), imagery and slide roles: cover, statement, image-left, image-right, metrics, chart, table, process, comparison, list, quote, close. Chart slides take typed categories/series; table slides take headers/rows/source and compose editable cells. Call presentation_plan with gathered evidence first, execute its calculation and visual tool steps, then create the deck. Legacy briefs remain supported. imageUploadIds supplies up to eight owned chat images; artwork auto fills open version 2 image slots with credited public-domain paintings, while artwork none excludes decorative paintings without excluding uploaded images or data. Combine supplied images, artwork and chart/table slides as the content needs; no imagery-category selection is required. Use instructions and sourceContext when content still needs generating. Omit both to create a blank file. The result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
+  description: DOCUMENT_CREATE_COPY,
   category: 'documents',
   risk: 'write_self',
   mutating: true,
   input: z
     .object({
-      kind: z.enum(DOCUMENT_KINDS),
-      title: z.string().min(1).max(500),
+      ...documentCreateFields,
+      // Not in the schema that the agent sees. A model that still sends it gets the rule.
       instructions: z.string().min(1).max(20_000).optional(),
-      sourceContext: z.string().max(40_000).optional(),
-      sourceRefs: z.array(sourceRefSchema).max(100).optional(),
-      presentation: z
-        .union([presentationAuthoringV2Schema, presentationAuthoringSchema])
-        .optional()
-        .describe(
-          'Finished presentation content for kind=deck; reviewed slide by slide, repaired and composed before saving. Put source detail and citations in speaker notes.',
-        ),
-      publishToGoogle: z.boolean().default(false),
-      googleConnectionId: z.string().max(500).optional(),
-      imageUploadIds: z.array(z.string().min(1).max(200)).max(MAX_UPLOAD_ASSETS).optional(),
-      artwork: z.enum(['auto', 'none']).optional(),
+      presentation: presentationInputSchema.optional().describe(PRESENTATION_FIELD_COPY),
     })
     .superRefine((args, ctx) => {
-      if (args.presentation && args.kind !== 'deck')
-        ctx.addIssue({
-          code: 'custom',
-          path: ['presentation'],
-          message: 'Presentation content requires kind=deck.',
-        });
-      if (
-        args.presentation &&
-        args.instructions &&
-        !presentationSlideCountMatches(args.instructions, args.presentation.slides.length)
-      )
-        ctx.addIssue({
-          code: 'custom',
-          path: ['presentation', 'slides'],
-          message: 'Slide count does not match the instructions.',
-        });
+      checkDocumentContent(args, ctx);
+      if (args.instructions && !args.presentation)
+        ctx.addIssue({ code: 'custom', path: ['instructions'], message: WRITE_IT_YOURSELF });
     }),
-  output: z.object({
-    ok: z.boolean(),
-    documentId: z.string(),
-    title: z.string(),
-    kind: z.enum(DOCUMENT_KINDS),
-    revision: z.number(),
-    openPath: z.string(),
-    googleUrl: z.string().optional(),
-    publishError: z.string().optional(),
-    visualReview: deckVisualReportSchema.optional(),
-    /** Plain notes on uploads that were skipped. */
-    notes: z.array(z.string()).optional(),
+  output: documentCreateOutput,
+  handler: createDocumentFile,
+});
+
+/**
+ * The one caller that needs a second model: a stored plan step has only its
+ * instructions (lib/tools/albatross.ts). The agent cannot reach this tool.
+ */
+export const documentCreateFromInstructions = defineTool({
+  name: 'document_create',
+  description: 'Create an Albatross file from the instructions of a stored plan step.',
+  category: 'documents',
+  risk: 'write_self',
+  mutating: true,
+  input: z.object({
+    kind: documentCreateFields.kind,
+    title: documentCreateFields.title,
+    instructions: z.string().min(1).max(20_000),
+    sourceContext: documentCreateFields.sourceContext,
+    sourceRefs: documentCreateFields.sourceRefs,
+    publishToGoogle: documentCreateFields.publishToGoogle,
+    googleConnectionId: documentCreateFields.googleConnectionId,
   }),
-  async handler(args, ctx) {
-    const userId = requireUserId(ctx.userId);
-    ctx.abortSignal?.throwIfAborted();
-    const notes: string[] = [];
-    let assets: Awaited<ReturnType<typeof assetsFromUploads>>['assets'] | undefined;
-    if (args.imageUploadIds?.length) {
-      if (args.kind === 'deck') {
-        const uploads = await dependencies.assetsFromUploads(userId, args.imageUploadIds);
-        assets = uploads.assets;
-        notes.push(...uploads.notes);
-      } else notes.push('Image uploads apply to presentations only and were not used.');
-    }
-    ctx.abortSignal?.throwIfAborted();
-    const proposal = args.presentation
-      ? await dependencies.composeDocumentPresentation({
-          userId,
-          instruction: args.instructions || '',
-          sourceContext: args.sourceContext,
-          userEmail: ctx.userEmail || undefined,
-          userName: ctx.userName || undefined,
-          presentation: args.presentation,
-          assets,
-          artwork: args.artwork,
-          abortSignal: ctx.abortSignal,
-        })
-      : args.instructions
-        ? await dependencies
-            .generateDocumentProposal({
-              userId,
-              userEmail: ctx.userEmail || undefined,
-              userName: ctx.userName || undefined,
-              kind: args.kind,
-              instruction: args.instructions,
-              sourceContext: args.sourceContext,
-              abortSignal: ctx.abortSignal,
-              ...(assets ? { assets } : {}),
-              ...(args.artwork ? { artwork: args.artwork } : {}),
-            })
-            .catch(unreadableProposal)
-        : null;
-    ctx.abortSignal?.throwIfAborted();
-    if (args.kind === 'deck' && proposal?.summary) notes.push(proposal.summary);
-    const document = await dependencies.createDocument({
-      userId,
-      kind: args.kind,
-      title: args.title || proposal?.title,
-      model: proposal?.model,
-      sourceRefs: args.sourceRefs,
-      reason: proposal?.summary || 'agent_create',
-    });
-    await dependencies.recordOperation({
-      userId,
-      tool: 'document_create',
-      surface: 'albatross',
-      summary: `Created ${args.kind} “${document.title}”`,
-      target: { kind: 'document', id: document.documentId },
-      inverse: { kind: 'documents.archive', payload: { documentId: document.documentId } },
-    });
-    let google: Awaited<ReturnType<typeof publishDocumentToGoogle>> | null = null;
-    let publishError: string | undefined;
-    if (args.publishToGoogle) {
-      try {
-        if (proposal?.visualReview?.status === 'needs_review')
-          throw new Error('Draft saved. Finish its visual review before publishing to Google.');
-        ctx.abortSignal?.throwIfAborted();
-        google = await dependencies.publishDocumentToGoogle({
-          userId,
-          document,
-          connectionId: args.googleConnectionId,
-        });
-      } catch (error) {
-        publishError =
-          error instanceof Error
-            ? truncateText(error.message, 500)
-            : 'Google publish failed after the Albatross document was created.';
-      }
-    }
-    return {
-      ok: true,
-      documentId: document.documentId,
-      title: document.title,
-      kind: document.kind,
-      revision: document.currentRevision,
-      openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
-      googleUrl: google?.webUrl,
-      publishError,
-      ...(proposal?.visualReview ? { visualReview: proposal.visualReview } : {}),
-      ...(notes.length ? { notes } : {}),
-    };
-  },
+  output: documentCreateOutput,
+  handler: createDocumentFile,
 });
 
 export const documentList = defineTool({
@@ -411,19 +580,31 @@ export const documentApplyInstruction = defineTool({
   },
 });
 
+// A tool call replays by its name and arguments. The revision in the arguments makes a new call
+// after an edit a new key, so a replay never returns the file or the report of an older revision.
+const REVISION_INPUT = z
+  .number()
+  .int()
+  .min(1)
+  .describe('The current revision of the file, from the newest create, edit, or read result.');
+
 export const documentReviewSlides = defineTool({
   name: 'document_review_slides',
   description:
-    'Render and visually inspect every slide of an existing presentation using the selected vision model. Repair layout, contrast and orientation without changing content or chart data, then inspect the repaired slides again. Use after document_edit or to resume a saved draft whose visualReview status is needs_review. Saves repairs with revision conflict protection; never recreates the presentation.',
+    'Render and visually inspect every slide of an existing presentation using the selected vision model. Repair layout, contrast and orientation without changing content or chart data, then inspect the repaired slides again. Use after document_edit or to resume a saved draft whose visualReview status is needs_review. Send the current revision. Saves repairs with revision conflict protection; never recreates the presentation.',
   category: 'documents',
   risk: 'write_self',
   mutating: true,
-  input: z.object({ documentId: z.string().min(1) }),
+  input: z.object({
+    documentId: z.string().min(1),
+    revision: REVISION_INPUT,
+  }),
   output: z.object({
     ok: z.boolean(),
+    status: z.literal('conflict').optional(),
     documentId: z.string(),
     revision: z.number(),
-    visualReview: deckVisualReportSchema,
+    visualReview: deckVisualReportSchema.optional(),
     summary: z.string(),
     openPath: z.string(),
   }),
@@ -432,6 +613,15 @@ export const documentReviewSlides = defineTool({
     ctx.abortSignal?.throwIfAborted();
     const document = await dependencies.getDocument(userId, args.documentId);
     if (!document || document.model.kind !== 'deck') throw new Error('Presentation not found.');
+    if (document.currentRevision !== args.revision)
+      return {
+        ok: false,
+        status: 'conflict' as const,
+        documentId: document.documentId,
+        revision: document.currentRevision,
+        summary: `Nothing was checked. The presentation is at revision ${document.currentRevision}. Read it, then send that revision.`,
+        openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
+      };
     const reviewed = await dependencies.reviewDeckVisuals(upgradeDeckModel(document.model), {
       userId,
       abortSignal: ctx.abortSignal,
@@ -502,17 +692,34 @@ function unreadableProposal(error: unknown): never {
   throw error;
 }
 
+function exportRefusal(documentId: string, status: 'conflict' | 'blanks', message: string, extra = {}) {
+  return { ok: false as const, status, documentId, message, ...extra };
+}
+
 /** A Word file converts as saved; a text document converts from its DOCX export. */
-async function exportPdf(userId: string, documentId: string) {
+async function exportPdf(userId: string, documentId: string, revision: number) {
   let saved: Awaited<ReturnType<typeof saveOfficePdf>>;
   try {
-    saved = await dependencies.saveOfficePdf(userId, documentId);
+    saved = await dependencies.saveOfficePdf(userId, documentId, undefined, { revision });
   } catch (error) {
+    if (error instanceof OfficeRevisionError)
+      return exportRefusal(documentId, 'conflict', error.message, { revision: error.current });
+    if (error instanceof OfficeBlanksError)
+      return exportRefusal(documentId, 'blanks', error.message, { blanks: error.blanks });
     if (!(error instanceof OfficeError) || error.status !== 404) throw error;
     const document = await dependencies.getDocument(userId, documentId);
     if (!document) throw new Error('Document not found.');
     if (document.kind !== 'doc')
       throw new Error('PDF export works for Word files and text documents. Use the native format.');
+    if (document.currentRevision !== revision)
+      return exportRefusal(
+        documentId,
+        'conflict',
+        new OfficeRevisionError(document.currentRevision).message,
+        {
+          revision: document.currentRevision,
+        },
+      );
     const exported = await dependencies.exportDocument(document);
     saved = await dependencies.saveDocxBytesAsPdf(userId, exported.bytes, document.title);
   }
@@ -532,13 +739,14 @@ async function exportPdf(userId: string, documentId: string) {
 export const documentExport = defineTool({
   name: 'document_export',
   description:
-    'Return the authenticated download URL for a file in DOCX, XLSX, or PPTX. Odoo workbook server downloads are values/formulas projections, not full-fidelity exports; use the editor download for the engine export. With format pdf, the document server makes a PDF of a Word file (from word_document_create) or of a text document, and the PDF is saved in Files: the result fileId can go on a draft as an attachment or into the package. The PDF shows the saved revision; fill the blanks first.',
+    'Build a file and return its authenticated download URL in DOCX, XLSX, or PPTX. The server opens the built file first, so a success means that the file opens. Odoo workbook server downloads are values/formulas projections, not full-fidelity exports; use the editor download for the engine export. With format pdf, the document server makes a PDF of a Word file (from word_document_create) or of a text document, and the PDF is saved in Files: the result fileId can go on a draft as an attachment or into the package. Send the current revision. A file with empty blanks gets no PDF: the result names them, so fill them first.',
   category: 'documents',
   // The pdf format saves a file in Files. Checkpointing keeps a retry from saving it twice.
   risk: 'write_self',
   mutating: true,
   input: z.object({
     documentId: z.string().min(1),
+    revision: REVISION_INPUT,
     format: z
       .enum(['native', 'pdf'])
       .optional()
@@ -563,17 +771,34 @@ export const documentExport = defineTool({
       contentType: z.string(),
       sha256: z.string(),
     }),
+    z.object({
+      ok: z.literal(false),
+      status: z.enum(['conflict', 'blanks']),
+      documentId: z.string(),
+      message: z.string(),
+      revision: z.number().optional(),
+      blanks: z.array(z.string()).optional(),
+    }),
   ]),
   async handler(args, ctx) {
-    if (args.format === 'pdf') return exportPdf(requireUserId(ctx.userId), args.documentId);
+    if (args.format === 'pdf') return exportPdf(requireUserId(ctx.userId), args.documentId, args.revision);
     const document = await dependencies.getDocument(requireUserId(ctx.userId), args.documentId);
     if (!document) throw new Error('Document not found.');
-    const engine = isSheetWorkbookModel(document.model);
+    if (document.currentRevision !== args.revision)
+      return exportRefusal(
+        document.documentId,
+        'conflict',
+        `The file is at revision ${document.currentRevision}. Read it again and send that revision.`,
+        { revision: document.currentRevision },
+      );
+    // Build once now, so that a file that does not build fails here and not at the download.
+    const exported = await dependencies.exportDocument(document);
+    const projection = exported.fidelity === 'projection';
     return {
       ok: true,
       downloadPath: `/api/documents/${encodeURIComponent(document.documentId)}/export`,
-      fidelity: engine ? ('projection' as const) : ('full' as const),
-      warning: engine
+      fidelity: exported.fidelity,
+      warning: projection
         ? 'This server download carries values and formulas only. Open the spreadsheet and use Download Excel to export through Odoo with its supported workbook features.'
         : undefined,
       openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,

@@ -2,7 +2,7 @@
 
 // The saved files that go with a draft (docs/albatross-goal-runs.md G3),
 // as rows between the body and the bar: the name, the kind and the size,
-// a note for a sealed file or a file that converts at send time, and
+// a note for a warning, a sealed file, or a file that converts at send time, and
 // "Remove". Shared by the inline composer, the compose overlay, and the
 // draft tab of document mode.
 
@@ -32,7 +32,12 @@ export function attachmentMeta(attachment: DraftAttachment): { line: string; not
   const size = formatFileSize(attachment.size);
   const converts = attachment.format === 'pdf' && attachment.provider !== 'upload' && kind !== 'PDF';
   const line = size ? `${kind}, ${size}` : kind;
-  return { line, note: attachmentSealedNote(attachment) ?? (converts ? ATTACHMENT_COPY.converted : null) };
+  return {
+    line,
+    note:
+      attachment.warning?.trim() ||
+      (attachmentSealedNote(attachment) ?? (converts ? ATTACHMENT_COPY.converted : null)),
+  };
 }
 
 export function AttachmentRows({

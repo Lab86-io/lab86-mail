@@ -332,7 +332,8 @@ export function initialToolGroups(scope: {
 }
 
 /** A request for a Word file that a house template makes (lib/documents/templates). */
-const TEMPLATE_DOCUMENT_REQUEST = /\b(?:invoice|letter|memo)s?\b/i;
+const TEMPLATE_DOCUMENT_REQUEST =
+  /\b(?:invoice|letter|memo)s?\b|\b(?:write|draft|make|create|prepare)\b[^.?!\n]{0,40}\breports?\b/i;
 /** A tax form by name. */
 const TAX_FORM = /\b(?:w-?9|w-?4|1099)s?\b/i;
 /** An action on a form, a PDF, or a mail attachment: fill one in, sign one, or save one. */
@@ -361,7 +362,7 @@ const NEEDS_YOU_REQUEST =
 
 /**
  * Groups that the request text asks for, before the first step: an invoice, a
- * letter, or a memo loads documents_more; a tax form, or a form, a PDF, or an
+ * letter, a memo, or a report to write loads documents_more; a tax form, or a form, a PDF, or an
  * attachment to fill, sign, or save loads pdf_forms and personal_forms; a
  * question on what the user owes loads needs_you for a user in its flag; the
  * other patterns above load the group of their name. So these tools are there

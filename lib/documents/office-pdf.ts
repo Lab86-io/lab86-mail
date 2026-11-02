@@ -13,6 +13,7 @@ import {
   validateOfficeArchive,
 } from './office-security';
 import { getOfficeFile } from './office-service';
+import { emptyWordBlanks } from './word-package';
 
 const defaults = {
   getOfficeFile,
@@ -95,26 +96,59 @@ export async function convertOfficeToPdf(bytes: Uint8Array, extension: OfficeExt
 const pdfName = (title: string) =>
   savedFileName(`${title.replace(/\.(docx|xlsx|pptx)$/i, '').trim() || 'document'}.pdf`);
 
-/** The PDF of the saved revision of a Word file. */
+/** A PDF of a file with empty blanks would show its placeholders: refuse, and name them. */
+export class OfficeBlanksError extends OfficeError {
+  constructor(readonly blanks: string[]) {
+    super(
+      `Fill these blanks first: ${blanks.map((blank) => `"${blank}"`).join(', ')}. No PDF was made.`,
+      409,
+    );
+  }
+}
+
+/** The caller read another revision of this file. */
+export class OfficeRevisionError extends OfficeError {
+  constructor(readonly current: number) {
+    super(`The file is at revision ${current}. Read it again and send that revision. No PDF was made.`, 409);
+  }
+}
+
+/**
+ * The PDF of the saved revision of a Word file. `revision` is the revision that
+ * the caller read: another one is an OfficeRevisionError.
+ */
 export async function exportOfficePdf(
   userId: string,
   documentId: string,
+  options: { revision?: number } = {},
 ): Promise<{ bytes: Uint8Array; name: string }> {
   const file = await dependencies.getOfficeFile(userId, documentId);
   if (!file?.version?.url) throw new OfficeError('Word document not found.', 404);
   if (file.extension !== 'docx') throw new OfficeError('PDF export works for Word files only.', 400);
+  if (options.revision !== undefined && file.currentRevision !== options.revision)
+    throw new OfficeRevisionError(file.currentRevision);
   const response = await dependencies.fetch(file.version.url, {
     redirect: 'error',
     signal: AbortSignal.timeout(15_000),
   });
   const source = await readOfficeResponse(response);
+  const blanks = await emptyWordBlanks(source);
+  if (blanks.length) throw new OfficeBlanksError(blanks);
   return { bytes: await convertOfficeToPdf(source, 'docx'), name: pdfName(file.title) };
 }
 
 /** Exports a Word file as PDF and saves the PDF in Files (origin `export`). */
-export async function saveOfficePdf(userId: string, documentId: string, workId?: string): Promise<SavedFile> {
+export async function saveOfficePdf(
+  userId: string,
+  documentId: string,
+  workId?: string,
+  options: { revision?: number } = {},
+): Promise<SavedFile> {
   // The export only reads. A failure tells the model to try again, and now it can.
-  const { bytes, name } = await beforeWrite(() => exportOfficePdf(userId, documentId), 'office_convert');
+  const { bytes, name } = await beforeWrite(
+    () => exportOfficePdf(userId, documentId, options),
+    'office_convert',
+  );
   return dependencies.saveFileBytes({
     userId,
     bytes,

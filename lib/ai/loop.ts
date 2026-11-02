@@ -9,6 +9,7 @@ import {
 } from 'ai';
 import { z } from 'zod';
 import { formQuestionSchema } from '../albatross/thread-contract';
+import { isDeckV2AuthoringEnabled } from '../documents/editor-flags';
 import { pausedAssistantRisks } from '../hosted/standing-orders';
 import { narrativePrompt } from '../narrative/service';
 import { needsYouFlagFor } from '../obligations/contract';
@@ -18,7 +19,7 @@ import { secureStoreEnabledFor } from '../secure/flag';
 import { withDeadline } from '../shared/deadline';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
-import { documentCreate } from '../tools/documents';
+import { documentCreateModelInput } from '../tools/documents';
 import { invokeTool, repairToolArgs, toolRisk } from '../tools/registry';
 import { APPROVAL_RISKS, approvalConditionMet, approvalSummary, type ToolRisk } from './approval';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
@@ -350,6 +351,8 @@ export interface AgentToolOptions {
   preloadGroups?: readonly string[];
   /** The client that renders this chat. Native clients get no web-only UI tools. */
   clientPlatform?: ClientPlatform;
+  /** The user of this run: the deck brief that the agent gets depends on it. */
+  userId?: string | null;
   /** Risk classes the user paused in Settings, Standing orders. Those calls change nothing. */
   pausedRisks?: ReadonlySet<ToolRisk>;
   /**
@@ -398,6 +401,7 @@ export function liftToolsForAgent(
   const lifted: Record<string, any> = {};
   const rejectedInputs = new Set<string>();
   const clientPlatform = options.clientPlatform ?? 'web';
+  const deckV2 = isDeckV2AuthoringEnabled(options.userId);
   for (const [name, t] of Object.entries(TOOLS)) {
     if (!AGENT_TOOL_NAMES.has(name)) continue;
     if (clientPlatform !== 'web' && isWebOnlyTool(name)) continue;
@@ -418,13 +422,9 @@ export function liftToolsForAgent(
             },
           }
         : {}),
-      // Keep legacy briefs readable by the registry, but offer the agent one
-      // creation contract with native charts/tables, including during recovery.
-      inputSchema: modelInputSchema(
-        name === 'document_create'
-          ? documentCreate.input.safeExtend({ presentation: presentationAuthoringV2Schema.optional() })
-          : t.input,
-      ),
+      // The agent writes the content, so its schema has no instructions field.
+      // It offers the one deck brief that this user's renderer takes.
+      inputSchema: modelInputSchema(name === 'document_create' ? documentCreateModelInput(deckV2) : t.input),
       toModelOutput: ({ output }: { output: unknown }) => toolModelOutput(name, output),
       execute: async (args: unknown, options?: { abortSignal?: AbortSignal }) => {
         if (paused) return pausedToolResult(name, risk);
@@ -445,6 +445,7 @@ export function liftToolsForAgent(
                   : `Call ask_presentation_choices for the ${stage} checkpoint and wait for the user. No file was created.`,
             };
           if (
+            deckV2 &&
             (presentationSession.brief || presentationSession.design) &&
             typeof (args as any)?.presentation?.audience !== 'string'
           )
@@ -1460,6 +1461,7 @@ export async function runAgent({
   // The user's standing orders decide which risk classes the assistant may use.
   const pausedRisks = userId ? await pausedAssistantRisks(userId) : undefined;
   const tools = liftToolsForAgent(operationBatchId, timezone, presentationSession, {
+    userId,
     scopeGroups: toolGroups,
     preloadGroups: preload,
     clientPlatform,
@@ -1536,7 +1538,15 @@ export async function runAgent({
               signal?.throwIfAborted();
               const base = buildSystemPrompt(
                 { name: userName, email: userEmail },
-                { memories, clientPlatform, askForm, secureStore, askSecureDetail, needsYou },
+                {
+                  memories,
+                  clientPlatform,
+                  askForm,
+                  secureStore,
+                  askSecureDetail,
+                  needsYou,
+                  deckV2: isDeckV2AuthoringEnabled(userId),
+                },
               );
               // Static instructions first, per-turn context last: providers cache the
               // shared prefix, so the parts that change every turn sit at the end.
@@ -1629,5 +1639,4 @@ import {
   type PresentationSession,
   presentationChoiceSchemaForSession,
 } from '@/lib/documents/presentation-choices';
-import { presentationAuthoringV2Schema } from '@/lib/documents/presentation-design';
 import { truncateText } from '../shared/text';

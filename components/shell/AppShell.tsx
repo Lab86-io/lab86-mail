@@ -50,6 +50,7 @@ import { Rail } from './Rail';
 import { ShortcutsBinding } from './ShortcutsBinding';
 import { ShortcutsSheet } from './ShortcutsSheet';
 import { WakeNudgeHost } from './WakeNudge';
+import { WebSpeedReporter } from './WebSpeedReporter';
 
 // Each visible-pane permutation gets its own persisted layout so the inbox
 // doesn't snap to weird sizes when the reader or AI sidebar mounts/unmounts.
@@ -384,6 +385,7 @@ export function AppShell({
       <ShortcutsSheet />
       <ShortcutsBinding />
       <RecordMailboxesConnected />
+      <WebSpeedReporter />
     </TooltipProvider>
   );
 }

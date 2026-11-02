@@ -273,7 +273,7 @@ export async function planPresentation(
         issues: gaps,
         nextStep: gaps.length
           ? 'Retrieve the missing evidence using tools, then update the plan. Do not fabricate the missing data.'
-          : `Execute the planned calculation and asset tool calls, ${input.delegateRemaining ? 'honor delegated choices without more pickers,' : 'show the complete storyboard picker only if that checkpoint remains unanswered (honor any saved confirmation),'} create the deck with the version 2 presentation brief, then read it back and verify every slide.`,
+          : `Execute the planned calculation and asset tool calls, ${input.delegateRemaining ? 'honor delegated choices without more pickers,' : 'show the complete storyboard picker only if that checkpoint remains unanswered (honor any saved confirmation),'} create the deck with the presentation brief, then read it back and verify every slide.`,
       };
     }
   } catch (error) {
@@ -297,6 +297,6 @@ export async function planPresentation(
           },
         }
       : {}),
-    nextStep: `Retain the gathered evidence and confirmed choices. Continue NOW: when recovery is present, call presentation_plan with that recovery object, the same evidence and slideCount to finish only pendingSlideNumbers without redoing the outline or completed slides. Otherwise deeply plan the slides in the current agent context. Execute remaining research/calculation tools. ${input.delegateRemaining ? 'The user delegated remaining choices: do not ask any more pickers; finish the storyboard yourself.' : 'Ask only the next unanswered checkpoint in the authoritative session state; never repeat confirmed choices. Wait for storyboard confirmation unless already confirmed or delegated.'} Create the deck with document_create kind=deck and a version 2 presentation brief, never the raw plan or legacy layout slides. Each slide uses role, title, kicker, body, items, notes, visualRole and the relevant chart/table/image data; omit unused supporting copy or use empty strings. Do not ask the user to restart. Never invent chart data.`,
+    nextStep: `Retain the gathered evidence and confirmed choices. Continue NOW: when recovery is present, call presentation_plan with that recovery object, the same evidence and slideCount to finish only pendingSlideNumbers without redoing the outline or completed slides. Otherwise deeply plan the slides in the current agent context. Execute remaining research/calculation tools. ${input.delegateRemaining ? 'The user delegated remaining choices: do not ask any more pickers; finish the storyboard yourself.' : 'Ask only the next unanswered checkpoint in the authoritative session state; never repeat confirmed choices. Wait for storyboard confirmation unless already confirmed or delegated.'} Create the deck with document_create kind=deck and the presentation brief in the shape of its schema, never the raw plan. Omit unused supporting copy or use empty strings. Do not ask the user to restart. Never invent chart data.`,
   };
 }

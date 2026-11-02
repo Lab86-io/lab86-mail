@@ -357,6 +357,83 @@ Vary the roles across the deck; use at least four different roles in a deck of f
 Use a content-led mix of relevant credited artwork, user-provided images, and evidence-backed charts/tables in the same deck. No mutually exclusive imagery mode is required. Prioritize relevant supplied images; artwork fills other appropriate image slots without replacing images or data visuals. Do not force all visual types onto every slide. Image requests need alt text and a subject. Only set assetId to an asset id listed in the grounding material. Never reference an outside image address; a slide without an owned image composes as typography.
 Use role table for precise comparisons with headers (2–4), rows (1–6), and a source caption. Use real chart data for trends or numerical comparisons. Choose a visual that proves the slide takeaway; never invent data or substitute prose for a chart. Respect the requested slide count. Write short headlines, concise labels and details that fit their limits. Speaker notes carry sources, nuance, exact dates with time zones and the fuller explanation. Each slide holds real content, never placeholders or a restatement of the request. Only attribute events to a date when source timestamps support it. Plain language, no emoji.`;
 
+const LEGACY_LAYOUT: Record<CompositionRole, PresentationBrief['slides'][number]['layout']> = {
+  cover: 'cover',
+  statement: 'statement',
+  quote: 'statement',
+  close: 'statement',
+  metrics: 'metrics',
+  chart: 'metrics',
+  table: 'columns',
+  comparison: 'columns',
+  list: 'columns',
+  'image-left': 'columns',
+  'image-right': 'columns',
+  'image-top': 'columns',
+  'image-bottom': 'columns',
+  'image-auto': 'columns',
+  process: 'timeline',
+};
+const LEGACY_PALETTE: Record<string, PresentationBrief['palette']> = {
+  grove: 'forest',
+  rose: 'clay',
+  sand: 'clay',
+};
+
+/**
+ * A version 2 brief in the legacy shape, for a user who does not have version 2.
+ * Nothing is lost: chart and table data also go to the speaker notes as text,
+ * and `visualsMoved` tells the caller to say so.
+ */
+export function legacyBriefFromV2(brief: PresentationBriefV2): {
+  brief: PresentationBrief;
+  visualsMoved: boolean;
+} {
+  let visualsMoved = false;
+  const slides = brief.slides.map((slide) => {
+    const facts: string[] = [];
+    const items = slide.items.map((item) => ({
+      label: item.label,
+      detail: item.meta ? `${item.detail} (${item.meta})`.trim() : item.detail,
+    }));
+    if (slide.chart) {
+      const { categories, series, unit, source } = slide.chart;
+      for (const entry of series)
+        facts.push(
+          `${entry.name}: ${categories.map((name, index) => `${name} ${entry.values[index]}${unit ?? ''}`).join(', ')}`,
+        );
+      if (source) facts.push(`Source: ${source}`);
+      if (!items.length)
+        items.push(
+          ...categories.slice(0, 3).map((name, index) => ({
+            label: `${series[0]?.values[index]}${unit ?? ''}`,
+            detail: name,
+          })),
+        );
+    }
+    if (slide.table) {
+      const { headers, rows, source } = slide.table;
+      facts.push(headers.join(' | '), ...rows.map((row) => row.join(' | ')));
+      if (source) facts.push(`Source: ${source}`);
+      if (!items.length)
+        items.push(
+          ...rows.slice(0, 3).map(([label, ...rest]) => ({ label: label || '-', detail: rest.join(', ') })),
+        );
+    }
+    if (facts.length || slide.image) visualsMoved = true;
+    return {
+      layout: LEGACY_LAYOUT[slide.role],
+      title: slide.title,
+      kicker: slide.kicker,
+      body: slide.body,
+      items,
+      notes: [slide.notes, ...facts].filter(Boolean).join('\n'),
+    };
+  });
+  const palette = typeof brief.palette === 'string' ? (LEGACY_PALETTE[brief.palette] ?? 'ink') : 'ink';
+  return { brief: { title: brief.title, summary: brief.summary, palette, slides }, visualsMoved };
+}
+
 /** The compositions that hang a painting when no owned image takes the slot. */
 export const ARTWORK_ROLES: readonly CompositionRole[] = [
   'cover',
