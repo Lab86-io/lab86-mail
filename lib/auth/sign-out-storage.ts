@@ -1,3 +1,5 @@
+import { abandonBrowserPush } from '../notifications/web-push-client';
+
 /**
  * Sign-out clears the app data that the browser keeps (CASA S9, ASVS 8.2.3).
  *
@@ -142,7 +144,11 @@ export interface SignOutStorageDeps {
   clearStorage?: () => unknown;
   deleteDatabases?: () => Promise<unknown>;
   navigate?: (url: string) => void;
+  revokeBrowserPush?: () => Promise<unknown>;
 }
+
+/** Sign-out never waits long for the push cleanup. */
+const PUSH_REVOKE_WAIT_MS = 3_000;
 
 function loadPage(url: string) {
   if (typeof window !== 'undefined') window.location.assign(url);
@@ -182,9 +188,16 @@ export async function signOutAndClearStorage(
   const clearStorage = deps.clearStorage ?? (() => clearAppStorage());
   const deleteDatabases = deps.deleteDatabases ?? (() => deleteAppDatabases());
   const navigate = deps.navigate ?? loadPage;
+  const revokeBrowserPush = deps.revokeBrowserPush ?? (() => abandonBrowserPush());
   appSignOutInProgress = true;
   clearStorage();
   await deleteDatabases().catch(() => undefined);
+  // The server accepts this only from the owner, so it runs before the session ends.
+  // Else the next account in this browser gets the pushes of this one.
+  await Promise.race([
+    revokeBrowserPush().catch(() => undefined),
+    new Promise((resolve) => setTimeout(resolve, PUSH_REVOKE_WAIT_MS)),
+  ]);
   try {
     await signOut(async () => {
       // The session is gone. Remove the keys that a component wrote in the meantime.

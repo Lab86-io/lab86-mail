@@ -543,6 +543,10 @@ describe('every-slide presentation review', () => {
       expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2B')).toBe(false);
       expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2m')).toBe(true);
       expect(preservesNumericClaims('in 12 markets', 'In 12 markets')).toBe(true);
+      // The same size in other words is the same number.
+      expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2 million')).toBe(true);
+      expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2 M')).toBe(true);
+      expect(preservesNumericClaims('revenue 3.2M', 'Revenue reached 3.2 billion')).toBe(false);
     });
 
     test('a fix may use an item figure, and a chart value with its unit', async () => {

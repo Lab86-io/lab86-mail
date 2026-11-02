@@ -272,6 +272,43 @@ describe('signOutAndClearStorage', () => {
     expect(assigned).toEqual(['/sign-in']);
   });
 
+  test('the push subscription leaves before the session ends, and a slow or failed cleanup does not stop it', async () => {
+    const order: string[] = [];
+    await signOutAndClearStorage(
+      async (callback) => {
+        order.push('sign out');
+        await callback();
+      },
+      {},
+      {
+        clearStorage: () => undefined,
+        deleteDatabases: async () => undefined,
+        navigate: () => undefined,
+        revokeBrowserPush: async () => {
+          order.push('revoke');
+        },
+      },
+    );
+    expect(order).toEqual(['revoke', 'sign out']);
+    resetAppSignOutForTest();
+    let signedOut = false;
+    await signOutAndClearStorage(
+      async () => {
+        signedOut = true;
+      },
+      {},
+      {
+        clearStorage: () => undefined,
+        deleteDatabases: async () => undefined,
+        navigate: () => undefined,
+        revokeBrowserPush: async () => {
+          throw new Error('offline');
+        },
+      },
+    );
+    expect(signedOut).toBe(true);
+  });
+
   test('the flag stays set after the sign-out, and a failed sign-out clears it', async () => {
     const deps = { clearStorage: () => undefined, deleteDatabases: async () => {}, navigate: () => {} };
     await signOutAndClearStorage(async (callback) => callback(), {}, deps);
