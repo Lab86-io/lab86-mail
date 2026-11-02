@@ -666,6 +666,30 @@ export async function closeHandoffsForStep(
     if (row.state === 'handed_off') await ctx.db.patch(row._id, { state: 'closed', updatedAt: ts });
 }
 
+/**
+ * What a decision on an approval means for the run that queued it: the run,
+ * and how many of its approvals still wait or went ahead. The step runner
+ * stores its run id as the approval's batch id.
+ */
+export const approvalRunState = query({
+  args: { ...callerArgs, runId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const id = ctx.db.normalizeId('albatrossStepRuns', args.runId);
+    const run = id ? await ctx.db.get(id) : null;
+    if (!run || run.userId !== userId) return null;
+    const approvals = await ctx.db
+      .query('albatrossApprovals')
+      .withIndex('by_user_batch', (q) => q.eq('userId', userId).eq('operationBatchId', args.runId))
+      .take(50);
+    return {
+      run: stepRunView(run),
+      open: approvals.filter((row) => row.status === 'pending' || row.status === 'claiming').length,
+      approved: approvals.filter((row) => row.status === 'approved').length,
+    };
+  },
+});
+
 /** The Work page's subscription: the newest run of each step. */
 export const runsForWork = query({
   args: { ...callerArgs, workId: v.string() },
@@ -679,6 +703,15 @@ export const runsForWork = query({
     return latestRunPerStep(rows).map(stepRunView);
   },
 });
+
+/** True when the run queued an approval: its next action, its artifacts, or its package say so. */
+function runMadeApproval(run: RunDoc): boolean {
+  return (
+    run.next?.kind === 'approve' ||
+    run.artifacts.some((artifact) => artifact.kind === 'approval') ||
+    Boolean(run.items?.some((item) => item.kind === 'approval'))
+  );
+}
 
 /** Steer notes a run keeps. */
 const STEER_MAX = 10;
@@ -700,6 +733,14 @@ export const runsForWorkHistory = query({
       .withIndex('by_user', (q) => q.eq('userId', userId).eq('workId', args.workId))
       .order('desc')
       .take(limit);
+    // One bounded read for the Work, and only when a run made an approval.
+    const approvals = rows.some(runMadeApproval)
+      ? await ctx.db
+          .query('albatrossApprovals')
+          .withIndex('by_user_intent', (q) => q.eq('userId', userId).eq('intentId', args.workId))
+          .order('desc')
+          .take(THREAD_RUNS_MAX)
+      : [];
     const views = await Promise.all(
       rows.reverse().map(async (run) => {
         const view = stepRunView(run);
@@ -710,6 +751,17 @@ export const runsForWorkHistory = query({
         const question = questionId ? await ctx.db.get(questionId) : null;
         return {
           ...view,
+          // Oldest first. The thread decides these in place (docs/albatross-step-runner.md).
+          approvals: approvals
+            .filter((approval) => approval.operationBatchId === String(run._id))
+            .reverse()
+            .map((approval) => ({
+              id: String(approval._id),
+              kind: approval.kind,
+              status: approval.status,
+              title: approval.title,
+              detail: approval.detail ?? null,
+            })),
           question:
             question && question.userId === userId
               ? {

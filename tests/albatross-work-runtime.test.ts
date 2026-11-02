@@ -286,6 +286,36 @@ describe('approval queue', () => {
     expect(undone.approval.status).toBe('undone');
   });
 
+  test('a failed call releases the claim, so the row can be decided again', async () => {
+    const t = newHarness();
+    const approvalId = await seedApproval(t);
+    // Not claimed: nothing changes.
+    expect(await t.mutation(api.albatrossWork.releaseApproval, { ...caller, approvalId })).toEqual({
+      ok: false,
+    });
+    await t.mutation(api.albatrossWork.claimApproval, { ...caller, approvalId });
+    expect(
+      await t.mutation(api.albatrossWork.releaseApproval, {
+        ...caller,
+        approvalId,
+        decisionNote: 'Approval execution failed: Calendar is offline.',
+      }),
+    ).toEqual({ ok: true });
+    const row = await t.query(api.albatrossWork.getApproval, { ...caller, approvalId });
+    expect(row?.status).toBe('pending');
+    expect(row?.decisionNote).toContain('Calendar is offline.');
+    // The same row can go ahead on the next try.
+    const claimed = await t.mutation(api.albatrossWork.claimApproval, { ...caller, approvalId });
+    expect(claimed.approval.status).toBe('claiming');
+    await expect(
+      t.mutation(api.albatrossWork.releaseApproval, {
+        internalSecret: caller.internalSecret,
+        userId: 'someone_else',
+        approvalId,
+      }),
+    ).rejects.toThrow('Approval not found.');
+  });
+
   test('terminal approvals reject re-decision and undo requires the window', async () => {
     const t = newHarness();
     const approvalId = await seedApproval(t);

@@ -668,6 +668,26 @@ export const claimApproval = mutation({
   },
 });
 
+/**
+ * A claimed approval whose call failed goes back to the queue, so the user can
+ * try again or decline it on any client. A row that is not claimed stays as it is.
+ */
+export const releaseApproval = mutation({
+  args: { ...callerArgs, approvalId: v.id('albatrossApprovals'), decisionNote: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const approval = await ctx.db.get(args.approvalId);
+    if (!approval || approval.userId !== userId) throw new Error('Approval not found.');
+    if (approval.status !== 'claiming') return { ok: false };
+    await ctx.db.patch(args.approvalId, {
+      status: 'pending',
+      decisionNote: bounded(args.decisionNote, 800),
+      updatedAt: now(),
+    });
+    return { ok: true };
+  },
+});
+
 export const recordPlanApplication = mutation({
   args: {
     ...callerArgs,

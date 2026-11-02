@@ -738,6 +738,110 @@ describe('approval dedupe', () => {
   });
 });
 
+describe('the approvals of a run', () => {
+  async function seedHandoff(t: Harness, workId: string, next: Record<string, unknown> | null) {
+    return t.run((ctx) =>
+      ctx.db.insert('albatrossStepRuns', {
+        userId,
+        workId,
+        stepKey: 'draft',
+        stepIdentity: 'draft',
+        stepTitle: 'Invite Dana',
+        state: 'handed_off',
+        active: false,
+        trigger: 'user',
+        attempts: 1,
+        availableAt: 1,
+        log: [],
+        artifacts: next ? [{ kind: 'approval', id: 'seed', title: 'Send the invite' }] : [],
+        ...(next ? { next } : {}),
+        createdAt: 1,
+        updatedAt: 1,
+      } as any),
+    );
+  }
+  const approve = {
+    kind: 'approve',
+    label: 'Approve it',
+    detail: 'It runs after you approve it.',
+    target: { kind: 'approval' },
+  };
+  function queueArgs(workId: string, runId: string, artifactId: string) {
+    return {
+      ...caller,
+      kind: 'calendar_invite' as const,
+      title: 'Send the invite: Review',
+      detail: 'To dana@example.com. From the step "Invite Dana".',
+      intentId: workId,
+      operationBatchId: runId,
+      artifactKind: 'step_run',
+      artifactId,
+      toolName: 'calendar_create_event',
+      toolArgs: { title: 'Review' },
+    };
+  }
+
+  test('approvalRunState counts what still waits and what went ahead', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const runId = String(await seedHandoff(t, workId, approve));
+    const first = await t.mutation(api.albatrossWork.enqueueApproval, queueArgs(workId, runId, 'a'));
+    const second = await t.mutation(api.albatrossWork.enqueueApproval, queueArgs(workId, runId, 'b'));
+    const state = () => t.query(api.albatrossStepRuns.approvalRunState, { ...caller, runId });
+    expect(await state()).toMatchObject({ open: 2, approved: 0, run: { id: runId, state: 'handed_off' } });
+    await t.mutation(api.albatrossWork.decideApproval, { ...caller, approvalId: first, status: 'approved' });
+    expect(await state()).toMatchObject({ open: 1, approved: 1 });
+    await t.mutation(api.albatrossWork.decideApproval, { ...caller, approvalId: second, status: 'rejected' });
+    expect(await state()).toMatchObject({ open: 0, approved: 1 });
+  });
+
+  test('approvalRunState reads nothing for another user or for an id that is not a run', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const runId = String(await seedHandoff(t, workId, approve));
+    expect(
+      await t.query(api.albatrossStepRuns.approvalRunState, {
+        internalSecret: SECRET,
+        userId: 'someone_else',
+        runId,
+      }),
+    ).toBeNull();
+    expect(
+      await t.query(api.albatrossStepRuns.approvalRunState, { ...caller, runId: 'not-a-run' }),
+    ).toBeNull();
+  });
+
+  test('the thread reads each run with its own approvals, decided ones too', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const runId = String(await seedHandoff(t, workId, approve));
+    const otherRun = String(await seedHandoff(t, workId, approve));
+    const first = await t.mutation(api.albatrossWork.enqueueApproval, queueArgs(workId, runId, 'a'));
+    await t.mutation(api.albatrossWork.enqueueApproval, queueArgs(workId, otherRun, 'b'));
+    await t.mutation(api.albatrossWork.decideApproval, { ...caller, approvalId: first, status: 'approved' });
+    const runs = await t.query(api.albatrossStepRuns.runsForWorkHistory, { ...caller, workId });
+    const mine = runs.find((run) => run.id === runId);
+    expect(mine?.approvals).toEqual([
+      {
+        id: String(first),
+        kind: 'calendar_invite',
+        status: 'approved',
+        title: 'Send the invite: Review',
+        detail: 'To dana@example.com. From the step "Invite Dana".',
+      },
+    ]);
+    expect(runs.find((run) => run.id === otherRun)?.approvals?.map((row) => row.status)).toEqual(['pending']);
+  });
+
+  test('a Work with no approval run has none, and the thread makes no approval read', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    await seedHandoff(t, workId, null);
+    const runs = await t.query(api.albatrossStepRuns.runsForWorkHistory, { ...caller, workId });
+    expect(runs[0].approvals).toEqual([]);
+  });
+});
+
 describe('goal runs (docs/albatross-goal-runs.md)', () => {
   function goalArgs(workId: string, overrides: Record<string, unknown> = {}) {
     return enqueueArgs(workId, {

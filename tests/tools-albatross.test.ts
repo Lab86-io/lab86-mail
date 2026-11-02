@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import * as albatross from '../lib/tools/albatross';
-import { invokeTool } from '../lib/tools/registry';
+import { invokeTool, ToolValidationError } from '../lib/tools/registry';
 import { runTool } from './tools/harness';
 
 const apiMock = {
@@ -17,6 +17,7 @@ const apiMock = {
     getApproval: 'albatross.getApproval',
     decideApproval: 'albatross.decideApproval',
     claimApproval: 'albatross.claimApproval',
+    releaseApproval: 'albatross.releaseApproval',
     recordPlanApplication: 'albatross.recordPlanApplication',
     listPlanApplications: 'albatross.listPlanApplications',
     getProjectPane: 'albatross.getProjectPane',
@@ -227,6 +228,9 @@ async function invokeToolMock(tool: any, args: any, ctx?: any) {
   return { ok: true };
 }
 
+const settleCalls: any[] = [];
+let settleResult: any = { action: 'none' };
+
 async function undoOperationMock(userId: string, operationId: string) {
   undoCalls.push({ userId, operationId });
   return { undone: operationId, surface: 'calendar' };
@@ -247,7 +251,13 @@ beforeEach(() => {
   generatedPlanIdFixture = 'plan_revised';
   evidenceAtDuringPlanFixture = undefined;
   sequence = 0;
+  settleCalls.length = 0;
+  settleResult = { action: 'none' };
   albatross.__setAlbatrossToolDepsForTest({
+    settleRunAfterDecision: (async (input: any) => {
+      settleCalls.push(input);
+      return settleResult;
+    }) as any,
     api: apiMock as any,
     convexMutation: convexMutationMock as any,
     convexQuery: convexQueryMock as any,
@@ -522,6 +532,13 @@ describe('Albatross tools', () => {
     expect(draftOperation.stepKey).toBeUndefined();
     const sendApproval = result.approvals.find((approval: any) => approval.stepKey === 'step-3');
     expect(sendApproval).toMatchObject({ kind: 'email_send' });
+    // The web can approve this row now, so its detail says who gets it.
+    const queued = mutationCalls.filter((call) => call.fn === apiMock.albatrossWork.enqueueApproval);
+    const queuedDetails = queued.map((call) => String(call.args.detail));
+    expect(queuedDetails.some((detail) => detail.startsWith('To '))).toBe(true);
+    expect(
+      queuedDetails.every((detail) => detail.endsWith('Know exactly what remains and schedule the work.')),
+    ).toBe(true);
 
     const createdProject = mutationCalls.find((call) => call.fn === apiMock.albatrossWork.createProject);
     expect(createdProject?.args).toMatchObject({
@@ -848,7 +865,7 @@ describe('Albatross tools', () => {
     };
     await expect(
       runTool(albatross.albatrossApproveAction.handler, { approvalId: 'approval_pending' }),
-    ).rejects.toThrow(/Approval tool not allowed/);
+    ).rejects.toThrow('Albatross cannot run this action. Decline it to close it.');
     expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWork.claimApproval)).toBe(false);
 
     approvalFixture = {
@@ -903,6 +920,124 @@ describe('Albatross tools', () => {
     });
     expect(approvedRsvp.result.operationId).toMatch(/^operation_rsvp_/);
     expect(mutationCalls.at(-1)?.args.undoExpiresAt).toBeGreaterThan(Date.now());
+  });
+
+  describe('a decision on an approval', () => {
+    const invite = {
+      approvalId: 'approval_invite',
+      status: 'pending',
+      title: 'Send the invite: Kickoff',
+      artifactKind: 'step_run',
+      toolName: 'send_message',
+      toolArgs: { account: 'sam@example.test', to: 'dana@example.test', subject: 'Kickoff', body: 'Hello.' },
+      operationBatchId: 'run_1',
+    };
+    const release = () => mutationCalls.filter((call) => call.fn === apiMock.albatrossWork.releaseApproval);
+    const decide = () => mutationCalls.filter((call) => call.fn === apiMock.albatrossWork.decideApproval);
+
+    test('Approve settles the run, for web and iOS alike, and says what it did', async () => {
+      approvalFixture = { ...invite };
+      settleResult = { action: 'continued', nextRunId: 'run_2' };
+      const approved = await runTool(albatross.albatrossApproveAction.handler, {
+        approvalId: 'approval_invite',
+      });
+      expect(approved.followUp).toEqual({ action: 'continued', nextRunId: 'run_2' });
+      expect(settleCalls[0].approval).toMatchObject({
+        artifactKind: 'step_run',
+        operationBatchId: 'run_1',
+        title: 'Send the invite: Kickoff',
+      });
+    });
+
+    test('Decline settles the run too', async () => {
+      approvalFixture = { ...invite };
+      settleResult = { action: 'closed' };
+      const declined = await runTool(albatross.albatrossRejectAction.handler, {
+        approvalId: 'approval_invite',
+      });
+      expect(declined).toEqual({ ok: true, followUp: { action: 'closed' } });
+      expect(settleCalls).toHaveLength(1);
+    });
+
+    test('a call that fails goes back to the queue, and the run stays as it is', async () => {
+      approvalFixture = { ...invite };
+      albatross.__setAlbatrossToolDepsForTest({
+        api: apiMock as any,
+        convexMutation: convexMutationMock as any,
+        convexQuery: convexQueryMock as any,
+        settleRunAfterDecision: (async (input: any) => {
+          settleCalls.push(input);
+          return { action: 'none' };
+        }) as any,
+        invokeTool: (async () => {
+          throw new Error('Calendar is offline.');
+        }) as any,
+      });
+      await expect(
+        runTool(albatross.albatrossApproveAction.handler, { approvalId: 'approval_invite' }),
+      ).rejects.toThrow('Calendar is offline.');
+      expect(release()[0].args).toMatchObject({
+        approvalId: 'approval_invite',
+        decisionNote: 'Approval execution failed: Calendar is offline.',
+      });
+      expect(decide()).toEqual([]);
+      expect(settleCalls).toEqual([]);
+    });
+
+    test('a result with ok false is a failure, with its own words for the user', async () => {
+      approvalFixture = { ...invite };
+      albatross.__setAlbatrossToolDepsForTest({
+        api: apiMock as any,
+        convexMutation: convexMutationMock as any,
+        convexQuery: convexQueryMock as any,
+        invokeTool: (async () => ({ ok: false, error: 'The calendar refused this invite.' })) as any,
+      });
+      const failure = await runTool(albatross.albatrossApproveAction.handler, {
+        approvalId: 'approval_invite',
+      }).catch((error: Error) => error);
+      expect(failure).toBeInstanceOf(ToolValidationError);
+      expect((failure as Error).message).toBe('The calendar refused this invite.');
+      expect(release()).toHaveLength(1);
+      expect(decide()).toEqual([]);
+      approvalFixture = { ...invite };
+      albatross.__setAlbatrossToolDepsForTest({
+        api: apiMock as any,
+        convexMutation: convexMutationMock as any,
+        convexQuery: convexQueryMock as any,
+        invokeTool: (async () => ({ ok: false })) as any,
+      });
+      await expect(
+        runTool(albatross.albatrossApproveAction.handler, { approvalId: 'approval_invite' }),
+      ).rejects.toThrow('The action did not go out. Try again.');
+    });
+
+    test('a row that takes no decision says why in plain words, and nothing runs', async () => {
+      const refused = async (status: string, tool: 'approve' | 'reject') => {
+        approvalFixture = { ...invite, status };
+        const handler =
+          tool === 'approve'
+            ? albatross.albatrossApproveAction.handler
+            : albatross.albatrossRejectAction.handler;
+        const error = await runTool(handler, { approvalId: 'approval_invite' }).catch(
+          (caught: Error) => caught,
+        );
+        expect(error).toBeInstanceOf(ToolValidationError);
+        return (error as Error).message;
+      };
+      expect(await refused('claiming', 'approve')).toBe('Albatross already sends this. Wait a moment.');
+      // A decline during the call cannot beat an invite that is on its way.
+      expect(await refused('claiming', 'reject')).toBe('Albatross already sends this. Wait a moment.');
+      expect(await refused('approved', 'approve')).toBe('This was already approved.');
+      expect(await refused('rejected', 'approve')).toBe('This was already declined.');
+      expect(await refused('expired', 'reject')).toBe(
+        'This approval is expired, so it takes no decision now.',
+      );
+      expect(mutationCalls).toEqual([]);
+      approvalFixture = null;
+      await expect(
+        runTool(albatross.albatrossApproveAction.handler, { approvalId: 'approval_gone' }),
+      ).rejects.toThrow('This approval no longer exists.');
+    });
   });
 
   test('records user-confirmed progress with source evidence, then versions the same Work plan', async () => {

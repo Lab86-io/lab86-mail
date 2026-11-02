@@ -171,14 +171,36 @@ context too).
 |---|---|---|
 | `review_draft` | "Read and send" | Open the draft (`target.id`, `target.accountId`) in the composer. |
 | `review_document` | "Open the document" | Open `target.url` (the document `openPath`) or the document by `target.id`. |
-| `approve` | "Approve the invite" | Open the approval (`target.id`) in the approval surface. |
+| `approve` | "Approve the invite" | The thread shows Approve and Decline in place. The Brief opens the approval on the Needs you or Notifications page. |
 | `sign_in`, `finish_on_page` | "Sign in", "Check and submit" | Show the shared browser live view (the session row is `user`). A second button, "Continue", sends `resume`. |
 | `answer` | none | Show the Work question (`target.id`) with its choices. The answer resumes the run on the server. |
 | `do_offline` | "Mark this step done" | The usual step check. |
 | `review` | "Open" | Open `target.url` when present, otherwise show the artifacts. |
 | `continue` | "Continue" | Send `resume`. |
 
-Every handoff card also offers "Dismiss" (`dismiss`) and "Discuss this" (the Work chat).
+Every handoff card also offers "Dismiss" (`dismiss`) and "Discuss this" (the Work chat). A card with
+a waiting approval offers only Approve and Decline, because Decline closes the handoff.
+
+### After a decision on an approval
+
+All clients decide through `albatross_approve_action` and `albatross_reject_action`, so the server
+does this once for all of them (`lib/albatross/approval-run.ts`). The step runner stores its run id as
+the approval's batch id. The run changes only when `next.kind` is `approve`, no other approval of the
+run waits, and no other item of the package waits.
+
+| Decision | What the run does |
+|---|---|
+| Something was approved and went out | A step run takes the "Mark step done" path: the step completes, and the next step starts when it runs alone. A goal run takes the "Done, continue" path: the next run checks the contract first. The note tells the next run that the action went out, so it does not send it again. |
+| Everything was declined | The handoff closes. The step stays open, so the user can start it again. |
+| The call failed | The approval goes back to the queue, with the failure in `decisionNote`. The handoff stays open, so the user can try again or decline. |
+
+If the step cannot complete, or the goal cannot continue, the handoff closes. The action already went
+out, so the handoff must not ask for it again.
+
+The queue row says what goes out and to whom before the Approve control (`approvalRecipientLine` in
+`lib/ai/approval.ts`, from the repaired args). The chat agent can list approvals but cannot decide
+them. Its approval card shows only the call's args, and this call holds only an approval id, so the
+card could not name a recipient.
 
 ## The shared browser
 
