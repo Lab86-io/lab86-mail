@@ -201,7 +201,6 @@ export function threadListFixture(now = Date.now()): {
     }),
   ];
   const activity: ThreadActivity = {
-    now,
     runs: {
       [ids.lisbon]: run({
         runId: 'run_lisbon',

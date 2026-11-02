@@ -17,6 +17,10 @@ import {
 // run's tools and finishes model steps the way a real model does. Convex, the
 // gateway, and the browser are fakes. Invented data only.
 
+/** The finished lines that the live writer sent. */
+const loggedLines = (calls: any[]): string[] =>
+  calls.flatMap((args) => (args.lines ?? []).flatMap((op: any) => (op.text && !op.open ? [op.text] : [])));
+
 const name = (fn: any) => getFunctionName(fn);
 
 const contract = {
@@ -286,7 +290,7 @@ describe('a goal run', () => {
     expect(names).not.toContain('step_note');
     // presentation_plan asks no pickers in a run.
     expect(h.liftTools.mock.calls[0][2]).toEqual({ delegate: true });
-    const lines = h.calls('albatrossStepRuns:progress').flatMap((args) => (args.line ? [args.line] : []));
+    const lines = loggedLines(h.calls('albatrossStepRuns:progress'));
     expect(lines[0]).toBe('Started on the goal.');
     // A missing step does not matter: no plan step is looked up or checked.
     expect(h.settled()).toMatchObject({ outcome: 'your_turn' });
@@ -411,8 +415,30 @@ describe('a goal run', () => {
         note: SEALED_FILE_NOTE,
       },
     ]);
-    const lines = h.calls('albatrossStepRuns:progress').flatMap((args) => (args.line ? [args.line] : []));
+    const lines = loggedLines(h.calls('albatrossStepRuns:progress'));
     expect(lines).toContain('Filled in “W-9 filled”.');
+  });
+
+  test('a message takes the place of the streamed text, and no later text write undoes it', async () => {
+    let clock = 10_000;
+    const h = harness(async (opts) => {
+      clock += 5_000;
+      opts.onTextDelta?.('I found the invoice. ');
+      opts.onStepFinish?.({ usage, text: 'I found the invoice.' });
+      await opts.tools.step_handoff.execute({
+        outcome: 'your_turn',
+        summary: 'Done for now.',
+        next: { kind: 'do_offline', label: 'Do it', detail: 'Do it.' },
+      });
+      return { text: '', usage, totalUsage: usage };
+    });
+    await runStepRun('user-1', 'run-1', { ...h.deps, now: () => clock });
+    const writes = h.calls('albatrossStepRuns:progress');
+    const messageAt = writes.findIndex((args) => args.message);
+    expect(writes[messageAt].message.text).toBe('I found the invoice.');
+    expect(writes.slice(messageAt).some((args) => typeof args.liveText === 'string')).toBe(false);
+    const textAt = writes.findIndex((args) => typeof args.liveText === 'string');
+    if (textAt !== -1) expect(textAt).toBeLessThan(messageAt);
   });
 
   test('the rules carry the document, invoice, blank, and attachment rules', () => {
@@ -916,7 +942,7 @@ describe('a goal run', () => {
     expect(system).toContain('Said: I read the thread.');
     expect(system).toContain('Started by: the user, to continue.');
     expect(h.generateOptions().messages[0].content).toContain('Continue the goal "July invoice"');
-    const lines = h.calls('albatrossStepRuns:progress').flatMap((args) => (args.line ? [args.line] : []));
+    const lines = loggedLines(h.calls('albatrossStepRuns:progress'));
     expect(lines[0]).toBe('Continued the goal.');
   });
 

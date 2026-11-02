@@ -29,6 +29,8 @@ const callerArgs = {
 
 const RAW_TEXT_MAX = 20_000;
 const ARTIFACT_HTML_MAX = 400_000;
+/** The composer's limit and some room. After this, the plan stops waiting for its page. */
+const PLAN_DOCUMENT_PENDING_MS = 200_000;
 
 const intentStatusValidator = v.union(
   v.literal('captured'),
@@ -444,6 +446,8 @@ export const savePlan = mutation({
     document: v.optional(v.any()),
     artifactSource: v.optional(v.string()),
     artifactTitle: v.optional(v.string()),
+    // The plan shows now, and its page follows (attachPlanDocument).
+    documentPending: v.optional(v.boolean()),
     model: v.optional(v.string()),
     mapQuery: v.optional(v.string()),
     places: v.optional(v.array(placeValidator)),
@@ -527,6 +531,7 @@ export const savePlan = mutation({
       document: args.document,
       artifactSource: args.artifactSource,
       artifactTitle: bounded(args.artifactTitle, 180),
+      ...(args.documentPending ? { documentPendingUntil: ts + PLAN_DOCUMENT_PENDING_MS } : {}),
       model: bounded(args.model, 120),
       mapQuery: bounded(args.mapQuery, 200),
       places: args.places?.map((place) => ({
@@ -578,6 +583,39 @@ export const savePlan = mutation({
 
     await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(args.intentId));
     return planId;
+  },
+});
+
+/**
+ * The page of a saved plan arrives. No document means that the composer failed:
+ * the plan stays as it is and stops waiting for a page. A plan that was applied
+ * first binds the page's checklist to its cards here, because markPlanApplied
+ * had no page to bind. A plan that a newer plan replaced gets nothing.
+ */
+export const attachPlanDocument = mutation({
+  args: {
+    ...callerArgs,
+    planId: v.id('albatrossIntentPlans'),
+    document: v.optional(v.any()),
+    artifactSource: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (!args.internalSecret) throw new Error('Only the server attaches a plan page.');
+    const userId = await resolveUserId(ctx, args);
+    const plan = await requirePlan(ctx, args.planId, userId);
+    if (plan.status === 'superseded') return false;
+    const ts = now();
+    if (!args.document) {
+      await ctx.db.patch(plan._id, { documentPendingUntil: undefined, documentFailedAt: ts, updatedAt: ts });
+      return false;
+    }
+    await ctx.db.patch(plan._id, {
+      document: bindPlanDocumentSteps(args.document, plan.appliedSteps || []).document,
+      artifactSource: args.artifactSource,
+      documentPendingUntil: undefined,
+      updatedAt: ts,
+    });
+    return true;
   },
 });
 

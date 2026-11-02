@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import {
   attachNarrativePlanRefs,
   attachNarrativeResearchRefs,
@@ -277,6 +277,7 @@ describe('generateIntentPlan orchestration', () => {
       getIntentWorkbench: 'q:getIntentWorkbench',
       updateIntent: 'm:updateIntent',
       savePlan: 'm:savePlan',
+      attachPlanDocument: 'm:attachPlanDocument',
     },
     albatrossWorkV2: { workDetail: 'q:workDetail' },
     userData: { listDocs: 'q:memoryDocs' },
@@ -325,6 +326,15 @@ describe('generateIntentPlan orchestration', () => {
     mapQuery: 'NYS Tax Department, Albany NY',
   };
 
+  /** The page that the composer attached after the plan was saved. */
+  async function attachedPage(calls: {
+    mutations: Array<{ fn: string; args: any }>;
+    deferred: Array<Promise<unknown>>;
+  }) {
+    await Promise.all(calls.deferred);
+    return calls.mutations.find((m) => m.fn === 'm:attachPlanDocument')!.args;
+  }
+
   function wire(overrides: {
     intent?: Record<string, unknown>;
     planText?: string;
@@ -334,10 +344,16 @@ describe('generateIntentPlan orchestration', () => {
     narrative?: NarrativeContextPacket;
     research?: { signal?: AbortSignal; result?: any };
   }) {
-    const calls: { mutations: Array<{ fn: string; args: any }>; generations: any[]; narrative: any[] } = {
+    const calls: {
+      mutations: Array<{ fn: string; args: any }>;
+      generations: any[];
+      narrative: any[];
+      deferred: Array<Promise<unknown>>;
+    } = {
       mutations: [],
       generations: [],
       narrative: [],
+      deferred: [],
     };
     const intent = {
       _id: 'intent_1',
@@ -347,6 +363,9 @@ describe('generateIntentPlan orchestration', () => {
       ...(overrides.intent || {}),
     };
     __setIntentPlanDepsForTest({
+      defer: (task: () => Promise<unknown>) => {
+        calls.deferred.push(task());
+      },
       api: fakeApi,
       getNarrativeTaskContext: async (...args: any[]) => {
         calls.narrative.push(args);
@@ -577,8 +596,13 @@ describe('generateIntentPlan orchestration', () => {
     expect(save!.args.mapQuery).toBe('NYS Tax Department, Albany NY');
     // The native document is the plan page; the HTML is only the static
     // companion older clients render.
-    expect(save!.args.artifactSource).toBe('document-v2');
-    const regionIds = save!.args.document.regions.map((region: any) => region.id);
+    expect(save!.args.artifactSource).toBeUndefined();
+    expect(save!.args.document).toBeUndefined();
+    expect(save!.args.documentPending).toBe(true);
+    const attached = await attachedPage(calls);
+    expect(attached.planId).toBe('plan_1');
+    expect(attached.artifactSource).toBe('document-v2');
+    const regionIds = attached.document.regions.map((region: any) => region.id);
     expect(regionIds.length).toBeGreaterThan(0);
     // The duplicate place_region call in the harness must replace, not append.
     expect(new Set(regionIds).size).toBe(regionIds.length);
@@ -667,9 +691,7 @@ describe('generateIntentPlan orchestration', () => {
     });
     const { calls } = wire({ planText, intent: { questions: [] } });
     await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
-    const save = calls.mutations.find((m) => m.fn === 'm:savePlan');
-    expect(save!.args.artifactSource).toBe('document-v2');
-    const regions = save!.args.document.regions;
+    const regions = (await attachedPage(calls)).document.regions;
     expect(regions.some((region: any) => region.id === 'frontier-gate')).toBe(false);
     expect(regions[0].tree.items[0].stepKey).toBe('step-1');
   });
@@ -772,6 +794,121 @@ describe('generateIntentPlan orchestration', () => {
     // The pure legacy companion is built before the composer runs, so a
     // provider failure never leaves the plan with nothing to show.
     expect(save!.args.artifactHtml).toContain('<!doctype html>');
+    // The plan stops waiting for its page.
+    const attached = await attachedPage(calls);
+    expect(attached).toMatchObject({ userId: 'user_1', planId: 'plan_1' });
+    expect(attached.document).toBeUndefined();
+  });
+
+  test('the plan saves and returns before the composer ends, and the page attaches later', async () => {
+    const { calls } = wire({});
+    let finishComposer: (value: { text: string }) => void = () => undefined;
+    const held = new Promise<{ text: string }>((resolve) => {
+      finishComposer = resolve;
+    });
+    __setIntentPlanDepsForTest({
+      defer: (task: () => Promise<unknown>) => {
+        calls.deferred.push(task());
+      },
+      api: fakeApi,
+      convexQuery: async (fn: string) => {
+        if (fn === 'q:getIntentWorkbench')
+          return { intent: { _id: 'intent_1', rawText: 'x', questions: [] } };
+        return [];
+      },
+      convexMutation: async (fn: string, args: any) => {
+        calls.mutations.push({ fn, args });
+        return fn === 'm:savePlan' ? 'plan_1' : null;
+      },
+      generateTextForCurrentUser: async (options: any) => {
+        calls.generations.push(options);
+        if (options.feature === 'albatross_plan')
+          return { text: JSON.stringify({ ...goodGeneration, questions: [] }) };
+        if (options.feature === 'albatross_plan_artifact') {
+          const answer = await held;
+          await options.tools.place_region.execute({
+            region: {
+              id: 'steps',
+              summary: 'Steps',
+              tree: {
+                kind: 'checklist',
+                title: 'Steps',
+                items: [{ label: 'Upload', stepKey: 'step-1' }],
+              },
+            },
+          });
+          return answer;
+        }
+        return { text: '{"query":null}' };
+      },
+      getNarrativeTaskContext: async () => emptyNarrativeContext('work'),
+    } as any);
+    // It returns while the composer still waits.
+    const result = await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    expect(result.planId).toBe('plan_1');
+    expect(calls.mutations.map((m) => m.fn)).toContain('m:savePlan');
+    expect(calls.mutations.map((m) => m.fn)).not.toContain('m:attachPlanDocument');
+    finishComposer({ text: '' });
+    const attached = await attachedPage(calls);
+    expect(attached.artifactSource).toBe('document-v2');
+    expect(attached.document.regions).toHaveLength(1);
+  });
+
+  test('a failed attach leaves the plan, and the wait ends at its time', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { calls } = wire({});
+      __setIntentPlanDepsForTest({
+        defer: (task: () => Promise<unknown>) => {
+          calls.deferred.push(task());
+        },
+        api: fakeApi,
+        convexQuery: async (fn: string) =>
+          fn === 'q:getIntentWorkbench' ? { intent: { _id: 'intent_1', rawText: 'x', questions: [] } } : [],
+        convexMutation: async (fn: string, args: any) => {
+          calls.mutations.push({ fn, args });
+          if (fn === 'm:attachPlanDocument') throw new Error('offline');
+          return fn === 'm:savePlan' ? 'plan_1' : null;
+        },
+        generateTextForCurrentUser: async (options: any) => {
+          if (options.feature === 'albatross_plan')
+            return { text: JSON.stringify({ ...goodGeneration, questions: [] }) };
+          await options.tools?.place_region?.execute({
+            region: {
+              id: 'steps',
+              summary: 'Steps',
+              tree: { kind: 'checklist', title: 'Steps', items: [{ label: 'Upload', stepKey: 'step-1' }] },
+            },
+          });
+          return { text: '' };
+        },
+        getNarrativeTaskContext: async () => emptyNarrativeContext('work'),
+      } as any);
+      const result = await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+      expect(result.planId).toBe('plan_1');
+      await Promise.all(calls.deferred);
+      expect(warn.mock.calls.flat().join(' ')).toContain('[albatross-plan] attach failed');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test('a plan that needs no page waits for nothing and starts no composer', async () => {
+    const { calls } = wire({
+      planText: JSON.stringify({
+        ...goodGeneration,
+        projectTitle: null,
+        questions: [],
+        digitalActions: [],
+        physicalActions: [],
+      }),
+      intent: { questions: [] },
+    });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const save = calls.mutations.find((m) => m.fn === 'm:savePlan');
+    expect(save!.args.documentPending).toBeUndefined();
+    expect(save!.args.artifactHtml).toBeUndefined();
+    expect(calls.deferred).toEqual([]);
   });
 
   test('unparseable generation records planError and returns intent to captured', async () => {

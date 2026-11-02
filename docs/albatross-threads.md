@@ -152,3 +152,17 @@ changed in it.
 10. **Attention.** Mac Dock badge = the count of threads that need you. No new push category in
     this PR. Screen readers: one merged announcement at most every 5–10 s, three event kinds
     (needs you, finished, did not finish).
+
+## Speed (2026-11-02)
+
+- The list keeps its frame on each switch. `ThreadListKeeper`, in the rail, holds `allWork` and
+  `activity` from the first load until ten minutes after the user leaves the rows. A return paints
+  from the live copy.
+- The thread draws the rail from those rows before its own detail answers. It shows the title from
+  the row and quiet lines in the column.
+- `workDetail` with `omitPlanArtifact` leaves the plan's page out. The thread reads the page with
+  `getPlanArtifact` when Details opens. Other callers get the whole plan.
+- `activity` has no clock in its answer, so a re-run with the same data sends the client nothing.
+  The route `GET /api/albatross/threads` still sends `now` to the native clients.
+- `markSeen` runs only when the thread has something unread or has no seen time.
+- The rail reads `railAreas` and `railNeedsYouCount`, not `listAreasOverview` and `allWork`.

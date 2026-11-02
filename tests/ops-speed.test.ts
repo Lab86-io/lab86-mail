@@ -859,6 +859,9 @@ describe('speed rows in Convex', () => {
     const { id } = await startRun(t);
     await t.run(async (ctx) => {
       await ctx.db.patch(id, { attempts: 2, availableAt: 0 });
+      // The lease lives on its own small row. A lost run stopped renewing it.
+      for (const live of await ctx.db.query('albatrossStepRunLive').collect())
+        await ctx.db.patch(live._id, { leaseUntil: 0 });
     });
     await t.mutation(internal.albatrossStepRuns.expireLost, {});
     await t.mutation(internal.albatrossStepRuns.expireLost, {});

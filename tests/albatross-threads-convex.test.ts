@@ -211,7 +211,8 @@ describe('albatrossThreads', () => {
     const activity = await t.query(api.albatrossThreads.activity, caller);
     expect(activity.runs[workA]).toMatchObject({ runId: String(live.runId), state: 'queued' });
     expect(activity.threads[workB]).toMatchObject({ answering: true, replyWaits: false });
-    expect(activity.now).toBeNumber();
+    // No clock in the answer: a re-run with the same data sends the client nothing.
+    expect(activity).not.toHaveProperty('now');
   });
 
   test('activity: a goal run shows its newest message, its package blanks, and its item count', async () => {

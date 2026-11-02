@@ -8,6 +8,7 @@
 
 import { type ReactNode, useState } from 'react';
 import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
+import { ShimmerText } from '@/components/odysseyui/text-shimmer';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -42,6 +43,8 @@ export const DETAILS_COPY = {
   assumptions: 'Assumptions',
   sourcesHeading: 'Sources',
   readPlan: 'Read the plan',
+  pagePending: 'Albatross writes the plan page.',
+  pageFailed: 'The plan page did not write. The plan above is complete without it.',
   planGuess:
     "This is Albatross's best guess at the way through. Tell it if the plan is wrong and it will find another one.",
   undo: 'Undo',
@@ -82,6 +85,7 @@ export function DetailsPanel({
   onError,
   onClose,
   goal,
+  nowMs = Date.now(),
   className,
 }: {
   detail: WorkDetailData;
@@ -100,11 +104,18 @@ export function DetailsPanel({
   onClose?: () => void;
   /** A goal Work: Checklist, Package, and Sources replace the Plan section. */
   goal?: DetailsGoal | null;
+  nowMs?: number;
   className?: string;
 }) {
   const { plan } = detail;
   const document = plan?.artifactSource === 'document-v2' ? plan.document : undefined;
-  const legacyPlan = Boolean(plan && !document && plan.artifactHtml);
+  // The plan shows at once and its page follows (attachPlanDocument).
+  const pagePending = Boolean(!document && plan?.documentPendingUntil && plan.documentPendingUntil > nowMs);
+  // A plan of this kind had a page on the way. A plan from before it never did.
+  const pageFailed = Boolean(
+    !document && !pagePending && (plan?.documentFailedAt || plan?.documentPendingUntil),
+  );
+  const legacyPlan = Boolean(plan && !document && !pagePending && !pageFailed && plan.artifactHtml);
   const artifacts = detail.application?.artifacts ?? [];
   const checklist = goal ? (goal.run?.checklist ?? detail.checklist ?? []) : [];
   const sources = goal?.run ? runSources(goal.run) : [];
@@ -264,6 +275,18 @@ export function DetailsPanel({
           <Section title={DETAILS_COPY.readPlan} collapsible>
             <BriefCanvas value={document} embedded />
             <p className="mt-4 text-[11.5px] text-[var(--color-text-faint)]">{DETAILS_COPY.planGuess}</p>
+          </Section>
+        ) : pagePending && !goal ? (
+          <Section>
+            <p data-slot="plan-page-pending" className="text-[12.5px]" aria-live="polite">
+              <ShimmerText text={DETAILS_COPY.pagePending} duration={1.6} startOnView={false} />
+            </p>
+          </Section>
+        ) : pageFailed && !goal ? (
+          <Section>
+            <p data-slot="plan-page-failed" className="text-[12.5px] text-[var(--color-text-muted)]">
+              {DETAILS_COPY.pageFailed}
+            </p>
           </Section>
         ) : legacyPlan ? (
           <Section>

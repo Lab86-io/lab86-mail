@@ -60,16 +60,111 @@ function noIconBeforeText(html: string) {
 }
 
 describe('the run block', () => {
-  test('a run at work: step, state word, the newest line, the open log, and Stop', () => {
+  test('a run at work: step, state word, the open rows, and Stop', () => {
     const html = block({ run: runs.running, stepNumber: 1 });
     expect(html).toContain('data-run-state="running"');
     expect(html).toContain('Step 1');
     expect(html).toContain('In progress');
+    expect(html).toContain('data-slot="run-live-rows"');
+    expect(html).toContain('data-slot="run-live-row-newest"');
     expect(html).toContain('Checked your calendar for each class');
-    expect(html).toContain('What Albatross did');
-    expect(html).toContain('data-state="open"');
+    // Three rows stay open, so nothing folds yet.
+    expect(html).not.toContain('What Albatross did');
     expect(buttons(html)).toEqual(['Stop']);
     noIconBeforeText(html);
+  });
+
+  test('a run at work folds its older rows and keeps the newest three open', () => {
+    const lines = ['One', 'Two', 'Three', 'Four', 'Five'].map((text, index) => ({
+      at: runs.running.createdAt + index * 60_000,
+      text,
+    }));
+    const doc = new JSDOM(block({ run: { ...runs.running, log: lines } })).window.document;
+    const rows = doc.querySelector('[data-slot="run-live-rows"]');
+    expect(rows!.textContent).toContain('Three');
+    expect(rows!.textContent).toContain('Five');
+    expect(rows!.textContent).not.toContain('Two');
+    const task = doc.querySelector('[data-slot="task"]');
+    expect(task!.textContent).toContain('What Albatross did');
+    expect(task!.getAttribute('data-state')).toBe('closed');
+  });
+
+  test('the live text goes above the rows of a step run, and under the messages of a goal run', () => {
+    const live = <div data-slot="run-live-text">The text so far</div>;
+    const step = new JSDOM(block({ run: runs.running, liveText: live })).window.document;
+    const stepNodes = [...step.querySelectorAll('[data-slot="run-live-text"], [data-slot="run-live-rows"]')];
+    expect(stepNodes.map((node) => node.getAttribute('data-slot'))).toEqual([
+      'run-live-text',
+      'run-live-rows',
+    ]);
+    const goal = new JSDOM(
+      block({
+        run: {
+          ...runs.running,
+          goal: true,
+          stepKey: 'goal',
+          messages: [{ id: 'm1', at: 1, text: 'A message.', sources: [] }],
+        },
+        liveText: live,
+      }),
+    ).window.document;
+    const nodes = [...goal.querySelectorAll('[data-slot="run-message"], [data-slot="run-live-text"]')];
+    expect(nodes.map((node) => node.getAttribute('data-slot'))).toEqual(['run-message', 'run-live-text']);
+  });
+
+  test('a new plan whose page failed says so and never reads as an old plan', () => {
+    const now = Date.UTC(2026, 9, 7, 14, 46);
+    const panel = (patch: Record<string, unknown>) => {
+      const detail = threadDetailFixture(now);
+      if (detail.plan)
+        Object.assign(detail.plan, { artifactHtml: '<p>plan</p>', document: undefined }, patch);
+      return renderToStaticMarkup(
+        <DetailsPanel
+          detail={detail}
+          steps={[]}
+          undoneOperations={new Set()}
+          undoing={null}
+          onUndo={() => undefined}
+          onError={() => undefined}
+          nowMs={now}
+        />,
+      );
+    };
+    expect(panel({ documentFailedAt: now - 1_000 })).toContain('data-slot="plan-page-failed"');
+    // The composer never answered, and the wait has passed.
+    expect(panel({ documentPendingUntil: now - 1_000 })).toContain('data-slot="plan-page-failed"');
+    expect(panel({})).not.toContain('data-slot="plan-page-failed"');
+  });
+
+  test('the plan page is on the way: Details says so, and shows no old notice', () => {
+    const now = Date.UTC(2026, 9, 7, 14, 46);
+    const detail = threadDetailFixture(now);
+    if (detail.plan) {
+      detail.plan.documentPendingUntil = now + 60_000;
+      detail.plan.artifactHtml = '<p>plan</p>';
+    }
+    const panel = (nowMs: number) =>
+      renderToStaticMarkup(
+        <DetailsPanel
+          detail={detail}
+          steps={[]}
+          undoneOperations={new Set()}
+          undoing={null}
+          onUndo={() => undefined}
+          onError={() => undefined}
+          nowMs={nowMs}
+        />,
+      );
+    const waiting = panel(now);
+    expect(waiting).toContain('data-slot="plan-page-pending"');
+    // After its time the plan stops waiting: a page that never came says so.
+    expect(panel(now + 120_000)).not.toContain('data-slot="plan-page-pending"');
+  });
+
+  test('a finished run folds its whole log', () => {
+    const doc = new JSDOM(block({ run: runs.done })).window.document;
+    expect(doc.querySelector('[data-slot="run-live-rows"]')).toBeNull();
+    expect(doc.querySelector('[data-slot="task"]')!.getAttribute('data-state')).toBe('closed');
   });
 
   test('a steered run shows that it read the note', () => {

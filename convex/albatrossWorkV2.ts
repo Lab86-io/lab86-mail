@@ -34,6 +34,7 @@ import {
   stepVerification,
 } from '../lib/albatross/step-verification';
 import { assertWorkOpen, isTerminalWork, workLifecycle } from '../lib/albatross/work-lifecycle';
+import { needsYou } from '../lib/albatross/work-state';
 import { truncateText } from '../lib/shared/text';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -1979,6 +1980,49 @@ export const allWork = query({
   },
 });
 
+/**
+ * The rail badge: how many Albatrosses need the user. It reads the Work rows
+ * and the open questions, and no plan or card, because the badge needs neither.
+ * The same count gives the same answer, so the rail does not draw again.
+ */
+export const railNeedsYouCount = query({
+  args: callerArgs,
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const [rows, pendingQuestions] = await Promise.all([
+      ctx.db
+        .query('albatrossIntents')
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+        .order('desc')
+        .take(200),
+      ctx.db
+        .query('albatrossWorkQuestions')
+        .withIndex('by_user_status_created', (q) => q.eq('userId', userId).eq('status', 'pending'))
+        .take(200),
+    ]);
+    const questionCounts = new Map<string, number>();
+    for (const question of pendingQuestions) {
+      if (!question.workId) continue;
+      const key = String(question.workId);
+      questionCounts.set(key, (questionCounts.get(key) || 0) + 1);
+    }
+    return {
+      needsYou: rows.filter((row) =>
+        needsYou({
+          status: row.status,
+          workState: row.workState,
+          agentState: row.agentState,
+          planError: row.planError,
+          replyWatch: row.replyWatch,
+          openQuestions:
+            questionCounts.get(String(row._id)) ??
+            (row.questions || []).filter((question) => !question.answeredAt).length,
+        }),
+      ).length,
+    };
+  },
+});
+
 /** The one server-owned answer to "what now?", plus separate recovery and attention lanes. */
 export const executionSnapshot = query({
   args: { ...callerArgs, limit: v.optional(v.number()), nowMs: v.optional(v.number()) },
@@ -2472,10 +2516,19 @@ export const horizonWakeTick = internalAction({
   },
 });
 
+/** The plan row with no page. The row stays the same shape: the page fields are absent. */
+function withoutPlanArtifact(plan: Doc<'albatrossIntentPlans'>): Doc<'albatrossIntentPlans'> {
+  const { artifactHtml: _html, document: _document, ...rest } = plan;
+  return rest;
+}
+
 export const workDetail = query({
   args: {
     ...callerArgs,
     workId: v.id('albatrossIntents'),
+    // The web thread leaves out the plan's page and reads it with getPlanArtifact
+    // when the Details panel opens. Other callers get the whole plan, as before.
+    omitPlanArtifact: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -2558,7 +2611,7 @@ export const workDetail = query({
       work.metric || work.shape === 'practice' ? await metricEntriesForWork(ctx, args.workId) : [];
     return {
       work,
-      plan,
+      plan: plan && args.omitPlanArtifact ? withoutPlanArtifact(plan) : plan,
       project,
       questions,
       areaLinks,

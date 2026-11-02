@@ -90,6 +90,7 @@ type StepRunView = {
   outcome: 'done' | 'ready_for_you' | 'your_turn' | 'needs_answer' | 'stopped' | null;
   summary: string | null; // what the agent did, one to three sentences
   log: Array<{ at: number; text: string }>; // live lines, oldest first, at most 30
+  firstVisibleAt?: number; // when the user could first read something from this run
   next: {
     kind:
       | 'review_draft' // open the draft in the composer
@@ -179,6 +180,28 @@ context too).
 | `continue` | "Continue" | Send `resume`. |
 
 Every handoff card also offers "Dismiss" (`dismiss`) and "Discuss this" (the Work chat).
+
+## The live row and the throttle (2026-11-02)
+
+Each write to a run row re-runs every live query that reads the row: the list, the thread, and the
+Brief. So only news writes that row.
+
+- The lease lives in `albatrossStepRunLive`, one small row for each run at work. `heartbeat` writes
+  only this row. A running row has an `availableAt` six hours away, so recovery finds a lost run by
+  its ended lease. A row that an older process claimed has no lease row: the due scan still finds it.
+- The text that the model writes now goes to the same small row (`progress` with `liveText`). Only
+  `albatrossStepRuns.liveText` reads it. A run message takes its place in one write.
+- A tool that starts adds an open log row in the present tense ("Reads irs.gov."). When the tool
+  ends, its past-tense line takes the place of that row. A tool with no line removes the row. A
+  run that ends drops its open rows. The record holds what the run did, as before.
+- `lib/albatross/run-live-writer.ts` sends log rows and text at most once in two seconds. The first
+  line goes right after the claim, before the reads of the run.
+- `firstVisibleAt` is the time of the first line, text, or message. It is set once.
+- The model call streams (`lib/albatross/run-model-stream.ts`). A first call with no chunk in two
+  minutes ends: the next runtime takes over, or the run may retry once.
+- Text waits at the end of a word and at an open `{{`, and it passes through redaction, before it
+  leaves the runner.
+
 
 ## The shared browser
 
