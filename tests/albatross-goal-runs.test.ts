@@ -81,6 +81,23 @@ describe('the first contract', () => {
     expect(goalContractKind('Learn the basics of tax forms')).toBe('general');
   });
 
+  test('a goal to draft a mail gets a proof that a run can show', () => {
+    const goal = 'Write a short kickoff note, and draft a mail to Dana Reyes with the note.';
+    expect(goalContractKind(goal)).toBe('draft');
+    expect(goalContractKind('Draft a purchase order for the printer')).toBe('draft');
+    expect(goalContractKind('Drafted replies for the board')).toBe('draft');
+    const contract = goalContractFor({ title: 'Bramble Press review kickoff', rawText: goal });
+    expect(contract.proofs).toEqual([{ id: 'draft-0', what: 'The draft is saved for you to read' }]);
+    expect(contract.closeWhen).toBe('outcome_likely');
+    expect(contract.contradictions).toBeUndefined();
+  });
+
+  test('a goal that also asks to send keeps the send contract', () => {
+    expect(goalContractKind('Draft the invoice and send it to billing')).toBe('send');
+    expect(goalContractKind('Send the draft to Dana')).toBe('send');
+    expect(goalContractKind('Reply to the mail from Dana')).toBe('send');
+  });
+
   test('the outcome is the title, else the request, and never empty', () => {
     expect(goalOutcomeText({ title: '  July   invoice ', rawText: 'x' })).toBe('July invoice');
     expect(goalOutcomeText({ title: '', rawText: 'Send the invoice' })).toBe('Send the invoice');
