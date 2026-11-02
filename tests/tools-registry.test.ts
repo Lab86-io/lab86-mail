@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import './tools/harness';
 import { z } from 'zod';
 import { getTool, listToolMetadata, TOOLS } from '../lib/tools/index';
-import { invokeTool, parseToolArgs, ToolValidationError } from '../lib/tools/registry';
+import { invokeTool, parseToolArgs, repairToolArgs, ToolValidationError } from '../lib/tools/registry';
 import { toolContext, withToolContext } from './tools/harness';
 
 describe('tool registry', () => {
@@ -74,6 +74,23 @@ describe('tool registry', () => {
     // JSON with the wrong items still fails on the items.
     expect(() => parseToolArgs(schema, { values: '[{"field":1}]' })).toThrow(z.ZodError);
     expect(() => parseToolArgs(schema, 'values')).toThrow(z.ZodError);
+  });
+
+  test('repairToolArgs reads JSON text fields and returns other args as they came', () => {
+    const schema = z.object({
+      values: z.array(z.object({ field: z.string() })),
+      name: z.string().optional(),
+    });
+    const values = [{ field: 'f1' }];
+    const good = { values };
+    expect(repairToolArgs(schema, good)).toBe(good);
+    expect(repairToolArgs(schema, { values: JSON.stringify(values) })).toEqual({ values });
+    const notJson = { values: 'Dana Example' };
+    expect(repairToolArgs(schema, notJson)).toBe(notJson);
+    const wrongKind = { values: '{"field":"f1"}' };
+    expect(repairToolArgs(schema, wrongKind)).toBe(wrongKind);
+    expect(repairToolArgs(schema, 'values')).toBe('values');
+    expect(repairToolArgs(schema, null)).toBe(null);
   });
 
   test('invokeTool audits a failed call as an error without its detail', async () => {

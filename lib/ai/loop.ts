@@ -18,7 +18,7 @@ import { withDeadline } from '../shared/deadline';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { documentCreate } from '../tools/documents';
-import { invokeTool, toolRisk } from '../tools/registry';
+import { invokeTool, repairToolArgs, toolRisk } from '../tools/registry';
 import { APPROVAL_RISKS, approvalConditionMet, approvalSummary, type ToolRisk } from './approval';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { executeCheckpointedTool, toolExecutionKey } from './execution';
@@ -308,19 +308,18 @@ export function modelInputSchema(input: unknown, validate = false) {
   } catch {
     return schema as any;
   }
-  return jsonSchema(
-    stripPatterns(json) as any,
-    validate
-      ? {
-          validate: (value) => {
-            const result = schema.safeParse(value);
-            return result.success
-              ? { success: true, value: result.data }
-              : { success: false, error: result.error };
-          },
+  return jsonSchema(stripPatterns(json) as any, {
+    validate: validate
+      ? (value) => {
+          const result = schema.safeParse(value);
+          return result.success
+            ? { success: true, value: result.data }
+            : { success: false, error: result.error };
         }
-      : undefined,
-  );
+      : // Without strict checks, the call still reaches the gate, the card, and
+        // execute with the args that would run.
+        (value) => ({ success: true, value: repairToolArgs(schema, value) as any }),
+  });
 }
 
 export function stripPatterns<T>(value: T): T {
@@ -398,10 +397,13 @@ export function liftToolsForAgent(
       // user's approval. The SDK runs execute only after an approved response
       // for this exact call. Malformed input skips the gate so the model gets
       // the field errors first. A paused class never asks: it runs nothing.
+      // The gate reads repaired args: a list sent as JSON text runs as a list.
       ...(APPROVAL_RISKS.has(risk) && !paused
         ? {
-            needsApproval: (input: unknown) =>
-              t.input.safeParse(input ?? {}).success && approvalConditionMet(name, input),
+            needsApproval: (input: unknown) => {
+              const repaired = repairToolArgs(t.input, input ?? {});
+              return t.input.safeParse(repaired).success && approvalConditionMet(name, repaired);
+            },
           }
         : {}),
       // Keep legacy briefs readable by the registry, but offer the agent one
@@ -413,6 +415,9 @@ export function liftToolsForAgent(
       ),
       execute: async (args: unknown, options?: { abortSignal?: AbortSignal }) => {
         if (paused) return pausedToolResult(name, risk);
+        // A stored call skips the SDK parse on resume. Repair here too, so the
+        // checkpoint and the timeout below cover it.
+        args = repairToolArgs(t.input, args ?? {});
         const context = getAiRequestContext();
         if (presentationSession && name === 'document_create' && (args as any)?.kind === 'deck') {
           const stage = nextPresentationCheckpoint(presentationSession);

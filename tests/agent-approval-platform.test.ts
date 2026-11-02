@@ -156,6 +156,99 @@ describe('server-enforced approval for tools that reach another person', () => {
     ).toBe(true);
   });
 
+  describe('a list sent as JSON text', () => {
+    const INVITE = {
+      account: 'acct_1',
+      title: 'Budget review',
+      startIso: '2031-01-02T10:00',
+      endIso: '2031-01-02T11:00',
+      attendees: [{ email: 'sam@example.test' }],
+    };
+    const asText = { ...INVITE, attendees: JSON.stringify(INVITE.attendees) };
+
+    test('the gate reads the text as the list that would run', () => {
+      const lifted = liftToolsForAgent('batch', 'UTC');
+      const needs = (name: string, input: unknown) => lifted[name].needsApproval(input, {});
+      expect(needs('calendar_create_event', asText)).toBe(true);
+      expect(
+        needs('calendar_update_event', {
+          eventId: 'e',
+          attendees: JSON.stringify([{ email: 'sam@example.test' }]),
+        }),
+      ).toBe(true);
+      // Text that is not the expected list stays malformed, and the model gets the field errors.
+      expect(needs('calendar_create_event', { ...INVITE, attendees: 'Sam' })).toBe(false);
+    });
+
+    test('an invitation stops at the approval card and the card names the attendee', async () => {
+      const handler = handlerSpy('calendar_create_event');
+      const { events } = await run(
+        [
+          model([
+            {
+              type: 'tool-call',
+              toolCallId: 'invite-1',
+              toolName: 'calendar_create_event',
+              input: JSON.stringify(asText),
+            },
+            finish('tool-calls'),
+          ]),
+        ],
+        [{ role: 'user', content: 'Invite Sam to the budget review.' }],
+        { userTimezone: 'UTC' },
+      );
+      expect(handler).not.toHaveBeenCalled();
+      expect(events.find((event) => event.type === 'tool-approval-request')).toMatchObject({
+        toolCallId: 'invite-1',
+      });
+      const card = events.find((event) => event.type === 'data-tool-approval');
+      expect(JSON.stringify(card.data.metadata)).toContain('sam@example.test');
+    });
+
+    test('an approved call stored as text runs once with the repaired list', async () => {
+      const handler = handlerSpy('calendar_create_event');
+      await run(
+        [model([...text('Sent.'), finish()])],
+        sanitizeToolPairs([
+          { role: 'user', content: 'Invite Sam to the budget review.' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool-call', toolCallId: 'invite-1', toolName: 'calendar_create_event', input: asText },
+              { type: 'tool-approval-request', approvalId: 'approval-1', toolCallId: 'invite-1' },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [{ type: 'tool-approval-response', approvalId: 'approval-1', approved: true }],
+          },
+        ]),
+        { userId: null },
+      );
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][0]).toMatchObject({ attendees: INVITE.attendees });
+    });
+  });
+
+  test('the same bad args are refused the second time with no run', async () => {
+    const handler = handlerSpy('schedule_send');
+    const lifted = liftToolsForAgent('batch', 'UTC');
+    const bad = { to: 'sam@example.test' };
+    await expect(lifted.schedule_send.execute(bad, {})).rejects.toThrow();
+    await expect(lifted.schedule_send.execute(bad, {})).rejects.toThrow('already rejected');
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  test('a handler failure reaches the caller and the log', async () => {
+    const spy = spyOn(TOOLS.schedule_send, 'handler').mockRejectedValue(new Error('provider refused'));
+    restores.push(() => spy.mockRestore());
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    restores.push(() => warn.mockRestore());
+    const lifted = liftToolsForAgent('batch', 'UTC');
+    await expect(lifted.schedule_send.execute(SEND, {})).rejects.toThrow('provider refused');
+    expect(warn.mock.calls.some((call) => call[0] === '[agent-tool-error]')).toBe(true);
+  });
+
   test('a denied answer never runs the call', async () => {
     const handler = handlerSpy('schedule_send');
     const { events } = await run(
@@ -193,6 +286,14 @@ describe('server-enforced approval for tools that reach another person', () => {
       true,
     );
     expect(toolNeedsApproval('archive_thread', {})).toBe(false);
+    // Attendees that arrive as text may still run as a list, so they ask.
+    expect(toolNeedsApproval('calendar_create_event', { attendees: '[{"email":"s@example.test"}]' })).toBe(
+      true,
+    );
+    expect(toolNeedsApproval('calendar_create_event', { attendees: ' [ ] ' })).toBe(false);
+    expect(toolNeedsApproval('calendar_create_event', { attendees: '' })).toBe(false);
+    // Other text cannot run, so it gets the field errors and no card.
+    expect(toolNeedsApproval('calendar_create_event', { attendees: 'Sam' })).toBe(false);
     // An answer to an invitation reaches the organizer, so it asks too.
     expect(needs('calendar_rsvp_event', { account: 'a', calendarId: 'c', eventId: 'e', status: 'yes' })).toBe(
       true,

@@ -79,15 +79,16 @@ function validationIssues(issues: z.core.$ZodIssue[]): z.core.$ZodIssue[] {
 }
 
 /**
- * Parses tool args. Some models send a list or an object as JSON text (for
- * example `values: "[{...}]"`). When a top-level field fails only because it
- * is text that holds the expected JSON list or object, the field is read as
- * that JSON and the args parse again. Anything else keeps the first error.
+ * Some models send a list or an object as JSON text (for example
+ * `values: "[{...}]"`). When a top-level field fails only because it is text
+ * that holds the expected JSON list or object, the field is read as that JSON.
+ * Any other args come back as the same value. Each gate that reads args must
+ * read them through this, because invokeTool runs what this returns.
  */
-export function parseToolArgs(schema: z.ZodTypeAny, args: unknown): unknown {
+export function repairToolArgs(schema: z.ZodTypeAny, args: unknown): unknown {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
   const first = schema.safeParse(args);
-  if (first.success) return first.data;
-  if (!args || typeof args !== 'object' || Array.isArray(args)) throw first.error;
+  if (first.success) return args;
   const fixed: Record<string, unknown> = { ...(args as Record<string, unknown>) };
   let changed = false;
   for (const issue of first.error.issues) {
@@ -104,11 +105,19 @@ export function parseToolArgs(schema: z.ZodTypeAny, args: unknown): unknown {
         changed = true;
       }
     } catch {
-      // Not JSON: the first error stands.
+      // Not JSON: the field stays as it came.
     }
   }
-  if (!changed) throw first.error;
-  return schema.parse(fixed);
+  return changed ? fixed : args;
+}
+
+/** Parses tool args after repairToolArgs. Args with no repair keep the first error. */
+export function parseToolArgs(schema: z.ZodTypeAny, args: unknown): unknown {
+  const first = schema.safeParse(args);
+  if (first.success) return first.data;
+  const repaired = repairToolArgs(schema, args);
+  if (repaired === args) throw first.error;
+  return schema.parse(repaired);
 }
 
 export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext) {

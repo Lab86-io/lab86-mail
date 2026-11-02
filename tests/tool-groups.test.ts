@@ -222,6 +222,27 @@ describe('tool groups', () => {
     ).toBeNull();
   });
 
+  test('a model-facing schema repairs JSON text, and the strict form rejects what fails', async () => {
+    const input = z.object({ attendees: z.array(z.object({ email: z.string() })) });
+    const list = [{ email: 'sam@example.test' }];
+    const open = modelInputSchema(input);
+    expect(await open.validate({ attendees: JSON.stringify(list) })).toEqual({
+      success: true,
+      value: { attendees: list },
+    });
+    // The open form passes bad input on, so the registry gives the model the field errors.
+    expect(await open.validate({ attendees: 'Sam' })).toEqual({
+      success: true,
+      value: { attendees: 'Sam' },
+    });
+    const strict = modelInputSchema(input, true);
+    expect(await strict.validate({ attendees: list })).toEqual({
+      success: true,
+      value: { attendees: list },
+    });
+    expect((await strict.validate({ attendees: 'Sam' })).success).toBe(false);
+  });
+
   test('model-facing input schemas carry no regex patterns (OpenAI Responses rejects lookarounds)', () => {
     const schema = modelInputSchema(
       z.object({ attendees: z.array(z.object({ email: z.email(), name: z.string().optional() })) }),
