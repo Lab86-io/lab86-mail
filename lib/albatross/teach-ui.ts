@@ -680,6 +680,22 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
     'Checked what is in Passwords and IDs',
     'Checking Passwords and IDs failed',
   ),
+  needs_you_list: fixed('Reading what needs you', 'Read what needs you', 'The read of what needs you failed'),
+  needs_you_done: (_args, out) => ({
+    running: 'Marking the item done',
+    done: str(out.title) ? `Marked done: ${str(out.title)}` : 'Marked the item done',
+    failed: 'The Done action failed',
+  }),
+  needs_you_later: (_args, out) => ({
+    running: 'Moving the item to later',
+    done: str(out.title) ? `Moved to later: ${str(out.title)}` : 'Moved the item to later',
+    failed: 'The Later action failed',
+  }),
+  needs_you_not_mine: (_args, out) => ({
+    running: 'Marking the item not mine',
+    done: str(out.title) ? `Marked not mine: ${str(out.title)}` : 'Marked the item not mine',
+    failed: 'The Not mine action failed',
+  }),
   pdf_form_fields: fixed('Reading the form fields', 'Read the form fields', 'Reading the form fields failed'),
   pdf_form_fill: (_args, out) => {
     const title = str(out.title);

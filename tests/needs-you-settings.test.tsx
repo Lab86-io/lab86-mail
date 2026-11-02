@@ -3,7 +3,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { JSDOM } from 'jsdom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { postObligationAction, postObligationDraft, postObligationReply } from '../components/needs-you/data';
-import { needsYouFlagsOf, saveCodesEnabled } from '../components/needs-you/NeedsYouAlertsSettings';
+import {
+  BrowserAlertsRow,
+  browserAlertsDescription,
+  needsYouFlagsOf,
+  saveCodesEnabled,
+} from '../components/needs-you/NeedsYouAlertsSettings';
 import {
   MAIL_PUSH_QUERY_KEY,
   MailAlertsSettings,
@@ -54,6 +59,45 @@ describe('the Needs you rows', () => {
     const page = new JSDOM(html).window.document;
     expect(page.querySelector('#needs-you-push')?.getAttribute('aria-checked')).toBe('true');
     expect(page.querySelector('#needs-you-codes')?.getAttribute('aria-checked')).toBe('false');
+  });
+
+  test('the browser row sits after the push switch, and its switch shows if this browser is on', () => {
+    const base = {
+      pushEnabled: true,
+      onPushEnabledChange: noop,
+      codesEnabled: true,
+      onCodesEnabledChange: noop,
+    };
+    const row = (initialState: Parameters<typeof BrowserAlertsRow>[0]['initialState']) =>
+      new JSDOM(render({ ...base, browserRow: <BrowserAlertsRow initialState={initialState} /> })).window
+        .document;
+    const on = row('on');
+    expect(on.body.textContent).toContain('Alerts in this browser');
+    expect(on.body.textContent).toContain('This browser shows each push, also when Albatross is closed.');
+    const control = on.querySelector('#needs-you-browser');
+    expect(control?.getAttribute('aria-checked')).toBe('true');
+    expect(control?.hasAttribute('disabled')).toBe(false);
+    const labels = [...on.querySelectorAll('label')].map((label) => label.textContent);
+    expect(labels.indexOf('Alerts in this browser')).toBe(
+      labels.indexOf('Push me when something needs me') + 1,
+    );
+    expect(row('off').querySelector('#needs-you-browser')?.getAttribute('aria-checked')).toBe('false');
+    expect(row('off').querySelector('#needs-you-browser')?.hasAttribute('disabled')).toBe(false);
+    // The switch cannot act before the browser answers, or when the browser refuses.
+    for (const state of [null, 'blocked', 'unsupported'] as const) {
+      const document = row(state);
+      expect(document.querySelector('#needs-you-browser')?.getAttribute('aria-checked')).toBe('false');
+      expect(document.querySelector('#needs-you-browser')?.hasAttribute('disabled')).toBe(true);
+    }
+    // No row without the slot: the mail alerts of everyone else stay as they were.
+    expect(render(base)).not.toContain('Alerts in this browser');
+  });
+
+  test('the row says what each state means and what to do', () => {
+    expect(browserAlertsDescription('off')).toContain('Each browser has its own setting.');
+    expect(browserAlertsDescription(null)).toBe(browserAlertsDescription('off'));
+    expect(browserAlertsDescription('blocked')).toContain('Allow them in the site settings of the browser');
+    expect(browserAlertsDescription('unsupported')).toContain('cannot show alerts');
   });
 
   test('everyone else keeps the mail alerts as they were', () => {

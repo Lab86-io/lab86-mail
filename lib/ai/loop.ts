@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { formQuestionSchema } from '../albatross/thread-contract';
 import { pausedAssistantRisks } from '../hosted/standing-orders';
 import { narrativePrompt } from '../narrative/service';
+import { needsYouFlagFor } from '../obligations/contract';
 import { aboutUserBlock, listPersonalDetails } from '../personal-details/store';
 import { SECURE_ITEM_KINDS } from '../secure/contract';
 import { secureStoreEnabledFor } from '../secure/flag';
@@ -153,6 +154,10 @@ export const AGENT_TOOL_NAMES = new Set([
   'personal_details_get',
   'personal_details_save',
   'secure_details_list',
+  'needs_you_list',
+  'needs_you_done',
+  'needs_you_later',
+  'needs_you_not_mine',
   'pdf_form_fields',
   'pdf_form_fill',
   'forget',
@@ -352,6 +357,8 @@ export interface AgentToolOptions {
    * user. The same reason as askForm: an older client would wait forever.
    */
   askSecureDetail?: boolean;
+  /** The user is in LAB86_NEEDS_YOU: enable_tools names the needs_you group. */
+  needsYou?: boolean;
 }
 
 /** Client capabilities the agent route accepts (AgentRequestBody.clientCapabilities). */
@@ -722,7 +729,9 @@ export function liftToolsForAgent(
   // the active set for the next one.
   const requestedGroups: string[] = [];
   lifted[ENABLE_TOOLS_NAME] = aiTool({
-    description: enableToolsDescription(toolGroupsForPlatform(clientPlatform)),
+    description: enableToolsDescription(
+      toolGroupsForPlatform(clientPlatform, { needsYou: options.needsYou }),
+    ),
     inputSchema: enableToolsInputSchema,
     execute: async ({ groups }: { groups: string[] }) => {
       const result = enableToolsResult(groups, {
@@ -1232,6 +1241,7 @@ export async function runAgent({
   const askForm = clientCapabilities?.has('ask_form') ?? false;
   const secureStore = userId ? secureStoreEnabledFor(userId) : false;
   const askSecureDetail = secureStore && (clientCapabilities?.has('ask_secure_detail') ?? false);
+  const needsYou = userId ? needsYouFlagFor(userId) : false;
   if (!hasPlatformAi() && !userId) {
     throw new Error(
       'Models are not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
@@ -1255,6 +1265,7 @@ export async function runAgent({
     pausedRisks,
     askForm,
     askSecureDetail,
+    needsYou,
   });
 
   let resolveSteps: (steps: any[]) => void = () => undefined;
@@ -1324,7 +1335,7 @@ export async function runAgent({
               signal?.throwIfAborted();
               const base = buildSystemPrompt(
                 { name: userName, email: userEmail },
-                { memories, clientPlatform, askForm, secureStore, askSecureDetail },
+                { memories, clientPlatform, askForm, secureStore, askSecureDetail, needsYou },
               );
               // Static instructions first, per-turn context last: providers cache the
               // shared prefix, so the parts that change every turn sit at the end.
