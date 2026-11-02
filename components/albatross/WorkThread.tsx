@@ -1073,7 +1073,9 @@ export function WorkThread({ workId }: { workId: string }) {
   const markSeen = useMarkSeen();
   const lastActivityAt = row?.lastActivityAt ?? 0;
   const nothingNew = useRef(false);
-  nothingNew.current = threadNeedsNoSeenWrite(row);
+  useEffect(() => {
+    nothingNew.current = threadNeedsNoSeenWrite(row);
+  });
   // biome-ignore lint/correctness/useExhaustiveDependencies: new activity marks the thread seen again
   useEffect(() => {
     if (!isAuthenticated) return;

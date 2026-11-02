@@ -203,6 +203,8 @@ Brief. So only news writes that row.
   leaves the runner.
 
 
+## The shared browser
+
 - The runner creates the session with the user's saved sign-in context, so a site the user signed
   in to before is still signed in.
 - While the runner controls the page, the session status is `agent` and `statusDetail` says what

@@ -913,7 +913,7 @@ describe('a run shows its work as it happens', () => {
     expect(ops).toContainEqual({ key: 'call-1', text: 'Wrote “The proposal”.' });
   });
 
-  test('a tool with no line of its own removes its open row, and so does a failed tool', async () => {
+  test('a failed tool puts its failure in the place of its open row', async () => {
     let clock = 10_000;
     const h = harness(async (opts) => {
       clock += 5_000;
@@ -937,7 +937,7 @@ describe('a run shows its work as it happens', () => {
     });
     const ops = progress(h).flatMap((args) => args.lines ?? []);
     expect(ops).toContainEqual({ key: 'quiet', text: 'Adds a hold to your calendar.', open: true });
-    expect(ops).toContainEqual({ key: 'quiet' });
+    expect(ops).toContainEqual({ key: 'quiet', text: 'Could not add the hold to your calendar.' });
   });
 
   test('the words of a tool call pass through redaction before they show', async () => {

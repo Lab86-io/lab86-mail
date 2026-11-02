@@ -80,6 +80,7 @@ export interface WorkDetailData {
     artifactSource?: string;
     /** The page of this plan comes later: the plan waits for it until this time. */
     documentPendingUntil?: number;
+    documentFailedAt?: number;
     assumptions?: string[];
     sourceRefs?: Array<{ kind: string; id: string; label?: string; url?: string }>;
     digitalActions?: Array<{ actionKey?: string; key?: string; kind: string; title: string }>;

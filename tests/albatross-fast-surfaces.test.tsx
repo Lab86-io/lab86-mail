@@ -140,11 +140,12 @@ describe('the subscriptions', () => {
     expect(thread).toMatch(/region === 'details' && planId/);
   });
 
-  test('the editor subscribes to the revision, and polls only with no live answer', () => {
+  test('the editor subscribes to the revision, and polls fast only with no live answer', () => {
     const editor = read('components/files/DocumentEditor.tsx');
     expect(editor).toContain('api.documents.savedRevision');
-    expect(editor).toContain(
-      'watchesSaves && liveRevision === null && !dirty ? SAVED_REVISION_CHECK_MS : false',
+    // Fast with no live answer. Slow with one: a suggestion keeps the revision, and a socket can drop.
+    expect(editor).toMatch(
+      /liveRevision === null\s*\?\s*SAVED_REVISION_CHECK_MS\s*:\s*LIVE_REVISION_BACKSTOP_MS/,
     );
   });
 });

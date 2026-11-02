@@ -2035,6 +2035,7 @@ export default defineSchema({
     document: v.optional(v.any()),
     // The page follows the plan (attachPlanDocument). The plan waits for it until this time.
     documentPendingUntil: v.optional(v.number()),
+    documentFailedAt: v.optional(v.number()),
     artifactSource: v.optional(v.string()),
     artifactTitle: v.optional(v.string()),
     model: v.optional(v.string()),

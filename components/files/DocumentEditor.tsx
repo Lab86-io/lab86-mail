@@ -128,6 +128,7 @@ function openDocumentChat() {
  * signed in to Convex yet, or no connection) they check at this interval.
  */
 const SAVED_REVISION_CHECK_MS = 5_000;
+const LIVE_REVISION_BACKSTOP_MS = 20_000;
 
 export function DocumentEditor({
   documentId,
@@ -179,7 +180,15 @@ export function DocumentEditor({
     queryKey: ['document', documentId],
     queryFn: () => fetchJson<{ ok: true; document: EditorDocument }>(`/api/documents/${documentId}`),
     staleTime: 10_000,
-    refetchInterval: watchesSaves && liveRevision === null && !dirty ? SAVED_REVISION_CHECK_MS : false,
+    // The live revision says when to read at once. It does not cover all: a new
+    // suggestion keeps the revision, the socket can drop and keep the last answer,
+    // and a read can fail. The slow check covers those.
+    refetchInterval:
+      watchesSaves && !dirty
+        ? liveRevision === null
+          ? SAVED_REVISION_CHECK_MS
+          : LIVE_REVISION_BACKSTOP_MS
+        : false,
   });
   const document = documentQuery.data?.document;
   // A chat or a run may save a new revision. With no unsaved edits here, the

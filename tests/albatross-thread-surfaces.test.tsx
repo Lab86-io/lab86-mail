@@ -112,6 +112,30 @@ describe('the run block', () => {
     expect(nodes.map((node) => node.getAttribute('data-slot'))).toEqual(['run-message', 'run-live-text']);
   });
 
+  test('a new plan whose page failed says so and never reads as an old plan', () => {
+    const now = Date.UTC(2026, 9, 7, 14, 46);
+    const panel = (patch: Record<string, unknown>) => {
+      const detail = threadDetailFixture(now);
+      if (detail.plan)
+        Object.assign(detail.plan, { artifactHtml: '<p>plan</p>', document: undefined }, patch);
+      return renderToStaticMarkup(
+        <DetailsPanel
+          detail={detail}
+          steps={[]}
+          undoneOperations={new Set()}
+          undoing={null}
+          onUndo={() => undefined}
+          onError={() => undefined}
+          nowMs={now}
+        />,
+      );
+    };
+    expect(panel({ documentFailedAt: now - 1_000 })).toContain('data-slot="plan-page-failed"');
+    // The composer never answered, and the wait has passed.
+    expect(panel({ documentPendingUntil: now - 1_000 })).toContain('data-slot="plan-page-failed"');
+    expect(panel({})).not.toContain('data-slot="plan-page-failed"');
+  });
+
   test('the plan page is on the way: Details says so, and shows no old notice', () => {
     const now = Date.UTC(2026, 9, 7, 14, 46);
     const detail = threadDetailFixture(now);
@@ -133,7 +157,7 @@ describe('the run block', () => {
       );
     const waiting = panel(now);
     expect(waiting).toContain('data-slot="plan-page-pending"');
-    // After its time the plan stops waiting: a page that never came is the old notice.
+    // After its time the plan stops waiting: a page that never came says so.
     expect(panel(now + 120_000)).not.toContain('data-slot="plan-page-pending"');
   });
 

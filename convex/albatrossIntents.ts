@@ -606,7 +606,7 @@ export const attachPlanDocument = mutation({
     if (plan.status === 'superseded') return false;
     const ts = now();
     if (!args.document) {
-      await ctx.db.patch(plan._id, { documentPendingUntil: undefined, updatedAt: ts });
+      await ctx.db.patch(plan._id, { documentPendingUntil: undefined, documentFailedAt: ts, updatedAt: ts });
       return false;
     }
     await ctx.db.patch(plan._id, {
