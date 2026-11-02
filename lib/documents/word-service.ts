@@ -3,6 +3,7 @@ import { api, convexMutation } from '@/lib/hosted/convex';
 import { exportDocument } from './export';
 import { OfficeError, readOfficeResponse, validateOfficeArchive } from './office-security';
 import { createOfficeFile, getOfficeFile, requireOffice, storeOfficeBytes } from './office-service';
+import { verifyOfficePackage } from './office-verify';
 import { getDocument } from './service';
 import { type DocumentTemplate, renderTemplate } from './templates';
 import {
@@ -68,6 +69,7 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
         if (input.edits?.length) bytes = await editWordPackage(bytes, input.edits);
       } else bytes = await createWordPackage(title, input.edits);
       const sha256 = validateOfficeArchive(bytes, 'docx');
+      await verifyOfficePackage(bytes, 'docx');
       // The blanks still empty after any edits, in page order (the package item `blanks`).
       const blanks = input.template
         ? (await readWordBlanks(bytes)).filter((blank) => !blank.filled).map((blank) => blank.name)

@@ -505,6 +505,11 @@ describe('document tools', () => {
     // Uploads on a text document are noted and never read; presentation review notes remain visible even without uploads.
     uploads.mockClear();
     proposal.mockClear();
+    proposal.mockImplementationOnce((async () => ({
+      title: 'Memo',
+      summary: 'A memo.',
+      model: createDefaultDocumentModel('doc'),
+    })) as any);
     const memo = await runTool(
       documentCreate.handler,
       { kind: 'doc', title: 'Memo', instructions: 'Draft', imageUploadIds: ['upload-1'] },

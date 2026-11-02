@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
-import { composeDocumentPresentation, generateDocumentProposal } from '@/lib/documents/ai';
+import {
+  composeDocumentPresentation,
+  type DocumentProposal,
+  generateDocumentProposal,
+} from '@/lib/documents/ai';
 import { artworksForDeck } from '@/lib/documents/deck-imagery';
 import { checkSlide } from '@/lib/documents/deck-quality';
 import { assetsFromUploads, MAX_UPLOAD_ASSETS } from '@/lib/documents/deck-upload-assets';
@@ -202,6 +206,25 @@ async function contentModel(args: DocumentCreateArgs) {
   return null;
 }
 
+function errorCopy(error: unknown) {
+  return truncateText(error instanceof Error ? error.message : 'The file did not build.', 300);
+}
+
+/** Builds the file from the model and opens it again (lib/documents/office-verify.ts). */
+async function openBuiltFile(kind: DocumentKind, title: string, model: DocumentProposal['model']) {
+  if (model.kind === 'sheet-changes') return;
+  await dependencies.exportDocument({
+    documentId: 'check',
+    title,
+    kind,
+    model,
+    currentRevision: 1,
+    createdAt: 0,
+    updatedAt: 0,
+    sourceRefs: [],
+  });
+}
+
 async function createDocumentFile(args: DocumentCreateArgs, ctx: ToolContext) {
   const userId = requireUserId(ctx.userId);
   ctx.abortSignal?.throwIfAborted();
@@ -242,17 +265,24 @@ async function createDocumentFile(args: DocumentCreateArgs, ctx: ToolContext) {
           })
           .catch(unreadableProposal)
       : null;
-  const written = proposal ? null : await contentModel(args);
+  const model = proposal?.model ?? (await contentModel(args));
   ctx.abortSignal?.throwIfAborted();
   if (args.kind === 'deck' && proposal?.summary) notes.push(proposal.summary);
+  // A document or a workbook must open before it is saved. A deck must not lose minutes of work
+  // to one image that will not load, so it opens after the save and reports the result.
+  if (model && args.kind !== 'deck') await openBuiltFile(args.kind, args.title, model);
   const document = await dependencies.createDocument({
     userId,
     kind: args.kind,
     title: args.title || proposal?.title,
-    model: proposal?.model ?? written ?? undefined,
+    model: model ?? undefined,
     sourceRefs: args.sourceRefs,
     reason: proposal?.summary || 'agent_create',
   });
+  if (model && args.kind === 'deck')
+    await openBuiltFile(args.kind, document.title, model).catch((error) => {
+      notes.push(`The deck is saved, but its PowerPoint file did not build. ${errorCopy(error)}`);
+    });
   await dependencies.recordOperation({
     userId,
     tool: 'document_create',

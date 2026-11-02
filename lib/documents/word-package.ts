@@ -5,7 +5,9 @@ import { JSDOM } from 'jsdom';
 import JSZip from 'jszip';
 import { z } from 'zod';
 import { OfficeError, validateOfficeArchive } from './office-security';
+import { verifyOfficePackage } from './office-verify';
 import { BlankNotFoundError, fillBlank, readBlanks } from './templates/blanks';
+import { xmlSafeDeep, xmlSafeText } from './xml-text';
 
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -291,7 +293,7 @@ export async function readWordPackage(bytes: Uint8Array) {
 
 export async function createWordPackage(title: string, edits?: WordEdit[]) {
   const bytes = await Packer.toBuffer(
-    new WordDocument({ title, sections: [{ children: [new Paragraph('')] }] }),
+    new WordDocument({ title: xmlSafeText(title), sections: [{ children: [new Paragraph('')] }] }),
   );
   return edits?.length ? editWordPackage(bytes, edits) : bytes;
 }
@@ -299,7 +301,7 @@ export async function createWordPackage(title: string, edits?: WordEdit[]) {
 export async function editWordPackage(bytes: Uint8Array, input: WordEdit[]) {
   if (JSON.stringify(input).length > 2_000_000)
     throw new OfficeError('Word edits must be smaller than 2 MB.', 413);
-  const edits = wordEditsSchema.parse(input);
+  const edits = xmlSafeDeep(wordEditsSchema.parse(input));
   const { zip, dom, document, body } = await open(bytes);
   const parts = new Map<string, JSDOM>();
   try {
@@ -651,6 +653,7 @@ export async function editWordPackage(bytes: Uint8Array, input: WordEdit[]) {
     for (const [path, content] of parts) zip.file(path, content.serialize());
     const result = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
     validateOfficeArchive(result, 'docx');
+    await verifyOfficePackage(result, 'docx', { parts: ['word/document.xml', ...parts.keys()] });
     return result;
   } finally {
     dom.window.close();

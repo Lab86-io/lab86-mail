@@ -395,6 +395,11 @@ describe('presentation creation dogfood', () => {
     const generate = mock(async () => {
       throw new Error('must not generate');
     });
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
+      generateObjectForCurrentUser: (async (options: any) => passingSlideReviews(options)) as any,
+    });
     __setDocumentToolDepsForTest({
       generateDocumentProposal: generate,
       createDocument: async (input) => {
