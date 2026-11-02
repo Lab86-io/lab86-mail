@@ -587,11 +587,17 @@ describe('compliance readiness', () => {
     // (event names and counts, no user id); its rows expire after 30 days.
     // albatrossContextDeletions holds Browserbase context ids (no user id)
     // that must outlive the cascade until Browserbase confirms each delete.
+    // The ops rollups hold counts and fixed names, with no user id, and the
+    // retention sweep removes them (docs/ops-signals.md).
     const exempt = new Set<string>([
       'dataMigrations',
       'deploymentSettings',
       'googleSecurityEvents',
       'albatrossContextDeletions',
+      'opsHealthBuckets',
+      'opsHealthWatch',
+      'opsToolRollups',
+      'speedRollups',
     ]);
 
     expect(tables.length).toBeGreaterThan(10);

@@ -10,6 +10,7 @@ import { cleanGoalUpdate, goalContractWatch, mergeGoalContract } from '../lib/al
 import { shapePlans } from '../lib/albatross/shape-policy';
 import { CHAT_ANSWER_PREFIX } from '../lib/albatross/thread-contract';
 import { isTerminalWork } from '../lib/albatross/work-lifecycle';
+import { classifyOpsError } from '../lib/ops/health';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -22,6 +23,8 @@ import {
   runMessageValidator,
 } from './goalRunSchema';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
+import { recordOpsHealth } from './opsHealth';
+import { recordRunLatency } from './speedRollups';
 
 // Step runs. The agent works one plan step as far as it can and stops with
 // one next action for the user: approve a draft, sign in on a page, answer a
@@ -236,6 +239,28 @@ export function latestRunPerStep(rows: readonly RunDoc[]): RunDoc[] {
     latest.push(row);
   }
   return latest;
+}
+
+/**
+ * The failure alarm and the latency rows of a run that ended. `firstVisibleAt`
+ * comes from the runner when the run has it; the row reads the first log line
+ * if not. A run that the user stopped does not come here.
+ */
+async function recordRunEnd(ctx: MutationCtx, run: RunDoc, ok: boolean, at: number, error?: string) {
+  await recordOpsHealth(ctx, {
+    kind: 'run',
+    ok,
+    ...(ok ? {} : { errorClass: classifyOpsError(error) }),
+    at,
+  });
+  await recordRunLatency(ctx, {
+    createdAt: run.createdAt,
+    ...(run.startedAt === undefined ? {} : { startedAt: run.startedAt }),
+    finishedAt: at,
+    log: run.log,
+    firstVisibleAt: (run as { firstVisibleAt?: unknown }).firstVisibleAt,
+    logLimit: LOG_MAX,
+  });
 }
 
 async function workRow(ctx: QueryCtx | MutationCtx, userId: string, workId: string) {
@@ -595,6 +620,7 @@ export const settle = mutation({
       finishedAt: ts,
       updatedAt: ts,
     });
+    await recordRunEnd(ctx, run, state !== 'failed', ts, args.error);
     // A goal Work is watched against its contract from its first handoff on,
     // so it closes when the user sends the mail, with no other run.
     if (run.goal || run.stepKey === 'goal') {
@@ -977,6 +1003,7 @@ export const expireLost = internalMutation({
           finishedAt: ts,
           updatedAt: ts,
         });
+        await recordRunEnd(ctx, run, false, ts);
       } else {
         await ctx.db.patch(run._id, { state: 'queued', token: undefined, updatedAt: ts });
       }
