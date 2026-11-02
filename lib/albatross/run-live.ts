@@ -11,6 +11,8 @@ import { truncateText } from '../shared/text';
 export const RUN_LIVE_WRITE_MS = 2_000;
 /** The live text of one model step that the small live row keeps. */
 export const RUN_LIVE_TEXT_MAX = 4_000;
+/** Less text than this waits. A write shows for 2 s, so one word alone looks like a fault. */
+const RUN_LIVE_TEXT_MIN = 8;
 const RUN_LOG_LINE_MAX = 200;
 
 export interface RunLogRow {
@@ -74,7 +76,8 @@ export function showableRunText(text: string, clean: (text: string) => string = 
   const closed = open === -1 ? -1 : text.indexOf('}}', open);
   const settled = open !== -1 && closed === -1 ? text.slice(0, open) : text;
   const space = settled.search(/\s\S*$/);
-  return truncateText(clean(space === -1 ? '' : settled.slice(0, space)).trim(), RUN_LIVE_TEXT_MAX);
+  const showable = truncateText(clean(space === -1 ? '' : settled.slice(0, space)).trim(), RUN_LIVE_TEXT_MAX);
+  return showable.length < RUN_LIVE_TEXT_MIN ? '' : showable;
 }
 
 /** How long the newest row has worked, once that is worth a look. Null before then. */

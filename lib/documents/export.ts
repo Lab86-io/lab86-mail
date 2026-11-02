@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs';
 import pptxgen from 'pptxgenjs';
 import { truncateText } from '../shared/text';
 import { loadDeckAsset } from './deck-assets';
+import { chartInks } from './deck-quality';
 import { deckExportFace, deckTextSlot, upgradeDeckModel } from './deck-versions';
 import { type AlbatrossDocumentRecord, type DeckElementV2, type DocBlock, sheetGridModel } from './model';
 import { verifyOfficePackage } from './office-verify';
@@ -285,7 +286,7 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
         const kind =
           element.shape === 'ellipse'
             ? presentation.ShapeType.ellipse
-            : element.shape === 'roundRect'
+            : element.shape === 'roundRect' && element.radius !== 0
               ? presentation.ShapeType.roundRect
               : presentation.ShapeType.rect;
         slide.addShape(kind, {
@@ -298,7 +299,10 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
                 dashType: DASH[element.stroke.dash ?? 'solid'],
               }
             : { color: presentationColor(element.fill ?? theme.colors.surface, 'E8EEF5'), width: 0 },
-          ...(element.shape === 'roundRect' && element.radius ? { rectRadius: element.radius / 72 } : {}),
+          // The same default as the web renderer. With no value, PowerPoint draws a much rounder corner.
+          ...(element.shape === 'roundRect' && element.radius !== 0
+            ? { rectRadius: (element.radius ?? 12) / 72 }
+            : {}),
         });
       } else if (element.type === 'line') {
         slide.addShape(presentation.ShapeType.line, {
@@ -329,13 +333,10 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
               : element.chart === 'doughnut'
                 ? presentation.ChartType.doughnut
                 : presentation.ChartType.bar;
-        const colors = (
-          element.colors?.length
-            ? element.colors
-            : [theme.colors.accent, theme.colors.ink, theme.colors.muted, theme.colors.surface]
-        ).map((color) => presentationColor(color, '17202A'));
-        const ink = presentationColor(theme.colors.ink, '17202A');
-        const muted = presentationColor(theme.colors.muted, '94A3B8');
+        const inks = chartInks(source, theme, element);
+        const colors = inks.series.map((color) => presentationColor(color, '17202A'));
+        const ink = presentationColor(inks.label, '17202A');
+        const muted = presentationColor(inks.quiet, '94A3B8');
         const body = deckExportFace(theme, 'body');
         // General shows each number as written, as the slide does: 3.7 stays 3.7, not 4.
         const numberFormat = element.unit ? `General"${element.unit.replace(/"/g, '')}"` : 'General';
@@ -368,7 +369,7 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
               Math.ceil((Math.max(1, ...element.series.flatMap((series) => series.values)) * 1.1) / 10) * 10,
             valAxisLabelFormatCode: numberFormat,
             dataLabelFormatCode: numberFormat,
-            valGridLine: { color: muted, style: 'dash', size: 0.5 },
+            valGridLine: { color: presentationColor(inks.grid, '94A3B8'), style: 'dash', size: 0.5 },
             catGridLine: { style: 'none' },
             catAxisLineShow: false,
             valAxisLineShow: false,

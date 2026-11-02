@@ -76,7 +76,12 @@ import {
 import { localDateKey } from './local-time';
 import { MODEL_AUTHORED_TOOLS, type ObservedStep, observedEvidence } from './run-evidence';
 import { createRunLiveWriter } from './run-live-writer';
-import { type RunModelOptions, type RunModelResult, streamRunModel } from './run-model-stream';
+import {
+  type RunModelOptions,
+  type RunModelResult,
+  RunModelStepStall,
+  streamRunModel,
+} from './run-model-stream';
 import { toolStartLine } from './run-tool-lines';
 import { completeWorkStep } from './step-execution';
 import {
@@ -109,6 +114,12 @@ const HEARTBEAT_MS = 30_000;
  * 15 and 30 minutes: without this, a stalled call uses all of it in silence.
  */
 export const RUN_FIRST_STEP_TIMEOUT_MS = 120_000;
+/**
+ * The longest time the model can write in one step, tool time excluded. A deck
+ * brief of 2,000 tokens takes 25 s, and a slow provider writes 5,400 tokens in
+ * this time, which is more than a long document needs.
+ */
+export const RUN_MODEL_STEP_TIMEOUT_MS = 180_000;
 
 export interface ClaimedRun {
   _id: string;
@@ -185,6 +196,7 @@ export interface StepRunnerDependencies {
   now: () => number;
   heartbeatMs: number;
   firstStepTimeoutMs: number;
+  modelStepTimeoutMs: number;
   reportError: typeof console.error;
   /** The account name and email (the users table), for personal details and the prompt. */
   readUser: (userId: string) => Promise<{ name: string | null; email: string | null }>;
@@ -244,6 +256,7 @@ const defaults: StepRunnerDependencies = {
   now: Date.now,
   heartbeatMs: HEARTBEAT_MS,
   firstStepTimeoutMs: RUN_FIRST_STEP_TIMEOUT_MS,
+  modelStepTimeoutMs: RUN_MODEL_STEP_TIMEOUT_MS,
   reportError: console.error,
   readUser: (userId) => readUserProfile(userId),
   listDetails: listPersonalDetails,
@@ -582,10 +595,12 @@ export async function runStepRun(
   let sessionId: string | null = run.browserSessionId || null;
   let handoff: HandoffInput | null = null;
   let usedPage = false;
-  // Goal runs talk (G2): each model step's text becomes a run message with the
-  // sources of the tool calls since the last message. Writes go in order.
+  // Goal runs talk (G2): each model step's text becomes a run message. The model
+  // writes that text before the tool calls of its step, so the sources of a step
+  // wait for the next message: the one that can use them. Writes go in order.
   let talk: Promise<void> = Promise.resolve();
   let spoke = false;
+  const stepSources: RunSource[] = [];
   const pendingSources: RunSource[] = [];
   // Filled PDFs whose ID numbers stay sealed: their items wait for a check (G5).
   const sealedFiles = new Set<string>();
@@ -882,7 +897,7 @@ export async function runStepRun(
                 .catch(() => ({ ok: false, message: 'The goal did not change. Try again.' }));
             },
             sources: (found: RunSource[]) => {
-              pendingSources.push(...found);
+              stepSources.push(...found);
             },
             sealed: (fileId: string) => {
               sealedFiles.add(fileId);
@@ -1043,6 +1058,7 @@ export async function runStepRun(
                 maxOutputTokens: maxOutputTokensForFeature(feature),
                 providerOptions: agentProviderOptions(runtime, `step-run:${userId}`),
                 onActivity: modelAnswered,
+                stepTimeoutMs: deps.modelStepTimeoutMs,
                 onTextDelta: (delta) => live.textDelta(delta),
                 onStepFinish: (stepResult: any) => {
                   modelAnswered();
@@ -1050,6 +1066,7 @@ export async function runStepRun(
                   // A goal run's text between tool calls is a message to the user (G2).
                   // A step run keeps no message: its text goes with the step.
                   if (!say(stepResult?.text)) live.clearText();
+                  pendingSources.push(...stepSources.splice(0));
                 },
               }),
             ),
@@ -1068,8 +1085,8 @@ export async function runStepRun(
           .catch(() => undefined);
         // Fail over only before the run did anything visible.
         const madeNothing = artifacts.length === (run.artifacts || []).length && !handoff && !spoke;
-        const stalled = stall.signal.aborted && !signal.aborted;
-        if (stalled) lastError = stall.signal.reason;
+        const stalled = (stall.signal.aborted || error instanceof RunModelStepStall) && !signal.aborted;
+        if (stall.signal.aborted && stalled) lastError = stall.signal.reason;
         if (signal.aborted || !madeNothing) throw error;
         if (!stalled && !canFailOverAgentRuntime(error, feature, runtime)) throw error;
       } finally {
@@ -1292,7 +1309,8 @@ export function approvalKey(toolName: string, args: unknown): string {
 
 /** Provider hiccups and lost connections may retry once; argument and access errors may not. */
 export function isRetryableRunError(error: unknown): boolean {
-  if ((error as Error)?.name === 'RunFirstStepStall') return true;
+  const name = (error as Error)?.name;
+  if (name === 'RunFirstStepStall' || name === 'RunModelStepStall') return true;
   const message = String((error as any)?.message || error || '');
   const status = Number((error as any)?.statusCode ?? (error as any)?.status);
   if (status === 429 || status >= 500) return true;

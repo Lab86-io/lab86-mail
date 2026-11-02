@@ -106,8 +106,9 @@ a tab in document mode. The email draft carries the other files as attachments.
   `stepResult.text`). Each non-empty text becomes a run message. No new tool.
 - Run message: `{ id, at, text, sources }`. `text` max 1,500 characters. Max 40 messages on a
   run row. Older messages fold into "Earlier messages" on the client; the row keeps the newest 40.
-- The server attaches sources. The sources of a message are the things that the model read in
-  the tool calls of the same model step and of the steps since the previous message:
+- The server attaches sources. The model writes the text of a step before the tool calls of that
+  step, so the sources of a message are the things that the model read in the earlier steps since
+  the previous message. A read in the last step with no message after it has no chip:
   - `browserbase_fetch`, `web_research`, `web_file_save`: `web` (title, URL).
   - `read_thread`, `get_thread`, `get_message`: `mail` (subject, sender, thread id, account).
   - `jira_read_issue`, `atlassian_search` hits that were read: `jira` (key, title, URL).

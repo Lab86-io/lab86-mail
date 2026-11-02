@@ -139,15 +139,23 @@ export function contradicted(contract: OutcomeContract | null | undefined, evide
  * opinion about what would settle a thing; the user corrects it rather than
  * authoring it from nothing.
  */
-export function proposeContract(outcome: string, kind: 'send' | 'buy' | 'book' | 'general'): OutcomeContract {
+export function proposeContract(
+  outcome: string,
+  kind: 'send' | 'draft' | 'buy' | 'book' | 'general',
+): OutcomeContract {
   const base: Record<string, string[]> = {
     send: ['The message left your account', 'The person acknowledged it'],
+    draft: ['The draft is saved for you to read'],
     buy: ['The purchase was charged', 'The confirmation arrived'],
     book: ['The booking was confirmed', 'It is on your calendar'],
     general: ['Something confirms it happened'],
   };
   const closeWhen: CloseWhen =
-    kind === 'send' ? 'outcome_likely' : kind === 'general' ? 'outcome_confirmed' : 'outcome_confirmed';
+    kind === 'send' || kind === 'draft'
+      ? 'outcome_likely'
+      : kind === 'general'
+        ? 'outcome_confirmed'
+        : 'outcome_confirmed';
   return {
     outcome,
     proofs: base[kind].map((what, index) => ({ id: `${kind}-${index}`, what })),

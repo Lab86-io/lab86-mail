@@ -468,6 +468,94 @@ describe('every-slide presentation review', () => {
     }) as any);
     expect(result.brief).toEqual(brief);
   });
+  describe('the headline against the data of its slide', () => {
+    const chartBrief = () => {
+      const brief = harborBrief();
+      brief.slides = [
+        {
+          ...brief.slides[0],
+          role: 'chart',
+          title: 'Unit sales have risen for two straight quarters',
+          body: '',
+          items: [],
+          chart: {
+            type: 'column',
+            categories: ['Q4 2025', 'Q1 2026', 'Q2 2026'],
+            series: [{ name: 'Units', values: [63, 52, 58] }],
+            unit: 'K',
+            source: 'Sales log',
+          },
+        } as (typeof brief.slides)[number],
+      ];
+      return brief;
+    };
+    const reviewWith = (title: string) => {
+      let system = '';
+      let prompt = '';
+      const generate = (async (options: any) => {
+        system = options.system;
+        prompt = options.prompt;
+        return {
+          object: {
+            reviews: [
+              {
+                slideId: 'slide-1',
+                purpose: 'p',
+                contentAssessment: 'c',
+                layoutAssessment: 'l',
+                fixes: [{ field: 'title', text: title }],
+              },
+            ],
+          },
+        };
+      }) as any;
+      return reviewPresentation(chartBrief(), { userId: 'u', instruction: 'Review' }, generate).then(
+        (result) => ({ ...result, system: () => system, prompt: () => prompt }),
+      );
+    };
+
+    test('the review has the rule, and it reads the chart values', async () => {
+      const { system, prompt } = await reviewWith('Unit sales fell, then rose');
+      expect(system()).toContain('Check each headline against the data of its own slide.');
+      expect(system()).toContain('return a fix for the title that says what the data shows');
+      expect(JSON.parse(prompt()).slides[0].chart.series[0].values).toEqual([63, 52, 58]);
+    });
+
+    test('a fix may use the numbers of the slide data, and the old headline stays in notes', async () => {
+      const { brief } = await reviewWith('Unit sales fell from 63 to 52 in Q1 2026, then rose to 58');
+      expect(brief.slides[0].title).toBe('Unit sales fell from 63 to 52 in Q1 2026, then rose to 58');
+      expect(brief.slides[0].notes).toContain(
+        'Original title:\nUnit sales have risen for two straight quarters',
+      );
+    });
+
+    test('a fix with a number from nowhere is refused', async () => {
+      const { brief } = await reviewWith('Unit sales fell from 63 to 49');
+      expect(brief.slides[0].title).toBe('Unit sales have risen for two straight quarters');
+    });
+  });
+
+  test('speaker notes name a changed field in plain words', () => {
+    const brief = harborBrief();
+    const slide = {
+      ...brief.slides[0],
+      items: [
+        { label: 'First', detail: 'One', meta: 'A' },
+        { label: 'Second', detail: 'Two', meta: 'B' },
+      ],
+      chart: { type: 'column', categories: ['Q1'], series: [{ name: 'U', values: [1] }], source: 'Log' },
+    } as (typeof brief.slides)[number];
+    replaceSlideCopy(slide, 'items.1.meta', 'C');
+    replaceSlideCopy(slide, 'items.0.label', 'One first');
+    replaceSlideCopy(slide, 'items.0.detail', 'Only one');
+    replaceSlideCopy(slide, 'chart.source', 'Sales log');
+    expect(slide.notes).toContain('Original item 2 figure:\nB');
+    expect(slide.notes).toContain('Original item 1 heading:\nFirst');
+    expect(slide.notes).toContain('Original item 1 detail:\nOne');
+    expect(slide.notes).toContain('Original chart source:\nLog');
+    expect(slide.notes).not.toContain('items.');
+  });
+
   test('review failures get bounded retries and a truthful fallback with recoverable copy', async () => {
     const brief = harborBrief();
     const original = 'Supporting evidence for this decision. '.repeat(30);

@@ -8,8 +8,8 @@
 // a calendar invite or an RSVP becomes an approval in the queue, and the run
 // hands it to the user.
 
-import { tool as aiTool } from 'ai';
 import { z } from 'zod';
+import { agentTool as aiTool } from '../ai/agent-tool';
 import { approvalConditionMet, approvalRecipientLine } from '../ai/approval';
 import { getAiRequestContext } from '../ai/context';
 import { runSecureFetch } from '../secure/fetch';
@@ -322,8 +322,20 @@ export interface RunnerToolHost {
   timezone?: string;
 }
 
+/** The log line of a goal change holds this much of the outcome: the row limit, less the words around it. */
+const GOAL_LINE_MAX = 170;
+
 function str(value: unknown, max = 160): string {
   return typeof value === 'string' ? truncateText(value.replace(/\s+/g, ' ').trim(), max) : '';
+}
+
+/** Like str, but a long value ends at a word. */
+function strAtWord(value: unknown, max: number): string {
+  const full = str(value, max + 1);
+  if (full.length <= max) return full;
+  const head = full.slice(0, max);
+  const space = head.lastIndexOf(' ');
+  return `${(space > 0 ? head.slice(0, space) : head).trimEnd()}…`;
 }
 
 function hostOf(url: string) {
@@ -423,7 +435,7 @@ export function describeToolCall(name: string, args: any, result: any): string |
     // Goal runs (docs/albatross-goal-runs.md).
     case 'goal_update':
       return str(args?.outcome)
-        ? `Changed the goal: “${str(args.outcome, 90)}”.`
+        ? `Changed the goal: “${strAtWord(args.outcome, GOAL_LINE_MAX)}”.`
         : 'Changed what proves the goal.';
     case 'presentation_plan':
       return 'Planned the presentation.';

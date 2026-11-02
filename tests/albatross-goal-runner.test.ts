@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { z } from 'zod';
-import { GOAL_CHECK_FIRST, GOAL_RUNNER_RULES, goalRunnerContext } from '../lib/albatross/goal-run-prompt';
+import {
+  GOAL_CHECK_FIRST,
+  GOAL_RUNNER_RULES,
+  goalRunnerContext,
+  goalTaskMessage,
+} from '../lib/albatross/goal-run-prompt';
 import { SEALED_FILE_NOTE } from '../lib/albatross/goal-runs';
 import {
   fallbackHandoff,
@@ -319,7 +324,52 @@ describe('a goal run', () => {
     expect(system.match(/goal run ·/g)?.length).toBe(1);
   });
 
-  test('text between tool calls becomes messages with the sources since the last message', async () => {
+  test('a source goes on the sentence after the read, not on the sentence before it', async () => {
+    const h = harness(async (opts) => {
+      await opts.tools.read_thread.execute({ account: 'acct-1', threadId: 't1' });
+      opts.onStepFinish({ usage, text: 'I found the mail from the lead. I read it now.' });
+      opts.onStepFinish({ usage, text: 'The mail says 78 hours.' });
+      opts.onStepFinish({ usage, text: 'The draft is ready.' });
+      await opts.tools.step_handoff.execute({
+        outcome: 'ready_for_you',
+        summary: 'I read the mail.',
+        next: { kind: 'review_draft', label: 'Read and send', detail: 'Read the draft.' },
+      });
+      return { text: '', usage };
+    });
+    await runStepRun('user-1', 'run-2', h.deps);
+    const messages = h
+      .calls('albatrossStepRuns:progress')
+      .flatMap((args) => (args.message ? [args.message] : []));
+    expect(
+      messages.map((message) => [message.text, message.sources.map((source: any) => source.id)]),
+    ).toEqual([
+      ['I found the mail from the lead. I read it now.', []],
+      ['The mail says 78 hours.', ['t1']],
+      ['The draft is ready.', []],
+    ]);
+  });
+
+  test('a step with no text keeps its sources for the next message', async () => {
+    const h = harness(async (opts) => {
+      await opts.tools.read_thread.execute({ account: 'acct-1', threadId: 't1' });
+      opts.onStepFinish({ usage, text: '' });
+      opts.onStepFinish({ usage, text: 'The mail says 78 hours.' });
+      await opts.tools.step_handoff.execute({
+        outcome: 'ready_for_you',
+        summary: 'I read the mail.',
+        next: { kind: 'review_draft', label: 'Read and send', detail: 'Read the draft.' },
+      });
+      return { text: '', usage };
+    });
+    await runStepRun('user-1', 'run-2', h.deps);
+    const messages = h
+      .calls('albatrossStepRuns:progress')
+      .flatMap((args) => (args.message ? [args.message] : []));
+    expect(messages.map((message) => message.sources.map((source: any) => source.id))).toEqual([['t1']]);
+  });
+
+  test('text between tool calls becomes messages with the sources of the earlier steps', async () => {
     const h = harness(async (opts) => {
       await opts.tools.checklist_set.execute({
         items: [
@@ -360,9 +410,10 @@ describe('a goal run', () => {
         accountId: 'acct-1',
         detail: 'lead@example.com, Jul 30',
       },
+    ]);
+    expect(messages[1].sources).toEqual([
       { kind: 'web', title: 'fw9.pdf', url: 'https://www.irs.gov/pub/irs-pdf/fw9.pdf', detail: 'irs.gov' },
     ]);
-    expect(messages[1].sources).toEqual([]);
     expect(typeof messages[0].id).toBe('string');
     const artifacts = progress.flatMap((args) => (args.artifact ? [args.artifact] : []));
     expect(artifacts).toEqual([
@@ -455,8 +506,20 @@ describe('a goal run', () => {
       'Make a new one only when the user asks for a new one.',
       'Propose values that you can find or compute',
       'Send mail. There is no send tool.',
+      // A step for the checklist alone is a wasted model call.
+      'Send your checklist together with your first other tool calls, in the same step',
+      'Send it together with your next tool call, in the same step. Do not use a step only for the checklist.',
+      // The model told the user that it corrected a proof, with no call.
+      'Say that you changed the goal only after goal_update returns ok. Never say it when you did not call the tool.',
+      // The model used unsure to say that it did not send the mail.
+      'Do not use it to say what you did not do or cannot do. Never write that you did not send a message',
     ])
       expect(GOAL_RUNNER_RULES).toContain(rule);
+    expect(GOAL_RUNNER_RULES).not.toContain('Before your first other tool call');
+    expect(goalTaskMessage('The July invoice', false)).toContain(
+      'Send your checklist with your first tool calls.',
+    );
+    expect(goalTaskMessage('The July invoice', true)).not.toContain('Send your checklist first');
     expect(GOAL_RUNNER_RULES).not.toMatch(/\bAI\b(?!")/);
     expect(GOAL_RUNNER_RULES).not.toContain('!');
   });

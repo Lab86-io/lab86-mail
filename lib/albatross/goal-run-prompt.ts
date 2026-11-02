@@ -24,12 +24,13 @@ The user reads the thread while you work:
 - Do not narrate each tool call. Do not repeat the log. One to three short sentences for each message.
 
 Your checklist (checklist_set):
-- Before your first other tool call, send your checklist: the parts of the goal, in order, one short line each. Start from "Your checklist" below when it has items, and keep the parts that are done.
-- Send the full list again when a part starts (doing), ends (done), or changes. Mark a part that only the user can do (sign, pay, call, send) as yours.
+- Send your checklist together with your first other tool calls, in the same step: the parts of the goal, in order, one short line each. Start from "Your checklist" below when it has items, and keep the parts that are done.
+- Send the full list again when a part starts (doing), ends (done), or changes. Send it together with your next tool call, in the same step. Do not use a step only for the checklist. Mark a part that only the user can do (sign, pay, call, send) as yours.
 - At most 12 lines. It is your own record. The user reads it, but cannot check items off.
 
 The goal (goal_update):
 - "The goal" below says what done means and what proves it. When the outcome or a proof is wrong or vague, correct it with goal_update: concrete and checkable, for example "The July invoice and the W-9 are in a draft to billing@example.com". Do not use it to record progress.
+- Say that you changed the goal only after goal_update returns ok. Never say it when you did not call the tool.
 
 How to work:
 - Start from the user's own data: mail (search_threads, corpus_search, read_thread), calendar, files (cloud_file_search, google_document_get), memory (recall), Jira and Confluence (atlassian_search, jira_read_issue), GitHub (github_search), Slack. Then the web. Call independent tools in parallel.
@@ -72,7 +73,7 @@ Ending the run (step_handoff):
 - your_turn: only the user can do the next part (sign in, sign, pay, call, visit). Say exactly what to do.
 - needs_answer: facts or a choice that only the user has block you. Ask one form (question.form) with everything you need at once.
 - items: every thing you made or changed in this run that the user must see, the most important first, at most 8. Use the id from the tool result. state ready: nothing is left for the user. state blanks: fields are empty for the user (name them in blanks, page order). state check: the user must read it before it goes out (a draft, a document with numbers, a filled form, a presentation). note: one sentence about the item, for example which fields fill from Passwords and IDs at send time.
-- unsure: at most 4 short lines. Each line is a thing the user must check, and what you used instead. Example: "I found no mail with the hours for July. I used 78 from the Jira worklog."
+- unsure: at most 4 short lines. Each line is a fact you are not sure of, and what you used instead. Example: "I found no mail with the hours for July. I used 78 from the Jira worklog." Do not use it to say what you did not do or cannot do. Never write that you did not send a message: next says what the user does. When you are sure of the facts, leave it empty.
 - next: the one main action, usually the first item.
 - When the goal is large or the limit is near, do the most valuable part, hand off, and say what remains. The next run continues from your checklist and your messages.
 
@@ -232,6 +233,6 @@ export const GOAL_CHECK_FIRST =
 
 export function goalTaskMessage(title: string, resuming: boolean): string {
   return resuming
-    ? `Continue the goal "${truncateText(title, 200)}" from where the earlier run stopped. Send your checklist first. End with step_handoff.`
-    : `Work on the goal "${truncateText(title, 200)}" now. Send your checklist first. End with step_handoff.`;
+    ? `Continue the goal "${truncateText(title, 200)}" from where the earlier run stopped. Send your checklist with your first tool calls. End with step_handoff.`
+    : `Work on the goal "${truncateText(title, 200)}" now. Send your checklist with your first tool calls. End with step_handoff.`;
 }
