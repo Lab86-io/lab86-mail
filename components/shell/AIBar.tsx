@@ -99,6 +99,7 @@ import {
 } from '@/lib/ai/chat-attachments';
 import { routeEmailPreviewThread } from '@/lib/ai/email-preview-routing';
 import type { ToolShape } from '@/lib/ai/tool-shapes';
+import { seedHandledToolCalls, uiToolFailureText } from '@/lib/ai/ui-tool-calls';
 import { type HoldCard, holdText, kickAdvance } from '@/lib/albatross/capture-client';
 import type { DocumentContextAttachment } from '@/lib/albatross/document-handoff';
 import {
@@ -433,6 +434,7 @@ export function AssistantChat({
         : undefined,
     [chatScopeKind, chatScopeWorkId, sharedBriefContext],
   );
+  const clientToolFailuresRef = useRef<string[]>([]);
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -446,6 +448,8 @@ export function AssistantChat({
         body: () => ({
           // This client renders ask_form and ask_secure_detail; the server offers them only to clients that say so.
           clientCapabilities: ['ask_form', 'ask_secure_detail'],
+          // UI tools that failed here since the last request. The server answered them blindly.
+          clientToolFailures: clientToolFailuresRef.current.splice(0),
           // A Work thread reply runs to its end on the server and is saved there
           // (docs/albatross-threads.md, T5); the base lets that save merge correctly.
           sessionId: sessionIdRef.current ?? undefined,
@@ -557,6 +561,8 @@ export function AssistantChat({
   const activeScopeKeyRef = useRef(scopeKey);
   activeScopeKeyRef.current = scopeKey;
   const restoredRef = useRef(false);
+  // Tool calls this client already acted on. A restored chat fills it, so its old calls never run again.
+  const handled = useRef<Set<string>>(new Set());
   const saveTimer = useRef<number | null>(null);
   const priorScopeRef = useRef(scopeKey);
 
@@ -583,6 +589,7 @@ export function AssistantChat({
           useClientStore.getState().clearBriefResponse();
           sessionIdRef.current = id;
           setLastChatId(id);
+          seedHandledToolCalls(handled.current, data.session.messages);
           setMessages(data.session.messages);
           return true;
         }
@@ -644,6 +651,7 @@ export function AssistantChat({
         if (!settled()) return;
         if (data?.ok && data.session && Array.isArray(data.session.messages)) {
           baseUpdatedAtRef.current = Number(data.session.updatedAt) || 0;
+          seedHandledToolCalls(handled.current, data.session.messages);
           // A message the user sent while the copy loaded stays: merge, do not replace.
           setMessages((current) => addMergedThreadMessages(data.session.messages, current));
         }
@@ -683,8 +691,10 @@ export function AssistantChat({
           const at = Number(data?.session?.updatedAt);
           if (thread && Number.isFinite(at) && at > 0) baseUpdatedAtRef.current = at;
           // Messages another device wrote: keep them, or the next save drops them.
-          if (thread && Array.isArray(data?.mergedMessages) && data.mergedMessages.length)
+          if (thread && Array.isArray(data?.mergedMessages) && data.mergedMessages.length) {
+            seedHandledToolCalls(handled.current, data.mergedMessages);
             setMessages((current) => addMergedThreadMessages(current, data.mergedMessages as typeof current));
+          }
           return qc.invalidateQueries({ queryKey: ['chat-sessions'] });
         })
         .catch(() => undefined);
@@ -878,7 +888,6 @@ export function AssistantChat({
   );
 
   // --- UI tool intercept ---
-  const handled = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!toolSignature || preview) return;
     for (const m of messageSnapshot.current) {
@@ -957,7 +966,13 @@ export function AssistantChat({
             // (thread) account rather than collapsing the inbox view.
             setThreadAccount(args.account);
           }
-        } catch {}
+        } catch (cause) {
+          // The server already told the model this worked. The user reads the
+          // failure now, and the model reads it on the next request.
+          console.warn('[agent-ui-tool-failed]', { tool: name, error: String(cause) });
+          clientToolFailuresRef.current.push(name);
+          toast.error(uiToolFailureText(name));
+        }
       }
     }
   }, [

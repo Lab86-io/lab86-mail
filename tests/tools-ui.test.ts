@@ -17,17 +17,17 @@ describe('UI tools', () => {
       await runTool(uiFocusThread.handler, { threadId: 'thread_123', account: 'jakob@example.test' }),
     ).toEqual({
       acknowledged: true,
-      hint: 'UI will focus thread thread_123.',
+      hint: 'The app was asked to focus thread thread_123.',
     });
     expect(
       await runTool(uiSetQuery.handler, { query: 'from:alex newer_than:7d', label: 'From Alex' }),
     ).toEqual({
       acknowledged: true,
-      hint: 'UI will run "from:alex newer_than:7d".',
+      hint: 'The app was asked to run "from:alex newer_than:7d".',
     });
     expect(await runTool(uiOpenCompose.handler, { to: 'alex@example.test', subject: 'Hello' })).toEqual({
       acknowledged: true,
-      hint: 'Compose pane opened — user will review and send.',
+      hint: 'The app was asked to open the compose pane. The user reviews and sends.',
     });
     expect(await runTool(uiOpenReply.handler, { threadId: 'thread_123', body: 'Thanks!' })).toEqual({
       acknowledged: true,
@@ -38,7 +38,7 @@ describe('UI tools', () => {
     expect(await runTool(uiCloseBar.handler, {})).toEqual({ acknowledged: true });
     expect(await runTool(uiSwitchAccount.handler, { account: 'jakob@example.test' })).toEqual({
       acknowledged: true,
-      hint: 'Switched to jakob@example.test',
+      hint: 'The app was asked to switch to jakob@example.test.',
     });
   });
 });
