@@ -101,7 +101,11 @@ export const WORK_STATE_HINT: Record<WorkStateKey, string> = {
  * badge says what is waiting instead, and says nothing when nothing is.
  */
 export function railWorkBadge(items: WorkStateInput[]): string | null {
-  const count = items.filter((item) => needsYou(item)).length;
+  return needsYouBadge(items.filter((item) => needsYou(item)).length);
+}
+
+/** The words of the rail badge for a count. */
+export function needsYouBadge(count: number): string | null {
   if (count === 0) return null;
   if (count === 1) return 'One needs you';
   return `${count} need you`;

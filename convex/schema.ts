@@ -1103,7 +1103,8 @@ export default defineSchema({
       ),
     ),
     summary: v.optional(v.string()),
-    log: v.array(v.object({ at: v.number(), text: v.string() })),
+    // `key` marks an open row: a tool at work (lib/albatross/run-live.ts).
+    log: v.array(v.object({ at: v.number(), text: v.string(), key: v.optional(v.string()) })),
     next: v.optional(
       v.object({
         kind: v.union(
@@ -1212,12 +1213,29 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     startedAt: v.optional(v.number()),
+    // When the user could first read something from this run. Set once.
+    firstVisibleAt: v.optional(v.number()),
     finishedAt: v.optional(v.number()),
   })
     .index('by_user', ['userId', 'workId', 'createdAt'])
     .index('by_user_step', ['userId', 'workId', 'stepIdentity'])
     .index('by_user_active', ['userId', 'active'])
     .index('by_active_available', ['active', 'availableAt']),
+
+  // The small live row of a run at work: its lease and the text the model
+  // writes now. A write to the run row re-runs each live query that reads the
+  // run (the list, the thread, the Brief). A write here re-runs only `liveText`.
+  albatrossStepRunLive: defineTable({
+    userId: v.string(),
+    runId: v.id('albatrossStepRuns'),
+    token: v.string(),
+    leaseUntil: v.number(),
+    text: v.optional(v.string()),
+    textAt: v.optional(v.number()),
+  })
+    .index('by_run', ['runId'])
+    .index('by_lease', ['leaseUntil'])
+    .index('by_user', ['userId']),
 
   // Saved sign-ins: one Browserbase context per user. The context keeps the
   // cookies of sites the user signed in to inside the shared browser. No
@@ -2037,6 +2055,9 @@ export default defineSchema({
     ),
     artifactHtml: v.optional(v.string()),
     document: v.optional(v.any()),
+    // The page follows the plan (attachPlanDocument). The plan waits for it until this time.
+    documentPendingUntil: v.optional(v.number()),
+    documentFailedAt: v.optional(v.number()),
     artifactSource: v.optional(v.string()),
     artifactTitle: v.optional(v.string()),
     model: v.optional(v.string()),
