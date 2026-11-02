@@ -99,6 +99,8 @@ describe('the frames that show at once', () => {
     const surface = read('components/albatross/AlbatrossesSurface.tsx');
     expect(surface).not.toContain('LoaderCircle');
     expect(surface).toContain('<ThreadListPlaceholder />');
+    // The placeholder is hidden from a screen reader, so a status line says that rows come.
+    expect(surface).toContain('role="status"');
     expect(surface).toContain('const loading = works === undefined || rows === undefined;');
   });
 

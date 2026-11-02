@@ -6,7 +6,7 @@
 // Status itself comes from the server (`buildThreadRows`); nothing here
 // re-derives it.
 
-import type { ThreadFilter, ThreadRow, ThreadStatus } from './threads';
+import { compareThreadRows, type ThreadFilter, type ThreadRow, type ThreadStatus } from './threads';
 
 // ---------------------------------------------------------------------------
 // Filters and groups.
@@ -453,3 +453,40 @@ export const RAIL_EMPTY_COPY: Record<ThreadFilter, { title: string; detail: stri
   needs_you: { title: 'Nothing needs you.', detail: 'Albatross asks here when it cannot go further.' },
   working: { title: 'No run is in progress.', detail: 'Press Handle it in a thread to start one.' },
 };
+
+// ---------------------------------------------------------------------------
+// Needs you items on the rows (docs/needs-you-phases-2-5.md, open item 3).
+// ---------------------------------------------------------------------------
+
+/** The word of a row whose thread has an open Needs you item and no run that waits. */
+export const THREAD_ROW_ITEM_WORD = 'Your turn';
+
+/**
+ * A row reads the run state. A thread can also hold open Needs you items with
+ * no run that waits for the user. Such a row joins Needs you with the word
+ * "Your turn" and the first item's title as its line. A row that already
+ * waits keeps its own words.
+ */
+export function applyObligationsToThreadRows(
+  rows: readonly ThreadRow[],
+  byWork: ReadonlyMap<string, ReadonlyArray<{ title: string; createdAt: number }>>,
+): ThreadRow[] {
+  if (!byWork.size) return [...rows];
+  const applied = rows.map((row): ThreadRow => {
+    const items = byWork.get(row.workId);
+    if (!items?.length || row.closed) return row;
+    const latest = items.reduce((last, item) => (item.createdAt > last.createdAt ? item : last), items[0]);
+    const lastActivityAt = Math.max(row.lastActivityAt, latest.createdAt);
+    if (row.needsYou || row.working)
+      return lastActivityAt === row.lastActivityAt ? row : { ...row, lastActivityAt };
+    return {
+      ...row,
+      status: 'your_turn',
+      statusLabel: THREAD_ROW_ITEM_WORD,
+      preview: latest.title,
+      needsYou: true,
+      lastActivityAt,
+    };
+  });
+  return applied.sort(compareThreadRows);
+}

@@ -230,7 +230,14 @@ export function AlbatrossesSurface() {
               <ReviewBatch items={stale} />
             </div>
           ) : null}
-          {loading ? <ThreadListPlaceholder /> : null}
+          {loading ? (
+            <>
+              <p role="status" className="sr-only">
+                Your Albatrosses load.
+              </p>
+              <ThreadListPlaceholder />
+            </>
+          ) : null}
           {!loading && visibleGroups.length === 0 && later.length === 0 ? (
             <EmptyState filter={filter} />
           ) : null}

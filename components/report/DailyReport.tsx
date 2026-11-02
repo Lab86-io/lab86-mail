@@ -9,6 +9,7 @@ import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/prov
 import { Ring } from '@/components/loading-ui/ring';
 import { requestNeedsYouItem } from '@/components/needs-you/data';
 import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
+import { BriefNewEditionLine } from '@/components/report/BriefNewEditionLine';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
 import { BriefSourceLine, briefEditionNotes } from '@/components/report/BriefSourceLine';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
@@ -25,8 +26,16 @@ import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { briefFreshness, briefIsStale, briefStaleNote } from '@/lib/albatross/today';
 import { callTool } from '@/lib/api-client';
 import { hasLiveBriefSection } from '@/lib/brief/editorial';
-import { BRIEF_RETRY_NOTE, isBriefEditionGenerating, isBriefEditionRetrying } from '@/lib/brief/generation';
+import { BRIEF_RETRY_NOTE, isBriefEditionRetrying } from '@/lib/brief/generation';
 import { BRIEF_LETTER_FAILED_COPY, briefLetterFromReport } from '@/lib/brief/letter';
+import {
+  BRIEF_LIVE_REFRESH_MS,
+  type BriefPendingEdition,
+  type BriefViewResponse,
+  type BriefWebEdition,
+  briefHeadPollInterval,
+} from '@/lib/brief/web-view';
+import { fetchBriefHead, fetchBriefView } from '@/lib/brief/web-view-client';
 import { useClientStore } from '@/lib/client-state';
 import {
   artifactFrameHeight,
@@ -35,139 +44,16 @@ import {
 } from '@/lib/daily-report-action-review';
 import { handleDailyReportNavigationAction, openBriefMailThread } from '@/lib/daily-report-navigation';
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
-import { type BriefService, briefServiceIdForMcpItem, briefServicesFromIds } from '@/lib/mail/brief-services';
+import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
 import { type BriefFrameCspOptions, withBriefFrameCsp } from '@/lib/security/brief-frame-csp';
 import { withFrameNonce } from '@/lib/security/frame-nonce';
-import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import { stripEmoji } from '@/lib/shared/format';
 import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
-interface DailyReportItem {
-  account: string;
-  threadId: string;
-  subject: string;
-  people: string[];
-  whyItMatters: string;
-  nextAction?: string;
-  openLoops?: string[];
-  dueAt?: number | null;
-  unread: boolean;
-  trackedThreadId?: string;
-  surfacedBecause?: string[];
-  demotionReason?: string | null;
-  isNewSender?: boolean;
-  lane?: string;
-  receivedAt?: number | null;
-}
-
-interface DailyReportTaskItem {
-  cardId: string;
-  boardId: string;
-  columnId: string;
-  boardTitle?: string;
-  columnName?: string;
-  title: string;
-  description?: string;
-  dueAt?: number | null;
-  completedAt?: number | null;
-  priority?: 'low' | 'medium' | 'high';
-  labels?: string[];
-  assignees?: string[];
-  sourceTitle?: string;
-  sourceUrl?: string;
-  source?: {
-    accountId?: string;
-    threadId?: string;
-    calendarId?: string;
-    eventId?: string;
-    providerEventId?: string;
-  };
-  sourceThreadId?: string;
-  sourceCalendarEventId?: string;
-  sourceAccountId?: string;
-  scope: 'week' | 'month';
-}
-
-interface DailyReportCalendarItem {
-  account: string;
-  eventId: string;
-  calendarId?: string;
-  calendarName?: string;
-  title: string;
-  startAt: number;
-  endAt: number;
-  allDay?: boolean;
-  location?: string;
-  htmlLink?: string;
-  description?: string;
-  scope: 'week' | 'month';
-}
-
-interface DailyReportMcpItem {
-  server: 'github' | 'bitbucket' | 'jira' | 'slack' | 'granola';
-  kind: string;
-  title: string;
-  state?: string | null;
-  author?: string | null;
-  url?: string | null;
-  updatedAt?: number | null;
-}
-
-interface DailyReportArtifactError {
-  stage: 'ai_availability' | 'week_artifact' | 'month_artifact' | 'month_enrichment' | 'document_v2';
-  message: string;
-  at: number;
-}
-
-interface DailyReportPayload {
-  _id: string;
-  kind: 'morning' | 'evening' | 'manual' | 'weekly';
-  first?: boolean;
-  light?: boolean;
-  generatedAt: number;
-  title: string;
-  narrative: string;
-  sections: Record<
-    string,
-    | DailyReportItem[]
-    | DailyReportTaskItem[]
-    | DailyReportCalendarItem[]
-    | DailyReportMcpItem[]
-    | string
-    | AlbatrossDailyReportContext
-    | undefined
-  >;
-  stats: {
-    scannedThreads: number;
-    trackedThreads: number;
-    needsReply: number;
-    replyOwed?: number;
-    dueSoon: number;
-    bulkTailCount?: number;
-    openTasks?: number;
-    completedTasks?: number;
-    calendarEvents?: number;
-    noise?: number;
-    selected?: number;
-  };
-  model?: string;
-  errors?: string[];
-  services?: string[];
-  tier?: 'free' | 'pro' | 'team';
-  prose?: { lede: string; weekAhead: string; model: string };
-  status?: 'partial' | 'ready';
-  progress?: { stage: string; done: number; total: number };
-  // A readable edition that waits for another writer attempt.
-  retrying?: boolean;
-  // Agent-authored self-contained HTML artifact (served in a sandboxed iframe).
-  html?: string;
-  document?: BriefDocumentV2;
-  artifactStatus?: 'composing' | 'enriching' | 'rendered' | 'ready';
-  artifactSource?: 'ai' | 'deterministic' | 'document-v2';
-  artifactErrors?: DailyReportArtifactError[];
-}
+// The page reads the slim web view of an edition (lib/brief/web-view.ts).
+type DailyReportPayload = BriefWebEdition;
 
 interface ReportSummary {
   _id: string;
@@ -215,18 +101,6 @@ function editionLabel(item: ReportSummary): string {
   return `${when} · ${EDITION[item.kind]}`;
 }
 
-function asLane(value: DailyReportPayload['sections'][string]): DailyReportItem[] | undefined {
-  return Array.isArray(value) ? (value as DailyReportItem[]) : undefined;
-}
-
-function asTasks(value: DailyReportPayload['sections'][string]): DailyReportTaskItem[] {
-  return Array.isArray(value) ? (value as DailyReportTaskItem[]) : [];
-}
-
-function asEvents(value: DailyReportPayload['sections'][string]): DailyReportCalendarItem[] {
-  return Array.isArray(value) ? (value as DailyReportCalendarItem[]) : [];
-}
-
 // The Albatross section is an object, not the array/string the other sections
 // carry, so it needs its own coercion before the brief reads it.
 function asAlbatrossContext(value: unknown): AlbatrossDailyReportContext | null {
@@ -238,19 +112,9 @@ function dailyReportThreadKey(account: string, threadId: string): string {
   return JSON.stringify([account, threadId]);
 }
 
+// The server merges the source ids of the edition into `services`.
 function servicesForReport(report: DailyReportPayload): BriefService[] {
-  const serviceIds = [
-    ...(report.services || []),
-    ...asMcpItems(report.sections.mcp).map(briefServiceIdForMcpItem),
-    ...(asEvents(report.sections.calendar).length ? ['calendar'] : []),
-    ...(asTasks(report.sections.tasks).some((task) => !task.completedAt) ? ['tasks'] : []),
-  ];
-  if (!serviceIds.length) serviceIds.push('mail');
-  return briefServicesFromIds(serviceIds);
-}
-
-function asMcpItems(value: DailyReportPayload['sections'][string]): DailyReportMcpItem[] {
-  return Array.isArray(value) ? (value as DailyReportMcpItem[]) : [];
+  return briefServicesFromIds(report.services?.length ? report.services : ['mail']);
 }
 
 function BriefFooter({ report }: { report: DailyReportPayload }) {
@@ -812,11 +676,10 @@ const BRIEF_VORTEX_SOURCES: VortexSource[] = [
 
 // The "we're working on it" state: the shared context-vortex treatment —
 // context cards fly into a growing singularity until the brief springs out.
-function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
-  const stage =
-    report?.artifactStatus === 'composing' ? 'Designing the layout' : report?.progress?.stage || null;
-  const progressCount = report?.progress?.total
-    ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}`
+function ReportGenerating({ pending }: { pending: BriefPendingEdition | null }) {
+  const stage = pending?.phase === 'composing' ? 'Designing the layout' : pending?.progress?.stage || null;
+  const progressCount = pending?.progress?.total
+    ? ` — ${Math.min(pending.progress.done, pending.progress.total)} of ${pending.progress.total}`
     : '';
   const subtitle = stage
     ? `${stripEmoji(stage)}${progressCount}…`
@@ -833,6 +696,81 @@ function openBacklogThread(account: string, threadId: string) {
   openBriefMailThread(account, threadId, useClientStore.getState());
 }
 
+const LATEST_EDITION_KEY = ['daily-report', 'latest'];
+
+// The list of past editions costs one full row each to read, so it loads only
+// when the reader opens the menu.
+function EditionPicker({
+  selectedId,
+  onSelect,
+  report,
+  pendingReportId,
+  latestLabel,
+  triggerClassName,
+}: {
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  report: DailyReportPayload | null;
+  pendingReportId: string | null;
+  latestLabel: string;
+  triggerClassName: string;
+}) {
+  const [opened, setOpened] = useState(false);
+  const historyQuery = useQuery({
+    queryKey: ['daily-report', 'history'],
+    queryFn: async () =>
+      callTool<{ reports: ReportSummary[] }>('list_daily_reports', { limit: 30, summaryOnly: true }),
+    staleTime: 30_000,
+    enabled: opened,
+  });
+  // The row of the edition in writing is not an edition to read yet.
+  const history = (historyQuery.data?.reports || []).filter((item) => item._id !== pendingReportId);
+  // A deep link can select an edition before the list loads.
+  const selectedOutsideList = Boolean(
+    selectedId && report?._id === selectedId && !history.some((item) => item._id === selectedId),
+  );
+  return (
+    <Select
+      value={selectedId ?? 'latest'}
+      onOpenChange={(open) => {
+        if (open) setOpened(true);
+      }}
+      onValueChange={(value) => onSelect(value === 'latest' ? null : value)}
+    >
+      <SelectTrigger
+        size="sm"
+        aria-label="Browse past editions"
+        title="Browse past editions"
+        className={triggerClassName}
+      >
+        <SelectValue placeholder={latestLabel} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="latest">{latestLabel}</SelectItem>
+        {selectedOutsideList && report ? (
+          <SelectItem value={report._id}>{editionLabel(report)}</SelectItem>
+        ) : null}
+        {history.map((item) => (
+          <SelectItem key={item._id} value={item._id}>
+            {editionLabel(item)}
+          </SelectItem>
+        ))}
+        {historyQuery.isLoading ? (
+          <div data-brief-history-loading aria-hidden className="space-y-1.5 px-2 py-1.5">
+            <div className="h-3.5 w-36 rounded shimmer" />
+            <div className="h-3.5 w-32 rounded shimmer" />
+          </div>
+        ) : null}
+        {historyQuery.isError ? (
+          <p role="status" className="px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]">
+            Past editions did not load.
+          </p>
+        ) : null}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export function DailyReport({
   embedded = false,
   onOpenLegacy,
@@ -845,75 +783,79 @@ export function DailyReport({
 
   // Browse history; the freshest edition shows by default (selectedId = null).
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Timestamp of the last manual Generate. We keep polling until an edition
-  // newer than this appears — otherwise the post-click refetch lands on the OLD
-  // report (the new one isn't saved yet), polling stops, and the fresh brief
-  // never shows.
-  const [generatingSince, setGeneratingSince] = useState<number | null>(null);
-
-  const historyQuery = useQuery({
-    queryKey: ['daily-report', 'history'],
-    queryFn: async () =>
-      callTool<{ reports: ReportSummary[] }>('list_daily_reports', { limit: 30, summaryOnly: true }),
-    staleTime: 30_000,
-  });
-  const history = historyQuery.data?.reports || [];
 
   // A notification or the /brief?id= deep link names one edition. The latest
   // edition still renders as "latest", so the live overlay stays on.
   const requestedReportId = useBriefEditionRequest((s) => s.reportId);
   const clearRequestedReportId = useBriefEditionRequest((s) => s.clear);
-  const refetchHistory = historyQuery.refetch;
   useEffect(() => {
     if (!requestedReportId) return;
     let current = true;
-    // Notifications can name an edition newer than the cached history. Decide
-    // whether it is "latest" only after this request's history read finishes.
-    void refetchHistory().then(({ data, isError }) => {
-      if (!current || isError || !data) return;
-      const latest = requestedReportId === data.reports[0]?._id;
-      setSelectedId(latest ? null : requestedReportId);
-      if (latest) void queryClient.invalidateQueries({ queryKey: ['daily-report', 'latest'] });
-      clearRequestedReportId();
-    });
+    // Notifications can name an edition newer than the page has. Decide whether
+    // it is "latest" only after this request's read finishes. One row is enough.
+    void callTool<{ reports: ReportSummary[] }>('list_daily_reports', { limit: 1, summaryOnly: true })
+      .then((data) => {
+        if (!current) return;
+        const shown = queryClient.getQueryData<BriefViewResponse>(LATEST_EDITION_KEY)?.report?._id;
+        const latest = requestedReportId === data.reports[0]?._id || requestedReportId === shown;
+        setSelectedId(latest ? null : requestedReportId);
+        if (latest) void queryClient.invalidateQueries({ queryKey: LATEST_EDITION_KEY });
+        clearRequestedReportId();
+      })
+      .catch(() => undefined);
     return () => {
       current = false;
     };
-  }, [clearRequestedReportId, queryClient, refetchHistory, requestedReportId]);
+  }, [clearRequestedReportId, queryClient, requestedReportId]);
 
+  // The edition and its live facts. The read is heavy, so it runs on mount,
+  // after a change, when the head below moves, and at a slow interval. When
+  // nothing changed the server sends no edition and the page keeps its copy.
   const reportQuery = useQuery({
     queryKey: ['daily-report', selectedId ?? 'latest'],
-    queryFn: async () =>
-      selectedId
-        ? callTool<{ report: DailyReportPayload | null }>('get_daily_report', { id: selectedId })
-        : callTool<{ report: DailyReportPayload | null }>('get_latest_daily_report', {}),
-    staleTime: 30_000,
-    // Keep polling while an edition streams in (status: partial), while the
-    // letter is composing, OR while we're waiting for a freshly-triggered
-    // edition to land — so the page upgrades live.
-    refetchInterval: (query) => {
-      const r = query.state.data?.report;
-      if (isBriefEditionGenerating(r)) return 2_000;
-      if (r?.retrying) return 10_000;
-      if (generatingSince && (!r || (r.generatedAt || 0) < generatingSince)) return 1_500;
-      return selectedId ? false : 30_000;
+    queryFn: async ({ queryKey, signal }): Promise<BriefViewResponse> => {
+      const previous = queryClient.getQueryData<BriefViewResponse>(queryKey);
+      const next = await fetchBriefView(
+        { ...(selectedId ? { id: selectedId } : {}), known: previous?.revision ?? null },
+        signal,
+      );
+      return next.unchanged && previous ? { ...previous, stamp: next.stamp, pending: next.pending } : next;
     },
-  });
-  // The legacy HTML artifact hides the tasks and threads the reader already
-  // put away. The letter hides them through the canvas.
-  const taskDismissalsQuery = useQuery({
-    queryKey: ['daily-report', 'task-dismissals'],
-    queryFn: async () => callTool<{ cardIds: string[] }>('list_daily_report_task_dismissals', {}),
     staleTime: 30_000,
-  });
-  const threadDismissalsQuery = useQuery({
-    queryKey: ['daily-report', 'thread-dismissals'],
-    queryFn: async () =>
-      callTool<{ dismissals: DailyReportThreadDismissalRecord[] }>('list_daily_report_thread_dismissals', {}),
-    staleTime: 30_000,
+    refetchOnWindowFocus: !selectedId,
+    refetchInterval: selectedId ? false : BRIEF_LIVE_REFRESH_MS,
   });
   const report = reportQuery.data?.report || null;
-  const artifactSource = report?.html ? (report.artifactSource ?? 'ai') : null;
+
+  // The small poll: which edition the writer works on now. It reads no edition.
+  const headQuery = useQuery({
+    queryKey: ['daily-report', 'head'],
+    queryFn: ({ signal }) => fetchBriefHead(signal),
+    staleTime: 5_000,
+    retry: false,
+    refetchOnWindowFocus: !selectedId,
+    refetchInterval: (query) =>
+      briefHeadPollInterval({
+        selected: Boolean(selectedId),
+        pending: Boolean(query.state.data?.pending),
+        retrying: Boolean(report?.retrying),
+        readable: Boolean(report),
+      }),
+  });
+  const headStamp = headQuery.data?.stamp;
+  const viewStamp = reportQuery.data?.stamp;
+  const headIsNewer = headQuery.dataUpdatedAt > reportQuery.dataUpdatedAt;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each newer head read re-checks a mismatch, so a read that raced a state change converges.
+  useEffect(() => {
+    if (selectedId || !headStamp || !viewStamp || headStamp === viewStamp || !headIsNewer) return;
+    void queryClient.invalidateQueries(
+      { queryKey: LATEST_EDITION_KEY, exact: true },
+      { cancelRefetch: false },
+    );
+  }, [headIsNewer, headQuery.dataUpdatedAt, headStamp, queryClient, selectedId, viewStamp]);
+  const pending = selectedId ? null : ((headIsNewer ? headQuery.data : reportQuery.data)?.pending ?? null);
+
+  const artifactSource = report?.artifactSource ?? (report?.html ? 'ai' : null);
   const displayDocument = Boolean(report?.document && report.artifactSource === 'document-v2');
   // Every edition says so when it describes an older day. Embedded in Today,
   // the stamp in the section rule carries it; on its own page the note sits
@@ -922,23 +864,32 @@ export function DailyReport({
   const embeddedFreshness = briefFreshness(report?.generatedAt ?? null, now);
   const stale = briefIsStale(report?.generatedAt ?? null, now);
   const staleNote = embedded ? null : briefStaleNote(report?.generatedAt ?? null, now);
-  // The deterministic HTML is the interim save while the letter composes. If
-  // it is still the final artifact, the letter did not write.
-  const composingLetter =
-    artifactSource === 'deterministic' &&
-    (report?.artifactStatus === 'composing' || report?.artifactStatus === 'enriching');
+  // The plain letter is the interim save while the full edition composes. If it
+  // is still the final artifact, the full edition did not write.
+  const composingLetter = artifactSource === 'deterministic' && pending?.reportId === report?._id;
   const letterFailed =
     Boolean(report) && !displayDocument && artifactSource === 'deterministic' && !composingLetter;
   // Editions from before the letter carry a model-authored HTML page.
   const displayArtifact = Boolean(report?.html && artifactSource === 'ai' && !displayDocument);
-  // True between clicking Generate and the new edition actually appearing.
-  const waitingForNew = Boolean(generatingSince && (!report || (report.generatedAt || 0) < generatingSince));
-  const generating = waitingForNew || isBriefEditionGenerating(report);
   const retrying = isBriefEditionRetrying(report);
-  const showGeneratingState = generating;
-  useSurfaceReady('today', reportQuery.isSuccess && !showGeneratingState);
+  // The legacy HTML artifact hides the tasks and threads the reader already
+  // put away. The letter hides them through the canvas.
+  const taskDismissalsQuery = useQuery({
+    queryKey: ['daily-report', 'task-dismissals'],
+    queryFn: async () => callTool<{ cardIds: string[] }>('list_daily_report_task_dismissals', {}),
+    staleTime: 30_000,
+    enabled: displayArtifact,
+  });
+  const threadDismissalsQuery = useQuery({
+    queryKey: ['daily-report', 'thread-dismissals'],
+    queryFn: async () =>
+      callTool<{ dismissals: DailyReportThreadDismissalRecord[] }>('list_daily_report_thread_dismissals', {}),
+    staleTime: 30_000,
+    enabled: displayArtifact,
+  });
   // The letter from the stored sections, for editions without a document of
-  // their own: older editions and the ones whose composition failed.
+  // their own: older editions, the ones whose composition failed, and the plain
+  // letter that a new edition shows while it composes.
   const fallbackLetter = useMemo(() => {
     if (!report || displayDocument || displayArtifact) return null;
     return briefLetterFromReport(
@@ -950,19 +901,19 @@ export function DailyReport({
         // Absent lanes stay absent: the letter tells a budget edition from
         // a seven-lane one by which lanes the edition wrote.
         sections: {
-          answer: asLane(report.sections.answer),
-          today: asLane(report.sections.today),
-          know: asLane(report.sections.know),
-          replyOwed: asLane(report.sections.replyOwed),
-          followUpOwed: asLane(report.sections.followUpOwed),
-          timeSensitive: asLane(report.sections.timeSensitive),
-          tracked: asLane(report.sections.tracked),
-          newPeople: asLane(report.sections.newPeople),
-          fyi: asLane(report.sections.fyi),
-          calendar: asEvents(report.sections.calendar),
+          answer: report.sections.answer,
+          today: report.sections.today,
+          know: report.sections.know,
+          replyOwed: report.sections.replyOwed,
+          followUpOwed: report.sections.followUpOwed,
+          timeSensitive: report.sections.timeSensitive,
+          tracked: report.sections.tracked,
+          newPeople: report.sections.newPeople,
+          fyi: report.sections.fyi,
+          calendar: report.sections.calendar,
           albatross: asAlbatrossContext(report.sections.albatross),
           // Needs you (phase 3): a flag user's lane takes the place of Answer.
-          needsYou: (report.sections as { needsYou?: unknown }).needsYou,
+          needsYou: report.sections.needsYou,
         },
       },
       { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
@@ -983,45 +934,44 @@ export function DailyReport({
     [threadDismissalsQuery.data?.dismissals],
   );
 
-  // Stop the "generating" state once an edition newer than the click has settled.
-  useEffect(() => {
-    if (!generatingSince || !report) return;
-    if ((report.generatedAt || 0) >= generatingSince && !isBriefEditionGenerating(report)) {
-      setGeneratingSince(null);
-    }
-  }, [report, generatingSince]);
-
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['daily-report'] });
     queryClient.invalidateQueries({ queryKey: ['tracked-threads'] });
+    return queryClient.invalidateQueries({ queryKey: ['daily-report'] });
   };
 
   const generate = useMutation({
     mutationFn: async () =>
-      callTool<{ report: DailyReportPayload | null; started?: boolean }>('generate_daily_report', {
+      callTool<{ report: unknown; started?: boolean }>('generate_daily_report', {
         kind: 'manual',
         wait: false,
       }),
-    // Mark the moment so polling waits for the NEW edition, and jump to latest.
-    onMutate: () => {
-      setSelectedId(null);
-      setGeneratingSince(Date.now());
-    },
-    onSuccess: (result) => {
-      // A completed response can release the refresh control immediately.
-      if (result.report && !isBriefEditionGenerating(result.report)) {
-        setGeneratingSince(null);
-      } else if (result.started === false && result.report?.generatedAt) {
-        setGeneratingSince(result.report.generatedAt);
-      }
-      invalidate();
-    },
-    onError: () => setGeneratingSince(null),
+    // Jump to latest. The reader keeps the edition on the page while the new one
+    // is written; the mutation stays pending until the page knows about the job.
+    onMutate: () => setSelectedId(null),
+    onSuccess: () => invalidate(),
   });
 
-  const busy = generate.isPending || generating;
+  const busy = generate.isPending || Boolean(pending);
+  // The vortex is only for a user with nothing to read.
+  const showVortex = !report && busy;
+  useSurfaceReady('today', reportQuery.isSuccess && !showVortex);
   const showsLetter = displayDocument || Boolean(fallbackLetter);
   const noiseCount = typeof report?.stats?.noise === 'number' ? report.stats.noise : null;
+  const showPicker = Boolean(report && (selectedId || !report.first));
+
+  // The new edition takes the place of the old one in the same scroll. A short
+  // fade says that the text changed.
+  const letterRef = useRef<HTMLDivElement>(null);
+  const shownEdition = useRef<string | null>(null);
+  const editionKey = report ? `${report._id}:${displayDocument}` : null;
+  useEffect(() => {
+    const previous = shownEdition.current;
+    shownEdition.current = editionKey;
+    const node = letterRef.current;
+    if (!previous || !editionKey || previous === editionKey || !node?.animate) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    node.animate([{ opacity: 0.55 }, { opacity: 1 }], { duration: 280, easing: 'ease-out' });
+  }, [editionKey]);
 
   return (
     <section className={cn('report-paper relative', embedded ? 'block' : 'flex h-full flex-col')}>
@@ -1070,7 +1020,9 @@ export function DailyReport({
       {/* The letter and the legacy artifact carry their own masthead, so the
           app header is hidden for them and the controls move to a floating
           toolbar. */}
-      {!embedded && !displayArtifact && !showsLetter ? (
+      {/* While the first read loads, the skeleton holds the shape of the letter,
+          which has no app header. */}
+      {!embedded && !displayArtifact && !showsLetter && !(reportQuery.isLoading && !report) ? (
         <header className="@container border-b border-[var(--color-border)] px-5 py-4">
           <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
             <div className="min-w-0">
@@ -1082,28 +1034,15 @@ export function DailyReport({
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
-              {history.length > 1 ? (
-                <Select
-                  value={selectedId ?? 'latest'}
-                  onValueChange={(value) => setSelectedId(value === 'latest' ? null : value)}
-                >
-                  <SelectTrigger
-                    size="sm"
-                    aria-label="Browse past editions"
-                    title="Browse past editions"
-                    className="max-w-[180px] rounded-md border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                  >
-                    <SelectValue placeholder="Latest edition" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="latest">Latest edition</SelectItem>
-                    {history.map((item) => (
-                      <SelectItem key={item._id} value={item._id}>
-                        {editionLabel(item)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              {showPicker ? (
+                <EditionPicker
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  report={report}
+                  pendingReportId={pending?.reportId ?? null}
+                  latestLabel="Latest edition"
+                  triggerClassName="max-w-[180px] rounded-md border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                />
               ) : null}
               <Button
                 type="button"
@@ -1138,10 +1077,10 @@ export function DailyReport({
           {busy ? (
             <div className="mt-3 space-y-2">
               <p className="text-[12px] text-[var(--color-accent)]">
-                {report?.artifactStatus === 'composing'
+                {pending?.phase === 'composing'
                   ? 'Writing your brief…'
-                  : generating && report?.progress
-                    ? `${report.progress.stage}${report.progress.total ? ` — ${Math.min(report.progress.done, report.progress.total)} of ${report.progress.total}` : ''}…`
+                  : pending?.progress
+                    ? `${pending.progress.stage}${pending.progress.total ? ` — ${Math.min(pending.progress.done, pending.progress.total)} of ${pending.progress.total}` : ''}…`
                     : 'Reading your mail, tasks, and calendar to write today’s brief…'}
               </p>
               <div className="h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
@@ -1149,8 +1088,8 @@ export function DailyReport({
                   className="h-full rounded-full bg-[var(--color-accent)] transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
                   style={{
                     width: `${
-                      report?.progress?.total
-                        ? Math.max(6, Math.min(100, (report.progress.done / report.progress.total) * 100))
+                      pending?.progress?.total
+                        ? Math.max(6, Math.min(100, (pending.progress.done / pending.progress.total) * 100))
                         : 12
                     }%`,
                   }}
@@ -1165,28 +1104,15 @@ export function DailyReport({
           hovered. Embedded, the same controls read as the section rule above. */}
       {!embedded && (displayArtifact || showsLetter) ? (
         <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-ui border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
-          {history.length > 1 ? (
-            <Select
-              value={selectedId ?? 'latest'}
-              onValueChange={(value) => setSelectedId(value === 'latest' ? null : value)}
-            >
-              <SelectTrigger
-                size="sm"
-                aria-label="Browse past editions"
-                title="Browse past editions"
-                className="h-7 max-w-[150px] rounded-ui border-0 bg-transparent text-[11px] text-[var(--color-text-muted)] shadow-none hover:text-[var(--color-text)]"
-              >
-                <SelectValue placeholder="Latest" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="latest">Latest</SelectItem>
-                {history.map((item) => (
-                  <SelectItem key={item._id} value={item._id}>
-                    {editionLabel(item)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          {showPicker ? (
+            <EditionPicker
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              report={report}
+              pendingReportId={pending?.reportId ?? null}
+              latestLabel="Latest"
+              triggerClassName="h-7 max-w-[150px] rounded-ui border-0 bg-transparent text-[11px] text-[var(--color-text-muted)] shadow-none hover:text-[var(--color-text)]"
+            />
           ) : null}
           <button
             type="button"
@@ -1213,7 +1139,7 @@ export function DailyReport({
       <div
         className={cn(
           embedded ? 'block' : 'min-h-0 flex-1',
-          displayArtifact || showsLetter || showGeneratingState
+          displayArtifact || showsLetter || showVortex || (reportQuery.isLoading && !report)
             ? embedded
               ? ''
               : 'overflow-hidden'
@@ -1235,34 +1161,38 @@ export function DailyReport({
           </div>
         ) : reportQuery.isLoading && !report ? (
           <BriefSkeleton masthead={!embedded} />
-        ) : showGeneratingState || showsLetter || (displayArtifact && report?.html) ? (
-          // Vortex while composing; when the brief lands, the vortex collapses
-          // and the finished letter springs out of it.
-          <AnimatePresence key={showGeneratingState ? 'generating' : 'edition'} mode="wait" initial={false}>
-            {showGeneratingState ? (
+        ) : showVortex || showsLetter || (displayArtifact && report?.html) ? (
+          // The vortex shows only with nothing to read; when the first brief
+          // lands, the vortex collapses and the letter springs out of it.
+          <AnimatePresence key={showVortex ? 'generating' : 'edition'} mode="wait" initial={false}>
+            {showVortex ? (
               <motion.div
                 key="vortex"
                 className={embedded ? undefined : 'h-full'}
                 exit={{ opacity: 0, scale: 1.05 }}
                 transition={{ duration: 0.25, ease: 'easeIn' }}
               >
-                <ReportGenerating report={report} />
+                <ReportGenerating pending={pending} />
               </motion.div>
-            ) : displayDocument && report?.document ? (
+            ) : report && (displayDocument || fallbackLetter) ? (
+              // One canvas across a swap: the plain letter, the full edition, and
+              // the next edition all keep the reader's scroll position. A past
+              // edition from the menu is a new page.
               <motion.div
-                key="document-v2"
+                key="letter"
+                ref={letterRef}
                 className={embedded ? undefined : 'h-full'}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.28, ease: 'easeOut' }}
               >
                 <BriefCanvas
-                  key={report._id}
+                  key={selectedId ?? 'latest'}
                   hideInactive={!selectedId}
                   reportId={report._id}
-                  value={report.document}
+                  value={displayDocument ? report.document : fallbackLetter}
                   liveSections={!selectedId}
-                  composing={report.artifactStatus === 'composing'}
+                  composing={displayDocument && report.artifactStatus === 'composing'}
                   onChanged={invalidate}
                   // Today already carries the dateline masthead. A second one
                   // on the same scroll would say the date twice.
@@ -1276,54 +1206,10 @@ export function DailyReport({
                           reportId={report._id}
                           notes={briefEditionNotes(report)}
                           staleNote={staleNote}
+                          lead={<BriefNewEditionLine pending={pending} reportId={report._id} />}
                           className="daily-brief-layout"
                         />
                         {/* Live, not part of the edition: a handoff after 7:00 still shows. */}
-                        <ReadyForYou className="daily-brief-layout" />
-                      </>
-                    )
-                  }
-                  footer={
-                    <>
-                      {!selectedId && !hasLiveBriefSection(report.document, 'prepared_work') ? (
-                        <PreparedWork />
-                      ) : null}
-                      <BriefMailBacklog
-                        items={asLane(report.sections.overflow) || []}
-                        onOpen={openBacklogThread}
-                      />
-                      {embedded ? null : <BriefFooter report={report} />}
-                    </>
-                  }
-                />
-              </motion.div>
-            ) : fallbackLetter && report ? (
-              <motion.div
-                key="letter-fallback"
-                className={embedded ? undefined : 'h-full'}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.28, ease: 'easeOut' }}
-              >
-                <BriefCanvas
-                  key={report._id}
-                  hideInactive={!selectedId}
-                  reportId={report._id}
-                  value={fallbackLetter}
-                  liveSections={!selectedId}
-                  onChanged={invalidate}
-                  masthead={!embedded}
-                  embedded={embedded}
-                  noiseCount={noiseCount}
-                  belowMasthead={
-                    selectedId ? null : (
-                      <>
-                        <BriefSourceLine
-                          reportId={report._id}
-                          notes={briefEditionNotes(report)}
-                          staleNote={staleNote}
-                          className="daily-brief-layout"
-                        />
                         <ReadyForYou className="daily-brief-layout" />
                       </>
                     )
@@ -1346,14 +1232,22 @@ export function DailyReport({
                           </button>
                         </p>
                       ) : null}
-                      {report.errors?.length ? (
+                      {!displayDocument && report.errors?.length ? (
                         <p className="mx-auto mt-3 max-w-[620px] text-[11px] text-[var(--color-danger)]">
                           Some sources failed: {report.errors.join('; ')}
                         </p>
                       ) : null}
-                      {!selectedId ? <PreparedWork /> : null}
+                      {!selectedId &&
+                      !(
+                        displayDocument &&
+                        report.document &&
+                        hasLiveBriefSection(report.document, 'prepared_work')
+                      ) ? (
+                        <PreparedWork />
+                      ) : null}
                       <BriefMailBacklog
-                        items={asLane(report.sections.overflow) || []}
+                        items={report.sections.overflow || []}
+                        total={report.stats?.overflow}
                         onOpen={openBacklogThread}
                       />
                       {embedded ? null : <BriefFooter report={report} />}
@@ -1393,6 +1287,7 @@ export function DailyReport({
                     reportId={report._id}
                     notes={briefEditionNotes(report)}
                     staleNote={staleNote}
+                    lead={<BriefNewEditionLine pending={pending} reportId={report._id} />}
                     className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-content)] px-5 pb-2.5 pt-[3.75rem] sm:pr-64 sm:pt-2.5"
                   />
                 )}
@@ -1408,7 +1303,7 @@ export function DailyReport({
                 </div>
               </motion.div>
             ) : (
-              <ReportGenerating report={report} />
+              <ReportGenerating pending={pending} />
             )}
           </AnimatePresence>
         ) : embedded ? (

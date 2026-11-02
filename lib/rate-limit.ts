@@ -37,6 +37,28 @@ export async function enforceUserRateLimit(options: UserRateLimitOptions) {
   return result;
 }
 
+// A cheap guard for a small poll that must not cost a Convex mutation of its
+// own. It counts per process, so it stops one noisy client, not a distributed one.
+const LOCAL_WINDOW_MAX_KEYS = 5_000;
+const localWindows = new Map<string, { startedAt: number; count: number }>();
+
+export function enforceLocalRateLimit(options: UserRateLimitOptions, now = Date.now()) {
+  const key = `${options.userId}:${options.key}`;
+  const current = localWindows.get(key);
+  if (!current || now - current.startedAt >= options.windowMs) {
+    if (localWindows.size >= LOCAL_WINDOW_MAX_KEYS) localWindows.clear();
+    localWindows.set(key, { startedAt: now, count: 1 });
+    return;
+  }
+  current.count += 1;
+  if (current.count > options.limit)
+    throw new RateLimitError(
+      'Too many requests. Try again shortly.',
+      current.startedAt + options.windowMs - now,
+      options.limit,
+    );
+}
+
 export function rateLimitJson(err: RateLimitError) {
   const retryAfterSeconds = Math.max(1, Math.ceil(err.retryAfterMs / 1000));
   return NextResponse.json(

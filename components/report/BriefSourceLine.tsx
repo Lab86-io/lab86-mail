@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { callTool } from '@/lib/api-client';
 import type { BriefSourceHealth, BriefSourceHealthSummary } from '@/lib/brief/source-health';
 import { cn } from '@/lib/utils';
@@ -113,12 +114,15 @@ export function BriefSourceLine({
   className,
   notes = [],
   staleNote = null,
+  lead,
 }: {
   reportId?: string | null;
   className?: string;
   notes?: string[];
   /** Said first, in the warning color, when the edition describes an older day. */
   staleNote?: string | null;
+  /** A note about the page itself. It goes first, in the same block as the source line. */
+  lead?: ReactNode;
 }) {
   const health = useQuery({
     queryKey: ['brief-sources', reportId ?? 'none'],
@@ -132,9 +136,10 @@ export function BriefSourceLine({
     staleTime: 60_000,
     refetchInterval: 120_000,
   });
-  if (!health.data && !notes.length && !staleNote) return null;
+  if (!health.data && !notes.length && !staleNote && !lead) return null;
   return (
     <div className={cn('flex flex-col gap-1', className)}>
+      {lead}
       {staleNote ? (
         <p data-brief-stale-note className="text-[12px] font-medium text-[var(--color-warning)]">
           {staleNote}

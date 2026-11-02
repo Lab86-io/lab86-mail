@@ -5,6 +5,9 @@ import { ArrowUpRight, CornerDownLeft, Loader2, X } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { requestNeedsYouItem } from '@/components/needs-you/data';
+import { NeedsYouGate } from '@/components/needs-you/NeedsYouGate';
+import { useNeedsYou } from '@/components/needs-you/useNeedsYou';
 import { SearchResultIcon } from '@/components/palette/SearchResultIcon';
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -12,6 +15,7 @@ import { callTool, readSearchSource } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { DEFAULT_MAIL_QUERY, QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
 import { isGlobalMailSearchShortcut } from '@/lib/mail/search/focus-contract';
+import { needsYouPages, searchNeedsYouItems } from '@/lib/obligations/surfaces';
 import {
   isIndexedFile,
   matchesSearch,
@@ -109,15 +113,30 @@ export function CommandPalette() {
   );
 }
 
-function SearchContent({
-  inputRef,
-  onClose,
-  onNavigate,
-}: {
+interface SearchContentProps {
   inputRef: React.RefObject<HTMLInputElement | null>;
   onClose: () => void;
   onNavigate: (action: () => void) => void;
-}) {
+}
+
+type PaletteNeedsYou = Pick<ReturnType<typeof useNeedsYou>, 'enabled' | 'groups'>;
+const NO_NEEDS_YOU: PaletteNeedsYou = { enabled: false, groups: [] };
+
+/**
+ * Feeds the search from outside its state: when the read fails, the gate drops
+ * only this part, and the search keeps what the user typed.
+ */
+function NeedsYouFeed({ onData }: { onData: (data: PaletteNeedsYou) => void }) {
+  // Counts and rows only: no current-move read.
+  const { enabled, groups } = useNeedsYou({ execution: false });
+  useEffect(() => {
+    onData({ enabled, groups });
+  }, [enabled, groups, onData]);
+  return null;
+}
+
+function SearchContent({ inputRef, onClose, onNavigate }: SearchContentProps) {
+  const [needsYou, setNeedsYou] = useState<PaletteNeedsYou>(NO_NEEDS_YOU);
   const [draft, setDraft] = useState('');
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<SearchScope>('all');
@@ -191,7 +210,16 @@ function SearchContent({
     staleTime: 60_000,
     retry: false,
   });
-  const pages = scope === 'all' ? searchPages(trimmed) : [];
+  // Needs you (docs/research/needs-you-web-2-design-2026-11-02.md): the page
+  // under its own name, and each open item by title.
+  const pages = scope === 'all' ? needsYouPages(searchPages(trimmed), needsYou.enabled) : [];
+  const needsYouHits =
+    needsYou.enabled && scope === 'all' && trimmed.length >= 2
+      ? searchNeedsYouItems(
+          needsYou.groups.flatMap((group) => group.entries),
+          trimmed,
+        )
+      : [];
   const indexed = useQuery({
     queryKey: ['global-search', 'indexed-content', query],
     queryFn: ({ signal }) => searchIndexedContent(query, false, signal),
@@ -358,258 +386,300 @@ function SearchContent({
     );
   };
   return (
-    <Command
-      value={selected}
-      onValueChange={setSelected}
-      shouldFilter={false}
-      loop
-      onKeyDown={(event) => {
-        const input = inputRef.current;
-        const fromInput = event.target === input;
-        if (!fromInput && !(event.target instanceof Element && event.target.closest('[data-search-scope]')))
-          return;
-        const next = searchScopeForArrow(event.nativeEvent, scope, fromInput ? input! : undefined);
-        if (!next) return;
-        event.preventDefault();
-        event.stopPropagation();
-        setScope(next);
-        setNatural(false);
-        setSelected('');
-        input?.focus();
-      }}
-      className="rounded-none bg-transparent text-[var(--color-text)]"
-    >
-      <div className="relative border-b border-[var(--color-border)] [&_[data-slot=command-input-wrapper]]:h-16 [&_[data-slot=command-input-wrapper]]:border-0 [&_[data-slot=command-input-wrapper]]:pl-5 [&_[data-slot=command-input-wrapper]]:pr-14 [&_[data-slot=command-input-wrapper]>svg]:size-5 [&_[data-slot=command-input-wrapper]>svg]:text-[var(--color-accent)]">
-        <CommandInput
-          ref={inputRef}
-          data-global-search-input
-          aria-label="Search pages, mail, files, and calendar"
-          placeholder="Search anything, or jump to a page…"
-          value={draft}
-          maxLength={200}
-          onValueChange={(value) => {
-            setDraft(value);
-            setNatural(false);
-          }}
-          className="h-16 text-[16px]"
-        />
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close search"
-          className="absolute right-4 top-5 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
-        >
-          Esc
-        </button>
-      </div>
-      <fieldset
-        className="flex items-center gap-1 border-b border-[var(--color-border)] px-4 py-2"
-        aria-label="Search sources"
+    <>
+      <NeedsYouGate fallback={null}>
+        <NeedsYouFeed onData={setNeedsYou} />
+      </NeedsYouGate>
+      <Command
+        value={selected}
+        onValueChange={setSelected}
+        shouldFilter={false}
+        loop
+        onKeyDown={(event) => {
+          const input = inputRef.current;
+          const fromInput = event.target === input;
+          if (!fromInput && !(event.target instanceof Element && event.target.closest('[data-search-scope]')))
+            return;
+          const next = searchScopeForArrow(event.nativeEvent, scope, fromInput ? input! : undefined);
+          if (!next) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setScope(next);
+          setNatural(false);
+          setSelected('');
+          input?.focus();
+        }}
+        className="rounded-none bg-transparent text-[var(--color-text)]"
       >
-        {SEARCH_SCOPES.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            data-search-scope={option.id}
-            aria-pressed={scope === option.id}
-            onClick={() => {
-              setScope(option.id);
+        <div className="relative border-b border-[var(--color-border)] [&_[data-slot=command-input-wrapper]]:h-16 [&_[data-slot=command-input-wrapper]]:border-0 [&_[data-slot=command-input-wrapper]]:pl-5 [&_[data-slot=command-input-wrapper]]:pr-14 [&_[data-slot=command-input-wrapper]>svg]:size-5 [&_[data-slot=command-input-wrapper]>svg]:text-[var(--color-accent)]">
+          <CommandInput
+            ref={inputRef}
+            data-global-search-input
+            aria-label="Search pages, mail, files, and calendar"
+            placeholder="Search anything, or jump to a page…"
+            value={draft}
+            maxLength={200}
+            onValueChange={(value) => {
+              setDraft(value);
               setNatural(false);
-              setSelected('');
-              inputRef.current?.focus();
             }}
-            className={cn(
-              'rounded-md px-2.5 py-1 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]',
-              scope === option.id
-                ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
-                : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)]',
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
-        {draft ? (
+            className="h-16 text-[16px]"
+          />
           <button
             type="button"
-            aria-label="Clear search"
-            onClick={() => {
-              setDraft('');
-              setNatural(false);
-              inputRef.current?.focus();
-            }}
-            className="ml-auto rounded p-1 text-[var(--color-text-muted)]"
+            onClick={onClose}
+            aria-label="Close search"
+            className="absolute right-4 top-5 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
           >
-            <X className="size-3.5" />
+            Esc
           </button>
-        ) : null}
-      </fieldset>
-      <CommandList className="max-h-[min(430px,55dvh)] min-h-[160px] p-2">
-        {pages.length ? <CommandGroup heading="Jump to">{pages.map(row)}</CommandGroup> : null}
-        {trimmed.length >= 2 ? (
-          <>
-            {scope === 'all' || scope === 'mail'
-              ? section(
-                  accountFilter.length ? 'Mail · selected accounts' : 'Mail',
-                  {
-                    ...mail,
-                    isFetching: mail.isFetching || accounts.isFetching || (natural && translation.isFetching),
-                    error: accounts.error || translation.error || mail.error,
-                  },
-                  [],
-                  [],
-                  natural && translation.data ? `Interpreted as: ${translation.data.query}` : undefined,
-                )
-              : null}
-            {scope === 'all' || scope === 'files'
-              ? section(
-                  'Files',
-                  {
-                    ...cloud,
-                    data: { items: [], warnings: cloud.data?.warnings || [] },
-                    isFetching:
-                      cloud.isFetching || library.isFetching || indexed.isFetching || semantic.isFetching,
-                  },
-                  files,
-                  [
-                    library.error ? 'Albatross library is unavailable.' : '',
-                    ...(library.data?.warnings || []),
-                    ...(semantic.data?.warnings || []),
-                    indexed.error || semantic.error ? 'Content search is temporarily unavailable.' : '',
-                  ].filter(Boolean),
-                )
-              : null}
-            {scope === 'all'
-              ? section('Connected tools', {
-                  ...indexed,
-                  data: { items: indexedItems.filter((item) => !isIndexedFile(item)), warnings: [] },
-                })
-              : null}
-            {scope === 'all' || scope === 'calendar' ? section('Calendar', calendar) : null}
-          </>
-        ) : null}
-        {scope === 'all' && narrative.data?.length ? (
-          <CommandGroup heading={trimmed ? 'Related history' : 'Pick up a thread'}>
-            {narrative.data.map(row)}
-          </CommandGroup>
-        ) : null}
-        {scope === 'all' ? (
-          <CommandGroup heading="Actions">
-            {matchesSearch('compose new message email', trimmed) ? (
-              <CommandItem
-                value="action:compose"
-                onSelect={() =>
-                  onNavigate(() => {
-                    if (pathname !== '/')
-                      navigateSearchTarget({ kind: 'page', view: 'mail' }, useClientStore.getState(), go);
-                    useClientStore.getState().openComposeNew();
-                  })
-                }
-              >
-                Compose new message
-              </CommandItem>
-            ) : null}
-            {matchesSearch('switch dark theme', trimmed) ? (
-              <CommandItem
-                value="action:dark"
-                onSelect={() => {
-                  setTheme('dark');
-                  onClose();
-                }}
-              >
-                Dark theme
-              </CommandItem>
-            ) : null}
-            {matchesSearch('switch light theme', trimmed) ? (
-              <CommandItem
-                value="action:light"
-                onSelect={() => {
-                  setTheme('light');
-                  onClose();
-                }}
-              >
-                Light theme
-              </CommandItem>
-            ) : null}
-          </CommandGroup>
-        ) : null}
-        {scope === 'all' && trimmed ? (
-          <CommandGroup heading="Mail shortcuts">
-            {Object.entries({
-              Inbox: DEFAULT_MAIL_QUERY,
-              ...QUICK_SEARCH_QUERIES,
-            })
-              .filter(([label]) => matchesSearch(`mail ${label}`, trimmed))
-              .map(([label, value]) => (
+        </div>
+        <fieldset
+          className="flex items-center gap-1 border-b border-[var(--color-border)] px-4 py-2"
+          aria-label="Search sources"
+        >
+          {SEARCH_SCOPES.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              data-search-scope={option.id}
+              aria-pressed={scope === option.id}
+              onClick={() => {
+                setScope(option.id);
+                setNatural(false);
+                setSelected('');
+                inputRef.current?.focus();
+              }}
+              className={cn(
+                'rounded-md px-2.5 py-1 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]',
+                scope === option.id
+                  ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
+                  : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)]',
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+          {draft ? (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => {
+                setDraft('');
+                setNatural(false);
+                inputRef.current?.focus();
+              }}
+              className="ml-auto rounded p-1 text-[var(--color-text-muted)]"
+            >
+              <X className="size-3.5" />
+            </button>
+          ) : null}
+        </fieldset>
+        <CommandList className="max-h-[min(430px,55dvh)] min-h-[160px] p-2">
+          {pages.length ? <CommandGroup heading="Jump to">{pages.map(row)}</CommandGroup> : null}
+          {needsYouHits.length ? (
+            <CommandGroup heading="Needs you">
+              {needsYouHits.map((hit) => (
                 <CommandItem
-                  key={label}
-                  value={`mailbox:${label}`}
+                  key={hit.id}
+                  value={hit.id}
+                  data-needs-you-hit={hit.obligationId}
                   onSelect={() =>
                     onNavigate(() => {
-                      navigateSearchTarget({ kind: 'page', view: 'mail' }, useClientStore.getState(), go);
-                      useClientStore.getState().setQuery(value);
+                      requestNeedsYouItem(hit.obligationId);
+                      navigateSearchTarget(
+                        { kind: 'page', view: 'notifications' },
+                        useClientStore.getState(),
+                        go,
+                      );
+                    })
+                  }
+                  className="group mx-1 gap-3 rounded-lg px-3 py-2.5 data-[selected=true]:bg-[var(--color-accent-soft)] data-[selected=true]:text-[var(--color-text)]"
+                >
+                  <div aria-hidden="true" className="grid size-8 shrink-0 place-items-center">
+                    <SearchResultIcon
+                      target={{ kind: 'page', view: 'notifications' }}
+                      active={selected === hit.id}
+                    />
+                  </div>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium">{hit.title}</span>
+                    <span className="block truncate text-[11px] text-[var(--color-text-muted)]">
+                      {hit.detail}
+                    </span>
+                  </span>
+                  <CornerDownLeft className="size-3.5 opacity-0 group-data-[selected=true]:opacity-60" />
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ) : null}
+          {trimmed.length >= 2 ? (
+            <>
+              {scope === 'all' || scope === 'mail'
+                ? section(
+                    accountFilter.length ? 'Mail · selected accounts' : 'Mail',
+                    {
+                      ...mail,
+                      isFetching:
+                        mail.isFetching || accounts.isFetching || (natural && translation.isFetching),
+                      error: accounts.error || translation.error || mail.error,
+                    },
+                    [],
+                    [],
+                    natural && translation.data ? `Interpreted as: ${translation.data.query}` : undefined,
+                  )
+                : null}
+              {scope === 'all' || scope === 'files'
+                ? section(
+                    'Files',
+                    {
+                      ...cloud,
+                      data: { items: [], warnings: cloud.data?.warnings || [] },
+                      isFetching:
+                        cloud.isFetching || library.isFetching || indexed.isFetching || semantic.isFetching,
+                    },
+                    files,
+                    [
+                      library.error ? 'Albatross library is unavailable.' : '',
+                      ...(library.data?.warnings || []),
+                      ...(semantic.data?.warnings || []),
+                      indexed.error || semantic.error ? 'Content search is temporarily unavailable.' : '',
+                    ].filter(Boolean),
+                  )
+                : null}
+              {scope === 'all'
+                ? section('Connected tools', {
+                    ...indexed,
+                    data: { items: indexedItems.filter((item) => !isIndexedFile(item)), warnings: [] },
+                  })
+                : null}
+              {scope === 'all' || scope === 'calendar' ? section('Calendar', calendar) : null}
+            </>
+          ) : null}
+          {scope === 'all' && narrative.data?.length ? (
+            <CommandGroup heading={trimmed ? 'Related history' : 'Pick up a thread'}>
+              {narrative.data.map(row)}
+            </CommandGroup>
+          ) : null}
+          {scope === 'all' ? (
+            <CommandGroup heading="Actions">
+              {matchesSearch('compose new message email', trimmed) ? (
+                <CommandItem
+                  value="action:compose"
+                  onSelect={() =>
+                    onNavigate(() => {
+                      if (pathname !== '/')
+                        navigateSearchTarget({ kind: 'page', view: 'mail' }, useClientStore.getState(), go);
+                      useClientStore.getState().openComposeNew();
                     })
                   }
                 >
-                  <span className="capitalize">{label}</span>
+                  Compose new message
                 </CommandItem>
-              ))}
-          </CommandGroup>
-        ) : null}
-        {scope === 'all' && pathname === '/' && trimmed ? (
-          <CommandGroup heading="Ask Albatross">
-            {[
-              ['Triage newest 25', 'Triage my newest 25 inbox threads'],
-              ['Summarize today', 'Summarize my unread from today and propose 3 replies'],
-            ]
-              .filter(([label]) => matchesSearch(`ask ${label}`, trimmed))
-              .map(([label, request]) => (
+              ) : null}
+              {matchesSearch('switch dark theme', trimmed) ? (
                 <CommandItem
-                  key={label}
-                  value={`ask:${label}`}
-                  onSelect={() => onNavigate(() => useClientStore.getState().askAssistant(request))}
+                  value="action:dark"
+                  onSelect={() => {
+                    setTheme('dark');
+                    onClose();
+                  }}
                 >
-                  {label}
+                  Dark theme
                 </CommandItem>
-              ))}
-          </CommandGroup>
-        ) : null}
-      </CommandList>
-      <div className="max-h-[25dvh] shrink-0 overflow-y-auto">
-        {sectionStatuses}
-        {trimmed.length < 2 ? (
-          <p className="px-4 py-3 text-[12px] text-[var(--color-text-muted)]">
-            {trimmed
-              ? 'Keep typing to search across your sources.'
-              : 'Jump to a page, or type to find mail, files, and events.'}
-          </p>
-        ) : null}
-      </div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-3 text-[10px] text-[var(--color-text-muted)]">
-        <span>
-          <kbd>↑ ↓</kbd> navigate
-        </span>
-        <span title="Switch categories when the query is empty or the caret is at its beginning or end">
-          <kbd>← →</kbd> categories
-        </span>
-        <span>
-          <kbd>↵</kbd> open
-        </span>
-        <span>
-          <kbd>esc</kbd> back to your page
-        </span>
-        {scope === 'mail' && trimmed.length >= 2 && !natural ? (
-          <button
-            type="button"
-            className="ml-auto text-[var(--color-accent)] hover:underline"
-            onClick={() => setNatural(true)}
-          >
-            Interpret as a mail request
-          </button>
-        ) : null}
-        {scope === 'files' ? (
-          <span className="basis-full">Connected drives and recent Albatross files · searches names</span>
-        ) : null}
-      </div>
-    </Command>
+              ) : null}
+              {matchesSearch('switch light theme', trimmed) ? (
+                <CommandItem
+                  value="action:light"
+                  onSelect={() => {
+                    setTheme('light');
+                    onClose();
+                  }}
+                >
+                  Light theme
+                </CommandItem>
+              ) : null}
+            </CommandGroup>
+          ) : null}
+          {scope === 'all' && trimmed ? (
+            <CommandGroup heading="Mail shortcuts">
+              {Object.entries({
+                Inbox: DEFAULT_MAIL_QUERY,
+                ...QUICK_SEARCH_QUERIES,
+              })
+                .filter(([label]) => matchesSearch(`mail ${label}`, trimmed))
+                .map(([label, value]) => (
+                  <CommandItem
+                    key={label}
+                    value={`mailbox:${label}`}
+                    onSelect={() =>
+                      onNavigate(() => {
+                        navigateSearchTarget({ kind: 'page', view: 'mail' }, useClientStore.getState(), go);
+                        useClientStore.getState().setQuery(value);
+                      })
+                    }
+                  >
+                    <span className="capitalize">{label}</span>
+                  </CommandItem>
+                ))}
+            </CommandGroup>
+          ) : null}
+          {scope === 'all' && pathname === '/' && trimmed ? (
+            <CommandGroup heading="Ask Albatross">
+              {[
+                ['Triage newest 25', 'Triage my newest 25 inbox threads'],
+                ['Summarize today', 'Summarize my unread from today and propose 3 replies'],
+              ]
+                .filter(([label]) => matchesSearch(`ask ${label}`, trimmed))
+                .map(([label, request]) => (
+                  <CommandItem
+                    key={label}
+                    value={`ask:${label}`}
+                    onSelect={() => onNavigate(() => useClientStore.getState().askAssistant(request))}
+                  >
+                    {label}
+                  </CommandItem>
+                ))}
+            </CommandGroup>
+          ) : null}
+        </CommandList>
+        <div className="max-h-[25dvh] shrink-0 overflow-y-auto">
+          {sectionStatuses}
+          {trimmed.length < 2 ? (
+            <p className="px-4 py-3 text-[12px] text-[var(--color-text-muted)]">
+              {trimmed
+                ? 'Keep typing to search across your sources.'
+                : 'Jump to a page, or type to find mail, files, and events.'}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-3 text-[10px] text-[var(--color-text-muted)]">
+          <span>
+            <kbd>↑ ↓</kbd> navigate
+          </span>
+          <span title="Switch categories when the query is empty or the caret is at its beginning or end">
+            <kbd>← →</kbd> categories
+          </span>
+          <span>
+            <kbd>↵</kbd> open
+          </span>
+          <span>
+            <kbd>esc</kbd> back to your page
+          </span>
+          {scope === 'mail' && trimmed.length >= 2 && !natural ? (
+            <button
+              type="button"
+              className="ml-auto text-[var(--color-accent)] hover:underline"
+              onClick={() => setNatural(true)}
+            >
+              Interpret as a mail request
+            </button>
+          ) : null}
+          {scope === 'files' ? (
+            <span className="basis-full">Connected drives and recent Albatross files · searches names</span>
+          ) : null}
+        </div>
+      </Command>
+    </>
   );
 }

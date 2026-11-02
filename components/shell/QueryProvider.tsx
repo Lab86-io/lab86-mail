@@ -1,12 +1,13 @@
 'use client';
 
 import { useAuth } from '@clerk/nextjs';
-import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ConvexProvider, ConvexReactClient } from 'convex/react';
+import { MutationCache, QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { ConvexProviderWithAuth, ConvexReactClient } from 'convex/react';
 import { ConvexProviderWithClerk } from 'convex/react-clerk';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { PendingSendProvider } from '@/components/compose/PendingSendProvider';
+import { bindBriefEditionCache } from '@/lib/brief/edition-cache';
 import { createMutationErrorFallback } from '@/lib/shell/mutation-errors';
 import { SignOutStorageGuard } from './SignOutStorageGuard';
 
@@ -16,6 +17,29 @@ const convex = new ConvexReactClient(convexUrl || 'http://127.0.0.1:3210', {
   logger: Boolean(convexUrl),
   skipConvexDeploymentUrlCheck: !convexUrl,
 });
+
+// Without Clerk nobody is signed in. Convex readers still get an auth answer.
+const SIGNED_OUT_CONVEX_AUTH = {
+  isLoading: false,
+  isAuthenticated: false,
+  fetchAccessToken: async () => null,
+};
+const signedOutConvexAuth = () => SIGNED_OUT_CONVEX_AUTH;
+
+/**
+ * The latest edition on disk, for this signed-in user only. It waits for Clerk
+ * to name the user, so a second person on this browser never sees the first
+ * person's mail.
+ */
+function BriefEditionPersistence() {
+  const client = useQueryClient();
+  const { isLoaded, userId } = useAuth();
+  useEffect(() => {
+    if (!isLoaded || !userId) return;
+    return bindBriefEditionCache(client, userId);
+  }, [client, isLoaded, userId]);
+  return null;
+}
 
 export function QueryProvider({
   children,
@@ -51,11 +75,16 @@ export function QueryProvider({
     <QueryClientProvider client={client}>
       {/* ClerkProvider wraps this tree only when clerkEnabled is true. */}
       {clerkEnabled ? <SignOutStorageGuard /> : null}
+      {clerkEnabled ? <BriefEditionPersistence /> : null}
       <PendingSendProvider>{children}</PendingSendProvider>
     </QueryClientProvider>
   );
   if (!convexUrl || !clerkEnabled || !clerkPublishableKey)
-    return <ConvexProvider client={convex}>{content}</ConvexProvider>;
+    return (
+      <ConvexProviderWithAuth client={convex} useAuth={signedOutConvexAuth}>
+        {content}
+      </ConvexProviderWithAuth>
+    );
   return (
     <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
       {content}

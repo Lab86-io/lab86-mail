@@ -1,8 +1,10 @@
 'use client';
 
 import { Bell } from 'lucide-react';
+import { useEffect } from 'react';
 import { SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import type { NeedsYouSummary } from '@/lib/obligations/groups';
+import { tabTitle } from '@/lib/obligations/surfaces';
 import { cn } from '@/lib/utils';
 import { useNeedsYouSnapshot } from './data';
 import { NeedsYouGate } from './NeedsYouGate';
@@ -26,10 +28,23 @@ interface RowProps {
   onSelect: () => void;
 }
 
+/** The browser tab shows the Now count: "(3) Albatross". */
+export const TAB_TITLE_BASE = 'Albatross';
+
+function useNeedsYouTabTitle(now: number) {
+  useEffect(() => {
+    document.title = tabTitle(TAB_TITLE_BASE, now);
+    return () => {
+      document.title = TAB_TITLE_BASE;
+    };
+  }, [now]);
+}
+
 function Row({ active, onSelect }: RowProps) {
   // Counts only: no current-move read.
   const { isLoading, summary } = useNeedsYou({ execution: false });
   const badge = isLoading ? null : railNeedsYouBadge(summary);
+  useNeedsYouTabTitle(isLoading ? 0 : summary.now);
   return (
     <SidebarMenuItem>
       <SidebarMenuButton

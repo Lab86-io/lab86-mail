@@ -155,11 +155,13 @@ describe('Today puts responsibility above decoration', () => {
   test('the shell routes Today to the Daily Brief', () => {
     const shell = read('components/shell/AppShell.tsx');
     expect(shell).toContain('<Today />');
-    // Today is the Brief. The only thing above it is the quiet trial note.
+    // Today is the Brief. The only thing above it is the quiet trial note. The
+    // Needs you layer is a context around the Brief, not a surface above it.
     const today = read('components/report/Today.tsx');
     expect(today).toContain('<DailyReport />');
     expect([...today.matchAll(/<([A-Z][A-Za-z]+)/g)].map((match) => match[1]).sort()).toEqual([
       'DailyReport',
+      'TodayNeedsYouLayer',
       'TrialDaysLeftNote',
     ]);
     expect(shell).not.toContain('<DailyReport />');

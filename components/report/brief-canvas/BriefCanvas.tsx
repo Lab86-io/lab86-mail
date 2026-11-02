@@ -13,12 +13,14 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 import { requestNeedsYouItem } from '@/components/needs-you/data';
+import { useBriefLiveLayer } from '@/components/report/live-layer';
 import { FRONTIER_GATE_REGION_ID } from '@/lib/albatross/plan-frontier';
 import { callTool } from '@/lib/api-client';
 import { briefQueryKeys, briefRefKey, collectBriefRefs, hydratedEntityKey } from '@/lib/brief/hydration';
 import { briefLetterKind } from '@/lib/brief/letter';
 import { useClientStore } from '@/lib/client-state';
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
+import { withoutNeedsYouLane } from '@/lib/obligations/brief-region';
 import { briefActionTier, isKnownBriefAction } from '@/lib/shared/brief-actions';
 import {
   type BriefActionV2,
@@ -48,6 +50,7 @@ import {
   briefEventRequest,
   postBriefEvent,
 } from './brief-action-runtime';
+import { InactiveBriefRefsLive } from './InactiveBriefRefsLive';
 
 export const BRIEF_UNKNOWN_ACTION_COPY = 'The brief cannot run this action yet.';
 
@@ -97,16 +100,21 @@ export function BriefCanvas({
   noiseCount?: number | null;
 }) {
   const queryClient = useQueryClient();
+  // The live layer of Today: the Needs you list under the masthead of the
+  // current edition. While it shows, the stored lane stays out.
+  const liveLayer = useBriefLiveLayer();
+  const hideNeedsYou = liveSections && Boolean(liveLayer?.hideNeedsYou);
   const document = useMemo(() => {
     const parsed = parseBriefDocument(value);
-    return {
+    const base = {
       ...parsed,
       // Earlier Work plans embedded their blocking question inside the brief.
       // Questions now belong to the attached conversation, including for old
       // saved documents that have not been regenerated yet.
       regions: parsed.regions.filter((region) => region.id !== FRONTIER_GATE_REGION_ID),
     };
-  }, [value]);
+    return hideNeedsYou ? withoutNeedsYouLane(base) : base;
+  }, [value, hideNeedsYou]);
   // A budget brief or an area pulse reads as a letter in one measure. Older
   // editions keep the editorial grid.
   const letterKind = useMemo(() => briefLetterKind(document), [document]);
@@ -115,31 +123,29 @@ export function BriefCanvas({
     () => refs.filter((ref) => ['work', 'task', 'card'].includes(ref.kind)),
     [refs],
   );
-  const inactive = useQuery({
-    queryKey: ['brief-v2', 'inactive', actionableRefs.map((ref) => `${ref.kind}:${ref.id}`).join('|')],
-    enabled: hideInactive && actionableRefs.length > 0,
-    refetchInterval: 5_000,
-    queryFn: async () => {
-      const batches = Array.from({ length: Math.ceil(actionableRefs.length / 100) }, (_, index) =>
-        actionableRefs.slice(index * 100, (index + 1) * 100),
-      );
-      const results = await Promise.all(
-        batches.map(async (refs) => {
-          const response = await fetch('/api/brief/state', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ refs: refs.map(({ kind, id }) => ({ kind, id })) }),
-          });
-          if (!response.ok) throw new Error('Could not refresh brief state.');
-          return (await response.json()).inactive as string[];
-        }),
-      );
-      return results.flat();
-    },
+  // The live subscription below writes the answer here.
+  const inactiveKey = useMemo(
+    () => ['brief-v2', 'inactive', actionableRefs.map((ref) => `${ref.kind}:${ref.id}`).join('|')],
+    [actionableRefs],
+  );
+  const inactive = useQuery<string[]>({
+    queryKey: inactiveKey,
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+    queryFn: () => [],
   });
   const [hiddenRefs, setHiddenRefs] = useState<Set<string>>(() => new Set());
   const [completedRefs, setCompletedRefs] = useState<Map<string, boolean>>(() => new Map());
   const [canvasReview, setCanvasReview] = useState<BriefActionV2 | null>(null);
+  // The canvas stays mounted across a new edition, so the reader's scroll stays.
+  // What the reader did to the old edition's rows does not carry over.
+  const [shownReportId, setShownReportId] = useState(reportId);
+  if (shownReportId !== reportId) {
+    setShownReportId(reportId);
+    setHiddenRefs(new Set());
+    setCompletedRefs(new Map());
+    setCanvasReview(null);
+  }
   const setSelectedThread = useClientStore((state) => state.setSelectedThread);
   const setThreadAccount = useClientStore((state) => state.setThreadAccount);
   const setPrimaryView = useClientStore((state) => state.setPrimaryView);
@@ -440,6 +446,9 @@ export function BriefCanvas({
       )}
       data-brief-document-version={document.version}
     >
+      {hideInactive && actionableRefs.length > 0 ? (
+        <InactiveBriefRefsLive refs={actionableRefs} queryKey={inactiveKey} />
+      ) : null}
       {masthead ? (
         <BriefMasthead
           generatedAt={document.generatedAt}
@@ -449,6 +458,11 @@ export function BriefCanvas({
         />
       ) : null}
       {belowMasthead}
+      {liveSections && liveLayer?.node ? (
+        <div data-brief-live-layer className="daily-brief-layout">
+          {liveLayer.node}
+        </div>
+      ) : null}
       {headerVisible ? (
         <header
           className={cn(

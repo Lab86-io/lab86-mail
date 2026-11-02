@@ -98,7 +98,7 @@ export function buildTodaySummary(input: {
 
 const defaults = {
   latest: (userId: string) =>
-    runWithAiRequestContext({ userId, agent: 'user' }, () => getLatestDailyReport(undefined, true)),
+    runWithAiRequestContext({ userId, agent: 'user' }, () => getLatestDailyReport()),
   events: (userId: string, now: number) =>
     convexQuery<TodaySummaryEvent[]>(api.calendarData.listEvents, {
       userId,
