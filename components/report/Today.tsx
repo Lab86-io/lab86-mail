@@ -1,6 +1,7 @@
 'use client';
 
 import { TrialDaysLeftNote } from '@/components/billing/TrialNote';
+import { TodayNeedsYouLayer } from '@/components/needs-you/TodayNeedsYou';
 import { DailyReport } from '@/components/report/DailyReport';
 
 /**
@@ -8,14 +9,19 @@ import { DailyReport } from '@/components/report/DailyReport';
  * masthead, edition history, write/refresh actions, loading/error states, and
  * legacy-artifact rendering, so this route does not put a dashboard in front
  * of the document or create a second version of those flows. The only thing
- * above it is the quiet trial note in the last days of a trial.
+ * above it is the quiet trial note in the last days of a trial. The Needs you
+ * layer gives the brief canvas the live list for under the masthead
+ * (components/needs-you/TodayNeedsYou.tsx); a user outside the flag sees no
+ * change.
  */
 export function Today() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <TrialDaysLeftNote className="shrink-0 px-5 pt-3 text-center" />
       <div className="min-h-0 flex-1">
-        <DailyReport />
+        <TodayNeedsYouLayer>
+          <DailyReport />
+        </TodayNeedsYouLayer>
       </div>
     </div>
   );

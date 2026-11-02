@@ -22,6 +22,7 @@ export function ShortcutsBinding() {
   const openCaptureWith = useClientStore((s) => s.openCaptureWith);
   const setShortcutsOpen = useClientStore((s) => s.setShortcutsOpen);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
   const paletteOpen = useClientStore((s) => s.paletteOpen);
   const setPaletteOpen = useClientStore((s) => s.setPaletteOpen);
@@ -68,6 +69,13 @@ export function ShortcutsBinding() {
         if (e.key === 'i') {
           e.preventDefault();
           setSmartCategory('main');
+          pendingG = 0;
+          return;
+        }
+        // g n: the Needs you page (the bell's page for everyone).
+        if (e.key === 'n') {
+          e.preventDefault();
+          setPrimaryView('notifications');
           pendingG = 0;
           return;
         }
@@ -180,6 +188,7 @@ export function ShortcutsBinding() {
     openCaptureWith,
     setShortcutsOpen,
     setSelectedThread,
+    setPrimaryView,
     setPaletteOpen,
     closeCompose,
     qc,

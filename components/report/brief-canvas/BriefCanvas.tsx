@@ -13,12 +13,14 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 import { requestNeedsYouItem } from '@/components/needs-you/data';
+import { useBriefLiveLayer } from '@/components/report/live-layer';
 import { FRONTIER_GATE_REGION_ID } from '@/lib/albatross/plan-frontier';
 import { callTool } from '@/lib/api-client';
 import { briefQueryKeys, briefRefKey, collectBriefRefs, hydratedEntityKey } from '@/lib/brief/hydration';
 import { briefLetterKind } from '@/lib/brief/letter';
 import { useClientStore } from '@/lib/client-state';
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
+import { withoutNeedsYouLane } from '@/lib/obligations/brief-region';
 import { briefActionTier, isKnownBriefAction } from '@/lib/shared/brief-actions';
 import {
   type BriefActionV2,
@@ -97,16 +99,21 @@ export function BriefCanvas({
   noiseCount?: number | null;
 }) {
   const queryClient = useQueryClient();
+  // The live layer of Today: the Needs you list under the masthead of the
+  // current edition. While it shows, the stored lane stays out.
+  const liveLayer = useBriefLiveLayer();
+  const hideNeedsYou = liveSections && Boolean(liveLayer?.hideNeedsYou);
   const document = useMemo(() => {
     const parsed = parseBriefDocument(value);
-    return {
+    const base = {
       ...parsed,
       // Earlier Work plans embedded their blocking question inside the brief.
       // Questions now belong to the attached conversation, including for old
       // saved documents that have not been regenerated yet.
       regions: parsed.regions.filter((region) => region.id !== FRONTIER_GATE_REGION_ID),
     };
-  }, [value]);
+    return hideNeedsYou ? withoutNeedsYouLane(base) : base;
+  }, [value, hideNeedsYou]);
   // A budget brief or an area pulse reads as a letter in one measure. Older
   // editions keep the editorial grid.
   const letterKind = useMemo(() => briefLetterKind(document), [document]);
@@ -449,6 +456,11 @@ export function BriefCanvas({
         />
       ) : null}
       {belowMasthead}
+      {liveSections && liveLayer?.node ? (
+        <div data-brief-live-layer className="daily-brief-layout">
+          {liveLayer.node}
+        </div>
+      ) : null}
       {headerVisible ? (
         <header
           className={cn(
