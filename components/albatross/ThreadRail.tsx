@@ -37,7 +37,7 @@ import {
   type ThreadFilter,
   type ThreadRow as ThreadRowData,
 } from '@/lib/albatross/threads';
-import { obligationsByWork } from '@/lib/obligations/surfaces';
+import { owedByWork } from '@/lib/obligations/surfaces';
 import { cn } from '@/lib/utils';
 import { ThreadRow } from './ThreadRow';
 
@@ -86,7 +86,7 @@ export function useThreadRowsWithItems(rawRows: ThreadRowData[] | undefined, now
   const snapshot = useNeedsYouSnapshot();
   return useMemo(() => {
     if (!rawRows || !snapshot?.enabled) return rawRows;
-    return applyObligationsToThreadRows(rawRows, obligationsByWork(snapshot.items, nowMs));
+    return applyObligationsToThreadRows(rawRows, owedByWork(snapshot.items, nowMs));
   }, [rawRows, snapshot, nowMs]);
 }
 

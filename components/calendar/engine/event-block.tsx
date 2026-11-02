@@ -152,7 +152,7 @@ export function EventBlock({ event, className }: IProps) {
                 )}
 
                 <p className="truncate font-semibold">{event.title}</p>
-                <EventNeedsYouMark accountId={event.accountId} eventId={event.id} />
+                <EventNeedsYouMark event={event} />
               </div>
 
               {showTime && (

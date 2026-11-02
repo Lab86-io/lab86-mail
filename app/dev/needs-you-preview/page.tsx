@@ -345,7 +345,7 @@ function CalendarSurfacePreview({ server }: { server: FixtureServer }) {
                         ? 'Board check-in'
                         : 'Team lunch'}
                   </p>
-                  <EventNeedsYouMark accountId="acct_alex" eventId={eventId} />
+                  <EventNeedsYouMark event={{ accountId: 'acct_alex', id: eventId }} />
                 </div>
                 <p className="truncate">3:00 PM - 3:45 PM</p>
               </div>
@@ -360,7 +360,7 @@ function CalendarSurfacePreview({ server }: { server: FixtureServer }) {
                 <h2 className="mb-4 font-display text-[18px] leading-snug">
                   {eventId === 'evt_harbor_followup' ? 'Harbor Labs follow-up' : 'Board check-in'}
                 </h2>
-                <EventNeedsYou accountId="acct_alex" eventId={eventId} />
+                <EventNeedsYou event={{ accountId: 'acct_alex', id: eventId }} />
               </div>
             ))}
           </div>

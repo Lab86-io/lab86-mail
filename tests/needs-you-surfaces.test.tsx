@@ -42,6 +42,8 @@ import {
   obligationsByEvent,
   obligationsByThread,
   obligationsByWork,
+  occurrenceObligations,
+  owedByWork,
   searchNeedsYouItems,
   TODAY_NEEDS_YOU_CAP,
   tabTitle,
@@ -118,6 +120,38 @@ describe('the lookups', () => {
     expect(map.has('slack:T01:C_RELEASE:1730131320')).toBe(false);
   });
 
+  test('a series answer belongs to the occurrence that starts at its time', () => {
+    const start = Date.parse('2031-01-02T15:00:00Z');
+    const base = fixture.items.find((item) => item.eventId === 'evt_harbor_followup')!;
+    const rsvp = {
+      ...base,
+      id: 'ob_series',
+      kind: 'rsvp' as const,
+      accountId: 'a',
+      eventId: 'master',
+      eventStart: start,
+    };
+    const prepare = {
+      ...base,
+      id: 'ob_prepare',
+      kind: 'prepare' as const,
+      accountId: 'a',
+      eventId: 'inst_1',
+      eventStart: start,
+    };
+    const byEvent = obligationsByEvent([rsvp, prepare], NOW);
+    const at = (id: string, startDate: string) =>
+      occurrenceObligations(byEvent, { accountId: 'a', id, masterEventId: 'master', startDate }).map(
+        (item) => item.id,
+      );
+    expect(at('inst_1', '2031-01-02T15:00:00Z')).toEqual(['ob_series', 'ob_prepare']);
+    expect(at('inst_2', '2031-01-09T15:00:00Z')).toEqual([]);
+    expect(occurrenceObligations(byEvent, { id: 'inst_1' })).toEqual([]);
+    expect(occurrenceObligations(byEvent, { accountId: 'a', id: 'inst_1' }).map((item) => item.id)).toEqual([
+      'ob_prepare',
+    ]);
+  });
+
   test('events map to their rsvp and prepare items; Albatrosses map to their open items', () => {
     const events = obligationsByEvent(fixture.items, NOW);
     const eventKey = (id: string) => {
@@ -179,10 +213,24 @@ describe('the areas', () => {
     expect(source).toContain("row.kind === 'obligation' && row.workId");
   });
 
+  test('an item that waits on someone else stays out of what the user owes', () => {
+    const owed = byId('ob_flight');
+    const waits = fixture.items.find((item) => item.kind === 'waiting')!;
+    const byWork = owedByWork(
+      [
+        { ...owed, workId: 'w1' },
+        { ...waits, workId: 'w1' },
+      ],
+      NOW,
+    );
+    expect(byWork.get('w1')?.map((item) => item.id)).toEqual([owed.id]);
+  });
+
   test('the generated brief and the artifact of an area show the ledger rows too', () => {
     const source = readFileSync('components/albatross/AreaHome.tsx', 'utf8');
     expect(source.match(/brief=\{withLedger\(/g)).toHaveLength(2);
-    expect(source).toContain('<NeedsYouSection rows={ledgerRows} bounded={false} />');
+    expect(source).toContain('<NeedsYouSection rows={ledgerRows} bounded={ledgerBounded} />');
+    expect(source).toContain('max-h-[45%] shrink-0 overflow-y-auto');
   });
 });
 
@@ -236,7 +284,7 @@ describe('the thread rail rows', () => {
   test('the rail and the hop keys read the same rows from the shared snapshot', () => {
     const rail = readFileSync('components/albatross/ThreadRail.tsx', 'utf8');
     expect(rail).toContain('useNeedsYouSnapshot()');
-    expect(rail).toContain('applyObligationsToThreadRows(rawRows, obligationsByWork(snapshot.items, nowMs))');
+    expect(rail).toContain('applyObligationsToThreadRows(rawRows, owedByWork(snapshot.items, nowMs))');
     const thread = readFileSync('components/albatross/WorkThread.tsx', 'utf8');
     expect(thread).toContain('useThreadRowsWithItems(useThreadRows(awakeWorks), railNowMs)');
   });
@@ -692,10 +740,10 @@ describe('the calendar', () => {
   const ACCOUNT = String(fixture.items.find((item) => item.eventId === 'evt_harbor_followup')?.accountId);
   const html = renderToStaticMarkup(
     <CalendarNeedsYouItems items={fixture.items} now={NOW} timezone={TZ}>
-      <EventNeedsYouMark accountId={ACCOUNT} eventId="evt_harbor_followup" />
-      <EventNeedsYouMark accountId={ACCOUNT} eventId="evt_plain" />
-      <EventNeedsYou accountId={ACCOUNT} eventId="evt_harbor_followup" />
-      <EventNeedsYou accountId={ACCOUNT} eventId="evt_board_checkin" />
+      <EventNeedsYouMark event={{ accountId: ACCOUNT, id: 'evt_harbor_followup' }} />
+      <EventNeedsYouMark event={{ accountId: ACCOUNT, id: 'evt_plain' }} />
+      <EventNeedsYou event={{ accountId: ACCOUNT, id: 'evt_harbor_followup' }} />
+      <EventNeedsYou event={{ accountId: ACCOUNT, id: 'evt_board_checkin' }} />
     </CalendarNeedsYouItems>,
   );
   const page = doc(html);
@@ -723,11 +771,19 @@ describe('the calendar', () => {
       '<CalendarNeedsYouProvider>',
     );
     expect(readFileSync('components/calendar/engine/event-details-dialog.tsx', 'utf8')).toContain(
-      '<EventNeedsYou accountId={event.accountId} eventId={event.id} />',
+      '<EventNeedsYou event={event} />',
     );
     expect(readFileSync('components/calendar/engine/event-block.tsx', 'utf8')).toContain(
-      '<EventNeedsYouMark accountId={event.accountId} eventId={event.id} />',
+      '<EventNeedsYouMark event={event} />',
     );
+  });
+});
+
+describe('the palette', () => {
+  test('the Needs you read sits outside the search state, so a failure keeps what the user typed', () => {
+    const source = readFileSync('components/palette/CommandPalette.tsx', 'utf8');
+    expect(source).toContain('<NeedsYouGate fallback={null}>');
+    expect(source).toContain('<NeedsYouFeed onData={setNeedsYou} />');
   });
 });
 

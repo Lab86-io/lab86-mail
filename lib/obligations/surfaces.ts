@@ -123,6 +123,33 @@ export function obligationsByEvent(
   return map;
 }
 
+export interface CalendarOccurrence {
+  accountId?: string;
+  /** The provider event id of this occurrence. */
+  id: string;
+  masterEventId?: string;
+  startDate?: string;
+}
+
+/**
+ * The open items of one displayed event. A `prepare` item names the occurrence.
+ * The `rsvp` item of a series names its master event and the next start, so it
+ * belongs only to the occurrence that starts at that time.
+ */
+export function occurrenceObligations(
+  byEvent: ReadonlyMap<string, ObligationView[]>,
+  event: CalendarOccurrence | undefined,
+): ObligationView[] {
+  if (!event?.accountId || !event.id) return [];
+  const own = byEvent.get(calendarEventKey(event.accountId, event.id)) ?? [];
+  if (!event.masterEventId || event.masterEventId === event.id) return own;
+  const start = event.startDate ? Date.parse(event.startDate) : Number.NaN;
+  const series = (byEvent.get(calendarEventKey(event.accountId, event.masterEventId)) ?? []).filter(
+    (item) => item.eventStart === start,
+  );
+  return series.length ? [...series, ...own] : own;
+}
+
 /** The open items of each Albatross, by `workId`. */
 export function obligationsByWork(
   items: readonly ObligationView[],
@@ -137,6 +164,14 @@ export function obligationsByWork(
   }
   for (const list of map.values()) list.sort(compareByCreated);
   return map;
+}
+
+/** The items of each Albatross that the user owes: an item that waits on someone else is not one. */
+export function owedByWork(items: readonly ObligationView[], now: number): Map<string, ObligationView[]> {
+  return obligationsByWork(
+    items.filter((item) => item.kind !== 'waiting'),
+    now,
+  );
 }
 
 function compareByCreated(a: ObligationView, b: ObligationView): number {

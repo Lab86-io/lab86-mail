@@ -91,7 +91,7 @@ import { isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import { WORK_STATE_HINT, WORK_STATE_LABEL } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import { areaChooserSentence, obligationNeedsYouRows, obligationsByWork } from '@/lib/obligations/surfaces';
+import { areaChooserSentence, obligationNeedsYouRows, owedByWork } from '@/lib/obligations/surfaces';
 import { withFrameNonce } from '@/lib/security/frame-nonce';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import {
@@ -667,14 +667,18 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   // brief is the view that most areas open, so it shows them too.
   const ledgerRows = needsYouSnapshot?.enabled
     ? obligationNeedsYouRows(
-        obligationsByWork(needsYouSnapshot.items, now),
+        owedByWork(needsYouSnapshot.items, now),
         (workRows ?? []).map((row) => String(row._id)),
         new Map((workRows ?? []).map((row) => [String(row._id), String(row.title || '')])),
       )
     : [];
+  // The area list reads at most 100 Albatrosses, so an item of an older one can be missing.
+  const ledgerBounded = ledgerRows.length > 0 && (workRows?.length ?? 0) >= 100;
   const withLedger = (brief: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
-      <NeedsYouSection rows={ledgerRows} bounded={false} />
+      <div className="max-h-[45%] shrink-0 overflow-y-auto">
+        <NeedsYouSection rows={ledgerRows} bounded={ledgerBounded} />
+      </div>
       <div className="min-h-0 flex-1">{brief}</div>
     </div>
   );
