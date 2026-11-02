@@ -37,7 +37,7 @@ import {
   MAX_ARTIFACT_ERRORS,
 } from '../shared/types';
 import { listDismissedDailyReportTasks, listDismissedDailyReportThreads } from './daily-report-dismissals';
-import { kvGet, kvGetMany, kvList, kvUpsert, requireStoreUserId } from './kv';
+import { KV_GET_MANY_LIMIT, kvGet, kvGetMany, kvList, kvUpsert, requireStoreUserId } from './kv';
 
 const saveDefaults = {
   persist: kvUpsert,
@@ -164,7 +164,16 @@ async function loadBriefDismissals(): Promise<BriefHiddenItems> {
 // only these rows, never the whole tracked list.
 async function loadClosedTracked(ids: string[]): Promise<Set<string>> {
   if (!ids.length) return new Set();
-  const rows = await kvGetMany<TrackedThread>('trackedThread', ids);
+  const unique = [...new Set(ids)];
+  const pages = await Promise.all(
+    Array.from({ length: Math.ceil(unique.length / KV_GET_MANY_LIMIT) }, (_, page) =>
+      kvGetMany<TrackedThread>(
+        'trackedThread',
+        unique.slice(page * KV_GET_MANY_LIMIT, (page + 1) * KV_GET_MANY_LIMIT),
+      ),
+    ),
+  );
+  const rows = pages.flat();
   return new Set(
     rows.filter((row) => row.status === 'resolved' || row.status === 'dismissed').map((row) => row._id),
   );
@@ -413,8 +422,16 @@ function viewRevision(value: unknown) {
  * reader has this revision already, the edition does not go out again.
  */
 export async function readBriefView(known?: string | null): Promise<BriefViewResponse> {
-  // A failed job read must not hide a readable edition.
-  const [head, row] = await Promise.all([loadBriefEditionHead().catch(() => null), readNewestReadableRow()]);
+  // A failed job read must not hide a readable edition. It is not the same as
+  // no active job, so it must not settle a row that still composes.
+  let headKnown = true;
+  const [head, row] = await Promise.all([
+    loadBriefEditionHead().catch(() => {
+      headKnown = false;
+      return null;
+    }),
+    readNewestReadableRow(),
+  ]);
   const pending = briefPendingFromHead(head);
   const stamp = briefHeadStamp(head);
   if (!row) return { stamp, pending, revision: null, report: null };
@@ -425,7 +442,9 @@ export async function readBriefView(known?: string | null): Promise<BriefViewRes
   // A `composing` row with no active job will not change again. Its plain
   // letter is final, and the page offers to write it again.
   const settled =
-    !pending && isBriefEditionGenerating(live) ? { ...live, artifactStatus: 'rendered' as const } : live;
+    headKnown && !pending && isBriefEditionGenerating(live)
+      ? { ...live, artifactStatus: 'rendered' as const }
+      : live;
   const report = briefWebEdition(settled);
   const revision = viewRevision(report);
   return known && known === revision

@@ -150,7 +150,9 @@ test('during composing the page shows the plain letter of the new edition', asyn
   expect(page.text()).not.toContain('Composing your brief');
   // Not a failure: the full edition is on the way.
   expect(page.text()).not.toContain(BRIEF_LETTER_FAILED_COPY);
-  expect((page.shown.at(-1)?.value as any).regions.length).toBeGreaterThan(0);
+  const last = page.shown.at(-1);
+  expect(last).toBeDefined();
+  expect((last!.value as any).regions.length).toBeGreaterThan(0);
 });
 
 test('the vortex shows only with nothing to read', async () => {

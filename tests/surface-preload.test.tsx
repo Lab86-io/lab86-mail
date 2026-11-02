@@ -99,6 +99,30 @@ describe('a surface that does not load', () => {
     return view!;
   }
 
+  test('a failure of one surface does not stay on the next, and a thrown text still shows', async () => {
+    const logged = spyOn(console, 'error').mockImplementation(() => {});
+    const Throws = failing('plain text' as unknown as Error);
+    const Fine = () => <p>Fine</p>;
+    let view: ReactTestRenderer | undefined;
+    await act(async () => {
+      view = create(
+        <SurfaceErrorBoundary surface="Calendar">
+          <Throws />
+        </SurfaceErrorBoundary>,
+      );
+    });
+    expect(JSON.stringify(view?.toJSON())).toContain('plain text');
+    await act(async () => {
+      view?.update(
+        <SurfaceErrorBoundary surface="Today">
+          <Fine />
+        </SurfaceErrorBoundary>,
+      );
+    });
+    logged.mockRestore();
+    expect(JSON.stringify(view?.toJSON())).toContain('Fine');
+  });
+
   test('the chunk errors of the browsers read as a chunk error, and others do not', () => {
     const chunk = new Error('Loading chunk 12 failed');
     expect(isChunkLoadError(chunk)).toBe(true);

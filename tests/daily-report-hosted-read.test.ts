@@ -270,6 +270,28 @@ test('during a partial row the page gets the last ready edition and the new row 
   ).toEqual([null, '1']);
 });
 
+test('a composing row with no job settles, and a failed job read leaves it as it is', async () => {
+  const composing = { ...ready(100), artifactStatus: 'composing' };
+  viewReader({ rows: [composing] });
+  await context(async () => {
+    const settled = await readBriefView();
+    expect(settled.report?.artifactStatus).toBe('rendered');
+  });
+  setDailyReportReaderForTest({
+    configured: () => true,
+    loadDismissals: async () => ({}),
+    loadClosedTracked: async () => new Set<string>(),
+    query: (async (fn: unknown, args: any) => {
+      if (getFunctionName(fn as any) === 'briefJobs:activeEdition') throw new Error('Unavailable');
+      return { page: [composing].slice(0, args.limit), isDone: true, continueCursor: '' };
+    }) as any,
+  });
+  await context(async () => {
+    const unknown = await readBriefView();
+    expect(unknown.report?.artifactStatus).toBe('composing');
+  });
+});
+
 test('a dead run of partial rows stops the scan, and nothing readable is a null report', async () => {
   const partial = (id: string) => ({ _id: id, generatedAt: 200, status: 'partial', sections: {} });
   const calls: Array<{ name: string; args: any }> = [];

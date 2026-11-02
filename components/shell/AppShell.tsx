@@ -383,7 +383,7 @@ export function AppShell({
                           transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
                           className="h-full min-w-0"
                         >
-                          <SurfaceErrorBoundary surface="This conversation">
+                          <SurfaceErrorBoundary key={selectedThreadId} surface="This conversation">
                             <ThreadView />
                           </SurfaceErrorBoundary>
                         </motion.div>
@@ -405,7 +405,7 @@ export function AppShell({
                       transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
                       className="absolute inset-0 z-20 h-full w-full bg-[var(--color-bg)] shadow-[var(--shadow-pop)]"
                     >
-                      <SurfaceErrorBoundary surface="This conversation">
+                      <SurfaceErrorBoundary key={selectedThreadId} surface="This conversation">
                         <ThreadView />
                       </SurfaceErrorBoundary>
                     </motion.div>
@@ -419,7 +419,7 @@ export function AppShell({
                       transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
                       className="absolute inset-y-0 right-0 z-30 w-[min(560px,calc(100%-96px))]"
                     >
-                      <SurfaceErrorBoundary surface="This conversation">
+                      <SurfaceErrorBoundary key={selectedThreadId} surface="This conversation">
                         <ThreadView variant="sheet" />
                       </SurfaceErrorBoundary>
                     </motion.div>

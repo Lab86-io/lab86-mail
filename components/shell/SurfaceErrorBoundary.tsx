@@ -13,8 +13,15 @@ export class SurfaceErrorBoundary extends Component<
 > {
   state = { error: null as Error | null };
 
-  static getDerivedStateFromError(error: Error) {
-    return { error };
+  // A thrown value can be anything. The message below reads an Error.
+  static getDerivedStateFromError(error: unknown) {
+    return { error: error instanceof Error ? error : new Error(String(error)) };
+  }
+
+  // One instance can serve several surfaces at the same place in the tree. A
+  // failure of one surface must not stay on the next.
+  componentDidUpdate(previous: { surface: string }) {
+    if (previous.surface !== this.props.surface && this.state.error) this.setState({ error: null });
   }
 
   render() {
