@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
+import { beforeWrite, stopIfAborted } from '@/lib/ai/tool-errors';
 import {
   fetchEmailAttachment,
   fetchWebFile,
@@ -248,7 +249,11 @@ export const tasksCreateCard = defineTool({
   output: z.object({ ok: z.boolean(), cardId: z.string(), operationId: z.string() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const { board, column } = await resolveBoardAndColumn(userId, args.boardId, args.column);
+    const { board, column, dueAt } = await beforeWrite(async () => ({
+      ...(await resolveBoardAndColumn(userId, args.boardId, args.column)),
+      dueAt: args.dueIso ? parseIsoInTimezone(args.dueIso, ctx.userTimezone, 'dueIso') : undefined,
+    }));
+    stopIfAborted(ctx.abortSignal);
     const cardId = await convexMutation<string>(boardsApi.createCard, {
       userId,
       boardId: board.boardId,
@@ -259,7 +264,7 @@ export const tasksCreateCard = defineTool({
       priority: args.priority,
       weight: args.weight,
       assignees: args.assignees,
-      dueAt: args.dueIso ? parseIsoInTimezone(args.dueIso, ctx.userTimezone, 'dueIso') : undefined,
+      dueAt,
       source: args.source ?? { kind: 'chat' },
     });
     const operationId = await recordOperation({

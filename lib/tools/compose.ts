@@ -1,5 +1,6 @@
 import type { CreateAttachmentRequest } from 'nylas';
 import { z } from 'zod';
+import { beforeWrite, stopIfAborted, ToolFailedBeforeWrite } from '@/lib/ai/tool-errors';
 import { recordOperation, registerUndoExecutor } from '../ai/operations';
 import { fetchEmailAttachment, fetchWebFile } from '../attachments/fetch-store';
 import { checkDraftAttachments, draftAttachmentsInputSchema } from '../files/draft-attachments';
@@ -350,11 +351,15 @@ export const saveDraftTool = defineTool({
   }),
   output: z.object({ ok: z.boolean(), draft: z.any(), operationId: z.string().optional() }),
   async handler({ attachments, ...args }, ctx) {
+    const checked = attachments?.length
+      ? await beforeWrite(() => checkedAttachments(ctx, attachments))
+      : undefined;
     const doc: Draft = {
       ...args,
-      ...(attachments?.length ? { attachments: await checkedAttachments(ctx, attachments) } : {}),
+      ...(checked ? { attachments: checked } : {}),
       updatedAt: Date.now(),
     };
+    stopIfAborted(ctx.abortSignal);
     const { saved, operationId } = await saveDraftAndRecordOperation({ ctx, doc, args });
     return { ok: true, draft: saved, operationId };
   },
@@ -446,8 +451,13 @@ export const scheduleSend = defineTool({
     ctx,
   ) {
     if (scheduledFor < Date.now() + 60_000) {
-      throw new Error('scheduledFor must be at least a minute in the future.');
+      throw new ToolFailedBeforeWrite('scheduledFor must be at least a minute in the future.');
     }
+    const prepared = await beforeWrite(async () => ({
+      signature: await signed({ account, body, html, includeSignature }),
+      resolved: await resolveSendAttachments(ctx.userId, attachments),
+    }));
+    stopIfAborted(ctx.abortSignal);
     const sent = await sendWithNylas({
       userId: ctx.userId,
       account,
@@ -455,8 +465,8 @@ export const scheduleSend = defineTool({
       cc,
       bcc,
       subject,
-      ...(await signed({ account, body, html, includeSignature })),
-      attachments: await resolveSendAttachments(ctx.userId, attachments),
+      ...prepared.signature,
+      attachments: prepared.resolved,
       sendAt: scheduledFor,
     });
     return { ok: true, scheduleId: (sent as any).scheduleId, messageId: sent._id };

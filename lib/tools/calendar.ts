@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { beforeWrite } from '@/lib/ai/tool-errors';
 import {
   createCalendarEvent,
   deleteCalendarEvent,
@@ -343,13 +344,18 @@ export const calendarCreateEvent = defineTool({
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
     const parseIso = makeParseIso(ctx.userTimezone);
+    const { startAt, endAt } = await beforeWrite(async () => ({
+      startAt: parseIso(args.startIso, 'startIso'),
+      endAt: parseIso(args.endIso, 'endIso'),
+    }));
     const result = await createCalendarEvent({
       userId,
       accountId: args.account,
       calendarId: args.calendarId,
       title: args.title,
-      startAt: parseIso(args.startIso, 'startIso'),
-      endAt: parseIso(args.endIso, 'endIso'),
+      startAt,
+      endAt,
+      signal: ctx.abortSignal,
       allDay: args.allDay,
       description: args.description,
       location: args.location,

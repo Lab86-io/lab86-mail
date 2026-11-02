@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { classifyToolError, isToolRetrySafe } from '../lib/ai/tool-errors';
 import {
   __setOfficePdfDepsForTest,
   convertOfficeToPdf,
@@ -7,6 +8,7 @@ import {
   saveDocxBytesAsPdf,
   saveOfficePdf,
 } from '../lib/documents/office-pdf';
+import { OfficeError } from '../lib/documents/office-security';
 import type { OfficeFile } from '../lib/documents/office-service';
 import { renderTemplate } from '../lib/documents/templates';
 import type { SaveFileInput } from '../lib/files/saved-files';
@@ -83,6 +85,32 @@ describe('office PDF export', () => {
         'document server address',
       );
     expect(() => officeConvertUrl({})).toThrow('PDF export needs a document server.');
+  });
+
+  test('a failed conversion keeps its type and proves that nothing was written, and a failed save does not', async () => {
+    await harness({ convert: () => new Response('no', { status: 500 }) });
+    const failed = await saveOfficePdf('user-1', 'word-1').catch((error) => error);
+    expect(failed).toBeInstanceOf(OfficeError);
+    expect(failed.status).toBe(502);
+    expect(isToolRetrySafe(failed)).toBe(true);
+    expect(classifyToolError(failed)).toEqual({ errorClass: 'provider', errorCode: 'office_convert' });
+    const { docx } = await harness({ convert: () => new Response('no', { status: 500 }) });
+    expect(isToolRetrySafe(await saveDocxBytesAsPdf('user-1', docx, 'Memo').catch((error) => error))).toBe(
+      true,
+    );
+    await harness();
+    __setOfficePdfDepsForTest({
+      env: () => env,
+      getOfficeFile: async () => office(),
+      fetch: async (input) =>
+        String(input).startsWith('https://storage.example.test/')
+          ? new Response(new Uint8Array(docx))
+          : new Response(PDF, { headers: { 'content-type': 'application/pdf' } }),
+      saveFileBytes: async () => {
+        throw new Error('Storage lost the answer');
+      },
+    });
+    expect(isToolRetrySafe(await saveOfficePdf('user-1', 'word-1').catch((error) => error))).toBe(false);
   });
 
   test('a Word file converts as saved and the PDF goes to Files with origin export', async () => {
