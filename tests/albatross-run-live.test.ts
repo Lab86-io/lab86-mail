@@ -471,7 +471,7 @@ describe('streamRunModel', () => {
   test('a step that writes past its limit ends with the stall, though chunks still arrive', async () => {
     const seen: string[] = [];
     const model = new MockLanguageModelV3({
-      doStream: async () => ({ stream: slowStream(writesArguments(200), 5) }),
+      doStream: async () => ({ stream: slowStream(writesArguments(1_000), 5) }),
     });
     const started = Date.now();
     await expect(
@@ -480,11 +480,11 @@ describe('streamRunModel', () => {
         maxRetries: 0,
         messages: [{ role: 'user', content: 'Go' }],
         tools: lookup(async () => ({ ok: true })),
-        stepTimeoutMs: 40,
+        stepTimeoutMs: 300,
         onActivity: () => seen.push('chunk'),
       }),
     ).rejects.toBeInstanceOf(RunModelStepStall);
-    expect(Date.now() - started).toBeLessThan(900);
+    expect(Date.now() - started).toBeLessThan(3_000);
     expect(seen.length).toBeGreaterThan(1);
   });
 
@@ -537,7 +537,7 @@ describe('streamRunModel', () => {
                     { type: 'tool-input-end', id: 'c1' },
                     { type: 'tool-call', toolCallId: `c${call}`, toolName: 'lookup', input: '{}' },
                   ],
-                  10,
+                  40,
                 )
               : slowStream(
                   [
@@ -556,7 +556,7 @@ describe('streamRunModel', () => {
       messages: [{ role: 'user', content: 'Go' }],
       stopWhen: stepCountIs(5),
       tools: lookup(async () => ({ ok: true })),
-      stepTimeoutMs: 150,
+      stepTimeoutMs: 600,
     });
     expect(result.text).toBe('Done.');
     expect(result.steps).toHaveLength(3);

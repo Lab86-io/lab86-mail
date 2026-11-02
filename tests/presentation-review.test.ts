@@ -11,6 +11,7 @@ import {
 } from '../lib/documents/presentation-design';
 import {
   copyFields,
+  preservesNumericClaims,
   replaceSlideCopy,
   reviewPresentation,
   slideReviewSchema,
@@ -527,6 +528,46 @@ describe('every-slide presentation review', () => {
       expect(brief.slides[0].notes).toContain(
         'Original title:\nUnit sales have risen for two straight quarters',
       );
+    });
+
+    test('the data of a slide counts with its unit, its sign, and its items', () => {
+      // Words from the review check: a value with its unit, and an item figure.
+      expect(preservesNumericClaims('old title 58 58%', 'Sales reached 58%')).toBe(true);
+      expect(preservesNumericClaims('old title 58', 'Sales reached 58%')).toBe(false);
+      // A minus sign counts. A hyphen in a range or a label is no minus sign.
+      expect(preservesNumericClaims('values -20', 'Profit was 20')).toBe(false);
+      expect(preservesNumericClaims('values -20', 'Profit was -20')).toBe(true);
+      expect(preservesNumericClaims('values \u221220', 'Profit was -20')).toBe(true);
+      expect(preservesNumericClaims('from 3 to 4 in Q1-2026', 'Between 3-4 in Q1-2026')).toBe(true);
+    });
+
+    test('a fix may use an item figure, and a chart value with its unit', async () => {
+      const brief = chartBrief();
+      const metric = {
+        ...brief.slides[0],
+        title: 'Revenue reached 5M',
+        items: [{ label: 'Revenue', detail: 'This year', meta: '3.2M' }],
+        chart: { ...(brief.slides[0] as any).chart, unit: '%', series: [{ name: 'Share', values: [58] }] },
+      } as (typeof brief.slides)[number];
+      const fixed = (title: string) => {
+        const generate = (async () => ({
+          object: {
+            reviews: [
+              {
+                slideId: 'slide-1',
+                purpose: 'p',
+                contentAssessment: 'c',
+                layoutAssessment: 'l',
+                fixes: [{ field: 'title', text: title }],
+              },
+            ],
+          },
+        })) as any;
+        const input = { ...brief, slides: [structuredClone(metric)] };
+        return reviewPresentation(input, { userId: 'u', instruction: 'Review' }, generate);
+      };
+      expect((await fixed('Revenue reached 3.2M')).brief.slides[0].title).toBe('Revenue reached 3.2M');
+      expect((await fixed('Share reached 58%')).brief.slides[0].title).toBe('Share reached 58%');
     });
 
     test('a fix with a number from nowhere is refused', async () => {

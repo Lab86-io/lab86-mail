@@ -110,14 +110,23 @@ export function copyFields(slide: Slide, v2: boolean) {
   return fields;
 }
 
-/** The categories, values, and cells of a slide's chart and table, as plain text. */
+/** The items, categories, values with their unit, and cells of a slide, as plain text. */
 function slideDataText(slide: Slide) {
-  if (!('role' in slide)) return '';
+  const items = slide.items.flatMap((item) => [
+    item.label,
+    item.detail,
+    'meta' in item && typeof item.meta === 'string' ? item.meta : '',
+  ]);
+  if (!('role' in slide)) return items.join(' ');
   const chart = slide.chart;
   const table = slide.table;
+  const unit = chart?.unit ?? '';
   return [
+    ...items,
     ...(chart?.categories ?? []),
-    ...(chart?.series ?? []).flatMap((series) => series.values),
+    ...(chart?.series ?? []).flatMap((series) =>
+      series.values.flatMap((value) => [String(value), `${value}${unit}`]),
+    ),
     ...(table?.headers ?? []),
     ...(table?.rows ?? []).flat(),
   ].join(' ');
@@ -125,8 +134,11 @@ function slideDataText(slide: Slide) {
 
 /** Editorial repair may omit detail into notes, but may not invent numeric claims. */
 export function preservesNumericClaims(original: string, replacement: string) {
+  // A minus sign counts: -20 is not 20. A hyphen in 3-4 or Q1-2026 is no minus sign.
   const numbers = (text: string): string[] =>
-    (text.match(/\d[\d,.%]*/g) || []).map((number) => number.replace(/[,.]+$/, ''));
+    (text.replace(/\u2212/g, '-').match(/(?<![\w.])-?\d[\d,.%]*|\d[\d,.%]*/g) || []).map((number) =>
+      number.replace(/[,.]+$/, ''),
+    );
   return numbers(replacement).every((number) => numbers(original).includes(number));
 }
 

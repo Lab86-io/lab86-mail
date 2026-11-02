@@ -46,6 +46,7 @@ export const APPROVAL_COPY = {
   word: { waiting: 'Your turn', deciding: 'In progress', approved: 'Approved', declined: 'Declined' },
   failedWord: 'Did not finish',
   staleClaim: 'The last try did not finish. Check that it did not go out, then try again.',
+  declinedStale: 'Declined. The last try may have gone out, so check that it did not.',
   approving: 'Albatross sends it now.',
   declining: 'Albatross closes it now.',
   declined: 'Declined. Nothing went out.',
@@ -119,7 +120,7 @@ export function approvalView(approval: ApprovalRef, local?: LocalApprovalDecisio
     case 'approved':
       return approved(approval.kind, goesOn);
     case 'rejected':
-      return DECLINED;
+      return approval.staleClaim ? { ...DECLINED, line: APPROVAL_COPY.declinedStale } : DECLINED;
     case 'expired':
       return {
         state: 'closed',
@@ -134,7 +135,8 @@ export function approvalView(approval: ApprovalRef, local?: LocalApprovalDecisio
       break;
   }
   if (local?.state === 'approved') return approved(approval.kind, goesOn);
-  if (local?.state === 'declined') return DECLINED;
+  if (local?.state === 'declined')
+    return approval.staleClaim ? { ...DECLINED, line: APPROVAL_COPY.declinedStale } : DECLINED;
   if (local?.state === 'deciding') {
     return inProgress(local.choice === 'approve' ? APPROVAL_COPY.approving : APPROVAL_COPY.declining);
   }
@@ -146,7 +148,7 @@ export function approvalView(approval: ApprovalRef, local?: LocalApprovalDecisio
       canDecide: true,
       word: APPROVAL_COPY.failedWord,
       tone: 'hot',
-      line: local.message,
+      line: approval.staleClaim ? APPROVAL_COPY.staleClaim : local.message,
     };
   }
   return {

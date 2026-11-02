@@ -39,6 +39,19 @@ describe('approvalView', () => {
       canDecide: true,
       line: APPROVAL_COPY.staleClaim,
     });
+    // The warning stays after a failed retry, and a decline does not say that nothing went out.
+    expect(
+      approvalView({ ...INVITE, status: 'pending', staleClaim: true }, {
+        state: 'failed',
+        message: 'The request failed.',
+      } as never).line,
+    ).toBe(APPROVAL_COPY.staleClaim);
+    expect(approvalView({ ...INVITE, status: 'rejected', staleClaim: true }).line).toBe(
+      APPROVAL_COPY.declinedStale,
+    );
+    expect(
+      approvalView({ ...INVITE, status: 'pending', staleClaim: true }, { state: 'declined' } as never).line,
+    ).toBe(APPROVAL_COPY.declinedStale);
   });
 
   test('a claiming row from another client offers no press', () => {

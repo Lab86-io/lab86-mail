@@ -131,6 +131,16 @@ describe('chart colors by contrast', () => {
     };
     const onPicture = slide({ elements: [picture, element] });
     expect(chartInks(onPicture, theme, element).ground).toBe(background);
+    // No ground to measure on a picture: nobody can say that the chart reads.
+    expect(chartInks(onPicture, theme, element).ok).toBe(false);
+  });
+
+  test('a color that is not hex is not called readable: the theme colors take its place', () => {
+    const element = chart({ colors: ['not-a-color'] });
+    const one = slide({ background: ink }, element);
+    const inks = chartInks(one, theme, element);
+    expect(inks.series).not.toContain('not-a-color');
+    for (const color of inks.series) expect(contrastRatio(color, ink) ?? 0).toBeGreaterThanOrEqual(3);
   });
 
   test('the check flags a chart when no color of the theme reads on its ground', () => {

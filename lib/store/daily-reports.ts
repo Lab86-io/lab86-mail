@@ -366,29 +366,40 @@ async function projectLatestEdition(
 
 // A dead run can leave more than one `partial` row in front of the last edition.
 const BRIEF_READABLE_SCAN = 4;
+/** The rows that one read looks at in all. A failed row is small. */
+const BRIEF_READABLE_ROWS = 12;
 
 // The newest edition that a reader can read: one row per step, so a ready row
 // costs one read and the small `partial` row costs almost nothing.
 async function readNewestReadableRow(): Promise<{ row: DailyReport | null; failedNewer: boolean }> {
   // A row that a failed job closed with nothing to read does not hide an older
-  // edition. With no older edition, the page shows the failure itself.
+  // edition, and failed days do not use up the scan of partial rows. With no older
+  // edition, the page shows the failure itself.
   let failed: DailyReport | null = null;
+  let partials = 0;
   const found = (row: DailyReport | null) => ({
     row: row ?? failed,
     failedNewer: Boolean(row && failed),
   });
+  /** The row to stop at, or null to read on. */
+  const consider = (row: DailyReport) => {
+    if (!isBriefEditionReadable(row)) partials += 1;
+    else if (isBriefEditionEmptyFailure(row)) failed ??= row;
+    else return row;
+    return null;
+  };
   if (!readDependencies.configured()) {
-    const rows = await readReportRows<DailyReport>(BRIEF_READABLE_SCAN, false);
+    const rows = await readReportRows<DailyReport>(BRIEF_READABLE_ROWS, false);
     for (const row of rows) {
-      if (!isBriefEditionReadable(row)) continue;
-      if (!isBriefEditionEmptyFailure(row)) return found(row);
-      failed ??= row;
+      if (partials >= BRIEF_READABLE_SCAN) break;
+      const chosen = consider(row);
+      if (chosen) return found(chosen);
     }
     return found(null);
   }
   const userId = requireStoreUserId();
   let cursor: string | null = null;
-  for (let step = 0; step < BRIEF_READABLE_SCAN; step += 1) {
+  for (let step = 0; step < BRIEF_READABLE_ROWS && partials < BRIEF_READABLE_SCAN; step += 1) {
     const result: { page: DailyReport[]; continueCursor: string; isDone: boolean } =
       await readDependencies.query(api.userData.dailyReportPage, {
         userId,
@@ -399,10 +410,8 @@ async function readNewestReadableRow(): Promise<{ row: DailyReport | null; faile
       });
     const row = result.page[0];
     if (!row) return found(null);
-    if (isBriefEditionReadable(row)) {
-      if (!isBriefEditionEmptyFailure(row)) return found(row);
-      failed ??= row;
-    }
+    const chosen = consider(row);
+    if (chosen) return found(chosen);
     if (result.isDone) return found(null);
     cursor = result.continueCursor;
   }

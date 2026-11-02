@@ -321,7 +321,8 @@ describe('tool groups', () => {
       earlier: [],
       needsYou: false,
     });
-    expect(JSON.stringify(lifted)).not.toContain('Loaded needs_you');
+    expect(lifted.enabled).toEqual([]);
+    expect(lifted.summary).toContain('Could not load needs_you: not available for this user.');
   });
 
   test('model-facing input schemas carry no regex patterns (OpenAI Responses rejects lookarounds)', () => {

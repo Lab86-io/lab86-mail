@@ -320,6 +320,23 @@ test('an empty failed row does not hide an older edition, and the page says that
   });
 });
 
+test('failed days do not use up the scan: the older edition still shows', async () => {
+  const failed = (id: string) => ({
+    _id: id,
+    generatedAt: 200,
+    status: 'ready',
+    narrative: BRIEF_EDITION_NOT_WRITTEN,
+    sections: {},
+    stats: {},
+  });
+  viewReader({ rows: [failed('a'), failed('b'), failed('c'), failed('d'), failed('e'), ready(100)] });
+  await context(async () => {
+    const view = await readBriefView();
+    expect(view.report?._id).toBe('edition-100');
+    expect(view.failedNewer).toBe(true);
+  });
+});
+
 test('a dead run of partial rows stops the scan, and nothing readable is a null report', async () => {
   const partial = (id: string) => ({ _id: id, generatedAt: 200, status: 'partial', sections: {} });
   const calls: Array<{ name: string; args: any }> = [];

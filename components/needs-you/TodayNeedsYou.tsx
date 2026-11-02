@@ -501,15 +501,16 @@ function LiveTodayNeedsYou() {
 /** One provider at all times: the brief under it never mounts again when the snapshot arrives. */
 function LayerChooser({ children }: { children: ReactNode }) {
   const snapshot = useNeedsYouSnapshot();
+  const loading = snapshot === undefined;
   const enabled = snapshot?.enabled === true;
   const value = useMemo(
     () => ({
       node: enabled ? <LiveTodayNeedsYou /> : null,
-      // The live list takes the place of the stored lane. A user outside the flag
-      // has no live list, and an old stored lane must not come back after the flag ends.
-      hideNeedsYou: true,
+      // A user outside the flag has no live list, so a stored lane stays: an edition
+      // moved its threads out of the other lanes. A user in the flag sees no lane flash.
+      hideNeedsYou: loading || enabled,
     }),
-    [enabled],
+    [enabled, loading],
   );
   return <BriefLiveLayer.Provider value={value}>{children}</BriefLiveLayer.Provider>;
 }

@@ -1,9 +1,10 @@
 import { v } from 'convex/values';
 import { assertWorkOpen, isTerminalWork } from '../lib/albatross/work-lifecycle';
 import { truncateText } from '../lib/shared/text';
+import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { mutation, query } from './_generated/server';
+import { internalMutation, mutation, query } from './_generated/server';
 import { normalizeSourceRefs, normalizeText } from './albatrossModel';
 import { now, requireInternalSecret } from './lib';
 
@@ -544,19 +545,10 @@ export const enqueueApproval = mutation({
 });
 
 /**
- * A claim lasts as long as one tool call. An older claim came from a process
- * that died, so no client would ever get a press again. It reads as waiting, and
- * the row says that the last try did not finish.
+ * A claim lasts as long as one tool call. No tool call runs this long, so a
+ * claim older than this came from a process that died.
  */
 const APPROVAL_CLAIM_STALE_MS = 10 * 60_000;
-
-function isStaleClaim(row: { status: string; updatedAt: number }, at: number) {
-  return row.status === 'claiming' && row.updatedAt < at - APPROVAL_CLAIM_STALE_MS;
-}
-
-function approvalForRead<T extends { status: string; updatedAt: number }>(row: T, at: number) {
-  return isStaleClaim(row, at) ? { ...row, status: 'pending' as const, staleClaim: true } : row;
-}
 
 export const listApprovals = query({
   args: {
@@ -582,11 +574,7 @@ export const listApprovals = query({
           ),
         )
       ).flat();
-      const at = now();
-      return rows
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .slice(0, limit)
-        .map((row) => approvalForRead(row, at));
+      return rows.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
     }
     const rows = await ctx.db
       .query('albatrossApprovals')
@@ -615,8 +603,7 @@ export const listApprovals = query({
       .filter((approval) => (args.projectId ? approval.projectId === args.projectId : true))
       .filter((approval) => (args.intentId ? approval.intentId === args.intentId : true))
       .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, limit)
-      .map((approval) => approvalForRead(approval, now()));
+      .slice(0, limit);
   },
 });
 
@@ -626,7 +613,7 @@ export const getApproval = query({
     const userId = await resolveUserId(ctx, args);
     const approval = await ctx.db.get(args.approvalId);
     if (!approval || approval.userId !== userId) return null;
-    return approvalForRead(approval, now());
+    return approval;
   },
 });
 
@@ -645,7 +632,7 @@ export const decideApproval = mutation({
     const userId = await resolveUserId(ctx, args);
     const approval = await ctx.db.get(args.approvalId);
     if (!approval || approval.userId !== userId) throw new Error('Approval not found.');
-    if (args.onlyIfPending && approval.status !== 'pending' && !isStaleClaim(approval, now()))
+    if (args.onlyIfPending && approval.status !== 'pending')
       throw new Error(`Approval is already ${approval.status}.`);
     if (args.status === 'approved' && approval.status !== 'claiming' && approval.status !== 'pending') {
       throw new Error(`Approval is already ${approval.status}.`);
@@ -679,8 +666,7 @@ export const claimApproval = mutation({
     const userId = await resolveUserId(ctx, args);
     const approval = await ctx.db.get(args.approvalId);
     if (!approval || approval.userId !== userId) throw new Error('Approval not found.');
-    if (approval.status !== 'pending' && !isStaleClaim(approval, now()))
-      throw new Error(`Approval is already ${approval.status}.`);
+    if (approval.status !== 'pending') throw new Error(`Approval is already ${approval.status}.`);
     if (approval.intentId) {
       const id = ctx.db.normalizeId('albatrossIntents', approval.intentId);
       const work = id ? await ctx.db.get(id) : null;
@@ -689,7 +675,27 @@ export const claimApproval = mutation({
     }
     const ts = now();
     await ctx.db.patch(args.approvalId, { status: 'claiming', updatedAt: ts });
+    await ctx.scheduler.runAfter(APPROVAL_CLAIM_STALE_MS, internal.albatrossWork.expireApprovalClaim, {
+      approvalId: args.approvalId,
+      claimedAt: ts,
+    });
     return { ok: true, approval: { ...approval, status: 'claiming', updatedAt: ts } };
+  },
+});
+
+/**
+ * A claim that never ended goes back to the queue, so a client has a press again.
+ * The earlier try may have gone out, so the row keeps that fact for the words on
+ * every later state. A claim that ended, or a newer claim, stays as it is.
+ */
+export const expireApprovalClaim = internalMutation({
+  args: { approvalId: v.id('albatrossApprovals'), claimedAt: v.number() },
+  handler: async (ctx, args) => {
+    const approval = await ctx.db.get(args.approvalId);
+    if (!approval || approval.status !== 'claiming' || approval.updatedAt !== args.claimedAt) return false;
+    const ts = now();
+    await ctx.db.patch(args.approvalId, { status: 'pending', staleClaimAt: ts, updatedAt: ts });
+    return true;
   },
 });
 

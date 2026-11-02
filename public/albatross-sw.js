@@ -36,18 +36,38 @@ function isAppPage(client) {
 async function openInApp(clients, url) {
   const app = clients.find((client) => 'focus' in client && isAppPage(client));
   if (app) {
+    let delivered = false;
     try {
       app.postMessage({ type: 'albatross:open-link', url });
-      return await app.focus();
+      delivered = true;
     } catch (_) {}
+    // The tab has the link. The click permission ends at focus, so a new tab cannot open.
+    if (delivered) return focusQuietly(app);
   }
-  const other = clients.find((client) => 'focus' in client && 'navigate' in client);
-  if (other) {
-    try {
-      const moved = await other.navigate(url);
-      return await (moved || other).focus();
-    } catch (_) {}
+  // An app tab may hold a draft, so a page load never goes there.
+  const other = clients.find((client) => 'focus' in client && 'navigate' in client && !isAppPage(client));
+  if (other) return moveTab(other, url);
+  return openNewTab(url);
+}
+
+async function focusQuietly(client) {
+  try {
+    await client.focus();
+  } catch (_) {}
+}
+
+// A page load can replace the tab, so the tab that navigate returns takes the focus.
+async function moveTab(client, url) {
+  let moved;
+  try {
+    moved = await client.navigate(url);
+  } catch (_) {
+    return openNewTab(url);
   }
+  return focusQuietly(moved || client);
+}
+
+function openNewTab(url) {
   return self.clients.openWindow ? self.clients.openWindow(url) : undefined;
 }
 
@@ -58,17 +78,8 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
       if (inApp) return openInApp(clients, url);
-      for (const client of clients) {
-        if ('focus' in client) {
-          try {
-            await client.navigate(url);
-            return await client.focus();
-          } catch (_) {
-            break;
-          }
-        }
-      }
-      return self.clients.openWindow ? self.clients.openWindow(url) : undefined;
+      const client = clients.find((candidate) => 'focus' in candidate);
+      return client ? moveTab(client, url) : openNewTab(url);
     }),
   );
 });

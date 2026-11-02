@@ -94,7 +94,7 @@ import {
   notificationPreferenceInput,
   timeZoneLabel,
 } from '@/lib/notifications/preferences';
-import { enableBrowserPush } from '@/lib/notifications/web-push-client';
+import { abandonBrowserPush, enableBrowserPush } from '@/lib/notifications/web-push-client';
 import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
 import { cn } from '@/lib/utils';
 
@@ -653,9 +653,16 @@ function NotificationsSection() {
   // This browser is subscribed. The evening check-in reads the flag too.
   const rememberWebPush = async () => {
     if (!prefs) return;
+    const before = prefs.webPushEnabled;
     const next = { ...prefs, webPushEnabled: true };
     setPrefs(next);
-    await savePreferences(notificationPreferenceInput(next));
+    try {
+      await savePreferences(notificationPreferenceInput(next));
+    } catch (error) {
+      // Only this field goes back: other edits in the form stay.
+      setPrefs((current) => (current ? { ...current, webPushEnabled: before } : current));
+      throw error;
+    }
     setBaseline((current) => (current ? { ...current, webPushEnabled: true } : current));
   };
 
@@ -665,7 +672,12 @@ function NotificationsSection() {
     setPushMessage(null);
     try {
       await enableBrowserPush();
-      await rememberWebPush();
+      try {
+        await rememberWebPush();
+      } catch (error) {
+        await abandonBrowserPush();
+        throw error;
+      }
       setPushMessage('Web Push is enabled on this browser.');
     } catch (error) {
       setPushMessage(error instanceof Error ? error.message : 'Could not enable Web Push.');

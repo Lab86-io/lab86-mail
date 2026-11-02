@@ -1287,7 +1287,10 @@ function composeComparison(content: CompositionContent, options: ComposeSlideOpt
 /** Does the heading or the figure of a comparison item name it as the recommended choice? */
 function isRecommended(item: { label: string; meta?: string }) {
   const words = `${item.label} ${item.meta ?? ''}`;
-  return /\brecommend(ed|ation)?\b/i.test(words) && !/\bnot recommended\b/i.test(words);
+  return (
+    /\brecommend(ed|ation)?\b/i.test(words) &&
+    !/\b(?:not|never|no longer|isn['’]?t)\b[^.;]{0,24}\brecommend/i.test(words)
+  );
 }
 
 function composeList(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {

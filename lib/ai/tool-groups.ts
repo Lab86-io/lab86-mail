@@ -487,6 +487,7 @@ export function enableToolsResult(
   const enabled = plan ? requested.filter((name) => plan.groups.includes(name)) : requested;
   const evicted = plan ? plan.evicted : [];
   const notLoaded = requested.filter((name) => evicted.includes(name));
+  const denied = context?.needsYou === false ? requested.filter((name) => name === 'needs_you') : [];
   // Groups this call pushed out: loaded before it, not loaded after it.
   const before = context
     ? planToolGroups(context.allToolNames, context.earlier, context.scopeGroups, {
@@ -501,6 +502,7 @@ export function enableToolsResult(
         ? ''
         : 'No known groups were requested.',
     notLoaded.length ? `Could not load ${notLoaded.join(', ')}: the tool limit is full.` : '',
+    denied.length ? `Could not load ${denied.join(', ')}: not available for this user.` : '',
     dropped.length
       ? `Unloaded ${dropped.join(', ')} to make room; enable ${dropped.length > 1 ? 'them' : 'it'} again if you still need it.`
       : '',

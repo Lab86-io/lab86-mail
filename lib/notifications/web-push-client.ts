@@ -66,17 +66,33 @@ export async function enableBrowserPush(env: BrowserPushEnvironment = browserPus
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(env.publicKey, env.decode),
   });
-  const response = await env.fetch('/api/notifications/push', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(subscription.toJSON()),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    // The server refused it, so this browser must not stay subscribed.
+  // The browser subscribed first. Any failure after this leaves no subscription behind.
+  try {
+    const response = await env.fetch('/api/notifications/push', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(subscription.toJSON()),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || 'Could not enable Web Push.');
+  } catch (error) {
     await subscription.unsubscribe().catch(() => undefined);
-    throw new Error(body?.error || 'Could not enable Web Push.');
+    throw error;
   }
+}
+
+/** Removes this browser after a failed save. Each part runs even when the other fails. */
+export async function abandonBrowserPush(env: BrowserPushEnvironment = browserPushEnvironment()) {
+  const subscription = await currentSubscription(env);
+  if (!subscription) return;
+  await env
+    .fetch('/api/notifications/push', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint: subscription.endpoint }),
+    })
+    .catch(() => undefined);
+  await subscription.unsubscribe().catch(() => undefined);
 }
 
 /** Removes this browser. The server stops first, so after a failure the switch shows the true state. */

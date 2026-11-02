@@ -984,24 +984,24 @@ describe('the approvals of a run', () => {
     expect(await state()).toMatchObject({ open: 0, approved: 1 });
   });
 
-  test('a claim from a process that died reads as waiting, and a person can decide it again', async () => {
+  test('a claim from a process that died goes back to the queue, and a newer claim stays', async () => {
     const t = harness();
     const workId = String(await seedWork(t));
     const runId = String(await seedHandoff(t, workId, approve));
     const approvalId = await t.mutation(api.albatrossWork.enqueueApproval, queueArgs(workId, runId, 'a'));
-    await t.mutation(api.albatrossWork.claimApproval, { ...caller, approvalId });
+    const claimed: any = await t.mutation(api.albatrossWork.claimApproval, { ...caller, approvalId });
     const read = () => t.query(api.albatrossWork.getApproval, { ...caller, approvalId });
-    // A live claim: nobody else can press.
+    const expire = (claimedAt: number) =>
+      t.mutation(internal.albatrossWork.expireApprovalClaim, { approvalId, claimedAt });
+    // Not this claim: nothing changes.
+    expect(await expire(claimed.approval.updatedAt - 1)).toBe(false);
     expect(await read()).toMatchObject({ status: 'claiming' });
-    await expect(t.mutation(api.albatrossWork.claimApproval, { ...caller, approvalId })).rejects.toThrow(
-      'already claiming',
-    );
-    await t.run(async (ctx) => {
-      await ctx.db.patch(approvalId as never, { updatedAt: Date.now() - 11 * 60_000 });
-    });
-    expect(await read()).toMatchObject({ status: 'pending', staleClaim: true });
-    const queue: any[] = await t.query(api.albatrossWork.listApprovals, { ...caller });
-    expect(queue[0]).toMatchObject({ status: 'pending', staleClaim: true });
+    expect(await expire(claimed.approval.updatedAt)).toBe(true);
+    const row: any = await read();
+    expect(row.status).toBe('pending');
+    expect(row.staleClaimAt).toBeGreaterThan(0);
+    const queue: any[] = await t.query(api.albatrossWork.listApprovals, { ...caller, status: 'pending' });
+    expect(queue.map((item) => String(item._id))).toContain(String(approvalId));
     await t.mutation(api.albatrossWork.decideApproval, {
       ...caller,
       approvalId,

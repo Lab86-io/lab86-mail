@@ -324,6 +324,8 @@ export interface RunApprovalView {
   title: string;
   /** What goes out and to whom. Older rows name no recipient. */
   detail: string | null;
+  /** An earlier try stopped with no answer, so it may have gone out. */
+  staleClaim?: boolean;
 }
 
 export type ThreadRunView = StepRunView & {

@@ -449,4 +449,10 @@ test('the accent goes on the recommended choice, and on the last item when there
       { label: 'Option B', detail: 'Split the work.' },
     ]),
   ).toEqual([surface, accent]);
+  expect(
+    panelFills([
+      { label: 'Option A', meta: 'Not currently recommended', detail: 'Keep the printer.' },
+      { label: 'Option B', meta: 'Recommended', detail: 'Split the work.' },
+    ]),
+  ).toEqual([surface, accent]);
 });

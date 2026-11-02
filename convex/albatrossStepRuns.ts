@@ -923,6 +923,7 @@ export const runsForWorkHistory = query({
               status: approval.status,
               title: approval.title,
               detail: approval.detail ?? null,
+              ...(approval.staleClaimAt ? { staleClaim: true } : {}),
             })),
           question:
             question && question.userId === userId

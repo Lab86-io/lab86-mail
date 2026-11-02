@@ -201,17 +201,17 @@ export interface ChartInks {
  */
 export function chartInks(slide: DeckSlideV2, theme: DeckTheme, element: ChartElement): ChartInks {
   const c = theme.colors;
-  const ground =
-    backgroundUnder(slide, theme, element, slide.elements.indexOf(element)) ??
-    slide.background ??
-    c.background;
+  const under = backgroundUnder(slide, theme, element, slide.elements.indexOf(element));
+  const ground = under ?? slide.background ?? c.background;
   // A color that is not hex cannot be measured, so it stays.
   const ratio = (color: string) => contrastRatio(color, ground) ?? Number.POSITIVE_INFINITY;
   const labels = [c.ink, c.background, c.surface, c.accentInk, c.muted];
   const label =
     labels.find((color) => ratio(color) >= TEXT_CONTRAST) ??
     labels.reduce((best, color) => (ratio(color) > ratio(best) ? color : best));
-  const own = element.colors?.length ? element.colors : [c.accent, c.ink, c.muted, c.surface];
+  // A color that is not hex cannot be measured, and the renderers would replace it.
+  const given = (element.colors ?? []).filter((color) => contrastRatio(color, ground) !== null);
+  const own = given.length ? given : [c.accent, c.ink, c.muted, c.surface];
   // A color that does not read moves toward the label only until it reads. It
   // keeps its own hue, so two series stay different from each other.
   const readable = (color: string) => {
@@ -230,7 +230,11 @@ export function chartInks(slide: DeckSlideV2, theme: DeckTheme, element: ChartEl
     quiet: mutedReads ? c.muted : label,
     grid: mutedReads ? c.muted : (mixColors(ground, label, 0.3) ?? label),
     series,
-    ok: ratio(label) >= TEXT_CONTRAST && series.every((color) => ratio(color) >= MARK_CONTRAST),
+    // On an image there is no ground to measure, so nobody can say that it reads.
+    ok:
+      under !== null &&
+      ratio(label) >= TEXT_CONTRAST &&
+      series.every((color) => ratio(color) >= MARK_CONTRAST),
   };
 }
 

@@ -8,6 +8,7 @@ import { MailSettingsRow } from '@/components/settings/mail-settings-ui';
 import { Switch } from '@/components/ui/switch';
 import type { NotificationPreferences } from '@/lib/notifications/preferences';
 import {
+  abandonBrowserPush,
   type BrowserPushState,
   disableBrowserPush,
   enableBrowserPush,
@@ -89,7 +90,7 @@ export function BrowserAlertsRow({
           await onEnabled?.();
         } catch (error) {
           // The setting did not save, so the row must not say that alerts are on.
-          await disableBrowserPush().catch(() => undefined);
+          await abandonBrowserPush();
           throw error;
         }
       } else await disableBrowserPush();

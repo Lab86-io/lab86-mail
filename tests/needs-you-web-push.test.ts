@@ -11,6 +11,7 @@ import {
 } from '../lib/notifications/delivery';
 import { CODE_PUSH_BODY, CODE_PUSH_TITLE, dispatchWebNotification } from '../lib/notifications/web-delivery';
 import {
+  abandonBrowserPush,
   type BrowserPushEnvironment,
   browserPushEnvironment,
   disableBrowserPush,
@@ -567,23 +568,49 @@ describe('the service worker', () => {
     expect(shown[1].options).toMatchObject({ tag: 'n1', renotify: false });
   });
 
-  test('a tab that cannot take the link does not lose the click: a new tab opens', async () => {
-    const stuck = tab('https://mail.example.test/', {
-      focus: async () => {
+  test('a tab that cannot take the link does not lose the click', async () => {
+    // The message cannot reach the tab: a new tab opens. The app tab does not load a page.
+    const silent = tab('https://mail.example.test/', {
+      postMessage: () => {
         throw new Error('gone');
       },
     });
-    const app = worker([stuck]);
+    const app = worker([silent]);
     await click(app.listeners, item);
     expect(app.opened).toEqual([item.url]);
-    const moved = tab('https://mail.example.test/settings', {
+    expect(silent.calls).toEqual([]);
+    // A tab that cannot move: a new tab opens.
+    const stuck = tab('https://mail.example.test/settings', {
       navigate: async () => {
         throw new Error('gone');
       },
     });
-    const plain = worker([moved]);
+    const plain = worker([stuck]);
     await click(plain.listeners, { url: '/x', inApp: false });
     expect(plain.opened).toEqual(['/x']);
+  });
+
+  test('a focus that fails after the link went through opens no second tab', async () => {
+    const away = tab('https://mail.example.test/', {
+      focus: async () => {
+        throw new Error('not allowed');
+      },
+    });
+    const app = worker([away]);
+    await click(app.listeners, item);
+    expect(app.opened).toEqual([]);
+    expect(away.calls).toEqual([{ type: 'albatross:open-link', url: item.url }]);
+  });
+
+  test('the tab that navigate returns takes the focus', async () => {
+    const replaced = tab('https://mail.example.test/other');
+    const old = tab('https://mail.example.test/settings', {
+      navigate: async () => replaced,
+    });
+    const run = worker([old]);
+    await click(run.listeners, { url: '/x', inApp: false });
+    expect(replaced.calls).toEqual(['focus']);
+    expect(old.calls).toEqual([]);
   });
 
   test('a new version takes over at once, so a tab that it controls can move', async () => {
@@ -783,6 +810,39 @@ describe('the browser path of Settings', () => {
     await expect(enableBrowserPush(refused('not json'))).rejects.toThrow('Could not enable Web Push.');
     // The server refused it, so this browser does not stay subscribed.
     expect(unsubscribed).toBe(2);
+  });
+
+  test('a request that never reaches the server leaves no subscription', async () => {
+    unsubscribed = 0;
+    const offline = browser({
+      fetch: (async () => {
+        throw new Error('offline');
+      }) as any,
+    }).env;
+    await expect(enableBrowserPush(offline)).rejects.toThrow('offline');
+    expect(unsubscribed).toBe(1);
+  });
+
+  test('after a failed save, this browser leaves even when the server cannot hear it', async () => {
+    let gone = 0;
+    const current = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser',
+      unsubscribe: async () => {
+        gone += 1;
+        return true;
+      },
+    };
+    const { env } = browser(
+      {
+        fetch: (async () => {
+          throw new Error('offline');
+        }) as any,
+      },
+      current,
+    );
+    await abandonBrowserPush(env);
+    expect(gone).toBe(1);
+    await abandonBrowserPush(browser().env);
   });
 
   test('disable tells the server first, then removes the subscription', async () => {
