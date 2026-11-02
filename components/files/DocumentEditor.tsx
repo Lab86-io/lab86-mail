@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import {
   ArrowLeft,
   Check,
@@ -24,6 +25,7 @@ import { OfficeEditor } from '@/components/files/OfficeEditor';
 import { useDocumentPanel, useNarrowDocumentWorkspace } from '@/components/files/useDocumentPanel';
 import { useOutgoingEdits } from '@/components/files/useOutgoingEdits';
 import { Button } from '@/components/ui/button';
+import { api } from '@/convex/_generated/api';
 import { useClientStore } from '@/lib/client-state';
 import { documentDraftMatchesSave } from '@/lib/documents/autosave';
 import { discardDraft, peekDraft, pendingFlush, type RetainedDraft } from '@/lib/documents/draft-store';
@@ -120,7 +122,11 @@ function openDocumentChat() {
   useClientStore.getState().setAssistantPresentation('split');
 }
 
-/** The thread and the native workspace edit next to a chat that the editor cannot hear, so they check for a newer save. */
+/**
+ * The thread and the native workspace edit next to a chat that the editor
+ * cannot hear. They subscribe to the saved revision. With no live answer (not
+ * signed in to Convex yet, or no connection) they check at this interval.
+ */
 const SAVED_REVISION_CHECK_MS = 5_000;
 
 export function DocumentEditor({
@@ -162,15 +168,28 @@ export function DocumentEditor({
     if (measured && narrow) setHistoryOpen(false);
   }, [measured, narrow]);
 
+  const watchesSaves = host === 'thread' || isNativeWorkspace();
+  const savedRevision = useConvexQuery({
+    query: api.documents.savedRevision,
+    args: watchesSaves ? { documentId } : 'skip',
+  });
+  const liveRevision =
+    savedRevision.status === 'success' && typeof savedRevision.data === 'number' ? savedRevision.data : null;
   const documentQuery = useQuery({
     queryKey: ['document', documentId],
     queryFn: () => fetchJson<{ ok: true; document: EditorDocument }>(`/api/documents/${documentId}`),
     staleTime: 10_000,
-    // A chat or a run may save a new revision. With no unsaved edits here, the
-    // editor takes it at once (the adopt effect below skips a dirty editor).
-    refetchInterval: (host === 'thread' || isNativeWorkspace()) && !dirty ? SAVED_REVISION_CHECK_MS : false,
+    refetchInterval: watchesSaves && liveRevision === null && !dirty ? SAVED_REVISION_CHECK_MS : false,
   });
   const document = documentQuery.data?.document;
+  // A chat or a run may save a new revision. With no unsaved edits here, the
+  // editor takes it at once (the adopt effect below skips a dirty editor).
+  const refetchDocument = documentQuery.refetch;
+  const hasDocument = Boolean(document);
+  useEffect(() => {
+    if (hasDocument && liveRevision !== null && !dirty && liveRevision > revisionRef.current)
+      void refetchDocument();
+  }, [hasDocument, liveRevision, dirty, refetchDocument]);
   useAssistantDocument(
     document
       ? {
