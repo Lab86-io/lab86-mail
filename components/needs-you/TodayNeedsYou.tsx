@@ -280,14 +280,14 @@ export function TodayNeedsYou({
                 transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.16, 1, 0.3, 1] }}
                 className="overflow-hidden"
               >
-                <ul className="-mx-5">
+                <ul>
                   <NeedsYouRow
                     entry={entry}
                     now={now}
                     timezone={timezone}
                     selected={false}
                     focusable
-                    pillsAlways
+                    flush
                     draftReady={obligation ? obligation.draftReady === true : false}
                     copied={copiedId === entry.id}
                     busy={actions.busyId === entry.id || sending === entry.id}
@@ -384,7 +384,7 @@ function ReplyInPlace({
   return (
     <div
       data-today-reply={obligation.id}
-      className="corner-smooth surface-accent mb-3 ml-10 rounded-ui border border-[var(--surface-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]"
+      className="corner-smooth surface-accent mb-3 ml-[40px] rounded-ui border border-[var(--surface-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]"
     >
       <div className="flex items-center gap-2.5 border-b border-[var(--surface-border)] px-3.5 py-2.5">
         <span className="text-[11px] font-semibold text-[var(--color-accent)]">Draft reply</span>

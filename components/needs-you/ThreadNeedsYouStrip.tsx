@@ -77,7 +77,7 @@ export function ThreadNeedsYouStrip({
       )}
     >
       <ObligationLead obligation={lead} size={24} className="mt-px" />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-[240px] flex-1">
         <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-[13.5px] leading-[19px]">
           <span
             className={cn(
@@ -103,7 +103,7 @@ export function ThreadNeedsYouStrip({
           </p>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="ml-auto flex shrink-0 items-center gap-1">
         {canSendReply(lead) ? (
           <Button
             size="sm"

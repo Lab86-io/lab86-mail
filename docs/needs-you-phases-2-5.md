@@ -599,33 +599,53 @@ module, and the server makes the module from the region.
 
 ### Open items
 
-1. The brief has no action that closes an obligation. "Done" in the lane
-   needs a new brief action on web, iOS, and the server (W).
-2. The Work thread shows its items in one block after the messages. Items
-   between the messages need a `thread.extras` slot in
-   `components/shell/AIBar.tsx` (W).
-3. The thread rail row (`ThreadRail.tsx`, `lib/albatross/thread-list-view.ts`)
-   reads the run state, not the obligations (W).
-4. The step line of the Albatross card ("Step 2 of 4 · ... · Your turn")
-   needs step data on `ObligationView`. The contract has none (W).
-5. The brief lane holds obligations only. Albatross questions and approvals
-   (the extras of the page) are not in the lane. The W fixture shows one.
-6. `framing.age` is "Day N" from `createdAt`, or empty on the first day. For a
-   connected item, `framing.reason` is the place ("Slack, #release"). The W
-   design shows the time ("9:12 AM") and "GitHub · 8:05 AM" in `age`.
-7. The iOS letter form shows no count sentence and no "Due today" label.
-   Real editions are editorial and show both. A stored letter document is
-   rare: old editions, or an editorial layout that did not compose.
-8. The deterministic HTML artifact (`buildNativeDailyReportArtifact`,
-   `compositionFromReport`) shows the old lanes, not Needs you. The web and
-   iOS show it when the composition fails and the edition has no document.
-9. The prose writer reads `sections.answer`, not the ledger. The lede can
-   name a thread that the page shows under Needs you. The editorial writer
-   reads the lane module.
-10. The macOS shell must add the steps of "What the Mac shell must add" in
-    the I notes (M).
-11. Swift edits of the integrator (`NeedsYouStore.swift`, the `open_view`
-    route, their tests) compile only in the Native acceptance workflow.
+Round 2 (2026-11-02, `docs/research/needs-you-web-2-design-2026-11-02.md`)
+closed items 2, 3, and 5 on the web, and made item 1 moot on the web.
+
+1. Closed on the web. Today shows a live list from the page subscription
+   with Done, Later, Reply, Copy, Yes/No, and Undo in place
+   (`components/needs-you/TodayNeedsYou.tsx`). While it shows, the brief
+   canvas hides the stored lane (`withoutNeedsYouLane`). The stored lane
+   still has no Done on iOS and macOS, and the brief action is still absent
+   on the server.
+2. Closed on the web. `thread.extras` in `components/shell/AIBar.tsx` puts
+   cards between the messages by time (`interleaveThreadExtras`). The Work
+   thread passes its items as extras.
+3. Closed on the web. `applyObligationsToThreadRows` in
+   `lib/albatross/thread-list-view.ts` gives a thread with an open item the
+   word "Your turn" and the item title. `ThreadRail.tsx` reads the shared
+   snapshot.
+4. Open. The step line of the Albatross card needs step data on
+   `ObligationView`. The contract has none (W).
+5. Closed on the web. The live list on Today holds the Albatross questions
+   and approvals. The stored lane still holds obligations only.
+6. Open. `framing.age` is "Day N" from `createdAt`, or empty on the first
+   day. The live list shows the time instead, so the stored lane matters
+   less on the web.
+7. Open. The iOS letter form shows no count sentence and no "Due today" label.
+8. Open. The deterministic HTML artifact shows the old lanes, not Needs you.
+9. Open. The prose writer reads `sections.answer`, not the ledger.
+10. Open. The macOS shell must add the steps of "What the Mac shell must add"
+    in the I notes (M).
+11. Open. Swift edits of the integrator compile only in the Native
+    acceptance workflow.
+
+### Web round 2 (2026-11-02)
+
+- Today: `TodayNeedsYouLayer` wraps the brief; the canvas renders the live
+  list under the masthead of the current edition and hides the stored lane.
+  Old editions and users outside the flag keep the stored lane.
+- Mail: `ThreadNeedsYou` strip in the reader; one accent dot on the inbox row
+  from one lookup (`useNeedsYouThreadMarks`).
+- Albatrosses: the area section merges ledger items whose Albatross is in
+  the area (`obligationNeedsYouRows`); the chooser sentence says "plans and
+  tasks". The rail row and the thread cards are above.
+- Calendar: `CalendarNeedsYouProvider` at the surface; the event dialog shows
+  the `rsvp` or `prepare` card; the week and day block shows one ring.
+- Routes: `g n`, the palette group "Needs you" with each open item, the page
+  entry renamed for flag users, and the tab title "(N) Albatross".
+- Previews: `/dev/needs-you-preview?surface=today|mail|calendar`,
+  `/dev/brief-preview?layout=needs-you-editorial&live=1`.
 
 ## M notes (macOS, 2026-10-30)
 

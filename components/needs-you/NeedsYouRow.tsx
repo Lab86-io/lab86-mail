@@ -209,6 +209,8 @@ export interface NeedsYouRowProps {
   undoWord?: string;
   /** The pills stay in view, not only on hover: a touch screen, or a list outside the page. */
   pillsAlways?: boolean;
+  /** No side padding: the row sits in a measure that already has its inset (the Today list). */
+  flush?: boolean;
   registerRef: (node: HTMLButtonElement | null) => void;
 }
 
@@ -272,6 +274,7 @@ export function NeedsYouRow({
   onUndo,
   undoWord,
   pillsAlways,
+  flush,
   registerRef,
 }: NeedsYouRowProps) {
   const words = rowWords(entry, now, timezone);
@@ -307,7 +310,8 @@ export function NeedsYouRow({
         onClick={onOpen}
         onKeyDown={onKeyDown}
         className={cn(
-          'grid w-full grid-cols-[28px_minmax(0,1fr)_auto] items-start gap-x-3 px-5 py-[11px] text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:rounded-ui focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
+          'grid w-full grid-cols-[28px_minmax(0,1fr)_auto] items-start gap-x-3 py-[11px] text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:rounded-ui focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
+          flush ? 'px-0' : 'px-5',
           selected && 'bg-[var(--color-selected-soft)]',
           closed && 'opacity-[0.72]',
         )}
@@ -369,7 +373,7 @@ export function NeedsYouRow({
         </span>
       </button>
       {undo ? (
-        <span className="absolute right-3 top-[9px] flex items-baseline gap-2">
+        <span className={cn('absolute top-[9px] flex items-baseline gap-2', flush ? 'right-0' : 'right-3')}>
           <span className={cn('text-[11.5px] leading-[22px]', DUE_TONE.done)}>{undoWord ?? due.text}</span>
           <button
             type="button"
@@ -386,7 +390,8 @@ export function NeedsYouRow({
       ) : hasPills ? (
         <span
           className={cn(
-            'absolute right-3 top-[9px] gap-1',
+            'absolute top-[9px] gap-1',
+            flush ? 'right-0' : 'right-3',
             pillsAlways ? 'flex' : 'hidden group-hover:flex group-focus-within:flex',
           )}
         >
