@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { convexTest } from 'convex-test';
 import { NextRequest } from 'next/server';
 import { createOpsHealthPost } from '../app/api/cron/ops-health/route';
@@ -557,6 +557,31 @@ describe('the alarm in Convex', () => {
     clock = NOW + OPS_CLAIM_LEASE_MS;
     const later = alarm(t);
     expect(await later.run()).toMatchObject({ sent: 1 });
+  });
+
+  test('a sent mail with a failed settle sends no second mail until its lease ends', async () => {
+    clock = NOW;
+    const t = harness();
+    await usage(t, 'jev_mail', failing(12));
+    const error = spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      clock = NOW + 60_000;
+      const settle = api.opsHealth.settleNotices;
+      const lost = alarm(t, {
+        mutate: (async (ref: any, args: any) => {
+          if (ref === settle) throw new Error('Convex is busy');
+          return t.mutation(ref, { internalSecret: SECRET, ...args });
+        }) as OpsAlarmDependencies['mutate'],
+      });
+      expect(await lost.run()).toMatchObject({ sent: 1, failed: 0 });
+      expect(lost.sent).toHaveLength(1);
+      clock = NOW + 120_000;
+      const next = alarm(t);
+      expect(await next.run()).toMatchObject({ notices: 0 });
+      expect(next.sent).toHaveLength(0);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   test('silence fires after a group stops, and a return closes it', async () => {

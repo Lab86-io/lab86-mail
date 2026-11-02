@@ -198,7 +198,9 @@ describe('the server buffer', () => {
     timers.at(-1)?.run();
     await Promise.resolve();
     await Promise.resolve();
-    expect((write.mock.calls.at(-1)?.[0] as any[])[0].count).toBe(2);
+    const lastCall = write.mock.calls.at(-1);
+    expect(lastCall).toBeDefined();
+    expect((lastCall![0] as any[])[0].count).toBe(2);
   });
 
   test('more rows than one write can hold wait for the next one', async () => {

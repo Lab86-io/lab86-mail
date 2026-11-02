@@ -78,13 +78,18 @@ export async function runOpsAlarm(overrides: Partial<OpsAlarmDependencies> = {})
     const refs = group.map(({ kind, type: noticeType }) => ({ kind, type: noticeType }));
     try {
       await deps.send({ to: recipient, ...opsAlarmEmail(type, group, now) });
-      await deps.mutate(alarmApi.settleNotices, { now, notices: refs });
-      sent += 1;
     } catch (error) {
       failed += 1;
       console.error('[ops-alarm] the email did not send:', error instanceof Error ? error.message : error);
       await deps.mutate(alarmApi.releaseNotices, { now, notices: refs }).catch(() => undefined);
+      continue;
     }
+    sent += 1;
+    // The mail went out. A failed settle keeps the claim: its lease then ends,
+    // and the owner gets no second mail from the next run at once.
+    await deps.mutate(alarmApi.settleNotices, { now, notices: refs }).catch((error: unknown) => {
+      console.error('[ops-alarm] the notice did not settle:', error instanceof Error ? error.message : error);
+    });
   }
   return { status: 'ran', rows: rows.length, notices: notices.length, sent, failed };
 }
