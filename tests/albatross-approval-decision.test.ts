@@ -33,6 +33,14 @@ describe('approvalView', () => {
     );
   });
 
+  test('a claim that never ended offers the press again and says what to check', () => {
+    expect(approvalView({ ...INVITE, status: 'pending', staleClaim: true })).toMatchObject({
+      state: 'waiting',
+      canDecide: true,
+      line: APPROVAL_COPY.staleClaim,
+    });
+  });
+
   test('a claiming row from another client offers no press', () => {
     expect(approvalView({ ...INVITE, status: 'claiming' })).toMatchObject({
       state: 'deciding',

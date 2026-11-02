@@ -30,6 +30,7 @@ export interface PendingApproval {
   status: string;
   kind?: string;
   createdAt?: number;
+  staleClaim?: boolean;
 }
 
 export type NotificationAction =
@@ -184,7 +185,7 @@ export function projectNotifications(input: {
       unreadNotificationIds: [],
       action: row.intentId ? { kind: 'work', workId: row.intentId } : { kind: 'albatrosses' },
       actionLabel: 'Open the Albatross',
-      approval: { id: row._id, status: row.status, kind: row.kind },
+      approval: { id: row._id, status: row.status, kind: row.kind, staleClaim: row.staleClaim },
     });
   }
   if (input.checkin && ['scheduled', 'open'].includes(input.checkin.status)) {

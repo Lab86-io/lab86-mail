@@ -21,6 +21,8 @@ export interface ApprovalRef {
   id: string;
   status: string;
   kind?: string;
+  /** An earlier try stopped with no answer, so it may have gone out. */
+  staleClaim?: boolean;
 }
 
 export type ApprovalViewState = 'waiting' | 'deciding' | 'approved' | 'declined' | 'failed' | 'closed';
@@ -43,6 +45,7 @@ export const APPROVAL_COPY = {
   decline: 'Decline',
   word: { waiting: 'Your turn', deciding: 'In progress', approved: 'Approved', declined: 'Declined' },
   failedWord: 'Did not finish',
+  staleClaim: 'The last try did not finish. Check that it did not go out, then try again.',
   approving: 'Albatross sends it now.',
   declining: 'Albatross closes it now.',
   declined: 'Declined. Nothing went out.',
@@ -146,7 +149,13 @@ export function approvalView(approval: ApprovalRef, local?: LocalApprovalDecisio
       line: local.message,
     };
   }
-  return { state: 'waiting', canDecide: true, word: APPROVAL_COPY.word.waiting, tone: 'plain', line: null };
+  return {
+    state: 'waiting',
+    canDecide: true,
+    word: APPROVAL_COPY.word.waiting,
+    tone: 'plain',
+    line: approval.staleClaim ? APPROVAL_COPY.staleClaim : null,
+  };
 }
 
 type ApprovalCaller = (name: string, args: Record<string, unknown>) => Promise<any>;

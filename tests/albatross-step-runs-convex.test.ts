@@ -984,6 +984,33 @@ describe('the approvals of a run', () => {
     expect(await state()).toMatchObject({ open: 0, approved: 1 });
   });
 
+  test('a claim from a process that died reads as waiting, and a person can decide it again', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const runId = String(await seedHandoff(t, workId, approve));
+    const approvalId = await t.mutation(api.albatrossWork.enqueueApproval, queueArgs(workId, runId, 'a'));
+    await t.mutation(api.albatrossWork.claimApproval, { ...caller, approvalId });
+    const read = () => t.query(api.albatrossWork.getApproval, { ...caller, approvalId });
+    // A live claim: nobody else can press.
+    expect(await read()).toMatchObject({ status: 'claiming' });
+    await expect(t.mutation(api.albatrossWork.claimApproval, { ...caller, approvalId })).rejects.toThrow(
+      'already claiming',
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(approvalId as never, { updatedAt: Date.now() - 11 * 60_000 });
+    });
+    expect(await read()).toMatchObject({ status: 'pending', staleClaim: true });
+    const queue: any[] = await t.query(api.albatrossWork.listApprovals, { ...caller });
+    expect(queue[0]).toMatchObject({ status: 'pending', staleClaim: true });
+    await t.mutation(api.albatrossWork.decideApproval, {
+      ...caller,
+      approvalId,
+      status: 'rejected',
+      onlyIfPending: true,
+    });
+    expect(await read()).toMatchObject({ status: 'rejected' });
+  });
+
   test('the settlement claim needs a handoff with nothing that waits, and goes once', async () => {
     const t = harness();
     const workId = String(await seedWork(t));
