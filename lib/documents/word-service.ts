@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { getSavedFileRow, readSavedFileBytes } from '@/lib/files/saved-files';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { exportDocument } from './export';
 import { OfficeError, readOfficeResponse, validateOfficeArchive } from './office-security';
@@ -27,8 +28,16 @@ import {
   type WordEdit,
 } from './word-package';
 
+/** The bytes of an image that this user has in Files. */
+async function readSavedImage(userId: string, fileId: string) {
+  const row = await getSavedFileRow(userId, fileId);
+  if (!row) throw new OfficeError('That image is not in Files.', 404);
+  return readSavedFileBytes(row);
+}
+
 const defaults = {
   requireOffice,
+  readSavedImage,
   getDocument,
   exportDocument,
   renderTemplate,
@@ -83,11 +92,12 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
       deps.requireOffice();
       options.signal?.throwIfAborted();
       let title = input.title.trim() || 'Untitled document';
+      const images = { readImage: (fileId: string) => deps.readSavedImage(userId, fileId) };
       let bytes: Uint8Array;
       if (input.template) {
         if (input.sourceDocumentId) throw new OfficeError('Use a template or a source document, not both.');
         bytes = (await deps.renderTemplate(input.template, input.data ?? {}, { title })).bytes;
-        if (input.edits?.length) bytes = await editWordPackage(bytes, input.edits);
+        if (input.edits?.length) bytes = await editWordPackage(bytes, input.edits, images);
       } else if (input.sourceDocumentId) {
         const source = await deps.getDocument(userId, input.sourceDocumentId);
         if (!source || source.kind !== 'doc') throw new OfficeError('Source document not found.', 404);
@@ -95,8 +105,11 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
           throw new OfficeError('The source changed. Save and reopen the latest version first.', 409);
         title = source.title;
         bytes = (await deps.exportDocument(source)).bytes;
-        if (input.edits?.length) bytes = await editWordPackage(bytes, input.edits);
-      } else bytes = await createWordPackage(title, input.edits);
+        if (input.edits?.length) bytes = await editWordPackage(bytes, input.edits, images);
+      } else {
+        bytes = await createWordPackage(title);
+        if (input.edits?.length) bytes = await editWordPackage(bytes, input.edits, images);
+      }
       const sha256 = validateOfficeArchive(bytes, 'docx');
       await verifyOfficePackage(bytes, 'docx');
       // The blanks still empty after any edits, in page order (the package item `blanks`).
@@ -224,7 +237,9 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
           await verifyOfficePackage(updated, 'docx');
           template = { kind: 'invoice', dataJson: JSON.stringify(data), renderedSha256: sha256Of(updated) };
         } else {
-          updated = await editWordPackage(bytes, edits);
+          updated = await editWordPackage(bytes, edits, {
+            readImage: (fileId) => deps.readSavedImage(userId, fileId),
+          });
           if (fills.length && file.template) notes.push(CHANGED_SINCE_RENDER_NOTE);
         }
         const sha256 = validateOfficeArchive(updated, 'docx');

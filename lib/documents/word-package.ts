@@ -16,6 +16,14 @@ const CT = 'http://schemas.openxmlformats.org/package/2006/content-types';
 const paragraphIndex = z.number().int().min(0);
 const text = z.string().max(100_000);
 const color = z.string().regex(/^[0-9a-fA-F]{6}$/);
+const inlineRun = z
+  .object({
+    text,
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    underline: z.boolean().optional(),
+  })
+  .strict();
 const singleLine = text.refine(
   (value) => !/[\r\n\t]/.test(value),
   'Use paragraph insertion for line breaks and tabs.',
@@ -37,18 +45,38 @@ export const wordEditSchema = z.discriminatedUnion('op', [
       dataUrl: z
         .string()
         .max(1_400_000)
-        .regex(/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/),
+        .regex(/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/)
+        .optional()
+        .describe('A small image as a data URL. Use fileId for an image in Files.'),
+      fileId: z.string().min(1).max(200).optional().describe('A PNG or JPEG in Files.'),
       width: z.number().int().min(1).max(1600),
       height: z.number().int().min(1).max(2000),
       alt: z.string().max(500).default(''),
     })
-    .strict(),
+    .strict()
+    .refine((edit) => Boolean(edit.dataUrl) !== Boolean(edit.fileId), {
+      message: 'Send dataUrl or fileId, not both.',
+      path: ['fileId'],
+    }),
   z
     .object({
       op: z.literal('insert_paragraph'),
       after: paragraphIndex.optional(),
-      text,
+      text: text.optional().describe('Plain text. Use runs for bold, italic, or underlined words.'),
+      runs: z.array(inlineRun).min(1).max(200).optional(),
       heading: z.number().int().min(1).max(6).optional(),
+    })
+    .strict()
+    .refine((edit) => edit.text !== undefined || edit.runs !== undefined, {
+      message: 'Send text or runs.',
+      path: ['text'],
+    }),
+  z
+    .object({
+      op: z.literal('insert_list'),
+      after: paragraphIndex.optional(),
+      items: z.array(text.max(10_000)).min(1).max(500),
+      ordered: z.boolean().default(false).describe('True for numbers. False for bullets.'),
     })
     .strict(),
   z
@@ -214,9 +242,7 @@ function properties(parent: Element, name: string) {
   }
   return node;
 }
-function paragraph(doc: XMLDocument, value: string) {
-  const node = element(doc, 'p');
-  const run = element(doc, 'r');
+function appendText(doc: XMLDocument, run: Element, value: string) {
   const pieces = value.replace(/\r\n?/g, '\n').split(/(\n|\t)/);
   pieces.forEach((piece) => {
     if (piece === '\n' || piece === '\t') {
@@ -228,7 +254,27 @@ function paragraph(doc: XMLDocument, value: string) {
     content.textContent = piece;
     run.append(content);
   });
+}
+function paragraph(doc: XMLDocument, value: string) {
+  const node = element(doc, 'p');
+  const run = element(doc, 'r');
+  appendText(doc, run, value);
   node.append(run);
+  return node;
+}
+function formattedParagraph(doc: XMLDocument, runs: ReadonlyArray<z.infer<typeof inlineRun>>) {
+  const node = element(doc, 'p');
+  for (const source of runs) {
+    const run = element(doc, 'r');
+    if (source.bold || source.italic || source.underline) {
+      const props = properties(run, 'rPr');
+      if (source.bold) property(props, 'b', { val: '1' });
+      if (source.italic) property(props, 'i', { val: '1' });
+      if (source.underline) property(props, 'u', { val: 'single' });
+    }
+    appendText(doc, run, source.text);
+    node.append(run);
+  }
   return node;
 }
 async function open(bytes: Uint8Array) {
@@ -305,7 +351,15 @@ export async function createWordPackage(title: string, edits?: WordEdit[]) {
   return edits?.length ? editWordPackage(bytes, edits) : bytes;
 }
 
-export async function editWordPackage(bytes: Uint8Array, input: WordEdit[]) {
+/** The most bytes that an image from Files can have. A data URL stays at 1 MB. */
+const FILE_IMAGE_MAX_BYTES = 5_000_000;
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+export async function editWordPackage(
+  bytes: Uint8Array,
+  input: WordEdit[],
+  options: { readImage?: (fileId: string) => Promise<Uint8Array> } = {},
+) {
   if (JSON.stringify(input).length > 2_000_000)
     throw new OfficeError('Word edits must be smaller than 2 MB.', 413);
   const edits = xmlSafeDeep(wordEditsSchema.parse(input));
@@ -355,6 +409,51 @@ export async function editWordPackage(bytes: Uint8Array, input: WordEdit[]) {
       }
       return node;
     };
+    // A new list definition each time, so that each numbered list starts at 1.
+    const addListNumbering = async (ordered: boolean) => {
+      const rels = await relationships();
+      const existing = Array.from(rels.documentElement.children).find(
+        (node) => node.getAttribute('Type') === `${R}/numbering`,
+      );
+      const target = existing?.getAttribute('Target') || 'numbering.xml';
+      if (existing?.getAttribute('TargetMode') === 'External' || !/^(?:\/word\/)?[\w-]+\.xml$/.test(target))
+        throw new OfficeError('The numbering part uses an unsupported location.');
+      if (!existing) await addRelationship('numbering', target);
+      const path = target.startsWith('/') ? target.slice(1) : `word/${target}`;
+      const numbering = await part(path, 'numbering', W);
+      await addContentType(
+        path,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml',
+      );
+      const next = (name: string, attribute: string) =>
+        Math.max(
+          0,
+          ...descendants(numbering, name)
+            .map((node) => Number(node.getAttributeNS(W, attribute)))
+            .filter(Number.isFinite),
+        ) + 1;
+      const abstractId = next('abstractNum', 'abstractNumId');
+      const numId = next('num', 'numId');
+      const abstract = element(numbering, 'abstractNum', { abstractNumId: abstractId });
+      const level = element(numbering, 'lvl', { ilvl: 0 });
+      const pPr = element(numbering, 'pPr');
+      pPr.append(element(numbering, 'ind', { left: 720, hanging: 360 }));
+      level.append(
+        element(numbering, 'start', { val: 1 }),
+        element(numbering, 'numFmt', { val: ordered ? 'decimal' : 'bullet' }),
+        element(numbering, 'lvlText', { val: ordered ? '%1.' : '\u2022' }),
+        element(numbering, 'lvlJc', { val: 'left' }),
+        pPr,
+      );
+      abstract.append(element(numbering, 'multiLevelType', { val: 'singleLevel' }), level);
+      // The schema puts each abstractNum before the first num.
+      numbering.documentElement.insertBefore(abstract, descendants(numbering, 'num')[0] || null);
+      const num = element(numbering, 'num', { numId });
+      num.append(element(numbering, 'abstractNumId', { val: abstractId }));
+      const after = descendants(numbering, 'numIdMacAtCleanup')[0];
+      numbering.documentElement.insertBefore(num, after || null);
+      return numId;
+    };
     const at = (index: number) => {
       const node = descendants(body, 'p')[index];
       if (!node) throw new OfficeError(`Paragraph ${index} does not exist. Read the current document first.`);
@@ -370,9 +469,22 @@ export async function editWordPackage(bytes: Uint8Array, input: WordEdit[]) {
     };
     for (const edit of edits) {
       if (edit.op === 'insert_paragraph') {
-        const node = paragraph(document, edit.text);
+        const node = edit.runs
+          ? formattedParagraph(document, edit.runs)
+          : paragraph(document, edit.text ?? '');
         if (edit.heading) property(properties(node, 'pPr'), 'pStyle', { val: `Heading${edit.heading}` });
         insert(node, edit.after);
+      } else if (edit.op === 'insert_list') {
+        const numId = await addListNumbering(edit.ordered);
+        let previous: Element | null = null;
+        for (const item of edit.items) {
+          const node = paragraph(document, item);
+          const numbering = property(properties(node, 'pPr'), 'numPr', {});
+          numbering.append(element(document, 'ilvl', { val: 0 }), element(document, 'numId', { val: numId }));
+          if (previous) previous.after(node);
+          else insert(node, edit.after);
+          previous = node;
+        }
       } else if (edit.op === 'replace_text') {
         const target = at(edit.paragraph);
         if (
@@ -567,15 +679,22 @@ export async function editWordPackage(bytes: Uint8Array, input: WordEdit[]) {
         run.append(element(document, 'commentReference', { id }));
         targetParagraph.append(run);
       } else if (edit.op === 'insert_image') {
-        const data = Buffer.from(edit.dataUrl.split(',')[1], 'base64');
-        const type = edit.dataUrl.startsWith('data:image/png') ? 'png' : 'jpg';
-        if (
-          data.length > 1_000_000 ||
-          (type === 'png'
-            ? !data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-            : data[0] !== 255 || data[1] !== 216)
-        )
-          throw new OfficeError('Use a PNG or JPEG image smaller than 1 MB.');
+        if (edit.fileId && !options.readImage)
+          throw new OfficeError('An image from Files needs a saved Word file.');
+        const data = edit.fileId
+          ? Buffer.from(await options.readImage!(edit.fileId))
+          : Buffer.from((edit.dataUrl ?? '').split(',')[1], 'base64');
+        const isPng = data.subarray(0, 8).equals(PNG_SIGNATURE);
+        const type = edit.fileId
+          ? isPng
+            ? 'png'
+            : 'jpg'
+          : edit.dataUrl?.startsWith('data:image/png')
+            ? 'png'
+            : 'jpg';
+        const limit = edit.fileId ? FILE_IMAGE_MAX_BYTES : 1_000_000;
+        if (data.length > limit || (type === 'png' ? !isPng : data[0] !== 255 || data[1] !== 216))
+          throw new OfficeError(`Use a PNG or JPEG image smaller than ${limit / 1_000_000} MB.`);
         try {
           const decoded = await loadImage(data);
           if (!decoded.width || !decoded.height) throw new Error('Empty image');
