@@ -524,6 +524,13 @@ function stopTimer(timer: ReturnType<typeof setInterval> | null) {
   if (timer) clearInterval(timer);
 }
 
+const RUN_START_LINES: ReadonlySet<string> = new Set([
+  'Started on the goal.',
+  'Continued the goal.',
+  'Started on the step.',
+  'Continued the step.',
+]);
+
 /**
  * Claim and run one queued step run. Every exit settles the run or leaves it
  * to the lease: a lost process never leaves a run "working" forever.
@@ -640,7 +647,9 @@ export async function runStepRun(
   try {
     if (!stepRunsEnabled()) return await settle({ error: 'Step runs are off.' });
     // The first line goes out before the reads below, so the run shows at once.
-    const earlierWork = run.attempts > 1 && (goal ? run.messages?.length : run.log?.length);
+    // The first line of an attempt is no work: a retry after a stalled first call starts fresh.
+    const loggedWork = (run.log || []).some((row: { text: string }) => !RUN_START_LINES.has(row.text));
+    const earlierWork = run.attempts > 1 && (goal ? run.messages?.length : loggedWork);
     const continuing = Boolean(
       run.parentRunId ||
         (goal && run.trigger === 'resume') ||
@@ -692,7 +701,7 @@ export async function runStepRun(
     // A retried attempt of this same run continues from what the first attempt
     // did (its log and its artifacts), instead of doing the step again.
     const previous: PreviousRun | null =
-      run.attempts > 1 && ((run.log || []).length || (run.artifacts || []).length)
+      run.attempts > 1 && (loggedWork || (run.artifacts || []).length)
         ? {
             summary: `An earlier attempt of this run stopped before it finished.${parent?.summary ? ` Before that: ${parent.summary}` : ''}`,
             log: run.log,

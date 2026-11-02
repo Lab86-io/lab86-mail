@@ -893,10 +893,19 @@ describe('a run shows its work as it happens', () => {
 
   test('a retry of a run with earlier work says it continues', async () => {
     const h = harness(handOff, {
-      run: { attempts: 2, log: [{ at: 1, text: 'Started on the step.' }] },
+      run: { attempts: 2, log: [{ at: 1, text: 'Saved a draft: “The proposal”.' }] },
     });
     await runStepRun('user-1', 'run-1', h.deps);
     expect(progress(h)[0].lines).toEqual([{ text: 'Continued the step.' }]);
+  });
+
+  test('a retry after a first call that did nothing starts fresh, not as a continuation', async () => {
+    const h = harness(handOff, {
+      run: { attempts: 2, log: [{ at: 1, text: 'Started on the step.' }] },
+    });
+    await runStepRun('user-1', 'run-1', h.deps);
+    expect(progress(h)[0].lines).toEqual([{ text: 'Started on the step.' }]);
+    expect(h.generateOptions().system).not.toContain('An earlier attempt of this run stopped');
   });
 
   test('a tool at work has an open row, and its own line takes that place', async () => {
