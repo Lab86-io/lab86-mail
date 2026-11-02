@@ -1,10 +1,18 @@
 'use client';
 
 import { useMutation } from 'convex/react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
+import { MailSettingsRow } from '@/components/settings/mail-settings-ui';
+import { Switch } from '@/components/ui/switch';
 import type { NotificationPreferences } from '@/lib/notifications/preferences';
+import {
+  type BrowserPushState,
+  disableBrowserPush,
+  enableBrowserPush,
+  readBrowserPush,
+} from '@/lib/notifications/web-push-client';
 import { setObligationPush, useNeedsYouSnapshot } from './data';
 import { NeedsYouGate } from './NeedsYouGate';
 
@@ -34,13 +42,87 @@ export async function saveCodesEnabled(enabled: boolean, fetcher: typeof fetch =
   if (!write.ok || !result?.ok) throw new Error(result?.error || 'Could not save this setting.');
 }
 
+/** The description of the browser row. `null` is the moment before the browser answers. */
+export function browserAlertsDescription(state: BrowserPushState | null): string {
+  switch (state) {
+    case 'on':
+      return 'This browser shows each push, also when Albatross is closed.';
+    case 'blocked':
+      return 'This browser blocks alerts from Albatross. Allow them in the site settings of the browser, then reload this page.';
+    case 'unsupported':
+      return 'This browser cannot show alerts. Use a different browser, or use the iPhone or Mac app.';
+    default:
+      return 'Show each push in this browser, also when Albatross is closed. Each browser has its own setting.';
+  }
+}
+
+/**
+ * The switch of this browser. On means that this browser has an active
+ * subscription: the same push goes to it, by the rules of the rows around it.
+ */
+export function BrowserAlertsRow({
+  initialState = null,
+  onEnabled,
+}: {
+  initialState?: BrowserPushState | null;
+  /** Records the change in the settings form, as the Web Push row does. */
+  onEnabled?: () => Promise<void>;
+}) {
+  const [state, setState] = useState<BrowserPushState | null>(initialState);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void readBrowserPush().then((next) => {
+      if (live) setState(next);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const onChange = async (enabled: boolean) => {
+    setBusy(true);
+    try {
+      if (enabled) {
+        await enableBrowserPush();
+        await onEnabled?.().catch(() => undefined);
+      } else await disableBrowserPush();
+      setState(enabled ? 'on' : 'off');
+      toast.success(enabled ? 'Alerts are on in this browser' : 'Alerts are off in this browser');
+    } catch (error) {
+      setState(await readBrowserPush());
+      toast.error(error instanceof Error ? error.message : 'Could not save this setting.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <MailSettingsRow
+      id="needs-you-browser"
+      label="Alerts in this browser"
+      description={browserAlertsDescription(state)}
+      control={
+        <Switch
+          id="needs-you-browser"
+          checked={state === 'on'}
+          disabled={busy || state === null || state === 'blocked' || state === 'unsupported'}
+          onCheckedChange={(enabled) => void onChange(enabled)}
+        />
+      }
+    />
+  );
+}
+
 interface AlertsProps {
   timezone?: string;
   /** The saved preference row, with the flags of phase 1 when the server has them. */
   remote: NotificationPreferences | undefined;
+  /** The browser row subscribed this browser. The settings form records it. */
+  onBrowserPushEnabled?: () => Promise<void>;
 }
 
-function NeedsYouAlerts({ timezone, remote }: AlertsProps) {
+function NeedsYouAlerts({ timezone, remote, onBrowserPushEnabled }: AlertsProps) {
   const snapshot = useNeedsYouSnapshot();
   const save = useMutation(setObligationPush);
   const [local, setLocal] = useState<{ pushEnabled?: boolean; codesEnabled?: boolean }>({});
@@ -87,6 +169,7 @@ function NeedsYouAlerts({ timezone, remote }: AlertsProps) {
         codesEnabled,
         onCodesEnabledChange: (enabled) => void onCodesEnabledChange(enabled),
         saving,
+        browserRow: <BrowserAlertsRow onEnabled={onBrowserPushEnabled} />,
       }}
     />
   );
