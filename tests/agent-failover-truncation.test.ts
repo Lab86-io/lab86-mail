@@ -175,6 +175,21 @@ describe('late failover', () => {
     expect(events.at(-1)).toEqual({ type: 'finish', finishReason: 'stop' });
   });
 
+  test('the prompt of the next runtime never ends with the partial text of the failed step', async () => {
+    handlerSpy('search_threads');
+    const first = model(callTool('search_threads', { account: 'acct_1', query: 'lease' }), (controller) => {
+      controller.enqueue({ type: 'text-start', id: 't' });
+      controller.enqueue({ type: 'text-delta', id: 't', delta: 'PARTIAL-TEXT' });
+      controller.enqueue({ type: 'error', error: overloaded() });
+      controller.close();
+    });
+    const second = model(answer('Whole answer.'));
+    await run([first, second]);
+    const { prompt } = second.doStreamCalls[0];
+    expect(prompt.at(-1)?.role).toBe('tool');
+    expect(JSON.stringify(prompt)).not.toContain('PARTIAL-TEXT');
+  });
+
   test('the groups the failed runtime loaded stay loaded on the next one', async () => {
     const first = model(callTool('enable_tools', { groups: ['slack'] }), failsWith(overloaded()));
     const second = model(answer('Done.'));

@@ -1091,13 +1091,17 @@ function usageOfSteps(steps: readonly any[]) {
  */
 function handOffMessages(steps: readonly any[]): ModelMessage[] {
   const messages: ModelMessage[] = steps.at(-1)?.response?.messages ?? [];
-  return messages.map((message) => {
+  const history = messages.map((message) => {
     if (!Array.isArray(message.content)) return message;
     const content = (message.content as any[])
       .filter((part) => part?.type !== 'reasoning')
       .map(({ providerOptions: _providerOptions, ...part }) => part);
     return { ...message, content } as ModelMessage;
   });
+  // The partial text of the failed step is already on the screen, and a provider
+  // can reject a prompt that ends with an assistant turn.
+  while (history.at(-1)?.role === 'assistant') history.pop();
+  return history;
 }
 
 const HANDOFF_NOTE =
