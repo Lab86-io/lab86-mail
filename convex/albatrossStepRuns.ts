@@ -740,7 +740,26 @@ export const claimApprovalSettlement = mutation({
     const userId = await resolveUserId(ctx, args);
     const run = await ctx.db.get(args.runId);
     if (!run || run.userId !== userId || run.approvalSettledAt) return false;
+    if (run.state !== 'handed_off') return false;
+    // The check and the mark are one transaction: an approval that waits blocks the claim.
+    const approvals = await ctx.db
+      .query('albatrossApprovals')
+      .withIndex('by_user_batch', (q) => q.eq('userId', userId).eq('operationBatchId', String(run._id)))
+      .take(RUN_APPROVALS_COUNT_MAX);
+    if (approvals.some((row) => row.status === 'pending' || row.status === 'claiming')) return false;
     await ctx.db.patch(run._id, { approvalSettledAt: now() });
+    return true;
+  },
+});
+
+/** A settlement that failed gives its claim back. The handoff keeps Dismiss for the user. */
+export const releaseApprovalSettlement = mutation({
+  args: { ...callerArgs, runId: v.id('albatrossStepRuns') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.userId !== userId || run.state !== 'handed_off') return false;
+    await ctx.db.patch(run._id, { approvalSettledAt: undefined });
     return true;
   },
 });

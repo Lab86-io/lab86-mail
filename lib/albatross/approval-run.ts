@@ -98,6 +98,7 @@ export async function settleRunAfterDecision(
     });
     return { action: 'closed' };
   };
+  let claimed = false;
   try {
     const state = await deps.convexQuery<ApprovalRunState | null>(api.albatrossStepRuns.approvalRunState, {
       userId: input.userId,
@@ -110,6 +111,7 @@ export async function settleRunAfterDecision(
       runId,
     });
     if (!first) return { action: 'none' };
+    claimed = true;
     if (after === 'close') return await close();
     const { run } = state;
     const note = approvedNote(input.approval.title);
@@ -132,6 +134,10 @@ export async function settleRunAfterDecision(
     }
   } catch (error) {
     console.warn('[approval-run] could not settle', error instanceof Error ? error.name : 'error');
+    if (claimed)
+      await deps
+        .convexMutation(api.albatrossStepRuns.releaseApprovalSettlement, { userId: input.userId, runId })
+        .catch(() => undefined);
     return { action: 'none' };
   }
 }

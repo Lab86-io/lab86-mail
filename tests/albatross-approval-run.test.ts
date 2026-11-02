@@ -149,6 +149,24 @@ describe('settleRunAfterDecision', () => {
     expect(h.completed).toEqual([]);
   });
 
+  test('a settlement that cannot close gives its claim back', async () => {
+    const calls: any[] = [];
+    const h = harness(state({ approved: 0 }), {
+      convexMutation: mock(async (_fn: unknown, args: any) => {
+        calls.push(args);
+        if (args?.runId && calls.length === 1) return true;
+        if (args?.id) throw new Error('Convex is busy');
+        return true;
+      }) as never,
+    });
+    expect(await settleRunAfterDecision(input, h.deps)).toEqual({ action: 'none' });
+    expect(calls).toEqual([
+      { userId: 'user-1', runId: 'run-1' },
+      { userId: 'user-1', id: 'run-1' },
+      { userId: 'user-1', runId: 'run-1' },
+    ]);
+  });
+
   test('a second decision at the same time does not continue the run again', async () => {
     const claims: unknown[] = [];
     let wins = 1;

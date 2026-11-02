@@ -795,6 +795,25 @@ describe('the approvals of a run', () => {
     expect(await state()).toMatchObject({ open: 0, approved: 1 });
   });
 
+  test('the settlement claim needs a handoff with nothing that waits, and goes once', async () => {
+    const t = harness();
+    const workId = String(await seedWork(t));
+    const runId = String(await seedHandoff(t, workId, approve));
+    const approvalId = await t.mutation(api.albatrossWork.enqueueApproval, queueArgs(workId, runId, 'a'));
+    const claim = () =>
+      t.mutation(api.albatrossStepRuns.claimApprovalSettlement, { ...caller, runId: runId as never });
+    // An approval still waits: no claim.
+    expect(await claim()).toBe(false);
+    await t.mutation(api.albatrossWork.decideApproval, { ...caller, approvalId, status: 'approved' });
+    expect(await claim()).toBe(true);
+    expect(await claim()).toBe(false);
+    // A failed settlement gives it back.
+    expect(
+      await t.mutation(api.albatrossStepRuns.releaseApprovalSettlement, { ...caller, runId: runId as never }),
+    ).toBe(true);
+    expect(await claim()).toBe(true);
+  });
+
   test('approvalRunState reads nothing for another user or for an id that is not a run', async () => {
     const t = harness();
     const workId = String(await seedWork(t));
