@@ -171,6 +171,23 @@ export function workbookText(model: SheetWorkbookModel, options: { maxCells?: nu
  * Sheets sync, server-side Excel fallback, native clients). Styles, formats,
  * charts, pivots, merges, and validation are NOT carried; callers must say so.
  */
+/** What a values-and-formulas export of this workbook leaves out. Empty means that nothing is lost. */
+export function workbookProjectionLosses(model: SheetWorkbookModel): string[] {
+  const has = (value: unknown) =>
+    Array.isArray(value)
+      ? value.length > 0
+      : Boolean(value) && typeof value === 'object' && Object.keys(value as object).length > 0;
+  const sheets = model.workbook.sheets as Array<Record<string, unknown>>;
+  const any = (...keys: string[]) => sheets.some((sheet) => keys.some((key) => has(sheet[key])));
+  return [
+    ...(any('figures') ? ['charts and images'] : []),
+    ...(any('tables') ? ['styled tables'] : []),
+    ...(has((model.workbook as Record<string, unknown>).pivots) ? ['pivots'] : []),
+    ...(any('styles', 'formats', 'borders', 'merges', 'conditionalFormats') ? ['formatting'] : []),
+    ...(any('dataValidationRules') ? ['validation'] : []),
+  ];
+}
+
 export function projectWorkbookToSheetV1(
   model: SheetWorkbookModel,
   limits: {

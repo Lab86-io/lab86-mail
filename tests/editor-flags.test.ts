@@ -39,6 +39,27 @@ describe('editor rollout flags', () => {
     process.env.OFFICE_THEMED_CHROME = 'true';
     expect(isThemedOfficeChromeEnabled()).toBe(true);
   });
+  test('the server flag takes all or a comma list of user ids', () => {
+    setProcessEnv('NODE_ENV', 'production');
+    delete process.env.LAB86_DEVELOPMENT_MODE;
+    process.env.DECK_V2_AUTHORING = 'all';
+    expect(isDeckV2AuthoringEnabled()).toBe(true);
+    expect(isDeckV2AuthoringEnabled('user_a')).toBe(true);
+    process.env.DECK_V2_AUTHORING = ' user_a , user_b ';
+    expect(isDeckV2AuthoringEnabled('user_a')).toBe(true);
+    expect(isDeckV2AuthoringEnabled('user_b')).toBe(true);
+    expect(isDeckV2AuthoringEnabled('user_c')).toBe(false);
+    expect(isDeckV2AuthoringEnabled()).toBe(false);
+    expect(isDeckV2AuthoringEnabled(null)).toBe(false);
+    process.env.DECK_V2_AUTHORING = 'TRUE';
+    expect(isDeckV2AuthoringEnabled('user_c')).toBe(true);
+    process.env.DECK_V2_AUTHORING = 'no';
+    expect(isDeckV2AuthoringEnabled('user_a')).toBe(false);
+    // A list does not depend on the development default.
+    process.env.LAB86_DEVELOPMENT_MODE = 'true';
+    process.env.DECK_V2_AUTHORING = 'user_a';
+    expect(isDeckV2AuthoringEnabled('user_c')).toBe(false);
+  });
   test('the client flag follows the public variable, else development', () => {
     delete process.env.NEXT_PUBLIC_DECK_V2_AUTHORING;
     setProcessEnv('NODE_ENV', 'development');
@@ -47,7 +68,12 @@ describe('editor rollout flags', () => {
     expect(isDeckV2AuthoringEnabledOnClient()).toBe(false);
     process.env.NEXT_PUBLIC_DECK_V2_AUTHORING = 'yes';
     expect(isDeckV2AuthoringEnabledOnClient()).toBe(true);
+    process.env.NEXT_PUBLIC_DECK_V2_AUTHORING = 'all';
+    expect(isDeckV2AuthoringEnabledOnClient()).toBe(true);
     process.env.NEXT_PUBLIC_DECK_V2_AUTHORING = '0';
+    expect(isDeckV2AuthoringEnabledOnClient()).toBe(false);
+    // An id list stays on the server: the browser never has one.
+    process.env.NEXT_PUBLIC_DECK_V2_AUTHORING = 'user_a';
     expect(isDeckV2AuthoringEnabledOnClient()).toBe(false);
   });
 });

@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useBriefFrameCspOptions, useFrameNonce } from '@/hooks/use-frame-nonce';
+import { useSurfaceReady } from '@/hooks/use-surface-ready';
 import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { briefFreshness, briefIsStale, briefStaleNote } from '@/lib/albatross/today';
@@ -953,6 +954,7 @@ export function DailyReport({
   const busy = generate.isPending || Boolean(pending);
   // The vortex is only for a user with nothing to read.
   const showVortex = !report && busy;
+  useSurfaceReady('today', reportQuery.isSuccess && !showVortex);
   const showsLetter = displayDocument || Boolean(fallbackLetter);
   const noiseCount = typeof report?.stats?.noise === 'number' ? report.stats.noise : null;
   const showPicker = Boolean(report && (selectedId || !report.first));

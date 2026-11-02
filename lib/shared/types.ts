@@ -171,6 +171,8 @@ export interface DraftAttachment {
    * time (a filled PDF with sealed fields). The stored file holds no value.
    */
   sealed?: boolean;
+  /** Plain words about what the recipient will not get: empty blanks, or a workbook's charts. */
+  warning?: string;
 }
 
 export interface LabelRecord {

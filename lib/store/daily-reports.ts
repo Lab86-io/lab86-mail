@@ -432,7 +432,13 @@ export async function readBriefView(known?: string | null): Promise<BriefViewRes
     }),
     readNewestReadableRow(),
   ]);
-  const pending = briefPendingFromHead(head);
+  // With no answer on the job, a row that composes keeps its state: the page
+  // must not call its plain letter final until a read says so.
+  const pending =
+    briefPendingFromHead(head) ??
+    (!headKnown && row && isBriefEditionGenerating(row)
+      ? { reportId: String(row._id), phase: 'composing' as const }
+      : null);
   const stamp = briefHeadStamp(head);
   if (!row) return { stamp, pending, revision: null, report: null };
   const migrated = migrateDailyReport(row, Date.now(), { legacyArtifacts: false });

@@ -41,6 +41,8 @@ async function makeForm(options: { tooltips?: boolean; signature?: boolean } = {
   const notes = form.createTextField('notes');
   notes.enableMultiline();
   notes.addToPage(page, { x: 110, y: 400, width: 200, height: 60 });
+  // Without a size here, the save below stores the size that it chose for empty text (51).
+  notes.setFontSize(10);
   const locked = form.createTextField('locked');
   locked.setText('fixed');
   locked.enableReadOnly();
@@ -179,6 +181,115 @@ describe('reading PDF form fields', () => {
       ),
     );
     await expect(readPdfFormFields(locked)).rejects.toMatchObject({ code: 'encrypted' });
+  });
+});
+
+describe('a filled form opens again and fits', () => {
+  async function fitForm() {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([612, 792]);
+    const form = doc.getForm();
+    const fixed = form.createTextField('fixed');
+    fixed.addToPage(page, { x: 40, y: 700, width: 100, height: 18 });
+    fixed.setFontSize(10);
+    const auto = form.createTextField('auto');
+    auto.addToPage(page, { x: 40, y: 660, width: 100, height: 18 });
+    // Size 0 is the form's way to say "automatic". pdf-lib itself stores the size it chose.
+    auto.acroField.setDefaultAppearance('0 g /Helv 0 Tf');
+    auto.acroField.getWidgets()[0].setDefaultAppearance('0 g /Helv 0 Tf');
+    const box = form.createTextField('box');
+    box.enableMultiline();
+    box.addToPage(page, { x: 40, y: 560, width: 100, height: 60 });
+    box.setFontSize(10);
+    const comb = form.createTextField('comb');
+    comb.setMaxLength(9);
+    comb.enableCombing();
+    comb.addToPage(page, { x: 40, y: 520, width: 90, height: 18 });
+    return doc.save({ updateFieldAppearances: false });
+  }
+
+  test('the same length can fit or not: the check measures the text, it does not count', async () => {
+    const form = await fitForm();
+    // Fifteen narrow letters fit in 98 points at size 10. Fifteen wide letters do not.
+    const narrow = await fillPdfForm(form, { values: { fixed: 'iiiiiiiiiiiiiii' } });
+    expect((await readPdfFormFields(narrow.bytes, { pageText: noPageText }))[0].value).toBe(
+      'iiiiiiiiiiiiiii',
+    );
+    const refused = await fillPdfForm(form, { values: { fixed: 'WWWWWWWWWWWWWWW' } }).catch((error) => error);
+    expect(refused).toBeInstanceOf(PdfFormError);
+    expect(refused.code).toBe('bad_values');
+    expect(refused.problems[0].field).toBe('fixed');
+    expect(refused.message).toContain('does not fit');
+    expect(refused.message).not.toContain('WWW');
+  });
+
+  test('an automatic field shrinks the text, down to a size that a person can read', async () => {
+    const form = await fitForm();
+    await fillPdfForm(form, { values: { auto: 'Mara Ellison, Harbor Design' } });
+    const refused = await fillPdfForm(form, { values: { auto: 'W'.repeat(40) } }).catch((error) => error);
+    expect(refused.problems?.[0].field).toBe('auto');
+  });
+
+  test('a multi-line field wraps by measure and refuses more lines than it has', async () => {
+    const form = await fitForm();
+    await fillPdfForm(form, { values: { box: 'one two three four five\nsix seven' } });
+    const refused = await fillPdfForm(form, { values: { box: 'word '.repeat(80).trim() } }).catch(
+      (error) => error,
+    );
+    expect(refused.problems?.[0].message).toContain('lines');
+    const long = await fillPdfForm(form, { values: { box: 'W'.repeat(100) } }).catch((error) => error);
+    expect(long.problems?.[0].field).toBe('box');
+  });
+
+  test('a comb field takes the length check only', async () => {
+    const form = await fitForm();
+    await fillPdfForm(form, { values: { comb: 'WWWWWWWWW' } });
+    const refused = await fillPdfForm(form, { values: { comb: 'WWWWWWWWWW' } }).catch((error) => error);
+    expect(refused.message).toContain('9 characters at most');
+  });
+
+  test('an automatic field stays automatic, so a longer value fits in a later fill', async () => {
+    const form = await fitForm();
+    const first = await fillPdfForm(form, { values: { auto: 'Hi' } });
+    const second = await fillPdfForm(first.bytes, { values: { auto: 'Mara Ellison, Harbor Design' } });
+    const auto = (await readPdfFormFields(second.bytes, { pageText: noPageText })).find(
+      (field) => field.name === 'auto',
+    );
+    expect(auto?.value).toBe('Mara Ellison, Harbor Design');
+    // A size set in the form stays.
+    const fixed = await fillPdfForm(form, { values: { fixed: 'Hi' } });
+    const reopened = await PDFDocument.load(fixed.bytes);
+    expect(reopened.getForm().getTextField('fixed').acroField.getDefaultAppearance()).toContain('10 Tf');
+  });
+
+  test('each value is confirmed in the saved bytes, with no value in the error', async () => {
+    const form = await fitForm();
+    const realSave = PDFDocument.prototype.save;
+    // The save loses the written text: the check must catch it.
+    PDFDocument.prototype.save = async function save(this: PDFDocument, options) {
+      this.getForm().getTextField('fixed').setText('other');
+      return realSave.call(this, options);
+    };
+    try {
+      const refused = await fillPdfForm(form, { values: { fixed: 'Hi' } }).catch((error) => error);
+      expect(refused).toBeInstanceOf(PdfFormError);
+      expect(refused.message).toContain('did not check out');
+      expect(refused.problems[0]).toEqual({
+        field: 'fixed',
+        message: 'The saved file does not hold this value.',
+      });
+      expect(refused.message).not.toContain('Hi');
+    } finally {
+      PDFDocument.prototype.save = realSave;
+    }
+  });
+
+  test('the real IRS form fills, reopens, and holds each value', async () => {
+    const filled = await fillPdfForm(W9, {
+      values: { [`${P}f1_01[0]`]: 'Mara Ellison', [`${P}Address_ReadOrder[0].f1_07[0]`]: '12 Harbor Way' },
+    });
+    const fields = await readPdfFormFields(filled.bytes, { pageText: noPageText });
+    expect(fields.find((field) => field.name === `${P}f1_01[0]`)?.value).toBe('Mara Ellison');
   });
 });
 

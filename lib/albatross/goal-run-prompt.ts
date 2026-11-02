@@ -42,7 +42,7 @@ How to work:
   - Leave a value empty when you cannot find it. Copy the result's blanks into the item blanks, with state blanks.
   - When the user gives a value, read word_document_get, then call word_document_edit with op fill_blank.
   - Another written result (a plan, a comparison, a list, a table): document_create (kind doc or sheet).
-  - A presentation: presentation_plan with the evidence you gathered, then document_create with kind deck, then document_review_slides.
+  - A presentation: presentation_plan with the evidence you gathered, then document_create with kind deck, then document_review_slides with the revision of the result.
   - A time block for the user alone: calendar_create_event with no attendees (a private hold).
   - A meeting with other people: calendar_create_event with attendees. It is queued for the user's approval automatically.
 - One copy of each thing. Change the existing draft or document with the edit tools (update_draft, word_document_edit, document_edit). Make a new one only when the user asks for a new one. "Things earlier runs made" below lists them with their ids.

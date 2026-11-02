@@ -47,6 +47,7 @@ import {
   preloadNextSurfacesWhenIdle,
 } from './surface-loaders';
 import { WakeNudgeHost } from './WakeNudge';
+import { WebSpeedReporter } from './WebSpeedReporter';
 
 // A surface that has not loaded holds its place with the same paper, so the
 // shell does not move when the code lands. Today paints the shape of the letter.
@@ -252,6 +253,9 @@ export function AppShell({
   const mailish =
     visiblePrimaryView === 'mail' || visiblePrimaryView === 'today' || visiblePrimaryView === 'areas';
   const readerVisible = !!(composeMode || (selectedThreadId && mailish));
+  // A new thread clears a failure of the last one. A draft has no thread, and a
+  // change of the selection must not mount its composer again.
+  const readerBoundaryKey = composeMode ? 'compose' : (selectedThreadId ?? 'none');
   // Mail splits in place. Linked messages from Today and Areas remain sheets
   // so opening a source does not reflow the document being read.
   const readerSplit = !isMobile && readerVisible && visiblePrimaryView === 'mail';
@@ -383,7 +387,7 @@ export function AppShell({
                           transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
                           className="h-full min-w-0"
                         >
-                          <SurfaceErrorBoundary key={selectedThreadId} surface="This conversation">
+                          <SurfaceErrorBoundary key={readerBoundaryKey} surface="This conversation">
                             <ThreadView />
                           </SurfaceErrorBoundary>
                         </motion.div>
@@ -405,7 +409,7 @@ export function AppShell({
                       transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
                       className="absolute inset-0 z-20 h-full w-full bg-[var(--color-bg)] shadow-[var(--shadow-pop)]"
                     >
-                      <SurfaceErrorBoundary key={selectedThreadId} surface="This conversation">
+                      <SurfaceErrorBoundary key={readerBoundaryKey} surface="This conversation">
                         <ThreadView />
                       </SurfaceErrorBoundary>
                     </motion.div>
@@ -419,7 +423,7 @@ export function AppShell({
                       transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
                       className="absolute inset-y-0 right-0 z-30 w-[min(560px,calc(100%-96px))]"
                     >
-                      <SurfaceErrorBoundary key={selectedThreadId} surface="This conversation">
+                      <SurfaceErrorBoundary key={readerBoundaryKey} surface="This conversation">
                         <ThreadView variant="sheet" />
                       </SurfaceErrorBoundary>
                     </motion.div>
@@ -442,6 +446,7 @@ export function AppShell({
       <ShortcutsSheet />
       <ShortcutsBinding />
       <RecordMailboxesConnected />
+      <WebSpeedReporter />
     </TooltipProvider>
   );
 }

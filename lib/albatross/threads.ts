@@ -250,7 +250,12 @@ export function buildThreadRows(
   return works
     .filter((work) => work.workState !== 'archived' && work.status !== 'archived')
     .map((work) => threadRow(work, activity?.runs[work._id] ?? null, activity?.threads[work._id] ?? null))
-    .sort((a, b) => rank(a) - rank(b) || b.lastActivityAt - a.lastActivityAt);
+    .sort(compareThreadRows);
+}
+
+/** Rows that need the user first, then work in progress, then the rest; the newest first in each. */
+export function compareThreadRows(a: ThreadRow, b: ThreadRow) {
+  return rank(a) - rank(b) || b.lastActivityAt - a.lastActivityAt;
 }
 
 export type ThreadFilter = 'all' | 'needs_you' | 'working';

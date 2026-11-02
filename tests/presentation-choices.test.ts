@@ -113,7 +113,12 @@ function messages(parts = [part('brief'), part('design'), part('storyboard')]) {
 function ready(): PresentationSession {
   return presentationSessionFromMessages(messages());
 }
-afterEach(() => __setDocumentToolDepsForTest());
+const deckFlag = process.env.DECK_V2_AUTHORING;
+afterEach(() => {
+  __setDocumentToolDepsForTest();
+  if (deckFlag === undefined) delete process.env.DECK_V2_AUTHORING;
+  else process.env.DECK_V2_AUTHORING = deckFlag;
+});
 
 describe('guided presentation preferences', () => {
   test('new design receipts omit imagery and allow artwork, owned images and approved data together', async () => {
@@ -685,7 +690,34 @@ describe('guided presentation preferences', () => {
         expect(restyleOperationFor(classification)).toMatchObject({ palette, fontPair });
       }
   });
+  test('with version 2 off, a confirmed session takes the legacy brief that the agent was offered', async () => {
+    process.env.DECK_V2_AUTHORING = 'someone_else';
+    const composed = mock(async (input: any) => {
+      expect(input.presentation.slides[0].layout).toBe('cover');
+      throw new Error('The legacy brief reached composition');
+    });
+    __setDocumentToolDepsForTest({ composeDocumentPresentation: composed });
+    const state: PresentationSession = { delegate: true, brief: { audience: 'Board' } as any };
+    await expect(
+      runTool(
+        () =>
+          liftToolsForAgent(undefined, 'UTC', state, { userId: 'this_user' }).document_create.execute({
+            kind: 'deck',
+            title: 'Direction',
+            presentation: {
+              title: 'Direction',
+              summary: 'A short deck.',
+              palette: 'ink',
+              slides: [{ layout: 'cover', title: 'One', kicker: '', body: '', items: [], notes: '' }],
+            },
+          }),
+        {},
+      ),
+    ).rejects.toThrow('The legacy brief reached composition');
+    expect(composed).toHaveBeenCalledTimes(1);
+  });
   test('the agent pauses deck writes, allows explicit delegation, and exposes a client-side tool', async () => {
+    process.env.DECK_V2_AUTHORING = 'all';
     const state: PresentationSession = {};
     const tools = liftToolsForAgent(undefined, 'UTC', state);
     expect(tools.ask_presentation_choices.execute).toBeUndefined();

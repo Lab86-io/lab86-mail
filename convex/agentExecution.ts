@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { type MutationCtx, mutation, query } from './_generated/server';
 import { requireInternalSecret } from './lib';
+import { recordToolFinish } from './opsHealth';
 
 const identity = { internalSecret: v.optional(v.string()), userId: v.string(), runId: v.string() };
 
@@ -47,12 +48,22 @@ export const finishTool = mutation({
       )
       .unique();
     if (!record || record.status === 'succeeded' || record.status === 'failed') return;
+    const at = Date.now();
     await ctx.db.patch(record._id, {
       status: args.status,
       output: args.output,
       error: args.error,
-      updatedAt: Date.now(),
+      updatedAt: at,
     });
+    // Each call counts once: a later write over `unknown` is not a second call.
+    if (record.status === 'running')
+      await recordToolFinish(ctx, {
+        toolName: record.toolName,
+        status: args.status,
+        errorClass: (args as { errorClass?: unknown }).errorClass,
+        error: args.error,
+        at,
+      });
   },
 });
 

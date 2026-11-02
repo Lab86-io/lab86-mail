@@ -6,6 +6,7 @@ import { AlignmentType, Document, Table, TableRow, WidthType } from 'docx';
 import { z } from 'zod';
 import {
   ACCENT,
+  blankSlug,
   cell,
   cleanText,
   displayDate,
@@ -200,6 +201,116 @@ export function invoiceTotals(data: InvoiceData): InvoiceTotals {
   };
 }
 
+/** The short name of a line in its blank labels. A long or repeated title uses the line number. */
+function invoiceLineName(lines: readonly InvoiceLine[], index: number) {
+  const { title } = lines[index];
+  return title.length <= 26 && lines.filter((other) => other.title === title).length === 1
+    ? title
+    : `line ${index + 1}`;
+}
+
+const invoiceUnit = (hourly: boolean) => (hourly ? 'Hours' : 'Qty');
+const adjustmentBlankName = (label: string, index: number) =>
+  label.length <= 30 ? `Amount: ${label}` : `Adjustment ${index + 1}`;
+
+/** A number as a person writes it: "$1,500.00", "12.5", "150 USD". Anything else is null. */
+export function parseInvoiceNumber(text: string): number | null {
+  const match =
+    /^(-)?\s*(?:[$€£¥]|[A-Za-z]{3})?\s*(-)?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d*\.?\d+)\s*(?:[A-Za-z]{3})?$/.exec(
+      text.trim(),
+    );
+  if (!match) return null;
+  const value = Number(match[3].replace(/,/g, ''));
+  if (!Number.isFinite(value)) return null;
+  return match[1] || match[2] ? -value : value;
+}
+
+/** A blank name that the data of this invoice cannot take. The message names what can. */
+export class InvoiceBlankError extends Error {}
+
+type InvoiceField = { name: string; number?: boolean; write: (value: string | number | undefined) => void };
+
+/** Each field that a blank can fill, under the name that the template gives its blank. */
+function invoiceFields(data: InvoiceData): InvoiceField[] {
+  const totals = invoiceTotals(data);
+  const unit = invoiceUnit(totals.hourly);
+  const text = (write: (value: string | undefined) => void) => (value: string | number | undefined) =>
+    write(value === undefined ? undefined : String(value));
+  const number = (write: (value: number | undefined) => void) => (value: string | number | undefined) =>
+    write(typeof value === 'number' ? value : undefined);
+  return [
+    { name: 'Your name', write: text((value) => Object.assign(data.from, { name: value })) },
+    { name: 'Client name', write: text((value) => Object.assign(data.billTo, { name: value })) },
+    { name: 'Invoice number', write: text((value) => Object.assign(data, { number: value })) },
+    { name: 'Invoice date', write: text((value) => Object.assign(data, { issued: value })) },
+    { name: 'Payment details', write: text((value) => Object.assign(data, { payment: value })) },
+    ...data.items.flatMap((item, index) => {
+      const name = invoiceLineName(totals.lines, index);
+      const quantity = totals.hourly ? 'hours' : 'quantity';
+      return [
+        { name: `Summary: ${name}`, write: text((value) => Object.assign(item, { summary: value })) },
+        {
+          name: `${unit}: ${name}`,
+          number: true,
+          write: number((value) => Object.assign(item, { [quantity]: value })),
+        },
+        {
+          name: `Rate: ${name}`,
+          number: true,
+          write: number((value) => Object.assign(item, { rate: value })),
+        },
+        {
+          name: `Amount: ${name}`,
+          number: true,
+          write: number((value) => Object.assign(item, { amount: value })),
+        },
+      ];
+    }),
+    ...(data.adjustments ?? []).map((adjustment, index) => ({
+      name: adjustmentBlankName(cleanText(adjustment.label), index),
+      number: true,
+      write: number((value) => Object.assign(adjustment, { amount: value })),
+    })),
+  ];
+}
+
+/**
+ * New invoice data with these blank values. The server computes each total, so a
+ * total is never a value to fill. The caller renders the invoice again from the result.
+ */
+export function applyInvoiceBlanks(
+  source: InvoiceData,
+  fills: ReadonlyArray<{ blank: string; value: string }>,
+): InvoiceData {
+  const data = structuredClone(source);
+  for (const { blank, value } of fills) {
+    const slug = blankSlug(blank.trim().replace(/^blank:/i, ''));
+    if (slug === 'total-due' || slug === 'subtotal')
+      throw new InvoiceBlankError(
+        `The server computes "${blank}". Fill the hours, the rates, or the amounts of the lines instead.`,
+      );
+    const fields = invoiceFields(data);
+    const field = fields.find((entry) => blankSlug(entry.name) === slug);
+    if (!field)
+      throw new InvoiceBlankError(
+        `No field of this invoice is named "${blank}". The names are ${fields.map((entry) => `"${entry.name}"`).join(', ')}.`,
+      );
+    const text = value.trim();
+    if (!text) {
+      field.write(undefined);
+      continue;
+    }
+    if (!field.number) {
+      field.write(value);
+      continue;
+    }
+    const parsed = parseInvoiceNumber(text);
+    if (parsed === null) throw new InvoiceBlankError(`"${field.name}" takes a number, for example 12.5.`);
+    field.write(parsed);
+  }
+  return data;
+}
+
 export function buildInvoice(canvas: TemplateCanvas, data: InvoiceData, title: string) {
   const c = canvas;
   const currency = cleanText(data.currency).toUpperCase() || 'USD';
@@ -296,7 +407,7 @@ export function buildInvoice(canvas: TemplateCanvas, data: InvoiceData, title: s
   );
 
   const columns = [WIDTH * 0.58, WIDTH * 0.12, WIDTH * 0.13, WIDTH * 0.17];
-  const unit = totals.hourly ? 'Hours' : 'Qty';
+  const unit = invoiceUnit(totals.hourly);
   const head = new TableRow({
     tableHeader: true,
     children: ['Description', unit, 'Rate', 'Amount'].map((text, index) =>
@@ -312,13 +423,8 @@ export function buildInvoice(canvas: TemplateCanvas, data: InvoiceData, title: s
     ),
   });
   const rule = { borders: { bottom: hairline() }, top: 160, bottom: 160 };
-  // Blank names must stay unique and short: a long or repeated title uses the line number.
-  const lineName = (line: InvoiceLine, index: number) =>
-    line.title.length <= 26 && totals.lines.filter((other) => other.title === line.title).length === 1
-      ? line.title
-      : `line ${index + 1}`;
   const itemRows = totals.lines.map((line, index) => {
-    const name = lineName(line, index);
+    const name = invoiceLineName(totals.lines, index);
     // A known amount needs no blanks for the numbers that made it.
     const priced = line.amount !== undefined;
     const numberCell = (value: number | undefined, label: string, show: (n: number) => string, color = INK) =>
@@ -377,10 +483,7 @@ export function buildInvoice(canvas: TemplateCanvas, data: InvoiceData, title: s
             totalRow(adjustment.label, [
               adjustment.amount !== undefined
                 ? c.run(money(adjustment.amount), { color: MUTED, size: 18 })
-                : c.blank(
-                    adjustment.label.length <= 30 ? `Amount: ${adjustment.label}` : `Adjustment ${index + 1}`,
-                    { color: MUTED, size: 18 },
-                  ),
+                : c.blank(adjustmentBlankName(adjustment.label, index), { color: MUTED, size: 18 }),
             ]),
           ),
         ]

@@ -199,6 +199,39 @@ From the official documents review of 2026-10-14:
 - Page numbers: emit the field runs one by one (begin, instruction, separate, end), each with the
   footer size. The `docx` library joins them in one run, and LibreOffice then uses the body size.
 
+### Document reliability (2026-11-02)
+
+From production data of 09-17 to 10-28: `document_create` failed 12 of 15 times, and
+`word_document_create` worked 4 of 4 times. The rules below replace the old second-model path.
+
+- One creation path. The model writes the content, and the server renders the file.
+  `document_create` takes `blocks` (kind doc), `sheet` (kind sheet), or `presentation` (kind deck).
+  It has no `instructions` field in the schema that the model sees, and it refuses the field with
+  the rule. Only a stored plan step (`lib/tools/albatross.ts`) uses `instructions`, through
+  `documentCreateFromInstructions`, because the plan holds nothing else.
+- One rule in the chat prompt and in the step prompt: an invoice, a letter, a memo, or a report
+  goes to `word_document_create` with a template.
+- `DECK_V2_AUTHORING` takes a boolean, `all`, or a comma list of user ids. The agent gets the brief
+  that the renderer of this user takes. A version 2 brief for a user without version 2 composes
+  through the legacy renderer, and its chart and table data goes to the speaker notes.
+  `NEXT_PUBLIC_DECK_V2_AUTHORING` takes a boolean or `all`, never a list, because it goes to each
+  browser.
+- Each file opens before it counts as made (`lib/documents/office-verify.ts`). All text goes
+  through `xmlSafeText` or `xmlSafeDeep`. The server then strictly parses each XML part again. A
+  file that does not parse is a failed call. An edit checks only the parts that it changed.
+- `document_export` and `document_review_slides` require `revision`, so that an edit makes a new
+  execution key and an old result cannot replay. A stale revision returns `ok: false` with status
+  `conflict`.
+- A PDF of a file with empty blanks is refused with status `blanks`, and the result names them.
+  A draft attachment with format `pdf` is refused in the same way. A Word attachment in its own
+  format, and an engine workbook that would lose charts, tables, pivots, or formatting, carry a
+  `warning` on the attachment.
+- An invoice keeps its data in `officeDocuments.template`. `fill_blank` updates the data and
+  renders the file again, so the server computes each amount and total. A total is never a value
+  to fill. The data counts only while its hash matches the current version, so a save from the
+  word processor is never overwritten. The fill then goes in place, and the result says that the
+  totals did not update.
+
 ## G5. The web layer (Browserbase only)
 
 Details and probe results: `docs/research/browserbase-auth-files-2026-10-15.md`.
@@ -308,7 +341,8 @@ The runner records artifacts and sources from these results, so every builder us
 - `word_document_create` with a template returns the result of today plus `blanks: string[]`
   (the names of the content controls, in page order).
 - `document_export` with `format: 'pdf'` returns `{ ok: true, fileId, title, openPath, size }`
-  for a new saved PDF (`agentUploads`), so the PDF can go into a package and onto a draft.
+  for a new saved PDF (`agentUploads`), so the PDF can go into a package and onto a draft. A refusal
+  returns `{ ok: false, status: 'conflict' | 'blanks', message, revision?, blanks? }`.
 
 ## Lead decisions during the build (2026-10-15)
 

@@ -328,8 +328,53 @@ function hostOf(url: string) {
   }
 }
 
+/** What a tool tried to do, for a log line when it did not work. A quiet tool has no line. */
+const FAILURE_LINES: Record<string, string> = {
+  search_threads: 'Could not search your mail.',
+  corpus_search: 'Could not search your mail.',
+  nl_search: 'Could not search your mail.',
+  get_thread: 'Could not read a mail thread.',
+  read_thread: 'Could not read a mail thread.',
+  save_draft: 'Could not save the draft.',
+  update_draft: 'Could not change the draft.',
+  calendar_create_event: 'Could not add the hold to your calendar.',
+  calendar_list_events: 'Could not check your calendar.',
+  calendar_search_events: 'Could not check your calendar.',
+  calendar_free_busy: 'Could not check your calendar.',
+  calendar_suggest_times: 'Could not check your calendar.',
+  tasks_create_card: 'Could not add the task.',
+  document_create: 'Could not write the document.',
+  word_document_create: 'Could not write the document.',
+  document_edit: 'Could not change the document.',
+  document_apply_instruction: 'Could not change the document.',
+  word_document_edit: 'Could not change the document.',
+  document_publish_google: 'Could not save the document to Google Drive.',
+  document_export: 'Could not make the file.',
+  document_review_slides: 'Could not check the slides.',
+  presentation_plan: 'Could not plan the presentation.',
+  browserbase_search: 'Could not search the web.',
+  browserbase_fetch: 'Could not read a web page.',
+  web_research: 'Could not research on the web.',
+  web_file_save: 'Could not save the file from the web.',
+  mail_attachment_save: 'Could not save the attachment from mail.',
+  cloud_file_search: 'Could not search your files.',
+  remember: 'Could not save a note for later.',
+  pdf_form_fields: 'Could not read the fields of the form.',
+  pdf_form_fill: 'Could not fill in the form.',
+};
+
+/** The log line for a call that threw or that returned ok: false. It holds no error text. */
+export function describeToolFailure(name: string, result?: any): string | null {
+  const line = FAILURE_LINES[name];
+  if (!line) return null;
+  if (result?.status === 'conflict') return `${line} The file changed first.`;
+  if (result?.status === 'blanks') return `${line} The file has empty blanks.`;
+  return line;
+}
+
 /** One plain log line for a finished tool call, or null for a quiet read. */
 export function describeToolCall(name: string, args: any, result: any): string | null {
+  if (result?.ok === false) return describeToolFailure(name, result);
   switch (name) {
     case 'search_threads':
     case 'corpus_search':
@@ -357,7 +402,8 @@ export function describeToolCall(name: string, args: any, result: any): string |
     case 'document_edit':
     case 'document_apply_instruction':
     case 'word_document_edit':
-      return 'Changed the document.';
+      // A review edit only makes a proposal. The file stays as it was.
+      return result?.status === 'proposed' ? 'Proposed a change to the document.' : 'Changed the document.';
     case 'document_publish_google':
       return 'Saved the document to Google Drive.';
     case 'browserbase_search':
@@ -592,7 +638,14 @@ export function buildRunnerTools(lifted: Record<string, any>, host: RunnerToolHo
               'This reaches other people, so it waits for the user. Hand off with outcome ready_for_you, next.kind approve, and target { kind: "approval", id }.',
           };
         }
-        const result = await base.execute(args, options);
+        let result: any;
+        try {
+          result = await base.execute(args, options);
+        } catch (error) {
+          const failed = describeToolFailure(name);
+          if (failed) await host.log(failed);
+          throw error;
+        }
         const line = describeToolCall(name, args, result);
         if (line) await host.log(line);
         const artifact = artifactFromToolResult(name, args, result, { goal });

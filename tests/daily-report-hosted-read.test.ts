@@ -289,6 +289,7 @@ test('a composing row with no job settles, and a failed job read leaves it as it
   await context(async () => {
     const unknown = await readBriefView();
     expect(unknown.report?.artifactStatus).toBe('composing');
+    expect(unknown.pending).toEqual({ reportId: composing._id, phase: 'composing' });
   });
 });
 

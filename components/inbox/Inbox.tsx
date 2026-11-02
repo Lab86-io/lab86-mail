@@ -42,6 +42,7 @@ import { toastWithUndo, undoMailOperation } from '@/components/inbox/mail-undo-t
 import { OrbitRing } from '@/components/loading-ui/orbit-ring';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
+import { useNeedsYouThreadMarks } from '@/components/needs-you/ThreadNeedsYouStrip';
 import { AccountScopePopover, ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -65,6 +66,7 @@ import { RefreshCWIcon } from '@/components/ui/refresh-cw';
 import { RowIcon } from '@/components/ui/row-icon';
 import { SearchIcon } from '@/components/ui/search';
 import { api } from '@/convex/_generated/api';
+import { useSurfaceReady } from '@/hooks/use-surface-ready';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { isAttentionView } from '@/lib/jev/contract';
@@ -77,6 +79,7 @@ import { useEmptyPageContinuation } from '@/lib/mail/search/use-empty-page-conti
 import { peekSenderLogo, resolveSenderLogo, senderLogoDomain } from '@/lib/mail/sender-logo';
 import { groupSenderEmailsByAccount } from '@/lib/mail/sender-photo-groups';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
+import { mailThreadKey } from '@/lib/obligations/surfaces';
 import {
   categoricalColor,
   decodeMailText,
@@ -170,6 +173,8 @@ function suppressionHides(s: QuickFixSuppression, smartCategory: string | null) 
 }
 
 export function Inbox() {
+  // Needs you: one lookup from the snapshot for the row marks. No read per row.
+  const needsYouMarks = useNeedsYouThreadMarks();
   const account = useClientStore((s) => s.account);
   const query = useClientStore((s) => s.query);
   const setQuery = useClientStore((s) => s.setQuery);
@@ -532,6 +537,7 @@ export function Inbox() {
   // an empty live result alone must not flash "Nothing here" while the HTTP
   // page (which can still backfill brand-new accounts) is in flight.
   const showInitialLoading = !items.length && (isLoading || liveInbox.status === 'pending');
+  useSurfaceReady('mail', !showInitialLoading);
 
   // --- Infinite scroll: prefetch ahead + pipelined batches -----------------
   // Fresh layout read instead of a cached observer entry, so the decision is
@@ -1125,6 +1131,7 @@ export function Inbox() {
                         showAccount={account === ALL_ACCOUNTS}
                         accountLabel={accountAliasById[rowAccount] || ''}
                         activeCategory={smartCategory}
+                        needsYou={needsYouMarks.get(mailThreadKey(rowAccount, it._id))}
                         selected={selectedIds.includes(key)}
                         active={selectedThreadId === it._id && threadAccount === rowAccount}
                         selecting={selectedIds.length > 0}
@@ -1228,6 +1235,7 @@ export const InboxThreadRow = memo(function InboxThreadRow({
   activeCategory,
   actionMenu,
   actionsDisabled = false,
+  needsYou,
 }: {
   item: ThreadRow;
   rowId: string;
@@ -1252,6 +1260,8 @@ export const InboxThreadRow = memo(function InboxThreadRow({
   activeCategory?: string | null;
   actionMenu?: ReactNode;
   actionsDisabled?: boolean;
+  /** The first open Needs you item of this thread, for the one quiet mark on the row. */
+  needsYou?: string;
 }) {
   const triage = (item as any).triage;
   const smart = (item as any).smartCategory;
@@ -1445,7 +1455,18 @@ export const InboxThreadRow = memo(function InboxThreadRow({
             </span>
           ) : null}
         </div>
-        <span className="truncate pl-3 text-[12.5px] leading-tight">
+        <span className="relative truncate pl-3 text-[12.5px] leading-tight">
+          {/* Needs you: one accent dot in the indent, under the unread dot. Two
+              statuses share the column; the row keeps its height. */}
+          {needsYou ? (
+            <span
+              role="img"
+              aria-label={`Needs you: ${needsYou}`}
+              title={`Needs you: ${needsYou}`}
+              data-needs-you-mark
+              className="absolute left-0 top-1/2 size-1.5 -translate-y-1/2 rounded-full bg-[var(--color-accent)]"
+            />
+          ) : null}
           <span className={item.unread ? 'font-medium text-[var(--color-text)]' : 'text-[var(--color-text)]'}>
             {decodeMailText(item.subject) || '(no subject)'}
           </span>
