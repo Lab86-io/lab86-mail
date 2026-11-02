@@ -2,19 +2,24 @@
 
 export function BriefMailBacklog({
   items,
+  total = items.length,
   onOpen,
 }: {
   items: Array<{ account: string; threadId: string; subject: string; whyItMatters: string }>;
+  /** The full count of the edition. The list holds the first rows of it. */
+  total?: number;
   onOpen: (account: string, threadId: string) => void;
 }) {
   if (!items.length) return null;
+  const count = Math.max(total, items.length);
   return (
     <details className="mx-auto mt-5 w-full max-w-[620px] rounded-[var(--radius-control)] border border-[var(--color-border)] text-sm">
       <summary className="cursor-pointer px-4 py-3">
-        {items.length} more {items.length === 1 ? 'conversation' : 'conversations'} worth your attention
+        {count} more {count === 1 ? 'conversation' : 'conversations'} worth your attention
       </summary>
       <p className="px-4 pb-3 text-xs text-[var(--color-text-muted)]">
         These met your Brief criteria and are beyond this edition’s highlight limit.
+        {count > items.length ? ` This list shows the first ${items.length}.` : ''}
       </p>
       <ul className="max-h-80 divide-y divide-[var(--color-border)] overflow-y-auto border-t border-[var(--color-border)]">
         {items.map((item) => (

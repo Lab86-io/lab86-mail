@@ -37,6 +37,32 @@ export const getDoc = query({
   },
 });
 
+/** One point read per key. It never lists the kind, so its cost follows the keys. */
+export const getDocs = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    kind: v.string(),
+    keys: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await Promise.all(
+      args.keys.slice(0, 100).map((key) =>
+        ctx.db
+          .query('userDocs')
+          .withIndex('by_user_kind_key', (q) =>
+            q.eq('userId', args.userId).eq('kind', args.kind).eq('key', key),
+          )
+          .unique(),
+      ),
+    );
+    return rows.flatMap((row) =>
+      row ? [{ key: row.key, ref: row.ref, doc: row.doc, updatedAt: row.updatedAt }] : [],
+    );
+  },
+});
+
 export const compareAndSwapDoc = mutation({
   args: {
     internalSecret: v.optional(v.string()),

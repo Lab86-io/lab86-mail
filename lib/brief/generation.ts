@@ -19,9 +19,24 @@ export function isBriefEditionGenerating(report: BriefGenerationState | null | u
   );
 }
 
+/**
+ * True when the row holds an edition that a reader can read. Only the `partial`
+ * placeholder has nothing. A `composing` row saved its plain letter first.
+ */
+export function isBriefEditionReadable(report: BriefGenerationState | null | undefined): boolean {
+  return Boolean(report) && report?.status !== 'partial';
+}
+
 /** True when a readable edition waits for another writer attempt. */
 export function isBriefEditionRetrying(report: BriefGenerationState | null | undefined): boolean {
   return Boolean(report?.retrying) && !isBriefEditionGenerating(report);
 }
 
 export const BRIEF_RETRY_NOTE = 'The writer could not finish this edition. It will try again shortly.';
+
+/** The quiet line while the page keeps the last edition and a new one has no text yet. */
+export const BRIEF_NEW_EDITION_NOTE =
+  'A new edition comes in about 3 minutes. You can read this edition until then.';
+/** The quiet line while the page shows the plain letter of the new edition. */
+export const BRIEF_PLAIN_LETTER_NOTE =
+  'This is the plain letter of the new edition. The full edition comes in about 2 minutes.';

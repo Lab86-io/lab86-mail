@@ -31,6 +31,21 @@ export async function kvGet<T = any>(kind: string, key: string): Promise<T | nul
   return row ? (row.doc as T) : null;
 }
 
+/** The rows of these keys, at most KV_GET_MANY_LIMIT. Rows that do not exist drop out. */
+export const KV_GET_MANY_LIMIT = 100;
+export async function kvGetMany<T = any>(kind: string, keys: string[]): Promise<T[]> {
+  const userId = requireStoreUserId();
+  const wanted = [...new Set(keys)].slice(0, KV_GET_MANY_LIMIT);
+  if (!wanted.length) return [];
+  if (!isConvexConfigured())
+    return wanted.flatMap((key) => {
+      const doc = memoryGet(userId, kind, key) as T | null;
+      return doc ? [doc] : [];
+    });
+  const rows = await convexQuery<KvRecord<T>[]>(userDataApi.getDocs, { userId, kind, keys: wanted });
+  return rows.map((row) => row.doc as T);
+}
+
 export async function kvList<T = any>(
   kind: string,
   options: { ref?: string; limit?: number } = {},

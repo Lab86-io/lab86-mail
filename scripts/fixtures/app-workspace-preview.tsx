@@ -104,6 +104,8 @@ globalThis.fetch = (async (input, init) => {
     return Response.json({ ok: true, result: { report: previewReport } });
   if (url.pathname === '/api/tools/list_daily_reports')
     return Response.json({ ok: true, result: { reports: [previewReport] } });
+  if (url.pathname === '/api/brief/view')
+    return Response.json({ stamp: 'idle', pending: null, revision: 'preview', report: previewReport });
   if (url.pathname.includes('daily_report_task_dismissals'))
     return Response.json({ ok: true, result: { cardIds: [] } });
   if (url.pathname.includes('daily_report_thread_dismissals'))
