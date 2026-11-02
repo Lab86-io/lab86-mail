@@ -167,6 +167,10 @@ describe('a thread reply that stops an earlier one', () => {
     const again = route.indexOf('threadReply ? await readPriorRuns() : priorRuns');
     expect(begin).toBeGreaterThan(-1);
     expect(again).toBeGreaterThan(begin);
+    // Its answer is the one that reaches the model.
+    const system = route.slice(route.indexOf('await runAgent('));
+    expect(system).toContain('priorRunsNow');
+    expect(system).not.toMatch(/\bpriorRuns\b/);
   });
 });
 
