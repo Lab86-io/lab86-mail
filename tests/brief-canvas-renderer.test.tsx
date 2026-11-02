@@ -1,9 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { BriefCanvas, briefGridRowSpan } from '../components/report/brief-canvas/BriefCanvas';
 import { type BriefNodeContext, BriefNodeView } from '../components/report/brief-canvas/BriefNodeView';
+import * as inactiveLive from '../components/report/brief-canvas/InactiveBriefRefsLive';
 import { briefRefKey } from '../lib/brief/hydration';
 import type {
   BriefActionV2,
@@ -448,6 +449,9 @@ describe('BriefCanvas degradation', () => {
     };
 
     const html = render(document);
+    // The chart, the diff, and the command output load on demand. Until then a
+    // placeholder of about their height holds the place.
+    expect(html.match(/data-brief-lazy-node/g)).toHaveLength(3);
     for (const slot of [
       'weather-widget',
       'plan',
@@ -455,9 +459,6 @@ describe('BriefCanvas degradation', () => {
       'option-list',
       'citation-list',
       'brief-geo-map',
-      'code-diff',
-      'terminal',
-      'chart',
     ]) {
       expect(html).toContain(`data-slot="${slot}"`);
     }
@@ -717,8 +718,15 @@ describe('current briefs reconcile terminal Work without changing historical edi
           <BriefCanvas value={document} hideInactive={hideInactive} />
         </QueryClientProvider>,
       );
-    expect(renderEdition(true)).not.toContain('Repair the tire');
-    expect(renderEdition(false)).toContain('Repair the tire');
+    // The subscription writes the same cache entry. Rendering needs no Convex.
+    const live = spyOn(inactiveLive, 'InactiveBriefRefsLive').mockImplementation(() => null);
+    try {
+      expect(renderEdition(true)).not.toContain('Repair the tire');
+      expect(renderEdition(false)).toContain('Repair the tire');
+      expect(live).toHaveBeenCalledTimes(1);
+    } finally {
+      live.mockRestore();
+    }
     expect(document.regions[0].tree.items).toHaveLength(1);
   });
 
