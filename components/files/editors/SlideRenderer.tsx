@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode, PointerEvent as ReactPointerEvent, Ref } from 'react';
+import { type ChartInks, chartInks } from '@/lib/documents/deck-quality';
 import { deckFontStack, deckTextSlot } from '@/lib/documents/deck-versions';
 import type { DeckElementV2, DeckSlideV2, DeckTheme } from '@/lib/documents/model';
 import { fontSizeForCanvas, pointsForCanvas, slideColor } from './deck-model';
@@ -172,18 +173,18 @@ function LineArt({ element }: { element: Extract<DeckElementV2, { type: 'line' }
   );
 }
 
-const CHART_PALETTE_FALLBACK = [
-  'var(--deck-accent)',
-  'var(--deck-ink)',
-  'var(--deck-muted)',
-  'var(--deck-surface)',
-];
-
-/** Charts draw in SVG from grounded data, with the same palette the export uses. */
-function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart' }> }) {
-  const colors = element.colors?.length
-    ? element.colors.map((color) => slideColor(color, '#17202A'))
-    : CHART_PALETTE_FALLBACK;
+/** Charts draw in SVG from grounded data, with the same colors the export uses. */
+function ChartArt({
+  element,
+  inks,
+}: {
+  element: Extract<DeckElementV2, { type: 'chart' }>;
+  inks: ChartInks;
+}) {
+  const colors = inks.series.map((color) => slideColor(color, '#17202A'));
+  const labelInk = slideColor(inks.label, 'var(--deck-ink)');
+  const quietInk = slideColor(inks.quiet, 'var(--deck-muted)');
+  const groundInk = slideColor(inks.ground, 'var(--deck-bg)');
   const width = 400;
   const height = Math.max(120, 400 * (element.height / Math.max(1, element.width)) * (9 / 16));
   const labelSize = 9;
@@ -211,7 +212,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
           key={element.categories[index] ?? index}
           d={`M ${cx} ${cy} L ${sx} ${sy} A ${radius} ${radius} 0 ${large} 1 ${ex} ${ey} Z`}
           fill={colors[index % colors.length]}
-          stroke="var(--deck-bg)"
+          stroke={groundInk}
           strokeWidth={1.5}
         />
       );
@@ -219,9 +220,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
     return (
       <svg className="deck-chart" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
         {arcs}
-        {element.chart === 'doughnut' ? (
-          <circle cx={cx} cy={cy} r={radius * 0.55} fill="var(--deck-bg)" />
-        ) : null}
+        {element.chart === 'doughnut' ? <circle cx={cx} cy={cy} r={radius * 0.55} fill={groundInk} /> : null}
         {showLegend
           ? element.categories.map((category, index) => (
               <g
@@ -229,7 +228,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
                 transform={`translate(${8 + index * (width / element.categories.length)}, ${height - 6})`}
               >
                 <rect width={8} height={8} y={-7} fill={colors[index % colors.length]} />
-                <text x={12} fontSize={labelSize} fill="var(--deck-ink)" fontFamily="var(--deck-body)">
+                <text x={12} fontSize={labelSize} fill={labelInk} fontFamily="var(--deck-body)">
                   {category}
                 </text>
               </g>
@@ -273,7 +272,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
         x2={horizontal ? valuePosition(tick) : padLeft + plotW}
         y1={horizontal ? padTop : valuePosition(tick)}
         y2={horizontal ? padTop + plotH : valuePosition(tick)}
-        stroke="var(--deck-muted)"
+        stroke={quietInk}
         strokeWidth={0.5}
         strokeDasharray={tick === 0 ? undefined : '2 2'}
         opacity={0.5}
@@ -283,7 +282,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
         y={horizontal ? padTop + plotH + 12 : valuePosition(tick) + 3}
         fontSize={labelSize - 1}
         textAnchor={horizontal ? 'middle' : 'end'}
-        fill="var(--deck-muted)"
+        fill={quietInk}
         fontFamily="var(--deck-body)"
       >
         {Number(tick.toPrecision(3))}
@@ -352,7 +351,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
               horizontal && value < 0 ? Math.min(valueLabelWidth(value), negativeValuePad - 8) : undefined
             }
             lengthAdjust="spacingAndGlyphs"
-            fill="var(--deck-ink)"
+            fill={labelInk}
             fontFamily="var(--deck-body)"
           >
             {value}
@@ -369,7 +368,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
         x2={horizontal ? zero : padLeft + plotW}
         y1={horizontal ? padTop : zero}
         y2={horizontal ? padTop + plotH : zero}
-        stroke="var(--deck-muted)"
+        stroke={quietInk}
         strokeWidth={0.75}
       />
       {marks}
@@ -380,7 +379,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
           y={horizontal ? categoryPosition(index) + 3 : padTop + plotH + 12}
           fontSize={labelSize}
           textAnchor={horizontal ? 'end' : 'middle'}
-          fill="var(--deck-ink)"
+          fill={labelInk}
           fontFamily="var(--deck-body)"
         >
           {category}
@@ -393,7 +392,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
               transform={`translate(${padLeft + index * (plotW / element.series.length)}, ${height - 5})`}
             >
               <rect width={8} height={8} y={-7} fill={colors[index % colors.length]} />
-              <text x={12} fontSize={labelSize} fill="var(--deck-ink)" fontFamily="var(--deck-body)">
+              <text x={12} fontSize={labelSize} fill={labelInk} fontFamily="var(--deck-body)">
                 {series.name}
               </text>
             </g>
@@ -411,7 +410,15 @@ function labelKey(label: string, position: number) {
   return `${label || 'c'}-${position}`;
 }
 
-export function ElementContent({ element }: { element: DeckElementV2 }) {
+export function ElementContent({
+  element,
+  slide,
+  theme,
+}: {
+  element: DeckElementV2;
+  slide: DeckSlideV2;
+  theme: DeckTheme;
+}) {
   if (element.type === 'text') {
     if (element.text) return <span className="deck-text">{element.text}</span>;
     return (
@@ -421,7 +428,7 @@ export function ElementContent({ element }: { element: DeckElementV2 }) {
     );
   }
   if (element.type === 'line') return <LineArt element={element} />;
-  if (element.type === 'chart') return <ChartArt element={element} />;
+  if (element.type === 'chart') return <ChartArt element={element} inks={chartInks(slide, theme, element)} />;
   if (element.type === 'image') {
     if (!element.src) return <span className="deck-image-missing">{element.alt || 'Image'}</span>;
     return (
@@ -546,7 +553,7 @@ export function SlideSurface({
               }
             }}
           >
-            <ElementContent element={element} />
+            <ElementContent element={element} slide={slide} theme={theme} />
           </button>
         ) : (
           <div
@@ -556,7 +563,7 @@ export function SlideSurface({
             data-element-type={element.type}
             style={elementStyle(element)}
           >
-            <ElementContent element={element} />
+            <ElementContent element={element} slide={slide} theme={theme} />
           </div>
         ),
       )}
