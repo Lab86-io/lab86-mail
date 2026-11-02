@@ -1,6 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'motion/react';
+import dynamic from 'next/dynamic';
 import {
   Component,
   type CSSProperties,
@@ -11,23 +12,13 @@ import {
   useState,
 } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
-import { ActivitySurface } from '@/components/albatross/ActivitySurface';
 import { AlbatrossCompanion } from '@/components/albatross/AlbatrossCompanion';
-import { AlbatrossesSurface } from '@/components/albatross/AlbatrossesSurface';
-import { AreaHome } from '@/components/albatross/AreaHome';
-import { WorkThread } from '@/components/albatross/WorkThread';
-import { CalendarSurface } from '@/components/calendar/CalendarSurface';
-import { FilesSurface } from '@/components/files/FilesSurface';
 import { RecordMailboxesConnected } from '@/components/hosted/HostedOnboarding';
-import { Inbox } from '@/components/inbox/Inbox';
 import { NeedsYouArrivals } from '@/components/needs-you/NeedsYouArrivals';
 import { NeedsYouPushLinks } from '@/components/needs-you/NeedsYouPushLinks';
-import { NeedsYouSurface } from '@/components/needs-you/NeedsYouSurface';
 import { CommandPalette } from '@/components/palette/CommandPalette';
+import { BriefSkeleton } from '@/components/report/BriefSkeleton';
 import { briefEditionIdFromSearch, requestBriefEdition } from '@/components/report/brief-edition-request';
-import { Today } from '@/components/report/Today';
-import { TasksSurface } from '@/components/tasks/TasksSurface';
-import { ThreadView } from '@/components/thread/ThreadView';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useMediaQuery } from '@/hooks/use-media-query';
@@ -49,7 +40,45 @@ import { MobileNavigation } from './MobileNavigation';
 import { Rail } from './Rail';
 import { ShortcutsBinding } from './ShortcutsBinding';
 import { ShortcutsSheet } from './ShortcutsSheet';
+import {
+  loadActivitySurface,
+  loadAlbatrossesSurface,
+  loadAreaHome,
+  loadCalendarSurface,
+  loadFilesSurface,
+  loadInbox,
+  loadNeedsYouSurface,
+  loadTasksSurface,
+  loadThreadView,
+  loadToday,
+  loadWorkThread,
+  preloadNextSurfacesWhenIdle,
+} from './surface-loaders';
 import { WakeNudgeHost } from './WakeNudge';
+
+// A surface that has not loaded holds its place with the same paper, so the
+// shell does not move when the code lands. Today paints the shape of the letter.
+function SurfacePaper() {
+  return <div data-surface-loading className="h-full w-full bg-[var(--color-content)]" />;
+}
+const surface = { loading: SurfacePaper, ssr: false };
+const Today = dynamic(() => loadToday().then((mod) => mod.Today), {
+  loading: () => <BriefSkeleton masthead />,
+  ssr: false,
+});
+const Inbox = dynamic(() => loadInbox().then((mod) => mod.Inbox), surface);
+const ThreadView = dynamic(() => loadThreadView().then((mod) => mod.ThreadView), surface);
+const ActivitySurface = dynamic(() => loadActivitySurface().then((mod) => mod.ActivitySurface), surface);
+const AlbatrossesSurface = dynamic(
+  () => loadAlbatrossesSurface().then((mod) => mod.AlbatrossesSurface),
+  surface,
+);
+const AreaHome = dynamic(() => loadAreaHome().then((mod) => mod.AreaHome), surface);
+const WorkThread = dynamic(() => loadWorkThread().then((mod) => mod.WorkThread), surface);
+const CalendarSurface = dynamic(() => loadCalendarSurface().then((mod) => mod.CalendarSurface), surface);
+const FilesSurface = dynamic(() => loadFilesSurface().then((mod) => mod.FilesSurface), surface);
+const NeedsYouSurface = dynamic(() => loadNeedsYouSurface().then((mod) => mod.NeedsYouSurface), surface);
+const TasksSurface = dynamic(() => loadTasksSurface().then((mod) => mod.TasksSurface), surface);
 
 // Each visible-pane permutation gets its own persisted layout so the inbox
 // doesn't snap to weird sizes when the reader or AI sidebar mounts/unmounts.
@@ -221,6 +250,8 @@ export function AppShell({
   useEffect(() => {
     if (!bootView && visiblePrimaryView !== primaryView) setPrimaryView(visiblePrimaryView);
   }, [bootView, primaryView, setPrimaryView, visiblePrimaryView]);
+
+  useEffect(() => preloadNextSurfacesWhenIdle(visiblePrimaryView), [visiblePrimaryView]);
 
   useEffect(() => {
     if (!initialView || initialViewAppliedRef.current || deepLinkedView) return;
