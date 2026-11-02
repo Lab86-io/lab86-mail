@@ -26,7 +26,7 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { truncateText } from '@/lib/shared/text';
 import { calendarCreateEvent, calendarRsvpEvent } from './calendar';
 import { saveDraftTool, sendMessage } from './compose';
-import { documentCreate } from './documents';
+import { documentCreateFromInstructions } from './documents';
 import { type AnyTool, defineTool, invokeTool, type ToolContext } from './registry';
 import { tasksCreateCard } from './tasks';
 
@@ -48,7 +48,7 @@ const defaultDeps = {
     calendarRsvpEvent,
     saveDraftTool,
     sendMessage,
-    documentCreate,
+    documentCreateFromInstructions,
   },
 };
 
@@ -315,7 +315,7 @@ async function executeToolStep(
   }
   if (step.kind === 'calendar_event') return deps.invokeTool(deps.tools.calendarCreateEvent, args, ctx);
   if (step.kind === 'email_draft') return deps.invokeTool(deps.tools.saveDraftTool, args, ctx);
-  if (step.kind === 'document') return deps.invokeTool(deps.tools.documentCreate, args, ctx);
+  if (step.kind === 'document') return deps.invokeTool(deps.tools.documentCreateFromInstructions, args, ctx);
   throw new Error(`Unsupported executable Albatross step: ${step.kind}`);
 }
 

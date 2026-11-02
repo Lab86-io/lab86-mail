@@ -7,6 +7,7 @@ import { createWordPackage, readWordPackage } from '../lib/documents/word-packag
 import { createWordService } from '../lib/documents/word-service';
 import { TOOLS } from '../lib/tools';
 import { wordDocumentCreate, wordDocumentEdit, wordDocumentGet } from '../lib/tools/word-documents';
+import { png } from '../scripts/fixtures/word-suite-plan';
 
 async function fixture() {
   const bytes = await createWordPackage('Report', [{ op: 'insert_paragraph', text: 'Original text' }]);
@@ -95,6 +96,34 @@ test('Word services create and read binary files and preserve the original when 
   await f.service.create('owner', { title: '', sourceDocumentId: 'simple', expectedRevision: 3 });
   expect(f.source.currentRevision).toBe(3);
   expect(f.calls.at(-1).create.title).toBe('Original draft.docx');
+});
+
+test('an image from Files is read for the owner of the file', async () => {
+  const f = await fixture();
+  const data = Buffer.from(png.split(',')[1], 'base64');
+  const seen: string[] = [];
+  const service = createWordService({
+    ...f.dependencies,
+    getSavedFileRow: async (userId: string, fileId: string) => {
+      seen.push(`${userId}:${fileId}`);
+      return fileId === 'not-yours' ? null : { url: 'https://s.test/image', size: data.length };
+    },
+    readSavedFileBytes: async () => new Uint8Array(data),
+  } as any);
+  await service.edit('owner', 'word-1', 1, [
+    { op: 'insert_image', fileId: 'file-1', width: 10, height: 10, alt: 'Logo' },
+  ]);
+  expect((await readWordPackage(f.uploaded()!)).images).toBe(1);
+  await service.create('owner', {
+    title: 'New',
+    edits: [{ op: 'insert_image', fileId: 'file-2', width: 10, height: 10, alt: '' }],
+  });
+  expect(seen).toEqual(['owner:file-1', 'owner:file-2']);
+  await expect(
+    service.edit('owner', 'word-1', 1, [
+      { op: 'insert_image', fileId: 'not-yours', width: 10, height: 10, alt: '' },
+    ]),
+  ).rejects.toThrow('That image is not in Files.');
 });
 
 test('saved-file edits use revision compare-and-swap and surface concurrent failures without claiming success', async () => {

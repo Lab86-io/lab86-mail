@@ -2700,6 +2700,11 @@ export default defineSchema({
       }),
     ),
     wopiLock: v.optional(v.object({ value: v.string(), sessionId: v.string(), expiresAt: v.number() })),
+    // The data of an invoice, so that fill_blank can render it again. It counts only while
+    // renderedSha256 is the sha256 of the current version.
+    template: v.optional(
+      v.object({ kind: v.literal('invoice'), dataJson: v.string(), renderedSha256: v.string() }),
+    ),
   })
     .index('by_user', ['userId'])
     .index('by_user_document', ['userId', 'documentId'])
