@@ -717,6 +717,7 @@ export async function runStepRun(
     const lifted = deps.liftTools(runId, timezone, goal ? { delegate: true } : undefined, {
       clientPlatform: 'ios',
       pausedRisks: paused,
+      userId,
     });
     const profile = await deps.readUser(userId).catch(() => ({ name: null, email: null }));
     const secure = deps.secureAccess({ userId, runId, workId: run.workId, stepKey: run.stepKey, log });

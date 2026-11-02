@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Document, ExternalHyperlink, Footer, Header, Packer, Paragraph, TextRun } from 'docx';
 import { JSDOM } from 'jsdom';
 import JSZip from 'jszip';
+import { parseStrictXml } from '../lib/documents/office-verify';
 import {
   createWordPackage,
   editWordPackage,
@@ -10,6 +11,113 @@ import {
 } from '../lib/documents/word-package';
 
 import { fullWordEdits, png } from '../scripts/fixtures/word-suite-plan';
+
+async function partsParse(bytes: Uint8Array) {
+  const zip = await JSZip.loadAsync(bytes);
+  for (const name of Object.keys(zip.files).filter((entry) => /\.(?:xml|rels)$/.test(entry)))
+    expect(parseStrictXml(await zip.file(name)!.async('string'))).toHaveProperty('root');
+  return zip;
+}
+
+describe('lists, formatted words, and images from Files', () => {
+  test('insert_list makes real numbered and bullet lists that each start at 1', async () => {
+    const bytes = await createWordPackage('Plan', [
+      { op: 'insert_paragraph', text: 'Before' },
+      { op: 'insert_list', items: ['One', 'Two'], ordered: true },
+      { op: 'insert_list', items: ['Dot'] },
+      { op: 'insert_list', items: ['A', 'B'], ordered: true, after: 1 },
+    ]);
+    const zip = await partsParse(bytes);
+    const read = await readWordPackage(bytes);
+    expect(read.paragraphs.map((entry) => entry.text)).toEqual(['', 'Before', 'A', 'B', 'One', 'Two', 'Dot']);
+    const document = await zip.file('word/document.xml')!.async('string');
+    const numbering = await zip.file('word/numbering.xml')!.async('string');
+    expect(document.match(/<w:numPr>/g)).toHaveLength(5);
+    expect(numbering).toContain('w:val="decimal"');
+    expect(numbering).toContain('w:val="bullet"');
+    // Each list has its own definition, so the second numbered list starts at 1.
+    const ids = [...document.matchAll(/<w:numId w:val="(\d+)"/g)].map((match) => match[1]);
+    expect(new Set(ids).size).toBe(3);
+    const dom = new JSDOM(numbering, { contentType: 'application/xml' });
+    const names = Array.from(dom.window.document.documentElement.children).map((node) => node.localName);
+    expect(names.lastIndexOf('abstractNum')).toBeLessThan(names.indexOf('num'));
+    dom.window.close();
+  });
+
+  test('a file with no numbering part gets one, with its relationship and content type', async () => {
+    const original = await createWordPackage('Plan');
+    const zip = await JSZip.loadAsync(original);
+    zip.remove('word/numbering.xml');
+    const rels = await zip.file('word/_rels/document.xml.rels')!.async('string');
+    zip.file('word/_rels/document.xml.rels', rels.replace(/<Relationship [^>]*numbering[^>]*\/>/, ''));
+    const types = await zip.file('[Content_Types].xml')!.async('string');
+    zip.file('[Content_Types].xml', types.replace(/<Override [^>]*numbering[^>]*\/>/, ''));
+    const edited = await editWordPackage(await zip.generateAsync({ type: 'uint8array' }), [
+      { op: 'insert_list', items: ['One'] },
+    ]);
+    const out = await partsParse(edited);
+    expect(await out.file('word/_rels/document.xml.rels')!.async('string')).toContain('numbering.xml');
+    expect(await out.file('[Content_Types].xml')!.async('string')).toContain('numbering+xml');
+    expect(out.file('word/numbering.xml')).not.toBeNull();
+  });
+
+  test('runs make bold, italic, and underlined words in one paragraph', async () => {
+    const bytes = await createWordPackage('Plan', [
+      {
+        op: 'insert_paragraph',
+        runs: [
+          { text: 'Pay ' },
+          { text: 'by Friday', bold: true },
+          { text: ' or ', italic: true },
+          { text: 'call', underline: true },
+        ],
+      },
+    ]);
+    const zip = await partsParse(bytes);
+    expect((await readWordPackage(bytes)).paragraphs[1].text).toBe('Pay by Friday or call');
+    const document = await zip.file('word/document.xml')!.async('string');
+    expect(document).toContain('<w:b w:val="1"');
+    expect(document).toContain('<w:i w:val="1"');
+    expect(document).toContain('<w:u w:val="single"');
+    expect(wordEditsSchema.safeParse([{ op: 'insert_paragraph' }]).success).toBe(false);
+  });
+
+  test('insert_image takes a file id, and takes one source only', async () => {
+    const data = Buffer.from(png.split(',')[1], 'base64');
+    const readImage = async (fileId: string) => {
+      expect(fileId).toBe('file-1');
+      return new Uint8Array(data);
+    };
+    const bytes = await editWordPackage(
+      await createWordPackage('Plan'),
+      [{ op: 'insert_image', fileId: 'file-1', width: 20, height: 20, alt: 'Logo' }],
+      { readImage },
+    );
+    await partsParse(bytes);
+    expect((await readWordPackage(bytes)).images).toBe(1);
+    expect(
+      Object.keys((await JSZip.loadAsync(bytes)).files).some((name) =>
+        /^word\/media\/albatross-.*\.png$/.test(name),
+      ),
+    ).toBe(true);
+    const both = { op: 'insert_image', fileId: 'f', dataUrl: png, width: 1, height: 1 };
+    expect(wordEditsSchema.safeParse([both]).success).toBe(false);
+    const neither = { op: 'insert_image', width: 1, height: 1 };
+    expect(wordEditsSchema.safeParse([neither]).success).toBe(false);
+  });
+
+  test('a file image needs a reader, and must be a PNG or JPEG of a real image', async () => {
+    const base = await createWordPackage('Plan');
+    const edit = [{ op: 'insert_image' as const, fileId: 'f', width: 1, height: 1 }];
+    await expect(editWordPackage(base, edit)).rejects.toThrow('needs a saved Word file');
+    await expect(
+      editWordPackage(base, edit, { readImage: async () => new TextEncoder().encode('not an image') }),
+    ).rejects.toThrow('Use a PNG or JPEG image smaller than 5 MB');
+    await expect(
+      editWordPackage(base, edit, { readImage: async () => new Uint8Array(5_000_001) }),
+    ).rejects.toThrow('smaller than 5 MB');
+  });
+});
 
 describe('full Word DOCX packages', () => {
   test('replacing headers and footers covers every section and existing page variant without stale notes', async () => {

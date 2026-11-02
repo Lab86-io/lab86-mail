@@ -9,15 +9,17 @@ import {
 } from 'ai';
 import { z } from 'zod';
 import { formQuestionSchema } from '../albatross/thread-contract';
+import { isDeckV2AuthoringEnabled } from '../documents/editor-flags';
 import { pausedAssistantRisks } from '../hosted/standing-orders';
 import { narrativePrompt } from '../narrative/service';
+import { needsYouFlagFor } from '../obligations/contract';
 import { aboutUserBlock, listPersonalDetails } from '../personal-details/store';
 import { SECURE_ITEM_KINDS } from '../secure/contract';
 import { secureStoreEnabledFor } from '../secure/flag';
 import { withDeadline } from '../shared/deadline';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
-import { documentCreate } from '../tools/documents';
+import { documentCreateModelInput } from '../tools/documents';
 import { invokeTool, repairToolArgs, toolRisk } from '../tools/registry';
 import { APPROVAL_RISKS, approvalConditionMet, approvalSummary, type ToolRisk } from './approval';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
@@ -153,6 +155,10 @@ export const AGENT_TOOL_NAMES = new Set([
   'personal_details_get',
   'personal_details_save',
   'secure_details_list',
+  'needs_you_list',
+  'needs_you_done',
+  'needs_you_later',
+  'needs_you_not_mine',
   'pdf_form_fields',
   'pdf_form_fill',
   'forget',
@@ -340,6 +346,8 @@ export interface AgentToolOptions {
   preloadGroups?: readonly string[];
   /** The client that renders this chat. Native clients get no web-only UI tools. */
   clientPlatform?: ClientPlatform;
+  /** The user of this run: the deck brief that the agent gets depends on it. */
+  userId?: string | null;
   /** Risk classes the user paused in Settings, Standing orders. Those calls change nothing. */
   pausedRisks?: ReadonlySet<ToolRisk>;
   /**
@@ -352,6 +360,8 @@ export interface AgentToolOptions {
    * user. The same reason as askForm: an older client would wait forever.
    */
   askSecureDetail?: boolean;
+  /** The user is in LAB86_NEEDS_YOU: enable_tools names the needs_you group. */
+  needsYou?: boolean;
 }
 
 /** Client capabilities the agent route accepts (AgentRequestBody.clientCapabilities). */
@@ -386,6 +396,7 @@ export function liftToolsForAgent(
   const lifted: Record<string, any> = {};
   const rejectedInputs = new Set<string>();
   const clientPlatform = options.clientPlatform ?? 'web';
+  const deckV2 = isDeckV2AuthoringEnabled(options.userId);
   for (const [name, t] of Object.entries(TOOLS)) {
     if (!AGENT_TOOL_NAMES.has(name)) continue;
     if (clientPlatform !== 'web' && isWebOnlyTool(name)) continue;
@@ -406,13 +417,9 @@ export function liftToolsForAgent(
             },
           }
         : {}),
-      // Keep legacy briefs readable by the registry, but offer the agent one
-      // creation contract with native charts/tables, including during recovery.
-      inputSchema: modelInputSchema(
-        name === 'document_create'
-          ? documentCreate.input.safeExtend({ presentation: presentationAuthoringV2Schema.optional() })
-          : t.input,
-      ),
+      // The agent writes the content, so its schema has no instructions field.
+      // It offers the one deck brief that this user's renderer takes.
+      inputSchema: modelInputSchema(name === 'document_create' ? documentCreateModelInput(deckV2) : t.input),
       execute: async (args: unknown, options?: { abortSignal?: AbortSignal }) => {
         if (paused) return pausedToolResult(name, risk);
         // A stored call skips the SDK parse on resume. Repair here too, so the
@@ -432,6 +439,7 @@ export function liftToolsForAgent(
                   : `Call ask_presentation_choices for the ${stage} checkpoint and wait for the user. No file was created.`,
             };
           if (
+            deckV2 &&
             (presentationSession.brief || presentationSession.design) &&
             typeof (args as any)?.presentation?.audience !== 'string'
           )
@@ -722,7 +730,9 @@ export function liftToolsForAgent(
   // the active set for the next one.
   const requestedGroups: string[] = [];
   lifted[ENABLE_TOOLS_NAME] = aiTool({
-    description: enableToolsDescription(toolGroupsForPlatform(clientPlatform)),
+    description: enableToolsDescription(
+      toolGroupsForPlatform(clientPlatform, { needsYou: options.needsYou }),
+    ),
     inputSchema: enableToolsInputSchema,
     execute: async ({ groups }: { groups: string[] }) => {
       const result = enableToolsResult(groups, {
@@ -1232,6 +1242,7 @@ export async function runAgent({
   const askForm = clientCapabilities?.has('ask_form') ?? false;
   const secureStore = userId ? secureStoreEnabledFor(userId) : false;
   const askSecureDetail = secureStore && (clientCapabilities?.has('ask_secure_detail') ?? false);
+  const needsYou = userId ? needsYouFlagFor(userId) : false;
   if (!hasPlatformAi() && !userId) {
     throw new Error(
       'Models are not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
@@ -1249,12 +1260,14 @@ export async function runAgent({
   // The user's standing orders decide which risk classes the assistant may use.
   const pausedRisks = userId ? await pausedAssistantRisks(userId) : undefined;
   const tools = liftToolsForAgent(operationBatchId, timezone, presentationSession, {
+    userId,
     scopeGroups: toolGroups,
     preloadGroups,
     clientPlatform,
     pausedRisks,
     askForm,
     askSecureDetail,
+    needsYou,
   });
 
   let resolveSteps: (steps: any[]) => void = () => undefined;
@@ -1324,7 +1337,15 @@ export async function runAgent({
               signal?.throwIfAborted();
               const base = buildSystemPrompt(
                 { name: userName, email: userEmail },
-                { memories, clientPlatform, askForm, secureStore, askSecureDetail },
+                {
+                  memories,
+                  clientPlatform,
+                  askForm,
+                  secureStore,
+                  askSecureDetail,
+                  needsYou,
+                  deckV2: isDeckV2AuthoringEnabled(userId),
+                },
               );
               // Static instructions first, per-turn context last: providers cache the
               // shared prefix, so the parts that change every turn sit at the end.
@@ -1410,5 +1431,4 @@ import {
   type PresentationSession,
   presentationChoiceSchemaForSession,
 } from '@/lib/documents/presentation-choices';
-import { presentationAuthoringV2Schema } from '@/lib/documents/presentation-design';
 import { truncateText } from '../shared/text';

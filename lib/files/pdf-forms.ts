@@ -20,6 +20,7 @@ import {
   PDFDocument,
   PDFDropdown,
   type PDFField,
+  type PDFFont,
   PDFHexString,
   PDFName,
   PDFOptionList,
@@ -509,10 +510,123 @@ export interface FillPlan {
   sealed?: Array<{ field: string; length?: number | null }>;
 }
 
+/** Below this size a field's automatic text is too small to read. */
+const MIN_READABLE_SIZE = 5;
+
+function daFontSize(appearance: string | undefined): number | undefined {
+  const size = Number(appearance?.match(/\/\S+\s+(\d*\.\d+|\d+)\s+Tf/)?.[1]);
+  return Number.isFinite(size) && size > 0 ? size : undefined;
+}
+
 /**
- * Checks every value against its field, writes the values, and returns new
- * bytes. Nothing is written when one value is wrong: the error lists each
- * problem. Throws PdfFormError: not_pdf, encrypted, no_form, bad_values.
+ * The room for text in each widget of a field, by the rules of the appearance
+ * writer: the border and one point of padding on each side, with the sides of a
+ * rotated widget swapped.
+ */
+function textBoxes(field: PDFTextField) {
+  return field.acroField.getWidgets().map((widget) => {
+    const rect = widget.getRectangle();
+    const rotation = widget.getAppearanceCharacteristics()?.getRotation() ?? 0;
+    const turned = Math.abs(rotation) % 180 === 90;
+    const inset = 2 * ((widget.getBorderStyle()?.getWidth() ?? 0) + 1);
+    return {
+      width: (turned ? rect.height : rect.width) - inset,
+      height: (turned ? rect.width : rect.height) - inset,
+      size: daFontSize(widget.getDefaultAppearance()) ?? daFontSize(field.acroField.getDefaultAppearance()),
+    };
+  });
+}
+
+/** The lines that a text takes in a width, split at spaces, then inside a long word. */
+function wrappedLines(text: string, font: PDFFont, size: number, width: number) {
+  let lines = 0;
+  for (const paragraph of text.split('\n')) {
+    lines += 1;
+    let left = width;
+    for (const word of paragraph.split(' ')) {
+      const wide = font.widthOfTextAtSize(`${word} `, size);
+      if (wide > left) {
+        lines += left === width ? Math.floor(wide / width) : 1 + Math.floor(wide / width);
+        left = width - (wide % width);
+      } else left -= wide;
+    }
+  }
+  return lines;
+}
+
+/**
+ * Why a text does not fit its field, by measured width. The message holds no value.
+ * A size in the field stays as it is. With no size, the writer shrinks the text to fit,
+ * so the text must still fit at a size that a person can read. A comb field takes one
+ * character for each cell, so its limit is the length check.
+ */
+export function textFitProblem(field: PDFTextField, text: string, font: PDFFont): string | null {
+  if (!text || field.isCombed()) return null;
+  for (const box of textBoxes(field)) {
+    const size = box.size ?? MIN_READABLE_SIZE;
+    if (!field.isMultiline()) {
+      const needs = font.widthOfTextAtSize(text, size);
+      if (needs > box.width)
+        return `This value does not fit: it needs ${Math.ceil(needs)} points at size ${size}, and the field has ${Math.floor(box.width)}. Use a shorter form of it.`;
+      continue;
+    }
+    const lines = wrappedLines(text, font, size, box.width);
+    const height = font.heightAtSize(size) * 1.2 * lines;
+    if (height > box.height)
+      return `This value does not fit: it needs ${lines} lines at size ${size}, and the field has room for ${Math.max(1, Math.floor(box.height / (font.heightAtSize(size) * 1.2)))}. Use a shorter form of it.`;
+  }
+  return null;
+}
+
+/**
+ * The appearance writer stores the size it chose as the size of the field. An automatic
+ * field stays automatic here, so a longer value can still fit in a later fill.
+ */
+function keepAutomaticSizes(fields: readonly PDFTextField[], write: () => void) {
+  const owners = fields.flatMap((field) => [field.acroField, ...field.acroField.getWidgets()]);
+  const saved = owners.map((owner) => ({ owner, appearance: owner.getDefaultAppearance() }));
+  write();
+  for (const { owner, appearance } of saved) {
+    if (daFontSize(appearance) !== undefined) continue;
+    if (appearance) owner.setDefaultAppearance(appearance);
+    else owner.dict.delete(PDFName.of('DA'));
+  }
+}
+
+/** Opens the saved bytes again and confirms that each field holds what was written. */
+async function confirmSavedFields(
+  bytes: Uint8Array,
+  pages: number,
+  checks: ReadonlyArray<{ name: string; holds: (field: PDFField) => boolean }>,
+) {
+  const doc = await loadPdf(bytes);
+  const fields = new Map(
+    doc
+      .getForm()
+      .getFields()
+      .map((field) => [field.getName(), field]),
+  );
+  const problems = checks
+    .filter(({ name, holds }) => {
+      const field = fields.get(name);
+      return !field || !holds(field);
+    })
+    .map(({ name }) => ({ field: name, message: 'The saved file does not hold this value.' }));
+  if (doc.getPageCount() !== pages)
+    problems.push({ field: '(file)', message: 'The saved file lost a page.' });
+  if (problems.length)
+    throw new PdfFormError(
+      'bad_values',
+      `The filled file did not check out, and it was not saved. ${problems.map((entry) => `${entry.field}: ${entry.message}`).join(' ')}`,
+      problems,
+    );
+}
+
+/**
+ * Checks every value against its field, writes the values, opens the saved bytes
+ * again to confirm them, and returns new bytes. Nothing is written when one value
+ * is wrong: the error lists each problem. Throws PdfFormError: not_pdf, encrypted,
+ * no_form, bad_values.
  */
 export async function fillPdfForm(
   bytes: Uint8Array,
@@ -527,6 +641,7 @@ export async function fillPdfForm(
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const problems: Array<{ field: string; message: string }> = [];
   const writes: Array<() => void> = [];
+  const checks: Array<{ name: string; holds: (field: PDFField) => boolean }> = [];
   const problem = (field: string, message: string) => problems.push({ field, message });
 
   for (const { field: name, length } of plan.sealed ?? []) {
@@ -579,15 +694,36 @@ export async function fillPdfForm(
         problem(name, 'The value has a character that this form cannot show.');
         continue;
       }
+      const fit = textFitProblem(field, text, font);
+      if (fit) {
+        problem(name, fit);
+        continue;
+      }
       writes.push(() => field.setText(text || undefined));
+      checks.push({
+        name,
+        holds: (saved) => saved instanceof PDFTextField && (saved.getText() ?? '') === text,
+      });
     } else if (field instanceof PDFCheckBox) {
       const checked = checkValue(value);
       if (checked === null) problem(name, 'This is a check box. Send true or false.');
-      else writes.push(() => (checked ? field.check() : field.uncheck()));
+      else {
+        writes.push(() => (checked ? field.check() : field.uncheck()));
+        checks.push({
+          name,
+          holds: (saved) => saved instanceof PDFCheckBox && saved.isChecked() === checked,
+        });
+      }
     } else if (field instanceof PDFRadioGroup) {
       const option = typeof value === 'string' ? pickOption(field.getOptions(), value) : null;
       if (!option) problem(name, `Choose one of: ${field.getOptions().slice(0, 20).join(', ')}.`);
-      else writes.push(() => field.select(option));
+      else {
+        writes.push(() => field.select(option));
+        checks.push({
+          name,
+          holds: (saved) => saved instanceof PDFRadioGroup && saved.getSelected() === option,
+        });
+      }
     } else if (field instanceof PDFDropdown || field instanceof PDFOptionList) {
       if (typeof value !== 'string') {
         problem(name, 'This is a list. Send one of its options.');
@@ -599,7 +735,14 @@ export async function fillPdfForm(
         problem(name, `Choose one of: ${field.getOptions().slice(0, 20).join(', ')}.`);
         continue;
       }
-      writes.push(() => field.select(option ?? value.trim()));
+      const chosen = option ?? value.trim();
+      writes.push(() => field.select(chosen));
+      checks.push({
+        name,
+        holds: (saved) =>
+          (saved instanceof PDFDropdown || saved instanceof PDFOptionList) &&
+          saved.getSelected()[0] === chosen,
+      });
     } else problem(name, 'Albatross cannot fill this kind of field.');
   }
 
@@ -610,7 +753,11 @@ export async function fillPdfForm(
       problems,
     );
   for (const write of writes) write();
-  form.updateFieldAppearances(font);
+  keepAutomaticSizes(
+    all.filter((field): field is PDFTextField => field instanceof PDFTextField),
+    () => form.updateFieldAppearances(font),
+  );
   const out = await doc.save({ updateFieldAppearances: false });
+  await confirmSavedFields(out, doc.getPageCount(), checks);
   return { bytes: out, filled: Object.keys(plan.values) };
 }

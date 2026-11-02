@@ -107,6 +107,12 @@ export interface ObligationServiceDependencies {
   rsvp?(caller: ObligationCaller, target: RsvpTarget): Promise<unknown>;
 }
 
+/** What Done, Later, Not mine, Undo, and an RSVP need. The routes and the chat tools both give it. */
+export type ObligationActionDependencies = Pick<
+  ObligationServiceDependencies,
+  'flag' | 'get' | 'act' | 'correctionFor' | 'cancelSend' | 'rsvp'
+>;
+
 const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('done') }).strict(),
   z.object({ action: z.literal('later'), until: z.number().finite() }).strict(),
@@ -135,7 +141,11 @@ function isOpen(view: ObligationView) {
 }
 
 /** The caller's row. Not in the flag, or another user's id: 404, so the two look the same. */
-async function load(caller: ObligationCaller, id: string, deps: ObligationServiceDependencies) {
+async function load(
+  caller: ObligationCaller,
+  id: string,
+  deps: Pick<ObligationServiceDependencies, 'flag' | 'get'>,
+) {
   if (!deps.flag(caller.userId)) throw new ObligationApiError('Not found.', 404);
   const record = await deps.get(caller.userId, id);
   if (!record) throw new ObligationApiError('Not found.', 404);
@@ -156,7 +166,7 @@ export async function runObligationAction(
   caller: ObligationCaller,
   id: string,
   body: unknown,
-  deps: ObligationServiceDependencies,
+  deps: ObligationActionDependencies,
 ): Promise<ObligationActionResponse> {
   const parsed = actionSchema.safeParse(body);
   if (!parsed.success)

@@ -12,6 +12,7 @@ import { AlbatrossMark } from '@/components/albatross/AlbatrossMark';
 import { ReviewBatch } from '@/components/albatross/Forgiveness';
 import { LaterShelf } from '@/components/albatross/LaterShelf';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useSurfaceReady } from '@/hooks/use-surface-ready';
 import { reviewBatch, type WorkShape } from '@/lib/albatross/forgiveness';
 import { isDormant, laterShelf, type WorkHorizon } from '@/lib/albatross/horizon';
 import {
@@ -156,6 +157,7 @@ export function AlbatrossesSurface() {
   const openThread = useCallback((workId: string) => setSelectedWorkId(workId), [setSelectedWorkId]);
   const actions = useThreadActions(openThread);
   const draftIds = useThreadDraftIds();
+  useSurfaceReady('albatrosses', works !== undefined && rows !== undefined);
 
   // The frame stays. Only the rows wait, and the keeper in the rail makes this
   // the first load of a session, not each switch (ThreadListKeeper.tsx).

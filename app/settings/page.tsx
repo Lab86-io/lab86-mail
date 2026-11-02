@@ -94,6 +94,7 @@ import {
   notificationPreferenceInput,
   timeZoneLabel,
 } from '@/lib/notifications/preferences';
+import { enableBrowserPush } from '@/lib/notifications/web-push-client';
 import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
 import { cn } from '@/lib/utils';
 
@@ -578,13 +579,6 @@ function SendingSection() {
   );
 }
 
-function urlBase64ToUint8Array(value: string) {
-  const padding = '='.repeat((4 - (value.length % 4)) % 4);
-  const base64 = (value + padding).replaceAll('-', '+').replaceAll('_', '/');
-  const raw = window.atob(base64);
-  return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
-}
-
 function clockLabel(value: string) {
   const [hours, minutes] = value.split(':').map(Number);
   if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return value;
@@ -656,34 +650,22 @@ function NotificationsSection() {
     }
   };
 
+  // This browser is subscribed. The evening check-in reads the flag too.
+  const rememberWebPush = async () => {
+    if (!prefs) return;
+    const next = { ...prefs, webPushEnabled: true };
+    setPrefs(next);
+    await savePreferences(notificationPreferenceInput(next));
+    setBaseline((current) => (current ? { ...current, webPushEnabled: true } : current));
+  };
+
   const enablePush = async () => {
     if (!prefs || pushBusy) return;
     setPushBusy(true);
     setPushMessage(null);
     try {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        throw new Error('This browser does not support Web Push.');
-      }
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') throw new Error('Notification permission was not granted.');
-      const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-      if (!publicKey) throw new Error('Web Push is not configured on this deployment.');
-      const registration = await navigator.serviceWorker.register('/albatross-sw.js');
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
-      });
-      const response = await fetch('/api/notifications/push', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(subscription.toJSON()),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not enable Web Push.');
-      const next = { ...prefs, webPushEnabled: true };
-      setPrefs(next);
-      await savePreferences(notificationPreferenceInput(next));
-      setBaseline((current) => (current ? { ...current, webPushEnabled: true } : current));
+      await enableBrowserPush();
+      await rememberWebPush();
       setPushMessage('Web Push is enabled on this browser.');
     } catch (error) {
       setPushMessage(error instanceof Error ? error.message : 'Could not enable Web Push.');
@@ -854,7 +836,11 @@ function NotificationsSection() {
           {dirty ? 'Changes apply after you save.' : 'Everything here is saved.'}
         </span>
       </div>
-      <NeedsYouAlertsSettings timezone={baseline?.timezone ?? prefs.timezone} remote={remote} />
+      <NeedsYouAlertsSettings
+        timezone={baseline?.timezone ?? prefs.timezone}
+        remote={remote}
+        onBrowserPushEnabled={rememberWebPush}
+      />
     </section>
   );
 }

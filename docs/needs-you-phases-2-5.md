@@ -676,3 +676,61 @@ Tests. `Lab86MailTests/MacNeedsYouLayoutTests.swift` covers the rules
 above, the menu requests, the sidebar row, and the push tap on the Mac.
 `NativeTourMacTests` gains the screen `mac-needs-you`, drawn from a seeded
 snapshot with invented people.
+
+## Chat and browser notes (2026-11-02)
+
+### Chat tools (`lib/tools/needs-you.ts`)
+
+- `needs_you_list` reads `obligationViews:snapshotFor` and groups it with
+  `groupNeedsYou`. It takes an optional `group` and `source`. A closed item
+  shows only for the group `closed_today`. It gives at most 40 items, and
+  `total` gives the full count. It does not read the Albatross questions and
+  approvals (the extras of the page).
+- `needs_you_done`, `needs_you_later`, and `needs_you_not_mine` call
+  `runObligationAction`. The routes and the tools get the same dependencies
+  from `lib/obligations/action-deps.ts`.
+- The risk class of the actions is `write_self`. They change only the list of
+  the user, so they do not ask for approval. A pause of that class in Standing
+  orders stops them.
+- Each action records an operation with the inverse `needs_you_undo`. Thus the
+  receipt in the chat and the Activity page have Undo. The window is the window
+  of the page (`UNDO_WINDOW_MS`). After it, Undo says "Undo is no longer
+  available."
+- A `code` item comes from an allow list: the fixed title, the issuer, the
+  expiry, and `available`. It has no `why`, excerpt, or thread. The value of a
+  live code is also removed from the text of the other items in the result.
+- The chat cards are existing shapes: `sources` for the list, `receipt` for an
+  action. The clients need no change.
+- A user outside the flag gets a short plain result. The prompt, the group list,
+  and the preload do not name the tools for that user. The `enable_tools` schema
+  lists all group names, so that name is the one change that the model can see.
+
+### Browser push
+
+- `deliverObligationPushes` and `releaseHeldObligationPushes` send each claimed
+  push to APNs and to `dispatchWebNotification`
+  (`lib/notifications/web-delivery.ts`) at the same time. The claim is the one
+  decision. An item counts as failed only when a channel threw and no channel
+  reached a device.
+- `claimPush` and `claimHeldPushes` need one channel. With `nativePushEnabled`
+  off, they read one row of `webPushSubscriptions`. An active browser keeps the
+  push. APNs still checks its own switch.
+- The topic is the first 32 characters of the base64url SHA-256 of the collapse
+  id (`webPushTopic`). The notification `tag` is the collapse id.
+- A send records one `web_push` row in `notificationDeliveries`. A 404 or a 410
+  marks the subscription `expired`.
+- A code push says "A code is ready" and "Open Albatross to copy it." Its TTL is
+  10 minutes. Its urgency is `high`, as for each time-sensitive push.
+- The link is `/?view=notifications&obligation=<id>` (the summary has no id). A
+  click focuses a tab at `/` and sends it `albatross:open-link`, so the tab has
+  no page load (`components/needs-you/NeedsYouPushLinks.tsx`). A tab on a
+  different page moves to the link. With no tab, a new tab opens.
+- The worker now takes over at once (`skipWaiting`, `clients.claim`). It has no
+  fetch handler, so this changes only push and click.
+
+### Settings
+
+- "Alerts in this browser" (`BrowserAlertsRow`) is on when this browser has a
+  subscription. On uses the path of the Web Push row
+  (`lib/notifications/web-push-client.ts`). Off removes the subscription. The
+  row is only for a user in the flag.

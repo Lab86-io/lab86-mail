@@ -1,12 +1,14 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
+import { executeCheckpointedTool, toolExecutionKey } from '../lib/ai/execution';
 import { resolveToolShape } from '../lib/ai/tool-shapes';
 import { type AlbatrossDocumentRecord, createDefaultDocumentModel } from '../lib/documents/model';
+import { OfficeBlanksError, OfficeRevisionError } from '../lib/documents/office-pdf';
 import { OfficeError } from '../lib/documents/office-security';
 import type { OfficeFile } from '../lib/documents/office-service';
 import { readWordBlanks } from '../lib/documents/word-package';
 import { createWordService } from '../lib/documents/word-service';
-import { __setDocumentToolDepsForTest, documentExport } from '../lib/tools/documents';
+import { __setDocumentToolDepsForTest, documentExport, documentReviewSlides } from '../lib/tools/documents';
 import { toolRisk } from '../lib/tools/registry';
 import { wordDocumentCreate, wordDocumentEdit, wordDocumentGet } from '../lib/tools/word-documents';
 import {
@@ -164,6 +166,104 @@ describe('word_document_create with a template', () => {
 });
 
 describe('document_export with format pdf', () => {
+  test('the revision is required, so a new revision is a new call and never a replay', () => {
+    expect(documentExport.input.safeParse({ documentId: 'word-1', format: 'pdf' }).success).toBe(false);
+    const first = toolExecutionKey('document_export', { documentId: 'word-1', revision: 3, format: 'pdf' });
+    const second = toolExecutionKey('document_export', { documentId: 'word-1', revision: 4, format: 'pdf' });
+    expect(first).not.toBe(second);
+    expect(toolExecutionKey('document_review_slides', { documentId: 'd', revision: 1 })).not.toBe(
+      toolExecutionKey('document_review_slides', { documentId: 'd', revision: 2 }),
+    );
+    expect(documentReviewSlides.input.safeParse({ documentId: 'd' }).success).toBe(false);
+  });
+
+  test('a replay across revisions: export, fill a blank, export again gives a new file', async () => {
+    // The real key and the real checkpoint, with an in-memory table.
+    const rows = new Map<string, any>();
+    const convexMutation = (async (_fn: unknown, args: any) => {
+      if ('toolName' in args) {
+        const row = rows.get(args.key);
+        if (row) return { claimed: false, ...row };
+        rows.set(args.key, { status: 'running' });
+        return { claimed: true };
+      }
+      rows.set(args.key, { status: args.status, output: args.output });
+    }) as any;
+    let exports = 0;
+    __setDocumentToolDepsForTest({
+      saveOfficePdf: async () => ({ ...saved, fileId: `upload_${++exports}` }),
+    });
+    const call = (revision: number) =>
+      executeCheckpointedTool(
+        {
+          userId: 'u',
+          runId: 'r',
+          name: 'document_export',
+          args: { documentId: 'word-1', revision, format: 'pdf' },
+          mutating: true,
+        },
+        () => runTool(documentExport.handler, { documentId: 'word-1', revision, format: 'pdf' }),
+        { convexMutation },
+      );
+    expect(await call(1)).toMatchObject({ fileId: 'upload_1' });
+    // A retry of the same revision replays the same file.
+    expect(await call(1)).toMatchObject({ fileId: 'upload_1' });
+    // After fill_blank the revision is new, so the export runs again.
+    expect(await call(2)).toMatchObject({ fileId: 'upload_2' });
+    expect(exports).toBe(2);
+  });
+
+  test('a stale revision of a Word file or a text document exports nothing', async () => {
+    const save = async (_user: string, _doc: string, _work?: string, options?: { revision?: number }) => {
+      expect(options?.revision).toBe(2);
+      throw new OfficeRevisionError(3);
+    };
+    __setDocumentToolDepsForTest({ saveOfficePdf: save as any });
+    expect(
+      await runTool(documentExport.handler, { documentId: 'word-1', revision: 2, format: 'pdf' }),
+    ).toMatchObject({ ok: false, status: 'conflict', revision: 3 });
+    const convert = mock(async () => saved);
+    __setDocumentToolDepsForTest({
+      saveOfficePdf: async () => {
+        throw new OfficeError('Word document not found.', 404);
+      },
+      getDocument: (async () => ({ ...record('doc'), currentRevision: 5 })) as any,
+      saveDocxBytesAsPdf: convert,
+    });
+    expect(
+      await runTool(documentExport.handler, { documentId: 'doc-1', revision: 2, format: 'pdf' }),
+    ).toMatchObject({ ok: false, status: 'conflict', revision: 5 });
+    expect(convert).not.toHaveBeenCalled();
+    // The native format refuses a stale revision too.
+    expect(await runTool(documentExport.handler, { documentId: 'doc-1', revision: 2 })).toMatchObject({
+      ok: false,
+      status: 'conflict',
+      revision: 5,
+    });
+  });
+
+  test('a file with empty blanks gets no PDF, and the result names the blanks', async () => {
+    __setDocumentToolDepsForTest({
+      saveOfficePdf: async () => {
+        throw new OfficeBlanksError(['Invoice number', 'Invoice date']);
+      },
+    });
+    const result: any = await runTool(documentExport.handler, {
+      documentId: 'word-1',
+      revision: 1,
+      format: 'pdf',
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'blanks',
+      blanks: ['Invoice number', 'Invoice date'],
+    });
+    expect(result.message).toContain('"Invoice number", "Invoice date"');
+    expect(documentExport.output.safeParse(result).success).toBe(true);
+    // A refusal shows as a plain tool result, not as a file card.
+    expect(resolveToolShape('document_export', { documentId: 'word-1' }, result)).toBeNull();
+  });
+
   const saved = {
     fileId: 'upload_7',
     title: 'Check-in memo.pdf',
@@ -191,12 +291,20 @@ describe('document_export with format pdf', () => {
         return saved;
       },
     });
-    const result = await runTool(documentExport.handler, { documentId: 'word-1', format: 'pdf' });
+    const result = await runTool(documentExport.handler, {
+      documentId: 'word-1',
+      revision: 1,
+      format: 'pdf',
+    });
     expect(result).toEqual({ ok: true, format: 'pdf', documentId: 'word-1', ...saved });
     expect(calls).toEqual(['test_user_tools:word-1']);
     expect(documentExport.output.safeParse(result).success).toBe(true);
     expect(toolRisk(documentExport)).toBe('write_self');
-    const shape = resolveToolShape('document_export', { documentId: 'word-1', format: 'pdf' }, result) as any;
+    const shape = resolveToolShape(
+      'document_export',
+      { documentId: 'word-1', revision: 1, format: 'pdf' },
+      result,
+    ) as any;
     expect(shape.title).toBe('Check-in memo.pdf');
     expect(shape.path).toBe('/?view=files&file=upload_7');
   });
@@ -214,7 +322,9 @@ describe('document_export with format pdf', () => {
         return { ...saved, title: `${title}.pdf` };
       },
     });
-    expect(await runTool(documentExport.handler, { documentId: 'doc-1', format: 'pdf' })).toMatchObject({
+    expect(
+      await runTool(documentExport.handler, { documentId: 'doc-1', revision: 1, format: 'pdf' }),
+    ).toMatchObject({
       fileId: 'upload_7',
       title: 'Decision memo.pdf',
     });
@@ -223,29 +333,47 @@ describe('document_export with format pdf', () => {
       saveOfficePdf: notWord,
       getDocument: (async () => record('deck')) as any,
     });
-    await expect(runTool(documentExport.handler, { documentId: 'doc-1', format: 'pdf' })).rejects.toThrow(
-      'Word files and text documents',
-    );
+    await expect(
+      runTool(documentExport.handler, { documentId: 'doc-1', revision: 1, format: 'pdf' }),
+    ).rejects.toThrow('Word files and text documents');
     __setDocumentToolDepsForTest({ saveOfficePdf: notWord, getDocument: (async () => null) as any });
-    await expect(runTool(documentExport.handler, { documentId: 'doc-1', format: 'pdf' })).rejects.toThrow(
-      'Document not found',
-    );
+    await expect(
+      runTool(documentExport.handler, { documentId: 'doc-1', revision: 1, format: 'pdf' }),
+    ).rejects.toThrow('Document not found');
     __setDocumentToolDepsForTest({
       saveOfficePdf: async () => {
         throw new OfficeError('The document server does not accept PDF conversion from this app.', 503);
       },
     });
-    await expect(runTool(documentExport.handler, { documentId: 'word-1', format: 'pdf' })).rejects.toThrow(
-      'does not accept PDF conversion',
-    );
+    await expect(
+      runTool(documentExport.handler, { documentId: 'word-1', revision: 1, format: 'pdf' }),
+    ).rejects.toThrow('does not accept PDF conversion');
   });
 
   test('the native format keeps its download link', async () => {
     __setDocumentToolDepsForTest({ getDocument: (async () => record('doc')) as any });
-    expect(await runTool(documentExport.handler, { documentId: 'doc-1', format: 'native' })).toMatchObject({
+    expect(
+      await runTool(documentExport.handler, { documentId: 'doc-1', revision: 1, format: 'native' }),
+    ).toMatchObject({
       downloadPath: '/api/documents/doc-1/export',
       fidelity: 'full',
     });
-    expect(documentExport.input.safeParse({ documentId: 'doc-1', format: 'png' }).success).toBe(false);
+    expect(documentExport.input.safeParse({ documentId: 'doc-1', revision: 1, format: 'png' }).success).toBe(
+      false,
+    );
+  });
+
+  test('the native format builds the file once, so a bad file fails here and not at the download', async () => {
+    const built = mock(async () => {
+      throw new OfficeError('The server built a PowerPoint file that does not open (ppt/slides/slide1.xml).');
+    });
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => record('deck')) as any,
+      exportDocument: built as any,
+    });
+    await expect(runTool(documentExport.handler, { documentId: 'doc-1', revision: 1 })).rejects.toThrow(
+      'does not open',
+    );
+    expect(built).toHaveBeenCalledTimes(1);
   });
 });

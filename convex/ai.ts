@@ -1,6 +1,8 @@
 import { v } from 'convex/values';
+import { modelCallOutcome, opsModelKind } from '../lib/ops/health';
 import { mutation, query } from './_generated/server';
 import { currentPeriod, now, requireInternalSecret } from './lib';
+import { recordOpsHealth } from './opsHealth';
 
 const providerValidator = v.union(v.literal('openrouter'), v.literal('openai'), v.literal('anthropic'));
 const modeValidator = v.union(v.literal('lab86'), v.literal('byok'));
@@ -279,6 +281,13 @@ export const recordUsage = mutation({
           updatedAt: ts,
         });
       }
+    }
+    // The failure alarm counts the calls Lab86 pays for: a user's own key that
+    // stops working is not an outage. A failed call counts with or without any
+    // successful one, so a disabled key still opens an incident (lib/ops/health.ts).
+    if (source === 'lab86') {
+      const outcome = modelCallOutcome(args.ok, args.error);
+      if (outcome) await recordOpsHealth(ctx, { kind: opsModelKind(args.feature), ...outcome, at: ts });
     }
     return { ok: true };
   },

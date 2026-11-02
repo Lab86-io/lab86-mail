@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { isStoredWebhookPayload, webhookPayloadForStorage } from '../lib/mail/webhook-storage';
+import { SPEED_RETENTION_DAYS, speedDayBefore } from '../lib/ops/speed';
 import { internal } from './_generated/api';
 import type { MutationCtx } from './_generated/server';
 import { internalMutation } from './_generated/server';
@@ -28,7 +29,11 @@ export const RETENTION_BATCH = {
   webhookEvents: 10,
   rateLimits: 500,
   oauthStates: 100,
+  opsRollups: 200,
 } as const;
+
+/** The alarm reads two hours and the report seven days, so buckets stay for 14 days. */
+export const OPS_BUCKET_RETENTION_MS = 14 * DAY_MS;
 
 type Counts = Record<string, number>;
 
@@ -100,6 +105,30 @@ export const sweep = internalMutation({
       counts[table] = await deleteAll(ctx, rows);
       more ||= rows.length === RETENTION_BATCH.oauthStates;
     }
+
+    // Three indexed reads that find nothing on most runs. A full batch runs the
+    // sweep again, so the rows cannot grow without a limit.
+    const oldBuckets = await ctx.db
+      .query('opsHealthBuckets')
+      .withIndex('by_hour_kind_shard', (q) => q.lt('hourStart', ts - OPS_BUCKET_RETENTION_MS))
+      .take(RETENTION_BATCH.opsRollups);
+    counts.opsHealthBuckets = await deleteAll(ctx, oldBuckets);
+    more ||= oldBuckets.length === RETENTION_BATCH.opsRollups;
+
+    const oldestDay = speedDayBefore(ts, SPEED_RETENTION_DAYS);
+    const oldTools = await ctx.db
+      .query('opsToolRollups')
+      .withIndex('by_day_tool_class', (q) => q.lt('day', oldestDay))
+      .take(RETENTION_BATCH.opsRollups);
+    counts.opsToolRollups = await deleteAll(ctx, oldTools);
+    more ||= oldTools.length === RETENTION_BATCH.opsRollups;
+
+    const oldSpeed = await ctx.db
+      .query('speedRollups')
+      .withIndex('by_key', (q) => q.lt('day', oldestDay))
+      .take(RETENTION_BATCH.opsRollups);
+    counts.speedRollups = await deleteAll(ctx, oldSpeed);
+    more ||= oldSpeed.length === RETENTION_BATCH.opsRollups;
 
     if (more) await ctx.scheduler.runAfter(0, internal.retention.sweep, {});
     return { counts, more };

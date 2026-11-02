@@ -2,9 +2,14 @@ import { v } from 'convex/values';
 import { truncateText } from '../lib/shared/text';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
+import { recordDocumentEffect } from './agentExecution';
 import { now, requireInternalSecret } from './lib';
 
 const owner = { internalSecret: v.optional(v.string()), userId: v.string() };
+const executionValidator = v.optional(v.object({ runId: v.string(), key: v.string() }));
+const templateValidator = v.optional(
+  v.object({ kind: v.literal('invoice'), dataJson: v.string(), renderedSha256: v.string() }),
+);
 async function owned(ctx: QueryCtx | MutationCtx, userId: string, documentId: string) {
   return ctx.db
     .query('officeDocuments')
@@ -37,6 +42,8 @@ export const create = mutation({
         syncedRevision: v.number(),
       }),
     ),
+    template: templateValidator,
+    execution: executionValidator,
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -61,6 +68,7 @@ export const create = mutation({
       createdAt: timestamp,
       updatedAt: timestamp,
       ...(args.google ? { google: args.google } : {}),
+      ...(args.template ? { template: args.template } : {}),
     };
     await ctx.db.insert('officeDocuments', document);
     await ctx.db.insert('officeVersions', {
@@ -72,6 +80,11 @@ export const create = mutation({
       sha256: args.sha256,
       recovery: false,
       createdAt: timestamp,
+    });
+    // In this transaction: a retry of a lost response sees the file instead of making a second one.
+    await recordDocumentEffect(ctx, args.userId, args.execution, {
+      documentId: args.documentId,
+      revision: 1,
     });
     return document;
   },
@@ -365,6 +378,8 @@ export const saveEditedVersion = mutation({
     size: v.number(),
     sha256: v.string(),
     requestId: v.optional(v.string()),
+    template: templateValidator,
+    execution: executionValidator,
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -409,7 +424,12 @@ export const saveEditedVersion = mutation({
       recovery: false,
       createdAt,
     });
-    await ctx.db.patch(document._id, { currentRevision: revision, updatedAt: createdAt });
+    await ctx.db.patch(document._id, {
+      currentRevision: revision,
+      updatedAt: createdAt,
+      ...(args.template ? { template: args.template } : {}),
+    });
+    await recordDocumentEffect(ctx, args.userId, args.execution, { documentId: args.documentId, revision });
     return { ok: true, revision };
   },
 });

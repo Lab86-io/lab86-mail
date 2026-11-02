@@ -2,7 +2,8 @@
 // Convex claim (convex/obligations.ts) decides inside its transaction, so two
 // pushes at the same time cannot both take the last slot of the hour.
 //
-// - One push for each obligation. The obligation id is the APNs collapse id.
+// - One push for each obligation. The obligation id is the APNs collapse id,
+//   and its hash is the Web Push topic.
 // - A code pushes at once. Quiet hours and the hourly limit never hold it.
 // - Quiet hours hold a push until they end, except a time-sensitive item and
 //   an item from a VIP sender.
@@ -27,6 +28,15 @@ export interface ObligationPushSettings extends MailPushSettings {
   obligationPushEnabled: boolean;
   /** "Verification codes" (oneTimeCodeAutofillEnabled). */
   codesEnabled: boolean;
+  /** The Convex claim sets it: iPhone pushes are off, and a browser has alerts on. */
+  webPushActive?: boolean;
+}
+
+/** One channel is enough. Each channel then checks its own switch when it sends. */
+export function anyPushChannel(
+  settings: Pick<ObligationPushSettings, 'nativePushEnabled' | 'webPushActive'>,
+) {
+  return settings.nativePushEnabled || settings.webPushActive === true;
 }
 
 /** Reads the preference row with defaults: every switch is on. */
@@ -76,7 +86,7 @@ export function decideObligationPush(input: {
   const { obligation, settings, now } = input;
   if (obligation.state !== 'open') return { action: 'none', reason: 'closed' };
   if (obligation.pushLevel === 'none') return { action: 'none', reason: 'in_app_only' };
-  if (!settings.nativePushEnabled) return { action: 'none', reason: 'disabled' };
+  if (!anyPushChannel(settings)) return { action: 'none', reason: 'disabled' };
   if (obligation.kind === 'code') {
     if (!settings.codesEnabled) return { action: 'none', reason: 'disabled' };
     return { action: 'push', timeSensitive: true, codeAvailable: true };
