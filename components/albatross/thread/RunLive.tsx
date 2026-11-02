@@ -27,7 +27,7 @@ export const LIVE_ROWS_OPEN = 3;
 
 export function RunLiveText({ text }: { text: string }) {
   return (
-    <div data-slot="run-live-text" aria-live="polite" className="min-w-0">
+    <div data-slot="run-live-text" className="min-w-0">
       <Markdown className={MESSAGE_CLASS} streaming>
         {text}
       </Markdown>
@@ -38,7 +38,13 @@ export function RunLiveText({ text }: { text: string }) {
 /** This node holds the subscription, so a new part of the text draws only this node. */
 export function RunLiveTextConnected({ runId }: { runId: string }) {
   const live = useQuery(api.albatrossStepRuns.liveText, { id: runId as Id<'albatrossStepRuns'> });
-  return live?.text ? <RunLiveText text={live.text} /> : null;
+  // The live region is there before the first word, so a screen reader hears it
+  // in both motion modes. Empty, it takes no space.
+  return (
+    <div data-slot="run-live-region" aria-live="polite" className="min-w-0">
+      {live?.text ? <RunLiveText text={live.text} /> : null}
+    </div>
+  );
 }
 
 function RowClock({ since }: { since: number }) {
