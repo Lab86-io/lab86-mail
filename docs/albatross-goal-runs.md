@@ -117,6 +117,10 @@ a tab in document mode. The email draft carries the other files as attachments.
   - Max 8 sources on one message. Same URL or id only once.
 - The run message, the log, and the summary all pass through the secure redaction as today.
 
+The user reads the text while the model writes it: see "The live row and the throttle" in
+`docs/albatross-step-runner.md`. A run message takes the place of that text at the end of the model
+step.
+
 ### What the model is told
 
 The prompt says:
