@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { JSDOM } from 'jsdom';
@@ -507,13 +507,21 @@ describe('the Today list acts in place', () => {
   });
   // Four items: a code, a moved flight, a review, and a reply with a draft. All fit under the cap.
   const few = ['ob_code_now', 'ob_flight', 'ob_review', 'ob_sow'].map(byId);
+  const mounted: ReactTestRenderer[] = [];
   const mount = async (props: TodayNeedsYouProps) => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(<TodayNeedsYou {...props} />);
     });
+    mounted.push(renderer);
     return renderer;
   };
+  // A row holds a menu. Its cleanup needs the browser globals, so it runs before they leave.
+  afterEach(async () => {
+    await act(async () => {
+      for (const renderer of mounted.splice(0)) renderer.unmount();
+    });
+  });
   const rowOf = (renderer: ReactTestRenderer, id: string) =>
     renderer.root.findAll((node) => node.type === 'li' && node.props['data-needs-you-row'] === id)[0];
   const button = (renderer: ReactTestRenderer, id: string, label: string) =>
