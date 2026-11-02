@@ -81,10 +81,14 @@ function attendeeList(value: unknown): string[] {
     .filter(Boolean);
 }
 
-/** Attendees sent as text may still be a list that runs. Only no text means no attendees. */
+/** Attendees sent as JSON text run as a list, so they count. Other text fails the field check. */
 function mayInvite(value: unknown): boolean {
-  if (typeof value === 'string') return !['', '[]'].includes(value.replace(/\s/g, ''));
-  return attendeeList(value).length > 0;
+  if (typeof value !== 'string') return attendeeList(value).length > 0;
+  try {
+    return attendeeList(JSON.parse(value)).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**

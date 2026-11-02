@@ -312,6 +312,15 @@ describe('buildRunnerTools', () => {
     expect(result).toMatchObject({ status: 'queued_for_approval' });
   });
 
+  test('attendees as other text go to the tool for its field errors, with no approval', async () => {
+    const lifted = { calendar_create_event: baseTool({ ok: false, error: 'attendees: expected a list' }) };
+    const { host, approvals } = makeHost();
+    const tools = buildRunnerTools(lifted, host);
+    await tools.calendar_create_event.execute({ title: 'Team lunch', attendees: 'Sam' });
+    expect(lifted.calendar_create_event.execute).toHaveBeenCalledTimes(1);
+    expect(approvals).toHaveLength(0);
+  });
+
   test('the invite title falls back to the summary, then to "event"', async () => {
     const { host, approvals } = makeHost();
     const tools = buildRunnerTools({ calendar_create_event: baseTool({ ok: true }) }, host);

@@ -273,6 +273,8 @@ describe('server-enforced approval for tools that reach another person', () => {
     );
     expect(toolNeedsApproval('calendar_create_event', { attendees: ' [ ] ' })).toBe(false);
     expect(toolNeedsApproval('calendar_create_event', { attendees: '' })).toBe(false);
+    // Other text cannot run, so it gets the field errors and no card.
+    expect(toolNeedsApproval('calendar_create_event', { attendees: 'Sam' })).toBe(false);
     // An answer to an invitation reaches the organizer, so it asks too.
     expect(needs('calendar_rsvp_event', { account: 'a', calendarId: 'c', eventId: 'e', status: 'yes' })).toBe(
       true,
