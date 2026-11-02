@@ -413,7 +413,8 @@ function viewRevision(value: unknown) {
  * reader has this revision already, the edition does not go out again.
  */
 export async function readBriefView(known?: string | null): Promise<BriefViewResponse> {
-  const [head, row] = await Promise.all([loadBriefEditionHead(), readNewestReadableRow()]);
+  // A failed job read must not hide a readable edition.
+  const [head, row] = await Promise.all([loadBriefEditionHead().catch(() => null), readNewestReadableRow()]);
   const pending = briefPendingFromHead(head);
   const stamp = briefHeadStamp(head);
   if (!row) return { stamp, pending, revision: null, report: null };

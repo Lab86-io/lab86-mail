@@ -1,4 +1,7 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { BriefMailBacklog } from '../components/report/BriefMailBacklog';
 import {
   isBriefEditionGenerating,
   isBriefEditionReadable,
@@ -17,6 +20,7 @@ import {
   briefPendingFromHead,
   briefWebEdition,
 } from '../lib/brief/web-view';
+import { fetchBriefHead, fetchBriefView } from '../lib/brief/web-view-client';
 import { getDailyArt } from '../lib/mail/daily-art';
 import type { DailyReport } from '../lib/shared/types';
 import { migrateDailyReport } from '../lib/store/daily-reports';
@@ -185,6 +189,43 @@ describe('the head of the active job', () => {
   });
 });
 
+describe('the browser client of the view', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+  const answer = (status: number, body: string) => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(body, { status });
+    }) as unknown as typeof fetch;
+    return calls;
+  };
+
+  test('the poll is a GET without a cache, and a read is a POST with the known revision', async () => {
+    const calls = answer(200, JSON.stringify({ stamp: 'idle', pending: null }));
+    const signal = new AbortController().signal;
+    expect(await fetchBriefHead(signal)).toEqual({ stamp: 'idle', pending: null });
+    expect(calls[0].url).toBe('/api/brief/view');
+    expect(calls[0].init).toMatchObject({ cache: 'no-store', signal });
+    await fetchBriefView({ known: 'rev' }, signal);
+    expect(calls[1].init?.method).toBe('POST');
+    expect(calls[1].init?.signal).toBe(signal);
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ known: 'rev' });
+    await fetchBriefHead();
+    await fetchBriefView({ id: 'old' });
+    expect(calls[3].init?.signal).toBeUndefined();
+  });
+
+  test('a failed read says what the server said, or a fixed text', async () => {
+    answer(429, JSON.stringify({ error: 'Too many requests.' }));
+    await expect(fetchBriefHead()).rejects.toThrow('Too many requests.');
+    answer(500, '<html>Bad gateway</html>');
+    await expect(fetchBriefView({})).rejects.toThrow('Could not load the brief.');
+  });
+});
+
 describe('the one generating rule', () => {
   test('a composing row is still generating and is readable; a placeholder is not readable', () => {
     const composing = { status: 'ready' as const, artifactStatus: 'composing' };
@@ -193,5 +234,28 @@ describe('the one generating rule', () => {
     expect(isBriefEditionReadable({ status: 'partial' })).toBe(false);
     expect(isBriefEditionReadable(null)).toBe(false);
     expect(isBriefEditionRetrying({ status: 'ready', retrying: true })).toBe(true);
+  });
+});
+
+describe('the backlog list', () => {
+  const row = { account: 'a', threadId: 't', subject: 'Vendor contract', whyItMatters: 'A change came in.' };
+
+  test('the summary counts the full edition, and the list says when it holds fewer rows', () => {
+    const html = renderToStaticMarkup(
+      createElement(BriefMailBacklog, { items: [row], total: 240, onOpen: () => undefined }),
+    );
+    expect(html).toContain('240 more conversations');
+    expect(html).toContain('This list shows the first 1.');
+  });
+
+  test('a short list reads as before', () => {
+    const html = renderToStaticMarkup(
+      createElement(BriefMailBacklog, { items: [row], onOpen: () => undefined }),
+    );
+    expect(html).toContain('1 more conversation worth');
+    expect(html).not.toContain('This list shows');
+    expect(
+      renderToStaticMarkup(createElement(BriefMailBacklog, { items: [], onOpen: () => undefined })),
+    ).toBe('');
   });
 });

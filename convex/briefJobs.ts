@@ -174,8 +174,9 @@ export const enqueue = mutation({
       attempts: 0,
     });
     if (args.kind === 'daily') {
-      // Persist the new edition atomically with its job. Readers immediately see
-      // its generation state, never a substituted previous edition.
+      // Persist the new edition atomically with its job. Native readers see its
+      // generation state at once. The web page keeps the last readable edition
+      // until this row has text (lib/store/daily-reports.ts, readBriefView).
       await ctx.db.insert('userDocs', {
         userId: args.userId,
         kind: 'dailyReport',

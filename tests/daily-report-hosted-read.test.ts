@@ -13,7 +13,7 @@ import {
   saveDailyReport,
   setDailyReportReaderForTest,
 } from '../lib/store/daily-reports';
-import { kvGetMany, kvUpsert } from '../lib/store/kv';
+import { KV_GET_MANY_LIMIT, kvGetMany, kvUpsert } from '../lib/store/kv';
 import { realShapeEdition } from './fixtures/brief-real-shape';
 
 afterEach(() => setDailyReportReaderForTest());
@@ -313,6 +313,24 @@ test('a composing row shows its own plain letter, and with no active job its let
   });
 });
 
+test('a failed read of the job does not hide a readable edition', async () => {
+  viewReader({ rows: [ready(100)] });
+  setDailyReportReaderForTest({
+    configured: () => true,
+    loadDismissals: async () => ({}),
+    loadClosedTracked: async () => new Set<string>(),
+    query: (async (fn: unknown, args: any) => {
+      if (getFunctionName(fn as any) === 'briefJobs:activeEdition') throw new Error('Unavailable');
+      return { page: [ready(100)].slice(0, args.limit), isDone: true, continueCursor: '' };
+    }) as any,
+  });
+  await context(async () => {
+    const view = await readBriefView();
+    expect(view.report?._id).toBe('edition-100');
+    expect(view.pending).toBeNull();
+  });
+});
+
 test('a revision that the reader has already means no edition on the wire', async () => {
   viewReader({ rows: [ready(100)] });
   await context(async () => {
@@ -404,6 +422,38 @@ test('the closed tracked read asks for its own rows, and the store caps a batch'
     const rows = await kvGetMany<{ _id: string }>('trackedThread', ['open', 'done', 'done', 'missing']);
     expect(rows.map((row) => row._id)).toEqual(['open', 'done']);
   });
+});
+
+test('the hosted batch read sends each key once and at most the batch limit', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+  process.env.NEXT_PUBLIC_CONVEX_URL = 'https://kv-tests.example';
+  const bodies: any[] = [];
+  globalThis.fetch = (async (_input: unknown, init: RequestInit) => {
+    bodies.push(JSON.parse(String(init.body)));
+    return Response.json({
+      status: 'success',
+      value: [{ key: 'a', doc: { _id: 'a', status: 'resolved' }, updatedAt: 1 }],
+      logLines: [],
+    });
+  }) as unknown as typeof fetch;
+  try {
+    await context(async () => {
+      const keys = ['a', 'a', ...Array.from({ length: 150 }, (_, index) => `k${index}`)];
+      const rows = await kvGetMany('trackedThread', keys);
+      expect(rows).toEqual([{ _id: 'a', status: 'resolved' }]);
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].path).toBe('userData:getDocs');
+    const [args] = bodies[0].args;
+    expect(args.kind).toBe('trackedThread');
+    expect(args.keys).toHaveLength(KV_GET_MANY_LIMIT);
+    expect(new Set(args.keys).size).toBe(KV_GET_MANY_LIMIT);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousUrl === undefined) delete process.env.NEXT_PUBLIC_CONVEX_URL;
+    else process.env.NEXT_PUBLIC_CONVEX_URL = previousUrl;
+  }
 });
 
 test('a read without legacy artifacts builds none of them', () => {

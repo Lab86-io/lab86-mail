@@ -2,8 +2,8 @@
 // the Today page can show. Every name here is invented, and no request leaves
 // the browser for a brief read. Development only.
 
-import { letterBriefDocumentFixture } from '../shared/brief-document-fixtures';
-import type { BriefPendingEdition, BriefViewResponse, BriefWebEdition } from './web-view';
+import type { BriefPendingEdition, BriefViewResponse, BriefWebEdition } from '@/lib/brief/web-view';
+import { letterBriefDocumentFixture } from '@/lib/shared/brief-document-fixtures';
 
 export type BriefPreviewState = 'first-load' | 'on-the-way' | 'plain-letter' | 'swap' | 'nothing';
 

@@ -788,6 +788,63 @@ describe('current briefs reconcile terminal Work without changing historical edi
 });
 
 describe('brief telemetry', () => {
+  test('a new edition in the same canvas forgets what the reader did to the old rows', async () => {
+    const { letterBriefDocumentFixture } = await import('../lib/shared/brief-document-fixtures');
+    const document = JSON.parse(JSON.stringify(letterBriefDocumentFixture));
+    const answer = document.regions.find((region: any) => region.id === 'answer');
+    answer.tree.items[0].actions = [
+      {
+        action: 'dismiss_task',
+        label: 'Not this one',
+        style: 'quiet',
+        payload: { cardId: 'card-a' },
+      },
+    ];
+    answer.tree.items[0].ref = { kind: 'task', id: 'card-a', label: 'Review deck' };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const body = url.includes('/resolve')
+        ? { ok: true, entities: [] }
+        : { ok: true, result: { ok: true, dismissal: {}, operationId: 'op', summary: 'Done.' } };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const page = (reportId: string) => (
+      <QueryClientProvider client={queryClient}>
+        <BriefCanvas value={document} reportId={reportId} />
+      </QueryClientProvider>
+    );
+    const hiders = ['dismiss_task'];
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = create(page('edition-a'));
+      });
+      const buttons = () =>
+        renderer.root
+          .findAllByType('button')
+          .filter((button) => hiders.includes(button.props['data-brief-letter-action-name']));
+      const before = buttons().length;
+      expect(before).toBeGreaterThan(0);
+      await act(async () => {
+        await buttons()[0].props.onClick();
+      });
+      expect(buttons().length).toBeLessThan(before);
+      await act(async () => {
+        renderer.update(page('edition-b'));
+      });
+      expect(buttons().length).toBe(before);
+    } finally {
+      globalThis.fetch = originalFetch;
+      renderer?.unmount();
+      queryClient.clear();
+    }
+  });
+
   test('a settled row action posts one event with the edition, surface, region, ref, and outcome', async () => {
     const { letterBriefDocumentFixture } = await import('../lib/shared/brief-document-fixtures');
     const calls: Array<{ url: string; init?: RequestInit }> = [];

@@ -6,13 +6,13 @@ import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { DailyReport } from '@/components/report/DailyReport';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
-import { type BriefPreviewState, briefPreviewFetch } from '@/lib/brief/preview-states';
 import { needsYouEditorialFixture, needsYouLetterFixture } from '@/lib/obligations/fixtures';
 import {
   areaPulseDocumentFixture,
   letterBriefDocumentFixture,
   richBriefDocumentFixture,
 } from '@/lib/shared/brief-document-fixtures';
+import { type BriefPreviewState, briefPreviewFetch } from './preview-states';
 
 /* Dev-only harness: a fixture through the real BriefCanvas, full viewport, so
  * layout, theming, and depth can be verified deterministically without a
