@@ -251,7 +251,7 @@ struct ActivityView: View {
                             ForEach(visibleApprovals) { approval in
                             VStack(alignment: .leading, spacing: 10) {
                                 activityTitle(approval.title, id: "approval:\(approval.id)")
-                                Text(approval.detail).font(.subheadline).foregroundStyle(.secondary)
+                                Text(approval.line).font(.subheadline).foregroundStyle(.secondary)
                                 HStack {
                                     Button(showsArchived ? "Restore" : "Archive") {
                                         setArchived("approval:\(approval.id)", archived: !showsArchived)

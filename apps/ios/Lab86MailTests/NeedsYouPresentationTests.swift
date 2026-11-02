@@ -145,6 +145,22 @@ struct NeedsYouPresentationTests {
         #expect(NeedsYouPresentation.closedLine(item(state: .expired, closeReason: .expired), now: Self.now, timezone: Self.tz) == "Expired")
     }
 
+    @Test func anApprovalLineSaysWhoGetsIt() throws {
+        let invite = try #require(ApprovalSummary(json: .object([
+            "_id": .string("ap2"),
+            "title": .string("Send the invite: Kickoff"),
+            "detail": .string("To Dana Reyes <dana@example.com>. From the goal \"Kickoff\"."),
+        ])))
+        #expect(invite.queueDetail == "To Dana Reyes <dana@example.com>. From the goal \"Kickoff\".")
+        #expect(invite.line == invite.queueDetail)
+        let extras = NeedsYouPresentation.extras(questions: [], approvals: [invite])
+        #expect(extras[0].line == invite.queueDetail)
+        // An older row has no queue words, and it keeps the older line.
+        let older = try #require(ApprovalSummary(json: .object(["_id": .string("ap3")])))
+        #expect(older.queueDetail == nil)
+        #expect(older.line == "Albatross needs your approval before continuing.")
+    }
+
     @Test func theAlbatrossExtrasComeFromTheQuestionsAndApprovals() throws {
         let question = try #require(PendingWorkQuestionSummary(json: .object([
             "question": .object(["_id": .string("q1"), "prompt": .string("Which quarter numbers should the deck use?")]),
