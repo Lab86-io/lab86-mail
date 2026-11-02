@@ -618,11 +618,15 @@ export const decideApproval = mutation({
     decisionNote: v.optional(v.string()),
     result: v.optional(v.any()),
     undoExpiresAt: v.optional(v.number()),
+    // A person's decline. A row that another client claimed is on its way out.
+    onlyIfPending: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const approval = await ctx.db.get(args.approvalId);
     if (!approval || approval.userId !== userId) throw new Error('Approval not found.');
+    if (args.onlyIfPending && approval.status !== 'pending')
+      throw new Error(`Approval is already ${approval.status}.`);
     if (args.status === 'approved' && approval.status !== 'claiming' && approval.status !== 'pending') {
       throw new Error(`Approval is already ${approval.status}.`);
     }

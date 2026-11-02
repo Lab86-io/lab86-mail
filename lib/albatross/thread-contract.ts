@@ -436,3 +436,40 @@ export function addMergedThreadMessages<M extends { id?: unknown; metadata?: unk
     .sort((a, b) => a.at - b.at || a.source - b.source || a.index - b.index)
     .map((entry) => entry.message);
 }
+
+/** A card between the messages, placed by time: a Needs you item (docs/needs-you-phases-2-5.md, open item 2). */
+export interface ThreadTimelineExtra {
+  id: string;
+  at: number;
+}
+
+export type ThreadTimelineWithExtras<M, E extends ThreadTimelineExtra> =
+  | ThreadTimelineItem<M>
+  | { kind: 'extra'; at: number; extra: E };
+
+/**
+ * Put the extras into the timeline by time. An extra sits after the items at
+ * or before its time, so a message and an item from the same minute keep the
+ * order in which they arrived. Items without a time stay first.
+ */
+export function interleaveThreadExtras<M, E extends ThreadTimelineExtra>(
+  timeline: readonly ThreadTimelineItem<M>[],
+  extras: readonly E[],
+): ThreadTimelineWithExtras<M, E>[] {
+  if (!extras.length) return [...timeline];
+  const sorted = [...extras].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+  const out: ThreadTimelineWithExtras<M, E>[] = [];
+  let next = 0;
+  for (const item of timeline) {
+    if (item.at !== null) {
+      while (next < sorted.length && sorted[next].at < item.at) {
+        out.push({ kind: 'extra', at: sorted[next].at, extra: sorted[next] });
+        next += 1;
+      }
+    }
+    out.push(item);
+  }
+  for (; next < sorted.length; next += 1)
+    out.push({ kind: 'extra', at: sorted[next].at, extra: sorted[next] });
+  return out;
+}

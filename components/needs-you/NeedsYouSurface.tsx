@@ -7,6 +7,7 @@ import {
   NotificationsSurface,
   useNotificationActions,
 } from '@/components/notifications/NotificationsSurface';
+import { useSurfaceReady } from '@/hooks/use-surface-ready';
 import { useClientStore } from '@/lib/client-state';
 import type { ObligationAction, ObligationView } from '@/lib/obligations/contract';
 import {
@@ -125,6 +126,7 @@ function UndecidedSurface() {
 
 function NeedsYouChooser({ onOpenActivity }: { onOpenActivity?: () => void }) {
   const data = useNeedsYou();
+  useSurfaceReady('needs_you', data.snapshot !== undefined);
   if (data.snapshot === undefined) return <UndecidedSurface />;
   if (!data.enabled) return <NotificationsSurface onOpenActivity={onOpenActivity} />;
   return <ConnectedNeedsYou data={data} onOpenActivity={onOpenActivity} />;

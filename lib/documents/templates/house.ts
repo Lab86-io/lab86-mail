@@ -17,6 +17,7 @@ import {
   VerticalAlign,
   WidthType,
 } from 'docx';
+import { xmlSafeText } from '../xml-text';
 
 export const INK = '1F1D1A';
 export const MUTED = '6B665D';
@@ -104,19 +105,8 @@ export function blankSlug(label: string): string {
   );
 }
 
-// XML 1.0 does not allow most control characters. Remove them from all data.
-function xmlSafe(value: string) {
-  let out = '';
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    const allowed =
-      code >= 0x20 ? code !== 0xfffe && code !== 0xffff : code === 0x9 || code === 0xa || code === 0xd;
-    if (allowed) out += character;
-  }
-  return out;
-}
 export function cleanText(value: unknown): string {
-  return typeof value === 'string' ? xmlSafe(value).replace(/\r\n?/g, '\n').trim() : '';
+  return typeof value === 'string' ? xmlSafeText(value).replace(/\r\n?/g, '\n').trim() : '';
 }
 
 /**

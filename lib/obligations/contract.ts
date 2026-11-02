@@ -286,6 +286,14 @@ export function needsYouFlagFor(userId: string, raw = process.env.LAB86_NEEDS_YO
     .includes(userId);
 }
 
+/** The Needs you page of the web app. */
+export const NEEDS_YOU_LINK = '/?view=notifications';
+
+/** The web link of one item: the page opens with that item selected. */
+export function needsYouItemLink(id: string): string {
+  return `${NEEDS_YOU_LINK}&obligation=${encodeURIComponent(id)}`;
+}
+
 /** The source key of one mail thread. */
 export function mailSourceKey(accountId: string, threadId: string): string {
   return `mail:${accountId}:${threadId}`;

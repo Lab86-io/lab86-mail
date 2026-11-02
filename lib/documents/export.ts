@@ -5,6 +5,8 @@ import { truncateText } from '../shared/text';
 import { loadDeckAsset } from './deck-assets';
 import { deckExportFace, deckTextSlot, upgradeDeckModel } from './deck-versions';
 import { type AlbatrossDocumentRecord, type DeckElementV2, type DocBlock, sheetGridModel } from './model';
+import { verifyOfficePackage } from './office-verify';
+import { xmlSafeDeep, xmlSafeText } from './xml-text';
 
 export interface DocumentExport {
   bytes: Uint8Array;
@@ -335,6 +337,8 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
         const ink = presentationColor(theme.colors.ink, '17202A');
         const muted = presentationColor(theme.colors.muted, '94A3B8');
         const body = deckExportFace(theme, 'body');
+        // General shows each number as written, as the slide does: 3.7 stays 3.7, not 4.
+        const numberFormat = element.unit ? `General"${element.unit.replace(/"/g, '')}"` : 'General';
         slide.addChart(
           type,
           element.series.map((series) => ({
@@ -362,8 +366,8 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
             valAxisLabelFontSize: 9,
             valAxisMaxVal:
               Math.ceil((Math.max(1, ...element.series.flatMap((series) => series.values)) * 1.1) / 10) * 10,
-            valAxisLabelFormatCode: element.unit ? `0"${element.unit.replace(/"/g, '')}"` : '0',
-            dataLabelFormatCode: element.unit ? `0"${element.unit.replace(/"/g, '')}"` : '0',
+            valAxisLabelFormatCode: numberFormat,
+            dataLabelFormatCode: numberFormat,
             valGridLine: { color: muted, style: 'dash', size: 0.5 },
             catGridLine: { style: 'none' },
             catAxisLineShow: false,
@@ -387,8 +391,15 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
   };
 }
 
+/** Builds the file from safe text, then opens it again. A file that does not open is an error. */
 export async function exportDocument(document: AlbatrossDocumentRecord): Promise<DocumentExport> {
-  if (document.kind === 'doc') return exportDoc(document);
-  if (document.kind === 'sheet') return exportSheet(document);
-  return exportDeck(document);
+  const clean = { ...document, title: xmlSafeText(document.title), model: xmlSafeDeep(document.model) };
+  const exported =
+    clean.kind === 'doc'
+      ? await exportDoc(clean)
+      : clean.kind === 'sheet'
+        ? await exportSheet(clean)
+        : await exportDeck(clean);
+  await verifyOfficePackage(exported.bytes, exported.extension);
+  return exported;
 }

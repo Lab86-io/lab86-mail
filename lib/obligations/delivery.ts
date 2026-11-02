@@ -2,12 +2,15 @@
 // The Convex claim decides each push in one transaction (quiet hours, VIP
 // senders, the hourly limit, the switches) and writes the notification row of
 // type `obligation`: title = the asker, body = the obligation title, and the
-// deep link of the source thread. This module sends the APNs push with the
-// obligation id as the collapse id. A failed push never fails the caller:
-// the obligation is in the app either way.
+// deep link of the source thread. This module sends the push to APNs and to
+// the user's browser subscriptions, with the obligation id as the collapse id.
+// One decision, two channels: a failure on one channel does not stop the
+// other. A failed push never fails the caller: the obligation is in the app
+// either way.
 
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { dispatchNativeNotification, type NativeDeliveryOptions } from '../notifications/native-delivery';
+import { dispatchWebNotification } from '../notifications/web-delivery';
 
 /** The collapse id of the hourly summary push: a new summary replaces the old one. */
 export const SUMMARY_COLLAPSE_ID = 'needs-you-summary';
@@ -34,6 +37,7 @@ export interface ObligationDeliveryDependencies {
   query: typeof convexQuery;
   mutate: typeof convexMutation;
   dispatch: typeof dispatchNativeNotification;
+  dispatchWeb: typeof dispatchWebNotification;
   clock?: () => number;
 }
 
@@ -41,6 +45,7 @@ const defaultDependencies: ObligationDeliveryDependencies = {
   query: convexQuery,
   mutate: convexMutation,
   dispatch: dispatchNativeNotification,
+  dispatchWeb: dispatchWebNotification,
 };
 
 // The collapse id of an obligation push is the obligation id (claimPush), so
@@ -52,6 +57,25 @@ export function pushOptions(push: ClaimedPush): NativeDeliveryOptions {
     ...(push.codeAvailable ? ({ codeAvailable: true } as const) : {}),
     ...(push.timeSensitive ? ({ timeSensitive: true } as const) : {}),
   };
+}
+
+/**
+ * Sends one claimed push to APNs and to the browser at the same time. It
+ * throws only when a channel threw and no channel reached a device.
+ */
+async function sendToChannels(
+  deps: ObligationDeliveryDependencies,
+  userId: string,
+  notificationId: string,
+  options: NativeDeliveryOptions,
+) {
+  const sends = await Promise.allSettled([
+    deps.dispatch(userId, notificationId, undefined, options),
+    deps.dispatchWeb(userId, notificationId, undefined, options),
+  ]);
+  const reached = sends.some((send) => send.status === 'fulfilled' && send.value.sent > 0);
+  const rejected = sends.find((send) => send.status === 'rejected');
+  if (rejected && !reached) throw rejected.reason;
 }
 
 /** Decides and sends the push of each obligation id that a sync returned. */
@@ -69,7 +93,7 @@ export async function deliverObligationPushes(
         now: (deps.clock ?? Date.now)(),
       });
       if (claim.action === 'push') {
-        await deps.dispatch(userId, claim.notificationId, undefined, pushOptions(claim));
+        await sendToChannels(deps, userId, claim.notificationId, pushOptions(claim));
         outcome.pushed += 1;
       } else if (claim.action === 'hold') outcome.held += 1;
       else outcome.inApp += 1;
@@ -97,10 +121,10 @@ export async function releaseHeldObligationPushes(
     try {
       const claim = await deps.mutate<HeldClaimResult>(api.obligations.claimHeldPushes, { userId, now });
       if (claim.kind === 'push') {
-        await deps.dispatch(userId, claim.push.notificationId, undefined, pushOptions(claim.push));
+        await sendToChannels(deps, userId, claim.push.notificationId, pushOptions(claim.push));
         outcome.pushes += 1;
       } else if (claim.kind === 'summary') {
-        await deps.dispatch(userId, claim.notificationId, undefined, { collapseId: SUMMARY_COLLAPSE_ID });
+        await sendToChannels(deps, userId, claim.notificationId, { collapseId: SUMMARY_COLLAPSE_ID });
         outcome.summaries += 1;
       } else outcome.waiting += 1;
     } catch {

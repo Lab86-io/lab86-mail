@@ -171,6 +171,8 @@ export interface DraftAttachment {
    * time (a filled PDF with sealed fields). The stored file holds no value.
    */
   sealed?: boolean;
+  /** Plain words about what the recipient will not get: empty blanks, or a workbook's charts. */
+  warning?: string;
 }
 
 export interface LabelRecord {
@@ -241,6 +243,14 @@ export function workIdFromSearch(search: string): string | null {
 /** `?area=<id>` opens one Area directly. */
 export function areaIdFromSearch(search: string): string | null {
   return new URLSearchParams(search).get('area') || null;
+}
+
+/** The service worker sends this to an open tab when the user clicks a Needs you notification. */
+export const NEEDS_YOU_PUSH_MESSAGE = 'albatross:open-link';
+
+/** `?obligation=<id>` opens one item on the Needs you page. */
+export function obligationIdFromSearch(search: string): string | null {
+  return new URLSearchParams(search).get('obligation') || null;
 }
 
 export function persistedPrimaryViewFromStorage(raw: string | null): PrimaryView | null {

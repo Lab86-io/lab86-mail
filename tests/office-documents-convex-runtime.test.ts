@@ -5,11 +5,13 @@ import schema from '../convex/schema';
 import { exportDocument } from '../lib/documents/export';
 import { createDefaultDocumentModel } from '../lib/documents/model';
 import { validateOfficeArchive } from '../lib/documents/office-security';
+import { publicOfficeFile } from '../lib/documents/office-service';
 
 const office = (api as any).officeDocuments;
 const modules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
   '../convex/officeDocuments.ts': () => import('../convex/officeDocuments'),
+  '../convex/agentExecution.ts': () => import('../convex/agentExecution'),
   '../convex/accounts.ts': () => import('../convex/accounts'),
 };
 const secret = 'office-runtime-secret';
@@ -23,6 +25,95 @@ beforeAll(() => {
 afterAll(() => {
   if (previous === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
   else process.env.LAB86_CONVEX_INTERNAL_SECRET = previous;
+});
+
+describe('Word files from an agent tool call', () => {
+  const execution = { runId: 'run-1', key: 'key-1' };
+  const identity = { ...auth, ...execution };
+  const template = { kind: 'invoice' as const, dataJson: '{"items":[]}', renderedSha256: 'first' };
+  const claim = (t: ReturnType<typeof convexTest>) =>
+    t.mutation((api as any).agentExecution.beginTool, {
+      ...identity,
+      toolName: 'word_document_create',
+      mutating: true,
+    });
+  const newFile = async (t: ReturnType<typeof convexTest>, extra: Record<string, unknown> = {}) =>
+    t.mutation(office.create, {
+      ...auth,
+      documentId: 'word-agent',
+      title: 'Invoice.docx',
+      extension: 'docx',
+      storageId: await t.run((ctx) => ctx.storage.store(new Blob(['word']))),
+      size: 4,
+      sha256: 'first',
+      ...extra,
+    });
+  const effect = (t: ReturnType<typeof convexTest>) =>
+    t.run(async (ctx) => (await ctx.db.query('agentToolExecutions').first())?.effect);
+
+  test('creation records its effect and its template data in the same transaction', async () => {
+    const t = convexTest(schema, modules);
+    await claim(t);
+    await newFile(t, { template, execution });
+    expect(await effect(t)).toEqual({ documentId: 'word-agent', revision: 1 });
+    const file = await t.query(office.get, { ...auth, documentId: 'word-agent' });
+    expect(file.template).toEqual(template);
+    // A retry of the same call sees the saved file instead of a clean claim.
+    expect(await claim(t)).toMatchObject({ claimed: false, effect: { documentId: 'word-agent' } });
+  });
+
+  test('a call that ended cannot land a late file or a late revision', async () => {
+    const t = convexTest(schema, modules);
+    await claim(t);
+    await t.mutation((api as any).agentExecution.finishTool, { ...identity, status: 'unknown' });
+    await expect(newFile(t, { execution })).rejects.toThrow('no longer active');
+    expect(await t.query(office.get, { ...auth, documentId: 'word-agent' })).toBeNull();
+
+    await newFile(t);
+    await expect(
+      t.mutation(office.saveEditedVersion, {
+        ...auth,
+        documentId: 'word-agent',
+        expectedRevision: 1,
+        storageId: await t.run((ctx) => ctx.storage.store(new Blob(['next']))),
+        size: 4,
+        sha256: 'second',
+        execution,
+      }),
+    ).rejects.toThrow('no longer active');
+    expect((await t.query(office.get, { ...auth, documentId: 'word-agent' })).currentRevision).toBe(1);
+  });
+
+  test('an edit records its effect, and only a render replaces the template data', async () => {
+    const t = convexTest(schema, modules);
+    await newFile(t, { template });
+    const save = async (sha256: string, revision: number, extra: Record<string, unknown> = {}) =>
+      t.mutation(office.saveEditedVersion, {
+        ...auth,
+        documentId: 'word-agent',
+        expectedRevision: revision,
+        storageId: await t.run((ctx) => ctx.storage.store(new Blob([sha256]))),
+        size: 4,
+        sha256,
+        ...extra,
+      });
+    await claim(t);
+    const rendered = { ...template, dataJson: '{"items":[1]}', renderedSha256: 'second' };
+    expect(await save('second', 1, { template: rendered, execution })).toEqual({ ok: true, revision: 2 });
+    expect(await effect(t)).toEqual({ documentId: 'word-agent', revision: 2 });
+    expect((await t.query(office.get, { ...auth, documentId: 'word-agent' })).template).toEqual(rendered);
+    // A save with no render leaves the data, and its hash then no longer matches the file.
+    await save('third', 2);
+    const file = await t.query(office.get, { ...auth, documentId: 'word-agent' });
+    expect(file.template.renderedSha256).not.toBe(file.version.sha256);
+  });
+
+  test('the template data stays on the server', async () => {
+    const t = convexTest(schema, modules);
+    await newFile(t, { template });
+    const file = await t.query(office.get, { ...auth, documentId: 'word-agent' });
+    expect(publicOfficeFile(file)).not.toHaveProperty('template');
+  });
 });
 
 describe('binary Office working copies', () => {

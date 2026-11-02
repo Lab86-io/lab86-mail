@@ -105,6 +105,11 @@ export async function settleRunAfterDecision(
     });
     const after = runAfterDecision(state);
     if (after === 'leave' || !state) return { action: 'none' };
+    const first = await deps.convexMutation<boolean>(api.albatrossStepRuns.claimApprovalSettlement, {
+      userId: input.userId,
+      runId,
+    });
+    if (!first) return { action: 'none' };
     if (after === 'close') return await close();
     const { run } = state;
     const note = approvedNote(input.approval.title);

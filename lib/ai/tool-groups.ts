@@ -192,6 +192,10 @@ export const TOOL_GROUPS = {
       'PDF forms in Files: save a mail attachment in Files, read the fillable fields, and fill them into a new PDF (a W-9, an application)',
     tools: ['mail_attachment_save', 'pdf_form_fields', 'pdf_form_fill'],
   },
+  needs_you: {
+    label: 'Needs you: read what the user owes, and mark an item done, later, or not mine',
+    tools: ['needs_you_list', 'needs_you_done', 'needs_you_later', 'needs_you_not_mine'],
+  },
 } as const satisfies Record<string, { label: string; tools: readonly string[] }>;
 
 export type ToolGroupName = keyof typeof TOOL_GROUPS;
@@ -282,25 +286,35 @@ export function initialToolGroups(scope: {
 }
 
 /** A request for a Word file that a house template makes (lib/documents/templates). */
-const TEMPLATE_DOCUMENT_REQUEST = /\b(?:invoice|letter|memo)s?\b/i;
+const TEMPLATE_DOCUMENT_REQUEST =
+  /\b(?:invoice|letter|memo)s?\b|\b(?:write|draft|make|create|prepare)\b[^.?!\n]{0,40}\breports?\b/i;
 /** A tax form by name. */
 const TAX_FORM = /\b(?:w-?9|w-?4|1099)s?\b/i;
 /** An action on a form, a PDF, or a mail attachment: fill one in, sign one, or save one. */
 const FORM_ACTION =
   /\b(?:fill|fills|filled|complete|sign|save|pull|get)\b[^.?!\n]{0,40}\b(?:forms?|pdfs?|applications?|attachments?)\b/i;
 
+/** A question on what the user owes: "What needs my attention?", "What do I owe?". */
+const NEEDS_YOU_REQUEST =
+  /\b(?:needs?|requires?)\s+my\s+attention\b|\bwhat\s+(?:needs|requires)\s+me\b|\bneeds\s+you\b|\bwhat\s+do\s+i\s+owe\b|\bwaiting\s+on\s+me\b|\bon\s+my\s+plate\b|\bmy\s+obligations\b|\bwhat\s+(?:do|must|should)\s+i\s+(?:need\s+to|have\s+to)\s+(?:do|answer|reply|respond)\b|\bwhat\s+must\s+i\s+do\b/i;
+
 /**
  * Groups that the request text asks for, before the first step: an invoice, a
- * letter, or a memo loads documents_more; a tax form, or a form, a PDF, or an
- * attachment to fill, sign, or save loads pdf_forms. So these tools are there
+ * letter, a memo, or a report to write loads documents_more; a tax form, or a form, a PDF, or an
+ * attachment to fill, sign, or save loads pdf_forms; a question on what the
+ * user owes loads needs_you for a user in its flag. So these tools are there
  * even when the model does not call enable_tools. The loop treats them as the
  * oldest enable_tools request, so the tool cap drops them first.
  */
-export function requestToolGroups(text: string | null | undefined): ToolGroupName[] {
+export function requestToolGroups(
+  text: string | null | undefined,
+  scope: { needsYou?: boolean } = {},
+): ToolGroupName[] {
   const value = text || '';
   const groups: ToolGroupName[] = [];
   if (TEMPLATE_DOCUMENT_REQUEST.test(value)) groups.push('documents_more');
   if (TAX_FORM.test(value) || FORM_ACTION.test(value)) groups.push('pdf_forms');
+  if (scope.needsYou && NEEDS_YOU_REQUEST.test(value)) groups.push('needs_you');
   return groups;
 }
 

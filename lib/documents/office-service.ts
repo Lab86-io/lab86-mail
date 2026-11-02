@@ -19,6 +19,11 @@ let dependencies = defaults;
 export function __setOfficeServiceDepsForTest(overrides: Partial<typeof defaults> = {}) {
   dependencies = { ...defaults, ...overrides };
 }
+export interface OfficeTemplateRecord {
+  kind: 'invoice';
+  dataJson: string;
+  renderedSha256: string;
+}
 export interface OfficeFile {
   documentId: string;
   title: string;
@@ -41,6 +46,8 @@ export interface OfficeFile {
     state: 'requested' | 'prepared' | 'complete' | 'failed';
   };
   wopiLock?: { value: string; sessionId: string; expiresAt: number };
+  /** The data of an invoice. It counts only while renderedSha256 is the current sha256. */
+  template?: OfficeTemplateRecord;
   versions: Array<{ revision: number; recovery: boolean; createdAt: number; size: number }>;
   version: { revision: number; url: string | null; size: number; sha256: string } | null;
 }
@@ -51,7 +58,7 @@ export interface OfficeFile {
  * original, and the editor uses it to open an original Google Doc. The
  * working-copy session and the lock stay on the server.
  */
-export function publicOfficeFile({ google, wopiLock: _lock, ...file }: OfficeFile) {
+export function publicOfficeFile({ google, wopiLock: _lock, template: _template, ...file }: OfficeFile) {
   return {
     ...file,
     ...(google
@@ -107,6 +114,9 @@ export const createOfficeFile = (input: {
   size: number;
   sha256: string;
   google?: OfficeFile['google'];
+  template?: OfficeTemplateRecord;
+  /** The agent run and tool call that make this file: the effect commits with the file. */
+  execution?: { runId: string; key: string };
 }) =>
   dependencies.convexMutation<OfficeFile>(office.create, {
     ...input,

@@ -317,6 +317,62 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
 
+  // The failure alarm (docs/ops-signals.md). One small row for each hour, kind,
+  // and shard: counts and a fixed error class, with no user or mail text.
+  opsHealthBuckets: defineTable({
+    hourStart: v.number(),
+    kind: v.string(),
+    shard: v.number(),
+    ok: v.number(),
+    failed: v.number(),
+    lastErrorClass: v.optional(v.string()),
+    lastFailedAt: v.optional(v.number()),
+    lastOkAt: v.optional(v.number()),
+  }).index('by_hour_kind_shard', ['hourStart', 'kind', 'shard']),
+
+  // One row for each alarm kind: its recent hours and its open incident. The
+  // saved incident is why a restart does not send a mail again.
+  opsHealthWatch: defineTable({
+    kind: v.string(),
+    hours: v.array(v.object({ hour: v.number(), ok: v.number(), failed: v.number() })),
+    lastOkAt: v.optional(v.number()),
+    incident: v.optional(
+      v.object({
+        reason: v.union(v.literal('failure_rate'), v.literal('silence')),
+        openedAt: v.number(),
+        ok: v.number(),
+        failed: v.number(),
+        errorClass: v.optional(v.string()),
+        openedSentAt: v.optional(v.number()),
+        recoveredAt: v.optional(v.number()),
+        claimedAt: v.optional(v.number()),
+      }),
+    ),
+    updatedAt: v.number(),
+  }).index('by_kind', ['kind']),
+
+  // Agent tool calls for each UTC day, tool name, and error class (`none` is a
+  // success). A tool name holds no personal data; its args never come here.
+  opsToolRollups: defineTable({
+    day: v.string(),
+    toolName: v.string(),
+    errorClass: v.string(),
+    count: v.number(),
+  }).index('by_day_tool_class', ['day', 'toolName', 'errorClass']),
+
+  // Daily speed histograms for each metric, surface, and form factor
+  // (lib/ops/speed.ts). The retention sweep removes rows after 90 days.
+  speedRollups: defineTable({
+    day: v.string(),
+    metric: v.string(),
+    surface: v.string(),
+    formFactor: v.string(),
+    count: v.number(),
+    sum: v.number(),
+    buckets: v.array(v.number()),
+    updatedAt: v.number(),
+  }).index('by_key', ['day', 'metric', 'surface', 'formFactor']),
+
   aiUsageEvents: defineTable({
     userId: v.string(),
     feature: v.string(),
@@ -1014,6 +1070,7 @@ export default defineSchema({
     availableAt: v.number(),
     attempts: v.number(),
     parentRunId: v.optional(v.id('albatrossStepRuns')),
+    approvalSettledAt: v.optional(v.number()),
     resumeNote: v.optional(v.string()),
     outcome: v.optional(
       v.union(
@@ -2644,6 +2701,11 @@ export default defineSchema({
       }),
     ),
     wopiLock: v.optional(v.object({ value: v.string(), sessionId: v.string(), expiresAt: v.number() })),
+    // The data of an invoice, so that fill_blank can render it again. It counts only while
+    // renderedSha256 is the sha256 of the current version.
+    template: v.optional(
+      v.object({ kind: v.literal('invoice'), dataJson: v.string(), renderedSha256: v.string() }),
+    ),
   })
     .index('by_user', ['userId'])
     .index('by_user_document', ['userId', 'documentId'])
@@ -3669,6 +3731,17 @@ export default defineSchema({
     fallback: v.boolean(),
     exhausted: v.optional(v.union(v.literal('time'), v.literal('cost'))),
     attempts: v.number(),
+    // Milliseconds in each stage of the edition job, summed over its attempts.
+    stages: v.optional(
+      v.object({
+        queued: v.optional(v.number()),
+        sources: v.optional(v.number()),
+        composition: v.optional(v.number()),
+        prose: v.optional(v.number()),
+        editorial: v.optional(v.number()),
+        save: v.optional(v.number()),
+      }),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

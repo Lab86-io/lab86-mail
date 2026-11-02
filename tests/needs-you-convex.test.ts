@@ -739,6 +739,91 @@ describe('push claims (S4)', () => {
     });
   });
 
+  test('with iPhone pushes off, a browser with alerts on still gets the push, at claim and at release', async () => {
+    const t = harness();
+    await setPreference(t, {
+      nativePushEnabled: false,
+      quietHoursEnabled: true,
+      quietHoursStart: 22,
+      quietHoursEnd: 7,
+    });
+    const [id] = await sync(t);
+    expect(await t.mutation(ob.claimPush, { ...scope, id, now: LATE })).toEqual({
+      action: 'none',
+      reason: 'disabled',
+    });
+    const subscription = await t.run((ctx) =>
+      ctx.db.insert('webPushSubscriptions', {
+        userId: USER,
+        endpoint: 'https://fcm.googleapis.com/fcm/send/this-browser',
+        p256dh: 'key',
+        auth: 'auth',
+        status: 'active',
+        createdAt: NOW,
+        updatedAt: NOW,
+      }),
+    );
+    expect(await t.mutation(ob.claimPush, { ...scope, id, now: LATE })).toEqual({
+      action: 'hold',
+      reason: 'quiet_hours',
+      until: QUIET_END,
+    });
+    expect(await t.mutation(ob.claimHeldPushes, { ...scope, now: QUIET_END })).toMatchObject({
+      kind: 'push',
+      push: { collapseId: id },
+    });
+    // A revoked browser is no channel.
+    await t.run((ctx) => ctx.db.patch(subscription, { status: 'revoked' }));
+    expect(await t.mutation(ob.claimPush, { ...scope, id, now: QUIET_END + 60_000 })).toEqual({
+      action: 'none',
+      reason: 'disabled',
+    });
+  });
+
+  test('webDeliveryContext gives the row, the active browsers, and their sends, to the secret only', async () => {
+    const t = harness();
+    const notifications = (api as any).albatrossNotifications;
+    const [id] = await sync(t);
+    const claim = await t.mutation(ob.claimPush, { ...scope, id, now: CLOCK });
+    const args = { ...scope, notificationId: claim.notificationId };
+    await expect(
+      t.query(notifications.webDeliveryContext, { ...args, internalSecret: 'wrong' }),
+    ).rejects.toThrow();
+    expect(await t.query(notifications.webDeliveryContext, { ...args, userId: 'someone-else' })).toBeNull();
+    expect(await t.query(notifications.webDeliveryContext, args)).toMatchObject({
+      notification: { type: 'obligation' },
+      subscriptions: [],
+      deliveries: [],
+    });
+    const insert = (name: string, status: 'active' | 'expired') =>
+      t.run((ctx) =>
+        ctx.db.insert('webPushSubscriptions', {
+          userId: USER,
+          endpoint: `https://fcm.googleapis.com/fcm/send/${name}`,
+          p256dh: 'key',
+          auth: 'auth',
+          userAgent: 'private detail',
+          status,
+          createdAt: NOW,
+          updatedAt: NOW,
+        }),
+      );
+    await insert('live', 'active');
+    await insert('dead', 'expired');
+    await t.mutation(notifications.recordDelivery, { ...args, channel: 'web_push', status: 'sent' });
+    expect(await t.query(notifications.webDeliveryContext, args)).toMatchObject({
+      subscriptions: [{ endpoint: 'https://fcm.googleapis.com/fcm/send/live', p256dh: 'key', auth: 'auth' }],
+      deliveries: [{ channel: 'web_push', status: 'sent' }],
+    });
+    const { subscriptions } = await t.query(notifications.webDeliveryContext, args);
+    expect('userAgent' in subscriptions[0]).toBe(false);
+    await t.mutation(notifications.expireSubscription, {
+      internalSecret: SECRET,
+      endpoint: 'https://fcm.googleapis.com/fcm/send/live',
+    });
+    expect((await t.query(notifications.webDeliveryContext, args)).subscriptions).toEqual([]);
+  });
+
   test('quiet hours hold a normal push; the release pushes it as itself when they end', async () => {
     const t = harness();
     await setPreference(t, { quietHoursEnabled: true, quietHoursStart: 22, quietHoursEnd: 7 });

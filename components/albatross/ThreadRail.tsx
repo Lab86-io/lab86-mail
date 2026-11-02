@@ -15,9 +15,11 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useNeedsYouSnapshot } from '@/components/needs-you/data';
 import {
   ANNOUNCE_EVERY_MS,
   announcementText,
+  applyObligationsToThreadRows,
   countThreads,
   holdThreadOrder,
   RAIL_EMPTY_COPY,
@@ -35,6 +37,7 @@ import {
   type ThreadFilter,
   type ThreadRow as ThreadRowData,
 } from '@/lib/albatross/threads';
+import { owedByWork } from '@/lib/obligations/surfaces';
 import { cn } from '@/lib/utils';
 import { ThreadRow } from './ThreadRow';
 
@@ -73,6 +76,19 @@ export const THREAD_RAIL_COPY = {
   loading: 'Loading…',
   capture: 'Get this off my mind',
 } as const;
+
+/**
+ * Needs you items (phase 3, open item 3): a thread with an open item joins
+ * Needs you with "Your turn" and the item title. The rail and the hop keys read
+ * the same rows. One shared snapshot read.
+ */
+export function useThreadRowsWithItems(rawRows: ThreadRowData[] | undefined, nowMs: number) {
+  const snapshot = useNeedsYouSnapshot();
+  return useMemo(() => {
+    if (!rawRows || !snapshot?.enabled) return rawRows;
+    return applyObligationsToThreadRows(rawRows, owedByWork(snapshot.items, nowMs));
+  }, [rawRows, snapshot, nowMs]);
+}
 
 export function ThreadRail({
   rows,

@@ -3,6 +3,8 @@ import {
   __setOfficePdfDepsForTest,
   convertOfficeToPdf,
   exportOfficePdf,
+  OfficeBlanksError,
+  OfficeRevisionError,
   officeConvertUrl,
   saveDocxBytesAsPdf,
   saveOfficePdf,
@@ -64,6 +66,46 @@ async function harness(
 afterEach(() => __setOfficePdfDepsForTest());
 
 describe('office PDF export', () => {
+  test('a Word file with empty blanks gets no PDF, and the error names the blanks', async () => {
+    const { calls } = await harness();
+    const { bytes } = await renderTemplate('invoice', {
+      from: { name: 'Mara Ellison' },
+      billTo: { name: 'Harbor Design' },
+      items: [{ title: 'July', summary: 'Design review.', hours: 10, rate: 90 }],
+      payment: 'Net 30',
+    });
+    __setOfficePdfDepsForTest({
+      env: () => env,
+      getOfficeFile: async () => office(),
+      fetch: async (input, init) => {
+        calls.push({ url: String(input), init });
+        return new Response(new Uint8Array(bytes));
+      },
+    });
+    const refusal = await exportOfficePdf('user-1', 'word-1').catch((error) => error);
+    expect(refusal).toBeInstanceOf(OfficeBlanksError);
+    expect(refusal.blanks).toEqual(['Invoice number', 'Invoice date']);
+    expect(refusal.message).toBe(
+      'Fill these blanks first: "Invoice number", "Invoice date". No PDF was made.',
+    );
+    expect(refusal.status).toBe(409);
+    // It never reached the document server.
+    expect(calls.map((call) => call.url)).toEqual(['https://storage.example.test/word-1']);
+  });
+
+  test('another revision is a refusal before the file is read', async () => {
+    const { calls } = await harness();
+    const refusal = await exportOfficePdf('user-1', 'word-1', { revision: 2 }).catch((error) => error);
+    expect(refusal).toBeInstanceOf(OfficeRevisionError);
+    expect(refusal.current).toBe(office().currentRevision);
+    expect(calls).toEqual([]);
+    await exportOfficePdf('user-1', 'word-1', { revision: office().currentRevision });
+    await saveOfficePdf('user-1', 'word-1', undefined, { revision: office().currentRevision });
+    await expect(saveOfficePdf('user-1', 'word-1', undefined, { revision: 1 })).rejects.toBeInstanceOf(
+      OfficeRevisionError,
+    );
+  });
+
   test('the convert address follows the configured document server and rejects unsafe forms', () => {
     expect(officeConvertUrl(env)).toBe('https://documents.example.test/cool/convert-to/pdf');
     expect(officeConvertUrl({ ...env, OFFICE_CONVERT_URL: 'http://documents.railway.internal:9980' })).toBe(

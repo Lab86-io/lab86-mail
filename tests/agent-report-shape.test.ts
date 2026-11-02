@@ -19,7 +19,7 @@ describe('brief pipeline hang/wedge guards', () => {
 
   test('daily composition uses the editorial agent after bounded source gathering', () => {
     expect(src).not.toContain("scope: 'full'");
-    expect(src).toContain('await writeDailyEditorial(');
+    expect(src).toContain('writeDailyEditorial(report, composed.document');
     expect(src).toContain('evidence: composed.editorialEvidence');
   });
 });

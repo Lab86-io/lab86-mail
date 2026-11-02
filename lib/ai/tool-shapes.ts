@@ -668,6 +668,29 @@ function calendarReceipt(input: Rec, output: Rec, toolName: string): ToolShape |
   );
 }
 
+/** One Needs you item as a list row. Mail opens its thread; a connected source opens its own link. */
+function needsYouRow(row: Rec): SourceRow {
+  const account = str(row.account);
+  const threadId = str(row.threadId);
+  const url = str(row.url) || undefined;
+  const workId = str(row.workId);
+  const place = [str(row.groupLabel), str(row.sourceName)].filter(Boolean).join(' · ');
+  return {
+    title: clip(str(row.title), 120),
+    url,
+    snippet: clip([str(row.asker), str(row.why)].filter(Boolean).join(': '), 160) || undefined,
+    source: place || undefined,
+    actions: [
+      ...(account && threadId ? [{ kind: 'open_thread', account, threadId } as ShapeAction] : []),
+      ...(url ? [{ kind: 'open_url', url } as ShapeAction] : []),
+      ...(workId ? [{ kind: 'open_work', workId } as ShapeAction] : []),
+    ],
+  };
+}
+
+const needsYouReceipt: Mapper = (input, output, tool) =>
+  receipt(tool, input, output, 'albatross', [], { obligationId: str(output.id) });
+
 const MAPPERS: Record<string, Mapper> = {
   // --- Mail reads ---
   search_threads: (input, output, tool) =>
@@ -1452,6 +1475,21 @@ const MAPPERS: Record<string, Mapper> = {
   web_file_save: (input, output, tool) => savedFileShape(tool, input, output),
   pdf_form_fill: (input, output, tool) => savedFileShape(tool, input, output),
   mail_attachment_save: (input, output, tool) => savedFileShape(tool, input, output),
+  // --- Needs you ---
+  // The rows come from the tool result, which never holds a code value.
+  needs_you_list: (input, output, tool) => {
+    const rows = asArray(output.items);
+    if (!rows.length) return null;
+    return {
+      kind: 'sources',
+      ...base(tool, input, output, 'Needs you', str(output.summary) || undefined),
+      items: rows.slice(0, SHAPE_LIST_LIMIT).map(needsYouRow),
+      actions: [],
+    };
+  },
+  needs_you_done: needsYouReceipt,
+  needs_you_later: needsYouReceipt,
+  needs_you_not_mine: needsYouReceipt,
   // --- Operations ---
   undo_operation: (input, output, tool) =>
     receipt(

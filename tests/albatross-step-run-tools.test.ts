@@ -124,6 +124,22 @@ describe('describeToolCall', () => {
     expect(describeToolCall('document_create', {}, { title: 'Comparison' })).toBe('Wrote “Comparison”.');
     expect(describeToolCall('word_document_create', { title: 'Letter' }, {})).toBe('Wrote “Letter”.');
     expect(describeToolCall('document_create', {}, null)).toBe('Wrote “a document”.');
+    // A conflict or a review edit changed nothing, so the log does not say that it did.
+    expect(describeToolCall('document_edit', {}, { ok: true, status: 'applied' })).toBe(
+      'Changed the document.',
+    );
+    expect(describeToolCall('word_document_edit', {}, { ok: true })).toBe('Changed the document.');
+    expect(describeToolCall('document_edit', {}, { ok: true, status: 'proposed' })).toBe(
+      'Proposed a change to the document.',
+    );
+    expect(describeToolCall('document_edit', {}, { ok: false, status: 'conflict' })).toBe(
+      'Could not change the document. The file changed first.',
+    );
+    expect(describeToolCall('document_export', {}, { ok: false, status: 'blanks' })).toBe(
+      'Could not make the file. The file has empty blanks.',
+    );
+    expect(describeToolCall('document_create', {}, { ok: false })).toBe('Could not write the document.');
+    expect(describeToolCall('content_search', {}, { ok: false })).toBeNull();
     for (const name of ['document_edit', 'document_apply_instruction', 'word_document_edit'])
       expect(describeToolCall(name, {}, {})).toBe('Changed the document.');
     expect(describeToolCall('document_publish_google', {}, {})).toBe('Saved the document to Google Drive.');
@@ -280,6 +296,31 @@ describe('buildRunnerTools', () => {
     await tools.list_drafts.execute({});
     expect(logs).toHaveLength(1);
     expect(artifacts).toHaveLength(1);
+  });
+
+  test('a tool that throws logs a plain failure, then the error goes on to the model', async () => {
+    const lifted: Record<string, any> = {
+      word_document_edit: {
+        description: 'base',
+        inputSchema: {},
+        execute: async () => {
+          throw new Error('secret detail from the server');
+        },
+      },
+    };
+    const { host, logs } = makeHost();
+    const tools = buildRunnerTools(lifted, host);
+    await expect(tools.word_document_edit.execute({})).rejects.toThrow('secret detail from the server');
+    expect(logs).toEqual(['Could not change the document.']);
+  });
+
+  test('a conflict from document_edit does not log a change and records no artifact', async () => {
+    const lifted = { document_edit: baseTool({ ok: false, status: 'conflict', documentId: 'd1' }) };
+    const { host, logs, artifacts } = makeHost();
+    const tools = buildRunnerTools(lifted, host);
+    await tools.document_edit.execute({});
+    expect(logs).toEqual(['Could not change the document. The file changed first.']);
+    expect(artifacts).toEqual([]);
   });
 
   test('a calendar invite with attendees is queued for approval and never runs', async () => {

@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import webpush from 'web-push';
 import { hostedPublicUrl } from '@/lib/hosted/env';
 
@@ -46,6 +46,11 @@ export interface NotificationEnvelope {
   timeSensitive?: true;
   /** Needs you: the obligation that the push names, so a tap opens that item. */
   obligationId?: string;
+  /**
+   * Needs you: the app link that a click on a browser notification opens. It
+   * is a plain path, so an open tab can take it without a page load.
+   */
+  appLink?: string;
 }
 
 function linkSecret() {
@@ -144,6 +149,21 @@ function configureWebPush() {
   notificationDeliveryDependencies.setVapidDetails(subject, publicKey, privateKey);
 }
 
+/**
+ * The Web Push `Topic` of a collapse id: the same job as `apns-collapse-id`.
+ * The push service keeps only the newest message of one topic. A topic has at
+ * most 32 URL-safe base64 characters, so it is a hash of the id.
+ */
+export function webPushTopic(collapseId: string) {
+  return createHash('sha256').update(collapseId).digest('base64url').slice(0, 32);
+}
+
+const WEB_PUSH_TTL_SECONDS = 60 * 60 * 12;
+/** A code is dead soon. An offline browser must not show "A code is ready" hours later. */
+const WEB_PUSH_CODE_TTL_SECONDS = 10 * 60;
+/** The Needs you send runs inside the Jev cycle, so a slow push service must not hold it. */
+const WEB_PUSH_TIMEOUT_MS = 10_000;
+
 export async function sendWebPush(
   envelope: NotificationEnvelope,
   subscription: { endpoint: string; p256dh: string; auth: string },
@@ -157,10 +177,18 @@ export async function sendWebPush(
     JSON.stringify({
       title: envelope.title,
       body: envelope.body,
-      url: notificationOpenUrl(envelope),
+      url: envelope.appLink ?? notificationOpenUrl(envelope),
       notificationId: envelope.id,
+      ...(envelope.appLink ? { inApp: true } : {}),
+      ...(envelope.collapseId ? { tag: envelope.collapseId } : {}),
     }),
-    { TTL: 60 * 60 * 12, urgency: 'normal' },
+    {
+      TTL: envelope.codeAvailable ? WEB_PUSH_CODE_TTL_SECONDS : WEB_PUSH_TTL_SECONDS,
+      urgency: envelope.timeSensitive ? 'high' : 'normal',
+      ...(envelope.collapseId
+        ? { topic: webPushTopic(envelope.collapseId), timeout: WEB_PUSH_TIMEOUT_MS }
+        : {}),
+    },
   );
 }
 

@@ -32,6 +32,7 @@ import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { type BriefResponseRef, briefResponseRefSchema } from '@/lib/brief/response';
 import { BriefResponseContextError, readBriefResponseContext } from '@/lib/brief/response-context';
 import { captureNarrativeTurn, narrativeEnabled } from '@/lib/narrative/service';
+import { needsYouFlagFor } from '@/lib/obligations/contract';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 import { redactUserMessages } from '@/lib/secure/redact';
 import { serverErrorMessage } from '@/lib/security/error-answer';
@@ -315,7 +316,9 @@ export async function POST(req: NextRequest) {
         hasAreaContext: Boolean(body.areaDiscovery),
         narrativeEnabled: narrativeEnabled(user.userId),
       }),
-      preloadGroups: requestToolGroups(latestUser ? messageText(latestUser) : ''),
+      preloadGroups: requestToolGroups(latestUser ? messageText(latestUser) : '', {
+        needsYou: needsYouFlagFor(user.userId),
+      }),
       signal: replyAbort ? replyAbort.signal : req.signal,
     });
     after(async () => {

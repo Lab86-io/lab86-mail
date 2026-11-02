@@ -6,6 +6,7 @@ import { isTerminalAiError, resolveAiRuntime } from '../ai/gateway';
 import { generateAreaLivingBrief } from '../albatross/area-living-brief';
 import { startBriefStepRuns } from '../albatross/step-run-brief';
 import { type BriefEditionBudget, BriefEditionMeter, runWithBriefMeter } from '../brief/budget';
+import type { BriefStageTimes } from '../brief/stages';
 import { generateWeeklyReview } from '../brief/weekly';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { refreshNarrative } from '../narrative/service';
@@ -55,6 +56,16 @@ export async function waitForBriefJob(userId: string, id: string, signal?: Abort
 const RETRY_NOTE = 'The writer will retry automatically.';
 const FINAL_NOTE = 'The writer is unavailable. The edition was published without it.';
 
+// The wait in the queue counts once. The wait before a retry is backoff, not a queue.
+function queueStage(
+  meter: BriefEditionMeter,
+  job: { attempts?: number; createdAt?: number },
+  startedAt: number,
+) {
+  if (Number(job.attempts) === 1 && typeof job.createdAt === 'number')
+    meter.addStageTime('queued', startedAt - job.createdAt);
+}
+
 // Another attempt is pointless when the writer has no model access at all.
 async function writerHasNoAccess(userId: string, feature: string) {
   try {
@@ -70,6 +81,7 @@ async function recordEditionTelemetry(
   userId: string,
   job: { reportId?: string; edition?: string; attempts?: number },
   budget: BriefEditionBudget,
+  stages?: BriefStageTimes,
 ) {
   if (!job.reportId) return;
   await convexMutation(api.dailyReports.recordEditionTelemetry, {
@@ -84,6 +96,7 @@ async function recordEditionTelemetry(
     fallback: budget.fallback,
     ...(budget.exhausted ? { exhausted: budget.exhausted } : {}),
     attempts: Number(job.attempts) || 1,
+    ...(stages && Object.keys(stages).length ? { stages } : {}),
   }).catch(() => undefined);
 }
 
@@ -162,16 +175,18 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
             // The weekly review (FEATURES item 9) is deterministic: one pass,
             // published as final, then announced.
             const meter = new BriefEditionMeter({ prior: saved?.budget });
+            queueStage(meter, job, startedAt);
             report = await runWithBriefMeter(meter, () =>
               deps.weekly({ userId, reportId: job.reportId, now: job.createdAt }),
             );
-            await deps.telemetry(userId, job, meter.record(false));
+            await deps.telemetry(userId, job, meter.record(false), meter.stages());
           } else if (saved?.artifactStatus === 'ready' && saved.editorial?.mode === 'generated')
             report = saved;
           else {
             // The edition budget (FEATURES item 5) runs across attempts: the
             // meter starts from the time and cost the saved edition used.
             const meter = new BriefEditionMeter({ prior: saved?.budget });
+            queueStage(meter, job, startedAt);
             try {
               report = await runWithBriefMeter(meter, () =>
                 deps.daily({
@@ -185,13 +200,14 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
                 }),
               );
             } catch (error) {
-              await deps.telemetry(userId, job, meter.record(true));
+              await deps.telemetry(userId, job, meter.record(true), meter.stages());
               throw error;
             }
             await deps.telemetry(
               userId,
               job,
               report.budget ?? meter.record(report.editorial?.mode !== 'generated'),
+              meter.stages(),
             );
           }
           // A spent budget is final: the edition publishes what exists.

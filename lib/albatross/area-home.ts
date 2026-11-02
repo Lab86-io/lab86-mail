@@ -817,7 +817,13 @@ export function splitBriefRows<T>(rows: readonly T[] | null | undefined, limit: 
   };
 }
 
-export type NeedsYouKind = 'work_input' | 'plan_answers' | 'overdue_task' | 'suggested_context';
+export type NeedsYouKind =
+  | 'work_input'
+  | 'plan_answers'
+  | 'overdue_task'
+  | 'suggested_context'
+  /** A Needs you ledger item that belongs to an Albatross of the area (lib/obligations/surfaces.ts). */
+  | 'obligation';
 
 export interface NeedsYouRow {
   id: string;
@@ -826,6 +832,7 @@ export interface NeedsYouRow {
   detail: string | null;
   intentId?: string;
   workId?: string;
+  obligationId?: string;
 }
 
 // The "needs you" queue: the few things in this area actually waiting on the

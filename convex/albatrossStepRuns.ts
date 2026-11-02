@@ -10,6 +10,7 @@ import { cleanGoalUpdate, goalContractWatch, mergeGoalContract } from '../lib/al
 import { shapePlans } from '../lib/albatross/shape-policy';
 import { CHAT_ANSWER_PREFIX } from '../lib/albatross/thread-contract';
 import { isTerminalWork } from '../lib/albatross/work-lifecycle';
+import { classifyOpsError } from '../lib/ops/health';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -22,6 +23,8 @@ import {
   runMessageValidator,
 } from './goalRunSchema';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
+import { recordOpsHealth } from './opsHealth';
+import { recordRunLatency } from './speedRollups';
 
 // Step runs. The agent works one plan step as far as it can and stops with
 // one next action for the user: approve a draft, sign in on a page, answer a
@@ -236,6 +239,28 @@ export function latestRunPerStep(rows: readonly RunDoc[]): RunDoc[] {
     latest.push(row);
   }
   return latest;
+}
+
+/**
+ * The failure alarm and the latency rows of a run that ended. `firstVisibleAt`
+ * comes from the runner when the run has it; the row reads the first log line
+ * if not. A run that the user stopped does not come here.
+ */
+async function recordRunEnd(ctx: MutationCtx, run: RunDoc, ok: boolean, at: number, error?: string) {
+  await recordOpsHealth(ctx, {
+    kind: 'run',
+    ok,
+    ...(ok ? {} : { errorClass: classifyOpsError(error) }),
+    at,
+  });
+  await recordRunLatency(ctx, {
+    createdAt: run.createdAt,
+    ...(run.startedAt === undefined ? {} : { startedAt: run.startedAt }),
+    finishedAt: at,
+    log: run.log,
+    firstVisibleAt: (run as { firstVisibleAt?: unknown }).firstVisibleAt,
+    logLimit: LOG_MAX,
+  });
 }
 
 async function workRow(ctx: QueryCtx | MutationCtx, userId: string, workId: string) {
@@ -595,6 +620,7 @@ export const settle = mutation({
       finishedAt: ts,
       updatedAt: ts,
     });
+    await recordRunEnd(ctx, run, state !== 'failed', ts, args.error);
     // A goal Work is watched against its contract from its first handoff on,
     // so it closes when the user sends the mail, with no other run.
     if (run.goal || run.stepKey === 'goal') {
@@ -704,6 +730,21 @@ export const runsForWork = query({
   },
 });
 
+/**
+ * One decision settles a run. Two approvals decided at the same time both see no
+ * open approval, and only the first may continue the run.
+ */
+export const claimApprovalSettlement = mutation({
+  args: { ...callerArgs, runId: v.id('albatrossStepRuns') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.userId !== userId || run.approvalSettledAt) return false;
+    await ctx.db.patch(run._id, { approvalSettledAt: now() });
+    return true;
+  },
+});
+
 /** True when the run queued an approval: its next action, its artifacts, or its package say so. */
 function runMadeApproval(run: RunDoc): boolean {
   return (
@@ -718,6 +759,8 @@ const STEER_MAX = 10;
 const STEER_TEXT_MAX = 2_000;
 /** Runs the thread shows, newest last. */
 const THREAD_RUNS_MAX = 30;
+/** Approvals the thread reads for one run. */
+const RUN_APPROVALS_MAX = 20;
 
 /**
  * Every run of a Work for the thread (docs/albatross-thread.md), oldest
@@ -733,14 +776,19 @@ export const runsForWorkHistory = query({
       .withIndex('by_user', (q) => q.eq('userId', userId).eq('workId', args.workId))
       .order('desc')
       .take(limit);
-    // One bounded read for the Work, and only when a run made an approval.
-    const approvals = rows.some(runMadeApproval)
-      ? await ctx.db
-          .query('albatrossApprovals')
-          .withIndex('by_user_intent', (q) => q.eq('userId', userId).eq('intentId', args.workId))
-          .order('desc')
-          .take(THREAD_RUNS_MAX)
-      : [];
+    // One bounded read for each run that made an approval: a cap across the Work
+    // could leave out an older approval that still waits.
+    const approvals = (
+      await Promise.all(
+        rows.filter(runMadeApproval).map((run) =>
+          ctx.db
+            .query('albatrossApprovals')
+            .withIndex('by_user_batch', (q) => q.eq('userId', userId).eq('operationBatchId', String(run._id)))
+            .order('desc')
+            .take(RUN_APPROVALS_MAX),
+        ),
+      )
+    ).flat();
     const views = await Promise.all(
       rows.reverse().map(async (run) => {
         const view = stepRunView(run);
@@ -1029,6 +1077,7 @@ export const expireLost = internalMutation({
           finishedAt: ts,
           updatedAt: ts,
         });
+        await recordRunEnd(ctx, run, false, ts);
       } else {
         await ctx.db.patch(run._id, { state: 'queued', token: undefined, updatedAt: ts });
       }

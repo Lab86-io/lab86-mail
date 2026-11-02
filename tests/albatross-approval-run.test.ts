@@ -81,7 +81,9 @@ function harness(found: ApprovalRunState | null, overrides: Partial<SettleRunDep
   const continued: any[] = [];
   const deps: Partial<SettleRunDependencies> = {
     convexQuery: mock(async () => found) as never,
-    convexMutation: mock(async (_fn: unknown, args: unknown) => {
+    convexMutation: mock(async (_fn: unknown, args: any) => {
+      // The settlement claim names a run. A dismissal names its id.
+      if (args?.runId) return true;
       dismissed.push(args);
       return { dismissed: true };
     }) as never,
@@ -145,6 +147,22 @@ describe('settleRunAfterDecision', () => {
     expect(await settleRunAfterDecision(input, h.deps)).toEqual({ action: 'continued', nextRunId: 'run-3' });
     expect(h.continued[0]).toMatchObject({ userId: 'user-1', workId: 'work-1' });
     expect(h.completed).toEqual([]);
+  });
+
+  test('a second decision at the same time does not continue the run again', async () => {
+    const claims: unknown[] = [];
+    let wins = 1;
+    const h = harness(state(), {
+      convexMutation: mock(async (_fn: unknown, args: any) => {
+        if (!args?.runId) return { dismissed: true };
+        claims.push(args);
+        return wins-- > 0;
+      }) as never,
+    });
+    expect((await settleRunAfterDecision(input, h.deps)).action).toBe('continued');
+    expect(await settleRunAfterDecision(input, h.deps)).toEqual({ action: 'none' });
+    expect(claims).toHaveLength(2);
+    expect(h.completed).toHaveLength(1);
   });
 
   test('a decline closes the handoff and starts nothing', async () => {

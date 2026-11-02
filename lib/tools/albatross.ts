@@ -28,7 +28,7 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { truncateText } from '@/lib/shared/text';
 import { calendarCreateEvent, calendarRsvpEvent } from './calendar';
 import { saveDraftTool, sendMessage } from './compose';
-import { documentCreate } from './documents';
+import { documentCreateFromInstructions } from './documents';
 import {
   type AnyTool,
   defineTool,
@@ -59,7 +59,7 @@ const defaultDeps = {
     calendarRsvpEvent,
     saveDraftTool,
     sendMessage,
-    documentCreate,
+    documentCreateFromInstructions,
   },
 };
 
@@ -326,7 +326,7 @@ async function executeToolStep(
   }
   if (step.kind === 'calendar_event') return deps.invokeTool(deps.tools.calendarCreateEvent, args, ctx);
   if (step.kind === 'email_draft') return deps.invokeTool(deps.tools.saveDraftTool, args, ctx);
-  if (step.kind === 'document') return deps.invokeTool(deps.tools.documentCreate, args, ctx);
+  if (step.kind === 'document') return deps.invokeTool(deps.tools.documentCreateFromInstructions, args, ctx);
   throw new Error(`Unsupported executable Albatross step: ${step.kind}`);
 }
 
@@ -1467,6 +1467,7 @@ export const albatrossRejectAction = defineTool({
       approvalId: args.approvalId,
       status: 'rejected',
       decisionNote: args.reason || 'Rejected from Albatross approval queue.',
+      onlyIfPending: true,
     });
     const followUp = await deps.settleRunAfterDecision({ userId, approval });
     return { ok: true, followUp };

@@ -50,7 +50,8 @@ the morning letter. This design adds the messages between the letters.
 
 | Surface | What it shows |
 |---|---|
-| Push | Only the obligations that pass the push bar (see below). One push for each obligation. |
+| Push | Only the obligations that pass the push bar (see below). One push for each obligation. It goes to APNs and to the browser subscriptions of the user. |
+| Chat | `needs_you_list` reads the list. `needs_you_done`, `needs_you_later`, and `needs_you_not_mine` run the actions of the page. |
 | Needs you page (web) | All open obligations, with Albatross questions, approvals, and check-ins. This page replaces the Notifications page. |
 | Albatross thread | An obligation with a `workId` also shows in the thread of that Albatross, as a message from the source. |
 | Daily Brief | The brief reads the open obligations. It shows what is open, what is due today, and what closed by itself since the last edition. It does not search for obligations itself. |

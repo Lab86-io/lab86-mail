@@ -38,6 +38,19 @@ const opOk = { ok: true, operationId: 'op_1' };
 
 const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
   [
+    'needs_you_list',
+    {},
+    {
+      enabled: true,
+      items: [{ id: 'ob_1', group: 'today', groupLabel: 'Today', title: 'Confirm the date', asker: 'Dana' }],
+      summary: '1 open: 1 today.',
+    },
+    'sources',
+  ],
+  ['needs_you_done', { id: 'ob_1' }, { ...opOk, id: 'ob_1', title: 'Confirm the date' }, 'receipt'],
+  ['needs_you_later', { id: 'ob_1' }, { ...opOk, id: 'ob_1', title: 'Confirm the date' }, 'receipt'],
+  ['needs_you_not_mine', { id: 'ob_1' }, { ...opOk, id: 'ob_1', title: 'Confirm the date' }, 'receipt'],
+  [
     'document_review_slides',
     { documentId: 'deck-1' },
     {

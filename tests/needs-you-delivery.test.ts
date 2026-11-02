@@ -340,6 +340,7 @@ function deliveryHarness(claims: any[]) {
       dispatched.push({ userId, notificationId, options });
       return { sent: 1, failed: 0 };
     }) as any,
+    dispatchWeb: (async () => ({ sent: 0, failed: 0, skipped: 'no_subscriptions' })) as any,
     clock: () => AFTERNOON,
   };
   return { deps, dispatched, calls };

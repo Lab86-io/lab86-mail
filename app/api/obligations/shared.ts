@@ -1,20 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { briefSteeringCorrection } from '@/lib/brief/steering';
-import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { needsYouFlagFor } from '@/lib/obligations/contract';
+import { api, convexMutation } from '@/lib/hosted/convex';
+import { obligationActionDefaults } from '@/lib/obligations/action-deps';
 import {
   ObligationApiError,
   type ObligationCaller,
-  type ObligationRecord,
   type ObligationServiceDependencies,
   type ReplyTarget,
 } from '@/lib/obligations/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { errorAnswerMessage } from '@/lib/security/error-answer';
 import { replyTargetFor, resolveSendAnchor } from '@/lib/send/anchor';
-import { cancelOutbox } from '@/lib/send/outbox';
 import { draftReply } from '@/lib/tools/ai';
 import { invokeTool } from '@/lib/tools/registry';
 import { createComposePost } from '../compose/route';
@@ -94,17 +91,9 @@ async function replyThroughCompose(_caller: ObligationCaller, target: ReplyTarge
 }
 
 export const obligationServiceDefaults: ObligationServiceDependencies = {
-  flag: (userId) => needsYouFlagFor(userId),
-  get: (userId, id) => convexQuery<ObligationRecord | null>(api.obligations.get, { userId, id }),
-  act: (input) => convexMutation(api.obligations.act, input),
+  ...obligationActionDefaults,
   recordReply: (input) => convexMutation(api.obligations.recordReply, input),
   saveDraft: (input) => convexMutation(api.obligations.saveDraft, input),
-  correctionFor: (target) =>
-    briefSteeringCorrection(
-      { mode: 'not_for_me', account: target.accountId, threadId: target.threadId },
-      null,
-    ),
-  cancelSend: (userId, pendingId) => cancelOutbox(userId, pendingId),
   generateDraft: draftForObligation,
   sendReply: replyThroughCompose,
 };

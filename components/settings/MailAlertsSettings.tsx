@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
 import {
   MailSettingsCard,
@@ -70,6 +70,8 @@ export interface NeedsYouAlertsProps {
   codesEnabled: boolean;
   onCodesEnabledChange: (enabled: boolean) => void;
   saving?: boolean;
+  /** The row for alerts in this browser. It comes after the push switch. */
+  browserRow?: ReactNode;
 }
 
 /**
@@ -182,6 +184,7 @@ export function MailAlertsSettings({
             }
           />
         )}
+        {needsYou?.browserRow}
         <MailSettingsRow
           id="mail-quiet-hours"
           label="Quiet hours"

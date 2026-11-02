@@ -12,6 +12,7 @@ import {
   UNDO_WINDOW_MS,
 } from '../lib/obligations/contract';
 import {
+  anyPushChannel,
   decideObligationPush,
   obligationPushSettingsFromRow,
   PUSH_WINDOW_MS,
@@ -1027,6 +1028,20 @@ async function recentPushes(ctx: QueryCtx | MutationCtx, userId: string, at: num
   return rows.filter((row) => row.kind !== 'code').map((row) => row.pushedAt!);
 }
 
+/**
+ * The push settings of a claim. With iPhone pushes off, a browser with alerts
+ * on still gets the push, so only that case reads the subscriptions.
+ */
+async function claimSettings(ctx: QueryCtx | MutationCtx, userId: string) {
+  const settings = obligationPushSettingsFromRow(await preferenceRow(ctx, userId));
+  if (settings.nativePushEnabled) return settings;
+  const browser = await ctx.db
+    .query('webPushSubscriptions')
+    .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'active'))
+    .first();
+  return { ...settings, webPushActive: browser !== null };
+}
+
 /** The deep link of a mail obligation: the format of the `mail_message` link, which the iOS app opens. */
 export function obligationDeepLink(row: Pick<Obligation, 'accountId' | 'threadId' | 'messageId'>) {
   if (!row.accountId || !row.threadId) return '/?view=notifications';
@@ -1113,8 +1128,8 @@ export const claimPush = mutation({
     const row = await ownRow(ctx, args.userId, args.id);
     if (!row) return { action: 'none' as const, reason: 'not_found' };
     const at = args.now ?? now();
-    const [preference, pushes, summaryAt] = await Promise.all([
-      preferenceRow(ctx, args.userId),
+    const [settings, pushes, summaryAt] = await Promise.all([
+      claimSettings(ctx, args.userId),
       recentPushes(ctx, args.userId, at),
       lastSummaryAt(ctx, args.userId),
     ]);
@@ -1122,7 +1137,7 @@ export const claimPush = mutation({
     const state = row.kind === 'code' && (row.codeExpiresAt ?? 0) <= at ? 'expired' : row.state;
     const decision = decideObligationPush({
       obligation: { kind: row.kind, state, pushLevel: row.pushLevel, askerAddress: row.askerAddress },
-      settings: obligationPushSettingsFromRow(preference),
+      settings,
       now: at,
       recentPushes: pushes,
       lastSummaryAt: summaryAt,
@@ -1183,15 +1198,14 @@ export const claimHeldPushes = mutation({
         q.eq('userId', args.userId).gt('pushHeldUntil', 0).lte('pushHeldUntil', at),
       )
       .take(50);
-    const [preference, pushes, summaryAt] = await Promise.all([
-      preferenceRow(ctx, args.userId),
+    const [settings, pushes, summaryAt] = await Promise.all([
+      claimSettings(ctx, args.userId),
       recentPushes(ctx, args.userId, at),
       lastSummaryAt(ctx, args.userId),
     ]);
-    const settings = obligationPushSettingsFromRow(preference);
     // The switches are read at release too: a follow-up was never checked
     // against them, and the user can turn pushes off while a push waits.
-    const allowed = settings.nativePushEnabled && settings.obligationPushEnabled;
+    const allowed = anyPushChannel(settings) && settings.obligationPushEnabled;
     const due: Obligation[] = [];
     for (const row of held) {
       if (row.state === 'open' && allowed) due.push(row);
