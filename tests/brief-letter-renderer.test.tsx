@@ -240,7 +240,13 @@ describe('BriefSkeleton', () => {
     expect(html).toContain('data-brief-skeleton');
     expect(html).toContain('max-width:620px');
     expect(count(html, 'rounded-full shimmer')).toBe(3);
-    expect(renderToStaticMarkup(<BriefSkeleton masthead />)).toContain('h-[min(36vh,300px)]');
+    // Standalone, the skeleton has the geometry of the canvas, so nothing moves when the letter lands.
+    const page = renderToStaticMarkup(<BriefSkeleton masthead />);
+    expect(page).toContain('brief-canvas');
+    expect(page).toContain('brief-masthead--canvas');
+    expect(page).toContain('@[680px]:h-[300px]');
+    expect(page).toContain('daily-brief-layout');
+    expect(page).not.toContain('max-width:620px');
   });
 });
 

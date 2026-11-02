@@ -6,6 +6,9 @@ import schema from '../convex/schema';
 const modules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
   '../convex/userData.ts': () => import('../convex/userData'),
+  '../convex/briefJobs.ts': () => import('../convex/briefJobs'),
+  '../convex/briefJobState.ts': () => import('../convex/briefJobState'),
+  '../convex/lib.ts': () => import('../convex/lib'),
 };
 const secret = 'brief-read-test';
 let previous: string | undefined;
@@ -18,6 +21,110 @@ afterAll(() => {
   else process.env.LAB86_CONVEX_INTERNAL_SECRET = previous;
 });
 const args = { internalSecret: secret, userId: 'reader', cursor: null, limit: 1, summaryOnly: false };
+
+describe('the small reads of the web page', () => {
+  const job = (patch: Record<string, unknown>) => ({
+    userId: 'reader',
+    scope: 'daily:2026-11-02',
+    kind: 'daily' as const,
+    edition: 'manual' as const,
+    reportId: 'new',
+    state: 'running' as const,
+    active: true,
+    availableAt: 1,
+    createdAt: 10,
+    attempts: 1,
+    ...patch,
+  });
+  const reader = { internalSecret: secret, userId: 'reader' };
+
+  test('no active daily job is null, and it reads no edition', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('briefJobs', job({ kind: 'narrative', reportId: undefined }));
+      await ctx.db.insert('briefJobs', job({ active: false, state: 'completed' }));
+      await ctx.db.insert('briefJobs', job({ userId: 'someone-else' }));
+    });
+    expect(await t.query(api.briefJobs.activeEdition, reader)).toBeNull();
+    await expect(
+      t.query(api.briefJobs.activeEdition, { ...reader, internalSecret: 'wrong' }),
+    ).rejects.toThrow();
+  });
+
+  test('the newest active daily job gives the state of its row', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('briefJobs', job({ reportId: 'older', createdAt: 5 }));
+      await ctx.db.insert('briefJobs', job({}));
+      await ctx.db.insert('userDocs', {
+        userId: 'reader',
+        kind: 'dailyReport',
+        key: 'new',
+        createdAt: 10,
+        updatedAt: 10,
+        doc: {
+          status: 'ready',
+          artifactStatus: 'composing',
+          retrying: true,
+          progress: { stage: 'Mail', done: 1, total: 2 },
+          sections: { large: 'x'.repeat(1000) },
+        },
+      });
+    });
+    expect(await t.query(api.briefJobs.activeEdition, reader)).toEqual({
+      reportId: 'new',
+      status: 'ready',
+      artifactStatus: 'composing',
+      retrying: true,
+      progress: { stage: 'Mail', done: 1, total: 2 },
+    });
+  });
+
+  test('a job before its row exists reads as a placeholder', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('briefJobs', job({}));
+    });
+    expect(await t.query(api.briefJobs.activeEdition, reader)).toEqual({
+      reportId: 'new',
+      status: 'partial',
+      artifactStatus: null,
+      retrying: false,
+      progress: null,
+    });
+  });
+
+  test('getDocs reads the named rows of one owner, and caps the batch', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      for (const [userId, key] of [
+        ['reader', 'a'],
+        ['reader', 'b'],
+        ['someone-else', 'c'],
+      ])
+        await ctx.db.insert('userDocs', {
+          userId,
+          kind: 'trackedThread',
+          key,
+          createdAt: 1,
+          updatedAt: 1,
+          doc: { _id: key },
+        });
+    });
+    const rows = await t.query(api.userData.getDocs, {
+      ...reader,
+      kind: 'trackedThread',
+      keys: ['a', 'c', 'missing'],
+    });
+    expect(rows.map((row) => row.key)).toEqual(['a']);
+    const beyond = await t.query(api.userData.getDocs, {
+      ...reader,
+      kind: 'trackedThread',
+      keys: [...Array.from({ length: 100 }, (_, index) => `x${index}`), 'b'],
+    });
+    expect(beyond).toEqual([]);
+  });
+});
 
 describe('bounded brief reads', () => {
   test('indexes existing nested payloads by generation time, edition, and owner', async () => {

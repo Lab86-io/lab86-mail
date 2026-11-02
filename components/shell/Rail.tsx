@@ -54,6 +54,7 @@ import { type RailSurfaceView, railSurfaces } from '@/lib/shell/rail-surfaces';
 import { NotificationCenter } from './NotificationCenter';
 import { RAIL_SURFACE_ICONS } from './navigation-icons';
 import { RailPrimaryActions } from './ShellActions';
+import { preloadSurface } from './surface-loaders';
 import { useApplyThemeExtras } from './ThemePanel';
 
 // Top-level surfaces of the product, with their rail glyphs. The order and
@@ -332,6 +333,8 @@ export function Rail({
                     isActive={view === 'chat' ? chatActive : !chatActive && visiblePrimaryView === view}
                     tooltip={label}
                     data-rail-target={view}
+                    onPointerEnter={() => preloadSurface(view)}
+                    onFocus={() => preloadSurface(view)}
                     onClick={() => {
                       if (view === 'albatrosses') setSelectedWorkId(null);
                       setPrimaryView(view);

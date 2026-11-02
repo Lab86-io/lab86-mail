@@ -561,7 +561,6 @@ describe('handled items leave the live edition', () => {
     const asked: string[][] = [];
     setDailyReportReaderForTest({
       configured: () => true,
-      load: (async () => edition) as any,
       loadDismissals: async () => ({}),
       loadPolicy: (async () => ({ ...policy, revision: 0 })) as any,
       loadClosedTracked: async (ids: string[]) => {
@@ -577,7 +576,7 @@ describe('handled items leave the live edition', () => {
         return [];
       }) as any,
     });
-    const latest = await withToolContext(() => getLatestDailyReport(undefined, true));
+    const latest = await withToolContext(() => getLatestDailyReport());
     expect(asked).toEqual([['tr-open', 'tr-closed']]);
     expect(latest?.sections.know ?? []).toEqual([]);
   });
@@ -697,7 +696,6 @@ describe('the default reader loaders', () => {
     } as unknown as DailyReport;
     setDailyReportReaderForTest({
       configured: () => true,
-      load: (async () => edition) as any,
       loadDismissals: async () => ({}),
       loadOperationStates: async () => {
         throw new Error('convex down');
@@ -707,7 +705,7 @@ describe('the default reader loaders', () => {
           ? { page: [edition], isDone: true, continueCursor: '' }
           : []) as any,
     });
-    const latest = await withToolContext(() => getLatestDailyReport(undefined, true), user);
+    const latest = await withToolContext(() => getLatestDailyReport(), user);
     expect(latest?.sections.know ?? []).toEqual([]);
     expect(latest?.sections.since?.agentActions[0].operationId).toBe('op-x');
   });

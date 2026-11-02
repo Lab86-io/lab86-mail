@@ -491,7 +491,6 @@ describe('the wiring in the agent', () => {
       'what needs me',
       'Show my Needs you list',
       'What do I owe people this week?',
-      'Who is waiting on me?',
       "What's on my plate",
       'List my obligations',
       'What do I need to do today?',
@@ -499,6 +498,11 @@ describe('the wiring in the agent', () => {
       'What must I do?',
     ])
       expect(requestToolGroups(text, { needsYou: true })).toEqual(['needs_you']);
+    // "Waiting on" is also a word of work progress, so both groups load.
+    expect(requestToolGroups('Who is waiting on me?', { needsYou: true })).toEqual([
+      'needs_you',
+      'work_progress',
+    ]);
     for (const text of ['Summarize the Stripe thread', 'What does Dana need?', 'I owe Dana a call', ''])
       expect(requestToolGroups(text, { needsYou: true })).toEqual([]);
     expect(requestToolGroups(null, { needsYou: true })).toEqual([]);

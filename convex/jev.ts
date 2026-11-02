@@ -777,6 +777,7 @@ export const liveBriefCandidates = query({
     userId: v.string(),
     since: v.number(),
     accountIds: v.array(v.string()),
+    limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -793,7 +794,7 @@ export const liveBriefCandidates = query({
       .query('mailCorpusThreads')
       .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId).gt('lastDate', args.since))
       .order('desc')
-      .take(300);
+      .take(Math.min(300, Math.max(1, Math.floor(args.limit ?? 300))));
     return rows
       .filter((r) => allowed.has(r.accountId) && assessmentIsCurrent(r.jev, r.latestMessageId))
       .map(normalizeCorpusThread);

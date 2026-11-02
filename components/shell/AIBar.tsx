@@ -99,6 +99,7 @@ import {
 } from '@/lib/ai/chat-attachments';
 import { routeEmailPreviewThread } from '@/lib/ai/email-preview-routing';
 import type { ToolShape } from '@/lib/ai/tool-shapes';
+import { seedHandledToolCalls, uiToolFailureText } from '@/lib/ai/ui-tool-calls';
 import { type HoldCard, holdText, kickAdvance } from '@/lib/albatross/capture-client';
 import type { DocumentContextAttachment } from '@/lib/albatross/document-handoff';
 import {
@@ -323,6 +324,12 @@ export function focusThreadComposer() {
   document.querySelector<HTMLTextAreaElement>('[data-thread-composer] textarea')?.focus();
 }
 
+/** Moves the failure notes into the request, and keeps them until the request reaches the agent. */
+function takeToolFailures(queue: { current: string[] }, sent: { current: string[] }) {
+  sent.current = queue.current.splice(0);
+  return sent.current;
+}
+
 // One conversation owner across corner, split, and chat-only presentations.
 // AssistantWorkspace owns the outer frame; transport, tool cards, attachments
 // and composer state stay mounted here when that presentation changes.
@@ -442,19 +449,34 @@ export function AssistantChat({
         : undefined,
     [chatScopeKind, chatScopeWorkId, sharedBriefContext],
   );
+  const clientToolFailuresRef = useRef<string[]>([]);
+  const sentToolFailuresRef = useRef<string[]>([]);
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: '/api/agent',
         // The assertion only matters under Bun's types, where fetch also has preconnect.
         fetch: (async (input, init) => {
-          const response = await fetch(input, init);
+          // A request that does not reach the agent keeps its failure notes for the next one.
+          const restoreFailures = () =>
+            clientToolFailuresRef.current.unshift(...sentToolFailuresRef.current.splice(0));
+          let response: Response;
+          try {
+            response = await fetch(input, init);
+          } catch (error) {
+            restoreFailures();
+            throw error;
+          }
+          if (response.ok) sentToolFailuresRef.current = [];
+          else restoreFailures();
           activeRunId.current = response.headers.get('x-agent-run-id');
           return response;
         }) as typeof fetch,
         body: () => ({
           // This client renders ask_form and ask_secure_detail; the server offers them only to clients that say so.
           clientCapabilities: ['ask_form', 'ask_secure_detail'],
+          // UI tools that failed here since the last request. The server answered them blindly.
+          clientToolFailures: takeToolFailures(clientToolFailuresRef, sentToolFailuresRef),
           // A Work thread reply runs to its end on the server and is saved there
           // (docs/albatross-threads.md, T5); the base lets that save merge correctly.
           sessionId: sessionIdRef.current ?? undefined,
@@ -566,6 +588,8 @@ export function AssistantChat({
   const activeScopeKeyRef = useRef(scopeKey);
   activeScopeKeyRef.current = scopeKey;
   const restoredRef = useRef(false);
+  // Tool calls this client already acted on. A restored chat fills it, so its old calls never run again.
+  const handled = useRef<Set<string>>(new Set());
   const saveTimer = useRef<number | null>(null);
   const priorScopeRef = useRef(scopeKey);
 
@@ -592,6 +616,7 @@ export function AssistantChat({
           useClientStore.getState().clearBriefResponse();
           sessionIdRef.current = id;
           setLastChatId(id);
+          seedHandledToolCalls(handled.current, data.session.messages);
           setMessages(data.session.messages);
           return true;
         }
@@ -653,6 +678,7 @@ export function AssistantChat({
         if (!settled()) return;
         if (data?.ok && data.session && Array.isArray(data.session.messages)) {
           baseUpdatedAtRef.current = Number(data.session.updatedAt) || 0;
+          seedHandledToolCalls(handled.current, data.session.messages);
           // A message the user sent while the copy loaded stays: merge, do not replace.
           setMessages((current) => addMergedThreadMessages(data.session.messages, current));
         }
@@ -692,8 +718,10 @@ export function AssistantChat({
           const at = Number(data?.session?.updatedAt);
           if (thread && Number.isFinite(at) && at > 0) baseUpdatedAtRef.current = at;
           // Messages another device wrote: keep them, or the next save drops them.
-          if (thread && Array.isArray(data?.mergedMessages) && data.mergedMessages.length)
+          if (thread && Array.isArray(data?.mergedMessages) && data.mergedMessages.length) {
+            seedHandledToolCalls(handled.current, data.mergedMessages);
             setMessages((current) => addMergedThreadMessages(current, data.mergedMessages as typeof current));
+          }
           return qc.invalidateQueries({ queryKey: ['chat-sessions'] });
         })
         .catch(() => undefined);
@@ -887,7 +915,6 @@ export function AssistantChat({
   );
 
   // --- UI tool intercept ---
-  const handled = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!toolSignature || preview) return;
     for (const m of messageSnapshot.current) {
@@ -966,7 +993,13 @@ export function AssistantChat({
             // (thread) account rather than collapsing the inbox view.
             setThreadAccount(args.account);
           }
-        } catch {}
+        } catch (cause) {
+          // The server already told the model this worked. The user reads the
+          // failure now, and the model reads it on the next request.
+          console.warn('[agent-ui-tool-failed]', { tool: name, error: String(cause) });
+          clientToolFailuresRef.current.push(name);
+          toast.error(uiToolFailureText(name));
+        }
       }
     }
   }, [

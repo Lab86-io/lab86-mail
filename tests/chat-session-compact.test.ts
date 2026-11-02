@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { convertToModelMessages } from 'ai';
+import { isToolApprovalPart } from '../lib/ai/approval';
 import { compactMessage } from '../lib/store/chat-sessions';
 
 describe('compactMessage (persisted chat history)', () => {
@@ -93,6 +94,57 @@ describe('compactMessage (persisted chat history)', () => {
     });
     expect(message.parts[0].state).toBe('output-available');
     expect(message.parts[0].output.answers[0].response).toBe('Wednesday');
+  });
+
+  test('keeps the approval of a call that waits, so a reopened chat shows its card', () => {
+    const part = {
+      type: 'tool-schedule_send',
+      toolCallId: 'send-1',
+      state: 'approval-requested',
+      input: { to: 'sam@example.test' },
+      approval: { id: 'approval-1' },
+    };
+    const compacted = compactMessage({ id: 'm', role: 'assistant', parts: [part] }).parts[0];
+    expect(compacted).toMatchObject({ state: 'approval-requested', approval: { id: 'approval-1' } });
+    expect(isToolApprovalPart(compacted)).toBe(true);
+    const answered = { ...part, state: 'approval-responded', approval: { id: 'approval-1', approved: true } };
+    expect(compactMessage({ id: 'm', role: 'assistant', parts: [answered] }).parts[0].approval).toEqual({
+      id: 'approval-1',
+      approved: true,
+    });
+  });
+
+  test('an oversized ok:false stays a failure, never "completed successfully"', () => {
+    const compacted = compactMessage({
+      id: 'm',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-bulk_move_threads',
+          toolCallId: 'bulk-1',
+          state: 'output-available',
+          input: {},
+          output: {
+            ok: false,
+            failed: Array.from({ length: 200 }, (_, id) => ({ threadId: `thread-${id}` })),
+          },
+        },
+      ],
+    }).parts[0];
+    expect(compacted.output).toMatchObject({ ok: false, outputOmitted: true });
+    expect(compacted.output.message).not.toContain('successfully');
+    expect(compacted.output.message).toContain('failure');
+  });
+
+  test('a call cut off during its input says that it did not run, and it stays valid history', () => {
+    const compacted = compactMessage({
+      id: 'm',
+      role: 'assistant',
+      parts: [{ type: 'tool-document_create', toolCallId: 'doc-1', state: 'input-streaming' }],
+    }).parts[0];
+    expect(compacted.state).toBe('output-error');
+    expect(compacted.errorText).toContain('cut off before it ran');
+    expect(compacted.input).toEqual({});
   });
 
   test('drops oversized outputs but keeps the part shape', () => {

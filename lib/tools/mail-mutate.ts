@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { stopIfAborted, ToolFailedBeforeWrite } from '@/lib/ai/tool-errors';
 import {
   changedFolders,
   formatWakeTime,
@@ -178,11 +179,12 @@ export const bulkMoveThreads = defineTool({
   }),
   async handler({ items, to, reason }, ctx) {
     const unique = [...new Map(items.map((item) => [`${item.account}:${item.threadId}`, item])).values()];
-    const results = await mapLimit(unique, 4, async (item) =>
-      requireNylasResult(
+    const results = await mapLimit(unique, 4, async (item) => {
+      stopIfAborted(ctx.abortSignal);
+      return requireNylasResult(
         moveNylasThread({ userId: ctx.userId, account: item.account, threadId: item.threadId, to }),
-      ),
-    );
+      );
+    });
     const moved: Array<{ account: string; threadId: string }> = [];
     const failed: Array<{ account: string; threadId: string; error: string }> = [];
     const changes: ThreadFolderChange[] = [];
@@ -598,7 +600,8 @@ export const unsnoozeThreadTool = defineTool({
 
 async function requireNylasResult<T>(value: Promise<T | null>): Promise<T> {
   const result = await value;
-  if (!result) throw new Error('Connected Nylas account not found.');
+  // A null answer means that no connected account took the call, so nothing changed.
+  if (!result) throw new ToolFailedBeforeWrite('Connected Nylas account not found.');
   return result;
 }
 

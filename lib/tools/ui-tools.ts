@@ -1,13 +1,12 @@
 /**
- * "UI tools" — agent-callable actions that mutate the host UI rather than the
- * mailbox. The server handler is a no-op acknowledgement; the client intercepts
- * the tool call via useChat.onToolCall and dispatches the actual UI mutation
- * (Zustand updates, modal opens, etc.).
+ * "UI tools": agent-callable actions that change the host UI, not the mailbox.
+ * The server handler only acknowledges the call. The chat client reads the call
+ * from the stream and runs the UI change (components/shell/AIBar.tsx).
  *
- * Why this works: when the agent calls a UI tool, both the client and server
- * "see" the tool call. The server's no-op returns success quickly so the agent
- * loop can continue. The client, in parallel, runs the real UI mutation
- * locally.
+ * The acknowledgement comes before the client acts, so it never says that the
+ * UI changed. When the client fails, the user sees a notice, and the next
+ * request tells the model (lib/ai/ui-tool-calls.ts). A restored chat does not
+ * run its old calls again.
  */
 import { z } from 'zod';
 import { defineTool } from './registry';
@@ -26,7 +25,7 @@ export const uiFocusThread = defineTool({
   }),
   output: ack,
   async handler({ threadId }) {
-    return { acknowledged: true as const, hint: `UI will focus thread ${threadId}.` };
+    return { acknowledged: true as const, hint: `The app was asked to focus thread ${threadId}.` };
   },
 });
 
@@ -42,7 +41,7 @@ export const uiSetQuery = defineTool({
   }),
   output: ack,
   async handler({ query }) {
-    return { acknowledged: true as const, hint: `UI will run "${query}".` };
+    return { acknowledged: true as const, hint: `The app was asked to run "${query}".` };
   },
 });
 
@@ -61,7 +60,10 @@ export const uiOpenCompose = defineTool({
   }),
   output: ack,
   async handler() {
-    return { acknowledged: true as const, hint: 'Compose pane opened — user will review and send.' };
+    return {
+      acknowledged: true as const,
+      hint: 'The app was asked to open the compose pane. The user reviews and sends.',
+    };
   },
 });
 
@@ -119,6 +121,6 @@ export const uiSwitchAccount = defineTool({
   input: z.object({ account: z.string() }),
   output: ack,
   async handler({ account }) {
-    return { acknowledged: true as const, hint: `Switched to ${account}` };
+    return { acknowledged: true as const, hint: `The app was asked to switch to ${account}.` };
   },
 });

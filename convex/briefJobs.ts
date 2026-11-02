@@ -195,8 +195,9 @@ export const enqueue = mutation({
       attempts: 0,
     });
     if (args.kind === 'daily') {
-      // Persist the new edition atomically with its job. Readers immediately see
-      // its generation state, never a substituted previous edition.
+      // Persist the new edition atomically with its job. Native readers see its
+      // generation state at once. The web page keeps the last readable edition
+      // until this row has text (lib/store/daily-reports.ts, readBriefView).
       await ctx.db.insert('userDocs', {
         userId: args.userId,
         kind: 'dailyReport',
@@ -352,6 +353,37 @@ export const get = query({
     requireInternalSecret(args.internalSecret);
     const job = await ctx.db.get(args.id);
     return job?.userId === args.userId ? job : null;
+  },
+});
+
+// The poll of the web Today page. The jobs are small rows, and it reads the
+// edition row only while a daily job is active.
+const ACTIVE_JOB_SCAN = 24;
+export const activeEdition = query({
+  args: caller,
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const jobs = await ctx.db
+      .query('briefJobs')
+      .withIndex('by_user_active', (q) => q.eq('userId', args.userId).eq('active', true))
+      .take(ACTIVE_JOB_SCAN);
+    const job = jobs
+      .filter((entry) => entry.kind === 'daily' && entry.reportId)
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (!job) return null;
+    const row = await ctx.db
+      .query('userDocs')
+      .withIndex('by_user_kind_key', (q) =>
+        q.eq('userId', args.userId).eq('kind', 'dailyReport').eq('key', job.reportId!),
+      )
+      .unique();
+    return {
+      reportId: job.reportId!,
+      status: row?.doc?.status ?? 'partial',
+      artifactStatus: row?.doc?.artifactStatus ?? null,
+      retrying: Boolean(row?.doc?.retrying),
+      progress: row?.doc?.progress ?? null,
+    };
   },
 });
 

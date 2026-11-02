@@ -16,15 +16,12 @@ import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { NarrativeBrief } from '@/components/narrative/NarrativeBrief';
 import { PreparedWork } from '@/components/report/PreparedWork';
-import { Chart } from '@/components/tool-ui/chart';
 import { CitationList } from '@/components/tool-ui/citation';
-import { CodeDiff } from '@/components/tool-ui/code-diff';
 import { type Column, DataTable, type DataTableRowData } from '@/components/tool-ui/data-table';
 import { OptionList } from '@/components/tool-ui/option-list';
 import { Plan } from '@/components/tool-ui/plan';
 import { ProgressTracker } from '@/components/tool-ui/progress-tracker';
 import { StatsDisplay } from '@/components/tool-ui/stats-display';
-import { Terminal } from '@/components/tool-ui/terminal';
 import { WeatherWidget } from '@/components/tool-ui/weather-widget/runtime';
 import { Button } from '@/components/ui/button';
 import { Markdown } from '@/components/ui/markdown';
@@ -43,6 +40,32 @@ import { BriefActions } from './BriefActions';
 import { BriefCanvasLeaf } from './BriefCanvasLeaf';
 import { BriefComponentBoundary, BriefToolUi } from './BriefToolUi';
 import type { BriefActionPayload } from './brief-action-runtime';
+
+// Most editions have no chart, diff, or command output. These libraries load
+// only for an edition that shows one. Each placeholder holds about the height of
+// its component, so the page does not jump.
+function BriefNodePlaceholder({ height }: { height: number }) {
+  return (
+    <div
+      aria-hidden
+      data-brief-lazy-node
+      style={{ minHeight: height }}
+      className="w-full rounded-lg shimmer"
+    />
+  );
+}
+const Chart = dynamic(() => import('@/components/tool-ui/chart').then((module) => module.Chart), {
+  ssr: false,
+  loading: () => <BriefNodePlaceholder height={240} />,
+});
+const CodeDiff = dynamic(() => import('@/components/tool-ui/code-diff').then((module) => module.CodeDiff), {
+  ssr: false,
+  loading: () => <BriefNodePlaceholder height={180} />,
+});
+const Terminal = dynamic(() => import('@/components/tool-ui/terminal').then((module) => module.Terminal), {
+  ssr: false,
+  loading: () => <BriefNodePlaceholder height={120} />,
+});
 
 const BriefGeoMap = dynamic(() => import('@/components/tool-ui/geo-map').then((module) => module.GeoMap), {
   ssr: false,

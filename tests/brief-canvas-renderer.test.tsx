@@ -1,9 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { BriefCanvas, briefGridRowSpan } from '../components/report/brief-canvas/BriefCanvas';
 import { type BriefNodeContext, BriefNodeView } from '../components/report/brief-canvas/BriefNodeView';
+import * as inactiveLive from '../components/report/brief-canvas/InactiveBriefRefsLive';
 import { briefRefKey } from '../lib/brief/hydration';
 import type {
   BriefActionV2,
@@ -448,6 +449,9 @@ describe('BriefCanvas degradation', () => {
     };
 
     const html = render(document);
+    // The chart, the diff, and the command output load on demand. Until then a
+    // placeholder of about their height holds the place.
+    expect(html.match(/data-brief-lazy-node/g)).toHaveLength(3);
     for (const slot of [
       'weather-widget',
       'plan',
@@ -455,9 +459,6 @@ describe('BriefCanvas degradation', () => {
       'option-list',
       'citation-list',
       'brief-geo-map',
-      'code-diff',
-      'terminal',
-      'chart',
     ]) {
       expect(html).toContain(`data-slot="${slot}"`);
     }
@@ -717,8 +718,15 @@ describe('current briefs reconcile terminal Work without changing historical edi
           <BriefCanvas value={document} hideInactive={hideInactive} />
         </QueryClientProvider>,
       );
-    expect(renderEdition(true)).not.toContain('Repair the tire');
-    expect(renderEdition(false)).toContain('Repair the tire');
+    // The subscription writes the same cache entry. Rendering needs no Convex.
+    const live = spyOn(inactiveLive, 'InactiveBriefRefsLive').mockImplementation(() => null);
+    try {
+      expect(renderEdition(true)).not.toContain('Repair the tire');
+      expect(renderEdition(false)).toContain('Repair the tire');
+      expect(live).toHaveBeenCalledTimes(1);
+    } finally {
+      live.mockRestore();
+    }
     expect(document.regions[0].tree.items).toHaveLength(1);
   });
 
@@ -780,6 +788,63 @@ describe('current briefs reconcile terminal Work without changing historical edi
 });
 
 describe('brief telemetry', () => {
+  test('a new edition in the same canvas forgets what the reader did to the old rows', async () => {
+    const { letterBriefDocumentFixture } = await import('../lib/shared/brief-document-fixtures');
+    const document = JSON.parse(JSON.stringify(letterBriefDocumentFixture));
+    const answer = document.regions.find((region: any) => region.id === 'answer');
+    answer.tree.items[0].actions = [
+      {
+        action: 'dismiss_task',
+        label: 'Not this one',
+        style: 'quiet',
+        payload: { cardId: 'card-a' },
+      },
+    ];
+    answer.tree.items[0].ref = { kind: 'task', id: 'card-a', label: 'Review deck' };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const body = url.includes('/resolve')
+        ? { ok: true, entities: [] }
+        : { ok: true, result: { ok: true, dismissal: {}, operationId: 'op', summary: 'Done.' } };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const page = (reportId: string) => (
+      <QueryClientProvider client={queryClient}>
+        <BriefCanvas value={document} reportId={reportId} />
+      </QueryClientProvider>
+    );
+    const hiders = ['dismiss_task'];
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = create(page('edition-a'));
+      });
+      const buttons = () =>
+        renderer.root
+          .findAllByType('button')
+          .filter((button) => hiders.includes(button.props['data-brief-letter-action-name']));
+      const before = buttons().length;
+      expect(before).toBeGreaterThan(0);
+      await act(async () => {
+        await buttons()[0].props.onClick();
+      });
+      expect(buttons().length).toBeLessThan(before);
+      await act(async () => {
+        renderer.update(page('edition-b'));
+      });
+      expect(buttons().length).toBe(before);
+    } finally {
+      globalThis.fetch = originalFetch;
+      renderer?.unmount();
+      queryClient.clear();
+    }
+  });
+
   test('a settled row action posts one event with the edition, surface, region, ref, and outcome', async () => {
     const { letterBriefDocumentFixture } = await import('../lib/shared/brief-document-fixtures');
     const calls: Array<{ url: string; init?: RequestInit }> = [];

@@ -6,6 +6,7 @@
  * - localStorage `lab86:pinned-models` and `lab86:proof-offer-dismissals`.
  * - localStorage `lab86-logo-v1:<domain>`: sender logo verdicts.
  * - localStorage `lab86-mail-assistant-split` and `lab86-mail-onboarding-dismissed-v1`.
+ * - localStorage `lab86-brief-latest-v1`: one slim latest edition of the Daily Brief.
  * - localStorage `tasks-lens`, `board-view:<boardId>`, and `calendar-settings-v2`.
  * - localStorage `react-resizable-panels:lab86-mail-shell-v2:<panes>`: the shell layout.
  * - sessionStorage `albatross.notifications.v1:<userId>`.

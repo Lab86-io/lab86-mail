@@ -1,7 +1,18 @@
+import { createHash } from 'node:crypto';
 import { parseBriefEditionBudget } from '../brief/budget';
 import { editorialPlanSchema } from '../brief/editorial';
+import { isBriefEditionGenerating, isBriefEditionReadable } from '../brief/generation';
 import { applySinceOperationStates, loadOperationStates, sinceOperationIds } from '../brief/since';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
+import {
+  BRIEF_BACKLOG_LIMIT,
+  type BriefEditionHead,
+  type BriefHeadResponse,
+  type BriefViewResponse,
+  briefHeadStamp,
+  briefPendingFromHead,
+  briefWebEdition,
+} from '../brief/web-view';
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
 import { DEFAULT_JEV_PREFERENCES } from '../jev/contract';
@@ -12,7 +23,7 @@ import { needsYouSectionOf } from '../obligations/brief-region';
 import { compositionFromReport } from '../shared/brief-composition';
 import { parseBriefDocument } from '../shared/brief-document';
 import { parseTriageHandoffs } from '../shared/triage-handoff';
-import type { BriefEditionKind, Thread } from '../shared/types';
+import type { BriefEditionKind, Thread, TrackedThread } from '../shared/types';
 import {
   DAILY_REPORT_ARTIFACT_ERROR_STAGES,
   type DailyReport,
@@ -26,8 +37,7 @@ import {
   MAX_ARTIFACT_ERRORS,
 } from '../shared/types';
 import { listDismissedDailyReportTasks, listDismissedDailyReportThreads } from './daily-report-dismissals';
-import { kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
-import { listTrackedThreads } from './tracked-threads';
+import { KV_GET_MANY_LIMIT, kvGet, kvGetMany, kvList, kvUpsert, requireStoreUserId } from './kv';
 
 const saveDefaults = {
   persist: kvUpsert,
@@ -130,6 +140,12 @@ export async function getDailyReport(id: string) {
   return report ? migrateDailyReportForRead(report) : null;
 }
 
+/** One stored edition for a reader that needs no legacy artifact. Nothing rebuilds. */
+export async function getDailyReportFacts(id: string) {
+  const report = await kvGet<DailyReport>('dailyReport', id);
+  return report ? migrateDailyReport(report, Date.now(), { legacyArtifacts: false }) : null;
+}
+
 export type DailyReportSummary = Pick<DailyReport, '_id' | 'kind' | 'generatedAt' | 'title'>;
 
 // Saved brief dismissals (dismiss, resolve, archive) as hidden item sets.
@@ -144,15 +160,22 @@ async function loadBriefDismissals(): Promise<BriefHiddenItems> {
   };
 }
 
-// Tracked threads among `ids` that the user resolved or dismissed.
+// Tracked threads among `ids` that the user resolved or dismissed. It reads
+// only these rows, never the whole tracked list.
 async function loadClosedTracked(ids: string[]): Promise<Set<string>> {
   if (!ids.length) return new Set();
-  const wanted = new Set(ids);
-  const rows = await listTrackedThreads({ includeResolved: true, limit: 1000 });
+  const unique = [...new Set(ids)];
+  const pages = await Promise.all(
+    Array.from({ length: Math.ceil(unique.length / KV_GET_MANY_LIMIT) }, (_, page) =>
+      kvGetMany<TrackedThread>(
+        'trackedThread',
+        unique.slice(page * KV_GET_MANY_LIMIT, (page + 1) * KV_GET_MANY_LIMIT),
+      ),
+    ),
+  );
+  const rows = pages.flat();
   return new Set(
-    rows
-      .filter((row) => wanted.has(row._id) && (row.status === 'resolved' || row.status === 'dismissed'))
-      .map((row) => row._id),
+    rows.filter((row) => row.status === 'resolved' || row.status === 'dismissed').map((row) => row._id),
   );
 }
 
@@ -169,7 +192,6 @@ const readDefaults = {
   query: convexQuery,
   configured: isConvexConfigured,
   loadPolicy: loadJevPolicy,
-  load: getDailyReport,
   loadDismissals: loadBriefDismissals,
   loadClosedTracked,
   loadSelfAddresses,
@@ -220,15 +242,37 @@ async function readReportRows<T>(
   return rows;
 }
 
-export async function getLatestDailyReport(kind?: BriefEditionKind, summaryFirst = false) {
-  const rows = await readReportRows<DailyReport>(1, summaryFirst, kind);
+export async function getLatestDailyReport(kind?: BriefEditionKind) {
+  const rows = await readReportRows<DailyReport>(1, false, kind);
   const latest = rows[0];
   if (!latest) return null;
-  const report = summaryFirst
-    ? await readDependencies.load(latest._id)
-    : await migrateDailyReportForRead(latest);
-  if (!report) return null;
-  if (!readDependencies.configured()) return report;
+  const report = await migrateDailyReportForRead(latest);
+  return readDependencies.configured() ? projectLatestEdition(report) : report;
+}
+
+// How a reader asks for the live facts of an edition. Native takes the full
+// form. The web page shows a short backlog, so it reads fewer threads.
+interface LiveEditionOptions {
+  threadLimit: number;
+  /** The most overflow rows that the reader shows. Only these get a live read. */
+  overflowLimit?: number;
+  arrivalLimit?: number;
+  legacyArtifacts: boolean;
+}
+
+const NATIVE_LIVE_OPTIONS: LiveEditionOptions = { threadLimit: 300, legacyArtifacts: true };
+const WEB_LIVE_OPTIONS: LiveEditionOptions = {
+  threadLimit: 120,
+  overflowLimit: BRIEF_BACKLOG_LIMIT,
+  arrivalLimit: 60,
+  legacyArtifacts: false,
+};
+
+// The live overlay of the latest edition. It never writes over the stored row.
+async function projectLatestEdition(
+  report: DailyReport,
+  options: LiveEditionOptions = NATIVE_LIVE_OPTIONS,
+): Promise<DailyReport> {
   const lanes: Partial<DailyReport['sections']> = report.sections ?? {};
   const trackedIds = [
     ...new Set(
@@ -243,27 +287,34 @@ export async function getLatestDailyReport(kind?: BriefEditionKind, summaryFirst
         .filter((id): id is string => Boolean(id)),
     ),
   ];
+  const projectOptions = { legacyArtifacts: options.legacyArtifacts };
   const [dismissals, closedTracked] = await Promise.all([
     readDependencies.loadDismissals().catch((): BriefHiddenItems => ({})),
     readDependencies.loadClosedTracked(trackedIds).catch(() => new Set<string>()),
   ]);
   const hidden: BriefHiddenItems = { ...dismissals, closedTracked };
-  // Dismissals apply to any latest edition; live mail facts only to a fresh one.
-  if (Date.now() - report.generatedAt > 24 * 3600_000)
-    return withLiveSince(
+  const offline = () =>
+    withLiveSince(
       projectBriefMail(
         report,
         [],
         { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
         Date.now(),
         hidden,
+        projectOptions,
       ),
     );
+  // Dismissals apply to any latest edition; live mail facts only to a fresh one.
+  if (Date.now() - report.generatedAt > 24 * 3600_000) return offline();
+  const overflow =
+    options.overflowLimit === undefined
+      ? report.sections.overflow || []
+      : (report.sections.overflow || []).slice(0, options.overflowLimit);
   const items = [
     ...(report.sections.answer || []),
     ...(report.sections.today || []),
     ...(report.sections.know || []),
-    ...(report.sections.overflow || []),
+    ...overflow,
     ...(report.sections.waiting || []),
   ];
   try {
@@ -272,13 +323,16 @@ export async function getLatestDailyReport(kind?: BriefEditionKind, summaryFirst
       readDependencies.loadPolicy(userId),
       readDependencies.query<Thread[]>(api.jev.threadAssessments, {
         userId,
-        threads: items.slice(0, 300).map((item) => ({ accountId: item.account, threadId: item.threadId })),
+        threads: items
+          .slice(0, options.threadLimit)
+          .map((item) => ({ accountId: item.account, threadId: item.threadId })),
       }),
       readDependencies
         .query<Thread[]>(api.jev.liveBriefCandidates, {
           userId,
           since: report.generatedAt,
           accountIds: report.accounts,
+          ...(options.arrivalLimit ? { limit: options.arrivalLimit } : {}),
         })
         .catch(() => []),
       readDependencies.loadSelfAddresses(userId).catch(() => new Set<string>()),
@@ -296,19 +350,124 @@ export async function getLatestDailyReport(kind?: BriefEditionKind, summaryFirst
         policy,
         Date.now(),
         { ...hidden, selfAddresses },
+        projectOptions,
       ),
     );
   } catch {
-    return withLiveSince(
-      projectBriefMail(
-        report,
-        [],
-        { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
-        Date.now(),
-        hidden,
-      ),
-    );
+    return offline();
   }
+}
+
+// ---- The web view of the Today page ------------------------------------------
+
+// A dead run can leave more than one `partial` row in front of the last edition.
+const BRIEF_READABLE_SCAN = 4;
+
+// The newest edition that a reader can read: one row per step, so a ready row
+// costs one read and the small `partial` row costs almost nothing.
+async function readNewestReadableRow(): Promise<DailyReport | null> {
+  if (!readDependencies.configured()) {
+    const rows = await readReportRows<DailyReport>(BRIEF_READABLE_SCAN, false);
+    return rows.find(isBriefEditionReadable) ?? null;
+  }
+  const userId = requireStoreUserId();
+  let cursor: string | null = null;
+  for (let step = 0; step < BRIEF_READABLE_SCAN; step += 1) {
+    const result: { page: DailyReport[]; continueCursor: string; isDone: boolean } =
+      await readDependencies.query(api.userData.dailyReportPage, {
+        userId,
+        edition: undefined,
+        cursor,
+        limit: 1,
+        summaryOnly: false,
+      });
+    const row = result.page[0];
+    if (!row) return null;
+    if (isBriefEditionReadable(row)) return row;
+    if (result.isDone) return null;
+    cursor = result.continueCursor;
+  }
+  return null;
+}
+
+async function loadBriefEditionHead(): Promise<BriefEditionHead | null> {
+  if (readDependencies.configured())
+    return readDependencies.query<BriefEditionHead | null>(api.briefJobs.activeEdition, {
+      userId: requireStoreUserId(),
+    });
+  const [latest] = await readReportRows<DailyReport>(1, false);
+  if (!latest || !isBriefEditionGenerating(latest)) return null;
+  return {
+    reportId: latest._id,
+    status: latest.status,
+    artifactStatus: latest.artifactStatus,
+    retrying: latest.retrying,
+    progress: latest.progress,
+  };
+}
+
+/** The small poll of the page. No active job means no read of an edition. */
+export async function readBriefHead(): Promise<BriefHeadResponse> {
+  const head = await loadBriefEditionHead();
+  return { stamp: briefHeadStamp(head), pending: briefPendingFromHead(head) };
+}
+
+function viewRevision(value: unknown) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('base64url').slice(0, 22);
+}
+
+/**
+ * The latest read of the page: the newest readable edition with its live facts,
+ * in the slim web form, and the edition that the writer works on now. When the
+ * reader has this revision already, the edition does not go out again.
+ */
+export async function readBriefView(known?: string | null): Promise<BriefViewResponse> {
+  // A failed job read must not hide a readable edition. It is not the same as
+  // no active job, so it must not settle a row that still composes.
+  let headKnown = true;
+  const [head, row] = await Promise.all([
+    loadBriefEditionHead().catch(() => {
+      headKnown = false;
+      return null;
+    }),
+    readNewestReadableRow(),
+  ]);
+  // With no answer on the job, a row that composes keeps its state: the page
+  // must not call its plain letter final until a read says so.
+  const pending =
+    briefPendingFromHead(head) ??
+    (!headKnown && row && isBriefEditionGenerating(row)
+      ? { reportId: String(row._id), phase: 'composing' as const }
+      : null);
+  const stamp = briefHeadStamp(head);
+  if (!row) return { stamp, pending, revision: null, report: null };
+  const migrated = migrateDailyReport(row, Date.now(), { legacyArtifacts: false });
+  const live = readDependencies.configured()
+    ? await projectLatestEdition(migrated, WEB_LIVE_OPTIONS)
+    : migrated;
+  // A `composing` row with no active job will not change again. Its plain
+  // letter is final, and the page offers to write it again.
+  const settled =
+    headKnown && !pending && isBriefEditionGenerating(live)
+      ? { ...live, artifactStatus: 'rendered' as const }
+      : live;
+  const report = briefWebEdition(settled);
+  const revision = viewRevision(report);
+  return known && known === revision
+    ? { stamp, pending, revision, unchanged: true }
+    : { stamp, pending, revision, report };
+}
+
+/** One edition from history, in the slim web form. It stays a snapshot. */
+export async function readBriefEditionView(id: string, known?: string | null): Promise<BriefViewResponse> {
+  const row = await getDailyReportFacts(id);
+  if (!row || !isBriefEditionReadable(row))
+    return { stamp: briefHeadStamp(null), pending: null, revision: null, report: null };
+  const report = briefWebEdition(row);
+  const revision = viewRevision(report);
+  return known && known === revision
+    ? { stamp: briefHeadStamp(null), pending: null, revision, unchanged: true }
+    : { stamp: briefHeadStamp(null), pending: null, revision, report };
 }
 
 // An operation the user undid since the edition leaves its look back.
@@ -345,7 +504,11 @@ async function migrateDailyReportForRead(raw: DailyReport): Promise<DailyReport>
 // report to the current shape so old and new editions render — and list in
 // history — identically. Reading never changes the generation lifecycle.
 // Exported for unit tests only; production callers go through the getters.
-export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()): DailyReport {
+export function migrateDailyReport(
+  raw: DailyReport,
+  _now: number = Date.now(),
+  options: { legacyArtifacts?: boolean } = {},
+): DailyReport {
   const sections = (raw.sections ?? {}) as Partial<DailyReport['sections']>;
   const items = (value: unknown): DailyReportItem[] => (Array.isArray(value) ? value : []);
   const tasks = (Array.isArray(sections.tasks) ? sections.tasks : []) as DailyReportTaskItem[];
@@ -470,6 +633,9 @@ export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()):
     model: raw.model,
     errors: Array.isArray(raw.errors) ? raw.errors : undefined,
   };
+
+  // A reader without the legacy artifact needs none of the rebuilds below.
+  if (options.legacyArtifacts === false) return migrated;
 
   if (!migrated.handoffs?.length) {
     migrated.handoffs = buildTriageHandoffIndex(migrated);

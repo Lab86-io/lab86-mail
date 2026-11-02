@@ -95,9 +95,14 @@ export function compactMessage(message: any): any {
           toolCallId: part.toolCallId,
           state: interrupted ? 'output-error' : part.state,
           errorText: interrupted
-            ? 'Interrupted: outcome not confirmed. Continue checks saved work before retrying.'
+            ? part.state === 'input-streaming'
+              ? 'The call was cut off before it ran, so it changed nothing. Send a smaller call or split the work.'
+              : 'Interrupted: outcome not confirmed. Continue checks saved work before retrying.'
             : part.errorText,
-          input: part.input,
+          // A call that was cut off may have no input yet. A provider needs an object.
+          input: interrupted ? (part.input ?? {}) : part.input,
+          // The approval card reads this. Without it, a reopened chat shows a failed row and no card.
+          ...(part.approval ? { approval: part.approval } : {}),
         };
         // Personal details stay in their encrypted store, not in saved chats.
         if (PRIVATE_OUTPUT_TOOLS.has(toolPartName(part))) {
@@ -143,14 +148,21 @@ export function compactMessage(message: any): any {
                     nextStep:
                       'The detailed plan exceeded saved-history capacity. Retain the evidence in this tool input and all confirmed presentation choices. Reconstruct the per-slide plan from that evidence before asking for storyboard confirmation; no deck was created by this planning call.',
                   }
-                : {
-                    outputOmitted: true,
-                    message: ['document_get', 'word_document_get', 'google_document_get'].includes(
-                      toolPartName(part),
-                    )
-                      ? 'Read succeeded. Reread the source for its full contents before editing.'
-                      : 'Tool completed successfully. Its full output was omitted from saved history; read the source again if needed.',
-                  };
+                : part.output?.ok === false
+                  ? {
+                      ok: false,
+                      outputOmitted: true,
+                      message:
+                        'Tool reported a failure. Its full output was omitted from saved history; read the source before another write.',
+                    }
+                  : {
+                      outputOmitted: true,
+                      message: ['document_get', 'word_document_get', 'google_document_get'].includes(
+                        toolPartName(part),
+                      )
+                        ? 'Read succeeded. Reread the source for its full contents before editing.'
+                        : 'Tool completed successfully. Its full output was omitted from saved history; read the source again if needed.',
+                    };
           }
         } catch {
           // unserializable output — drop it

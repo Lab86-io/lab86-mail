@@ -1,3 +1,5 @@
+import { ToolTimeoutError, toolTimeoutMessage } from './tool-errors';
+
 const DEFAULT_TIMEOUT_MS = 75_000;
 const GENERATION_TIMEOUT_MS = 210_000;
 
@@ -19,14 +21,14 @@ export function agentToolTimeoutMs(name: string, args: Record<string, unknown> =
 export async function withToolTimeout<T>(
   run: (signal: AbortSignal) => Promise<T>,
   toolName: string,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: { timeoutMs?: number; signal?: AbortSignal; mutating?: boolean } = {},
 ): Promise<T> {
   const controller = new AbortController();
   const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
   signal.throwIfAborted();
   const timeoutMs = options.timeoutMs ?? agentToolTimeoutMs(toolName);
   const timer = setTimeout(() => {
-    controller.abort(new Error(`${toolName} timed out after ${Math.round(timeoutMs / 1000)}s`));
+    controller.abort(new ToolTimeoutError(toolTimeoutMessage(toolName, timeoutMs, options.mutating)));
   }, timeoutMs);
   let onAbort: () => void = () => {};
   const cancelled = new Promise<never>((_, reject) => {

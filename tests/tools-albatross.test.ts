@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { ToolFailedBeforeWrite, ToolRetrySafe } from '../lib/ai/tool-errors';
 import * as albatross from '../lib/tools/albatross';
 import { invokeTool, ToolValidationError } from '../lib/tools/registry';
 import { runTool } from './tools/harness';
@@ -69,6 +70,8 @@ const approvalOrder: string[] = [];
 const toolInvocations: Array<{ tool: string; args: any }> = [];
 const queryFailures = new Set<string>();
 const failingCardTitles = new Set<string>();
+const provenFailure = { value: false };
+const listApplicationsFails = { value: false };
 let approvalFixture: any = null;
 let connectedAccountsFixture: any[] = [];
 let areaFixture: any = null;
@@ -148,6 +151,8 @@ async function convexMutationMock(fn: string, args: any) {
   return { ok: true };
 }
 
+let planApplications: any[] = [];
+
 async function convexQueryMock(fn: string, args: any) {
   if (queryFailures.has(fn)) throw new Error(`Query failed: ${fn}`);
   if (fn === apiMock.accounts.listConnectedAccounts) return connectedAccountsFixture;
@@ -170,7 +175,10 @@ async function convexQueryMock(fn: string, args: any) {
   if (fn === apiMock.albatrossRoutines.listForProject)
     return [{ routineId: 'routine_1', projectId: args.projectId }];
   if (fn === apiMock.albatrossWorkV2.workDetail) return workDetailFixture;
-  if (fn === apiMock.albatrossWork.listPlanApplications) return [];
+  if (fn === apiMock.albatrossWork.listPlanApplications) {
+    if (listApplicationsFails.value) throw new Error('Convex read failed');
+    return planApplications;
+  }
   return null;
 }
 
@@ -187,7 +195,10 @@ async function invokeToolMock(tool: any, args: any, ctx?: any) {
     return tool.handler(args, ctx);
   }
   if (tool.name === 'tasks_create_card') {
-    if (failingCardTitles.has(args.title)) throw new Error('Board write failed');
+    if (failingCardTitles.has(args.title)) {
+      if (provenFailure.value) throw new ToolRetrySafe('Board refused the card');
+      throw new Error('Board write failed');
+    }
     return { ok: true, cardId: `card_${sequence}`, operationId: `operation_card_${sequence}` };
   }
   if (tool.name === 'calendar_create_event') {
@@ -244,6 +255,7 @@ beforeEach(() => {
   toolInvocations.length = 0;
   queryFailures.clear();
   failingCardTitles.clear();
+  planApplications = [];
   approvalFixture = null;
   connectedAccountsFixture = [];
   areaFixture = null;
@@ -372,6 +384,81 @@ describe('Albatross plan apply failures (WRK-4, WRK-1)', () => {
     );
     // The recorded document keeps its id, so the plan binds it (WRK-5).
     expect(recorded?.args.artifacts[1]).toMatchObject({ kind: 'document', stepKey: 'step-3' });
+  });
+
+  test('a chat retry makes only the steps that earlier attempts did not record', async () => {
+    planApplications = [
+      {
+        status: 'partially_applied',
+        projectId: 'project_earlier',
+        artifacts: [{ actionKey: 'a1' }, { actionKey: 'a3' }],
+      },
+      { status: 'undone', projectId: 'project_undone', artifacts: [{ actionKey: 'a2' }] },
+    ];
+    await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_move',
+      projectMode: 'project',
+      projectTitle: 'Move',
+      plan,
+    });
+    expect(toolInvocations.map((call) => call.args.title)).toEqual(['Pack the kitchen']);
+    // The project of the earlier attempt stays: the retry does not make a second one.
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWork.createProject)).toBe(false);
+    const recorded = mutationCalls.find((call) => call.fn === apiMock.albatrossWork.recordPlanApplication);
+    expect(recorded?.args.projectId).toBe('project_earlier');
+  });
+
+  test('a chat retry with nothing left does not run a step or record an empty application', async () => {
+    planApplications = [
+      { status: 'applied', artifacts: [{ actionKey: 'a1' }, { actionKey: 'a2' }, { actionKey: 'a3' }] },
+    ];
+    const result = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_move',
+      projectMode: 'task_only',
+      plan,
+    });
+    expect(result).toMatchObject({ ok: true, alreadyApplied: true, operations: [] });
+    expect(toolInvocations).toEqual([]);
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWork.recordPlanApplication)).toBe(false);
+  });
+
+  test('a partly failed plan can run again only when each failed step proved that it wrote nothing', async () => {
+    const run = (input: Record<string, unknown>) =>
+      runTool(albatross.albatrossApplyIntentPlan.handler, {
+        intentId: 'intent_move',
+        projectMode: 'task_only',
+        plan,
+        ...input,
+      }).catch((error) => error);
+    // A plain failure can hide a write: the checkpoint must stay uncertain.
+    failingCardTitles.add('Pack the kitchen');
+    const uncertain = await run({});
+    expect(uncertain).toBeInstanceOf(Error);
+    expect(uncertain).not.toBeInstanceOf(ToolRetrySafe);
+    // A failure that proves that nothing was written can run again.
+    failingCardTitles.clear();
+    failingCardTitles.add('Book the truck');
+    provenFailure.value = true;
+    try {
+      const proven = await run({ plan: { ...plan, digitalActions: [plan.digitalActions[0]] } });
+      expect(proven).toBeInstanceOf(ToolRetrySafe);
+    } finally {
+      provenFailure.value = false;
+    }
+  });
+
+  test('a plan does not run when its earlier attempts cannot be read', async () => {
+    listApplicationsFails.value = true;
+    try {
+      const error = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+        intentId: 'intent_move',
+        projectMode: 'task_only',
+        plan,
+      }).catch((caught) => caught);
+      expect(error).toBeInstanceOf(ToolFailedBeforeWrite);
+    } finally {
+      listApplicationsFails.value = false;
+    }
   });
 
   test('nothing is recorded when no step could be created', async () => {
