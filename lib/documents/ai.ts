@@ -34,6 +34,7 @@ import {
   composePresentation,
   composePresentationV2,
   copyRepairSchema,
+  legacyBriefFromV2,
   mentionsRestyle,
   PRESENTATION_DESIGN_GUIDANCE,
   PRESENTATION_DESIGN_GUIDANCE_V2,
@@ -70,6 +71,7 @@ const defaultDependencies = {
   isDeckV2AuthoringEnabled,
   resolveDeckImagery,
   artworksForDeck,
+  artworkTimeoutMs: 40_000,
 };
 
 let dependencies = defaultDependencies;
@@ -209,6 +211,9 @@ interface DeckArtworkSelection {
   note: string;
 }
 
+// A deck's bounded steps: artwork 40 s, slide review 70 s, copy repair 40 s, layout 100 s, and
+// visual review 120 s. That is 370 s, below the 380 s tool limit. Each step degrades with a
+// note; only a deck that fails its layout check stops, and then nothing is saved.
 async function selectDeckArtworks(
   input: DeckGenerationInput,
   brief: PresentationBriefV2,
@@ -220,8 +225,11 @@ async function selectDeckArtworks(
   });
   if (!plan.slots.length) return { note: '' };
   try {
-    const resolved = await dependencies.resolveDeckImagery(plan, { userId: input.userId });
-    input.abortSignal?.throwIfAborted();
+    const resolved = await withToolTimeout(
+      () => dependencies.resolveDeckImagery(plan, { userId: input.userId }),
+      'presentation_artwork',
+      { timeoutMs: dependencies.artworkTimeoutMs, signal: input.abortSignal },
+    );
     const artworks = artworksBySlideIndex(plan, resolved);
     const count = Object.keys(artworks).length;
     if (!count) return { note: ' Artwork was not available; the slides are typographic.' };
@@ -231,6 +239,7 @@ async function selectDeckArtworks(
       note: ` Added ${count} public-domain ${count === 1 ? 'painting' : 'paintings'} with credits.`,
     };
   } catch {
+    input.abortSignal?.throwIfAborted();
     return { note: ' Artwork could not be added; the slides are typographic.' };
   }
 }
@@ -351,19 +360,22 @@ async function composeDocumentPresentationDraft(
   input: DeckGenerationInput & { presentation: PresentationBrief | PresentationBriefV2 },
 ): Promise<DocumentProposal> {
   input.abortSignal?.throwIfAborted();
-  const brief = input.presentation;
+  // A version 2 brief for a user without version 2 composes through the legacy
+  // renderer: a deck never fails on the rollout flag.
+  const version2 = 'audience' in input.presentation;
+  const downgraded =
+    version2 && !dependencies.isDeckV2AuthoringEnabled(input.userId)
+      ? legacyBriefFromV2(input.presentation as PresentationBriefV2)
+      : null;
+  const brief = downgraded?.brief ?? input.presentation;
   if (!('audience' in brief)) {
     const reviewed = await reviewPresentation(brief, input, dependencies.generateObjectForCurrentUser);
     return {
       title: brief.title,
-      summary: brief.summary + reviewed.summary,
+      summary: `${brief.summary}${reviewed.summary}${downgraded?.visualsMoved ? ' Charts, tables, and images are not in this slide format. Their data is in the speaker notes.' : ''}`,
       model: composePresentation(reviewed.brief),
     };
   }
-  if (!dependencies.isDeckV2AuthoringEnabled())
-    throw new DocumentGenerationError(
-      'Version 2 presentation authoring is disabled. Use the legacy presentation brief.',
-    );
   const art = await selectDeckArtworks(input, brief);
   const finished = await finishComposedDeck(input, brief, art);
   input.abortSignal?.throwIfAborted();
@@ -478,7 +490,7 @@ async function generateDocumentProposalDraft(input: {
     input.current.model.slides.every((slide) =>
       slide.elements.every((element) => element.type === 'text' && !element.text?.trim()),
     );
-  const deckV2 = input.kind === 'deck' && dependencies.isDeckV2AuthoringEnabled();
+  const deckV2 = input.kind === 'deck' && dependencies.isDeckV2AuthoringEnabled(input.userId);
   if (input.kind === 'deck' && (!input.current || blankDeck)) {
     if (deckV2) return generateDeckV2(input);
     const { object } = await dependencies.generateObjectForCurrentUser({

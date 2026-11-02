@@ -308,20 +308,59 @@ describe('presentation creation dogfood', () => {
     expect(generate).toHaveBeenCalled();
   });
 
-  test('direct version 2 content respects the authoring rollout flag', async () => {
+  test('a version 2 brief for a user without version 2 composes through the legacy renderer', async () => {
+    const asked: Array<string | null | undefined> = [];
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
       designPresentationLayouts: passingLayoutDesign,
-      isDeckV2AuthoringEnabled: () => false,
+      isDeckV2AuthoringEnabled: (userId) => {
+        asked.push(userId);
+        return false;
+      },
+      generateObjectForCurrentUser: (async (options: any) => passingSlideReviews(options)) as any,
     });
-    await expect(
-      composeDocumentPresentation({
-        userId: 'owner',
-        instruction: '',
-        presentation: harborBrief(),
-        artwork: 'none',
-      }),
-    ).rejects.toThrow('authoring is disabled');
+    const brief = harborBrief();
+    brief.slides[1] = {
+      ...brief.slides[1],
+      role: 'chart',
+      items: [],
+      chart: {
+        type: 'column',
+        categories: ['Spring', 'Fall'],
+        series: [{ name: 'Depth', values: [3.7, 4] }],
+        unit: 'm',
+      },
+    };
+    const proposal = await composeDocumentPresentation({
+      userId: 'owner',
+      instruction: '',
+      presentation: brief,
+      artwork: 'none',
+    });
+    expect(asked).toContain('owner');
+    expect(proposal.model).toMatchObject({ kind: 'deck', version: 1 });
+    const slide = (proposal.model as any).slides[1];
+    expect(slide.notes).toContain('Depth: Spring 3.7m, Fall 4m');
+    expect(slide.elements.some((element: any) => element.text === '3.7m')).toBe(true);
+    expect(proposal.summary).toContain('Their data is in the speaker notes.');
+  });
+
+  test('artwork that hangs degrades to typography inside its own time budget', async () => {
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
+      isDeckV2AuthoringEnabled: () => true,
+      artworkTimeoutMs: 1,
+      resolveDeckImagery: () => new Promise<never>(() => undefined),
+      generateObjectForCurrentUser: (async (options: any) => passingSlideReviews(options)) as any,
+    });
+    const proposal = await composeDocumentPresentation({
+      userId: 'owner',
+      instruction: '',
+      presentation: harborBrief(),
+    });
+    expect(proposal.summary).toContain('Artwork could not be added');
+    expect(proposal.model).toMatchObject({ kind: 'deck', version: 2 });
   });
 
   test('cancelled version 2 generation stops before artwork or copy repair', async () => {
@@ -428,10 +467,8 @@ describe('presentation creation dogfood', () => {
   });
 
   test('generation and reviewed briefs get a longer deadline while reads stay bounded', () => {
-    expect(agentToolTimeoutMs('document_create', { instructions: 'Create a deck' })).toBe(210_000);
-    expect(agentToolTimeoutMs('document_create', { instructions: 'Create a deck', presentation })).toBe(
-      380_000,
-    );
+    expect(agentToolTimeoutMs('document_create', { presentation })).toBe(380_000);
+    expect(agentToolTimeoutMs('document_create', { blocks: [] })).toBe(75_000);
     expect(agentToolTimeoutMs('document_create')).toBe(75_000);
     expect(agentToolTimeoutMs('document_get')).toBe(75_000);
     expect(agentToolTimeoutMs('document_apply_instruction')).toBe(380_000);
@@ -446,12 +483,12 @@ describe('presentation creation dogfood', () => {
         return new Promise<string>((resolve) => setTimeout(() => resolve('saved'), 90_000));
       },
       'document_create',
-      { timeoutMs: agentToolTimeoutMs('document_create', { instructions: 'Create a deck' }) },
+      { timeoutMs: agentToolTimeoutMs('document_create', { presentation }) },
     );
     jest.advanceTimersByTime(90_000);
     expect(await pending).toBe('saved');
     expect(signal?.aborted).toBe(false);
-    jest.advanceTimersByTime(210_000);
+    jest.advanceTimersByTime(290_000);
     expect(signal?.aborted).toBe(false);
   });
 
@@ -505,7 +542,7 @@ describe('presentation creation dogfood', () => {
     });
     __setDocumentToolDepsForTest({
       createDocument: create,
-      generateDocumentProposal: async (input) => {
+      composeDocumentPresentation: async (input) => {
         providerSignal = input.abortSignal;
         started();
         return new Promise((_resolve, reject) =>
@@ -519,7 +556,7 @@ describe('presentation creation dogfood', () => {
     const pending = runTool(
       async () =>
         liftToolsForAgent().document_create.execute(
-          { kind: 'deck', title: 'PubMed', instructions: 'Create two slides' },
+          { kind: 'deck', title: 'PubMed', presentation: harborBrief() },
           { abortSignal: controller.signal },
         ),
       {},

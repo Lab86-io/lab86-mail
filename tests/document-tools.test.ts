@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { z } from 'zod';
 import { DECK_THEMES, referenceDeck } from '../lib/documents/deck-fixtures';
 import { compositionArtwork } from '../lib/documents/deck-imagery';
 import { documentEditsSchema } from '../lib/documents/edits';
@@ -8,6 +9,7 @@ import {
   __setDocumentToolDepsForTest,
   documentApplyInstruction,
   documentCreate,
+  documentCreateModelInput,
   documentEdit,
   documentExport,
   documentGet,
@@ -452,8 +454,9 @@ describe('document tools', () => {
     expect(documentEdit.description).toContain('deck_restyle');
     expect(documentEdit.description).toContain('theme-and-layout');
     expect(documentEdit.description).toContain('mode apply');
-    expect(documentCreate.description).toContain('image-left');
-    expect(documentCreate.description).toContain('editorial');
+    const brief = JSON.stringify(z.toJSONSchema(documentCreateModelInput(true), { io: 'input' }));
+    expect(brief).toContain('image-left');
+    expect(brief).toContain('editorial');
     expect(documentEdit.input.shape.operations).toBe(documentEditsSchema);
   });
 

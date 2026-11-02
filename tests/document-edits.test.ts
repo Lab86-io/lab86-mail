@@ -13,11 +13,13 @@ import { TOOLS } from '../lib/tools';
 import {
   __setDocumentToolDepsForTest,
   documentCreate,
+  documentCreateFromInstructions,
   documentEdit,
   documentExport,
   spreadsheetCapabilitiesTool,
   UNREADABLE_PROPOSAL_COPY,
 } from '../lib/tools/documents';
+import { invokeTool } from '../lib/tools/registry';
 import { poolArtworks } from './fixtures/presentation-briefs';
 import { toolContext, withToolContext } from './tools/harness';
 
@@ -354,6 +356,129 @@ describe('document editing through the agent AI SDK toolset', () => {
     summary: 'Clarify the introduction',
     operations: [{ op: 'block_update' as const, blockId: 'intro', patch: { text: 'Clear plan' } }],
   });
+  test('document_create refuses instructions with the rule and never starts a second model', async () => {
+    const generation = mock(async () => {
+      throw new Error('Must not generate');
+    });
+    const create = mock(async () => {
+      throw new Error('Must not create');
+    });
+    __setDocumentToolDepsForTest({ generateDocumentProposal: generation, createDocument: create as any });
+    await expect(
+      invokeTool(
+        documentCreate,
+        { kind: 'doc', title: 'Invoice', instructions: 'Make an invoice for 10 hours.' },
+        toolContext(),
+      ),
+    ).rejects.toThrow('document_create does not write the content');
+    expect(generation).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  test('document_create saves blocks that the model wrote, with no second model', async () => {
+    const generation = mock(async () => {
+      throw new Error('Must not generate');
+    });
+    const create = mock(async (input: any) => ({
+      documentId: 'written',
+      title: input.title,
+      kind: input.kind,
+      currentRevision: 1,
+    }));
+    __setDocumentToolDepsForTest({
+      generateDocumentProposal: generation,
+      createDocument: create as any,
+      recordOperation: (async () => 'operation') as any,
+    });
+    const result: any = await invokeTool(
+      documentCreate,
+      {
+        kind: 'doc',
+        title: 'Move plan',
+        blocks: [
+          { type: 'heading', text: 'Move plan', level: 1 },
+          { type: 'bullet', text: 'Book the van' },
+        ],
+      },
+      toolContext(),
+    );
+    expect(result).toMatchObject({ ok: true, documentId: 'written', revision: 1 });
+    expect(generation).not.toHaveBeenCalled();
+    expect((create.mock.calls[0][0] as any).model).toEqual({
+      kind: 'doc',
+      version: 1,
+      blocks: [
+        { id: 'block-1', type: 'heading', text: 'Move plan', level: 1 },
+        { id: 'block-2', type: 'bullet', text: 'Book the van' },
+      ],
+    });
+  });
+
+  test('document_create builds a real workbook from the cells that the model wrote', async () => {
+    const create = mock(async (input: any) => ({
+      documentId: 'sheet',
+      title: input.title,
+      kind: input.kind,
+      currentRevision: 1,
+    }));
+    __setDocumentToolDepsForTest({
+      createDocument: create as any,
+      recordOperation: (async () => 'operation') as any,
+    });
+    await invokeTool(
+      documentCreate,
+      {
+        kind: 'sheet',
+        title: 'Budget',
+        sheet: {
+          changes: [
+            { sheet: 'Sheet 1', cell: 'A1', content: 'Rent' },
+            { sheet: 'Sheet 1', cell: 'B1', content: '1200' },
+            { sheet: 'Sheet 1', cell: 'B2', content: '=B1*2' },
+          ],
+        },
+      },
+      toolContext(),
+    );
+    const model = (create.mock.calls[0][0] as any).model;
+    expect(model).toMatchObject({ kind: 'sheet', version: 2 });
+    expect(model.workbook.sheets[0].cells).toMatchObject({ A1: 'Rent', B2: '=B1*2' });
+  });
+
+  test('document_create content must match the kind', () => {
+    const wrong = [
+      { kind: 'sheet', title: 'T', blocks: [{ type: 'paragraph', text: 'x' }] },
+      { kind: 'doc', title: 'T', sheet: { changes: [{ sheet: 'Sheet 1', cell: 'A1', content: 'x' }] } },
+    ];
+    for (const args of wrong) expect(documentCreate.input.safeParse(args).success).toBe(false);
+  });
+
+  test('a stored plan step still creates from its instructions', async () => {
+    const generation = mock(async () => ({
+      title: 'Generated',
+      summary: 'Made',
+      model: { kind: 'doc' as const, version: 1 as const, blocks: [] },
+    }));
+    const create = mock(async (input: any) => ({
+      documentId: 'plan',
+      title: input.title,
+      kind: input.kind,
+      currentRevision: 1,
+    }));
+    __setDocumentToolDepsForTest({
+      generateDocumentProposal: generation as any,
+      createDocument: create as any,
+      recordOperation: (async () => 'operation') as any,
+    });
+    const result: any = await invokeTool(
+      documentCreateFromInstructions,
+      { kind: 'doc', title: 'Vendor memo', instructions: 'Compare the two vendors.' },
+      toolContext(),
+    );
+    expect(result).toMatchObject({ ok: true, documentId: 'plan' });
+    expect(generation).toHaveBeenCalledTimes(1);
+  });
+
   test('document_create gives plain words for a proposal reply that cannot be read, and creates nothing', async () => {
     const create = mock(async () => {
       throw new Error('Must not create');

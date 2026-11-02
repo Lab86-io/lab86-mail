@@ -13,7 +13,14 @@ import {
 import { type DocumentEditContext, documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
 import { exportDocument } from '@/lib/documents/export';
 import { publishDocumentToGoogle } from '@/lib/documents/google';
-import { DOCUMENT_KINDS, documentModelText, isSheetWorkbookModel } from '@/lib/documents/model';
+import {
+  createDefaultDocumentModel,
+  DOCUMENT_KINDS,
+  type DocumentKind,
+  documentModelText,
+  isSheetWorkbookModel,
+  MAX_DOC_LIST_LEVEL,
+} from '@/lib/documents/model';
 import { saveDocxBytesAsPdf, saveOfficePdf } from '@/lib/documents/office-pdf';
 import { OfficeError } from '@/lib/documents/office-security';
 import {
@@ -29,10 +36,11 @@ import {
   listDocumentSummaries,
   updateDocument,
 } from '@/lib/documents/service';
+import { MAX_SHEET_CHANGES, sheetChangeSchema } from '@/lib/documents/sheet-workbook';
 import { spreadsheetCapabilities, spreadsheetCommandNames } from '@/lib/documents/spreadsheet-commands';
 import { applySpreadsheetChanges } from '@/lib/documents/spreadsheet-server';
 import { truncateText } from '@/lib/shared/text';
-import { defineTool } from './registry';
+import { defineTool, type ToolContext } from './registry';
 
 function requireUserId(userId: string | null | undefined) {
   if (!userId) throw new Error('Not authenticated.');
@@ -73,152 +81,279 @@ export function __setDocumentToolDepsForTest(overrides: Partial<typeof defaultDe
   dependencies = { ...defaultDependencies, ...overrides };
 }
 
+const documentBlockInputSchema = z.object({
+  type: z.enum(['paragraph', 'heading', 'bullet', 'numbered', 'quote']),
+  text: z.string().max(100_000),
+  level: z
+    .union([z.literal(1), z.literal(2), z.literal(3)])
+    .optional()
+    .describe('Heading level.'),
+  listLevel: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_DOC_LIST_LEVEL)
+    .optional()
+    .describe('List nesting. 0 is the top.'),
+});
+
+const documentSheetInputSchema = z.object({
+  newSheets: z.array(z.string().min(1).max(200)).max(20).optional().describe('Names of more sheets to add.'),
+  changes: z
+    .array(sheetChangeSchema)
+    .max(MAX_SHEET_CHANGES)
+    .min(1)
+    .describe('Cell values. sheet is "Sheet 1" or a name in newSheets. A formula starts with "=".'),
+});
+
+/** The fields of document_create that both the agent and a stored plan step can send. */
+const documentCreateFields = {
+  kind: z.enum(DOCUMENT_KINDS),
+  title: z.string().min(1).max(500),
+  blocks: z
+    .array(documentBlockInputSchema)
+    .min(1)
+    .max(5_000)
+    .optional()
+    .describe('kind=doc: the finished text of the document, in order.'),
+  sheet: documentSheetInputSchema.optional().describe('kind=sheet: the finished cells of the workbook.'),
+  sourceContext: z
+    .string()
+    .max(40_000)
+    .optional()
+    .describe('kind=deck: the evidence that the slide review reads.'),
+  sourceRefs: z.array(sourceRefSchema).max(100).optional(),
+  publishToGoogle: z.boolean().default(false),
+  googleConnectionId: z.string().max(500).optional(),
+  imageUploadIds: z.array(z.string().min(1).max(200)).max(MAX_UPLOAD_ASSETS).optional(),
+  artwork: z.enum(['auto', 'none']).optional(),
+};
+
+const PRESENTATION_FIELD_COPY =
+  'kind=deck: the finished slides. The server reviews each slide, repairs copy and layout, and composes the deck. Put source detail and citations in speaker notes.';
+
+/**
+ * The schema the agent sees for document_create. It has no instructions field,
+ * because the agent writes the content. It offers the one deck brief that the
+ * renderer of this user takes (docs/albatross-goal-runs.md).
+ */
+export function documentCreateModelInput(deckV2: boolean) {
+  return z.object({
+    ...documentCreateFields,
+    presentation: (deckV2 ? presentationAuthoringV2Schema : presentationAuthoringSchema)
+      .optional()
+      .describe(PRESENTATION_FIELD_COPY),
+  });
+}
+
+const presentationInputSchema = z.union([presentationAuthoringV2Schema, presentationAuthoringSchema]);
+
+const WRITE_IT_YOURSELF =
+  'document_create does not write the content. Write it yourself and send it: blocks for kind=doc, sheet for kind=sheet, presentation for kind=deck. For an invoice, a letter, a memo, or a report, use word_document_create with template and data.';
+
+type DocumentCreateArgs = {
+  kind: DocumentKind;
+  title: string;
+  instructions?: string;
+  blocks?: z.infer<typeof documentCreateFields.blocks>;
+  sheet?: z.infer<typeof documentCreateFields.sheet>;
+  sourceContext?: string;
+  sourceRefs?: z.infer<typeof documentCreateFields.sourceRefs>;
+  presentation?: z.infer<typeof presentationInputSchema>;
+  publishToGoogle?: boolean;
+  googleConnectionId?: string;
+  imageUploadIds?: string[];
+  artwork?: 'auto' | 'none';
+};
+
+function checkDocumentContent(args: DocumentCreateArgs, ctx: z.RefinementCtx) {
+  const wrongKind = (path: string, kind: DocumentKind) =>
+    ctx.addIssue({ code: 'custom', path: [path], message: `${path} content requires kind=${kind}.` });
+  if (args.presentation && args.kind !== 'deck') wrongKind('presentation', 'deck');
+  if (args.blocks && args.kind !== 'doc') wrongKind('blocks', 'doc');
+  if (args.sheet && args.kind !== 'sheet') wrongKind('sheet', 'sheet');
+  if (
+    args.presentation &&
+    args.instructions &&
+    !presentationSlideCountMatches(args.instructions, args.presentation.slides.length)
+  )
+    ctx.addIssue({
+      code: 'custom',
+      path: ['presentation', 'slides'],
+      message: 'Slide count does not match the instructions.',
+    });
+}
+
+/** The server's file for the model-written content, or null for a blank file. */
+async function contentModel(args: DocumentCreateArgs) {
+  if (args.blocks)
+    return {
+      kind: 'doc' as const,
+      version: 1 as const,
+      blocks: args.blocks.map((block, index) => ({ id: `block-${index + 1}`, ...block })),
+    };
+  if (args.sheet)
+    return dependencies.applySpreadsheetChanges(createDefaultDocumentModel('sheet'), {
+      kind: 'sheet-changes',
+      version: 1,
+      changes: args.sheet.changes,
+      ...(args.sheet.newSheets ? { newSheets: args.sheet.newSheets } : {}),
+    });
+  return null;
+}
+
+async function createDocumentFile(args: DocumentCreateArgs, ctx: ToolContext) {
+  const userId = requireUserId(ctx.userId);
+  ctx.abortSignal?.throwIfAborted();
+  const notes: string[] = [];
+  let assets: Awaited<ReturnType<typeof assetsFromUploads>>['assets'] | undefined;
+  if (args.imageUploadIds?.length) {
+    if (args.kind === 'deck') {
+      const uploads = await dependencies.assetsFromUploads(userId, args.imageUploadIds);
+      assets = uploads.assets;
+      notes.push(...uploads.notes);
+    } else notes.push('Image uploads apply to presentations only and were not used.');
+  }
+  ctx.abortSignal?.throwIfAborted();
+  const proposal = args.presentation
+    ? await dependencies.composeDocumentPresentation({
+        userId,
+        instruction: args.instructions || '',
+        sourceContext: args.sourceContext,
+        userEmail: ctx.userEmail || undefined,
+        userName: ctx.userName || undefined,
+        presentation: args.presentation,
+        assets,
+        artwork: args.artwork,
+        abortSignal: ctx.abortSignal,
+      })
+    : args.instructions
+      ? await dependencies
+          .generateDocumentProposal({
+            userId,
+            userEmail: ctx.userEmail || undefined,
+            userName: ctx.userName || undefined,
+            kind: args.kind,
+            instruction: args.instructions,
+            sourceContext: args.sourceContext,
+            abortSignal: ctx.abortSignal,
+            ...(assets ? { assets } : {}),
+            ...(args.artwork ? { artwork: args.artwork } : {}),
+          })
+          .catch(unreadableProposal)
+      : null;
+  const written = proposal ? null : await contentModel(args);
+  ctx.abortSignal?.throwIfAborted();
+  if (args.kind === 'deck' && proposal?.summary) notes.push(proposal.summary);
+  const document = await dependencies.createDocument({
+    userId,
+    kind: args.kind,
+    title: args.title || proposal?.title,
+    model: proposal?.model ?? written ?? undefined,
+    sourceRefs: args.sourceRefs,
+    reason: proposal?.summary || 'agent_create',
+  });
+  await dependencies.recordOperation({
+    userId,
+    tool: 'document_create',
+    surface: 'albatross',
+    summary: `Created ${args.kind} “${document.title}”`,
+    target: { kind: 'document', id: document.documentId },
+    inverse: { kind: 'documents.archive', payload: { documentId: document.documentId } },
+  });
+  let google: Awaited<ReturnType<typeof publishDocumentToGoogle>> | null = null;
+  let publishError: string | undefined;
+  if (args.publishToGoogle) {
+    try {
+      if (proposal?.visualReview?.status === 'needs_review')
+        throw new Error('Draft saved. Finish its visual review before publishing to Google.');
+      ctx.abortSignal?.throwIfAborted();
+      google = await dependencies.publishDocumentToGoogle({
+        userId,
+        document,
+        connectionId: args.googleConnectionId,
+      });
+    } catch (error) {
+      publishError =
+        error instanceof Error
+          ? truncateText(error.message, 500)
+          : 'Google publish failed after the Albatross document was created.';
+    }
+  }
+  return {
+    ok: true,
+    documentId: document.documentId,
+    title: document.title,
+    kind: document.kind,
+    revision: document.currentRevision,
+    openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
+    googleUrl: google?.webUrl,
+    publishError,
+    ...(proposal?.visualReview ? { visualReview: proposal.visualReview } : {}),
+    ...(notes.length ? { notes } : {}),
+  };
+}
+
+const documentCreateOutput = z.object({
+  ok: z.boolean(),
+  documentId: z.string(),
+  title: z.string(),
+  kind: z.enum(DOCUMENT_KINDS),
+  revision: z.number(),
+  openPath: z.string(),
+  googleUrl: z.string().optional(),
+  publishError: z.string().optional(),
+  visualReview: deckVisualReportSchema.optional(),
+  /** Plain notes on uploads that were skipped. */
+  notes: z.array(z.string()).optional(),
+});
+
+const DOCUMENT_CREATE_COPY =
+  'Create an editable Albatross document, spreadsheet, or presentation from content that you wrote. It makes a private draft, and it does not send or share it. kind=doc: send blocks. kind=sheet: send sheet, then add charts and pivots with document_edit. kind=deck: send presentation with the finished slides. Call presentation_plan with your evidence first and do its calculation and visual steps. imageUploadIds supplies up to eight chat images. artwork auto adds credited public-domain paintings to open image slots of a version 2 brief; artwork none leaves them out. For an invoice, a letter, a memo, or a report, use word_document_create instead. Send no content for a blank file.';
+
 export const documentCreate = defineTool({
   name: 'document_create',
-  description:
-    'Create an editable Albatross document, spreadsheet, or presentation. For researched decks, provide presentation with the finished slide content: it composes through review of every slide and bounded copy/layout repair. Prefer the version 2 brief with audience, purpose, tone, palette (editorial, signal, grove, lagoon, dusk, rose, sand, slate), fontPair (serif, sans, literary, humanist, grotesk, mono), imagery and slide roles: cover, statement, image-left, image-right, metrics, chart, table, process, comparison, list, quote, close. Chart slides take typed categories/series; table slides take headers/rows/source and compose editable cells. Call presentation_plan with gathered evidence first, execute its calculation and visual tool steps, then create the deck. Legacy briefs remain supported. imageUploadIds supplies up to eight owned chat images; artwork auto fills open version 2 image slots with credited public-domain paintings, while artwork none excludes decorative paintings without excluding uploaded images or data. Combine supplied images, artwork and chart/table slides as the content needs; no imagery-category selection is required. Use instructions and sourceContext when content still needs generating. Omit both to create a blank file. The result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
+  description: DOCUMENT_CREATE_COPY,
   category: 'documents',
   risk: 'write_self',
   mutating: true,
   input: z
     .object({
-      kind: z.enum(DOCUMENT_KINDS),
-      title: z.string().min(1).max(500),
+      ...documentCreateFields,
+      // Not in the schema that the agent sees. A model that still sends it gets the rule.
       instructions: z.string().min(1).max(20_000).optional(),
-      sourceContext: z.string().max(40_000).optional(),
-      sourceRefs: z.array(sourceRefSchema).max(100).optional(),
-      presentation: z
-        .union([presentationAuthoringV2Schema, presentationAuthoringSchema])
-        .optional()
-        .describe(
-          'Finished presentation content for kind=deck; reviewed slide by slide, repaired and composed before saving. Put source detail and citations in speaker notes.',
-        ),
-      publishToGoogle: z.boolean().default(false),
-      googleConnectionId: z.string().max(500).optional(),
-      imageUploadIds: z.array(z.string().min(1).max(200)).max(MAX_UPLOAD_ASSETS).optional(),
-      artwork: z.enum(['auto', 'none']).optional(),
+      presentation: presentationInputSchema.optional().describe(PRESENTATION_FIELD_COPY),
     })
     .superRefine((args, ctx) => {
-      if (args.presentation && args.kind !== 'deck')
-        ctx.addIssue({
-          code: 'custom',
-          path: ['presentation'],
-          message: 'Presentation content requires kind=deck.',
-        });
-      if (
-        args.presentation &&
-        args.instructions &&
-        !presentationSlideCountMatches(args.instructions, args.presentation.slides.length)
-      )
-        ctx.addIssue({
-          code: 'custom',
-          path: ['presentation', 'slides'],
-          message: 'Slide count does not match the instructions.',
-        });
+      checkDocumentContent(args, ctx);
+      if (args.instructions && !args.presentation)
+        ctx.addIssue({ code: 'custom', path: ['instructions'], message: WRITE_IT_YOURSELF });
     }),
-  output: z.object({
-    ok: z.boolean(),
-    documentId: z.string(),
-    title: z.string(),
-    kind: z.enum(DOCUMENT_KINDS),
-    revision: z.number(),
-    openPath: z.string(),
-    googleUrl: z.string().optional(),
-    publishError: z.string().optional(),
-    visualReview: deckVisualReportSchema.optional(),
-    /** Plain notes on uploads that were skipped. */
-    notes: z.array(z.string()).optional(),
+  output: documentCreateOutput,
+  handler: createDocumentFile,
+});
+
+/**
+ * The one caller that needs a second model: a stored plan step has only its
+ * instructions (lib/tools/albatross.ts). The agent cannot reach this tool.
+ */
+export const documentCreateFromInstructions = defineTool({
+  name: 'document_create',
+  description: 'Create an Albatross file from the instructions of a stored plan step.',
+  category: 'documents',
+  risk: 'write_self',
+  mutating: true,
+  input: z.object({
+    kind: documentCreateFields.kind,
+    title: documentCreateFields.title,
+    instructions: z.string().min(1).max(20_000),
+    sourceContext: documentCreateFields.sourceContext,
+    sourceRefs: documentCreateFields.sourceRefs,
+    publishToGoogle: documentCreateFields.publishToGoogle,
+    googleConnectionId: documentCreateFields.googleConnectionId,
   }),
-  async handler(args, ctx) {
-    const userId = requireUserId(ctx.userId);
-    ctx.abortSignal?.throwIfAborted();
-    const notes: string[] = [];
-    let assets: Awaited<ReturnType<typeof assetsFromUploads>>['assets'] | undefined;
-    if (args.imageUploadIds?.length) {
-      if (args.kind === 'deck') {
-        const uploads = await dependencies.assetsFromUploads(userId, args.imageUploadIds);
-        assets = uploads.assets;
-        notes.push(...uploads.notes);
-      } else notes.push('Image uploads apply to presentations only and were not used.');
-    }
-    ctx.abortSignal?.throwIfAborted();
-    const proposal = args.presentation
-      ? await dependencies.composeDocumentPresentation({
-          userId,
-          instruction: args.instructions || '',
-          sourceContext: args.sourceContext,
-          userEmail: ctx.userEmail || undefined,
-          userName: ctx.userName || undefined,
-          presentation: args.presentation,
-          assets,
-          artwork: args.artwork,
-          abortSignal: ctx.abortSignal,
-        })
-      : args.instructions
-        ? await dependencies
-            .generateDocumentProposal({
-              userId,
-              userEmail: ctx.userEmail || undefined,
-              userName: ctx.userName || undefined,
-              kind: args.kind,
-              instruction: args.instructions,
-              sourceContext: args.sourceContext,
-              abortSignal: ctx.abortSignal,
-              ...(assets ? { assets } : {}),
-              ...(args.artwork ? { artwork: args.artwork } : {}),
-            })
-            .catch(unreadableProposal)
-        : null;
-    ctx.abortSignal?.throwIfAborted();
-    if (args.kind === 'deck' && proposal?.summary) notes.push(proposal.summary);
-    const document = await dependencies.createDocument({
-      userId,
-      kind: args.kind,
-      title: args.title || proposal?.title,
-      model: proposal?.model,
-      sourceRefs: args.sourceRefs,
-      reason: proposal?.summary || 'agent_create',
-    });
-    await dependencies.recordOperation({
-      userId,
-      tool: 'document_create',
-      surface: 'albatross',
-      summary: `Created ${args.kind} “${document.title}”`,
-      target: { kind: 'document', id: document.documentId },
-      inverse: { kind: 'documents.archive', payload: { documentId: document.documentId } },
-    });
-    let google: Awaited<ReturnType<typeof publishDocumentToGoogle>> | null = null;
-    let publishError: string | undefined;
-    if (args.publishToGoogle) {
-      try {
-        if (proposal?.visualReview?.status === 'needs_review')
-          throw new Error('Draft saved. Finish its visual review before publishing to Google.');
-        ctx.abortSignal?.throwIfAborted();
-        google = await dependencies.publishDocumentToGoogle({
-          userId,
-          document,
-          connectionId: args.googleConnectionId,
-        });
-      } catch (error) {
-        publishError =
-          error instanceof Error
-            ? truncateText(error.message, 500)
-            : 'Google publish failed after the Albatross document was created.';
-      }
-    }
-    return {
-      ok: true,
-      documentId: document.documentId,
-      title: document.title,
-      kind: document.kind,
-      revision: document.currentRevision,
-      openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
-      googleUrl: google?.webUrl,
-      publishError,
-      ...(proposal?.visualReview ? { visualReview: proposal.visualReview } : {}),
-      ...(notes.length ? { notes } : {}),
-    };
-  },
+  output: documentCreateOutput,
+  handler: createDocumentFile,
 });
 
 export const documentList = defineTool({
