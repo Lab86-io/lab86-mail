@@ -6,7 +6,7 @@
 // Status itself comes from the server (`buildThreadRows`); nothing here
 // re-derives it.
 
-import type { ThreadFilter, ThreadRow, ThreadStatus } from './threads';
+import { compareThreadRows, type ThreadFilter, type ThreadRow, type ThreadStatus } from './threads';
 
 // ---------------------------------------------------------------------------
 // Filters and groups.
@@ -472,7 +472,7 @@ export function applyObligationsToThreadRows(
   byWork: ReadonlyMap<string, ReadonlyArray<{ title: string; createdAt: number }>>,
 ): ThreadRow[] {
   if (!byWork.size) return [...rows];
-  return rows.map((row) => {
+  const applied = rows.map((row): ThreadRow => {
     const items = byWork.get(row.workId);
     if (!items?.length || row.closed) return row;
     const latest = items.reduce((last, item) => (item.createdAt > last.createdAt ? item : last), items[0]);
@@ -488,4 +488,5 @@ export function applyObligationsToThreadRows(
       lastActivityAt,
     };
   });
+  return applied.sort(compareThreadRows);
 }

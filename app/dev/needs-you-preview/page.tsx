@@ -27,6 +27,7 @@ import type {
 import { UNDO_WINDOW_MS } from '@/lib/obligations/contract';
 import { NEEDS_YOU_FIXTURE_NOW, needsYouFixture } from '@/lib/obligations/fixtures';
 import { isClosedObligation } from '@/lib/obligations/groups';
+import { mailThreadKey, obligationsByThread } from '@/lib/obligations/surfaces';
 
 /* Dev-only harness: the Needs you page from fixtures, so every state can be
  * seen and screenshotted without a backend. Query switches:
@@ -223,7 +224,6 @@ function TodaySurfacePreview({ server }: { server: FixtureServer }) {
           loadDraft={server.onLoadDraft}
           sendReply={server.onSendReply}
           startAlbatross={server.onStartAlbatross}
-          copyText={async () => undefined}
           onOpenItem={(id) => toast(`Open ${id}`)}
           onOpenPage={say('Open the Needs you page')}
           onOpenWork={(workId) => toast(`Open thread ${workId}`)}
@@ -240,7 +240,7 @@ function TodaySurfacePreview({ server }: { server: FixtureServer }) {
 
 /** The reader strip under a stand-in title bar, and two inbox rows, one with the mark. */
 function MailSurfacePreview({ server }: { server: FixtureServer }) {
-  const dana = server.items.filter((item) => item.threadId === 'thr_dana_sow');
+  const dana = obligationsByThread(server.items, now).get(mailThreadKey('acct_alex', 'thr_dana_sow')) ?? [];
   const rowBase = {
     rowAccount: 'acct_alex',
     senderEmail: '',
@@ -345,7 +345,7 @@ function CalendarSurfacePreview({ server }: { server: FixtureServer }) {
                         ? 'Board check-in'
                         : 'Team lunch'}
                   </p>
-                  <EventNeedsYouMark eventId={eventId} />
+                  <EventNeedsYouMark accountId="acct_alex" eventId={eventId} />
                 </div>
                 <p className="truncate">3:00 PM - 3:45 PM</p>
               </div>
@@ -360,7 +360,7 @@ function CalendarSurfacePreview({ server }: { server: FixtureServer }) {
                 <h2 className="mb-4 font-display text-[18px] leading-snug">
                   {eventId === 'evt_harbor_followup' ? 'Harbor Labs follow-up' : 'Board check-in'}
                 </h2>
-                <EventNeedsYou eventId={eventId} />
+                <EventNeedsYou accountId="acct_alex" eventId={eventId} />
               </div>
             ))}
           </div>

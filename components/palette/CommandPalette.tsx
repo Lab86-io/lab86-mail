@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { requestNeedsYouItem } from '@/components/needs-you/data';
+import { NeedsYouGate } from '@/components/needs-you/NeedsYouGate';
 import { useNeedsYou } from '@/components/needs-you/useNeedsYou';
 import { SearchResultIcon } from '@/components/palette/SearchResultIcon';
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
@@ -97,7 +98,7 @@ export function CommandPalette() {
             and Escape to return to your page. Left and right switch categories at the edges of your query.
           </DialogDescription>
           {open ? (
-            <SearchContent
+            <SearchWithNeedsYou
               inputRef={input}
               onClose={() => setOpen(false)}
               onNavigate={(action) => {
@@ -112,15 +113,36 @@ export function CommandPalette() {
   );
 }
 
+interface SearchContentProps {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  onClose: () => void;
+  onNavigate: (action: () => void) => void;
+}
+
+type PaletteNeedsYou = Pick<ReturnType<typeof useNeedsYou>, 'enabled' | 'groups'>;
+const NO_NEEDS_YOU: PaletteNeedsYou = { enabled: false, groups: [] };
+
+/** A failed Needs you read leaves the search as it was: the gate shows it with no Needs you rows. */
+function SearchWithNeedsYou(props: SearchContentProps) {
+  return (
+    <NeedsYouGate fallback={<SearchContent {...props} needsYou={NO_NEEDS_YOU} />}>
+      <SearchWithLiveNeedsYou {...props} />
+    </NeedsYouGate>
+  );
+}
+
+function SearchWithLiveNeedsYou(props: SearchContentProps) {
+  // Counts and rows only: no current-move read.
+  const needsYou = useNeedsYou({ execution: false });
+  return <SearchContent {...props} needsYou={needsYou} />;
+}
+
 function SearchContent({
   inputRef,
   onClose,
   onNavigate,
-}: {
-  inputRef: React.RefObject<HTMLInputElement | null>;
-  onClose: () => void;
-  onNavigate: (action: () => void) => void;
-}) {
+  needsYou,
+}: SearchContentProps & { needsYou: PaletteNeedsYou }) {
   const [draft, setDraft] = useState('');
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<SearchScope>('all');
@@ -195,9 +217,7 @@ function SearchContent({
     retry: false,
   });
   // Needs you (docs/research/needs-you-web-2-design-2026-11-02.md): the page
-  // under its own name, and each open item by title. Counts only: no
-  // current-move read.
-  const needsYou = useNeedsYou({ execution: false });
+  // under its own name, and each open item by title.
   const pages = scope === 'all' ? needsYouPages(searchPages(trimmed), needsYou.enabled) : [];
   const needsYouHits =
     needsYou.enabled && scope === 'all' && trimmed.length >= 2

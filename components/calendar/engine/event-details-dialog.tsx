@@ -108,7 +108,7 @@ export function EventDetailsDialog({ event, children, open: controlledOpen, onOp
         <ScrollArea className="max-h-[70vh]">
           <div className="space-y-4 pr-3">
             {/* Needs you: the invitation or the preparation this event waits for. */}
-            <EventNeedsYou eventId={event.id} />
+            <EventNeedsYou accountId={event.accountId} eventId={event.id} />
             {open && event.accountId && event.calendarId && !event.pending && (
               <NarrativeMeetingPrep
                 key={JSON.stringify([

@@ -16,7 +16,7 @@ import {
 import type { ObligationView } from '@/lib/obligations/contract';
 import { laterOptions } from '@/lib/obligations/groups';
 import { kindLabel } from '@/lib/obligations/labels';
-import { obligationsByEvent } from '@/lib/obligations/surfaces';
+import { calendarEventKey, obligationsByEvent } from '@/lib/obligations/surfaces';
 import { cn } from '@/lib/utils';
 import { useNeedsYouSnapshot } from './data';
 import { NeedsYouGate } from './NeedsYouGate';
@@ -85,21 +85,26 @@ export function CalendarNeedsYouProvider({ children }: { children: ReactNode }) 
 }
 
 /** The open items of one event, or an empty list outside the flag. */
-export function useEventObligations(eventId: string | undefined): ObligationView[] {
+export function useEventObligations(
+  accountId: string | undefined,
+  eventId: string | undefined,
+): ObligationView[] {
   const value = useContext(CalendarNeedsYouContext);
-  if (!value || !eventId) return [];
-  return value.byEvent.get(eventId) ?? [];
+  if (!value || !accountId || !eventId) return [];
+  return value.byEvent.get(calendarEventKey(accountId, eventId)) ?? [];
 }
 
 /** One small accent ring at the right of a block title: the event has an open item. */
 export function EventNeedsYouMark({
+  accountId,
   eventId,
   className,
 }: {
+  accountId: string | undefined;
   eventId: string | undefined;
   className?: string;
 }) {
-  const items = useEventObligations(eventId);
+  const items = useEventObligations(accountId, eventId);
   if (!items.length) return null;
   return (
     <span
@@ -113,9 +118,15 @@ export function EventNeedsYouMark({
 }
 
 /** The item card in the event dialog: the sentence, why, and Yes/No/Maybe or Done/Later. */
-export function EventNeedsYou({ eventId }: { eventId: string | undefined }) {
+export function EventNeedsYou({
+  accountId,
+  eventId,
+}: {
+  accountId: string | undefined;
+  eventId: string | undefined;
+}) {
   const value = useContext(CalendarNeedsYouContext);
-  const items = useEventObligations(eventId);
+  const items = useEventObligations(accountId, eventId);
   const actions = useObligationActions({ post: value?.post });
   const live = useMemo(() => actions.merge(items), [actions, items]);
   if (!value || !live.length) return null;
@@ -124,7 +135,8 @@ export function EventNeedsYou({ eventId }: { eventId: string | undefined }) {
     <div data-event-needs-you className="space-y-3">
       {live.map((item) => {
         const closed = item.state !== 'open' && item.state !== 'snoozed';
-        const busy = actions.busyId === item.id;
+        // One request at a time across the dialog: an event can hold two items.
+        const busy = actions.busyId !== null;
         const error = actions.error?.id === item.id ? actions.error.text : null;
         return (
           <div

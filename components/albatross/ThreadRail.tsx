@@ -77,8 +77,21 @@ export const THREAD_RAIL_COPY = {
   capture: 'Get this off my mind',
 } as const;
 
+/**
+ * Needs you items (phase 3, open item 3): a thread with an open item joins
+ * Needs you with "Your turn" and the item title. The rail and the hop keys read
+ * the same rows. One shared snapshot read.
+ */
+export function useThreadRowsWithItems(rawRows: ThreadRowData[] | undefined, nowMs: number) {
+  const snapshot = useNeedsYouSnapshot();
+  return useMemo(() => {
+    if (!rawRows || !snapshot?.enabled) return rawRows;
+    return applyObligationsToThreadRows(rawRows, obligationsByWork(snapshot.items, nowMs));
+  }, [rawRows, snapshot, nowMs]);
+}
+
 export function ThreadRail({
-  rows: rawRows,
+  rows,
   laterCount = 0,
   openWorkId,
   filter,
@@ -102,13 +115,6 @@ export function ThreadRail({
   const listRef = useRef<HTMLDivElement>(null);
   const [held, setHeld] = useState(false);
   const shownRef = useRef<ThreadRowData[]>([]);
-  // Needs you items (phase 3, open item 3): a thread with an open item joins
-  // Needs you with "Your turn" and the item title. One shared snapshot read.
-  const snapshot = useNeedsYouSnapshot();
-  const rows = useMemo(() => {
-    if (!rawRows || !snapshot?.enabled) return rawRows;
-    return applyObligationsToThreadRows(rawRows, obligationsByWork(snapshot.items, nowMs));
-  }, [rawRows, snapshot, nowMs]);
   const counts = useMemo(() => countThreads(rows ?? []), [rows]);
 
   const visible = useMemo(() => {

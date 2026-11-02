@@ -116,7 +116,7 @@ import { cn } from '@/lib/utils';
 import { undoPersonalDetails } from '../ai-elements/form-question-card';
 import { awakeWork } from './AlbatrossesSurface';
 import { ThreadAnswerInPlace } from './ThreadAnswerInPlace';
-import { ThreadRail } from './ThreadRail';
+import { ThreadRail, useThreadRowsWithItems } from './ThreadRail';
 import type { AllowSecureNote } from './thread/AllowSecureBlock';
 import { DetailsPanel } from './thread/DetailsPanel';
 import {
@@ -1059,7 +1059,7 @@ export function WorkThread({ workId }: { workId: string }) {
     [scopedWorks, railNowMs],
   );
   const laterCount = scopedWorks && awakeWorks ? scopedWorks.length - awakeWorks.length : 0;
-  const rows = useThreadRows(awakeWorks);
+  const rows = useThreadRowsWithItems(useThreadRows(awakeWorks), railNowMs);
   const row = useMemo(() => rows?.find((item) => item.workId === workId) ?? null, [rows, workId]);
   const railAreaName = useMemo(
     () => (railAreaId ? (scopedWorks?.find((work) => work.areaName)?.areaName ?? null) : null),

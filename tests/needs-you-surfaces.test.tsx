@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { JSDOM } from 'jsdom';
@@ -34,6 +34,7 @@ import {
 import { groupNeedsYou, laterOptions, needsYouSummary } from '../lib/obligations/groups';
 import {
   areaChooserSentence,
+  calendarEventKey,
   isOpenObligation,
   mailThreadKey,
   needsYouPages,
@@ -119,8 +120,22 @@ describe('the lookups', () => {
 
   test('events map to their rsvp and prepare items; Albatrosses map to their open items', () => {
     const events = obligationsByEvent(fixture.items, NOW);
-    expect(events.get('evt_harbor_followup')?.[0].kind).toBe('rsvp');
-    expect(events.get('evt_board_checkin')?.[0].kind).toBe('prepare');
+    const eventKey = (id: string) => {
+      const item = fixture.items.find((entry) => entry.eventId === id);
+      return calendarEventKey(String(item?.accountId), id);
+    };
+    expect(events.get(eventKey('evt_harbor_followup'))?.[0].kind).toBe('rsvp');
+    expect(events.get(eventKey('evt_board_checkin'))?.[0].kind).toBe('prepare');
+    // Another account can hold an event with the same id: its items stay apart.
+    const twin = { ...fixture.items.find((entry) => entry.eventId === 'evt_harbor_followup')! };
+    const split = obligationsByEvent(
+      [...fixture.items, { ...twin, id: 'ob_twin', accountId: 'acct_other' }],
+      NOW,
+    );
+    expect(split.get(calendarEventKey('acct_other', 'evt_harbor_followup'))?.map((item) => item.id)).toEqual([
+      'ob_twin',
+    ]);
+    expect(split.get(eventKey('evt_harbor_followup'))?.map((item) => item.id)).not.toContain('ob_twin');
     const works = obligationsByWork(fixture.items, NOW);
     const deck = works.get(NEEDS_YOU_FIXTURE_WORK_ID)?.map((item) => item.id) ?? [];
     expect(deck).toContain('ob_slack_numbers');
@@ -162,6 +177,12 @@ describe('the areas', () => {
     expect(source).toContain('areaChooserSentence(totals.needsYou)');
     expect(source).toContain('obligationNeedsYouRows(');
     expect(source).toContain("row.kind === 'obligation' && row.workId");
+  });
+
+  test('the generated brief and the artifact of an area show the ledger rows too', () => {
+    const source = readFileSync('components/albatross/AreaHome.tsx', 'utf8');
+    expect(source.match(/brief=\{withLedger\(/g)).toHaveLength(2);
+    expect(source).toContain('<NeedsYouSection rows={ledgerRows} bounded={false} />');
   });
 });
 
@@ -212,12 +233,22 @@ describe('the thread rail rows', () => {
     expect(applyObligationsToThreadRows([row({})], new Map())[0].needsYou).toBe(false);
   });
 
-  test('the rail reads the shared snapshot and applies the rows', () => {
-    const source = readFileSync('components/albatross/ThreadRail.tsx', 'utf8');
-    expect(source).toContain('useNeedsYouSnapshot()');
-    expect(source).toContain(
-      'applyObligationsToThreadRows(rawRows, obligationsByWork(snapshot.items, nowMs))',
+  test('the rail and the hop keys read the same rows from the shared snapshot', () => {
+    const rail = readFileSync('components/albatross/ThreadRail.tsx', 'utf8');
+    expect(rail).toContain('useNeedsYouSnapshot()');
+    expect(rail).toContain('applyObligationsToThreadRows(rawRows, obligationsByWork(snapshot.items, nowMs))');
+    const thread = readFileSync('components/albatross/WorkThread.tsx', 'utf8');
+    expect(thread).toContain('useThreadRowsWithItems(useThreadRows(awakeWorks), railNowMs)');
+  });
+
+  test('a row that an item promotes takes its place by time among the rows that need the user', () => {
+    const older = row({ workId: 'older', needsYou: true, status: 'your_turn', lastActivityAt: 100 });
+    const idle = row({ workId: 'idle', lastActivityAt: 50 });
+    const out = applyObligationsToThreadRows(
+      [older, idle],
+      new Map([['idle', [{ title: 'New item', createdAt: 200 }]]]),
     );
+    expect(out.map((item) => item.workId)).toEqual(['idle', 'older']);
   });
 });
 
@@ -291,6 +322,33 @@ describe('the stored lane hides under the live list', () => {
     const old = doc(render(false));
     expect(old.querySelector('[data-brief-live-layer]')).toBeNull();
     expect(old.querySelector('[data-brief-region="needs-you"]')).not.toBeNull();
+  });
+
+  test('a split or a grid that loses the lane keeps a valid shape, and other trees stay as they are', () => {
+    const text = (value: string) => ({ kind: 'text', role: 'body', text: value }) as any;
+    const lane = { kind: 'group', title: 'Needs you', children: [text('row')] } as any;
+    const base = needsYouLetterFixture();
+    const withTrees = (trees: Record<string, unknown>) => ({
+      ...base,
+      regions: Object.entries(trees).map(([id, tree]) => ({ ...base.regions[0], id, tree })),
+    });
+    const out = withoutNeedsYouLane(
+      withTrees({
+        leaf: text('stays'),
+        kept: { kind: 'stack', children: [text('a'), text('b')] },
+        split: { kind: 'split', children: [lane, text('alone')] },
+        grid: { kind: 'grid', children: [lane, text('alone')] },
+        stack: { kind: 'stack', children: [lane, text('stays'), text('too')] },
+        gone: { kind: 'stack', children: [lane] },
+      }) as any,
+    );
+    const tree = (id: string) => out.regions.find((region) => region.id === id)?.tree as any;
+    expect(tree('leaf').kind).toBe('text');
+    expect(tree('kept').children).toHaveLength(2);
+    expect(tree('split')).toEqual(text('alone'));
+    expect(tree('grid')).toEqual(text('alone'));
+    expect(tree('stack').children).toHaveLength(2);
+    expect(out.regions.map((region) => region.id)).not.toContain('gone');
   });
 
   test('Today mounts the layer around the brief', () => {
@@ -441,6 +499,12 @@ describe('the Today list', () => {
 
 describe('the Today list acts in place', () => {
   useBrowserGlobals();
+  beforeAll(() => {
+    setSystemTime(new Date(NOW));
+  });
+  afterAll(() => {
+    setSystemTime();
+  });
   // Four items: a code, a moved flight, a review, and a reply with a draft. All fit under the cap.
   const few = ['ob_code_now', 'ob_flight', 'ob_review', 'ob_sow'].map(byId);
   const mount = async (props: TodayNeedsYouProps) => {
@@ -454,6 +518,42 @@ describe('the Today list acts in place', () => {
     renderer.root.findAll((node) => node.type === 'li' && node.props['data-needs-you-row'] === id)[0];
   const button = (renderer: ReactTestRenderer, id: string, label: string) =>
     rowOf(renderer, id).findAll((node) => node.type === 'button' && node.props.children === label)[0];
+
+  test('an answer to an invitation closes with no Undo', async () => {
+    const { props } = todayProps({ items: [byId('ob_rsvp')], extras: [] });
+    const renderer = await mount(props);
+    await act(async () => {
+      button(renderer, 'ob_rsvp', 'Yes').props.onClick({ stopPropagation() {} });
+    });
+    expect(
+      rowOf(renderer, 'ob_rsvp').findAll((node) => node.props['data-needs-you-undo'] !== undefined),
+    ).toHaveLength(0);
+  });
+
+  test('a failed copy does not say Copied', async () => {
+    const { props } = todayProps({ items: few, extras: [] });
+    const renderer = await mount({
+      ...props,
+      copyText: async () => {
+        throw new Error('denied');
+      },
+    });
+    await act(async () => {
+      button(renderer, 'ob_code_now', 'Copy').props.onClick({ stopPropagation() {} });
+      await Promise.resolve();
+    });
+    expect(button(renderer, 'ob_code_now', 'Copied')).toBeUndefined();
+  });
+
+  test('the head counts the rows of the list, not the items that wait on others', async () => {
+    const waiting = fixture.items.find((item) => item.kind === 'waiting');
+    expect(waiting).toBeDefined();
+    const { props } = todayProps({ items: [byId('ob_flight'), waiting!], extras: [] });
+    const renderer = await mount(props);
+    const text = JSON.stringify(renderer.toJSON());
+    expect(text).toContain('thing needs you now.');
+    expect(text).not.toContain('waits for you');
+  });
 
   test('Done closes the row at once, keeps it in place with Undo, and Undo brings it back', async () => {
     const { props, actions } = todayProps({ items: few, extras: [] });
@@ -581,12 +681,13 @@ describe('the reader strip', () => {
 });
 
 describe('the calendar', () => {
+  const ACCOUNT = String(fixture.items.find((item) => item.eventId === 'evt_harbor_followup')?.accountId);
   const html = renderToStaticMarkup(
     <CalendarNeedsYouItems items={fixture.items} now={NOW} timezone={TZ}>
-      <EventNeedsYouMark eventId="evt_harbor_followup" />
-      <EventNeedsYouMark eventId="evt_plain" />
-      <EventNeedsYou eventId="evt_harbor_followup" />
-      <EventNeedsYou eventId="evt_board_checkin" />
+      <EventNeedsYouMark accountId={ACCOUNT} eventId="evt_harbor_followup" />
+      <EventNeedsYouMark accountId={ACCOUNT} eventId="evt_plain" />
+      <EventNeedsYou accountId={ACCOUNT} eventId="evt_harbor_followup" />
+      <EventNeedsYou accountId={ACCOUNT} eventId="evt_board_checkin" />
     </CalendarNeedsYouItems>,
   );
   const page = doc(html);
@@ -614,10 +715,10 @@ describe('the calendar', () => {
       '<CalendarNeedsYouProvider>',
     );
     expect(readFileSync('components/calendar/engine/event-details-dialog.tsx', 'utf8')).toContain(
-      '<EventNeedsYou eventId={event.id} />',
+      '<EventNeedsYou accountId={event.accountId} eventId={event.id} />',
     );
     expect(readFileSync('components/calendar/engine/event-block.tsx', 'utf8')).toContain(
-      '<EventNeedsYouMark eventId={event.id} />',
+      '<EventNeedsYouMark accountId={event.accountId} eventId={event.id} />',
     );
   });
 });

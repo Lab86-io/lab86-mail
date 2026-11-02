@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import {
   CalendarDays,
   ChevronDown,
@@ -287,6 +288,7 @@ export function NeedsYouRow({
       ? [{ label: albatrossActionLabel || 'Answer', onClick: onAlbatrossAction, primary: true }]
       : [];
   const later = obligation && !closed && obligation.kind !== 'code' && onLater && laterOptions?.length;
+  const [laterOpen, setLaterOpen] = useState(false);
   const undo = Boolean(onUndo) && (closed || Boolean(undoWord));
   const hasPills = pills.length > 0 || Boolean(later);
   const due = words.due;
@@ -361,6 +363,7 @@ export function NeedsYouRow({
             'whitespace-nowrap pt-px text-right text-[11.5px] leading-[18px] tabular-nums',
             DUE_TONE[due.tone],
             hasPills && !pillsAlways && 'group-hover:invisible group-focus-within:invisible',
+            laterOpen && 'invisible',
             (hasPills && pillsAlways) || undo ? 'invisible' : undefined,
           )}
         >
@@ -392,7 +395,8 @@ export function NeedsYouRow({
           className={cn(
             'absolute top-[9px] gap-1',
             flush ? 'right-0' : 'right-3',
-            pillsAlways ? 'flex' : 'hidden group-hover:flex group-focus-within:flex',
+            // The menu is a portal: focus leaves the row, and the pills must stay.
+            pillsAlways || laterOpen ? 'flex' : 'hidden group-hover:flex group-focus-within:flex',
           )}
         >
           {pills.map((pill) => (
@@ -411,7 +415,7 @@ export function NeedsYouRow({
             </button>
           ))}
           {later ? (
-            <DropdownMenu>
+            <DropdownMenu open={laterOpen} onOpenChange={setLaterOpen}>
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"

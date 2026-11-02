@@ -40,7 +40,7 @@ import {
 } from './data';
 import { NeedsYouGate } from './NeedsYouGate';
 import { NeedsYouRow } from './NeedsYouRow';
-import { COPIED_MS } from './NeedsYouView';
+import { COPIED_MS, sonnerNeedsYouNotifier } from './NeedsYouView';
 import { useNeedsYou } from './useNeedsYou';
 import { type ObligationPost, useObligationActions } from './useObligationActions';
 
@@ -89,9 +89,9 @@ export function TodayNeedsYou({
   const reduceMotion = useReducedMotion() ?? false;
   // Rows that the user closed or put off: they stay in place for the Undo
   // window, then leave with a height collapse. The map holds the leave time.
-  const [leaving, setLeaving] = useState<ReadonlyMap<string, { until: number; word?: string }>>(
-    () => new Map(),
-  );
+  const [leaving, setLeaving] = useState<
+    ReadonlyMap<string, { until: number; word?: string; undoable: boolean }>
+  >(() => new Map());
   const [replyId, setReplyId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<ReadonlyMap<string, DraftState>>(() => new Map());
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -100,7 +100,8 @@ export function TodayNeedsYou({
 
   const merged = useMemo(() => actions.merge(items), [actions, items]);
   const groups = useMemo(() => groupNeedsYou(merged, extras, now, timezone), [merged, extras, now, timezone]);
-  const summary = useMemo(() => needsYouSummary(groups), [groups]);
+  // The head counts what the list holds: Waiting on others is not on this list.
+  const summary = useMemo(() => needsYouSummary(groups.filter((group) => group.id !== 'waiting')), [groups]);
   const list = useMemo(() => todayNeedsYouList(groups), [groups]);
   const later = useMemo(() => laterOptions(now, timezone), [now, timezone]);
 
@@ -160,8 +161,9 @@ export function TodayNeedsYou({
   );
 
   const leave = useCallback((id: string, until: number | undefined, word?: string) => {
-    const at = until && until > Date.now() ? until : Date.now() + LEAVE_WITHOUT_UNDO_MS;
-    setLeaving((current) => new Map(current).set(id, { until: at, word }));
+    const undoable = Boolean(until && until > Date.now());
+    const at = undoable && until ? until : Date.now() + LEAVE_WITHOUT_UNDO_MS;
+    setLeaving((current) => new Map(current).set(id, { until: at, word, undoable }));
   }, []);
   const close = useCallback(
     async (obligation: ObligationView, action: Parameters<typeof actions.act>[1], word?: string) => {
@@ -189,11 +191,17 @@ export function TodayNeedsYou({
     (obligation: ObligationView) => {
       const value = obligation.code?.value.replace(/\s+/g, '');
       if (!value) return;
-      void copyText(value).then(() => {
-        setCopiedId(obligation.id);
-        if (copiedTimer.current) clearTimeout(copiedTimer.current);
-        copiedTimer.current = setTimeout(() => setCopiedId(null), COPIED_MS);
-      });
+      // The default can throw at once: an insecure page has no clipboard.
+      void Promise.resolve()
+        .then(() => copyText(value))
+        .then(
+          () => {
+            setCopiedId(obligation.id);
+            if (copiedTimer.current) clearTimeout(copiedTimer.current);
+            copiedTimer.current = setTimeout(() => setCopiedId(null), COPIED_MS);
+          },
+          () => sonnerNeedsYouNotifier.info('Could not copy the code.', 'Select the code and copy it.'),
+        );
     },
     [copyText],
   );
@@ -270,7 +278,9 @@ export function TodayNeedsYou({
                 : closed
                   ? closeReasonLabel(obligation?.closeReason)
                   : undefined;
-            const canUndo = Boolean(leavingEntry && obligation && leavingEntry.until > now - 100 && undoWord);
+            const canUndo = Boolean(
+              leavingEntry?.undoable && obligation && leavingEntry.until > now - 100 && undoWord,
+            );
             return (
               <motion.li
                 key={entry.id}
@@ -481,27 +491,28 @@ function ConnectedTodayNeedsYou({ data }: { data: ReturnType<typeof useNeedsYou>
   );
 }
 
-function LayerWhenEnabled({ children }: { children: ReactNode }) {
+/** The list with its data: mounts only for a user in the flag, so nobody else starts the second read. */
+function LiveTodayNeedsYou() {
   // Counts and rows only: no current-move read.
   const data = useNeedsYou({ execution: false });
-  const enabled = data.snapshot?.enabled === true;
-  const value = useMemo(
-    () => ({
-      node: enabled ? <ConnectedTodayNeedsYou data={data} /> : null,
-      // A user outside the flag has no stored lane, so the hide costs nothing
-      // while the snapshot loads; a user in the flag sees no lane flash.
-      hideNeedsYou: data.snapshot === undefined || enabled,
-    }),
-    [data, enabled],
-  );
-  return <BriefLiveLayer.Provider value={value}>{children}</BriefLiveLayer.Provider>;
+  return <ConnectedTodayNeedsYou data={data} />;
 }
 
-/** Reads only the snapshot first: a user outside the flag starts no second notification read. */
+/** One provider at all times: the brief under it never mounts again when the snapshot arrives. */
 function LayerChooser({ children }: { children: ReactNode }) {
   const snapshot = useNeedsYouSnapshot();
-  if (snapshot !== undefined && !snapshot.enabled) return <>{children}</>;
-  return <LayerWhenEnabled>{children}</LayerWhenEnabled>;
+  const loading = snapshot === undefined;
+  const enabled = snapshot?.enabled === true;
+  const value = useMemo(
+    () => ({
+      node: enabled ? <LiveTodayNeedsYou /> : null,
+      // A user outside the flag has no stored lane, so the hide costs nothing
+      // while the snapshot loads; a user in the flag sees no lane flash.
+      hideNeedsYou: loading || enabled,
+    }),
+    [enabled, loading],
+  );
+  return <BriefLiveLayer.Provider value={value}>{children}</BriefLiveLayer.Provider>;
 }
 
 /**

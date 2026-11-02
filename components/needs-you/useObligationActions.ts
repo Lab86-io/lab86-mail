@@ -13,6 +13,8 @@ export type ObligationPost = (
   action: ObligationAction,
 ) => Promise<ObligationActionResponse>;
 
+const defaultPost: ObligationPost = (obligation, action) => postObligationAction(obligation.id, action);
+
 /**
  * Done, Later, Not mine, Yes/No/Maybe, and Undo on one surface outside the
  * page: the reader strip, the Today list, the calendar dialog. What the user
@@ -23,7 +25,7 @@ export type ObligationPost = (
 export function useObligationActions(
   options: { post?: ObligationPost; notify?: NeedsYouNotifier | null } = {},
 ) {
-  const post = options.post ?? ((obligation, action) => postObligationAction(obligation.id, action));
+  const post = options.post ?? defaultPost;
   const notify = options.notify === undefined ? sonnerNeedsYouNotifier : options.notify;
   const [overrides, setOverrides] = useState<ReadonlyMap<string, ObligationView>>(() => new Map());
   const [undoUntil, setUndoUntil] = useState<ReadonlyMap<string, number>>(() => new Map());

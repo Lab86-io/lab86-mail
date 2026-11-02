@@ -573,6 +573,8 @@ export function withoutNeedsYouLane(document: BriefDocumentV2): BriefDocumentV2 
     const children = node.children.map(prune).filter((child): child is BriefNode => child !== null);
     if (children.length === node.children.length) return node;
     if (!children.length) return null;
+    // A split needs two children and a grid at least two: the one child stands alone.
+    if (children.length === 1 && (node.kind === 'split' || node.kind === 'grid')) return children[0];
     return { ...node, children } as BriefNode;
   };
   let changed = false;

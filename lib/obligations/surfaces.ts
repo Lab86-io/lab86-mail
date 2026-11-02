@@ -100,19 +100,24 @@ export function obligationsByThread(
   return map;
 }
 
-/** The open calendar items (`rsvp`, `prepare`) of each event, by event id. */
+export function calendarEventKey(accountId: string, eventId: string): string {
+  return `${accountId}:${eventId}`;
+}
+
+/** The open calendar items (`rsvp`, `prepare`) of each event, by `accountId:eventId`. Two accounts can share an event id. */
 export function obligationsByEvent(
   items: readonly ObligationView[],
   now: number,
 ): Map<string, ObligationView[]> {
   const map = new Map<string, ObligationView[]>();
   for (const item of items) {
-    if (item.source !== 'calendar' || !item.eventId) continue;
+    if (item.source !== 'calendar' || !item.eventId || !item.accountId) continue;
     if (item.kind !== 'rsvp' && item.kind !== 'prepare') continue;
     if (!isOpenObligation(item, now)) continue;
-    const list = map.get(item.eventId);
+    const key = calendarEventKey(item.accountId, item.eventId);
+    const list = map.get(key);
     if (list) list.push(item);
-    else map.set(item.eventId, [item]);
+    else map.set(key, [item]);
   }
   for (const list of map.values()) list.sort(compareByCreated);
   return map;

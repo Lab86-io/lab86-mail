@@ -662,6 +662,23 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     );
   }
 
+  // The ledger items that belong to an Albatross of this area join the same
+  // section, so "Needs you" means one thing here and on the page. The generated
+  // brief is the view that most areas open, so it shows them too.
+  const ledgerRows = needsYouSnapshot?.enabled
+    ? obligationNeedsYouRows(
+        obligationsByWork(needsYouSnapshot.items, now),
+        (workRows ?? []).map((row) => String(row._id)),
+        new Map((workRows ?? []).map((row) => [String(row._id), String(row.title || '')])),
+      )
+    : [];
+  const withLedger = (brief: ReactNode) => (
+    <div className="flex h-full min-h-0 flex-col">
+      <NeedsYouSection rows={ledgerRows} bounded={false} />
+      <div className="min-h-0 flex-1">{brief}</div>
+    </div>
+  );
+
   // The generated document is the selected Area screen. React only supplies
   // the sandbox, theme/action bridge, and small floating host controls. The
   // structured renderer below is retained solely as an explicit recovery view.
@@ -675,7 +692,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     return (
       <AreaWorkbench
         home={home}
-        brief={
+        brief={withLedger(
           <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-bg)] pt-14">
             <BriefCanvas value={home.livingBrief.document} surface="area" hideInactive />
             <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 p-3">
@@ -725,8 +742,8 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
                 </a>
               </div>
             </div>
-          </div>
-        }
+          </div>,
+        )}
       />
     );
   }
@@ -740,7 +757,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     return (
       <AreaWorkbench
         home={home}
-        brief={
+        brief={withLedger(
           <AreaArtifactCanvas
             home={home}
             html={home.livingBrief.artifactHtml}
@@ -757,8 +774,8 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
             onOpenAlbatrosses={() => setAreaView('albatrosses')}
             onStructuredFallback={() => setShowStructuredFallback(true)}
             pulse={pulse}
-          />
-        }
+          />,
+        )}
       />
     );
   }
@@ -805,15 +822,6 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   // plans awaiting answers, overdue tasks, and suggested context to confirm.
   // A Work item and its plan share an intent id, so the same intent can arrive
   // from both sources — merge by identity, keeping the actionable work_input row.
-  // The ledger items that belong to an Albatross of this area join the same
-  // section, so "Needs you" means one thing here and on the page.
-  const ledgerRows = needsYouSnapshot?.enabled
-    ? obligationNeedsYouRows(
-        obligationsByWork(needsYouSnapshot.items, now),
-        (workRows ?? []).map((row) => String(row._id)),
-        new Map((workRows ?? []).map((row) => [String(row._id), String(row.title || '')])),
-      )
-    : [];
   const needsYou = mergeNeedsYouRows(
     [...workNeedsYouRows(workRows), ...ledgerRows],
     areaNeedsYouRows({ plans: home.plans, tasks: home.tasks, candidateFacts: home.facts.candidate }, now),
