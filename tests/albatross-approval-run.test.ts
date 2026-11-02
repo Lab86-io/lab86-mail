@@ -1,4 +1,5 @@
 import { describe, expect, mock, spyOn, test } from 'bun:test';
+import { getFunctionName } from 'convex/server';
 import {
   type ApprovalRunState,
   runAfterDecision,
@@ -150,14 +151,13 @@ describe('settleRunAfterDecision', () => {
   });
 
   test('a settlement that cannot close gives its claim back', async () => {
-    const calls: any[] = [];
+    const calls: string[] = [];
     // Nothing went ahead, so the run closes, and that write fails.
     const h = harness(
       { ...state(), approved: 0 },
       {
-        convexMutation: mock(async (_fn: unknown, args: any) => {
-          calls.push(args);
-          if (args?.runId && calls.length === 1) return true;
+        convexMutation: mock(async (fn: any, args: any) => {
+          calls.push(getFunctionName(fn));
           if (args?.id) throw new Error('Convex is busy');
           return true;
         }) as never,
@@ -165,9 +165,9 @@ describe('settleRunAfterDecision', () => {
     );
     expect(await settleRunAfterDecision(input, h.deps)).toEqual({ action: 'none' });
     expect(calls).toEqual([
-      { userId: 'user-1', runId: 'run-1' },
-      { userId: 'user-1', id: 'run-1' },
-      { userId: 'user-1', runId: 'run-1' },
+      'albatrossStepRuns:claimApprovalSettlement',
+      'albatrossStepRuns:dismissHandoff',
+      'albatrossStepRuns:releaseApprovalSettlement',
     ]);
   });
 

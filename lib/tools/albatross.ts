@@ -1520,7 +1520,11 @@ export const albatrossRejectAction = defineTool({
       decisionNote: args.reason || 'Rejected from Albatross approval queue.',
       onlyIfPending: true,
     });
-    const followUp = await deps.settleRunAfterDecision({ userId, approval });
+    // A decline in a mixed run: the continuation note must not name this item as sent.
+    const followUp = await deps.settleRunAfterDecision({
+      userId,
+      approval: { ...approval, title: undefined },
+    });
     return { ok: true, followUp };
   },
 });
