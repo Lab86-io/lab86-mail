@@ -182,14 +182,17 @@ export function rowWords(entry: NeedsYouListEntry, now: number, timezone: string
         : [when, kindLabel(obligation), obligation.workTitle?.trim() || null].filter(Boolean).join(' · ');
   // "Board check-in · Calendar · Board check-in" says the place twice: the asker already names it.
   const label = obligation.sourceLabel?.trim();
+  const line = obligation.kind === 'code' && closed ? 'Verification code.' : obligation.title;
   return {
     name: obligation.asker,
     source: sourceWords({
       source: obligation.source,
-      sourceLabel: label && label !== obligation.asker ? label : undefined,
+      // The line often names the place: "Answer the invitation: Standup".
+      sourceLabel: label && label !== obligation.asker && !line.includes(label) ? label : undefined,
     }),
-    line: obligation.kind === 'code' && closed ? 'Verification code.' : obligation.title,
+    line,
     meta,
+    when,
     due: dueLabel(obligation, now, timezone),
   };
 }
@@ -226,6 +229,13 @@ export interface NeedsYouRowProps {
   pillsAlways?: boolean;
   /** No side padding: the row sits in a measure that already has its inset (the Today list). */
   flush?: boolean;
+  /**
+   * The Today list: the actions always show, at the right on a wide column and
+   * under the text on a narrow one. The due word moves into the meta line.
+   */
+  actionsInline?: boolean;
+  /** How many more notices this row stands for (one sender on the Today list). */
+  bundled?: number;
   registerRef: (node: HTMLButtonElement | null) => void;
 }
 
@@ -290,6 +300,8 @@ export function NeedsYouRow({
   undoWord,
   pillsAlways,
   flush,
+  actionsInline,
+  bundled = 0,
   registerRef,
 }: NeedsYouRowProps) {
   const approval = entry.type === 'albatross' ? entry.item.approval : undefined;
@@ -303,13 +315,24 @@ export function NeedsYouRow({
     : onAlbatrossAction
       ? [{ label: albatrossActionLabel || 'Answer', onClick: onAlbatrossAction, primary: true }]
       : [];
+  // The Today list: each row says where to start, so a row with no other first action opens.
+  if (actionsInline && obligation && !closed && !pills.some((pill) => pill.primary))
+    pills.unshift({ label: 'Open', onClick: onOpen, primary: true });
   const later = obligation && !closed && obligation.kind !== 'code' && onLater && laterOptions?.length;
   const [laterOpen, setLaterOpen] = useState(false);
   const undo = Boolean(onUndo) && (closed || Boolean(undoWord));
   const hasPills = pills.length > 0 || Boolean(later);
   const due = words.due;
   const pillClass = (primary?: boolean) =>
-    cn(
+    actionsInline
+      ? cn(
+          // 36 px on a touch width, with room to miss; 28 px beside a wide row.
+          'h-9 whitespace-nowrap rounded-[var(--radius-control)] border px-3 text-[13px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-ring)] disabled:opacity-60 @[560px]:h-7 @[560px]:px-2.5 @[560px]:text-[12.5px]',
+          primary
+            ? 'border-transparent bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90'
+            : 'border-[var(--color-border)] bg-transparent text-[var(--color-text)] hover:bg-[var(--color-control-hover)]',
+        )
+      : cn(
       'h-[22px] whitespace-nowrap rounded-[8px] border bg-[var(--color-bg-elevated)] px-2 text-[12px] font-medium leading-5 transition-colors hover:bg-[var(--color-control-hover)] disabled:opacity-60',
       primary
         ? 'border-[color-mix(in_oklab,var(--color-accent)_40%,var(--color-border))] text-[var(--color-accent)]'
@@ -328,7 +351,10 @@ export function NeedsYouRow({
         onClick={onOpen}
         onKeyDown={onKeyDown}
         className={cn(
-          'grid w-full grid-cols-[28px_minmax(0,1fr)_auto] items-start gap-x-3 py-[11px] text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:rounded-ui focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
+          'grid w-full items-start gap-x-3 text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:rounded-ui focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
+          actionsInline
+            ? 'grid-cols-[32px_minmax(0,1fr)] py-3 @[560px]:pr-[196px]'
+            : 'grid-cols-[28px_minmax(0,1fr)_auto] py-[11px]',
           flush ? 'px-0' : 'px-5',
           selected && 'bg-[var(--color-selected-soft)]',
           closed && 'opacity-[0.72]',
@@ -340,13 +366,13 @@ export function NeedsYouRow({
             <span className="max-w-[75%] shrink-0 truncate font-display text-[14px] font-medium leading-[18px] text-[var(--color-text)]">
               {words.name}
             </span>
-            {words.source ? (
+            {bundled > 0 || words.source ? (
               <span
                 data-needs-you-source
                 className="flex min-w-0 shrink items-baseline gap-[7px] text-[11px] leading-[18px] text-[var(--color-text-muted)]"
               >
                 <span aria-hidden className="size-[3px] shrink-0 rounded-full bg-[var(--color-text-faint)]" />
-                <span className="truncate">{words.source}</span>
+                <span className="truncate">{bundled > 0 ? `${bundled + 1} notices` : words.source}</span>
               </span>
             ) : null}
           </span>
@@ -363,18 +389,42 @@ export function NeedsYouRow({
           ) : (
             <span
               className={cn(
-                'mt-0.5 line-clamp-2 text-[13px] leading-[18px]',
+                'mt-0.5 line-clamp-2',
+                actionsInline ? 'text-[14px] leading-[20px]' : 'text-[13px] leading-[18px]',
                 closed ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]',
               )}
             >
               {words.line}
             </span>
           )}
-          <span className="mt-1 block text-[11px] leading-[14px] text-[var(--color-text-faint)]">
-            {words.meta}
-            {draftReady ? ' · Draft ready' : ''}
+          <span
+            className={cn(
+              'mt-1 block',
+              actionsInline
+                ? 'text-[12px] leading-[16px] text-[var(--color-text-muted)] empty:hidden'
+                : 'text-[11px] leading-[14px] text-[var(--color-text-faint)]',
+            )}
+          >
+            {actionsInline ? (
+              <>
+                <span
+                  data-needs-you-due
+                  className={due.tone === 'plain' ? 'text-[var(--color-text-muted)]' : DUE_TONE[due.tone]}
+                >
+                  {due.text}
+                </span>
+                {due.sub ? ` ${due.sub}` : ''}
+                {draftReady ? `${due.text ? ' · ' : ''}Draft ready` : ''}
+              </>
+            ) : (
+              <>
+                {words.meta}
+                {draftReady ? ' · Draft ready' : ''}
+              </>
+            )}
           </span>
         </span>
+        {actionsInline ? null : (
         <span
           data-needs-you-due
           className={cn(
@@ -392,6 +442,7 @@ export function NeedsYouRow({
             </small>
           ) : null}
         </span>
+        )}
       </button>
       {approval && approvalView?.canDecide ? (
         <ApprovalDecisionPills
@@ -405,7 +456,13 @@ export function NeedsYouRow({
         />
       ) : null}
       {undo ? (
-        <span className={cn('absolute top-[9px] flex items-baseline gap-2', flush ? 'right-0' : 'right-3')}>
+        <span
+          className={cn(
+            'absolute flex items-baseline gap-2',
+            actionsInline ? 'top-3' : 'top-[9px]',
+            flush ? 'right-0' : 'right-3',
+          )}
+        >
           <span className={cn('text-[11.5px] leading-[22px]', DUE_TONE.done)}>{undoWord ?? due.text}</span>
           <button
             type="button"
@@ -422,10 +479,14 @@ export function NeedsYouRow({
       ) : hasPills ? (
         <span
           className={cn(
-            'absolute top-[9px] gap-1',
-            flush ? 'right-0' : 'right-3',
-            // The menu is a portal: focus leaves the row, and the pills must stay.
-            pillsAlways || laterOpen ? 'flex' : 'hidden group-hover:flex group-focus-within:flex',
+            actionsInline
+              ? 'flex gap-2 pb-3 pl-[44px] @[560px]:absolute @[560px]:right-0 @[560px]:top-1/2 @[560px]:gap-1.5 @[560px]:-translate-y-1/2 @[560px]:pb-0 @[560px]:pl-0'
+              : cn(
+                  'absolute top-[9px] gap-1',
+                  flush ? 'right-0' : 'right-3',
+                  // The menu is a portal: focus leaves the row, and the pills must stay.
+                  pillsAlways || laterOpen ? 'flex' : 'hidden group-hover:flex group-focus-within:flex',
+                ),
           )}
         >
           {pills.map((pill) => (

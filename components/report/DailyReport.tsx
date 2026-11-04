@@ -16,6 +16,8 @@ import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { useBriefEditionRequest } from '@/components/report/brief-edition-request';
 import { PreparedWork } from '@/components/report/PreparedWork';
 import { ReadyForYou } from '@/components/report/ReadyForYou';
+import { WorthKnowing } from '@/components/needs-you/WorthKnowing';
+import { useBriefLiveLayer } from '@/components/report/live-layer';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -787,6 +789,9 @@ export function DailyReport({
 
   // Browse history; the freshest edition shows by default (selectedId = null).
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The live Today page replaces the stored stories on the current edition only.
+  const liveLayer = useBriefLiveLayer();
+  const livePage = !selectedId && Boolean(liveLayer?.replacesDocument);
 
   // A notification or the /brief?id= deep link names one edition. The latest
   // edition still renders as "latest", so the live overlay stays on.
@@ -1213,7 +1218,7 @@ export function DailyReport({
                   embedded={embedded}
                   noiseCount={noiseCount}
                   belowMasthead={
-                    selectedId ? null : (
+                    selectedId || livePage ? null : (
                       <>
                         <BriefSourceLine
                           reportId={report._id}
@@ -1228,6 +1233,15 @@ export function DailyReport({
                     )
                   }
                   footer={
+                    livePage ? (
+                      <div className="daily-brief-layout mt-6">
+                        <WorthKnowing items={report.worthKnowing} />
+                        {/* Live, not part of the edition: a handoff after 7:00 still shows. */}
+                        <ReadyForYou className="mt-8" />
+                        <PreparedWork />
+                        <BriefSourceLine reportId={report._id} className="mt-8" />
+                      </div>
+                    ) : (
                     <>
                       {letterFailed ? (
                         <p
@@ -1265,6 +1279,7 @@ export function DailyReport({
                       />
                       {embedded ? null : <BriefFooter report={report} />}
                     </>
+                    )
                   }
                 />
               </motion.div>

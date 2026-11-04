@@ -549,6 +549,31 @@ export const listEvents = query({
   },
 });
 
+/** The widest window that the Today schedule reads: one local day can have 25 hours. */
+const MY_DAY_MAX_MS = 26 * 60 * 60 * 1000;
+const MY_DAY_EVENTS = 40;
+
+// The signed-in user's events of one day, for the live Today page. Only the
+// fields that the schedule shows leave the server.
+export const myDayEvents = query({
+  args: { startAt: v.number(), endAt: v.number() },
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    if (args.endAt <= args.startAt || args.endAt - args.startAt > MY_DAY_MAX_MS) return [];
+    const rows = await queryEventsInWindow(ctx, userId, args.startAt, args.endAt, MY_DAY_EVENTS);
+    return rows.map((row) => ({
+      id: row.providerEventId,
+      accountId: row.accountId,
+      title: row.title,
+      startAt: row.startAt,
+      endAt: row.endAt,
+      ...(row.allDay ? { allDay: true } : {}),
+      ...(row.location ? { location: row.location } : {}),
+      ...(row.status ? { status: row.status } : {}),
+    }));
+  },
+});
+
 // The same window read as listEvents, plus a `truncated` flag when the cap cut
 // rows off. Tools use it so that a partial list is never shown as complete.
 export const listEventsPage = query({

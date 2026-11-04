@@ -7,6 +7,7 @@ import { BriefBudgetExhaustedError, currentBriefMeter, withBriefStage } from '..
 import { api, convexQuery } from '../hosted/convex';
 import { prepareBriefContext } from '../narrative/service';
 import { editionNeedsYou, placeNeedsYouLane, withBriefNeedsYou } from '../obligations/brief-region';
+import { needsYouFlagFor } from '../obligations/contract';
 import { compositionFromReport } from '../shared/brief-composition';
 import type { BriefDocumentV2 } from '../shared/brief-document';
 import { normalizeBriefTimezone } from '../shared/brief-edition';
@@ -18,6 +19,7 @@ import {
   type DailyReportArtifactErrorStage,
   type DailyReportItem,
   type DailyReportSinceLastEdition,
+  type DailyReportWorthKnowing,
   MAX_ARTIFACT_ERROR_MESSAGE_CHARS,
   MAX_ARTIFACT_ERRORS,
   type Message,
@@ -33,6 +35,7 @@ import type { BriefLane } from './brief-score';
 import { briefSourceCoverage } from './brief-source-refresh';
 import { resolveBriefTimezone } from './brief-timezone';
 import { gatherBriefWeather, weatherSentence } from './brief-weather';
+import { writeWorthKnowing } from './brief-worth-knowing';
 import { generateDailyReport } from './daily-report';
 import { buildNativeDailyReportArtifact } from './report-artifact';
 
@@ -375,7 +378,8 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
 export function withEditionBudget(report: DailyReport): DailyReport {
   const meter = currentBriefMeter();
   if (!meter) return report;
-  const budget = meter.record(report.editorial?.mode !== 'generated');
+  // An edition of the live Today page runs no editor, so it is not a fallback.
+  const budget = meter.record(report.worthKnowing === undefined && report.editorial?.mode !== 'generated');
   const next = { ...report, budget };
   return budget.exhausted
     ? withArtifactError(next, artifactError('document_v2', new BriefBudgetExhaustedError(budget.exhausted)))
@@ -395,6 +399,8 @@ export interface ComposedBudgetBrief {
   writerTerminalError?: Error;
   /** Ephemeral writer context; never persisted into the edition. */
   editorialEvidence?: Record<string, unknown>;
+  /** The live Today page: at most two short facts. */
+  worthKnowing?: DailyReportWorthKnowing[];
 }
 
 export interface ComposeBudgetBriefDeps {
@@ -563,6 +569,13 @@ export async function composeDailyBrief(
   deps: ComposeBudgetBriefDeps = {},
 ): Promise<ComposedBudgetBrief> {
   const composed = await composeBudgetBrief(report, userId, deps);
+  // The live Today page has no stories, so a user on it needs no editor run.
+  if (userId && needsYouFlagFor(userId)) {
+    const worthKnowing = await withBriefStage('editorial', () =>
+      writeWorthKnowing(report, composed.document, { userId, generate: deps.generate }),
+    );
+    return { ...composed, worthKnowing };
+  }
   const layout = await withBriefStage('editorial', () =>
     writeDailyEditorial(report, composed.document, {
       userId,
@@ -612,6 +625,7 @@ export function finalizeBudgetReport(report: DailyReport, composed: ComposedBudg
     },
     document: composed.document,
     ...(composed.editorial ? { editorial: composed.editorial } : {}),
+    ...(composed.worthKnowing ? { worthKnowing: composed.worthKnowing } : {}),
     artifactStatus: 'ready',
     artifactSource: 'document-v2',
     model: composed.prose.model,
