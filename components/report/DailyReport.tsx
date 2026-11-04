@@ -1234,7 +1234,7 @@ export function DailyReport({
                   }
                   footer={
                     livePage ? (
-                      <div className="daily-brief-layout mt-6">
+                      <div className="daily-brief-layout mt-2">
                         <WorthKnowing items={report.worthKnowing} />
                         {/* Live, not part of the edition: a handoff after 7:00 still shows. */}
                         <ReadyForYou className="mt-8" />

@@ -44,7 +44,7 @@ const TITLE_TONE: Record<ScheduleState, string> = {
   past: 'text-[var(--color-text-muted)]',
   now: 'font-medium text-[var(--color-text)]',
   next: 'font-medium text-[var(--color-text)]',
-  later: 'text-[var(--color-text)]',
+  later: 'font-medium text-[var(--color-text)]',
 };
 
 /** The day as a short list: what passed, what runs, what is next, and the open room between. */
@@ -61,11 +61,6 @@ export function TodaySchedule({
 }) {
   const lines = useMemo(() => scheduleLines(events ?? [], now), [events, now]);
   const allDay = useMemo(() => allDayEvents(events ?? []), [events]);
-  // One line carries the present: what runs now, or else what comes next.
-  const present = useMemo(() => {
-    const timed = lines.flatMap((line) => (line.type === 'event' ? [line] : []));
-    return (timed.find((line) => line.state === 'now') ?? timed.find((line) => line.state === 'next'))?.event.id;
-  }, [lines]);
   return (
     <section data-today-schedule aria-label="Schedule" className="min-w-0">
       <div className="flex items-baseline justify-between gap-3 pb-2">
@@ -75,7 +70,7 @@ export function TodaySchedule({
         <button
           type="button"
           onClick={onOpen}
-          className="rounded-ui text-[12.5px] text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
+          className="rounded-ui text-[13px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
         >
           Open calendar
         </button>
@@ -98,7 +93,7 @@ export function TodaySchedule({
                 className="grid grid-cols-[62px_minmax(0,1fr)] gap-x-2 py-1.5 text-[12.5px] text-[var(--color-text-muted)]"
               >
                 <span aria-hidden />
-                <span>Open until {line.until ? clock(line.until, timezone) : 'the end of the day'}</span>
+                <span>Free until {line.until ? clock(line.until, timezone) : 'the end of the day'}</span>
               </li>
             ) : (
               <li
@@ -107,8 +102,9 @@ export function TodaySchedule({
                 className={cn(
                   'grid grid-cols-[62px_minmax(0,1fr)] items-baseline gap-x-2',
                   line.state === 'past' ? 'py-0.5' : 'py-1.5',
-                  present === line.event.id &&
-                    '-ml-2.5 mt-1 rounded-r-[var(--radius-control)] border-l-2 border-[var(--color-accent)] bg-[var(--color-accent-soft)] pl-2',
+                  // Only what runs now has a fill. The text stays on the column edge.
+                  line.state === 'now' &&
+                    '-mx-2 my-0.5 rounded-[var(--radius-control)] bg-[var(--color-accent-soft)] px-2',
                 )}
               >
                 <span
@@ -121,7 +117,16 @@ export function TodaySchedule({
                         : 'text-[var(--color-text-muted)]',
                   )}
                 >
-                  {line.state === 'now' ? 'Now' : clock(line.event.startAt, timezone)}
+                  {line.state === 'now' ? (
+                    'Now'
+                  ) : line.state === 'next' ? (
+                    <>
+                      <span className="block font-medium text-[var(--color-text)]">Next</span>
+                      {clock(line.event.startAt, timezone)}
+                    </>
+                  ) : (
+                    clock(line.event.startAt, timezone)
+                  )}
                 </span>
                 <span className="min-w-0">
                   <span className={cn('block text-[13.5px] leading-[18px]', TITLE_TONE[line.state])}>
@@ -130,7 +135,7 @@ export function TodaySchedule({
                   {line.state === 'now' || line.state === 'next' ? (
                     <span className="mt-0.5 block text-[11.5px] leading-[15px] text-[var(--color-text-muted)]">
                       {line.state === 'now'
-                        ? `Until ${clock(line.event.endAt, timezone)}`
+                        ? `${clock(line.event.startAt, timezone)} to ${clock(line.event.endAt, timezone)}`
                         : line.event.location || `Ends ${clock(line.event.endAt, timezone)}`}
                     </span>
                   ) : null}

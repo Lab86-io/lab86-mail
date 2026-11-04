@@ -194,6 +194,17 @@
   margin-top: calc(var(--frame-w) + 12px);
   text-align: left;
   color: var(--color-text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 16px;
+}
+[data-today-needs-you] [role='img'] {
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+}
+.dark [data-today-needs-you] [role='img'] {
+  color: var(--color-text) !important;
+}
+
+.brief-canvas--live .brief-masthead__moulding {
+  filter: drop-shadow(0 6px 12px rgb(0 0 0 / 0.18));
 }

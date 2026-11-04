@@ -77,6 +77,7 @@ export const TODAY_PREVIEW_ITEMS: ObligationView[] = [
       kind: 'change',
       title: 'Your payment of $36.00 could not be processed.',
       asker: 'Lumen Hosting',
+      due: 'today',
       createdAt: NOW - (8 + index * 24) * HOUR,
       updatedAt: NOW - (8 + index * 24) * HOUR,
     }),
@@ -132,11 +133,11 @@ export const TODAY_PREVIEW_EVENTS: TodayScheduleEvent[] = [
 
 export const TODAY_PREVIEW_WORTH: DailyReportWorthKnowing[] = [
   {
-    title: 'The Northwind contract renews on November 12.',
-    line: 'The renewal raises the seat price by 8 percent.',
+    title: 'Northwind renews on November 12.',
+    line: 'The seat price rises 8 percent.',
   },
   {
-    title: 'Your water bill is lower.',
-    line: 'October came in at $41, down from $63 in September.',
+    title: 'Your water bill fell.',
+    line: 'October was $41, down from $63 in September.',
   },
 ];

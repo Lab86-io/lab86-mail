@@ -236,6 +236,8 @@ export interface NeedsYouRowProps {
   actionsInline?: boolean;
   /** How many more notices this row stands for (one sender on the Today list). */
   bundled?: number;
+  /** The first row of the Today list: only its first action has the solid fill. */
+  lead?: boolean;
   registerRef: (node: HTMLButtonElement | null) => void;
 }
 
@@ -276,6 +278,26 @@ export function rowPills(
   return pills;
 }
 
+/** A due word alone asks the reader to guess: "Fri" reads "Due Fri"; an invitation says when it starts. */
+export function dueSentenceWord(obligation: Pick<ObligationView, 'kind'>, text: string): string {
+  if (!text || obligation.kind === 'code' || obligation.kind === 'waiting' || /^(over|past)/i.test(text))
+    return text;
+  const word = /^(Today|Tomorrow|Yesterday)\b/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+  return `${obligation.kind === 'rsvp' || obligation.kind === 'prepare' ? 'Starts' : 'Due'} ${word}`;
+}
+
+/** On the Today list the mark on the avatar names the source, so the words name only the place. */
+function placeWords(entry: NeedsYouListEntry, source: string, inline: boolean | undefined) {
+  if (!inline || entry.type !== 'obligation') return source;
+  return entry.obligation.sourceLabel?.trim() && source.includes(' · ') ? source.split(' · ').slice(1).join(' · ') : '';
+}
+
+/** The word of a row whose first action only opens the item: what the person does there. */
+export function firstActionWord(obligation: Pick<ObligationView, 'source' | 'title'>): string {
+  if (/^review\b/i.test(obligation.title)) return 'Review';
+  return obligation.source === 'mail' ? 'Read' : 'Open';
+}
+
 export function NeedsYouRow({
   entry,
   now,
@@ -302,6 +324,7 @@ export function NeedsYouRow({
   flush,
   actionsInline,
   bundled = 0,
+  lead,
   registerRef,
 }: NeedsYouRowProps) {
   const approval = entry.type === 'albatross' ? entry.item.approval : undefined;
@@ -316,8 +339,11 @@ export function NeedsYouRow({
       ? [{ label: albatrossActionLabel || 'Answer', onClick: onAlbatrossAction, primary: true }]
       : [];
   // The Today list: each row says where to start, so a row with no other first action opens.
-  if (actionsInline && obligation && !closed && !pills.some((pill) => pill.primary))
-    pills.unshift({ label: 'Open', onClick: onOpen, primary: true });
+  if (actionsInline && obligation && !closed) {
+    if (!pills.some((pill) => pill.primary))
+      pills.unshift({ label: firstActionWord(obligation), onClick: onOpen, primary: true });
+    for (const pill of pills) pill.label = pill.label === 'Yes' ? 'Accept' : pill.label === 'No' ? 'Decline' : pill.label;
+  }
   const later = obligation && !closed && obligation.kind !== 'code' && onLater && laterOptions?.length;
   const [laterOpen, setLaterOpen] = useState(false);
   const undo = Boolean(onUndo) && (closed || Boolean(undoWord));
@@ -326,10 +352,12 @@ export function NeedsYouRow({
   const pillClass = (primary?: boolean) =>
     actionsInline
       ? cn(
-          // 36 px on a touch width, with room to miss; 28 px beside a wide row.
-          'h-9 whitespace-nowrap rounded-[var(--radius-control)] border px-3 text-[13px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-ring)] disabled:opacity-60 @[560px]:h-7 @[560px]:px-2.5 @[560px]:text-[12.5px]',
+          // 44 px on a touch width; 32 px beside a wide row.
+          "h-11 w-full whitespace-nowrap rounded-[var(--radius-control)] border px-2 text-[13.5px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-ring)] disabled:opacity-60 @[560px]:h-8 @[560px]:text-[13px]",
           primary
-            ? 'border-transparent bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90'
+            ? lead
+              ? 'border-transparent bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90'
+              : 'border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]'
             : 'border-[var(--color-border)] bg-transparent text-[var(--color-text)] hover:bg-[var(--color-control-hover)]',
         )
       : cn(
@@ -353,26 +381,56 @@ export function NeedsYouRow({
         className={cn(
           'grid w-full items-start gap-x-3 text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:rounded-ui focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
           actionsInline
-            ? 'grid-cols-[32px_minmax(0,1fr)] py-3 @[560px]:pr-[196px]'
+            ? 'grid-cols-[32px_minmax(0,1fr)] py-3.5 @[560px]:pr-[236px]'
             : 'grid-cols-[28px_minmax(0,1fr)_auto] py-[11px]',
           flush ? 'px-0' : 'px-5',
           selected && 'bg-[var(--color-selected-soft)]',
           closed && 'opacity-[0.72]',
         )}
       >
-        <RowLead entry={entry} />
+        <span className="relative">
+          <RowLead entry={entry} />
+          {actionsInline && obligation ? (
+            <SourceGlyph
+              source={obligation.source}
+              size={17}
+              className="absolute -bottom-0.5 -right-1 border-[var(--color-content)]"
+            />
+          ) : null}
+        </span>
         <span className="min-w-0">
-          <span className="flex min-w-0 items-baseline gap-2">
-            <span className="max-w-[75%] shrink-0 truncate font-display text-[14px] font-medium leading-[18px] text-[var(--color-text)]">
+          <span
+            className={cn(
+              'flex min-w-0',
+              actionsInline ? 'flex-wrap items-baseline gap-x-1.5' : 'items-baseline gap-2',
+            )}
+          >
+            <span
+              className={cn(
+                'max-w-[75%] shrink-0 truncate leading-[18px] text-[var(--color-text)]',
+                actionsInline ? 'text-[13px] font-semibold' : 'font-display text-[14px] font-medium',
+              )}
+            >
               {words.name}
             </span>
-            {bundled > 0 || words.source ? (
+            {bundled > 0 || placeWords(entry, words.source, actionsInline) ? (
               <span
                 data-needs-you-source
-                className="flex min-w-0 shrink items-baseline gap-[7px] text-[11px] leading-[18px] text-[var(--color-text-muted)]"
+                className={cn(
+                  'flex min-w-0 shrink items-baseline gap-[7px] leading-[18px] text-[var(--color-text-muted)]',
+                  actionsInline ? 'text-[12px]' : 'text-[11px]',
+                )}
               >
-                <span aria-hidden className="size-[3px] shrink-0 rounded-full bg-[var(--color-text-faint)]" />
-                <span className="truncate">{bundled > 0 ? `${bundled + 1} notices` : words.source}</span>
+                <span
+                  aria-hidden
+                  className={cn(
+                    'size-[3px] shrink-0 rounded-full bg-[var(--color-text-faint)]',
+                    actionsInline && 'hidden @[560px]:block',
+                  )}
+                />
+                <span className="truncate">
+                  {bundled > 0 ? `${bundled + 1} notices` : placeWords(entry, words.source, actionsInline)}
+                </span>
               </span>
             ) : null}
           </span>
@@ -390,7 +448,9 @@ export function NeedsYouRow({
             <span
               className={cn(
                 'mt-0.5 line-clamp-2',
-                actionsInline ? 'text-[14px] leading-[20px]' : 'text-[13px] leading-[18px]',
+                actionsInline
+                  ? 'text-[14.5px] font-medium leading-[21px] tracking-[-0.003em]'
+                  : 'text-[13px] leading-[18px]',
                 closed ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]',
               )}
             >
@@ -409,9 +469,14 @@ export function NeedsYouRow({
               <>
                 <span
                   data-needs-you-due
-                  className={due.tone === 'plain' ? 'text-[var(--color-text-muted)]' : DUE_TONE[due.tone]}
+                  className={
+                    due.tone === 'plain'
+                      ? 'text-[var(--color-text-muted)]'
+                      : // On this list a due word says one thing: time is short.
+                        'font-medium text-[var(--color-accent-2)]'
+                  }
                 >
-                  {due.text}
+                  {obligation ? dueSentenceWord(obligation, due.text) : due.text}
                 </span>
                 {due.sub ? ` ${due.sub}` : ''}
                 {draftReady ? `${due.text ? ' · ' : ''}Draft ready` : ''}
@@ -480,7 +545,8 @@ export function NeedsYouRow({
         <span
           className={cn(
             actionsInline
-              ? 'flex gap-2 pb-3 pl-[44px] @[560px]:absolute @[560px]:right-0 @[560px]:top-1/2 @[560px]:gap-1.5 @[560px]:-translate-y-1/2 @[560px]:pb-0 @[560px]:pl-0'
+              ? // Three fixed columns, so the actions line up from row to row.
+                'grid grid-cols-[72px_72px_60px] gap-2 pb-3 pl-[44px] @[560px]:absolute @[560px]:right-0 @[560px]:top-1/2 @[560px]:-translate-y-1/2 @[560px]:pb-0 @[560px]:pl-0'
               : cn(
                   'absolute top-[9px] gap-1',
                   flush ? 'right-0' : 'right-3',

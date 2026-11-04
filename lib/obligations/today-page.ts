@@ -143,16 +143,10 @@ export function allDayEvents(events: readonly TodayScheduleEvent[]): TodaySchedu
 
 // ---- The note ---------------------------------------------------------------
 
-/** One run of the note. A strong run is a name or a time: the words to find at a glance. */
-export interface NoteRun {
-  text: string;
-  strong?: boolean;
-}
-
-export type NoteSentence = NoteRun[];
-
-function plural(count: number, one: string, many: string) {
-  return count === 1 ? one : many;
+/** The two lines of the note: what needs the person, and what the day does next. */
+export interface TodayNoteLines {
+  lead: string;
+  day: string;
 }
 
 /** "9:30 AM", "3 PM", "noon": as a person says it. */
@@ -166,89 +160,67 @@ export function clockLabel(at: number, timezone: string): string {
   return text.replace(':00', '');
 }
 
-/** A title this short can stand as a sentence of the note. A longer one stays on its row. */
-const NOTE_TITLE_CHARS = 90;
-
-/** The lead sentence: the news itself when a notice says it, or who waits and for what. */
-function leadSentence(row: TodayRow): NoteSentence {
+/** What the first row is, after "starting with" or "One thing needs you:". */
+function firstWords(row: TodayRow): string {
   const { entry, others } = row;
   if (entry.type === 'albatross') {
-    if (entry.item.kind === 'approval') return [{ text: 'An Albatross waits for your approval.' }];
-    if (entry.item.kind === 'checkin') return [{ text: 'Your daily check-in is ready.' }];
-    return [{ text: 'An Albatross has a question for you.' }];
+    if (entry.item.kind === 'approval') return 'an approval for an Albatross';
+    if (entry.item.kind === 'checkin') return 'your daily check-in';
+    return 'a question from an Albatross';
   }
   const { obligation } = entry;
-  const asker: NoteRun = { text: obligation.asker, strong: true };
-  const title = obligation.title.trim();
+  const asker = obligation.asker.trim();
   switch (obligation.kind) {
     case 'reply':
-      return [asker, { text: ' waits for your reply.' }];
+      return `a reply to ${asker}`;
     case 'rsvp':
-      return [asker, { text: ' waits for your answer to an invitation.' }];
+      return `an invitation from ${asker}`;
     case 'prepare':
-      return [
-        { text: 'Prepare for ' },
-        { text: obligation.sourceLabel?.trim() || obligation.asker, strong: true },
-        { text: '.' },
-      ];
+      return `preparation for ${obligation.sourceLabel?.trim() || asker}`;
     case 'code':
-      return [asker, { text: ' sent a sign-in code.' }];
+      return `a sign-in code from ${asker}`;
     case 'change':
-      if (others.length) return [asker, { text: ` sent ${others.length + 1} notices.` }];
-      return title.length <= NOTE_TITLE_CHARS && /[.!?]$/.test(title)
-        ? [{ text: title, strong: true }]
-        : [asker, { text: ' sent a notice.' }];
+      return others.length ? `${others.length + 1} notices from ${asker}` : `a notice from ${asker}`;
     default:
-      return [asker, { text: ' has a request for you.' }];
+      return `a request from ${asker}`;
   }
 }
 
-function scheduleSentence(lines: readonly ScheduleLine[], now: number, timezone: string): NoteSentence {
+function leadLine(rows: readonly TodayRow[], open: number): string {
+  const [first] = rows;
+  if (!first) return 'Nothing needs you right now.';
+  // One row can stand for all of it: three notices from one sender.
+  if (open === 1 + first.others.length) {
+    return open === 1
+      ? `One thing needs you: ${firstWords(first)}.`
+      : `${open} things need you: ${firstWords(first)}.`;
+  }
+  return `${open} things need you, starting with ${firstWords(first)}.`;
+}
+
+function dayLine(lines: readonly ScheduleLine[], now: number, timezone: string): string {
   const events = lines.flatMap((line) => (line.type === 'event' ? [line] : []));
-  const current = events.find((line) => line.state === 'now');
-  const next = events.find((line) => line.state === 'next');
+  const current = events.find((line) => line.state === 'now')?.event;
+  const next = events.find((line) => line.state === 'next')?.event;
   if (current && next)
-    return [
-      { text: current.event.title, strong: true },
-      { text: ' ends at ' },
-      { text: clockLabel(current.event.endAt, timezone), strong: true },
-      { text: ', then ' },
-      { text: next.event.title, strong: true },
-      { text: ' at ' },
-      { text: clockLabel(next.event.startAt, timezone), strong: true },
-      { text: '.' },
-    ];
+    return `${current.title} ends at ${clockLabel(current.endAt, timezone)}, then ${next.title} at ${clockLabel(next.startAt, timezone)}.`;
   if (current)
-    return [
-      { text: current.event.title, strong: true },
-      { text: ' ends at ' },
-      { text: clockLabel(current.event.endAt, timezone), strong: true },
-      { text: '. Nothing else is on your calendar today.' },
-    ];
+    return `${current.title} ends at ${clockLabel(current.endAt, timezone)}. Nothing else is on your calendar today.`;
   if (next) {
-    const minutes = Math.round((next.event.startAt - now) / 60_000);
-    if (minutes <= 30)
-      return [
-        { text: next.event.title, strong: true },
-        { text: minutes <= 1 ? ' starts now.' : ` starts in ${minutes} minutes.` },
-      ];
-    return [
-      { text: 'Next is ' },
-      { text: next.event.title, strong: true },
-      { text: ' at ' },
-      { text: clockLabel(next.event.startAt, timezone), strong: true },
-      { text: '.' },
-    ];
+    const minutes = Math.round((next.startAt - now) / 60_000);
+    if (minutes <= 1) return `${next.title} starts now.`;
+    if (minutes <= 30) return `${next.title} starts in ${minutes} minutes.`;
+    return `${next.title} is next, at ${clockLabel(next.startAt, timezone)}.`;
   }
   return events.length
-    ? [{ text: 'Your calendar is clear for the rest of today.' }]
-    : [{ text: 'Nothing is on your calendar today.' }];
+    ? 'Your calendar is clear for the rest of today.'
+    : 'Nothing is on your calendar today.';
 }
 
 /**
- * The note: what leads the list, how much else waits, and what is next on the
- * calendar. Three short sentences at most. It reads the same data as the
- * sections under it, so it can never say something that they do not show.
+ * The note: how much needs the person and where to start, then what the day
+ * does next. It reads the same data as the sections under it, so it can never
+ * say something that they do not show.
  */
 export function todayNote(input: {
   rows: readonly TodayRow[];
@@ -256,20 +228,9 @@ export function todayNote(input: {
   lines: readonly ScheduleLine[];
   now: number;
   timezone: string;
-}): NoteSentence[] {
-  const { rows, open, lines, now, timezone } = input;
-  const sentences: NoteSentence[] = [];
-  const [first] = rows;
-  if (!first) sentences.push([{ text: 'Nothing needs you right now.' }]);
-  else {
-    sentences.push(leadSentence(first));
-    const rest = open - 1 - first.others.length;
-    if (rest > 0)
-      sentences.push([
-        { text: `${rest} more`, strong: true },
-        { text: plural(rest, ' thing needs you.', ' things need you.') },
-      ]);
-  }
-  sentences.push(scheduleSentence(lines, now, timezone));
-  return sentences;
+}): TodayNoteLines {
+  return {
+    lead: leadLine(input.rows, input.open),
+    day: dayLine(input.lines, input.now, input.timezone),
+  };
 }

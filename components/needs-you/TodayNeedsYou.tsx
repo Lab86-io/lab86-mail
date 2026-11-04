@@ -276,7 +276,6 @@ export function TodayNeedsYou({
     [startAlbatross, actions, onOpenWork],
   );
 
-  if (!rows.length) return null;
   const errorFor = (id: string) => (actions.error?.id === id ? actions.error.text : null);
 
   return (
@@ -285,24 +284,22 @@ export function TodayNeedsYou({
         <h2 className="font-display text-[17px] font-medium tracking-tight text-[var(--color-text)]">
           Needs you
           {list.open > 0 ? (
-            <span className="ml-2 font-sans text-[13px] font-normal tabular-nums text-[var(--color-text-muted)]">
-              {list.open}
+            <span className="ml-2 font-sans text-[12.5px] font-normal tabular-nums text-[var(--color-text-muted)]">
+              {list.more > 0
+                ? `${list.rows.reduce((count, row) => count + 1 + row.others.length, 0)} of ${list.open}`
+                : list.open}
             </span>
           ) : null}
         </h2>
-        {list.more > 0 ? (
-          <button
-            type="button"
-            onClick={onOpenPage}
-            className="rounded-ui text-[12.5px] text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
-          >
-            View all
-          </button>
-        ) : null}
       </div>
-      <ul className="border-t border-[var(--color-border)]">
+      {rows.length ? null : (
+        <p className="border-t border-[var(--color-border)] pt-3 text-[14px] leading-[21px] text-[var(--color-text-muted)]">
+          New items show here when they arrive.
+        </p>
+      )}
+      <ul className={rows.length ? 'border-t border-[var(--color-border)]' : undefined}>
         <AnimatePresence initial={false}>
-          {rows.map((row) => {
+          {rows.map((row, rowIndex) => {
             const { entry, others } = row;
             const obligation = entry.type === 'obligation' ? entry.obligation : null;
             const leavingEntry = leaving.get(entry.id);
@@ -337,6 +334,7 @@ export function TodayNeedsYou({
                     pillsAlways
                     actionsInline
                     bundled={others.length}
+                    lead={rowIndex === 0}
                     draftReady={obligation ? obligation.draftReady === true : false}
                     copied={copiedId === entry.id}
                     busy={actions.busyId === entry.id || sending === entry.id}
@@ -396,6 +394,16 @@ export function TodayNeedsYou({
           })}
         </AnimatePresence>
       </ul>
+      {list.more > 0 ? (
+        <button
+          type="button"
+          data-today-more
+          onClick={onOpenPage}
+          className="mt-1 rounded-ui py-2.5 text-[13px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
+        >
+          View all {list.open}
+        </button>
+      ) : null}
     </section>
   );
 }
@@ -419,8 +427,8 @@ export function TodayLive({
   );
   return (
     <div data-today-live className="@container/today">
-      <TodayNote sentences={note} />
-      <div className="mt-6 grid gap-x-12 gap-y-9 @[860px]/today:grid-cols-[minmax(0,1fr)_288px]">
+      <TodayNote note={note} />
+      <div className="mt-6 grid gap-x-12 gap-y-8 @[860px]/today:grid-cols-[minmax(0,1fr)_288px]">
         <TodayNeedsYou {...list} />
         <TodaySchedule events={events} now={now} timezone={timezone} onOpen={onOpenCalendar} />
       </div>

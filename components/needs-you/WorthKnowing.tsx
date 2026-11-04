@@ -13,7 +13,7 @@ export function WorthKnowing({ items }: { items: readonly DailyReportWorthKnowin
       </h2>
       <ul className="grid gap-x-12 @[720px]:grid-cols-2">
         {shown.map((item) => (
-          <li key={item.title} className="py-3 text-[14px] leading-[21px] text-[var(--color-text-muted)]">
+          <li key={item.title} className="py-2.5 text-[14px] leading-[21px] text-[var(--color-text-muted)]">
             <span className="font-medium text-[var(--color-text)]">{item.title}</span> {item.line}
           </li>
         ))}

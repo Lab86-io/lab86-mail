@@ -113,7 +113,7 @@ function MastheadArtwork({
             className={cn(
               'brief-masthead__painting relative overflow-hidden bg-[var(--color-accent-soft)] p-4',
               plain
-                ? 'flex h-[280px] items-end justify-between gap-4 @[680px]:h-[360px] @[680px]:p-6'
+                ? 'flex h-[250px] items-end justify-between gap-4 @[680px]:h-[min(360px,38vh)] @[680px]:min-h-[280px] @[680px]:p-6'
                 : 'grid h-[250px] grid-rows-[1fr_auto_1fr] @[680px]:h-[300px]',
             )}
           >
@@ -126,7 +126,11 @@ function MastheadArtwork({
                 src={src}
                 alt=""
                 onError={() => setSourceIndex((index) => (index === sourceIndex ? index + 1 : index))}
-                className="absolute inset-0 h-full w-full object-cover"
+                className={cn(
+                  'absolute inset-0 h-full w-full object-cover',
+                  // A scan often ends in a bright edge. The frame opening hides it.
+                  plain && 'scale-[1.03]',
+                )}
               />
             ) : null}
             {plain ? (
@@ -167,7 +171,8 @@ function MastheadArtwork({
             {displayed?.credit}
             {displayed?.source ? ` · ${displayed.source}` : ''}
           </span>
-          <span>{briefFrameCreditLine(frame)}</span>
+          {/* The live page keeps the credit that a source is owed, and drops the one that is ours. */}
+          <span>{plain && frame.credit.startsWith('Albatross') ? `Frame: ${frame.title}` : briefFrameCreditLine(frame)}</span>
         </figcaption>
       </figure>
     </div>

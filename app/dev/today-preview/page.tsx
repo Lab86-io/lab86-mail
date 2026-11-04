@@ -77,7 +77,7 @@ function Inner() {
           liveSections
           masthead
           footer={
-            <div className="daily-brief-layout mt-6">
+            <div className="daily-brief-layout mt-2">
               <WorthKnowing items={TODAY_PREVIEW_WORTH} />
             </div>
           }
