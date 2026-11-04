@@ -237,5 +237,8 @@ export function todayNote(input: {
  * says: "Review: Move the export" beside a Review button reads "Move the export".
  */
 export function todayRowLine(title: string): string {
-  return title.replace(/^review:\s*/i, '').replace(/^answer the invitation:\s*/i, 'Invitation: ');
+  return title
+    .replace(/^review:\s*/i, '')
+    .replace(/^answer the invitation:\s*/i, 'Invitation: ')
+    .replace(/\.$/, '');
 }
