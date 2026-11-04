@@ -29,6 +29,7 @@ import {
   contentItemFacts,
   contentObligation,
   contentObligationSource,
+  readableAsker,
   mailObligations,
   type ObligationSourceMessage,
   ownParticipant,
@@ -151,7 +152,7 @@ export function obligationView(row: Obligation, code: CodeRow, at: number): Obli
     ...(row.threadId ? { threadId: row.threadId } : {}),
     ...(row.messageId ? { messageId: row.messageId } : {}),
     title: row.title,
-    asker: row.asker,
+    asker: readableAsker(row.asker),
     ...(row.askerAddress ? { askerAddress: row.askerAddress } : {}),
     ...(row.why ? { why: row.why } : {}),
     ...(row.excerpt ? { excerpt: row.excerpt } : {}),
@@ -1938,7 +1939,7 @@ export const sweep = internalMutation({
 // ---------------------------------------------------------------------------
 
 /** The version of the rules that the rows of a user follow. A higher value starts the repair. */
-export const OBLIGATION_RULES_VERSION = 2;
+export const OBLIGATION_RULES_VERSION = 3;
 /** Mail rows (all kinds and states) that one repair page reads, at most. */
 export const REPAIR_SCAN = 200;
 /** A repair with no page for this long has stopped: the next claim resumes it. */

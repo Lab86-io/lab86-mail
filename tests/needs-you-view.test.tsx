@@ -282,7 +282,7 @@ describe('the list', () => {
     const glyphs = [...page.querySelectorAll('[data-needs-you-row] [data-needs-you-glyph]')].map((node) =>
       node.getAttribute('data-needs-you-glyph'),
     );
-    expect(glyphs).toEqual(['bitbucket', 'calendar', 'granola', 'atlassian']);
+    expect(glyphs).toEqual(['calendar', 'granola', 'bitbucket', 'atlassian']);
     // A person keeps initials, whatever the source.
     expect(page.querySelector('[data-needs-you-row="ob_slack_numbers"] [role="img"]')?.textContent).toBe(
       'PR',
