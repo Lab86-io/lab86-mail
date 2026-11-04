@@ -496,24 +496,22 @@ describe('the Today list', () => {
 
   test('it shows the capped rows with their actions in view, the count, and the way to the rest', () => {
     const head = page.querySelector('[data-today-needs-you] h2')?.textContent ?? '';
-    expect(head).toMatch(/^Needs you\d+ of \d+$/);
+    expect(head).toMatch(/^Needs you\d+$/);
     expect(page.querySelectorAll('[data-needs-you-row]').length).toBe(TODAY_NEEDS_YOU_CAP);
     const texts = [...page.querySelectorAll('[data-needs-you-row] button')].map((node) => node.textContent);
     expect(texts).toContain('Done');
     expect(texts).toContain('Later');
     expect(texts).toContain('Copy');
-    expect(page.querySelector('[data-today-more]')?.textContent).toMatch(/^View all \d+$/);
+    expect(page.querySelector('[data-today-more]')?.textContent).toBe('View all');
     // No group labels, no code value outside the code row.
     expect(page.querySelector('h2 + ul h2')).toBeNull();
   });
 
-  test('with nothing open it keeps its place and says what comes here', () => {
+  test('it takes no space when nothing is open', () => {
     const closedOnly = fixture.items.filter((item) => item.state !== 'open');
-    const empty = doc(
+    expect(
       renderToStaticMarkup(<TodayNeedsYou {...todayProps({ items: closedOnly, extras: [] }).props} />),
-    );
-    expect(empty.querySelectorAll('[data-needs-you-row]').length).toBe(0);
-    expect(empty.body.textContent).toContain('New items show here when they arrive.');
+    ).toBe('');
   });
 });
 
@@ -552,6 +550,7 @@ describe('the Today list acts in place', () => {
     const renderer = await mount(props);
     await act(async () => {
       button(renderer, 'ob_rsvp', 'Accept').props.onClick({ stopPropagation() {} });
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(
       rowOf(renderer, 'ob_rsvp').findAll((node) => node.props['data-needs-you-undo'] !== undefined),

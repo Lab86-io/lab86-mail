@@ -110,7 +110,7 @@ describe('the schedule', () => {
   });
 
   test('a time reads as a person says it', () => {
-    expect(clockLabel(Date.UTC(2026, 9, 28, 19, 0), TZ)).toBe('noon');
+    expect(clockLabel(Date.UTC(2026, 9, 28, 19, 0), TZ)).toBe('12 PM');
     expect(clockLabel(Date.UTC(2026, 9, 28, 22, 0), TZ)).toBe('3 PM');
     expect(clockLabel(Date.UTC(2026, 9, 28, 16, 30), TZ)).toBe('9:30 AM');
   });
@@ -126,7 +126,7 @@ describe('the note', () => {
 
   test('the fixture day says the news, the count, and what is next', () => {
     expect(note(TODAY_PREVIEW_ITEMS, TODAY_PREVIEW_EVENTS)).toBe(
-      '8 things need you, starting with a notice from Harbor Air. Design review ends at 11:30 AM. Lunch with Mara is next, at noon.',
+      '8 things need you, starting with a notice from Harbor Air. Design review ends at 11:30 AM. Lunch with Mara is next, at 12 PM.',
     );
   });
 

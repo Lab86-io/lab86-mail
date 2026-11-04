@@ -113,7 +113,7 @@ function MastheadArtwork({
             className={cn(
               'brief-masthead__painting relative overflow-hidden bg-[var(--color-accent-soft)] p-4',
               plain
-                ? 'flex h-[250px] items-end justify-between gap-4 @[680px]:h-[min(360px,38vh)] @[680px]:min-h-[280px] @[680px]:p-6'
+                ? 'flex h-[225px] items-end justify-between gap-4 @[680px]:h-[min(360px,38vh)] @[680px]:min-h-[280px] @[680px]:p-6'
                 : 'grid h-[250px] grid-rows-[1fr_auto_1fr] @[680px]:h-[300px]',
             )}
           >
@@ -172,7 +172,9 @@ function MastheadArtwork({
             {displayed?.source ? ` · ${displayed.source}` : ''}
           </span>
           {/* The live page keeps the credit that a source is owed, and drops the one that is ours. */}
-          <span>
+          <span
+            className={plain && frame.credit.startsWith('Albatross') ? 'hidden @[680px]:inline' : undefined}
+          >
             {plain && frame.credit.startsWith('Albatross')
               ? `Frame: ${frame.title}`
               : briefFrameCreditLine(frame)}

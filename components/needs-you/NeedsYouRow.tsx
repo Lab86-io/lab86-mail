@@ -280,6 +280,16 @@ export function rowPills(
   return pills;
 }
 
+const FULL_DAYS: Record<string, string> = {
+  Mon: 'Monday',
+  Tue: 'Tuesday',
+  Wed: 'Wednesday',
+  Thu: 'Thursday',
+  Fri: 'Friday',
+  Sat: 'Saturday',
+  Sun: 'Sunday',
+};
+
 /** A due word alone asks the reader to guess: "Fri" reads "Due Fri"; an invitation says when it starts. */
 export function dueSentenceWord(obligation: Pick<ObligationView, 'kind'>, text: string): string {
   if (!text || obligation.kind === 'code' || obligation.kind === 'waiting' || /^(over|past)/i.test(text))
@@ -359,6 +369,14 @@ export function NeedsYouRow({
   const undo = Boolean(onUndo) && (closed || Boolean(undoWord));
   const hasPills = pills.length > 0 || Boolean(later);
   const due = words.due;
+  const urgent = obligation?.pushLevel === 'time_sensitive';
+  const statusWord = obligation
+    ? due.text
+      ? dueSentenceWord(obligation, due.text)
+      : urgent
+        ? 'Urgent'
+        : ''
+    : due.text;
   const pillClass = (primary?: boolean) =>
     actionsInline
       ? cn(
@@ -367,9 +385,9 @@ export function NeedsYouRow({
           primary
             ? lead
               ? 'border-transparent bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90'
-              : 'border-transparent bg-[color-mix(in_oklab,var(--color-accent)_16%,var(--color-content))] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]'
+              : 'border-transparent bg-[color-mix(in_oklab,var(--color-accent)_16%,var(--color-content))] text-[var(--color-accent)] dark:bg-[color-mix(in_oklab,var(--color-accent)_26%,var(--color-content))] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]'
             : // The way out of a row stays quiet: text only until the pointer is on it.
-              'border-transparent bg-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
+              'border-transparent bg-transparent text-[color-mix(in_oklab,var(--color-text)_78%,var(--color-content))] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
         )
       : cn(
           'h-[22px] whitespace-nowrap rounded-[8px] border bg-[var(--color-bg-elevated)] px-2 text-[12px] font-medium leading-5 transition-colors hover:bg-[var(--color-control-hover)] disabled:opacity-60',
@@ -392,7 +410,7 @@ export function NeedsYouRow({
         className={cn(
           'grid w-full items-start gap-x-3 text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:rounded-ui focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
           actionsInline
-            ? 'grid-cols-[32px_minmax(0,1fr)] py-3 @[560px]:py-3.5 @[560px]:pr-[224px]'
+            ? 'grid-cols-[32px_minmax(0,1fr)] py-3 @[560px]:pr-[224px]'
             : 'grid-cols-[28px_minmax(0,1fr)_auto] py-[11px]',
           flush ? 'px-0' : 'px-5',
           selected && 'bg-[var(--color-selected-soft)]',
@@ -405,8 +423,8 @@ export function NeedsYouRow({
             <SourceGlyph
               source={obligation.source}
               size={17}
-              glyph={11}
-              className="absolute -bottom-1 -right-1.5 border-2 border-[var(--color-content)]"
+              glyph={10}
+              className="absolute -bottom-1 -right-1.5 border-[var(--color-border)] bg-[var(--color-content)]"
             />
           ) : null}
         </span>
@@ -445,6 +463,29 @@ export function NeedsYouRow({
                 </span>
               </span>
             ) : null}
+            {actionsInline && (statusWord || draftReady) ? (
+              <span className="text-[12px] leading-[18px]">
+                {statusWord ? (
+                  <span
+                    data-needs-you-due
+                    className={
+                      due.tone === 'plain' && !urgent
+                        ? 'text-[var(--color-text-muted)]'
+                        : // On this list a due word says one thing: time is short.
+                          'font-medium text-[var(--color-accent-2)]'
+                    }
+                  >
+                    {statusWord}
+                  </span>
+                ) : null}
+                {statusWord && draftReady ? (
+                  <span className="text-[var(--color-text-muted)]"> and draft ready</span>
+                ) : null}
+                {!statusWord && draftReady ? (
+                  <span className="text-[var(--color-text-muted)]">Draft ready</span>
+                ) : null}
+              </span>
+            ) : null}
           </span>
           {code ? (
             <span className="mt-[3px] flex items-baseline gap-3">
@@ -469,43 +510,12 @@ export function NeedsYouRow({
               {words.line}
             </span>
           )}
-          <span
-            className={cn(
-              'mt-1 block',
-              actionsInline
-                ? 'text-[12px] leading-[16px] text-[var(--color-text-muted)] empty:hidden'
-                : 'text-[11px] leading-[14px] text-[var(--color-text-faint)]',
-            )}
-          >
-            {actionsInline ? (
-              <>
-                <span
-                  data-needs-you-due
-                  className={
-                    due.tone === 'plain' && obligation?.pushLevel !== 'time_sensitive'
-                      ? 'text-[var(--color-text-muted)]'
-                      : // On this list a due word says one thing: time is short.
-                        'font-medium text-[var(--color-accent-2)]'
-                  }
-                >
-                  {obligation
-                    ? due.text
-                      ? dueSentenceWord(obligation, due.text)
-                      : obligation.pushLevel === 'time_sensitive'
-                        ? 'Now'
-                        : ''
-                    : due.text}
-                </span>
-                {due.sub ? ` ${due.sub}` : ''}
-                {draftReady ? `${due.text ? ' · ' : ''}Draft ready` : ''}
-              </>
-            ) : (
-              <>
-                {words.meta}
-                {draftReady ? ' · Draft ready' : ''}
-              </>
-            )}
-          </span>
+          {actionsInline ? null : (
+            <span className="mt-1 block text-[11px] leading-[14px] text-[var(--color-text-faint)]">
+              {words.meta}
+              {draftReady ? ' · Draft ready' : ''}
+            </span>
+          )}
         </span>
         {actionsInline ? null : (
           <span

@@ -278,10 +278,20 @@ export function TodayNeedsYou({
           Needs you
           {list.open > 0 ? (
             <span className="ml-2 font-sans text-[12.5px] font-normal tabular-nums text-[var(--color-text-muted)]">
-              {list.more > 0 ? `${list.rows.length} of ${list.open}` : list.open}
+              {list.open}
             </span>
           ) : null}
         </h2>
+        {list.more > 0 ? (
+          <button
+            type="button"
+            data-today-more
+            onClick={onOpenPage}
+            className="rounded-ui text-[13px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
+          >
+            View all
+          </button>
+        ) : null}
       </div>
       <ul className="border-t border-[var(--color-border)]">
         <AnimatePresence initial={false}>
@@ -380,16 +390,6 @@ export function TodayNeedsYou({
           })}
         </AnimatePresence>
       </ul>
-      {list.more > 0 ? (
-        <button
-          type="button"
-          data-today-more
-          onClick={onOpenPage}
-          className="mt-1 rounded-ui py-2.5 text-[13px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
-        >
-          View all
-        </button>
-      ) : null}
     </section>
   );
 }

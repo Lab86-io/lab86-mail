@@ -6,6 +6,7 @@ import { useMemo } from 'react';
 import { startOfLocalDay } from '@/lib/obligations/rules';
 import {
   allDayEvents,
+  clockLabel,
   type ScheduleState,
   scheduleLines,
   type TodayScheduleEvent,
@@ -32,12 +33,7 @@ export function useDayEvents(now: number, timezone: string | undefined) {
   return useQuery(dayEventsQuery, isAuthenticated && args ? args : 'skip');
 }
 
-function clock(at: number, timezone: string) {
-  return new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: 'numeric', minute: '2-digit' })
-    .format(new Date(at))
-    .replace(/:00/, '')
-    .replace(' ', ' ');
-}
+const clock = (at: number, timezone: string) => clockLabel(at, timezone).replace(' ', '\u00a0');
 
 const TITLE_TONE: Record<ScheduleState, string> = {
   past: 'text-[var(--color-text-muted)]',
@@ -89,10 +85,10 @@ export function TodaySchedule({
               <li
                 key={line.id}
                 data-today-open
-                className="grid grid-cols-[62px_minmax(0,1fr)] gap-x-2 py-0.5 text-[12px] text-[var(--color-text-muted)]"
+                className="flex items-center gap-2 py-2 text-[12px] text-[var(--color-text-muted)]"
               >
-                <span aria-hidden />
                 <span>Free until {line.until ? clock(line.until, timezone) : 'the end of the day'}</span>
+                <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
               </li>
             ) : (
               <li

@@ -149,14 +149,13 @@ export interface TodayNoteLines {
   day: string;
 }
 
-/** "9:30 AM", "3 PM", "noon": as a person says it. */
+/** "9:30 AM", "3 PM": as a person says it. */
 export function clockLabel(at: number, timezone: string): string {
   const text = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(at));
-  if (text === '12:00 PM') return 'noon';
   return text.replace(':00', '');
 }
 
