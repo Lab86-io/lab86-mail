@@ -204,12 +204,13 @@
   font-size: 12px;
   line-height: 16px;
 }
+/* On the Today list a mark says who and where, so one neutral fill replaces the name tints. */
 [data-today-needs-you] [role="img"] {
+  background-color: var(--color-control) !important;
+  color: var(--color-text-muted) !important;
   font-family: var(--font-sans);
+  font-size: 10.5px !important;
   letter-spacing: 0;
-}
-.dark [data-today-needs-you] [role="img"] {
-  color: var(--color-text) !important;
 }
 
 .brief-canvas--live .brief-masthead__moulding {

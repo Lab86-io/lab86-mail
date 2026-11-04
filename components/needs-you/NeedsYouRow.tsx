@@ -296,7 +296,7 @@ export function dueSentenceWord(obligation: Pick<ObligationView, 'kind'>, text: 
     return text;
   const word = /^(Today|Tomorrow|Yesterday)\b/.test(text)
     ? text.charAt(0).toLowerCase() + text.slice(1)
-    : text;
+    : (FULL_DAYS[text] ?? text);
   return `${obligation.kind === 'rsvp' || obligation.kind === 'prepare' ? 'Starts' : 'Due'} ${word}`;
 }
 
