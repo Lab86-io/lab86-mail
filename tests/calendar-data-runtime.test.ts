@@ -189,6 +189,55 @@ describe('calendar and event upserts', () => {
   });
 });
 
+describe('the live Today schedule', () => {
+  test('a signed-in user reads the events of one day, with only the fields the page shows', async () => {
+    const t = await harnessWithAccounts();
+    await t.mutation(api.calendarData.upsertEventBatch, {
+      ...scope,
+      events: [
+        eventInput({
+          description: 'A private agenda',
+          location: 'Studio',
+          participants: [{ email: 'a@example.test' }],
+        }),
+        eventInput({ providerEventId: 'event_next_day', startAt: BASE + 30 * HOUR, endAt: BASE + 31 * HOUR }),
+      ],
+    });
+    const window = { startAt: BASE - HOUR, endAt: BASE + 12 * HOUR };
+    const own = await t.withIdentity({ subject: USER }).query(api.calendarData.myDayEvents, window);
+    expect(own).toEqual([
+      {
+        id: 'event_1',
+        accountId: 'account_1',
+        title: 'Quarterly planning zebra',
+        startAt: BASE,
+        endAt: BASE + HOUR,
+        location: 'Studio',
+      },
+    ]);
+    expect(
+      await t.withIdentity({ subject: 'someone_else' }).query(api.calendarData.myDayEvents, window),
+    ).toEqual([]);
+  });
+
+  test('a window wider than a day, or a backward one, reads nothing', async () => {
+    const t = await harnessWithAccounts();
+    await t.mutation(api.calendarData.upsertEventBatch, { ...scope, events: [eventInput()] });
+    const as = t.withIdentity({ subject: USER });
+    expect(
+      await as.query(api.calendarData.myDayEvents, { startAt: BASE - HOUR, endAt: BASE + 30 * HOUR }),
+    ).toEqual([]);
+    expect(await as.query(api.calendarData.myDayEvents, { startAt: BASE + HOUR, endAt: BASE })).toEqual([]);
+  });
+
+  test('a read without sign-in fails', async () => {
+    const t = await harnessWithAccounts();
+    await expect(
+      t.query(api.calendarData.myDayEvents, { startAt: BASE, endAt: BASE + HOUR }),
+    ).rejects.toThrow();
+  });
+});
+
 describe('event deletion', () => {
   test('deleteEvent removes the row and its recurring instances on request', async () => {
     const t = newHarness();
