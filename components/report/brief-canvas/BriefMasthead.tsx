@@ -113,7 +113,7 @@ function MastheadArtwork({
             className={cn(
               'brief-masthead__painting relative overflow-hidden bg-[var(--color-accent-soft)] p-4',
               plain
-                ? 'flex h-[176px] items-end justify-between gap-4 @[680px]:h-[min(360px,32vh)] @[680px]:min-h-[260px] @[680px]:p-6'
+                ? 'flex h-[224px] items-end justify-between gap-4 @[680px]:h-[min(360px,32vh)] @[680px]:min-h-[260px] @[680px]:p-6'
                 : 'grid h-[250px] grid-rows-[1fr_auto_1fr] @[680px]:h-[300px]',
             )}
           >
