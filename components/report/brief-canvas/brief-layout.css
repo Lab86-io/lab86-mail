@@ -180,8 +180,15 @@
 
 /* The live Today page: one column of about a page width, on the wall. */
 .brief-canvas--live {
+  /* A slimmer moulding: more of the height goes to the painting, and its edge is the text edge. */
+  --brief-frame-width: clamp(14px, 2.6cqi, 28px);
   max-width: calc(1120px + 2 * var(--brief-text-inset, 20px));
   margin-inline: auto;
+  padding-bottom: 64px;
+}
+/* With nothing on the list, the schedule takes the wide column and the facts sit beside it. */
+[data-today-grid]:not(:has([data-today-needs-you])) [data-today-aside] {
+  display: contents;
 }
 
 .brief-canvas--live .brief-masthead--canvas {

@@ -89,7 +89,7 @@ export function TodaySchedule({
               <li
                 key={line.id}
                 data-today-open
-                className="grid grid-cols-[62px_minmax(0,1fr)] gap-x-2 py-1.5 text-[12.5px] text-[var(--color-text-muted)]"
+                className="grid grid-cols-[62px_minmax(0,1fr)] gap-x-2 py-0.5 text-[12px] text-[var(--color-text-muted)]"
               >
                 <span aria-hidden />
                 <span>Free until {line.until ? clock(line.until, timezone) : 'the end of the day'}</span>
@@ -108,7 +108,7 @@ export function TodaySchedule({
               >
                 <span
                   className={cn(
-                    'text-[12.5px] tabular-nums',
+                    'text-[13px] leading-[20px] tabular-nums',
                     line.state === 'past'
                       ? 'text-[var(--color-text-muted)]'
                       : line.state === 'now'
@@ -116,26 +116,33 @@ export function TodaySchedule({
                         : 'text-[var(--color-text-muted)]',
                   )}
                 >
-                  {line.state === 'now' ? (
-                    'Now'
-                  ) : line.state === 'next' ? (
+                  {line.state === 'now' || line.state === 'next' ? (
                     <>
-                      <span className="block font-medium text-[var(--color-text)]">Next</span>
-                      {clock(line.event.startAt, timezone)}
+                      <span
+                        className={cn(
+                          'block font-medium',
+                          line.state === 'next' && 'text-[var(--color-text)]',
+                        )}
+                      >
+                        {line.state === 'now' ? 'Now' : 'Next'}
+                      </span>
+                      <span className="text-[var(--color-text-muted)] font-normal">
+                        {clock(line.event.startAt, timezone)}
+                      </span>
                     </>
                   ) : (
                     clock(line.event.startAt, timezone)
                   )}
                 </span>
                 <span className="min-w-0">
-                  <span className={cn('block text-[13.5px] leading-[18px]', TITLE_TONE[line.state])}>
+                  <span className={cn('block text-[14px] leading-[20px]', TITLE_TONE[line.state])}>
                     {line.event.title}
                   </span>
                   {line.state === 'now' || line.state === 'next' ? (
-                    <span className="mt-0.5 block text-[11.5px] leading-[15px] text-[var(--color-text-muted)]">
-                      {line.state === 'now'
-                        ? `${clock(line.event.startAt, timezone)} to ${clock(line.event.endAt, timezone)}`
-                        : line.event.location || `Ends ${clock(line.event.endAt, timezone)}`}
+                    <span className="block text-[12.5px] leading-[17px] text-[var(--color-text-muted)]">
+                      {line.state === 'next' && line.event.location
+                        ? line.event.location
+                        : `Ends ${clock(line.event.endAt, timezone)}`}
                     </span>
                   ) : null}
                 </span>

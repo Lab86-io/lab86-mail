@@ -68,10 +68,13 @@ const SOURCE_GLYPHS: Record<ObligationSource, LucideIcon> = {
 export function SourceGlyph({
   source,
   size = 28,
+  glyph,
   className,
 }: {
   source: ObligationSource;
   size?: number;
+  /** The size of the glyph, when half of `size` is too small to read. */
+  glyph?: number;
   className?: string;
 }) {
   const Glyph = SOURCE_GLYPHS[source] ?? Mail;
@@ -85,7 +88,7 @@ export function SourceGlyph({
       )}
       style={{ width: size, height: size }}
     >
-      <Glyph style={{ width: size / 2, height: size / 2 }} />
+      <Glyph style={{ width: glyph ?? size / 2, height: glyph ?? size / 2 }} />
     </span>
   );
 }
@@ -364,8 +367,9 @@ export function NeedsYouRow({
           primary
             ? lead
               ? 'border-transparent bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90'
-              : 'border-transparent bg-[var(--color-accent-soft)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]'
-            : 'border-[var(--color-border)] bg-transparent text-[var(--color-text)] hover:bg-[var(--color-control-hover)]',
+              : 'border-transparent bg-[color-mix(in_oklab,var(--color-accent)_16%,var(--color-content))] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]'
+            : // The way out of a row stays quiet: text only until the pointer is on it.
+              'border-transparent bg-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
         )
       : cn(
           'h-[22px] whitespace-nowrap rounded-[8px] border bg-[var(--color-bg-elevated)] px-2 text-[12px] font-medium leading-5 transition-colors hover:bg-[var(--color-control-hover)] disabled:opacity-60',
@@ -388,7 +392,7 @@ export function NeedsYouRow({
         className={cn(
           'grid w-full items-start gap-x-3 text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:rounded-ui focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
           actionsInline
-            ? 'grid-cols-[32px_minmax(0,1fr)] py-3.5 @[560px]:pr-[236px]'
+            ? 'grid-cols-[32px_minmax(0,1fr)] py-3 @[560px]:py-3.5 @[560px]:pr-[224px]'
             : 'grid-cols-[28px_minmax(0,1fr)_auto] py-[11px]',
           flush ? 'px-0' : 'px-5',
           selected && 'bg-[var(--color-selected-soft)]',
@@ -401,7 +405,8 @@ export function NeedsYouRow({
             <SourceGlyph
               source={obligation.source}
               size={17}
-              className="absolute -bottom-0.5 -right-1 border-[var(--color-content)]"
+              glyph={11}
+              className="absolute -bottom-1 -right-1.5 border-2 border-[var(--color-content)]"
             />
           ) : null}
         </span>
@@ -409,7 +414,7 @@ export function NeedsYouRow({
           <span
             className={cn(
               'flex min-w-0',
-              actionsInline ? 'flex-wrap items-baseline gap-x-1.5' : 'items-baseline gap-2',
+              actionsInline ? 'flex-wrap items-baseline gap-x-2' : 'items-baseline gap-2',
             )}
           >
             <span
@@ -432,7 +437,7 @@ export function NeedsYouRow({
                   aria-hidden
                   className={cn(
                     'size-[3px] shrink-0 rounded-full bg-[var(--color-text-faint)]',
-                    actionsInline && 'hidden @[560px]:block',
+                    actionsInline && 'hidden',
                   )}
                 />
                 <span className="truncate">
@@ -477,13 +482,19 @@ export function NeedsYouRow({
                 <span
                   data-needs-you-due
                   className={
-                    due.tone === 'plain'
+                    due.tone === 'plain' && obligation?.pushLevel !== 'time_sensitive'
                       ? 'text-[var(--color-text-muted)]'
                       : // On this list a due word says one thing: time is short.
                         'font-medium text-[var(--color-accent-2)]'
                   }
                 >
-                  {obligation ? dueSentenceWord(obligation, due.text) : due.text}
+                  {obligation
+                    ? due.text
+                      ? dueSentenceWord(obligation, due.text)
+                      : obligation.pushLevel === 'time_sensitive'
+                        ? 'Now'
+                        : ''
+                    : due.text}
                 </span>
                 {due.sub ? ` ${due.sub}` : ''}
                 {draftReady ? `${due.text ? ' · ' : ''}Draft ready` : ''}
@@ -553,7 +564,7 @@ export function NeedsYouRow({
           className={cn(
             actionsInline
               ? // Three fixed columns, so the actions line up from row to row.
-                'grid grid-cols-[72px_72px_60px] gap-2 pb-3 pl-[44px] @[560px]:absolute @[560px]:right-0 @[560px]:top-1/2 @[560px]:-translate-y-1/2 @[560px]:pb-0 @[560px]:pl-0'
+                'grid grid-cols-[72px_72px_60px] gap-1 pb-3 pl-[44px] @[560px]:absolute @[560px]:right-0 @[560px]:top-1/2 @[560px]:-translate-y-1/2 @[560px]:pb-0 @[560px]:pl-0'
               : cn(
                   'absolute top-[9px] gap-1',
                   flush ? 'right-0' : 'right-3',

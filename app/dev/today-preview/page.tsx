@@ -3,7 +3,7 @@
 import { notFound, useSearchParams } from 'next/navigation';
 import { useMemo } from 'react';
 import { TodayLive } from '@/components/needs-you/TodayNeedsYou';
-import { WorthKnowing } from '@/components/needs-you/WorthKnowing';
+import { TodayWorthKnowing } from '@/components/needs-you/WorthKnowing';
 import type { NotificationItem } from '@/components/notifications/model';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { BriefLiveLayer } from '@/components/report/live-layer';
@@ -78,18 +78,15 @@ function Inner() {
   );
   return (
     <div className="h-screen bg-[var(--color-content)]">
-      <BriefLiveLayer.Provider value={live}>
-        <BriefCanvas
-          value={{ ...letterBriefDocumentFixture, generatedAt: now, timezone: NEEDS_YOU_FIXTURE_TIMEZONE }}
-          liveSections
-          masthead
-          footer={
-            <div className="daily-brief-layout mt-2">
-              <WorthKnowing items={TODAY_PREVIEW_WORTH} />
-            </div>
-          }
-        />
-      </BriefLiveLayer.Provider>
+      <TodayWorthKnowing.Provider value={TODAY_PREVIEW_WORTH}>
+        <BriefLiveLayer.Provider value={live}>
+          <BriefCanvas
+            value={{ ...letterBriefDocumentFixture, generatedAt: now, timezone: NEEDS_YOU_FIXTURE_TIMEZONE }}
+            liveSections
+            masthead
+          />
+        </BriefLiveLayer.Provider>
+      </TodayWorthKnowing.Provider>
     </div>
   );
 }

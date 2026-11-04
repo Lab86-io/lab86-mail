@@ -54,7 +54,7 @@ describe('the rows of the Today list', () => {
       item({ id: 'c', asker: 'Marin' }),
       item({ id: 'd', asker: 'Marin', createdAt: NOW - 3 * HOUR }),
     ]);
-    expect(list.open).toBe(4);
+    expect(list.open).toBe(3);
     expect(list.rows.map((row) => [row.entry.id, row.others.map((other) => other.id)])).toEqual([
       ['c', []],
       ['d', []],
@@ -126,7 +126,7 @@ describe('the note', () => {
 
   test('the fixture day says the news, the count, and what is next', () => {
     expect(note(TODAY_PREVIEW_ITEMS, TODAY_PREVIEW_EVENTS)).toBe(
-      '10 things need you, starting with a notice from Harbor Air. Design review ends at 11:30 AM, then Lunch with Mara at noon.',
+      '8 things need you, starting with a notice from Harbor Air. Design review ends at 11:30 AM. Lunch with Mara is next, at noon.',
     );
   });
 
@@ -152,7 +152,7 @@ describe('the note', () => {
         ],
         [],
       ),
-    ).toStartWith('2 things need you: 2 notices from Stripe. Nothing is');
+    ).toStartWith('One thing needs you: 2 notices from Stripe. Nothing is');
   });
 
   test('a next event soon counts the minutes', () => {

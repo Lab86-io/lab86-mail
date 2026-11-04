@@ -20,7 +20,7 @@ export interface TodayRows<T extends NeedsYouExtraLike = NeedsYouExtraLike> {
   rows: TodayRow<T>[];
   /** Open rows that the list does not show. */
   more: number;
-  /** Every open item that the list stands for, bundled rows counted one by one. */
+  /** Every open row, shown or not. The notices of one sender count once. */
   open: number;
 }
 
@@ -81,7 +81,7 @@ export function todayRows<T extends NeedsYouExtraLike>(
     }
     rows.push({ entry, others: [] });
   }
-  return { rows: rows.slice(0, cap), more: Math.max(0, rows.length - cap), open: ordered.length };
+  return { rows: rows.slice(0, cap), more: Math.max(0, rows.length - cap), open: rows.length };
 }
 
 // ---- The schedule -----------------------------------------------------------
@@ -189,12 +189,7 @@ function firstWords(row: TodayRow): string {
 function leadLine(rows: readonly TodayRow[], open: number): string {
   const [first] = rows;
   if (!first) return 'Nothing needs you right now.';
-  // One row can stand for all of it: three notices from one sender.
-  if (open === 1 + first.others.length) {
-    return open === 1
-      ? `One thing needs you: ${firstWords(first)}.`
-      : `${open} things need you: ${firstWords(first)}.`;
-  }
+  if (open === 1) return `One thing needs you: ${firstWords(first)}.`;
   return `${open} things need you, starting with ${firstWords(first)}.`;
 }
 
@@ -203,7 +198,7 @@ function dayLine(lines: readonly ScheduleLine[], now: number, timezone: string):
   const current = events.find((line) => line.state === 'now')?.event;
   const next = events.find((line) => line.state === 'next')?.event;
   if (current && next)
-    return `${current.title} ends at ${clockLabel(current.endAt, timezone)}, then ${next.title} at ${clockLabel(next.startAt, timezone)}.`;
+    return `${current.title} ends at ${clockLabel(current.endAt, timezone)}. ${next.title} is next, at ${clockLabel(next.startAt, timezone)}.`;
   if (current)
     return `${current.title} ends at ${clockLabel(current.endAt, timezone)}. Nothing else is on your calendar today.`;
   if (next) {
