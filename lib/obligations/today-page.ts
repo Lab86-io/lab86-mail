@@ -206,7 +206,7 @@ function dayLine(lines: readonly ScheduleLine[], now: number, timezone: string):
     const minutes = Math.round((next.startAt - now) / 60_000);
     if (minutes <= 1) return `${next.title} starts now.`;
     if (minutes <= 30) return `${next.title} starts in ${minutes} minutes.`;
-    return `You are free until ${next.title} at ${clockLabel(next.startAt, timezone)}.`;
+    return `No more events until ${next.title} at ${clockLabel(next.startAt, timezone)}.`;
   }
   return events.length
     ? 'Your calendar is clear for the rest of today.'

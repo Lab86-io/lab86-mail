@@ -137,7 +137,7 @@ function MastheadArtwork({
               <>
                 {/* The scrim sits only under the words, so the painting keeps its color. */}
                 <div aria-hidden className="brief-masthead__foot absolute inset-x-0 bottom-0 h-[46%]" />
-                <h1 className="relative z-10 min-w-0 text-balance font-display text-[clamp(1.375rem,3.4cqi,2.25rem)] font-medium leading-[1.04] tracking-tight text-white [text-shadow:0_1px_18px_rgba(0,0,0,0.45)]">
+                <h1 className="relative z-10 min-w-0 text-balance font-display [font-variant-numeric:lining-nums] text-[clamp(1.375rem,3.4cqi,2.25rem)] font-medium leading-[1.04] tracking-tight text-white [text-shadow:0_1px_18px_rgba(0,0,0,0.45)]">
                   {plainDate(generatedAt, timezone)}
                 </h1>
                 <div className="relative z-10 min-w-0 shrink pb-1 text-right">

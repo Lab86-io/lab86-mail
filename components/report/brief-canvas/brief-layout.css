@@ -190,11 +190,6 @@
 [data-today-grid]:not(:has([data-today-needs-you])) [data-today-aside] {
   display: contents;
 }
-@container today (min-width: 860px) {
-  [data-today-grid]:not(:has([data-today-needs-you])) {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
 
 .brief-canvas--live .brief-masthead--canvas {
   /* The moulding covers 3 px of the painting, so the visible edge is the text edge. */
@@ -230,4 +225,8 @@
 /* The thin ebony ribs read as gray stripes at this width: settle them into one dark moulding. */
 .brief-canvas--live [data-brief-frame="gothic-ebony"] .brief-masthead__moulding {
   filter: brightness(0.62) contrast(0.92) drop-shadow(0 6px 12px rgb(0 0 0 / 0.18));
+}
+/* On a dark page the moulding needs its weight back, and a faint edge to sit on the wall. */
+.dark .brief-canvas--live [data-brief-frame="gothic-ebony"] .brief-masthead__moulding {
+  filter: brightness(1) drop-shadow(0 0 1px rgb(255 255 255 / 0.22));
 }

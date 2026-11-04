@@ -176,7 +176,7 @@ describe('the row line', () => {
     expect(todayRowLine('The payment failed.')).toBe('The payment failed');
   });
 
-  test('free time before the next event reads as free', () => {
+  test('a long gap before the next event says so', () => {
     expect(
       todayNote({
         rows: [],
@@ -186,7 +186,7 @@ describe('the row line', () => {
         now: NOW,
         timezone: TZ,
       }).day,
-    ).toBe('You are free until Squash at 2:05 PM.');
+    ).toBe('No more events until Squash at 2:05 PM.');
   });
 });
 

@@ -397,8 +397,8 @@ export function NeedsYouRow({
             ? lead
               ? 'border-transparent bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90'
               : quiet
-                ? 'border-transparent bg-[var(--color-control)] font-semibold text-[var(--color-text)] hover:bg-[var(--color-control-hover)]'
-                : 'border-transparent bg-[color-mix(in_oklab,var(--color-accent)_11%,var(--color-content))] font-semibold text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)] dark:bg-[color-mix(in_oklab,var(--color-accent)_22%,var(--color-content))]'
+                ? 'border-[color-mix(in_oklab,var(--color-text)_22%,var(--color-content))] bg-transparent font-medium text-[var(--color-text)] hover:bg-[var(--color-control-hover)]'
+                : 'border-transparent bg-[color-mix(in_oklab,var(--color-accent)_11%,var(--color-content))] font-semibold text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)] dark:bg-[color-mix(in_oklab,var(--color-accent)_28%,var(--color-content))]'
             : // The way out of a row stays quiet: text only until the pointer is on it.
               'border-transparent bg-transparent text-[color-mix(in_oklab,var(--color-text)_78%,var(--color-content))] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
         )
@@ -437,7 +437,7 @@ export function NeedsYouRow({
               source={obligation.source}
               size={18}
               glyph={10}
-              className="absolute -bottom-1 -right-1.5 border-2 border-[var(--color-content)] bg-[color-mix(in_oklab,var(--color-text)_10%,var(--color-content))]"
+              className="absolute -bottom-[5px] -right-[7px] border-2 border-[var(--color-content)] bg-[color-mix(in_oklab,var(--color-text)_10%,var(--color-content))]"
             />
           ) : null}
         </span>
@@ -514,7 +514,7 @@ export function NeedsYouRow({
           ) : (
             <span
               className={cn(
-                'mt-0.5 line-clamp-2',
+                'mt-0.5 line-clamp-2 text-pretty',
                 actionsInline
                   ? 'text-[15px] font-medium leading-[21px] tracking-[-0.003em]'
                   : 'text-[13px] leading-[18px]',

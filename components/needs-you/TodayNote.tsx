@@ -12,10 +12,10 @@ export function TodayNote({ note }: { note: TodayNoteLines | null }) {
     <div data-today-note aria-live="polite" className="min-h-[3.75rem] max-w-[46rem]">
       {note ? (
         <>
-          <p className="text-pretty font-display text-[clamp(1.375rem,2.5cqi,1.75rem)] font-normal leading-[1.25] tracking-[-0.012em] text-[var(--color-text)]">
+          <p className="text-balance font-display [font-variant-numeric:lining-nums] text-[clamp(1.375rem,2.5cqi,1.75rem)] font-normal leading-[1.25] tracking-[-0.012em] text-[var(--color-text)]">
             {note.lead}
           </p>
-          <p className="mt-1.5 text-pretty text-[15px] leading-[22px] text-[var(--color-text-muted)] @[860px]/today:text-[16px]">
+          <p className="mt-1.5 text-balance text-[15px] leading-[22px] text-[var(--color-text-muted)] @[860px]/today:text-[16px]">
             {note.day}
           </p>
         </>
