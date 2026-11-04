@@ -168,6 +168,19 @@ export function headerName(header: string | undefined): string {
 const ROLE_MAILBOX =
   /^(no-?reply|do-?not-?reply|donotreply|notifications?|notify|alerts?|updates?|mailer|support|help|billing|payments?|invoices?|accounts?|info|hello|hi|team|admin|service|services|security|news|newsletter|contact|sales)$/i;
 
+/** A mailbox provider says nothing about the sender: two people there are not one company. */
+const PERSONAL_MAIL_DOMAIN =
+  /^(gmail|googlemail|outlook|hotmail|live|msn|yahoo|ymail|icloud|me|mac|aol|proton|protonmail|pm|gmx|fastmail|hey|zoho)\./i;
+/** The second label of a two-part public suffix: "co" in bt.co.uk. */
+const SUFFIX_LABEL = /^(co|com|org|net|ac|gov|edu|ne|or)$/i;
+
+/** The company label of a domain: "stripe" in billing.stripe.com, "bt" in bt.co.uk. */
+function companyLabel(domain: string) {
+  const labels = domain.split('.');
+  const second = labels.at(-2);
+  return second && SUFFIX_LABEL.test(second) && labels.length >= 3 ? labels.at(-3) : second;
+}
+
 function titleWord(word: string) {
   return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
 }
@@ -186,7 +199,8 @@ export function readableAsker(asker: string): string {
   const parts = local.split(/[._-]+/).filter(Boolean);
   if (!ROLE_MAILBOX.test(local) && parts.length >= 2 && parts.every((part) => /^[a-z']+$/i.test(part)))
     return parts.map(titleWord).join(' ');
-  const host = domain.split('.').at(-2);
+  if (PERSONAL_MAIL_DOMAIN.test(domain)) return raw;
+  const host = companyLabel(domain);
   return host ? titleWord(host) : raw;
 }
 

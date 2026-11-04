@@ -640,6 +640,33 @@ describe('the Today list acts in place', () => {
     ]);
   });
 
+  test('a lead notice that fails leaves the other notices of its sender open', async () => {
+    const notice = (id: string, createdAt: number): ObligationView => ({
+      ...byId('ob_card'),
+      id,
+      kind: 'change',
+      asker: 'Lumen Hosting',
+      sourceKey: `mail:acct:${id}`,
+      createdAt,
+      updatedAt: createdAt,
+    });
+    const logged: string[] = [];
+    const { props } = todayProps({
+      items: [notice('n1', NOW - 1000), notice('n2', NOW - 2000)],
+      extras: [],
+      post: async (obligation) => {
+        logged.push(obligation.id);
+        throw new Error('down');
+      },
+    });
+    const renderer = await mount(props);
+    await act(async () => {
+      button(renderer, 'n1', 'Done').props.onClick({ stopPropagation() {} });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(logged).toEqual(['n1']);
+  });
+
   test('Done closes the row at once, keeps it in place with Undo, and Undo brings it back', async () => {
     const { props, actions } = todayProps({ items: few, extras: [] });
     const renderer = await mount(props);

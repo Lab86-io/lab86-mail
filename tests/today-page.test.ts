@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import { localDayWindow } from '../components/needs-you/TodaySchedule';
 import { parseWorthKnowing } from '../lib/mail/brief-worth-knowing';
 import type { ObligationView } from '../lib/obligations/contract';
 import { NEEDS_YOU_FIXTURE_NOW as NOW, NEEDS_YOU_FIXTURE_TIMEZONE as TZ } from '../lib/obligations/fixtures';
 import { groupNeedsYou } from '../lib/obligations/groups';
+import { startOfLocalDay } from '../lib/obligations/rules';
 import { TODAY_PREVIEW_EVENTS, TODAY_PREVIEW_ITEMS } from '../lib/obligations/today-fixtures';
 import {
   allDayEvents,
@@ -165,6 +167,20 @@ describe('the note', () => {
 
   test('a next event soon counts the minutes', () => {
     expect(note([], [event('Standup', 0.25, 0.5)])).toEndWith('Standup starts in 15 minutes.');
+  });
+});
+
+describe('the local day', () => {
+  test('its window ends at the next midnight, on a short or a long day', () => {
+    const ny = 'America/New_York';
+    const hours = (at: number) => {
+      const start = startOfLocalDay(at, ny);
+      const { startAt, endAt } = localDayWindow(start, ny);
+      return (endAt - startAt) / HOUR;
+    };
+    expect(hours(Date.UTC(2026, 10, 1, 16))).toBe(25); // Clocks go back.
+    expect(hours(Date.UTC(2026, 2, 8, 16))).toBe(23); // Clocks go forward.
+    expect(hours(Date.UTC(2026, 9, 28, 16))).toBe(24);
   });
 });
 

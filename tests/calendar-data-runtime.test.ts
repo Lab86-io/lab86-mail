@@ -207,7 +207,7 @@ describe('the live Today schedule', () => {
     const own = await t.withIdentity({ subject: USER }).query(api.calendarData.myDayEvents, window);
     expect(own).toEqual([
       {
-        id: 'event_1',
+        id: 'account_1:event_1',
         accountId: 'account_1',
         title: 'Quarterly planning zebra',
         startAt: BASE,

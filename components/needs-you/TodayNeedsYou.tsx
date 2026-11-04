@@ -176,8 +176,9 @@ export function TodayNeedsYou({
       word?: string,
       others: ObligationView[] = [],
     ) => {
-      const results = await Promise.all([obligation, ...others].map((member) => actions.act(member, action)));
-      if (!results[0]) return;
+      // The other notices follow only after the lead closes: a failed lead leaves all of them open.
+      if (!(await actions.act(obligation, action))) return;
+      const results = [true, ...(await Promise.all(others.map((member) => actions.act(member, action))))];
       const until = action.action === 'rsvp' ? undefined : Date.now() + UNDO_WINDOW_MS;
       leave(
         obligation.id,

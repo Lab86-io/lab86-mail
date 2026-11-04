@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from 'bun:test';
+import { BriefEditionMeter, runWithBriefMeter } from '../lib/brief/budget';
 import * as editorial from '../lib/brief/editorial';
 import {
   composeEditorialDocument,
@@ -10,7 +11,7 @@ import { collectBriefRefs } from '../lib/brief/hydration';
 import { briefLetterKind } from '../lib/brief/letter';
 import { briefWebEdition } from '../lib/brief/web-view';
 import { projectBriefMail } from '../lib/jev/report';
-import { composeDailyBrief, finalizeBudgetReport } from '../lib/mail/agent-report';
+import { composeDailyBrief, finalizeBudgetReport, withEditionBudget } from '../lib/mail/agent-report';
 import { composeBudgetBriefDocument } from '../lib/mail/brief-budget-document';
 import { createDailyEditorialSession, writeDailyEditorial } from '../lib/mail/brief-editorial';
 import { WORTH_KNOWING_SYSTEM, writeWorthKnowing } from '../lib/mail/brief-worth-knowing';
@@ -388,7 +389,10 @@ test('a user on the live Today page gets short facts and no editor run', async (
     ]);
     expect(briefWebEdition(finalized).worthKnowing).toEqual(finalized.worthKnowing);
     // No editor run is not a fallback: the budget record stays clean.
-    expect(finalized.worthKnowing).toBeDefined();
+    const metered = await runWithBriefMeter(new BriefEditionMeter({}), async () =>
+      withEditionBudget(finalized),
+    );
+    expect(metered.budget?.fallback).toBe(false);
   } finally {
     if (saved === undefined) delete process.env.LAB86_NEEDS_YOU;
     else process.env.LAB86_NEEDS_YOU = saved;

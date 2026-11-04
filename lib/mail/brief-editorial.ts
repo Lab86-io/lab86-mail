@@ -49,7 +49,7 @@ it includes completed items that did not rank as stories. Use it to retire stale
 it does not require another visible card for every completed item.
 Compose with place_regions, inspect with inspect_brief, fix any returned errors, and finish with
 finalize_brief. Its regionOrder must list every region id exactly once in the intended reading order.
-Start with the opening, then the strongest story; put supporting and private live sections afterward.
+Start with what the person must do; put supporting and private live sections afterward.
 Region creation and repair order is not reading order: explicitly order the finished page.
 A region is {id,summary,tree}. A tree is one of:
 - {kind:'component',id,component,props,summary,sources:[EXACT_MODULE_ID,...],footprint?,emphasis?}

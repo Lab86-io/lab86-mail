@@ -19,7 +19,12 @@ const dayEventsQuery = makeFunctionReference<
   TodayScheduleEvent[]
 >('calendarData:myDayEvents');
 
-const DAY_MS = 24 * 60 * 60_000;
+const AFTER_ANY_DAY_MS = 26 * 60 * 60_000;
+
+/** The local day from its start to the next midnight: a day can have 23 or 25 hours. */
+export function localDayWindow(startAt: number, timezone: string) {
+  return { startAt, endAt: startOfLocalDay(startAt + AFTER_ANY_DAY_MS, timezone) };
+}
 
 /** The events of the local day. Undefined while they load, or before sign-in. */
 export function useDayEvents(now: number, timezone: string | undefined) {
@@ -27,8 +32,8 @@ export function useDayEvents(now: number, timezone: string | undefined) {
   const startAt = timezone ? startOfLocalDay(now, timezone) : undefined;
   // The start changes once a day, so the subscription stays open all day.
   const args = useMemo(
-    () => (startAt === undefined ? null : { startAt, endAt: startAt + DAY_MS }),
-    [startAt],
+    () => (startAt === undefined || !timezone ? null : localDayWindow(startAt, timezone)),
+    [startAt, timezone],
   );
   return useQuery(dayEventsQuery, isAuthenticated && args ? args : 'skip');
 }

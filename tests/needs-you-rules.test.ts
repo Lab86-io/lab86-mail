@@ -459,5 +459,9 @@ describe('the words of a row (rules version 3)', () => {
     expect(readableAsker('ada@northwind.test')).toBe('Northwind');
     expect(readableAsker("Pat O'Hara")).toBe("Pat O'Hara");
     expect(readableAsker('octo-maya')).toBe('octo-maya');
+    // A mailbox provider is not a company, so two people there never merge into one row.
+    expect(readableAsker('jsmith@gmail.com')).toBe('jsmith@gmail.com');
+    expect(readableAsker('billing@bt.co.uk')).toBe('Bt');
+    expect(readableAsker('billing@accounts.stripe.com')).toBe('Stripe');
   });
 });

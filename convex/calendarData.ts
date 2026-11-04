@@ -562,7 +562,8 @@ export const myDayEvents = query({
     if (args.endAt <= args.startAt || args.endAt - args.startAt > MY_DAY_MAX_MS) return [];
     const rows = await queryEventsInWindow(ctx, userId, args.startAt, args.endAt, MY_DAY_EVENTS);
     return rows.map((row) => ({
-      id: row.providerEventId,
+      // One meeting can sit in two accounts under the same provider id.
+      id: `${row.accountId}:${row.providerEventId}`,
       accountId: row.accountId,
       title: row.title,
       startAt: row.startAt,
