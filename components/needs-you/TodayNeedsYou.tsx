@@ -284,7 +284,7 @@ export function TodayNeedsYou({
             onClick={onOpenPage}
             className="rounded-ui text-[13px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
           >
-            View all {list.open}
+            {list.rows.length} of {list.open}, view all
           </button>
         ) : null}
       </div>
@@ -404,7 +404,17 @@ export function TodayLive({
   const summary = useMemo(() => todayRows(groups), [groups]);
   const lines = useMemo(() => scheduleLines(events ?? [], now), [events, now]);
   const note = useMemo(
-    () => (events ? todayNote({ rows: summary.rows, open: summary.open, lines, now, timezone }) : null),
+    () =>
+      events
+        ? todayNote({
+            rows: summary.rows,
+            open: summary.open,
+            dueToday: summary.dueToday,
+            lines,
+            now,
+            timezone,
+          })
+        : null,
     [events, summary, lines, now, timezone],
   );
   return (
@@ -412,7 +422,7 @@ export function TodayLive({
       <TodayNote note={note} />
       <div
         data-today-grid
-        className="mt-6 grid gap-x-12 gap-y-8 @[860px]/today:grid-cols-[minmax(0,1fr)_288px]"
+        className="mt-5 grid gap-x-12 gap-y-8 @[860px]/today:grid-cols-[minmax(0,1fr)_288px]"
       >
         <TodayNeedsYou {...list} />
         <div data-today-aside className="flex min-w-0 flex-col gap-8">

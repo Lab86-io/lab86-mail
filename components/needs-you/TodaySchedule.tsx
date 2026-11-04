@@ -107,28 +107,22 @@ export function TodaySchedule({
                     'text-[13px] leading-[20px] tabular-nums',
                     line.state === 'past'
                       ? 'text-[var(--color-text-muted)]'
-                      : line.state === 'now'
-                        ? 'font-medium text-[var(--color-accent)]'
+                      : line.state === 'now' || line.state === 'next'
+                        ? 'text-[var(--color-text)]'
                         : 'text-[var(--color-text-muted)]',
                   )}
                 >
+                  {clock(line.event.startAt, timezone)}
                   {line.state === 'now' || line.state === 'next' ? (
-                    <>
-                      <span
-                        className={cn(
-                          'block font-medium',
-                          line.state === 'next' && 'text-[var(--color-text)]',
-                        )}
-                      >
-                        {line.state === 'now' ? 'Now' : 'Next'}
-                      </span>
-                      <span className="text-[var(--color-text-muted)] font-normal">
-                        {clock(line.event.startAt, timezone)}
-                      </span>
-                    </>
-                  ) : (
-                    clock(line.event.startAt, timezone)
-                  )}
+                    <span
+                      className={cn(
+                        'block text-[12px] font-medium leading-[18px]',
+                        line.state === 'now' ? 'text-[var(--color-accent)]' : 'text-[var(--color-text)]',
+                      )}
+                    >
+                      {line.state === 'now' ? 'Now' : 'Next'}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="min-w-0">
                   <span className={cn('block text-[14px] leading-[20px]', TITLE_TONE[line.state])}>

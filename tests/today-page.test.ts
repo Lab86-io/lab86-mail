@@ -11,6 +11,7 @@ import {
   type TodayNoteLines,
   type TodayScheduleEvent,
   todayNote,
+  todayRowLine,
   todayRows,
 } from '../lib/obligations/today-page';
 
@@ -120,13 +121,20 @@ describe('the note', () => {
   const note = (items: ObligationView[], events: TodayScheduleEvent[], now = NOW) => {
     const list = rowsOf(items);
     return text(
-      todayNote({ rows: list.rows, open: list.open, lines: scheduleLines(events, now), now, timezone: TZ }),
+      todayNote({
+        rows: list.rows,
+        open: list.open,
+        dueToday: list.dueToday,
+        lines: scheduleLines(events, now),
+        now,
+        timezone: TZ,
+      }),
     );
   };
 
   test('the fixture day says the news, the count, and what is next', () => {
     expect(note(TODAY_PREVIEW_ITEMS, TODAY_PREVIEW_EVENTS)).toBe(
-      '8 things need you. First, an urgent notice from Harbor Air. Design review ends at 11:30 AM. Lunch with Mara is next, at 12 PM.',
+      '8 things need you, 3 of them today. Start with Harbor Air. Design review ends at 11:30 AM. Lunch with Mara is next, at 12 PM.',
     );
   });
 
@@ -152,11 +160,32 @@ describe('the note', () => {
         ],
         [],
       ),
-    ).toStartWith('One thing needs you: 2 notices from Stripe. Nothing is');
+    ).toStartWith('One thing needs you. Start with Stripe. Nothing is');
   });
 
   test('a next event soon counts the minutes', () => {
     expect(note([], [event('Standup', 0.25, 0.5)])).toEndWith('Standup starts in 15 minutes.');
+  });
+});
+
+describe('the row line', () => {
+  test('it leaves out what the first action says', () => {
+    expect(todayRowLine('Review: Move the export')).toBe('Move the export');
+    expect(todayRowLine('Answer the invitation: Vendor review')).toBe('Invitation: Vendor review');
+    expect(todayRowLine('Can you review the plan?')).toBe('Can you review the plan?');
+  });
+
+  test('free time before the next event reads as free', () => {
+    expect(
+      todayNote({
+        rows: [],
+        open: 0,
+        dueToday: 0,
+        lines: scheduleLines([event('Squash', 3, 4)], NOW),
+        now: NOW,
+        timezone: TZ,
+      }).day,
+    ).toBe('You are free until Squash at 2 PM.');
   });
 });
 

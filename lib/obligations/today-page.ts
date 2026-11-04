@@ -22,6 +22,8 @@ export interface TodayRows<T extends NeedsYouExtraLike = NeedsYouExtraLike> {
   more: number;
   /** Every open row, shown or not. The notices of one sender count once. */
   open: number;
+  /** The open rows that are due now or today. */
+  dueToday: number;
 }
 
 function senderKey(obligation: ObligationView): string {
@@ -64,6 +66,7 @@ export function todayRows<T extends NeedsYouExtraLike>(
       .sort((a, b) => laterRank(a.entry) - laterRank(b.entry) || a.index - b.index)
       .map(({ entry }) => entry),
   ];
+  const urgentCount = urgent.reduce((count, group) => count + group.entries.length, 0);
   const rows: TodayRow<T>[] = [];
   const bySender = new Map<string, TodayRow<T>>();
   for (const entry of ordered) {
@@ -81,7 +84,13 @@ export function todayRows<T extends NeedsYouExtraLike>(
     }
     rows.push({ entry, others: [] });
   }
-  return { rows: rows.slice(0, cap), more: Math.max(0, rows.length - cap), open: rows.length };
+  const urgentIds = new Set(ordered.slice(0, urgentCount).map((entry) => entry.id));
+  return {
+    rows: rows.slice(0, cap),
+    more: Math.max(0, rows.length - cap),
+    open: rows.length,
+    dueToday: rows.filter((row) => urgentIds.has(row.entry.id)).length,
+  };
 }
 
 // ---- The schedule -----------------------------------------------------------
@@ -159,38 +168,27 @@ export function clockLabel(at: number, timezone: string): string {
   return text.replace(':00', '');
 }
 
-/** What the first row is, after "First," or "One thing needs you:". */
-function firstWords(row: TodayRow): string {
-  const { entry, others } = row;
+/** Who to start with: the name that the first row leads with. */
+function firstName(row: TodayRow): string {
+  const { entry } = row;
   if (entry.type === 'albatross') {
-    if (entry.item.kind === 'approval') return 'an approval for an Albatross';
+    if (entry.item.kind === 'approval') return 'the approval for an Albatross';
     if (entry.item.kind === 'checkin') return 'your daily check-in';
-    return 'a question from an Albatross';
+    return 'the question from an Albatross';
   }
   const { obligation } = entry;
-  const asker = obligation.asker.trim();
-  switch (obligation.kind) {
-    case 'reply':
-      return `a reply to ${asker}`;
-    case 'rsvp':
-      return `an invitation from ${asker}`;
-    case 'prepare':
-      return `preparation for ${obligation.sourceLabel?.trim() || asker}`;
-    case 'code':
-      return `a sign-in code from ${asker}`;
-    case 'change':
-      if (others.length) return `${others.length + 1} notices from ${asker}`;
-      return `${obligation.pushLevel === 'time_sensitive' ? 'an urgent' : 'a'} notice from ${asker}`;
-    default:
-      return `a request from ${asker}`;
-  }
+  if (obligation.kind === 'prepare') return obligation.sourceLabel?.trim() || obligation.asker.trim();
+  return obligation.asker.trim();
 }
 
-function leadLine(rows: readonly TodayRow[], open: number): string {
+function leadLine(rows: readonly TodayRow[], open: number, dueToday: number): string {
   const [first] = rows;
   if (!first) return 'Nothing needs you right now.';
-  if (open === 1) return `One thing needs you: ${firstWords(first)}.`;
-  return `${open} things need you. First, ${firstWords(first)}.`;
+  const start = `Start with ${firstName(first)}.`;
+  if (open === 1) return `One thing needs you. ${start}`;
+  if (dueToday === open) return `${open} things need you today. ${start}`;
+  if (dueToday > 0) return `${open} things need you, ${dueToday} of them today. ${start}`;
+  return `${open} things need you. ${start}`;
 }
 
 function dayLine(lines: readonly ScheduleLine[], now: number, timezone: string): string {
@@ -205,7 +203,7 @@ function dayLine(lines: readonly ScheduleLine[], now: number, timezone: string):
     const minutes = Math.round((next.startAt - now) / 60_000);
     if (minutes <= 1) return `${next.title} starts now.`;
     if (minutes <= 30) return `${next.title} starts in ${minutes} minutes.`;
-    return `${next.title} is next, at ${clockLabel(next.startAt, timezone)}.`;
+    return `You are free until ${next.title} at ${clockLabel(next.startAt, timezone)}.`;
   }
   return events.length
     ? 'Your calendar is clear for the rest of today.'
@@ -220,12 +218,21 @@ function dayLine(lines: readonly ScheduleLine[], now: number, timezone: string):
 export function todayNote(input: {
   rows: readonly TodayRow[];
   open: number;
+  dueToday: number;
   lines: readonly ScheduleLine[];
   now: number;
   timezone: string;
 }): TodayNoteLines {
   return {
-    lead: leadLine(input.rows, input.open),
+    lead: leadLine(input.rows, input.open, input.dueToday),
     day: dayLine(input.lines, input.now, input.timezone),
   };
+}
+
+/**
+ * The line of a row on the Today list, without the words that its first action
+ * says: "Review: Move the export" beside a Review button reads "Move the export".
+ */
+export function todayRowLine(title: string): string {
+  return title.replace(/^review:\s*/i, '').replace(/^answer the invitation:\s*/i, 'Invitation: ');
 }

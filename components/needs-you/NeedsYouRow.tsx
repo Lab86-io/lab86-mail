@@ -41,6 +41,7 @@ import {
   spacedCode,
   whenLabel,
 } from '@/lib/obligations/labels';
+import { todayRowLine } from '@/lib/obligations/today-page';
 import { cn } from '@/lib/utils';
 
 export type NeedsYouListEntry = NeedsYouEntry<NotificationItem>;
@@ -313,8 +314,7 @@ function placeWords(entry: NeedsYouListEntry, source: string, inline: boolean | 
 
 /** The word of a row whose first action only opens the item: what the person does there. */
 export function firstActionWord(obligation: Pick<ObligationView, 'source' | 'title'>): string {
-  if (/^review\b/i.test(obligation.title)) return 'Review';
-  return obligation.source === 'mail' ? 'Read' : 'Open';
+  return /^review\b/i.test(obligation.title) ? 'Review' : 'Open';
 }
 
 export function NeedsYouRow({
@@ -392,7 +392,7 @@ export function NeedsYouRow({
           primary
             ? lead
               ? 'border-transparent bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90'
-              : 'border-[color-mix(in_oklab,var(--color-accent)_30%,var(--color-content))] bg-[color-mix(in_oklab,var(--color-accent)_13%,var(--color-content))] font-semibold text-[var(--color-accent)] dark:bg-[color-mix(in_oklab,var(--color-accent)_24%,var(--color-content))] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]'
+              : 'border-transparent bg-[color-mix(in_oklab,var(--color-accent)_11%,var(--color-content))] font-semibold text-[var(--color-accent)] dark:bg-[color-mix(in_oklab,var(--color-accent)_22%,var(--color-content))] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]'
             : // The way out of a row stays quiet: text only until the pointer is on it.
               'border-transparent bg-transparent text-[color-mix(in_oklab,var(--color-text)_78%,var(--color-content))] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
         )
@@ -417,7 +417,7 @@ export function NeedsYouRow({
         className={cn(
           'grid w-full items-start gap-x-3 text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:rounded-ui focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
           actionsInline
-            ? 'grid-cols-[32px_minmax(0,1fr)] pb-2 pt-3 @[560px]:py-3 @[560px]:pr-[226px]'
+            ? 'grid-cols-[32px_minmax(0,1fr)] pb-1.5 pt-2.5 @[560px]:py-2.5 @[560px]:pr-[226px]'
             : 'grid-cols-[28px_minmax(0,1fr)_auto] py-[11px]',
           flush ? 'px-0' : 'px-5',
           selected && 'bg-[var(--color-selected-soft)]',
@@ -431,7 +431,7 @@ export function NeedsYouRow({
               source={obligation.source}
               size={18}
               glyph={11}
-              className="absolute -bottom-1 -right-1.5 border-[var(--color-border)] bg-[var(--color-content)]"
+              className="absolute -bottom-1 -right-1.5 border-2 border-[var(--color-content)]"
             />
           ) : null}
         </span>
@@ -445,7 +445,9 @@ export function NeedsYouRow({
             <span
               className={cn(
                 'max-w-[75%] shrink-0 truncate leading-[18px] text-[var(--color-text)]',
-                actionsInline ? 'text-[13.5px] font-medium' : 'font-display text-[14px] font-medium',
+                actionsInline
+                  ? 'text-[13px] font-medium text-[color-mix(in_oklab,var(--color-text)_82%,var(--color-content))]'
+                  : 'font-display text-[14px] font-medium',
               )}
             >
               {words.name}
@@ -510,7 +512,7 @@ export function NeedsYouRow({
                 closed ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]',
               )}
             >
-              {words.line}
+              {actionsInline ? todayRowLine(words.line) : words.line}
             </span>
           )}
           {actionsInline ? null : (
@@ -577,7 +579,7 @@ export function NeedsYouRow({
           className={cn(
             actionsInline
               ? // Three fixed columns, so the actions line up from row to row.
-                'grid grid-cols-[86px_64px_56px] gap-1 pb-3 pl-[44px] @[560px]:absolute @[560px]:right-0 @[560px]:top-1/2 @[560px]:-translate-y-1/2 @[560px]:pb-0 @[560px]:pl-0'
+                'grid grid-cols-[86px_64px_56px] gap-1 pb-2.5 pl-[44px] @[560px]:absolute @[560px]:right-0 @[560px]:top-1/2 @[560px]:-translate-y-1/2 @[560px]:pb-0 @[560px]:pl-0'
               : cn(
                   'absolute top-[9px] gap-1',
                   flush ? 'right-0' : 'right-3',
