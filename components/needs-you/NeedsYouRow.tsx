@@ -432,7 +432,10 @@ export function NeedsYouRow({
       >
         <span className="relative">
           <RowLead entry={entry} />
-          {actionsInline && obligation && obligation.source !== 'mail' ? (
+          {actionsInline &&
+          obligation &&
+          obligation.source !== 'mail' &&
+          rowLeadKind(obligation) !== 'glyph' ? (
             <SourceGlyph
               source={obligation.source}
               size={18}

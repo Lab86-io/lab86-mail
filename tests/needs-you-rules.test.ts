@@ -445,6 +445,13 @@ describe('the words of a row (rules version 3)', () => {
     expect(requestLine('## Review the plan', 'action')).toBeUndefined();
   });
 
+  test('a change line must stand alone', () => {
+    expect(
+      requestLine('This may happen if your card has expired or was declined.', 'change'),
+    ).toBeUndefined();
+    expect(requestLine('Your payment was declined.', 'change')).toBe('Your payment was declined.');
+  });
+
   test('a stored address reads as a name', () => {
     expect(readableAsker('pat.ohara@statpearls.test')).toBe('Pat Ohara');
     expect(readableAsker('billing@stripe.com')).toBe('Stripe');

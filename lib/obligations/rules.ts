@@ -241,6 +241,12 @@ const PROMISE_CUE = /\b(i will|i'll|we will|we'll|i am going to|we are going to|
 const CHANGE_CUE =
   /\b(cancel(?:l?ed)?|moved|changed|reschedul\w*|delayed|failed|declined|overdue|locked|suspended|now departs|new time)\b/i;
 
+/**
+ * A sentence that opens with "This may happen if..." leans on the sentence
+ * before it, so it cannot stand alone as the line of a row.
+ */
+const NEEDS_REFERENT = /^(this|that|these|those|it|they)\b/i;
+
 /** The sentence of the evidence that says what is owed, or undefined. */
 export function requestLine(text: string, kind: ObligationKind): string | undefined {
   const all = sentences(text);
@@ -251,7 +257,7 @@ export function requestLine(text: string, kind: ObligationKind): string | undefi
       : kind === 'reply'
         ? (find((sentence) => sentence.endsWith('?')) ?? find((sentence) => REQUEST_CUE.test(sentence)))
         : kind === 'change'
-          ? find((sentence) => CHANGE_CUE.test(sentence))
+          ? find((sentence) => CHANGE_CUE.test(sentence) && !NEEDS_REFERENT.test(sentence))
           : find((sentence) => REQUEST_CUE.test(sentence) || PROMISE_CUE.test(sentence));
   return pick ? clip(pick, TITLE_CHARS) : undefined;
 }
