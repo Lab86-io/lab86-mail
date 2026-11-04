@@ -173,6 +173,7 @@ describe('the row line', () => {
     expect(todayRowLine('Review: Move the export')).toBe('Move the export');
     expect(todayRowLine('Answer the invitation: Vendor review')).toBe('Invitation: Vendor review');
     expect(todayRowLine('Can you review the plan?')).toBe('Can you review the plan?');
+    expect(todayRowLine('The payment failed.')).toBe('The payment failed');
   });
 
   test('free time before the next event reads as free', () => {

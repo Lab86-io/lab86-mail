@@ -14,6 +14,8 @@ export interface TodayRow<T extends NeedsYouExtraLike = NeedsYouExtraLike> {
   entry: NeedsYouEntry<T>;
   /** The other notices from the same sender. Done closes them with the row. */
   others: ObligationView[];
+  /** Due now or today. The row's first action carries the accent only then. */
+  urgent?: boolean;
 }
 
 export interface TodayRows<T extends NeedsYouExtraLike = NeedsYouExtraLike> {
@@ -85,11 +87,12 @@ export function todayRows<T extends NeedsYouExtraLike>(
     rows.push({ entry, others: [] });
   }
   const urgentIds = new Set(ordered.slice(0, urgentCount).map((entry) => entry.id));
+  const marked = rows.map((row) => ({ ...row, urgent: urgentIds.has(row.entry.id) }));
   return {
-    rows: rows.slice(0, cap),
+    rows: marked.slice(0, cap),
     more: Math.max(0, rows.length - cap),
     open: rows.length,
-    dueToday: rows.filter((row) => urgentIds.has(row.entry.id)).length,
+    dueToday: marked.filter((row) => row.urgent).length,
   };
 }
 

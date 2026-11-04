@@ -502,7 +502,7 @@ describe('the Today list', () => {
     expect(texts).toContain('Done');
     expect(texts).toContain('Later');
     expect(texts).toContain('Copy');
-    expect(page.querySelector('[data-today-more]')?.textContent).toMatch(/^\d+ of \d+, view all$/);
+    expect(page.querySelector('[data-today-more]')?.textContent).toBe('View all');
     // No group labels, no code value outside the code row.
     expect(page.querySelector('h2 + ul h2')).toBeNull();
   });

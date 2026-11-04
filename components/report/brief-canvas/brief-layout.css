@@ -197,7 +197,12 @@
 }
 
 .brief-canvas--live .brief-masthead--canvas {
+  /* The moulding covers 3 px of the painting, so the visible edge is the text edge. */
+  margin-inline: calc(var(--brief-text-inset, 12px) - 3px);
   margin-bottom: 4px;
+}
+.brief-canvas--live .brief-masthead__label {
+  margin-inline: 3px;
 }
 .brief-canvas--live .brief-masthead__label {
   flex-flow: row wrap;

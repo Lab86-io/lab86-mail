@@ -241,6 +241,8 @@ export interface NeedsYouRowProps {
   bundled?: number;
   /** The first row of the Today list: only its first action has the solid fill. */
   lead?: boolean;
+  /** A row of the Today list that is not due today: its first action stays neutral. */
+  quiet?: boolean;
   registerRef: (node: HTMLButtonElement | null) => void;
 }
 
@@ -298,7 +300,8 @@ export function dueSentenceWord(obligation: Pick<ObligationView, 'kind'>, text: 
   const word = /^(Today|Tomorrow|Yesterday)\b/.test(text)
     ? text.charAt(0).toLowerCase() + text.slice(1)
     : (FULL_DAYS[text] ?? text);
-  return `${obligation.kind === 'rsvp' || obligation.kind === 'prepare' ? 'Starts' : 'Due'} ${word}`;
+  const when = word.replace(/^(today|tomorrow|yesterday) /, '$1, ');
+  return `${obligation.kind === 'rsvp' || obligation.kind === 'prepare' ? 'Starts' : 'Due'} ${when}`;
 }
 
 /**
@@ -344,6 +347,7 @@ export function NeedsYouRow({
   actionsInline,
   bundled = 0,
   lead,
+  quiet,
   registerRef,
 }: NeedsYouRowProps) {
   const approval = entry.type === 'albatross' ? entry.item.approval : undefined;
@@ -392,7 +396,9 @@ export function NeedsYouRow({
           primary
             ? lead
               ? 'border-transparent bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90'
-              : 'border-transparent bg-[color-mix(in_oklab,var(--color-accent)_11%,var(--color-content))] font-semibold text-[var(--color-accent)] dark:bg-[color-mix(in_oklab,var(--color-accent)_22%,var(--color-content))] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]'
+              : quiet
+                ? 'border-transparent bg-[var(--color-control)] font-semibold text-[var(--color-text)] hover:bg-[var(--color-control-hover)]'
+                : 'border-transparent bg-[color-mix(in_oklab,var(--color-accent)_11%,var(--color-content))] font-semibold text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)] dark:bg-[color-mix(in_oklab,var(--color-accent)_22%,var(--color-content))]'
             : // The way out of a row stays quiet: text only until the pointer is on it.
               'border-transparent bg-transparent text-[color-mix(in_oklab,var(--color-text)_78%,var(--color-content))] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
         )
@@ -417,7 +423,7 @@ export function NeedsYouRow({
         className={cn(
           'grid w-full items-start gap-x-3 text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:rounded-ui focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
           actionsInline
-            ? 'grid-cols-[32px_minmax(0,1fr)] pb-1.5 pt-2.5 @[560px]:py-2.5 @[560px]:pr-[226px]'
+            ? 'grid-cols-[32px_minmax(0,1fr)] pb-1.5 pt-2.5 @[560px]:py-2.5 @[560px]:pr-[232px]'
             : 'grid-cols-[28px_minmax(0,1fr)_auto] py-[11px]',
           flush ? 'px-0' : 'px-5',
           selected && 'bg-[var(--color-selected-soft)]',
@@ -430,8 +436,8 @@ export function NeedsYouRow({
             <SourceGlyph
               source={obligation.source}
               size={18}
-              glyph={11}
-              className="absolute -bottom-1 -right-1.5 border-2 border-[var(--color-content)]"
+              glyph={10}
+              className="absolute -bottom-1 -right-1.5 border-2 border-[var(--color-content)] bg-[color-mix(in_oklab,var(--color-text)_10%,var(--color-content))]"
             />
           ) : null}
         </span>
@@ -488,6 +494,9 @@ export function NeedsYouRow({
                   >
                     {statusWord}
                   </span>
+                ) : null}
+                {urgent && !due.text ? (
+                  <span className="ml-1.5 font-medium text-[var(--color-accent-2)]">Today</span>
                 ) : null}
               </span>
             ) : null}
@@ -579,7 +588,7 @@ export function NeedsYouRow({
           className={cn(
             actionsInline
               ? // Three fixed columns, so the actions line up from row to row.
-                'grid grid-cols-[86px_64px_56px] gap-1 pb-2.5 pl-[44px] @[560px]:absolute @[560px]:right-0 @[560px]:top-1/2 @[560px]:-translate-y-1/2 @[560px]:pb-0 @[560px]:pl-0'
+                'grid grid-cols-[92px_64px_56px] gap-1 pb-2.5 pl-[44px] @[560px]:absolute @[560px]:right-0 @[560px]:top-1/2 @[560px]:-translate-y-1/2 @[560px]:pb-0 @[560px]:pl-0'
               : cn(
                   'absolute top-[9px] gap-1',
                   flush ? 'right-0' : 'right-3',

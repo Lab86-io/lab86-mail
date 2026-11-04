@@ -278,14 +278,19 @@ export function TodayNeedsYou({
           Needs you
         </h2>
         {list.more > 0 ? (
-          <button
-            type="button"
-            data-today-more
-            onClick={onOpenPage}
-            className="rounded-ui text-[13px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
-          >
-            {list.rows.length} of {list.open}, view all
-          </button>
+          <span className="flex items-baseline gap-2">
+            <span className="text-[13px] tabular-nums text-[var(--color-text-muted)]">
+              {list.rows.length} of {list.open}
+            </span>
+            <button
+              type="button"
+              data-today-more
+              onClick={onOpenPage}
+              className="rounded-ui text-[13px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
+            >
+              View all
+            </button>
+          </span>
         ) : null}
       </div>
       <ul className="border-t border-[var(--color-border)]">
@@ -326,6 +331,7 @@ export function TodayNeedsYou({
                     actionsInline
                     bundled={others.length}
                     lead={rowIndex === 0}
+                    quiet={rowIndex > 0 && !row.urgent}
                     draftReady={obligation ? obligation.draftReady === true : false}
                     copied={copiedId === entry.id}
                     busy={actions.busyId === entry.id || sending === entry.id}
