@@ -1096,6 +1096,21 @@ struct DailyBriefArt: Hashable, Codable, Sendable {
     }
 }
 
+/// One short fact from the morning (`DailyReportWorthKnowing`). The live Today
+/// page shows at most two.
+struct WorthKnowingFact: Identifiable, Hashable, Codable, Sendable {
+    let title: String
+    let line: String
+
+    var id: String { "\(title):\(line)" }
+
+    init?(json: JSONValue) {
+        guard let title = json["title"]?.stringValue?.nilIfBlank else { return nil }
+        self.title = title
+        line = json["line"]?.stringValue?.nilIfBlank ?? ""
+    }
+}
+
 /// One mail thread the brief says matters today. Today shows at most four.
 struct ImportantMailItem: Identifiable, Hashable, Codable, Sendable {
     let accountID: String
@@ -1245,7 +1260,11 @@ struct DailyReportModel: Hashable, Codable, Sendable {
     // after a mailbox connects. Optional so older snapshots decode.
     private let lightEdition: Bool?
     private let firstEdition: Bool?
+    // The short facts of a live-page edition. Older editions have none, and
+    // snapshots saved before 2026-11-04 keep decoding.
+    private let worthKnowingFacts: [WorthKnowingFact]?
 
+    var worthKnowing: [WorthKnowingFact] { worthKnowingFacts ?? [] }
     var isLightEdition: Bool { lightEdition == true }
     var isFirstEdition: Bool { firstEdition == true }
     // The Sunday weekly review (round 2, FEATURES item 9).
@@ -1329,6 +1348,7 @@ struct DailyReportModel: Hashable, Codable, Sendable {
         services = json["services"]?.arrayValue.map { $0.compactMap { $0.stringValue?.nilIfBlank } }
         lightEdition = json["light"]?.boolValue
         firstEdition = json["first"]?.boolValue
+        worthKnowingFacts = json["worthKnowing"]?.arrayValue?.compactMap(WorthKnowingFact.init(json:))
     }
 }
 

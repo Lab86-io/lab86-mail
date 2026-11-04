@@ -2242,6 +2242,36 @@
       }
   },
   "scenarios": {
+    "today-live": {
+      "tools": {
+        "get_latest_daily_report": {
+          "report": {
+            "_id": "report-tour-live",
+            "kind": "morning",
+            "generatedAt": "@ms:day@06:30",
+            "status": "ready",
+            "title": "The {{weekday:day}} Brief",
+            "narrative": "",
+            "artifactStatus": "ready",
+            "art": {
+              "imageUrl": "@art",
+              "credit": "Fallback edition art",
+              "source": "Albatross"
+            },
+            "worthKnowing": [
+              {
+                "title": "Northwind renews on November 12.",
+                "line": "The seat price rises 8 percent."
+              },
+              {
+                "title": "Your water bill fell.",
+                "line": "October was $41, down from $63 in September."
+              }
+            ]
+          }
+        }
+      }
+    },
     "work-thread-receipt": {
       "paths": {
         "/api/albatross/work/w-course-receipt/runs": {

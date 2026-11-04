@@ -16,8 +16,22 @@ struct TodayView: View {
     @State private var lastBriefRequest: BriefRequest = .read
     @State private var showsInlineDate = false
     @State private var showsBriefSettings = false
+    @State private var liveViewportHeight: CGFloat = 0
 
     private var store: ProductStore { environment.store }
+
+    /// The live page: a user in the flag, on the current edition. A past
+    /// edition and everyone else keep the edition page.
+    private var showsLivePage: Bool {
+        TodayPage.showsLivePage(
+            enabled: environment.needsYou.isEnabled,
+            showsLatestEdition: store.showsLatestDailyReport
+        )
+    }
+
+    /// The Needs you list on the live page reads again this often while it
+    /// is on screen. A push and a return to the app read it sooner.
+    static let liveListInterval: Duration = .seconds(60)
 
     /// The brief reads were a plain load, or a request to write the edition.
     enum BriefRequest: Equatable {
@@ -116,8 +130,11 @@ struct TodayView: View {
                     .accessibilityHidden(!showsInlineDate)
             }
             #endif
-            ToolbarItem(placement: .primaryAction) {
-                regenerateButton
+            // The live page writes no letter, so it has nothing to write again.
+            if !showsLivePage {
+                ToolbarItem(placement: .primaryAction) {
+                    regenerateButton
+                }
             }
             // Secondary actions share the system overflow menu, so the bar
             // carries one ellipsis, never two side by side (D20).
@@ -159,9 +176,11 @@ struct TodayView: View {
             }
         }
         .shellToolbar()
-        .task(id: Self.narrativePollKey(report: store.dailyReport, scenePhase: scenePhase)) {
+        .task(id: "\(Self.narrativePollKey(report: store.dailyReport, scenePhase: scenePhase)):\(showsLivePage)") {
             if Self.clearsNarrative(in: scenePhase) { narrative.clear(); return }
             emptyEditionDate = .now
+            // The live page shows no stories, so it spends no read on them.
+            if showsLivePage { return }
             while !Task.isCancelled {
                 await reloadNarrative()
                 do { try await Task.sleep(for: .seconds(narrative.running ? 8 : 60)) } catch { return }
@@ -261,6 +280,82 @@ struct TodayView: View {
         return store.briefError ?? "This brief did not open."
     }
 
+    @ViewBuilder
+    private var todayBody: some View {
+        if showsLivePage {
+            livePageBody
+        } else {
+            editionTodayBody
+        }
+    }
+
+    /// The live page (docs/research/today-live-2026-11-04.md): the painting,
+    /// the note, Needs you, the day, and at most two short facts. No stories.
+    /// What is live and not part of the edition follows, as on the web.
+    private var livePageBody: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                TodayLiveMasthead(
+                    generatedAt: Self.editionDate(report: store.dailyReport, now: emptyEditionDate),
+                    art: store.dailyReport?.art,
+                    viewportHeight: liveViewportHeight
+                )
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    TodayLivePage(
+                        now: context.date,
+                        worthKnowing: store.dailyReport?.worthKnowing ?? [],
+                        onRetryCalendar: { await refreshTodayPage() }
+                    )
+                }
+                ReadyForYouSection()
+                PreparedWorkSection()
+                sourceStrip
+                    .padding(.top, 16)
+                    .padding(.bottom, 32)
+            }
+            .frame(maxWidth: TodayLivePage.maxWidth, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            .padding(.trailing, trailingReserve)
+        }
+        .background(environment.theme.paperColor)
+        .contentMargins(.bottom, Self.bottomReserve, for: .scrollContent)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { newHeight in
+            liveViewportHeight = newHeight
+        }
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            let offset = geometry.contentOffset.y + geometry.contentInsets.top
+            let width = min(geometry.containerSize.width, TodayLivePage.maxWidth) - 2 * TodayLiveMasthead.pageMargin
+            return offset > TodayLiveMasthead.frameHeight(width: width, viewportHeight: geometry.containerSize.height) - 56
+        } action: { _, crossed in
+            showsInlineDate = crossed
+        }
+        .refreshable {
+            await refreshTodayPage()
+            await store.refreshExecution()
+            await environment.needsYou.load(environment.backend, force: true)
+            await environment.refreshTodayWidget()
+        }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: Self.liveListInterval) } catch { return }
+                await environment.needsYou.load(environment.backend)
+            }
+        }
+        .task(id: "today-execution-poll") {
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(300))
+                } catch {
+                    return
+                }
+                await store.refreshExecution()
+            }
+        }
+    }
+
     /// On compact Apple platforms, Today is one page read in layers down one
     /// scroll. The Mac branch below restores the written Brief as the page.
     ///
@@ -272,7 +367,7 @@ struct TodayView: View {
     /// vanished behind it, and a three-week-old edition could present itself as
     /// the current one. The web merged them; this is the same page.
     @ViewBuilder
-    private var todayBody: some View {
+    private var editionTodayBody: some View {
         #if os(macOS)
         // Restore the desktop Today surface to its strongest identity: when a
         // written edition exists, the brief is the page. Live operational

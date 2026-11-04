@@ -36,6 +36,19 @@ final class NativeTourTests: XCTestCase {
         try await tour(screen)
     }
 
+    func testTour02bTodayLive() async throws {
+        // The live page (docs/research/today-live-2026-11-04.md). The rows are
+        // seeded: the stub server has no ledger.
+        var screen = Screen(id: "today-live", title: "Today, the live page", section: "Today", tab: .today)
+        screen.fullPage = true
+        screen.setUp = { environment in
+            environment.needsYou.activate(ownerID: environment.sessionStore.ownerID)
+            environment.needsYou.apply(TodayLiveTourFixture.snapshot(now: .now))
+            environment.navigation.needsYouEnabled = true
+        }
+        try await tour(screen)
+    }
+
     func testTour03TodayEmpty() async throws {
         var screen = Screen(id: "today-empty", title: "Today with no brief yet", section: "Today", tab: .today)
         screen.fullPage = true
@@ -520,7 +533,7 @@ final class NativeTourTests: XCTestCase {
     }
 
     private static let screenOrder = [
-        "shell-sidebar", "today-brief", "today-empty", "today-error", "mail-list", "mail-thread", "mail-empty",
+        "shell-sidebar", "today-brief", "today-live", "today-empty", "today-error", "mail-list", "mail-thread", "mail-empty",
         "mail-needs-reply", "mail-error", "compose-new", "compose-reply", "calendar-day", "calendar-week", "calendar-month", "tasks",
         "work", "work-detail", "work-detail-run", "work-detail-handoff", "work-thread-run", "work-thread-form",
         "work-thread-handoff", "work-thread-allow", "work-thread-receipt", "work-thread-goal-run", "work-thread-goal-package",

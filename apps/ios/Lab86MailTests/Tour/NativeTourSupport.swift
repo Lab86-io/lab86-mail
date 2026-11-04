@@ -482,3 +482,108 @@ enum TourPixels {
 
     static let blankThreshold = 16
 }
+
+/// The Needs you rows of the live Today page in the tour: the day of
+/// `lib/obligations/today-fixtures.ts`. Invented people only.
+enum TodayLiveTourFixture {
+    static func snapshot(now: Date) -> NeedsYouSnapshot {
+        let millis = NeedsYouClock.millis(now)
+        let hour: ObligationMillis = 3_600_000
+        let payments = (0..<3).map { index in
+            ObligationView(
+                id: "tp-pay-\(index)",
+                kind: .change,
+                sourceKey: "mail:acct-work:t-pay-\(index)",
+                title: "Your payment of $36.00 could not be processed.",
+                asker: "Lumen Hosting",
+                due: .today,
+                pushLevel: .none,
+                createdAt: millis - Double(8 + index * 24) * hour
+            )
+        }
+        let others = [
+            ObligationView(
+                id: "tp-flight",
+                kind: .change,
+                sourceKey: "mail:acct-work:t-flight",
+                title: "Flight HA 220 now departs at 6:40 PM from gate C12.",
+                asker: "Harbor Air",
+                pushLevel: .timeSensitive,
+                createdAt: millis - hour
+            ),
+            ObligationView(
+                id: "tp-invite",
+                kind: .rsvp,
+                source: .calendar,
+                sourceKey: "calendar:acct-work:vendor",
+                sourceLabel: "Vendor review",
+                title: "Answer the invitation: Vendor review",
+                asker: "Dana Whitfield",
+                due: .soon,
+                dueAt: millis + 26 * hour,
+                pushLevel: .none,
+                createdAt: millis - 3 * hour
+            ),
+            ObligationView(
+                id: "tp-terms",
+                kind: .reply,
+                sourceKey: "mail:acct-work:t-terms",
+                accountID: "acct-work",
+                threadID: "t-terms",
+                title: "What works for you to send the licensing terms to the press office?",
+                asker: "Marin Okafor",
+                pushLevel: .none,
+                draftReady: true,
+                createdAt: millis - 20 * hour
+            ),
+            ObligationView(
+                id: "tp-review",
+                kind: .action,
+                source: .github,
+                sourceKey: "github:northwind/web#491",
+                sourceLabel: "northwind/web #491",
+                title: "Review: Move the invoice export to the new queue",
+                asker: "Priya Raman",
+                due: .today,
+                pushLevel: .none,
+                createdAt: millis - 5 * hour
+            ),
+            ObligationView(
+                id: "tp-nda",
+                kind: .action,
+                sourceKey: "mail:acct-work:t-nda",
+                title: "Please sign the updated NDA before the kickoff.",
+                asker: "Tomás Rivera",
+                due: .soon,
+                dueAt: millis + 48 * hour,
+                pushLevel: .none,
+                createdAt: millis - 3 * hour
+            ),
+            ObligationView(
+                id: "tp-card",
+                kind: .change,
+                sourceKey: "mail:acct-work:t-card",
+                title: "The card ending 4410 expires next month.",
+                asker: "Bramble Press",
+                pushLevel: .none,
+                createdAt: millis - 30 * hour
+            ),
+            ObligationView(
+                id: "tp-numbers",
+                kind: .action,
+                source: .slack,
+                sourceKey: "slack:C1:1",
+                sourceLabel: "#finance",
+                title: "Can you send the Q3 numbers before the board call?",
+                asker: "Sam Lindqvist",
+                pushLevel: .none,
+                createdAt: millis - 26 * hour
+            ),
+        ]
+        return NeedsYouSnapshot(
+            enabled: true,
+            timezone: TimeZone.current.identifier,
+            items: others + payments
+        )
+    }
+}

@@ -22,6 +22,19 @@ final class NativeTourMacTests: XCTestCase {
         try await tour(Screen(id: "mac-today", title: "Today with a full brief", section: "Today", tab: .today))
     }
 
+    func testMacTour01bTodayLive() async throws {
+        // The live page in two columns. The rows are seeded: the stub server
+        // has no ledger.
+        var screen = Screen(id: "mac-today-live", title: "Today, the live page", section: "Today", tab: .today)
+        screen.scenarioID = "today-live"
+        screen.setUp = { environment in
+            environment.needsYou.activate(ownerID: environment.sessionStore.ownerID)
+            environment.needsYou.apply(TodayLiveTourFixture.snapshot(now: .now))
+            environment.navigation.needsYouEnabled = true
+        }
+        try await tour(screen)
+    }
+
     func testMacTour02Mail() async throws {
         var screen = Screen(id: "mac-mail", title: "Mail with the reading pane", section: "Mail", tab: .mail)
         screen.setUp = { environment in
@@ -375,7 +388,7 @@ final class NativeTourMacTests: XCTestCase {
     private static let windowSize = NSSize(width: 1_440, height: 900)
 
     private static let screenOrder = [
-        "mac-today", "mac-needs-you", "mac-mail", "mac-compose", "mac-calendar-week", "mac-calendar-month", "mac-tasks", "mac-work",
+        "mac-today", "mac-today-live", "mac-needs-you", "mac-mail", "mac-compose", "mac-calendar-week", "mac-calendar-month", "mac-tasks", "mac-work",
         "mac-work-detail", "mac-work-detail-run", "mac-work-detail-handoff", "mac-work-thread-run",
         "mac-work-thread-form", "mac-work-thread-handoff", "mac-work-thread-narrow", "mac-work-thread-allow",
         "mac-work-thread-receipt", "mac-work-thread-goal-run", "mac-work-thread-goal-package", "mac-document-mode-package",
