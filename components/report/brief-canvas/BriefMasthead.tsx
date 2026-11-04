@@ -172,7 +172,11 @@ function MastheadArtwork({
             {displayed?.source ? ` · ${displayed.source}` : ''}
           </span>
           {/* The live page keeps the credit that a source is owed, and drops the one that is ours. */}
-          <span>{plain && frame.credit.startsWith('Albatross') ? `Frame: ${frame.title}` : briefFrameCreditLine(frame)}</span>
+          <span>
+            {plain && frame.credit.startsWith('Albatross')
+              ? `Frame: ${frame.title}`
+              : briefFrameCreditLine(frame)}
+          </span>
         </figcaption>
       </figure>
     </div>

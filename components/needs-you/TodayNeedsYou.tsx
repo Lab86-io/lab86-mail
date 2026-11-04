@@ -20,12 +20,7 @@ import type {
   ObligationView,
 } from '@/lib/obligations/contract';
 import { UNDO_WINDOW_MS } from '@/lib/obligations/contract';
-import {
-  groupNeedsYou,
-  isClosedObligation,
-  type LaterOption,
-  laterOptions,
-} from '@/lib/obligations/groups';
+import { groupNeedsYou, isClosedObligation, type LaterOption, laterOptions } from '@/lib/obligations/groups';
 import { canSendReply, closeReasonLabel } from '@/lib/obligations/labels';
 import {
   scheduleLines,
@@ -43,9 +38,9 @@ import {
 } from './data';
 import { NeedsYouGate } from './NeedsYouGate';
 import { NeedsYouRow } from './NeedsYouRow';
+import { COPIED_MS, sonnerNeedsYouNotifier } from './NeedsYouView';
 import { TodayNote } from './TodayNote';
 import { TodaySchedule, useDayEvents } from './TodaySchedule';
-import { COPIED_MS, sonnerNeedsYouNotifier } from './NeedsYouView';
 import { useNeedsYou } from './useNeedsYou';
 import { type ObligationPost, useObligationActions } from './useObligationActions';
 
@@ -180,9 +175,7 @@ export function TodayNeedsYou({
       word?: string,
       others: ObligationView[] = [],
     ) => {
-      const results = await Promise.all(
-        [obligation, ...others].map((member) => actions.act(member, action)),
-      );
+      const results = await Promise.all([obligation, ...others].map((member) => actions.act(member, action)));
       if (!results[0]) return;
       const until = action.action === 'rsvp' ? undefined : Date.now() + UNDO_WINDOW_MS;
       leave(
@@ -198,9 +191,7 @@ export function TodayNeedsYou({
   const undo = useCallback(
     async (obligation: ObligationView) => {
       const others = leaving.get(obligation.id)?.others ?? [];
-      const results = await Promise.all(
-        [obligation, ...others].map((member) => actions.undo(member)),
-      );
+      const results = await Promise.all([obligation, ...others].map((member) => actions.undo(member)));
       if (!results[0]) return;
       setLeaving((current) => {
         const next = new Map(current);

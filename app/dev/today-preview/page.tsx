@@ -9,8 +9,12 @@ import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { BriefLiveLayer } from '@/components/report/live-layer';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
-import { TODAY_PREVIEW_EVENTS, TODAY_PREVIEW_ITEMS, TODAY_PREVIEW_WORTH } from '@/lib/obligations/today-fixtures';
 import { NEEDS_YOU_FIXTURE_NOW, NEEDS_YOU_FIXTURE_TIMEZONE } from '@/lib/obligations/fixtures';
+import {
+  TODAY_PREVIEW_EVENTS,
+  TODAY_PREVIEW_ITEMS,
+  TODAY_PREVIEW_WORTH,
+} from '@/lib/obligations/today-fixtures';
 import { letterBriefDocumentFixture } from '@/lib/shared/brief-document-fixtures';
 
 /* Dev-only harness: the live Today page over invented data, through the real
@@ -33,7 +37,10 @@ function Inner() {
   const params = useSearchParams();
   const hour = Number(params.get('at'));
   const state = params.get('state');
-  const now = Number.isFinite(hour) && hour > 0 ? NEEDS_YOU_FIXTURE_NOW + (hour - 11) * 3_600_000 : NEEDS_YOU_FIXTURE_NOW;
+  const now =
+    Number.isFinite(hour) && hour > 0
+      ? NEEDS_YOU_FIXTURE_NOW + (hour - 11) * 3_600_000
+      : NEEDS_YOU_FIXTURE_NOW;
   const items = state === 'clear' ? [] : TODAY_PREVIEW_ITEMS;
   const events = state === 'quiet' ? [] : TODAY_PREVIEW_EVENTS;
   const live = useMemo(

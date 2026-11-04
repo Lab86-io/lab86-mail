@@ -30,13 +30,16 @@ Reply with only JSON: {"items":[{"title":"...","line":"..."}]}.`;
 
 function clipWords(text: string, max: number) {
   const words = text.split(/\s+/);
-  return words.length <= max ? text : `${words.slice(0, max).join(' ').replace(/[,;:]$/, '')}…`;
+  return words.length <= max
+    ? text
+    : `${words
+        .slice(0, max)
+        .join(' ')
+        .replace(/[,;:]$/, '')}…`;
 }
 
 const answerSchema = z.object({
-  items: z
-    .array(z.object({ title: z.string().trim().min(1), line: z.string().trim().min(1) }))
-    .max(8),
+  items: z.array(z.object({ title: z.string().trim().min(1), line: z.string().trim().min(1) })).max(8),
 });
 
 /** The items of one model answer, cut to size, or none when it is not valid. */
@@ -75,7 +78,9 @@ export async function writeWorthKnowing(
         title: letter.title,
         know: pick(report.sections.know),
         since: report.sections.since ?? null,
-        connected: (report.sections.mcp ?? []).slice(0, 12).map((item) => ({ title: item.title, summary: item.summary })),
+        connected: (report.sections.mcp ?? [])
+          .slice(0, 12)
+          .map((item) => ({ title: item.title, summary: item.summary })),
       }),
       maxRetries: 0,
     });

@@ -187,8 +187,7 @@ export function rowWords(entry: NeedsYouListEntry, now: number, timezone: string
     name: obligation.asker,
     source: sourceWords({
       source: obligation.source,
-      // The line often names the place: "Answer the invitation: Standup".
-      sourceLabel: label && label !== obligation.asker && !line.includes(label) ? label : undefined,
+      sourceLabel: label && label !== obligation.asker ? label : undefined,
     }),
     line,
     meta,
@@ -282,14 +281,21 @@ export function rowPills(
 export function dueSentenceWord(obligation: Pick<ObligationView, 'kind'>, text: string): string {
   if (!text || obligation.kind === 'code' || obligation.kind === 'waiting' || /^(over|past)/i.test(text))
     return text;
-  const word = /^(Today|Tomorrow|Yesterday)\b/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+  const word = /^(Today|Tomorrow|Yesterday)\b/.test(text)
+    ? text.charAt(0).toLowerCase() + text.slice(1)
+    : text;
   return `${obligation.kind === 'rsvp' || obligation.kind === 'prepare' ? 'Starts' : 'Due'} ${word}`;
 }
 
-/** On the Today list the mark on the avatar names the source, so the words name only the place. */
+/**
+ * On the Today list the mark on the avatar names the source, so the words name
+ * only the place, and not when the line already says it: "Answer the invitation: Standup".
+ */
 function placeWords(entry: NeedsYouListEntry, source: string, inline: boolean | undefined) {
   if (!inline || entry.type !== 'obligation') return source;
-  return entry.obligation.sourceLabel?.trim() && source.includes(' · ') ? source.split(' · ').slice(1).join(' · ') : '';
+  const { sourceLabel, asker, title } = entry.obligation;
+  const place = sourceLabel?.trim();
+  return place && place !== asker && !title.includes(place) ? place : '';
 }
 
 /** The word of a row whose first action only opens the item: what the person does there. */
@@ -342,7 +348,8 @@ export function NeedsYouRow({
   if (actionsInline && obligation && !closed) {
     if (!pills.some((pill) => pill.primary))
       pills.unshift({ label: firstActionWord(obligation), onClick: onOpen, primary: true });
-    for (const pill of pills) pill.label = pill.label === 'Yes' ? 'Accept' : pill.label === 'No' ? 'Decline' : pill.label;
+    for (const pill of pills)
+      pill.label = pill.label === 'Yes' ? 'Accept' : pill.label === 'No' ? 'Decline' : pill.label;
   }
   const later = obligation && !closed && obligation.kind !== 'code' && onLater && laterOptions?.length;
   const [laterOpen, setLaterOpen] = useState(false);
@@ -353,7 +360,7 @@ export function NeedsYouRow({
     actionsInline
       ? cn(
           // 44 px on a touch width; 32 px beside a wide row.
-          "h-11 w-full whitespace-nowrap rounded-[var(--radius-control)] border px-2 text-[13.5px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-ring)] disabled:opacity-60 @[560px]:h-8 @[560px]:text-[13px]",
+          'h-11 w-full whitespace-nowrap rounded-[var(--radius-control)] border px-2 text-[13.5px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-ring)] disabled:opacity-60 @[560px]:h-8 @[560px]:text-[13px]',
           primary
             ? lead
               ? 'border-transparent bg-[var(--color-accent)] text-[var(--color-accent-foreground)] hover:opacity-90'
@@ -361,11 +368,11 @@ export function NeedsYouRow({
             : 'border-[var(--color-border)] bg-transparent text-[var(--color-text)] hover:bg-[var(--color-control-hover)]',
         )
       : cn(
-      'h-[22px] whitespace-nowrap rounded-[8px] border bg-[var(--color-bg-elevated)] px-2 text-[12px] font-medium leading-5 transition-colors hover:bg-[var(--color-control-hover)] disabled:opacity-60',
-      primary
-        ? 'border-[color-mix(in_oklab,var(--color-accent)_40%,var(--color-border))] text-[var(--color-accent)]'
-        : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
-    );
+          'h-[22px] whitespace-nowrap rounded-[8px] border bg-[var(--color-bg-elevated)] px-2 text-[12px] font-medium leading-5 transition-colors hover:bg-[var(--color-control-hover)] disabled:opacity-60',
+          primary
+            ? 'border-[color-mix(in_oklab,var(--color-accent)_40%,var(--color-border))] text-[var(--color-accent)]'
+            : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
+        );
   return (
     <li
       data-needs-you-row={entry.id}
@@ -490,23 +497,23 @@ export function NeedsYouRow({
           </span>
         </span>
         {actionsInline ? null : (
-        <span
-          data-needs-you-due
-          className={cn(
-            'whitespace-nowrap pt-px text-right text-[11.5px] leading-[18px] tabular-nums',
-            DUE_TONE[due.tone],
-            hasPills && !pillsAlways && 'group-hover:invisible group-focus-within:invisible',
-            laterOpen && 'invisible',
-            (hasPills && pillsAlways) || undo ? 'invisible' : undefined,
-          )}
-        >
-          {due.text}
-          {due.sub ? (
-            <small className="block text-[10.5px] font-normal text-[var(--color-text-faint)]">
-              {due.sub}
-            </small>
-          ) : null}
-        </span>
+          <span
+            data-needs-you-due
+            className={cn(
+              'whitespace-nowrap pt-px text-right text-[11.5px] leading-[18px] tabular-nums',
+              DUE_TONE[due.tone],
+              hasPills && !pillsAlways && 'group-hover:invisible group-focus-within:invisible',
+              laterOpen && 'invisible',
+              (hasPills && pillsAlways) || undo ? 'invisible' : undefined,
+            )}
+          >
+            {due.text}
+            {due.sub ? (
+              <small className="block text-[10.5px] font-normal text-[var(--color-text-faint)]">
+                {due.sub}
+              </small>
+            ) : null}
+          </span>
         )}
       </button>
       {approval && approvalView?.canDecide ? (

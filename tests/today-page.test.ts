@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { NEEDS_YOU_FIXTURE_NOW as NOW, NEEDS_YOU_FIXTURE_TIMEZONE as TZ } from '../lib/obligations/fixtures';
+import { parseWorthKnowing } from '../lib/mail/brief-worth-knowing';
 import type { ObligationView } from '../lib/obligations/contract';
+import { NEEDS_YOU_FIXTURE_NOW as NOW, NEEDS_YOU_FIXTURE_TIMEZONE as TZ } from '../lib/obligations/fixtures';
 import { groupNeedsYou } from '../lib/obligations/groups';
 import { TODAY_PREVIEW_EVENTS, TODAY_PREVIEW_ITEMS } from '../lib/obligations/today-fixtures';
 import {
@@ -12,7 +13,6 @@ import {
   todayNote,
   todayRows,
 } from '../lib/obligations/today-page';
-import { parseWorthKnowing } from '../lib/mail/brief-worth-knowing';
 
 const HOUR = 3_600_000;
 const text = (note: TodayNoteLines) => `${note.lead} ${note.day}`;
@@ -44,7 +44,13 @@ describe('the rows of the Today list', () => {
   test('the notices of one sender share a row; two questions from one person do not', () => {
     const list = rowsOf([
       item({ id: 'a', kind: 'change', asker: 'Lumen Hosting', title: 'Payment failed.' }),
-      item({ id: 'b', kind: 'change', asker: 'lumen hosting', title: 'Payment failed again.', createdAt: NOW - 2 * HOUR }),
+      item({
+        id: 'b',
+        kind: 'change',
+        asker: 'lumen hosting',
+        title: 'Payment failed again.',
+        createdAt: NOW - 2 * HOUR,
+      }),
       item({ id: 'c', asker: 'Marin' }),
       item({ id: 'd', asker: 'Marin', createdAt: NOW - 3 * HOUR }),
     ]);
@@ -85,18 +91,20 @@ describe('the rows of the Today list', () => {
 
 describe('the schedule', () => {
   test('each event has its state at this moment, and a long open stretch has a line', () => {
-    const lines = scheduleLines([event('past', -3, -2), event('now', -0.5, 0.5), event('next', 3, 4), event('later', 4, 5)], NOW);
-    expect(lines.map((line) => (line.type === 'event' ? `${line.event.id}:${line.state}` : line.type))).toEqual([
-      'past:past',
-      'now:now',
-      'open',
-      'next:next',
-      'later:later',
-    ]);
+    const lines = scheduleLines(
+      [event('past', -3, -2), event('now', -0.5, 0.5), event('next', 3, 4), event('later', 4, 5)],
+      NOW,
+    );
+    expect(
+      lines.map((line) => (line.type === 'event' ? `${line.event.id}:${line.state}` : line.type)),
+    ).toEqual(['past:past', 'now:now', 'open', 'next:next', 'later:later']);
   });
 
   test('a cancelled event leaves the day; an all-day event has its own place', () => {
-    const lines = scheduleLines([event('gone', 1, 2, { status: 'cancelled' }), event('all', -11, 13, { allDay: true })], NOW);
+    const lines = scheduleLines(
+      [event('gone', 1, 2, { status: 'cancelled' }), event('all', -11, 13, { allDay: true })],
+      NOW,
+    );
     expect(lines).toEqual([]);
     expect(allDayEvents([event('all', -11, 13, { allDay: true })]).map((row) => row.id)).toEqual(['all']);
   });
@@ -133,7 +141,9 @@ describe('the note', () => {
   });
 
   test('one item, and one sender with many notices, read as one thing to start', () => {
-    expect(note([item({ id: 'r', asker: 'Marin' })], [])).toStartWith('One thing needs you: a reply to Marin.');
+    expect(note([item({ id: 'r', asker: 'Marin' })], [])).toStartWith(
+      'One thing needs you: a reply to Marin.',
+    );
     expect(
       note(
         [
@@ -168,7 +178,9 @@ describe('the short facts', () => {
 
   test('a fenced answer reads; anything else gives none', () => {
     expect(parseWorthKnowing('```json\n{"items":[]}\n```')).toEqual([]);
-    expect(parseWorthKnowing('{"items":[{"title":"A.","line":"B."}]}')).toEqual([{ title: 'A.', line: 'B.' }]);
+    expect(parseWorthKnowing('{"items":[{"title":"A.","line":"B."}]}')).toEqual([
+      { title: 'A.', line: 'B.' },
+    ]);
     expect(parseWorthKnowing('Nothing today.')).toEqual([]);
   });
 });

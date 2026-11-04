@@ -197,11 +197,11 @@
   font-size: 12px;
   line-height: 16px;
 }
-[data-today-needs-you] [role='img'] {
+[data-today-needs-you] [role="img"] {
   font-family: var(--font-sans);
   letter-spacing: 0;
 }
-.dark [data-today-needs-you] [role='img'] {
+.dark [data-today-needs-you] [role="img"] {
   color: var(--color-text) !important;
 }
 

@@ -8,16 +8,16 @@ import { ContextVortex, type VortexSource } from '@/components/albatross/Context
 import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { requestNeedsYouItem } from '@/components/needs-you/data';
+import { WorthKnowing } from '@/components/needs-you/WorthKnowing';
 import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefNewEditionLine } from '@/components/report/BriefNewEditionLine';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
 import { BriefSourceLine, briefEditionNotes } from '@/components/report/BriefSourceLine';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { useBriefEditionRequest } from '@/components/report/brief-edition-request';
+import { useBriefLiveLayer } from '@/components/report/live-layer';
 import { PreparedWork } from '@/components/report/PreparedWork';
 import { ReadyForYou } from '@/components/report/ReadyForYou';
-import { WorthKnowing } from '@/components/needs-you/WorthKnowing';
-import { useBriefLiveLayer } from '@/components/report/live-layer';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -1242,43 +1242,43 @@ export function DailyReport({
                         <BriefSourceLine reportId={report._id} className="mt-8" />
                       </div>
                     ) : (
-                    <>
-                      {letterFailed ? (
-                        <p
-                          data-brief-letter-failed
-                          className="mx-auto mt-6 flex max-w-[620px] flex-wrap items-baseline gap-x-3 text-[12.5px] text-[var(--color-text-muted)]"
-                        >
-                          <span>{BRIEF_LETTER_FAILED_COPY}</span>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => generate.mutate()}
-                            className="text-[var(--color-accent)] hover:underline disabled:opacity-60"
+                      <>
+                        {letterFailed ? (
+                          <p
+                            data-brief-letter-failed
+                            className="mx-auto mt-6 flex max-w-[620px] flex-wrap items-baseline gap-x-3 text-[12.5px] text-[var(--color-text-muted)]"
                           >
-                            Write it again
-                          </button>
-                        </p>
-                      ) : null}
-                      {!displayDocument && report.errors?.length ? (
-                        <p className="mx-auto mt-3 max-w-[620px] text-[11px] text-[var(--color-danger)]">
-                          Some sources failed: {report.errors.join('; ')}
-                        </p>
-                      ) : null}
-                      {!selectedId &&
-                      !(
-                        displayDocument &&
-                        report.document &&
-                        hasLiveBriefSection(report.document, 'prepared_work')
-                      ) ? (
-                        <PreparedWork />
-                      ) : null}
-                      <BriefMailBacklog
-                        items={report.sections.overflow || []}
-                        total={report.stats?.overflow}
-                        onOpen={openBacklogThread}
-                      />
-                      {embedded ? null : <BriefFooter report={report} />}
-                    </>
+                            <span>{BRIEF_LETTER_FAILED_COPY}</span>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => generate.mutate()}
+                              className="text-[var(--color-accent)] hover:underline disabled:opacity-60"
+                            >
+                              Write it again
+                            </button>
+                          </p>
+                        ) : null}
+                        {!displayDocument && report.errors?.length ? (
+                          <p className="mx-auto mt-3 max-w-[620px] text-[11px] text-[var(--color-danger)]">
+                            Some sources failed: {report.errors.join('; ')}
+                          </p>
+                        ) : null}
+                        {!selectedId &&
+                        !(
+                          displayDocument &&
+                          report.document &&
+                          hasLiveBriefSection(report.document, 'prepared_work')
+                        ) ? (
+                          <PreparedWork />
+                        ) : null}
+                        <BriefMailBacklog
+                          items={report.sections.overflow || []}
+                          total={report.stats?.overflow}
+                          onOpen={openBacklogThread}
+                        />
+                        {embedded ? null : <BriefFooter report={report} />}
+                      </>
                     )
                   }
                 />

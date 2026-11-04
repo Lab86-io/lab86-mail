@@ -6,7 +6,6 @@ import { useMemo } from 'react';
 import { startOfLocalDay } from '@/lib/obligations/rules';
 import {
   allDayEvents,
-  clockLabel,
   type ScheduleState,
   scheduleLines,
   type TodayScheduleEvent,

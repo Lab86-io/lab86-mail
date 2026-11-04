@@ -111,7 +111,13 @@ export const TODAY_PREVIEW_ITEMS: ObligationView[] = [
   }),
 ];
 
-function event(id: string, title: string, fromHour: number, toHour: number, location?: string): TodayScheduleEvent {
+function event(
+  id: string,
+  title: string,
+  fromHour: number,
+  toHour: number,
+  location?: string,
+): TodayScheduleEvent {
   // NOW is 11:05 AM, so an hour of the day is an offset from it.
   const start = NOW - (11 + 5 / 60) * HOUR;
   return {
