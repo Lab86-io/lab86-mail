@@ -190,6 +190,11 @@
 [data-today-grid]:not(:has([data-today-needs-you])) [data-today-aside] {
   display: contents;
 }
+@container today (min-width: 860px) {
+  [data-today-grid]:not(:has([data-today-needs-you])) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 
 .brief-canvas--live .brief-masthead--canvas {
   margin-bottom: 4px;
@@ -204,15 +209,20 @@
   font-size: 12px;
   line-height: 16px;
 }
-/* On the Today list a mark says who and where, so one neutral fill replaces the name tints. */
 [data-today-needs-you] [role="img"] {
-  background-color: var(--color-control) !important;
-  color: var(--color-text-muted) !important;
   font-family: var(--font-sans);
   font-size: 10.5px !important;
   letter-spacing: 0;
 }
+.dark [data-today-needs-you] [role="img"] {
+  color: var(--color-text) !important;
+}
 
 .brief-canvas--live .brief-masthead__moulding {
   filter: drop-shadow(0 6px 12px rgb(0 0 0 / 0.18));
+}
+
+/* The thin ebony ribs read as gray stripes at this width: settle them into one dark moulding. */
+.brief-canvas--live [data-brief-frame="gothic-ebony"] .brief-masthead__moulding {
+  filter: brightness(0.62) contrast(0.92) drop-shadow(0 6px 12px rgb(0 0 0 / 0.18));
 }

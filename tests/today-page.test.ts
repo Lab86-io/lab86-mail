@@ -126,7 +126,7 @@ describe('the note', () => {
 
   test('the fixture day says the news, the count, and what is next', () => {
     expect(note(TODAY_PREVIEW_ITEMS, TODAY_PREVIEW_EVENTS)).toBe(
-      '8 things need you, starting with a notice from Harbor Air. Design review ends at 11:30 AM. Lunch with Mara is next, at 12 PM.',
+      '8 things need you. First, an urgent notice from Harbor Air. Design review ends at 11:30 AM. Lunch with Mara is next, at 12 PM.',
     );
   });
 

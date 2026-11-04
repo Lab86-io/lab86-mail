@@ -159,7 +159,7 @@ export function clockLabel(at: number, timezone: string): string {
   return text.replace(':00', '');
 }
 
-/** What the first row is, after "starting with" or "One thing needs you:". */
+/** What the first row is, after "First," or "One thing needs you:". */
 function firstWords(row: TodayRow): string {
   const { entry, others } = row;
   if (entry.type === 'albatross') {
@@ -179,7 +179,8 @@ function firstWords(row: TodayRow): string {
     case 'code':
       return `a sign-in code from ${asker}`;
     case 'change':
-      return others.length ? `${others.length + 1} notices from ${asker}` : `a notice from ${asker}`;
+      if (others.length) return `${others.length + 1} notices from ${asker}`;
+      return `${obligation.pushLevel === 'time_sensitive' ? 'an urgent' : 'a'} notice from ${asker}`;
     default:
       return `a request from ${asker}`;
   }
@@ -189,7 +190,7 @@ function leadLine(rows: readonly TodayRow[], open: number): string {
   const [first] = rows;
   if (!first) return 'Nothing needs you right now.';
   if (open === 1) return `One thing needs you: ${firstWords(first)}.`;
-  return `${open} things need you, starting with ${firstWords(first)}.`;
+  return `${open} things need you. First, ${firstWords(first)}.`;
 }
 
 function dayLine(lines: readonly ScheduleLine[], now: number, timezone: string): string {

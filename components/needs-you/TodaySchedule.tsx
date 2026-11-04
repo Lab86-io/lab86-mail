@@ -85,7 +85,7 @@ export function TodaySchedule({
               <li
                 key={line.id}
                 data-today-open
-                className="flex items-center gap-2 py-2 text-[12px] text-[var(--color-text-muted)]"
+                className="flex items-center gap-2 py-2 text-[13px] text-[var(--color-text-muted)]"
               >
                 <span>Free until {line.until ? clock(line.until, timezone) : 'the end of the day'}</span>
                 <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
@@ -135,7 +135,7 @@ export function TodaySchedule({
                     {line.event.title}
                   </span>
                   {line.state === 'now' || line.state === 'next' ? (
-                    <span className="block text-[12.5px] leading-[17px] text-[var(--color-text-muted)]">
+                    <span className="block text-[13px] leading-[18px] text-[var(--color-text-muted)]">
                       {line.state === 'next' && line.event.location
                         ? line.event.location
                         : `Ends ${clock(line.event.endAt, timezone)}`}

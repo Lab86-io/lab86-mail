@@ -3,25 +3,23 @@
 import type { TodayNoteLines } from '@/lib/obligations/today-page';
 
 /**
- * The note under the painting: what needs the person in full ink, what the day
- * does next one step back. Null while the calendar loads: the space stays, so
- * the list does not jump when the words arrive.
+ * The note under the painting. The first line is the one to read, in the
+ * display face. The day is a plain line under it, one step back. Null while the
+ * calendar loads: the space stays, so the list does not jump when the words arrive.
  */
 export function TodayNote({ note }: { note: TodayNoteLines | null }) {
   return (
-    <p
-      data-today-note
-      aria-live="polite"
-      className="min-h-[2.6em] max-w-[38em] text-pretty font-display text-[clamp(1.25rem,2.3cqi,1.625rem)] font-normal leading-[1.33] tracking-[-0.008em] text-[var(--color-text)]"
-    >
+    <div data-today-note aria-live="polite" className="min-h-[3.75rem] max-w-[46rem]">
       {note ? (
         <>
-          {note.lead}
-          <span className="mt-1 block text-[0.84em] leading-[1.32] text-[var(--color-text-muted)]">
+          <p className="text-pretty font-display text-[clamp(1.375rem,2.5cqi,1.75rem)] font-normal leading-[1.25] tracking-[-0.012em] text-[var(--color-text)]">
+            {note.lead}
+          </p>
+          <p className="mt-1.5 text-pretty text-[15px] leading-[22px] text-[var(--color-text-muted)] @[860px]/today:text-[16px]">
             {note.day}
-          </span>
+          </p>
         </>
       ) : null}
-    </p>
+    </div>
   );
 }

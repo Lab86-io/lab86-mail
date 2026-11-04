@@ -276,11 +276,6 @@ export function TodayNeedsYou({
       <div className="flex items-baseline justify-between gap-3 pb-2">
         <h2 className="font-display text-[17px] font-medium tracking-tight text-[var(--color-text)]">
           Needs you
-          {list.open > 0 ? (
-            <span className="ml-2 font-sans text-[12.5px] font-normal tabular-nums text-[var(--color-text-muted)]">
-              {list.open}
-            </span>
-          ) : null}
         </h2>
         {list.more > 0 ? (
           <button
@@ -289,7 +284,7 @@ export function TodayNeedsYou({
             onClick={onOpenPage}
             className="rounded-ui text-[13px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
           >
-            View all
+            View all {list.open}
           </button>
         ) : null}
       </div>

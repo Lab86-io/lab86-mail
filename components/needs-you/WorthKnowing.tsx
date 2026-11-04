@@ -20,7 +20,7 @@ export function WorthKnowing({ items }: { items: readonly DailyReportWorthKnowin
       </h2>
       <ul>
         {shown.map((item) => (
-          <li key={item.title} className="pt-3.5 text-[14px] leading-[20px] text-[var(--color-text-muted)]">
+          <li key={item.title} className="pt-3.5 text-[14px] leading-[21px] text-[var(--color-text-muted)]">
             <span className="font-medium text-[var(--color-text)]">{item.title}</span> {item.line}
           </li>
         ))}

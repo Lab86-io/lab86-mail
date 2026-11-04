@@ -496,13 +496,13 @@ describe('the Today list', () => {
 
   test('it shows the capped rows with their actions in view, the count, and the way to the rest', () => {
     const head = page.querySelector('[data-today-needs-you] h2')?.textContent ?? '';
-    expect(head).toMatch(/^Needs you\d+$/);
+    expect(head).toBe('Needs you');
     expect(page.querySelectorAll('[data-needs-you-row]').length).toBe(TODAY_NEEDS_YOU_CAP);
     const texts = [...page.querySelectorAll('[data-needs-you-row] button')].map((node) => node.textContent);
     expect(texts).toContain('Done');
     expect(texts).toContain('Later');
     expect(texts).toContain('Copy');
-    expect(page.querySelector('[data-today-more]')?.textContent).toBe('View all');
+    expect(page.querySelector('[data-today-more]')?.textContent).toMatch(/^View all \d+$/);
     // No group labels, no code value outside the code row.
     expect(page.querySelector('h2 + ul h2')).toBeNull();
   });
