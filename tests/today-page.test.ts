@@ -150,7 +150,7 @@ describe('the note', () => {
 
   test('one item, and one sender with many notices, read as one thing to start', () => {
     expect(note([item({ id: 'r', asker: 'Marin' })], [])).toStartWith(
-      'One thing needs you: a reply to Marin.',
+      'One thing needs you. Start with Marin.',
     );
     expect(
       note(
@@ -185,7 +185,7 @@ describe('the row line', () => {
         now: NOW,
         timezone: TZ,
       }).day,
-    ).toBe('You are free until Squash at 2 PM.');
+    ).toBe('You are free until Squash at 2:05 PM.');
   });
 });
 
