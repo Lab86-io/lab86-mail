@@ -859,7 +859,7 @@ private struct TodayScheduleSection: View {
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 4)
                 }
-                if lines.isEmpty {
+                if lines.isEmpty && TodayPage.allDayEvents(events).isEmpty {
                     Text("Nothing is scheduled today.")
                         .font(TodayType.detail)
                         .foregroundStyle(.secondary)

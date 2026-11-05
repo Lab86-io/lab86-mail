@@ -13,6 +13,7 @@ import {
 import { NeedsYouRow } from '../components/needs-you/NeedsYouRow';
 import { THREAD_STRIP_COPY, ThreadNeedsYouStrip } from '../components/needs-you/ThreadNeedsYouStrip';
 import { TodayNeedsYou, type TodayNeedsYouProps } from '../components/needs-you/TodayNeedsYou';
+import { TodaySchedule } from '../components/needs-you/TodaySchedule';
 import type { NotificationItem } from '../components/notifications/model';
 import { BriefCanvas } from '../components/report/brief-canvas/BriefCanvas';
 import { BriefLiveLayer } from '../components/report/live-layer';
@@ -74,6 +75,23 @@ describe('the Today list rules', () => {
 
   test('a short list shows every row', () => {
     expect(todayRows(groups, 100).more).toBe(0);
+  });
+});
+
+describe('the Today schedule', () => {
+  const at = Date.UTC(2026, 9, 28, 18);
+  const render = (
+    events: { id: string; title: string; startAt: number; endAt: number; allDay?: boolean }[],
+  ) =>
+    renderToStaticMarkup(<TodaySchedule events={events} now={at} timezone={TZ} onOpen={() => undefined} />);
+
+  test('an all-day event is not a day with nothing scheduled', () => {
+    const allDay = render([
+      { id: 'a', title: 'Offsite', startAt: at - 3_600_000, endAt: at + 3_600_000, allDay: true },
+    ]);
+    expect(allDay).toContain('Offsite');
+    expect(allDay).not.toContain('Nothing is scheduled today.');
+    expect(render([])).toContain('Nothing is scheduled today.');
   });
 });
 

@@ -81,7 +81,7 @@ export function TodaySchedule({
             {event.title}
           </p>
         ))}
-        {events && !lines.length ? (
+        {events && !lines.length && !allDay.length ? (
           <p className="py-1.5 text-[13px] text-[var(--color-text-muted)]">Nothing is scheduled today.</p>
         ) : null}
         <ol>

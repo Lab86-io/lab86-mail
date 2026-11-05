@@ -202,7 +202,7 @@ export function TodayNeedsYou({
         sonnerNeedsYouNotifier.info(
           'A notice could not come back.',
           leaving.get(obligation.id)?.word === 'Later'
-            ? 'It comes back at the time you chose.'
+            ? 'It stays put off. See the Needs you page.'
             : 'It is under Closed today on the Needs you page.',
         );
       setLeaving((current) => {
