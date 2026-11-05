@@ -170,7 +170,7 @@ struct NeedsYouStoreTests {
         await store.load(server.backend, now: at)
 
         #expect(await store.act(.done, on: "ob_1", others: ["ob_2", "ob_3"], transport: server.backend, now: at))
-        #expect(store.items.allSatisfy(\.isClosed))
+        #expect(store.items.allSatisfy { $0.isClosed })
         #expect(store.undo?.obligationID == "ob_1")
         #expect(store.undo?.otherIDs == ["ob_2", "ob_3"])
         #expect(store.busyID == nil)
