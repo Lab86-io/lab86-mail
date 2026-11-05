@@ -565,10 +565,11 @@ private struct TodayNeedsYouRow: View {
                     Image(systemName: badge)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(.secondary)
-                        .frame(width: 18, height: 18)
+                        .frame(width: 16, height: 16)
                         .background(Circle().fill(environment.theme.paperColor))
                         .overlay(Circle().strokeBorder(environment.theme.hairlineColor, lineWidth: 1))
-                        .offset(x: 5, y: 4)
+                        // Past the avatar's edge, so the mark never covers the initials.
+                        .offset(x: 9, y: 8)
                         .accessibilityHidden(true)
                 }
             }
