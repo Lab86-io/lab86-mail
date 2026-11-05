@@ -201,7 +201,9 @@ export function TodayNeedsYou({
       if (results.includes(false))
         sonnerNeedsYouNotifier.info(
           'A notice could not come back.',
-          'It is under Closed today on the Needs you page.',
+          leaving.get(obligation.id)?.word === 'Later'
+            ? 'It comes back at the time you chose.'
+            : 'It is under Closed today on the Needs you page.',
         );
       setLeaving((current) => {
         const next = new Map(current);
