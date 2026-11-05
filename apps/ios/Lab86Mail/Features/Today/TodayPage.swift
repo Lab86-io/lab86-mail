@@ -185,8 +185,12 @@ enum TodayPage {
 
     // MARK: - The rows of the list
 
+    /// One sender: the same name at the same domain. A company writes from
+    /// more than one mailbox, and two companies can show the same short name.
     private static func senderKey(_ obligation: ObligationView) -> String {
-        obligation.asker.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let name = obligation.asker.trimmingCharacters(in: .whitespacesAndNewlines)
+        let domain = (obligation.askerAddress ?? "").split(separator: "@").dropFirst().first.map(String.init) ?? ""
+        return "\(name)|\(domain.trimmingCharacters(in: .whitespacesAndNewlines))".lowercased()
     }
 
     /// Only a notice bundles. Two questions from one person are two things to answer.

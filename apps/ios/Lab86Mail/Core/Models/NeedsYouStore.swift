@@ -195,12 +195,21 @@ final class NeedsYouStore {
         transport: any BackendExchanging,
         now: Date = .now
     ) async -> Bool {
+        let startedAt = Date.now
         guard let result = await post(id: id, body: action.body, transport: transport),
               let outcome = ObligationActionResult(json: result) else { return false }
         let followers = await postToOthers(others, body: action.body, transport: transport)
         replace(outcome.obligation)
         for follower in followers { replace(follower) }
-        offerUndo(for: outcome, word: action.noticeWord, otherIDs: followers.map(\.id), now: now)
+        // The server's window keeps running while the other notices post, so
+        // the offer reads the time after them. `now` stays the injected clock.
+        let settled = now.addingTimeInterval(Date.now.timeIntervalSince(startedAt))
+        if !others.isEmpty, let until = outcome.undoUntil, NeedsYouClock.millis(settled) >= until {
+            // The window closed while the notices posted: an offer could only fail.
+            dismissUndo()
+        } else {
+            offerUndo(for: outcome, word: action.noticeWord, otherIDs: followers.map(\.id), now: settled)
+        }
         return true
     }
 

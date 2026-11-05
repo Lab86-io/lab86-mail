@@ -28,8 +28,13 @@ export interface TodayRows<T extends NeedsYouExtraLike = NeedsYouExtraLike> {
   dueToday: number;
 }
 
+/**
+ * One sender: the same name at the same domain. A company writes from more
+ * than one mailbox, and two companies can show the same short name.
+ */
 function senderKey(obligation: ObligationView): string {
-  return obligation.asker.trim().toLocaleLowerCase();
+  const domain = obligation.askerAddress?.split('@')[1]?.trim() ?? '';
+  return `${obligation.asker.trim()}|${domain}`.toLocaleLowerCase();
 }
 
 /** Only a notice bundles. Two questions from one person are two things to answer. */

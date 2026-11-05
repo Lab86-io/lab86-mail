@@ -176,10 +176,12 @@ export function TodayNeedsYou({
       word?: string,
       others: ObligationView[] = [],
     ) => {
+      // The server starts the Undo window when the lead closes, so the row's window
+      // starts no later than that, however long the other notices take.
+      const until = action.action === 'rsvp' ? undefined : Date.now() + UNDO_WINDOW_MS;
       // The other notices follow only after the lead closes: a failed lead leaves all of them open.
       if (!(await actions.act(obligation, action))) return;
       const results = [true, ...(await Promise.all(others.map((member) => actions.act(member, action))))];
-      const until = action.action === 'rsvp' ? undefined : Date.now() + UNDO_WINDOW_MS;
       leave(
         obligation.id,
         until,

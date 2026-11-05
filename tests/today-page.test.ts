@@ -65,6 +65,20 @@ describe('the rows of the Today list', () => {
     ]);
   });
 
+  test('one company shares a row across mailboxes; the same name at another domain does not', () => {
+    const notice = (id: string, askerAddress: string) =>
+      item({ id, kind: 'change', asker: 'Lumen', title: 'Failed.', askerAddress });
+    const list = rowsOf([
+      notice('a', 'billing@lumen.test'),
+      notice('b', 'receipts@lumen.test'),
+      notice('c', 'billing@lumen.example'),
+    ]);
+    expect(list.rows.map((row) => [row.entry.id, row.others.map((other) => other.id)])).toEqual([
+      ['a', ['b']],
+      ['c', []],
+    ]);
+  });
+
   test('the cap counts rows, and the rest is a count', () => {
     const items = Array.from({ length: 8 }, (_, index) => item({ id: `r${index}` }));
     const list = rowsOf(items, 6);
