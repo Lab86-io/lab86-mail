@@ -164,6 +164,46 @@ export function headerName(header: string | undefined): string {
   return emailFromHeader(raw) || raw || 'Someone';
 }
 
+/** Mailbox names that belong to a function, not to a person. */
+const ROLE_MAILBOX =
+  /^(no-?reply|do-?not-?reply|donotreply|notifications?|notify|alerts?|updates?|mailer|support|help|billing|payments?|invoices?|accounts?|info|hello|hi|team|admin|service|services|security|news|newsletter|contact|sales)$/i;
+
+/** A mailbox provider says nothing about the sender: two people there are not one company. */
+const PERSONAL_MAIL_DOMAIN =
+  /^(gmail|googlemail|outlook|hotmail|live|msn|yahoo|ymail|icloud|me|mac|aol|proton|protonmail|pm|gmx|fastmail|hey|zoho)\./i;
+/** The second label of a two-part public suffix: "co" in bt.co.uk. */
+const SUFFIX_LABEL = /^(co|com|org|net|ac|gov|edu|ne|or)$/i;
+
+/** The company label of a domain: "stripe" in billing.stripe.com, "bt" in bt.co.uk. */
+function companyLabel(domain: string) {
+  const labels = domain.split('.');
+  const second = labels.at(-2);
+  return second && SUFFIX_LABEL.test(second) && labels.length >= 3 ? labels.at(-3) : second;
+}
+
+function titleWord(word: string) {
+  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+}
+
+/**
+ * The name to show for an asker. A stored address reads as a name: the local
+ * part of a person's mailbox ("pat.ohara@x.test" gives "Pat Ohara"), or the
+ * company of a role mailbox ("billing@stripe.com" gives "Stripe"). Any other
+ * asker stays as it is.
+ */
+export function readableAsker(asker: string): string {
+  const raw = asker.trim();
+  const match = /^([^\s@]+)@([^\s@]+\.[^\s@]+)$/.exec(raw);
+  if (!match) return raw;
+  const [, local, domain] = match;
+  const parts = local.split(/[._-]+/).filter(Boolean);
+  if (!ROLE_MAILBOX.test(local) && parts.length >= 2 && parts.every((part) => /^[a-z']+$/i.test(part)))
+    return parts.map(titleWord).join(' ');
+  if (PERSONAL_MAIL_DOMAIN.test(domain)) return raw;
+  const host = companyLabel(domain);
+  return host ? titleWord(host) : raw;
+}
+
 function firstAddress(list: string | undefined, self: Set<string>): string | undefined {
   for (const part of String(list || '').split(/[,;]/)) {
     const email = emailFromHeader(part);
@@ -188,10 +228,24 @@ export function ownText(body: string): string {
   return lines.join('\n').trim();
 }
 
+/** A Markdown heading names a section. It asks nothing, so it is never the line of a row. */
+const MARKDOWN_HEADING = /^\s*#{1,6}\s/;
+
+/** The words of one line without its Markdown marks: list marks, emphasis, and code ticks. */
+export function plainLine(line: string): string {
+  return line
+    .replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+(?:\[[ x]\]\s+)?)/i, '')
+    .replace(/(\*\*|__|`)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function sentences(text: string): string[] {
   return ownText(text)
-    .split(/(?<=[.!?])\s+|\n+/)
-    .map((sentence) => sentence.replace(/\s+/g, ' ').trim())
+    .split(/\n+/)
+    .filter((line) => !MARKDOWN_HEADING.test(line))
+    .flatMap((line) => plainLine(line).split(/(?<=[.!?])\s+/))
+    .map((sentence) => sentence.trim())
     .filter((sentence) => sentence.length >= 8 && /[a-z]/i.test(sentence));
 }
 
@@ -200,6 +254,12 @@ const REQUEST_CUE =
 const PROMISE_CUE = /\b(i will|i'll|we will|we'll|i am going to|we are going to|will send|will get back)\b/i;
 const CHANGE_CUE =
   /\b(cancel(?:l?ed)?|moved|changed|reschedul\w*|delayed|failed|declined|overdue|locked|suspended|now departs|new time)\b/i;
+
+/**
+ * A sentence that opens with "This may happen if..." leans on the sentence
+ * before it, so it cannot stand alone as the line of a row.
+ */
+const NEEDS_REFERENT = /^(this|that|these|those|it|they)\b/i;
 
 /** The sentence of the evidence that says what is owed, or undefined. */
 export function requestLine(text: string, kind: ObligationKind): string | undefined {
@@ -211,7 +271,7 @@ export function requestLine(text: string, kind: ObligationKind): string | undefi
       : kind === 'reply'
         ? (find((sentence) => sentence.endsWith('?')) ?? find((sentence) => REQUEST_CUE.test(sentence)))
         : kind === 'change'
-          ? find((sentence) => CHANGE_CUE.test(sentence))
+          ? find((sentence) => CHANGE_CUE.test(sentence) && !NEEDS_REFERENT.test(sentence))
           : find((sentence) => REQUEST_CUE.test(sentence) || PROMISE_CUE.test(sentence));
   return pick ? clip(pick, TITLE_CHARS) : undefined;
 }
@@ -226,7 +286,8 @@ export function fallbackTitle(kind: ObligationKind, subject: string): string {
   if (kind === 'reply') return `Reply about ${topic}`;
   if (kind === 'action') return `Action needed: ${topic}`;
   if (kind === 'waiting') return `Waiting for an answer: ${topic}`;
-  if (kind === 'change') return `Changed: ${topic}`;
+  // The subject says what changed. A prefix adds no fact, and the row already has the sender.
+  if (kind === 'change') return topic;
   return `Sign-in code: ${topic}`;
 }
 
@@ -588,6 +649,11 @@ export function ownerFactText(value: unknown): string {
     .join('\n');
 }
 
+/** True when a fact asks something of the owner. `authored` alone asks nothing. */
+function hasOwnerAsk(facts: readonly OwnerFact[] | undefined) {
+  return (facts ?? []).some((fact) => fact !== 'authored');
+}
+
 /** The content labels that the rules read (lib/content/contract.ts). */
 export interface ContentLabelFacts {
   kind: string;
@@ -695,6 +761,11 @@ export function contentObligation(
   if (!source || settings.excluded || item.deleted) return null;
   if (!labels.actionable || labels.resolved || labels.kind === 'noise') return null;
   if (now - item.modifiedAt > CONTENT_OBLIGATION_WINDOW_MS) return null;
+  // A code host names what it asks of the owner: a review, a mention, an
+  // assignment, or a failed check. Without that fact the item is only the
+  // owner's own open work. The Bitbucket loader lists the owner's own pull
+  // requests, so the text of each one reads as a request to the owner.
+  if ((source === 'github' || source === 'bitbucket') && !hasOwnerAsk(item.ownerFacts)) return null;
   const sourceName = OBLIGATION_SOURCE_LABELS[source];
   const author = item.author?.trim();
   const asker = clip(author || sourceName, 80);

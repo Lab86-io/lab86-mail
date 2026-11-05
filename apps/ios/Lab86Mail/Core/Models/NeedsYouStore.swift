@@ -25,6 +25,9 @@ final class NeedsYouStore {
         let asker: String
         /// The end of the window, in epoch milliseconds.
         let until: ObligationMillis
+        /// The other notices of a Today row that closed with this one. Undo
+        /// brings them back too.
+        var otherIDs: [String] = []
 
         var id: String { "\(obligationID):\(until)" }
         var summary: String { "\(word): \(asker)" }
@@ -181,21 +184,37 @@ final class NeedsYouStore {
 
     /// Done, Later, Not mine, or an RSVP. The row the server gives back
     /// replaces the old one; an undo window opens when the server offers one.
+    /// `others` are the other notices of a Today row. They follow the lead,
+    /// and the rows change together so the list does not jump between posts.
+    /// A notice that fails stays open under its own row, and says why.
     @discardableResult
     func act(
         _ action: ObligationAction,
         on id: String,
+        others: [String] = [],
         transport: any BackendExchanging,
         now: Date = .now
     ) async -> Bool {
+        let startedAt = Date.now
         guard let result = await post(id: id, body: action.body, transport: transport),
               let outcome = ObligationActionResult(json: result) else { return false }
+        let followers = await postToOthers(others, body: action.body, transport: transport)
         replace(outcome.obligation)
-        offerUndo(for: outcome, word: action.noticeWord, now: now)
+        for follower in followers { replace(follower) }
+        // The server's window keeps running while the other notices post, so
+        // the offer reads the time after them. `now` stays the injected clock.
+        let settled = now.addingTimeInterval(Date.now.timeIntervalSince(startedAt))
+        if !others.isEmpty, let until = outcome.undoUntil, NeedsYouClock.millis(settled) >= until {
+            // The window closed while the notices posted: an offer could only fail.
+            dismissUndo()
+        } else {
+            offerUndo(for: outcome, word: action.noticeWord, otherIDs: followers.map(\.id), now: settled)
+        }
         return true
     }
 
-    /// Reverses the last close while its window is open.
+    /// Reverses the last close while its window is open, with every notice
+    /// that closed with it.
     @discardableResult
     func undoLast(transport: any BackendExchanging, now: Date = .now) async -> Bool {
         guard let undo else { return false }
@@ -205,9 +224,32 @@ final class NeedsYouStore {
         }
         guard let result = await post(id: undo.obligationID, body: ObligationAction.undo.body, transport: transport),
               let outcome = ObligationActionResult(json: result) else { return false }
+        let followers = await postToOthers(undo.otherIDs, body: ObligationAction.undo.body, transport: transport)
         replace(outcome.obligation)
+        for follower in followers { replace(follower) }
         dismissUndo()
         return true
+    }
+
+    /// One post at a time: `post` holds one busy item. The rows that answered
+    /// come back, and the last failure stays on `actionError`.
+    private func postToOthers(
+        _ ids: [String],
+        body: JSONValue,
+        transport: any BackendExchanging
+    ) async -> [ObligationView] {
+        var rows: [ObligationView] = []
+        var failure: String?
+        for id in ids {
+            if let result = await post(id: id, body: body, transport: transport),
+               let outcome = ObligationActionResult(json: result) {
+                rows.append(outcome.obligation)
+            } else if let actionError {
+                failure = actionError
+            }
+        }
+        if let failure { actionError = failure }
+        return rows
     }
 
     func dismissUndo() {
@@ -326,13 +368,19 @@ final class NeedsYouStore {
         self.snapshot = snapshot
     }
 
-    private func offerUndo(for outcome: ObligationActionResult, word: String, now: Date) {
+    private func offerUndo(for outcome: ObligationActionResult, word: String, otherIDs: [String] = [], now: Date) {
         guard let until = outcome.undoUntil else {
             dismissUndo()
             return
         }
         undoTimer?.cancel()
-        undo = UndoNotice(obligationID: outcome.obligation.id, word: word, asker: outcome.obligation.asker, until: until)
+        undo = UndoNotice(
+            obligationID: outcome.obligation.id,
+            word: word,
+            asker: outcome.obligation.asker,
+            until: until,
+            otherIDs: otherIDs
+        )
         let wait = max(0, until - NeedsYouClock.millis(now))
         undoTimer = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(Int(wait) + 50))

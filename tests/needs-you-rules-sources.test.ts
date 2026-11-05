@@ -414,6 +414,7 @@ describe('connected sources (phase 2)', () => {
     const vip = contentItemFacts(item({ source: 'github' }), {
       externalId: 'x',
       author: 'Maya <maya@northwind.test>',
+      raw: { ownerFacts: ['mentioned'] },
     });
     expect(
       contentObligation(vip, labels, { ...settings, vipSenders: ['maya@northwind.test'] }, NOW),
@@ -667,5 +668,38 @@ describe('the sweep (sweepAtFor, sweepStep)', () => {
     expect(sweepStep(row({ kind: 'prepare' }), NOW)).toEqual({ action: 'none' });
     expect(sweepStep(row({ kind: 'reply' }), NOW)).toEqual({ action: 'none' });
     expect(sweepStep(row({ state: 'resolved' }), NOW)).toEqual({ action: 'none' });
+  });
+});
+
+describe('what a code host asks of the owner (rules version 3)', () => {
+  const NOW_MS = Date.UTC(2026, 10, 3, 15);
+  const base = {
+    title: 'Refactor the outbox',
+    text: 'Refactor the outbox\n### Database review follow-up (2026-11-03)\nPlease review the plan.',
+    modifiedAt: NOW_MS - 3_600_000,
+    deleted: false,
+    author: 'jakob.langtry',
+  };
+  const open = { kind: 'work', actionable: true, resolved: false, workId: null };
+  const plain = { vipSenders: [], timezone: 'UTC' };
+
+  test("the owner's own pull request with no ask opens nothing", () => {
+    for (const source of ['bitbucket', 'github'])
+      expect(contentObligation({ ...base, source }, open, plain, NOW_MS)).toBeNull();
+    expect(
+      contentObligation({ ...base, source: 'bitbucket', ownerFacts: ['authored'] }, open, plain, NOW_MS),
+    ).toBeNull();
+  });
+
+  test('a failed check on the same pull request opens an item that says so', () => {
+    expect(
+      contentObligation({ ...base, source: 'bitbucket', ownerFacts: ['checks_failed'] }, open, plain, NOW_MS),
+    ).toMatchObject({ kind: 'action', title: 'Fix the failed checks: Refactor the outbox' });
+  });
+
+  test('other sources still open by the label alone', () => {
+    expect(contentObligation({ ...base, source: 'slack' }, open, plain, NOW_MS)?.title).toBe(
+      'Please review the plan.',
+    );
   });
 });

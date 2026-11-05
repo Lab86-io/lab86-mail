@@ -1,14 +1,13 @@
 'use client';
 
-// The live Needs you list on Today (docs/research/needs-you-web-2-design-2026-11-02.md).
-// The morning letter stores a copy of the list with no Done. This list reads
-// the same subscription as the page, so it is live, and it acts in place:
-// Done, Later, Reply with the prepared draft, Copy, Yes and No, Undo. It sits
-// under the masthead and before the lede, in the measure of the letter. An
-// empty list takes no space.
+// The live Needs you list on Today (docs/research/today-live-2026-11-04.md).
+// The list reads the same subscription as the page, so it is live, and it acts
+// in place: Done, Later, Reply with the prepared draft, Copy, Yes and No, Undo.
+// The notices of one sender share a row, and Done closes them all. An empty
+// list takes no space.
 
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { NotificationAction, NotificationItem } from '@/components/notifications/model';
 import { useNotificationActions } from '@/components/notifications/NotificationsSurface';
 import { BriefLiveLayer } from '@/components/report/live-layer';
@@ -21,16 +20,15 @@ import type {
   ObligationView,
 } from '@/lib/obligations/contract';
 import { UNDO_WINDOW_MS } from '@/lib/obligations/contract';
-import {
-  groupNeedsYou,
-  isClosedObligation,
-  type LaterOption,
-  laterOptions,
-  type NeedsYouEntry,
-  needsYouSummary,
-} from '@/lib/obligations/groups';
+import { groupNeedsYou, isClosedObligation, type LaterOption, laterOptions } from '@/lib/obligations/groups';
 import { canSendReply, closeReasonLabel } from '@/lib/obligations/labels';
-import { todayNeedsYouFoot, todayNeedsYouHead, todayNeedsYouList } from '@/lib/obligations/surfaces';
+import {
+  scheduleLines,
+  type TodayRow,
+  type TodayScheduleEvent,
+  todayNote,
+  todayRows,
+} from '@/lib/obligations/today-page';
 import {
   postObligationAlbatross,
   postObligationDraft,
@@ -41,8 +39,11 @@ import {
 import { NeedsYouGate } from './NeedsYouGate';
 import { NeedsYouRow } from './NeedsYouRow';
 import { COPIED_MS, sonnerNeedsYouNotifier } from './NeedsYouView';
+import { TodayNote } from './TodayNote';
+import { TodaySchedule, useDayEvents } from './TodaySchedule';
 import { useNeedsYou } from './useNeedsYou';
 import { type ObligationPost, useObligationActions } from './useObligationActions';
+import { TodayWorthKnowing, WorthKnowing } from './WorthKnowing';
 
 /** A row that the user closed stays this long without an Undo window (an answer to an invitation). */
 const LEAVE_WITHOUT_UNDO_MS = 1_200;
@@ -90,7 +91,7 @@ export function TodayNeedsYou({
   // Rows that the user closed or put off: they stay in place for the Undo
   // window, then leave with a height collapse. The map holds the leave time.
   const [leaving, setLeaving] = useState<
-    ReadonlyMap<string, { until: number; word?: string; undoable: boolean }>
+    ReadonlyMap<string, { until: number; word?: string; undoable: boolean; others: ObligationView[] }>
   >(() => new Map());
   const [replyId, setReplyId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<ReadonlyMap<string, DraftState>>(() => new Map());
@@ -100,40 +101,38 @@ export function TodayNeedsYou({
 
   const merged = useMemo(() => actions.merge(items), [actions, items]);
   const groups = useMemo(() => groupNeedsYou(merged, extras, now, timezone), [merged, extras, now, timezone]);
-  // The head counts what the list holds: Waiting on others is not on this list.
-  const summary = useMemo(() => needsYouSummary(groups.filter((group) => group.id !== 'waiting')), [groups]);
-  const list = useMemo(() => todayNeedsYouList(groups), [groups]);
+  const list = useMemo(() => todayRows(groups), [groups]);
   const later = useMemo(() => laterOptions(now, timezone), [now, timezone]);
 
   // The rows in view: the open list, with the rows that leave still in their
   // old place. A row that comes back (Undo) keeps its place too.
   const rows = useMemo(() => {
-    const byId = new Map<string, NeedsYouEntry<NotificationItem>>();
-    for (const entry of list.entries) byId.set(entry.id, entry);
-    for (const [id] of leaving) {
+    const byId = new Map<string, TodayRow<NotificationItem>>();
+    for (const row of list.rows) byId.set(row.entry.id, row);
+    for (const [id, stay] of leaving) {
       if (byId.has(id)) continue;
       const obligation = merged.find((item) => item.id === id);
-      if (obligation) byId.set(id, { type: 'obligation', id, obligation });
+      if (obligation) byId.set(id, { entry: { type: 'obligation', id, obligation }, others: stay.others });
     }
-    const ordered: NeedsYouEntry<NotificationItem>[] = [];
+    const ordered: TodayRow<NotificationItem>[] = [];
     const seen = new Set<string>();
     for (const id of orderRef.current) {
-      const entry = byId.get(id);
-      if (entry && !seen.has(id)) {
-        ordered.push(entry);
+      const row = byId.get(id);
+      if (row && !seen.has(id)) {
+        ordered.push(row);
         seen.add(id);
       }
     }
-    for (const entry of list.entries) {
-      if (!seen.has(entry.id)) {
-        ordered.push(entry);
-        seen.add(entry.id);
+    for (const row of list.rows) {
+      if (!seen.has(row.entry.id)) {
+        ordered.push(row);
+        seen.add(row.entry.id);
       }
     }
     return ordered;
-  }, [list.entries, leaving, merged]);
+  }, [list.rows, leaving, merged]);
   useEffect(() => {
-    orderRef.current = rows.map((row) => row.id);
+    orderRef.current = rows.map((row) => row.entry.id);
   }, [rows]);
 
   // Each leaving row leaves at its time.
@@ -160,32 +159,59 @@ export function TodayNeedsYou({
     [],
   );
 
-  const leave = useCallback((id: string, until: number | undefined, word?: string) => {
-    const undoable = Boolean(until && until > Date.now());
-    const at = undoable && until ? until : Date.now() + LEAVE_WITHOUT_UNDO_MS;
-    setLeaving((current) => new Map(current).set(id, { until: at, word, undoable }));
-  }, []);
+  const leave = useCallback(
+    (id: string, until: number | undefined, word?: string, others: ObligationView[] = []) => {
+      const undoable = Boolean(until && until > Date.now());
+      const at = undoable && until ? until : Date.now() + LEAVE_WITHOUT_UNDO_MS;
+      setLeaving((current) => new Map(current).set(id, { until: at, word, undoable, others }));
+    },
+    [],
+  );
+  // A bundled row acts on all of its notices. It leaves only when the lead
+  // closes, so a failed notice stays on the list under its own row.
   const close = useCallback(
-    async (obligation: ObligationView, action: Parameters<typeof actions.act>[1], word?: string) => {
-      const ok = await actions.act(obligation, action);
-      if (!ok) return;
+    async (
+      obligation: ObligationView,
+      action: Parameters<typeof actions.act>[1],
+      word?: string,
+      others: ObligationView[] = [],
+    ) => {
+      // The server starts the Undo window when the lead closes, so the row's window
+      // starts no later than that, however long the other notices take.
       const until = action.action === 'rsvp' ? undefined : Date.now() + UNDO_WINDOW_MS;
-      leave(obligation.id, until, word);
+      // The other notices follow only after the lead closes: a failed lead leaves all of them open.
+      if (!(await actions.act(obligation, action))) return;
+      const results = [true, ...(await Promise.all(others.map((member) => actions.act(member, action))))];
+      leave(
+        obligation.id,
+        until,
+        word,
+        others.filter((_, index) => results[index + 1]),
+      );
       if (replyId === obligation.id) setReplyId(null);
     },
     [actions, leave, replyId],
   );
   const undo = useCallback(
     async (obligation: ObligationView) => {
-      const ok = await actions.undo(obligation);
-      if (!ok) return;
+      const others = leaving.get(obligation.id)?.others ?? [];
+      const results = await Promise.all([obligation, ...others].map((member) => actions.undo(member)));
+      if (!results[0]) return;
+      // A notice that stays closed leaves this list, so say where it is.
+      if (results.includes(false))
+        sonnerNeedsYouNotifier.info(
+          'A notice could not come back.',
+          leaving.get(obligation.id)?.word === 'Later'
+            ? 'It stays put off. See the Needs you page.'
+            : 'It is under Closed today on the Needs you page.',
+        );
       setLeaving((current) => {
         const next = new Map(current);
         next.delete(obligation.id);
         return next;
       });
     },
-    [actions],
+    [actions, leaving],
   );
   const copy = useCallback(
     (obligation: ObligationView) => {
@@ -253,21 +279,39 @@ export function TodayNeedsYou({
     [startAlbatross, actions, onOpenWork],
   );
 
-  const head = todayNeedsYouHead(summary, list.dueToday);
-  const foot = todayNeedsYouFoot(list.more);
   if (!rows.length) return null;
-  const errorFor = (id: string) => (actions.error?.id === id ? actions.error.text : null);
+  // A row answers for all of its notices, so a failure of any of them shows on it.
+  const errorFor = (row: TodayRow<NotificationItem>) =>
+    actions.error && [row.entry.id, ...row.others.map((other) => other.id)].includes(actions.error.id)
+      ? actions.error.text
+      : null;
 
   return (
-    <section data-today-needs-you aria-label="Needs you" className="mb-9">
-      {head ? (
-        <h2 className="text-pretty font-display text-[19px] font-medium leading-[1.3] tracking-tight text-[var(--color-text)]">
-          {head}
+    <section data-today-needs-you aria-label="Needs you" className="@container min-w-0">
+      <div className="flex items-baseline justify-between gap-3 pb-2">
+        <h2 className="font-display text-[17px] font-medium tracking-tight text-[var(--color-text)]">
+          Needs you
         </h2>
-      ) : null}
-      <ul className="mt-2 border-t border-[var(--color-border)]">
+        {list.more > 0 ? (
+          <span className="flex items-baseline gap-2">
+            <span className="text-[13px] tabular-nums text-[var(--color-text-muted)]">
+              {list.rows.length} of {list.open}
+            </span>
+            <button
+              type="button"
+              data-today-more
+              onClick={onOpenPage}
+              className="rounded-ui text-[13px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
+            >
+              View all
+            </button>
+          </span>
+        ) : null}
+      </div>
+      <ul className="border-t border-[var(--color-border)]">
         <AnimatePresence initial={false}>
-          {rows.map((entry) => {
+          {rows.map((row, rowIndex) => {
+            const { entry, others } = row;
             const obligation = entry.type === 'obligation' ? entry.obligation : null;
             const leavingEntry = leaving.get(entry.id);
             const closed = obligation ? isClosedObligation(obligation) : false;
@@ -298,6 +342,11 @@ export function TodayNeedsYou({
                     selected={false}
                     focusable
                     flush
+                    pillsAlways
+                    actionsInline
+                    bundled={others.length}
+                    lead={rowIndex === 0}
+                    quiet={rowIndex > 0 && !row.urgent}
                     draftReady={obligation ? obligation.draftReady === true : false}
                     copied={copiedId === entry.id}
                     busy={actions.busyId === entry.id || sending === entry.id}
@@ -307,7 +356,7 @@ export function TodayNeedsYou({
                         : onOpenItem(entry.id)
                     }
                     onKeyDown={() => undefined}
-                    onDone={open ? () => void close(open, { action: 'done' }) : undefined}
+                    onDone={open ? () => void close(open, { action: 'done' }, undefined, others) : undefined}
                     onCopy={open?.kind === 'code' ? () => copy(open) : undefined}
                     onRsvp={
                       open?.kind === 'rsvp'
@@ -320,7 +369,7 @@ export function TodayNeedsYou({
                     onLater={
                       open
                         ? (option: LaterOption) =>
-                            void close(open, { action: 'later', until: option.until }, 'Later')
+                            void close(open, { action: 'later', until: option.until }, 'Later', others)
                         : undefined
                     }
                     onAlbatrossAction={
@@ -334,9 +383,9 @@ export function TodayNeedsYou({
                     registerRef={() => undefined}
                   />
                 </ul>
-                {errorFor(entry.id) ? (
+                {errorFor(row) ? (
                   <p role="alert" className="px-0 pb-2 text-[12px] text-[var(--color-danger)]">
-                    {errorFor(entry.id)}
+                    {errorFor(row)}
                   </p>
                 ) : null}
                 {open && replyId === entry.id ? (
@@ -357,18 +406,52 @@ export function TodayNeedsYou({
           })}
         </AnimatePresence>
       </ul>
-      {foot ? (
-        <p className="mt-2.5 text-[12.5px] text-[var(--color-text-muted)]">
-          <button
-            type="button"
-            onClick={onOpenPage}
-            className="underline-offset-2 hover:text-[var(--color-text)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]"
-          >
-            {foot}
-          </button>
-        </p>
-      ) : null}
     </section>
+  );
+}
+
+/** The live page under the painting: the note, the list, and the day. */
+export function TodayLive({
+  events,
+  onOpenCalendar,
+  ...list
+}: TodayNeedsYouProps & {
+  events: readonly TodayScheduleEvent[] | undefined;
+  onOpenCalendar: () => void;
+}) {
+  const { items, extras, timezone, now } = list;
+  const worthKnowing = useContext(TodayWorthKnowing);
+  const groups = useMemo(() => groupNeedsYou(items, extras, now, timezone), [items, extras, now, timezone]);
+  const summary = useMemo(() => todayRows(groups), [groups]);
+  const lines = useMemo(() => scheduleLines(events ?? [], now), [events, now]);
+  const note = useMemo(
+    () =>
+      events
+        ? todayNote({
+            rows: summary.rows,
+            open: summary.open,
+            dueToday: summary.dueToday,
+            lines,
+            now,
+            timezone,
+          })
+        : null,
+    [events, summary, lines, now, timezone],
+  );
+  return (
+    <div data-today-live className="@container/today">
+      <TodayNote note={note} />
+      <div
+        data-today-grid
+        className="mt-5 grid gap-x-12 gap-y-8 @[860px]/today:grid-cols-[minmax(0,1fr)_288px]"
+      >
+        <TodayNeedsYou {...list} />
+        <div data-today-aside className="flex min-w-0 flex-col gap-8">
+          <TodaySchedule events={events} now={now} timezone={timezone} onOpen={onOpenCalendar} />
+          <WorthKnowing items={worthKnowing} />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -472,14 +555,18 @@ function ConnectedTodayNeedsYou({ data }: { data: ReturnType<typeof useNeedsYou>
     },
     [onAction, onOpenItem],
   );
+  const onOpenCalendar = useCallback(() => setPrimaryView('calendar'), [setPrimaryView]);
   const snapshot = data.snapshot;
+  const events = useDayEvents(data.nowMs, snapshot?.timezone);
   if (!snapshot?.enabled) return null;
   return (
-    <TodayNeedsYou
+    <TodayLive
       items={snapshot.items}
       extras={data.extras}
       timezone={snapshot.timezone}
       now={data.nowMs}
+      events={events}
+      onOpenCalendar={onOpenCalendar}
       loadDraft={(obligation) => postObligationDraft(obligation.id)}
       sendReply={(obligation, body) => postObligationReply(obligation.id, body)}
       startAlbatross={(obligation) => postObligationAlbatross(obligation.id)}
@@ -509,6 +596,8 @@ function LayerChooser({ children }: { children: ReactNode }) {
       // A user outside the flag has no live list, so a stored lane stays: an edition
       // moved its threads out of the other lanes. A user in the flag sees no lane flash.
       hideNeedsYou: loading || enabled,
+      // The stories stay away too while the first read runs, so they never flash.
+      replacesDocument: loading || enabled,
     }),
     [enabled, loading],
   );

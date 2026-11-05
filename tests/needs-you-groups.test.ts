@@ -219,10 +219,10 @@ describe('the list', () => {
     // The GitHub review has a due time, so it leads Today; the old card failure sits here, not in Now.
     expect(ids.today).toEqual([
       'ob_github_491',
-      'ob_pipeline',
       'ob_prepare',
       'ob_review',
       'ob_granola_nda',
+      'ob_pipeline',
       'ob_card',
     ]);
     expect(ids.this_week).toEqual([
@@ -337,5 +337,15 @@ describe('code expiry on an open page', () => {
       ),
     ).toBe(NOW + 2 * 60_000);
     expect(nextCodeExpiry([code('none'), item({ id: 'r' })], NOW)).toBeUndefined();
+  });
+});
+
+describe('the order of items with no date', () => {
+  test('a question from a person comes before a newer notice from a service', () => {
+    const question = item({ id: 'q', kind: 'reply', createdAt: NOW - 20 * HOUR });
+    const notice = item({ id: 'n', kind: 'change', createdAt: NOW - HOUR });
+    const task = item({ id: 't', kind: 'action', createdAt: NOW - 2 * HOUR });
+    const groups = groupNeedsYou([notice, task, question], [], NOW, TZ);
+    expect(groups.flatMap((entry) => entry.entries.map((row) => row.id))).toEqual(['q', 't', 'n']);
   });
 });

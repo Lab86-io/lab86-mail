@@ -79,6 +79,7 @@ export interface BriefWebEdition {
   artifactSource?: DailyReport['artifactSource'];
   artifactErrors?: DailyReportArtifactError[];
   document?: BriefDocumentV2;
+  worthKnowing?: DailyReport['worthKnowing'];
   html?: string;
   prose?: { lede?: string; weekAhead?: string; model?: string } | null;
   stats?: { noise?: number; overflow?: number };
@@ -212,6 +213,7 @@ export function briefWebEdition(report: DailyReport): BriefWebEdition {
     title: report.title,
     status: report.status,
     ...(report.retrying ? { retrying: true } : {}),
+    ...(report.worthKnowing?.length ? { worthKnowing: report.worthKnowing } : {}),
     services: briefEditionServiceIds(report) as string[],
     artifactStatus: report.artifactStatus,
     artifactSource: source,

@@ -609,6 +609,11 @@ export interface DailyReportArtifactError {
  * Sunday, the weekly review (FEATURES item 9). */
 export type BriefEditionKind = 'morning' | 'manual' | 'weekly';
 
+export interface DailyReportWorthKnowing {
+  title: string;
+  line: string;
+}
+
 export interface DailyReport {
   _id: string;
   // 'evening' appears only on editions stored in June 2026. Nothing writes it
@@ -642,6 +647,9 @@ export interface DailyReport {
   // Native cross-platform composition document. Stored beside legacy HTML
   // during rollout so older web/iOS clients retain a deterministic fallback.
   document?: BriefDocumentV2;
+  // The live Today page: at most two short facts that the list and the calendar
+  // do not say. Absent on older editions and for users outside the live page.
+  worthKnowing?: DailyReportWorthKnowing[];
   // One authored arrangement, replayed against refreshed content on live reads.
   editorial?: { plan: EditorialPlan; mode: 'generated' | 'fallback' };
   // Generation phase for the artifact: 'composing' while the agent writes the

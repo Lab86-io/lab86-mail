@@ -11,6 +11,8 @@ import {
   type MailThreadFacts,
   mailObligations,
   ownText,
+  plainLine,
+  readableAsker,
   requestLine,
   startOfLocalDay,
   whyLine,
@@ -99,7 +101,7 @@ describe('text helpers', () => {
     expect(fallbackTitle('reply', 'Re: Budget approval')).toBe('Reply about Budget approval');
     expect(fallbackTitle('action', 'Form')).toBe('Action needed: Form');
     expect(fallbackTitle('waiting', 'Lease')).toBe('Waiting for an answer: Lease');
-    expect(fallbackTitle('change', 'Flight')).toBe('Changed: Flight');
+    expect(fallbackTitle('change', 'Flight')).toBe('Flight');
     expect(fallbackTitle('code', '')).toBe('Sign-in code: (no subject)');
     expect(whyLine('reply', 'Maya')).toContain('Maya asked you something');
     expect(whyLine('action', 'Maya')).toContain('not done yet');
@@ -431,5 +433,35 @@ describe('codes (codeObligation)', () => {
     const bare = codeObligation({ messageId: 'm', from: 'Shop', subject: '', confidence: 3, expiresAt: 1 });
     expect(bare).toMatchObject({ asker: 'Shop', probability: 1, excerpt: 'Sign-in code' });
     expect(bare.askerAddress).toBeUndefined();
+  });
+});
+
+describe('the words of a row (rules version 3)', () => {
+  test('a Markdown heading is never the line, and marks leave the line', () => {
+    expect(requestLine('### Review follow-up\n- **Please** send the `plan`.', 'action')).toBe(
+      'Please send the plan.',
+    );
+    expect(plainLine('- [x] Done item')).toBe('Done item');
+    expect(requestLine('## Review the plan', 'action')).toBeUndefined();
+  });
+
+  test('a change line must stand alone', () => {
+    expect(
+      requestLine('This may happen if your card has expired or was declined.', 'change'),
+    ).toBeUndefined();
+    expect(requestLine('Your payment was declined.', 'change')).toBe('Your payment was declined.');
+  });
+
+  test('a stored address reads as a name', () => {
+    expect(readableAsker('pat.ohara@statpearls.test')).toBe('Pat Ohara');
+    expect(readableAsker('billing@stripe.com')).toBe('Stripe');
+    expect(readableAsker('no-reply@accounts.google.com')).toBe('Google');
+    expect(readableAsker('ada@northwind.test')).toBe('Northwind');
+    expect(readableAsker("Pat O'Hara")).toBe("Pat O'Hara");
+    expect(readableAsker('octo-maya')).toBe('octo-maya');
+    // A mailbox provider is not a company, so two people there never merge into one row.
+    expect(readableAsker('jsmith@gmail.com')).toBe('jsmith@gmail.com');
+    expect(readableAsker('billing@bt.co.uk')).toBe('Bt');
+    expect(readableAsker('billing@accounts.stripe.com')).toBe('Stripe');
   });
 });

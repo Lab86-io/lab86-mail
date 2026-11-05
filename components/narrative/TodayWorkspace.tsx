@@ -502,7 +502,7 @@ export function weatherLocalTime(asOf: number, timezone?: string): number | unde
     return undefined;
   }
 }
-export function TodayWeather({ variant = 'card' }: { variant?: 'card' | 'masthead' }) {
+export function TodayWeather({ variant = 'card' }: { variant?: 'card' | 'masthead' | 'plate' }) {
   const query = useQuery({
     queryKey: ['brief', 'weather'],
     queryFn: ({ signal }) => weatherRequest(signal),
@@ -510,6 +510,23 @@ export function TodayWeather({ variant = 'card' }: { variant?: 'card' | 'masthea
     retry: false,
   });
   const weather = query.data?.weather;
+  // On the painting: only the fact, and no words at all when there is no forecast.
+  if (variant === 'plate') {
+    if (!weather) return null;
+    return (
+      <section
+        data-brief-header-weather
+        aria-label="Current weather"
+        className="font-sans text-[13px] leading-snug text-white/95 [text-shadow:0_1px_10px_rgba(0,0,0,0.6)]"
+      >
+        <span className="tabular-nums">
+          {weather.current.temp}
+          {weather.unit}
+        </span>{' '}
+        <span>{weather.current.condition}</span>
+      </section>
+    );
+  }
   if (variant === 'masthead') {
     const attribution = safeExternalUrl(weather?.attributionURL || '');
     const precipitation = weather?.daily[0]?.precipChance;

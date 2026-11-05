@@ -13,6 +13,7 @@ import {
 import { NeedsYouRow } from '../components/needs-you/NeedsYouRow';
 import { THREAD_STRIP_COPY, ThreadNeedsYouStrip } from '../components/needs-you/ThreadNeedsYouStrip';
 import { TodayNeedsYou, type TodayNeedsYouProps } from '../components/needs-you/TodayNeedsYou';
+import { TodaySchedule } from '../components/needs-you/TodaySchedule';
 import type { NotificationItem } from '../components/notifications/model';
 import { BriefCanvas } from '../components/report/brief-canvas/BriefCanvas';
 import { BriefLiveLayer } from '../components/report/live-layer';
@@ -31,7 +32,7 @@ import {
   needsYouFixture,
   needsYouLetterFixture,
 } from '../lib/obligations/fixtures';
-import { groupNeedsYou, laterOptions, needsYouSummary } from '../lib/obligations/groups';
+import { groupNeedsYou, laterOptions } from '../lib/obligations/groups';
 import {
   areaChooserSentence,
   calendarEventKey,
@@ -48,10 +49,8 @@ import {
   TODAY_NEEDS_YOU_CAP,
   tabTitle,
   threadStripWords,
-  todayNeedsYouFoot,
-  todayNeedsYouHead,
-  todayNeedsYouList,
 } from '../lib/obligations/surfaces';
+import { todayRows } from '../lib/obligations/today-page';
 
 /* Needs you where the owner does the work (docs/research/needs-you-web-2-design-2026-11-02.md). */
 
@@ -65,42 +64,34 @@ const groups = groupNeedsYou(fixture.items, extras, NOW, TZ);
 
 describe('the Today list rules', () => {
   test('the list keeps the group order, leaves out Waiting and Closed today, and stops at the cap', () => {
-    const list = todayNeedsYouList(groups);
-    expect(list.entries.length).toBe(TODAY_NEEDS_YOU_CAP);
-    const ids = list.entries.map((entry) => entry.id);
+    const list = todayRows(groups);
+    expect(list.rows.length).toBe(TODAY_NEEDS_YOU_CAP);
+    const ids = list.rows.map((row) => row.entry.id);
     // Now first: the code, the moved flight, the Albatross question.
     expect(ids.slice(0, 3)).toEqual(expect.arrayContaining(['ob_code_now', 'ob_flight', 'question:q_deck']));
     expect(ids).not.toContain('ob_lease');
     expect(ids).not.toContain('ob_kickoff');
-    const open = groups
-      .filter((group) => group.id !== 'closed_today' && group.id !== 'waiting')
-      .reduce((count, group) => count + group.entries.length, 0);
-    expect(list.more).toBe(open - TODAY_NEEDS_YOU_CAP);
-    expect(list.dueToday).toBe(
-      groups
-        .filter((group) => group.id === 'now' || group.id === 'today')
-        .reduce((count, group) => count + group.entries.length, 0),
-    );
   });
 
-  test('a short list shows everything and has no foot', () => {
-    const list = todayNeedsYouList(groups, 100);
-    expect(list.more).toBe(0);
-    expect(todayNeedsYouFoot(list.more)).toBe('');
-    expect(todayNeedsYouFoot(1)).toBe('1 more is on the Needs you page.');
-    expect(todayNeedsYouFoot(4)).toBe('4 more are on the Needs you page.');
+  test('a short list shows every row', () => {
+    expect(todayRows(groups, 100).more).toBe(0);
   });
+});
 
-  test('the head sentence counts now, due today, and the rest', () => {
-    expect(todayNeedsYouHead({ now: 0, open: 0 }, 0)).toBe('');
-    expect(todayNeedsYouHead({ now: 3, open: 9 }, 5)).toBe('3 things need you now. 2 more are due today.');
-    expect(todayNeedsYouHead({ now: 1, open: 1 }, 1)).toBe('1 thing needs you now.');
-    expect(todayNeedsYouHead({ now: 2, open: 5 }, 2)).toBe('2 things need you now. 3 more wait for you.');
-    expect(todayNeedsYouHead({ now: 0, open: 4 }, 1)).toBe('1 thing is due today. 3 more wait for you.');
-    expect(todayNeedsYouHead({ now: 0, open: 2 }, 0)).toBe('2 things need you.');
-    expect(todayNeedsYouHead({ now: 0, open: 1 }, 0)).toBe('1 thing needs you.');
-    const summary = needsYouSummary(groups);
-    expect(todayNeedsYouHead(summary, todayNeedsYouList(groups).dueToday)).toMatch(/need you now\./);
+describe('the Today schedule', () => {
+  const at = Date.UTC(2026, 9, 28, 18);
+  const render = (
+    events: { id: string; title: string; startAt: number; endAt: number; allDay?: boolean }[],
+  ) =>
+    renderToStaticMarkup(<TodaySchedule events={events} now={at} timezone={TZ} onOpen={() => undefined} />);
+
+  test('an all-day event is not a day with nothing scheduled', () => {
+    const allDay = render([
+      { id: 'a', title: 'Offsite', startAt: at - 3_600_000, endAt: at + 3_600_000, allDay: true },
+    ]);
+    expect(allDay).toContain('Offsite');
+    expect(allDay).not.toContain('Nothing is scheduled today.');
+    expect(render([])).toContain('Nothing is scheduled today.');
   });
 });
 
@@ -521,27 +512,24 @@ function todayProps(overrides: Partial<TodayNeedsYouProps> = {}) {
 describe('the Today list', () => {
   const page = doc(renderToStaticMarkup(<TodayNeedsYou {...todayProps().props} />));
 
-  test('it opens with the head sentence, shows the capped rows with their pills, and ends with the foot', () => {
+  test('it shows the capped rows with their actions in view, the count, and the way to the rest', () => {
     const head = page.querySelector('[data-today-needs-you] h2')?.textContent ?? '';
-    expect(head).toMatch(/need you now\./);
+    expect(head).toBe('Needs you');
     expect(page.querySelectorAll('[data-needs-you-row]').length).toBe(TODAY_NEEDS_YOU_CAP);
-    // The row grammar of the page: the due column in view, the pills on hover.
-    expect(page.querySelector('[data-needs-you-due]')?.textContent).not.toBe('');
     const texts = [...page.querySelectorAll('[data-needs-you-row] button')].map((node) => node.textContent);
     expect(texts).toContain('Done');
     expect(texts).toContain('Later');
     expect(texts).toContain('Copy');
-    expect(page.body.textContent).toMatch(/\d+ more are on the Needs you page\./);
+    expect(page.querySelector('[data-today-more]')?.textContent).toBe('View all');
     // No group labels, no code value outside the code row.
     expect(page.querySelector('h2 + ul h2')).toBeNull();
   });
 
   test('it takes no space when nothing is open', () => {
     const closedOnly = fixture.items.filter((item) => item.state !== 'open');
-    const html = renderToStaticMarkup(
-      <TodayNeedsYou {...todayProps({ items: closedOnly, extras: [] }).props} />,
-    );
-    expect(html).toBe('');
+    expect(
+      renderToStaticMarkup(<TodayNeedsYou {...todayProps({ items: closedOnly, extras: [] }).props} />),
+    ).toBe('');
   });
 });
 
@@ -579,7 +567,8 @@ describe('the Today list acts in place', () => {
     const { props } = todayProps({ items: [byId('ob_rsvp')], extras: [] });
     const renderer = await mount(props);
     await act(async () => {
-      button(renderer, 'ob_rsvp', 'Yes').props.onClick({ stopPropagation() {} });
+      button(renderer, 'ob_rsvp', 'Accept').props.onClick({ stopPropagation() {} });
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(
       rowOf(renderer, 'ob_rsvp').findAll((node) => node.props['data-needs-you-undo'] !== undefined),
@@ -601,14 +590,101 @@ describe('the Today list acts in place', () => {
     expect(button(renderer, 'ob_code_now', 'Copied')).toBeUndefined();
   });
 
-  test('the head counts the rows of the list, not the items that wait on others', async () => {
+  test('the count holds the rows of the list, not the items that wait on others', async () => {
     const waiting = fixture.items.find((item) => item.kind === 'waiting');
     expect(waiting).toBeDefined();
     const { props } = todayProps({ items: [byId('ob_flight'), waiting!], extras: [] });
     const renderer = await mount(props);
-    const text = JSON.stringify(renderer.toJSON());
-    expect(text).toContain('thing needs you now.');
-    expect(text).not.toContain('waits for you');
+    expect(
+      renderer.root.findAll((node) => node.props['data-needs-you-row'] !== undefined && node.type === 'li'),
+    ).toHaveLength(1);
+  });
+
+  test('Done on a row of notices closes each notice of the sender, and Undo brings them all back', async () => {
+    const notice = (id: string, createdAt: number): ObligationView => ({
+      ...byId('ob_card'),
+      id,
+      kind: 'change',
+      asker: 'Lumen Hosting',
+      sourceKey: `mail:acct:${id}`,
+      createdAt,
+      updatedAt: createdAt,
+    });
+    const items = [notice('n1', NOW - 1000), notice('n2', NOW - 2000), notice('n3', NOW - 3000)];
+    const { props, actions } = todayProps({
+      items,
+      extras: [],
+      post: async (obligation, action) => ({
+        obligation:
+          action.action === 'undo'
+            ? { ...obligation, state: 'open', updatedAt: NOW + 120_000 }
+            : {
+                ...obligation,
+                state: 'done',
+                closedAt: NOW,
+                closeReason: 'user_done',
+                updatedAt: NOW + 60_000,
+              },
+        undoUntil: action.action === 'undo' ? undefined : Date.now() + UNDO_WINDOW_MS,
+      }),
+    });
+    const logged: string[] = [];
+    const post = props.post!;
+    const renderer = await mount({
+      ...props,
+      post: async (obligation, action) => {
+        logged.push(`${action.action}:${obligation.id}`);
+        return post(obligation, action);
+      },
+    });
+    expect(actions).toEqual([]);
+    expect(
+      renderer.root.findAll((node) => node.type === 'li' && node.props['data-needs-you-row']),
+    ).toHaveLength(1);
+    await act(async () => {
+      button(renderer, 'n1', 'Done').props.onClick({ stopPropagation() {} });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(logged.sort()).toEqual(['done:n1', 'done:n2', 'done:n3']);
+    const undo = rowOf(renderer, 'n1').findAll((node) => node.props['data-needs-you-undo'] !== undefined)[0];
+    await act(async () => {
+      undo.props.onClick({ stopPropagation() {} });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(logged.filter((entry) => entry.startsWith('undo')).sort()).toEqual([
+      'undo:n1',
+      'undo:n2',
+      'undo:n3',
+    ]);
+  });
+
+  test('a lead notice that fails leaves the other notices of its sender open', async () => {
+    const notice = (id: string, createdAt: number): ObligationView => ({
+      ...byId('ob_card'),
+      id,
+      kind: 'change',
+      asker: 'Lumen Hosting',
+      sourceKey: `mail:acct:${id}`,
+      createdAt,
+      updatedAt: createdAt,
+    });
+    const logged: string[] = [];
+    const { props } = todayProps({
+      items: [notice('n1', NOW - 1000), notice('n2', NOW - 2000)],
+      extras: [],
+      post: async (obligation) => {
+        logged.push(obligation.id);
+        throw new Error('down');
+      },
+    });
+    const renderer = await mount(props);
+    await act(async () => {
+      button(renderer, 'n1', 'Done').props.onClick({ stopPropagation() {} });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(logged).toEqual(['n1']);
+    const alert = renderer.root.findAll((node) => node.type === 'p' && node.props.role === 'alert')[0];
+    expect(alert?.props.children).toBe('down');
   });
 
   test('Done closes the row at once, keeps it in place with Undo, and Undo brings it back', async () => {
@@ -616,6 +692,7 @@ describe('the Today list acts in place', () => {
     const renderer = await mount(props);
     await act(async () => {
       button(renderer, 'ob_review', 'Done').props.onClick({ stopPropagation() {} });
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(actions).toEqual([{ id: 'ob_review', action: { action: 'done' } }]);
     const undo = rowOf(renderer, 'ob_review').findAll(
@@ -628,6 +705,7 @@ describe('the Today list acts in place', () => {
     ).toBe(1);
     await act(async () => {
       undo.props.onClick({ stopPropagation() {} });
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(actions.at(-1)).toEqual({ id: 'ob_review', action: { action: 'undo' } });
     expect(button(renderer, 'ob_review', 'Done')).toBeDefined();
@@ -645,6 +723,7 @@ describe('the Today list acts in place', () => {
     )[0];
     await act(async () => {
       rowNode.props.onLater(options[0]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(actions[0]).toEqual({ id: 'ob_flight', action: { action: 'later', until: options[0].until } });
     expect(
@@ -674,7 +753,7 @@ describe('the Today list acts in place', () => {
     ).toBe(1);
   });
 
-  test('the row itself opens the item on the page; the foot opens the page', async () => {
+  test('the row itself opens the item on the page; the link under the list opens the page', async () => {
     const { props, opened } = todayProps({ items: few, extras: [] });
     const renderer = await mount(props);
     await act(async () => {
@@ -685,7 +764,7 @@ describe('the Today list acts in place', () => {
     expect(opened).toEqual(['ob_sow']);
     const full = await mount(todayProps({ onOpenPage: () => opened.push('page') }).props);
     const foot = full.root.findAll(
-      (node) => node.type === 'button' && /more are on the Needs you page/.test(String(node.props.children)),
+      (node) => node.type === 'button' && node.props['data-today-more'] !== undefined,
     )[0];
     await act(async () => {
       foot.props.onClick();

@@ -6,13 +6,7 @@
 
 import type { NeedsYouRow as AreaNeedsYouRow } from '../albatross/area-home';
 import type { ObligationView } from './contract';
-import {
-  isClosedObligation,
-  type NeedsYouEntry,
-  type NeedsYouExtraLike,
-  type NeedsYouGroup,
-  type NeedsYouSummary,
-} from './groups';
+import { isClosedObligation, type NeedsYouEntry } from './groups';
 
 /** The Today list shows at most this many rows. The rest is a link to the page. */
 export const TODAY_NEEDS_YOU_CAP = 6;
@@ -22,58 +16,6 @@ export function isOpenObligation(obligation: ObligationView, now: number): boole
   if (isClosedObligation(obligation)) return false;
   if (obligation.state === 'snoozed' && (obligation.snoozedUntil ?? 0) > now) return false;
   return true;
-}
-
-export interface TodayNeedsYouList<T extends NeedsYouExtraLike = NeedsYouExtraLike> {
-  entries: NeedsYouEntry<T>[];
-  /** How many open entries the list does not show. */
-  more: number;
-  /** The entries that are due today or sooner, for the head sentence. */
-  dueToday: number;
-}
-
-/**
- * The rows of the Today list: the page groups in their order, without
- * Waiting on others and Closed today, cut at the cap. Now and due today
- * come first because the groups do.
- */
-export function todayNeedsYouList<T extends NeedsYouExtraLike>(
-  groups: readonly NeedsYouGroup<T>[],
-  cap = TODAY_NEEDS_YOU_CAP,
-): TodayNeedsYouList<T> {
-  const active = groups.filter((group) => group.id !== 'closed_today' && group.id !== 'waiting');
-  const all = active.flatMap((group) => group.entries);
-  const dueToday = active
-    .filter((group) => group.id === 'now' || group.id === 'today')
-    .reduce((count, group) => count + group.entries.length, 0);
-  return { entries: all.slice(0, cap), more: Math.max(0, all.length - cap), dueToday };
-}
-
-/**
- * The head of the Today list: "3 things need you now. 2 more are due today."
- * Empty when nothing is open, so the list takes no space.
- */
-export function todayNeedsYouHead(summary: Pick<NeedsYouSummary, 'now' | 'open'>, dueToday: number): string {
-  const open = summary.open;
-  if (open === 0) return '';
-  const now = summary.now;
-  const later = dueToday - now;
-  if (now === 0) {
-    if (later === 0) return open === 1 ? '1 thing needs you.' : `${open} things need you.`;
-    const rest = open - later;
-    const head = later === 1 ? '1 thing is due today.' : `${later} things are due today.`;
-    return rest > 0 ? `${head} ${rest} more ${rest === 1 ? 'waits' : 'wait'} for you.` : head;
-  }
-  const head = now === 1 ? '1 thing needs you now.' : `${now} things need you now.`;
-  if (later > 0) return `${head} ${later} more ${later === 1 ? 'is' : 'are'} due today.`;
-  const rest = open - now;
-  return rest > 0 ? `${head} ${rest} more ${rest === 1 ? 'waits' : 'wait'} for you.` : head;
-}
-
-/** "4 more are on the Needs you page." Empty when the list shows everything. */
-export function todayNeedsYouFoot(more: number): string {
-  if (more <= 0) return '';
-  return more === 1 ? '1 more is on the Needs you page.' : `${more} more are on the Needs you page.`;
 }
 
 // ---- Lookups ---------------------------------------------------------------

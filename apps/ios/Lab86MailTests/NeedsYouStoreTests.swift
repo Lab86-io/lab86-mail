@@ -151,6 +151,66 @@ struct NeedsYouStoreTests {
         #expect(store.undo == nil)
     }
 
+    @Test("A bundled row closes all of its notices, and Undo brings them all back")
+    func bundledRow() async throws {
+        let server = StubBackendServer()
+        defer { server.tearDown() }
+        let notice: [String: JSONValue] = ["kind": .string("change"), "asker": .string("Lumen Hosting")]
+        server.routes[NeedsYouStore.path] = Self.snapshot([Self.row("ob_1", notice), Self.row("ob_2", notice), Self.row("ob_3", notice)])
+        let closed = notice.merging(["state": .string("done"), "closeReason": .string("user_done")]) { _, new in new }
+        for id in ["ob_1", "ob_2", "ob_3"] {
+            server.routes[NeedsYouStore.actionPath(id: id)] = .object([
+                "obligation": Self.row(id, closed),
+                "undoUntil": .number(Self.now + 10_000),
+            ])
+        }
+        let store = NeedsYouStore(defaults: try makeDefaults())
+        store.activate(ownerID: "owner-1")
+        let at = Date(timeIntervalSince1970: Self.now / 1_000)
+        await store.load(server.backend, now: at)
+
+        #expect(await store.act(.done, on: "ob_1", others: ["ob_2", "ob_3"], transport: server.backend, now: at))
+        #expect(store.items.allSatisfy { $0.isClosed })
+        #expect(store.undo?.obligationID == "ob_1")
+        #expect(store.undo?.otherIDs == ["ob_2", "ob_3"])
+        #expect(store.busyID == nil)
+
+        for id in ["ob_1", "ob_2", "ob_3"] {
+            server.routes[NeedsYouStore.actionPath(id: id)] = .object(["obligation": Self.row(id, notice)])
+        }
+        #expect(await store.undoLast(transport: server.backend, now: at))
+        #expect(store.items.allSatisfy { !$0.isClosed })
+        #expect(store.undo == nil)
+        let undone = server.recorded.filter { $0.body == .object(["action": .string("undo")]) }.map(\.path)
+        #expect(undone == ["ob_1", "ob_2", "ob_3"].map { NeedsYouStore.actionPath(id: $0) })
+    }
+
+    @Test("A notice that fails stays open and says why, and Undo leaves it out")
+    func bundledRowWithAFailure() async throws {
+        let server = StubBackendServer()
+        defer { server.tearDown() }
+        let notice: [String: JSONValue] = ["kind": .string("change"), "asker": .string("Lumen Hosting")]
+        server.routes[NeedsYouStore.path] = Self.snapshot([Self.row("ob_1", notice), Self.row("ob_2", notice)])
+        let closed = notice.merging(["state": .string("done"), "closeReason": .string("user_done")]) { _, new in new }
+        server.routes[NeedsYouStore.actionPath(id: "ob_1")] = .object([
+            "obligation": Self.row("ob_1", closed),
+            "undoUntil": .number(Self.now + 10_000),
+        ])
+        let failedPath = NeedsYouStore.actionPath(id: "ob_2")
+        server.routes[failedPath] = Self.envelope(code: "not_found", message: "Gone")
+        server.statuses[failedPath] = 404
+        let store = NeedsYouStore(defaults: try makeDefaults())
+        store.activate(ownerID: "owner-1")
+        let at = Date(timeIntervalSince1970: Self.now / 1_000)
+        await store.load(server.backend, now: at)
+
+        #expect(await store.act(.done, on: "ob_1", others: ["ob_2"], transport: server.backend, now: at))
+        #expect(store.item(id: "ob_1")?.isClosed == true)
+        #expect(store.item(id: "ob_2")?.isClosed == false)
+        #expect(store.actionError == "This item is no longer on your list.")
+        #expect(store.undo?.otherIDs == [])
+    }
+
     @Test("Later, Not mine, and an RSVP send their bodies; an RSVP has no Undo; the window closes when it passes")
     func otherActions() async throws {
         let server = StubBackendServer()

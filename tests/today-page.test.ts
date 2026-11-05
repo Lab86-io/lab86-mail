@@ -1,0 +1,246 @@
+import { describe, expect, test } from 'bun:test';
+import { localDayWindow } from '../components/needs-you/TodaySchedule';
+import { parseWorthKnowing } from '../lib/mail/brief-worth-knowing';
+import type { ObligationView } from '../lib/obligations/contract';
+import { NEEDS_YOU_FIXTURE_NOW as NOW, NEEDS_YOU_FIXTURE_TIMEZONE as TZ } from '../lib/obligations/fixtures';
+import { groupNeedsYou } from '../lib/obligations/groups';
+import { startOfLocalDay } from '../lib/obligations/rules';
+import { TODAY_PREVIEW_EVENTS, TODAY_PREVIEW_ITEMS } from '../lib/obligations/today-fixtures';
+import {
+  allDayEvents,
+  clockLabel,
+  scheduleLines,
+  type TodayNoteLines,
+  type TodayScheduleEvent,
+  todayNote,
+  todayRowLine,
+  todayRows,
+} from '../lib/obligations/today-page';
+
+const HOUR = 3_600_000;
+const text = (note: TodayNoteLines) => `${note.lead} ${note.day}`;
+
+const item = (overrides: Partial<ObligationView> & { id: string }): ObligationView => ({
+  kind: 'reply',
+  state: 'open',
+  source: 'mail',
+  sourceKey: `mail:acct:${overrides.id}`,
+  title: 'Can you confirm the date?',
+  asker: 'Ada Example',
+  due: 'none',
+  pushLevel: 'none',
+  probability: 0.9,
+  createdAt: NOW - HOUR,
+  updatedAt: NOW - HOUR,
+  ...overrides,
+});
+const rowsOf = (items: ObligationView[], cap?: number) => todayRows(groupNeedsYou(items, [], NOW, TZ), cap);
+const event = (id: string, from: number, to: number, extra: Partial<TodayScheduleEvent> = {}) => ({
+  id,
+  title: id,
+  startAt: NOW + from * HOUR,
+  endAt: NOW + to * HOUR,
+  ...extra,
+});
+
+describe('the rows of the Today list', () => {
+  test('the notices of one sender share a row; two questions from one person do not', () => {
+    const list = rowsOf([
+      item({ id: 'a', kind: 'change', asker: 'Lumen Hosting', title: 'Payment failed.' }),
+      item({
+        id: 'b',
+        kind: 'change',
+        asker: 'lumen hosting',
+        title: 'Payment failed again.',
+        createdAt: NOW - 2 * HOUR,
+      }),
+      item({ id: 'c', asker: 'Marin' }),
+      item({ id: 'd', asker: 'Marin', createdAt: NOW - 3 * HOUR }),
+    ]);
+    expect(list.open).toBe(3);
+    expect(list.rows.map((row) => [row.entry.id, row.others.map((other) => other.id)])).toEqual([
+      ['c', []],
+      ['d', []],
+      ['a', ['b']],
+    ]);
+  });
+
+  test('one company shares a row across mailboxes; the same name at another domain does not', () => {
+    const notice = (id: string, askerAddress: string) =>
+      item({ id, kind: 'change', asker: 'Lumen', title: 'Failed.', askerAddress });
+    const list = rowsOf([
+      notice('a', 'billing@lumen.test'),
+      notice('b', 'receipts@lumen.test'),
+      notice('c', 'billing@lumen.example'),
+    ]);
+    expect(list.rows.map((row) => [row.entry.id, row.others.map((other) => other.id)])).toEqual([
+      ['a', ['b']],
+      ['c', []],
+    ]);
+  });
+
+  test('the cap counts rows, and the rest is a count', () => {
+    const items = Array.from({ length: 8 }, (_, index) => item({ id: `r${index}` }));
+    const list = rowsOf(items, 6);
+    expect(list.rows).toHaveLength(6);
+    expect(list.more).toBe(2);
+    expect(list.open).toBe(8);
+  });
+
+  test('due today leads; after it a question comes before a notice with a due word', () => {
+    const list = rowsOf([
+      item({ id: 'notice', kind: 'change', due: 'soon' }),
+      item({ id: 'question' }),
+      item({ id: 'today', kind: 'action', due: 'today', asker: 'Sam' }),
+    ]);
+    expect(list.rows.map((row) => row.entry.id)).toEqual(['today', 'question', 'notice']);
+  });
+
+  test('waiting on others and closed items are not on the list', () => {
+    const list = rowsOf([
+      item({ id: 'wait', kind: 'waiting' }),
+      item({ id: 'closed', state: 'done', closedAt: NOW - 1000, closeReason: 'user_done' }),
+    ]);
+    expect(list.rows).toEqual([]);
+    expect(list.open).toBe(0);
+  });
+});
+
+describe('the schedule', () => {
+  test('each event has its state at this moment, and a long open stretch has a line', () => {
+    const lines = scheduleLines(
+      [event('past', -3, -2), event('now', -0.5, 0.5), event('next', 3, 4), event('later', 4, 5)],
+      NOW,
+    );
+    expect(
+      lines.map((line) => (line.type === 'event' ? `${line.event.id}:${line.state}` : line.type)),
+    ).toEqual(['past:past', 'now:now', 'open', 'next:next', 'later:later']);
+  });
+
+  test('a cancelled event leaves the day; an all-day event has its own place', () => {
+    const lines = scheduleLines(
+      [event('gone', 1, 2, { status: 'cancelled' }), event('all', -11, 13, { allDay: true })],
+      NOW,
+    );
+    expect(lines).toEqual([]);
+    expect(allDayEvents([event('all', -11, 13, { allDay: true })]).map((row) => row.id)).toEqual(['all']);
+  });
+
+  test('a time reads as a person says it', () => {
+    expect(clockLabel(Date.UTC(2026, 9, 28, 19, 0), TZ)).toBe('12 PM');
+    expect(clockLabel(Date.UTC(2026, 9, 28, 22, 0), TZ)).toBe('3 PM');
+    expect(clockLabel(Date.UTC(2026, 9, 28, 16, 30), TZ)).toBe('9:30 AM');
+  });
+});
+
+describe('the note', () => {
+  const note = (items: ObligationView[], events: TodayScheduleEvent[], now = NOW) => {
+    const list = rowsOf(items);
+    return text(
+      todayNote({
+        rows: list.rows,
+        open: list.open,
+        dueToday: list.dueToday,
+        lines: scheduleLines(events, now),
+        now,
+        timezone: TZ,
+      }),
+    );
+  };
+
+  test('the fixture day says the news, the count, and what is next', () => {
+    expect(note(TODAY_PREVIEW_ITEMS, TODAY_PREVIEW_EVENTS)).toBe(
+      '8 things need you, 3 of them today. Start with Harbor Air. Design review ends at 11:30 AM. Lunch with Mara is next, at 12 PM.',
+    );
+  });
+
+  test('it never promises a time that has passed', () => {
+    expect(note([], TODAY_PREVIEW_EVENTS, NOW + 10 * HOUR)).toBe(
+      'Nothing needs you right now. Your calendar is clear for the rest of today.',
+    );
+  });
+
+  test('an empty day says so', () => {
+    expect(note([], [])).toBe('Nothing needs you right now. Nothing is on your calendar today.');
+  });
+
+  test('one item, and one sender with many notices, read as one thing to start', () => {
+    expect(note([item({ id: 'r', asker: 'Marin' })], [])).toStartWith(
+      'One thing needs you. Start with Marin.',
+    );
+    expect(
+      note(
+        [
+          item({ id: 'a', kind: 'change', asker: 'Stripe', title: 'Failed.' }),
+          item({ id: 'b', kind: 'change', asker: 'Stripe', title: 'Failed.', createdAt: NOW - 2 * HOUR }),
+        ],
+        [],
+      ),
+    ).toStartWith('One thing needs you. Start with Stripe. Nothing is');
+  });
+
+  test('a next event soon counts the minutes', () => {
+    expect(note([], [event('Standup', 0.25, 0.5)])).toEndWith('Standup starts in 15 minutes.');
+  });
+});
+
+describe('the local day', () => {
+  test('its window ends at the next midnight, on a short or a long day', () => {
+    const ny = 'America/New_York';
+    const hours = (at: number) => {
+      const start = startOfLocalDay(at, ny);
+      const { startAt, endAt } = localDayWindow(start, ny);
+      return (endAt - startAt) / HOUR;
+    };
+    expect(hours(Date.UTC(2026, 10, 1, 16))).toBe(25); // Clocks go back.
+    expect(hours(Date.UTC(2026, 2, 8, 16))).toBe(23); // Clocks go forward.
+    expect(hours(Date.UTC(2026, 9, 28, 16))).toBe(24);
+  });
+});
+
+describe('the row line', () => {
+  test('it leaves out what the first action says', () => {
+    expect(todayRowLine('Review: Move the export')).toBe('Move the export');
+    expect(todayRowLine('Answer the invitation: Vendor review')).toBe('Invitation: Vendor review');
+    expect(todayRowLine('Can you review the plan?')).toBe('Can you review the plan?');
+    expect(todayRowLine('The payment failed.')).toBe('The payment failed');
+  });
+
+  test('a long gap before the next event says so', () => {
+    expect(
+      todayNote({
+        rows: [],
+        open: 0,
+        dueToday: 0,
+        lines: scheduleLines([event('Squash', 3, 4)], NOW),
+        now: NOW,
+        timezone: TZ,
+      }).day,
+    ).toBe('No more events until Squash at 2:05 PM.');
+  });
+});
+
+describe('the short facts', () => {
+  test('at most two, each cut to its size', () => {
+    const long = Array.from({ length: 40 }, () => 'word').join(' ');
+    const items = parseWorthKnowing(
+      JSON.stringify({
+        items: [
+          { title: 'One.', line: long },
+          { title: 'Two.', line: 'Two.' },
+          { title: 'Three.', line: 'Three.' },
+        ],
+      }),
+    );
+    expect(items.map((entry) => entry.title)).toEqual(['One.', 'Two.']);
+    expect(items[0].line.split(' ')).toHaveLength(24);
+  });
+
+  test('a fenced answer reads; anything else gives none', () => {
+    expect(parseWorthKnowing('```json\n{"items":[]}\n```')).toEqual([]);
+    expect(parseWorthKnowing('{"items":[{"title":"A.","line":"B."}]}')).toEqual([
+      { title: 'A.', line: 'B.' },
+    ]);
+    expect(parseWorthKnowing('Nothing today.')).toEqual([]);
+  });
+});

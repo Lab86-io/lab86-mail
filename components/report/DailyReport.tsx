@@ -8,12 +8,14 @@ import { ContextVortex, type VortexSource } from '@/components/albatross/Context
 import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { requestNeedsYouItem } from '@/components/needs-you/data';
+import { TodayWorthKnowing } from '@/components/needs-you/WorthKnowing';
 import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefNewEditionLine } from '@/components/report/BriefNewEditionLine';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
 import { BriefSourceLine, briefEditionNotes } from '@/components/report/BriefSourceLine';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { useBriefEditionRequest } from '@/components/report/brief-edition-request';
+import { useBriefLiveLayer } from '@/components/report/live-layer';
 import { PreparedWork } from '@/components/report/PreparedWork';
 import { ReadyForYou } from '@/components/report/ReadyForYou';
 import { Button } from '@/components/ui/button';
@@ -787,6 +789,9 @@ export function DailyReport({
 
   // Browse history; the freshest edition shows by default (selectedId = null).
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The live Today page replaces the stored stories on the current edition only.
+  const liveLayer = useBriefLiveLayer();
+  const livePage = !selectedId && Boolean(liveLayer?.replacesDocument);
 
   // A notification or the /brief?id= deep link names one edition. The latest
   // edition still renders as "latest", so the live overlay stays on.
@@ -1199,74 +1204,85 @@ export function DailyReport({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.28, ease: 'easeOut' }}
               >
-                <BriefCanvas
-                  key={selectedId ?? 'latest'}
-                  hideInactive={!selectedId}
-                  reportId={report._id}
-                  value={displayDocument ? report.document : fallbackLetter}
-                  liveSections={!selectedId}
-                  composing={displayDocument && report.artifactStatus === 'composing'}
-                  onChanged={invalidate}
-                  // Today already carries the dateline masthead. A second one
-                  // on the same scroll would say the date twice.
-                  masthead={!embedded}
-                  embedded={embedded}
-                  noiseCount={noiseCount}
-                  belowMasthead={
-                    selectedId ? null : (
-                      <>
-                        <BriefSourceLine
-                          reportId={report._id}
-                          notes={briefEditionNotes(report)}
-                          staleNote={staleNote}
-                          lead={<BriefNewEditionLine pending={pending} reportId={report._id} />}
-                          className="daily-brief-layout"
-                        />
-                        {/* Live, not part of the edition: a handoff after 7:00 still shows. */}
-                        <ReadyForYou className="daily-brief-layout" />
-                      </>
-                    )
-                  }
-                  footer={
-                    <>
-                      {letterFailed ? (
-                        <p
-                          data-brief-letter-failed
-                          className="mx-auto mt-6 flex max-w-[620px] flex-wrap items-baseline gap-x-3 text-[12.5px] text-[var(--color-text-muted)]"
-                        >
-                          <span>{BRIEF_LETTER_FAILED_COPY}</span>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => generate.mutate()}
-                            className="text-[var(--color-accent)] hover:underline disabled:opacity-60"
-                          >
-                            Write it again
-                          </button>
-                        </p>
-                      ) : null}
-                      {!displayDocument && report.errors?.length ? (
-                        <p className="mx-auto mt-3 max-w-[620px] text-[11px] text-[var(--color-danger)]">
-                          Some sources failed: {report.errors.join('; ')}
-                        </p>
-                      ) : null}
-                      {!selectedId &&
-                      !(
-                        displayDocument &&
-                        report.document &&
-                        hasLiveBriefSection(report.document, 'prepared_work')
-                      ) ? (
-                        <PreparedWork />
-                      ) : null}
-                      <BriefMailBacklog
-                        items={report.sections.overflow || []}
-                        total={report.stats?.overflow}
-                        onOpen={openBacklogThread}
-                      />
-                      {embedded ? null : <BriefFooter report={report} />}
-                    </>
-                  }
-                />
+                <TodayWorthKnowing.Provider value={report.worthKnowing}>
+                  <BriefCanvas
+                    key={selectedId ?? 'latest'}
+                    hideInactive={!selectedId}
+                    reportId={report._id}
+                    value={displayDocument ? report.document : fallbackLetter}
+                    liveSections={!selectedId}
+                    composing={displayDocument && report.artifactStatus === 'composing'}
+                    onChanged={invalidate}
+                    // Today already carries the dateline masthead. A second one
+                    // on the same scroll would say the date twice.
+                    masthead={!embedded}
+                    embedded={embedded}
+                    noiseCount={noiseCount}
+                    belowMasthead={
+                      selectedId || livePage ? null : (
+                        <>
+                          <BriefSourceLine
+                            reportId={report._id}
+                            notes={briefEditionNotes(report)}
+                            staleNote={staleNote}
+                            lead={<BriefNewEditionLine pending={pending} reportId={report._id} />}
+                            className="daily-brief-layout"
+                          />
+                          {/* Live, not part of the edition: a handoff after 7:00 still shows. */}
+                          <ReadyForYou className="daily-brief-layout" />
+                        </>
+                      )
+                    }
+                    footer={
+                      livePage ? (
+                        <div className="daily-brief-layout mt-2">
+                          {/* Live, not part of the edition: a handoff after 7:00 still shows. */}
+                          <ReadyForYou />
+                          <PreparedWork />
+                          <BriefSourceLine reportId={report._id} className="mt-8" />
+                        </div>
+                      ) : (
+                        <>
+                          {letterFailed ? (
+                            <p
+                              data-brief-letter-failed
+                              className="mx-auto mt-6 flex max-w-[620px] flex-wrap items-baseline gap-x-3 text-[12.5px] text-[var(--color-text-muted)]"
+                            >
+                              <span>{BRIEF_LETTER_FAILED_COPY}</span>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => generate.mutate()}
+                                className="text-[var(--color-accent)] hover:underline disabled:opacity-60"
+                              >
+                                Write it again
+                              </button>
+                            </p>
+                          ) : null}
+                          {!displayDocument && report.errors?.length ? (
+                            <p className="mx-auto mt-3 max-w-[620px] text-[11px] text-[var(--color-danger)]">
+                              Some sources failed: {report.errors.join('; ')}
+                            </p>
+                          ) : null}
+                          {!selectedId &&
+                          !(
+                            displayDocument &&
+                            report.document &&
+                            hasLiveBriefSection(report.document, 'prepared_work')
+                          ) ? (
+                            <PreparedWork />
+                          ) : null}
+                          <BriefMailBacklog
+                            items={report.sections.overflow || []}
+                            total={report.stats?.overflow}
+                            onOpen={openBacklogThread}
+                          />
+                          {embedded ? null : <BriefFooter report={report} />}
+                        </>
+                      )
+                    }
+                  />
+                </TodayWorthKnowing.Provider>
               </motion.div>
             ) : embedded && report?.html ? (
               // An edition from before the current format carries its own

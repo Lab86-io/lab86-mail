@@ -12,6 +12,11 @@ import { createContext, type ReactNode, useContext } from 'react';
 export interface BriefLiveLayerValue {
   node: ReactNode;
   hideNeedsYou: boolean;
+  /**
+   * The live page takes the place of the stored stories. Past editions keep
+   * the letter: they never see a layer.
+   */
+  replacesDocument?: boolean;
 }
 
 export const BriefLiveLayer = createContext<BriefLiveLayerValue | null>(null);

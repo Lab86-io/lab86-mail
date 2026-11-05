@@ -73,6 +73,9 @@
   /* The canvas sits a hair below the frame, so the lip throws a thin shadow. */
   box-shadow: 0 0 0 1px rgb(0 0 0 / 0.5);
 }
+.brief-masthead__foot {
+  background: linear-gradient(to top, rgb(0 0 0 / 0.68), rgb(0 0 0 / 0.42) 45%, rgb(0 0 0 / 0));
+}
 .brief-masthead__scrim {
   /* Worst-case background is #666 on a pure-white painting. The palette's
      ink is checked against this, including its darkest texture flecks. */
@@ -173,4 +176,57 @@
   height: 1px;
   background: var(--surface-border);
   pointer-events: none;
+}
+
+/* The live Today page: one column of about a page width, on the wall. */
+.brief-canvas--live {
+  /* A slimmer moulding: more of the height goes to the painting, and its edge is the text edge. */
+  --brief-frame-width: clamp(14px, 2.6cqi, 28px);
+  max-width: calc(1120px + 2 * var(--brief-text-inset, 20px));
+  margin-inline: auto;
+  padding-bottom: 64px;
+}
+/* With nothing on the list, the schedule takes the wide column and the facts sit beside it. */
+[data-today-grid]:not(:has([data-today-needs-you])) [data-today-aside] {
+  display: contents;
+}
+
+.brief-canvas--live .brief-masthead--canvas {
+  /* The moulding covers 3 px of the painting, so the visible edge is the text edge. */
+  margin-inline: calc(var(--brief-text-inset, 12px) - 3px);
+  margin-bottom: 4px;
+}
+.brief-canvas--live .brief-masthead__label {
+  margin-inline: 3px;
+}
+.brief-canvas--live .brief-masthead__label {
+  flex-flow: row wrap;
+  align-items: baseline;
+  column-gap: 16px;
+  margin-top: calc(var(--frame-w) + 12px);
+  text-align: left;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+[data-today-needs-you] [role="img"] {
+  font-family: var(--font-sans);
+  font-size: 10.5px !important;
+  letter-spacing: 0;
+}
+.dark [data-today-needs-you] [role="img"] {
+  color: var(--color-text) !important;
+}
+
+.brief-canvas--live .brief-masthead__moulding {
+  filter: drop-shadow(0 6px 12px rgb(0 0 0 / 0.18));
+}
+
+/* The thin ebony ribs read as gray stripes at this width: settle them into one dark moulding. */
+.brief-canvas--live [data-brief-frame="gothic-ebony"] .brief-masthead__moulding {
+  filter: brightness(0.62) contrast(0.92) drop-shadow(0 6px 12px rgb(0 0 0 / 0.18));
+}
+/* On a dark page the moulding needs its weight back, and a faint edge to sit on the wall. */
+.dark .brief-canvas--live [data-brief-frame="gothic-ebony"] .brief-masthead__moulding {
+  filter: brightness(1) drop-shadow(0 0 1px rgb(255 255 255 / 0.22));
 }

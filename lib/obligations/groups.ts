@@ -180,7 +180,20 @@ function recencyOf<T extends NeedsYouExtraLike>(entry: NeedsYouEntry<T>): number
   return obligation.createdAt;
 }
 
-/** Dated entries first, by date; then the newest first. */
+/**
+ * Among entries with no date: what a person asks of the user comes before a
+ * notice from a service. Without a date, the newest notice otherwise pushes a
+ * question from a person down the list.
+ */
+function askRank<T extends NeedsYouExtraLike>(entry: NeedsYouEntry<T>): number {
+  if (entry.type === 'albatross') return 0;
+  const { kind } = entry.obligation;
+  if (kind === 'reply' || kind === 'code') return 0;
+  if (kind === 'change') return 2;
+  return 1;
+}
+
+/** Dated entries first, by date; then questions before notices; then the newest first. */
 export function compareEntries<T extends NeedsYouExtraLike>(
   a: NeedsYouEntry<T>,
   b: NeedsYouEntry<T>,
@@ -190,6 +203,8 @@ export function compareEntries<T extends NeedsYouExtraLike>(
   if (dueA !== undefined && dueB !== undefined && dueA !== dueB) return dueA - dueB;
   if (dueA !== undefined && dueB === undefined) return -1;
   if (dueA === undefined && dueB !== undefined) return 1;
+  const rank = askRank(a) - askRank(b);
+  if (rank) return rank;
   const recency = recencyOf(b) - recencyOf(a);
   return recency || a.id.localeCompare(b.id);
 }

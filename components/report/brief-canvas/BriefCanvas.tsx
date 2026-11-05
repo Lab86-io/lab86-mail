@@ -104,6 +104,8 @@ export function BriefCanvas({
   // current edition. While it shows, the stored lane stays out.
   const liveLayer = useBriefLiveLayer();
   const hideNeedsYou = liveSections && Boolean(liveLayer?.hideNeedsYou);
+  // The live page takes the place of the stored stories on the current edition.
+  const livePage = liveSections && Boolean(liveLayer?.replacesDocument);
   const document = useMemo(() => {
     const parsed = parseBriefDocument(value);
     const base = {
@@ -440,6 +442,7 @@ export function BriefCanvas({
       className={cn(
         '@container/brief-canvas brief-canvas',
         authored && 'brief-canvas--authored',
+        livePage && 'brief-canvas--live',
         embedded
           ? 'brief-canvas--embedded'
           : 'scrollable assistant-launcher-clearance h-full overflow-y-auto bg-[var(--color-content)]',
@@ -455,6 +458,7 @@ export function BriefCanvas({
           timezone={document.timezone}
           frameId={mastheadFrame}
           title={letterKind === 'weekly' ? document.title : undefined}
+          plain={livePage}
         />
       ) : null}
       {belowMasthead}
@@ -463,7 +467,7 @@ export function BriefCanvas({
           {liveLayer.node}
         </div>
       ) : null}
-      {headerVisible ? (
+      {!livePage && headerVisible ? (
         <header
           className={cn(
             'mx-auto mb-7 border-b border-[var(--color-border)] pb-5',
@@ -518,7 +522,7 @@ export function BriefCanvas({
           ) : null}
         </header>
       ) : null}
-      {letterKind ? (
+      {livePage ? null : letterKind ? (
         <BriefLetter document={document} kind={letterKind} context={context} noiseCount={noiseCount} />
       ) : (
         /* Editorial masonry preserves authored visual order while measuring

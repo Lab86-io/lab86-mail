@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from 'bun:test';
+import { BriefEditionMeter, runWithBriefMeter } from '../lib/brief/budget';
 import * as editorial from '../lib/brief/editorial';
 import {
   composeEditorialDocument,
@@ -8,10 +9,12 @@ import {
 } from '../lib/brief/editorial';
 import { collectBriefRefs } from '../lib/brief/hydration';
 import { briefLetterKind } from '../lib/brief/letter';
+import { briefWebEdition } from '../lib/brief/web-view';
 import { projectBriefMail } from '../lib/jev/report';
-import { composeDailyBrief, finalizeBudgetReport } from '../lib/mail/agent-report';
+import { composeDailyBrief, finalizeBudgetReport, withEditionBudget } from '../lib/mail/agent-report';
 import { composeBudgetBriefDocument } from '../lib/mail/brief-budget-document';
 import { createDailyEditorialSession, writeDailyEditorial } from '../lib/mail/brief-editorial';
+import { WORTH_KNOWING_SYSTEM, writeWorthKnowing } from '../lib/mail/brief-worth-knowing';
 import { lintBriefDocument, parseBriefDocument } from '../lib/shared/brief-document';
 import { migrateDailyReport } from '../lib/store/daily-reports';
 import { editorialFixture } from './fixtures/editorial';
@@ -352,6 +355,62 @@ test('saved area context respects the plan schema even when user content is over
   expect(restored.editorial?.plan.areas).toEqual([
     { areaId: 'area-a', name: 'A'.repeat(500), line: 'x'.repeat(4000) },
   ]);
+});
+
+test('a user on the live Today page gets short facts and no editor run', async () => {
+  const { edition } = editorialFixture();
+  const calls: string[] = [];
+  const saved = process.env.LAB86_NEEDS_YOU;
+  process.env.LAB86_NEEDS_YOU = 'user_live';
+  try {
+    const composed = await withToolContext(() =>
+      composeDailyBrief(edition, 'user_live', {
+        loadMessages: async () => [],
+        loadWeather: async () => null,
+        loadAreaPulses: async () => [],
+        generate: (async (options: any) => {
+          calls.push(options.system === WORTH_KNOWING_SYSTEM ? 'worth' : options.feature);
+          if (options.system === WORTH_KNOWING_SYSTEM)
+            return {
+              text: JSON.stringify({
+                items: [{ title: 'Northwind renews November 12.', line: 'The seat price rises 8 percent.' }],
+              }),
+            };
+          return { text: JSON.stringify({ lede: 'A short day.', items: [], weekAhead: '' }) };
+        }) as any,
+      }),
+    );
+    expect(calls).not.toContain('daily_brief_layout');
+    expect(calls).toContain('worth');
+    expect(composed.editorial).toBeUndefined();
+    const finalized = finalizeBudgetReport(edition, composed);
+    expect(finalized.worthKnowing).toEqual([
+      { title: 'Northwind renews November 12.', line: 'The seat price rises 8 percent.' },
+    ]);
+    expect(briefWebEdition(finalized).worthKnowing).toEqual(finalized.worthKnowing);
+    // A stored edition keeps its facts when it is read again.
+    expect(migrateDailyReport(finalized, NOW).worthKnowing).toEqual(finalized.worthKnowing);
+    // No editor run is not a fallback: the budget record stays clean.
+    const metered = await runWithBriefMeter(new BriefEditionMeter({}), async () =>
+      withEditionBudget(finalized),
+    );
+    expect(metered.budget?.fallback).toBe(false);
+  } finally {
+    if (saved === undefined) delete process.env.LAB86_NEEDS_YOU;
+    else process.env.LAB86_NEEDS_YOU = saved;
+  }
+});
+
+test('the facts writer leaves the section out when the model fails or has no access', async () => {
+  const { edition, letter } = editorialFixture();
+  expect(await writeWorthKnowing(edition, letter, { generate: null })).toEqual([]);
+  expect(
+    await writeWorthKnowing(edition, letter, {
+      generate: (async () => {
+        throw new Error('down');
+      }) as any,
+    }),
+  ).toEqual([]);
 });
 
 test('text-only provider responses work, including providers that throw when output is read', async () => {
