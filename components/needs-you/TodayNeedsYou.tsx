@@ -197,6 +197,12 @@ export function TodayNeedsYou({
       const others = leaving.get(obligation.id)?.others ?? [];
       const results = await Promise.all([obligation, ...others].map((member) => actions.undo(member)));
       if (!results[0]) return;
+      // A notice that stays closed leaves this list, so say where it is.
+      if (results.includes(false))
+        sonnerNeedsYouNotifier.info(
+          'A notice could not come back.',
+          'It is under Closed today on the Needs you page.',
+        );
       setLeaving((current) => {
         const next = new Map(current);
         next.delete(obligation.id);
