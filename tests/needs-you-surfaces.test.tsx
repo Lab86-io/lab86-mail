@@ -665,6 +665,7 @@ describe('the Today list acts in place', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(logged).toEqual(['n1']);
+    expect(JSON.stringify(renderer.toJSON())).toContain('down');
   });
 
   test('Done closes the row at once, keeps it in place with Undo, and Undo brings it back', async () => {

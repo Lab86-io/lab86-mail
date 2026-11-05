@@ -272,7 +272,11 @@ export function TodayNeedsYou({
   );
 
   if (!rows.length) return null;
-  const errorFor = (id: string) => (actions.error?.id === id ? actions.error.text : null);
+  // A row answers for all of its notices, so a failure of any of them shows on it.
+  const errorFor = (row: TodayRow<NotificationItem>) =>
+    actions.error && [row.entry.id, ...row.others.map((other) => other.id)].includes(actions.error.id)
+      ? actions.error.text
+      : null;
 
   return (
     <section data-today-needs-you aria-label="Needs you" className="@container min-w-0">
@@ -371,9 +375,9 @@ export function TodayNeedsYou({
                     registerRef={() => undefined}
                   />
                 </ul>
-                {errorFor(entry.id) ? (
+                {errorFor(row) ? (
                   <p role="alert" className="px-0 pb-2 text-[12px] text-[var(--color-danger)]">
-                    {errorFor(entry.id)}
+                    {errorFor(row)}
                   </p>
                 ) : null}
                 {open && replyId === entry.id ? (

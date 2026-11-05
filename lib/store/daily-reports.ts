@@ -599,6 +599,7 @@ export function migrateDailyReport(
     handoffs: parseTriageHandoffs(raw.handoffs),
     composition: raw.composition,
     document: migrateBriefDocument(raw.document),
+    ...(Array.isArray(raw.worthKnowing) ? { worthKnowing: raw.worthKnowing } : {}),
     ...(editorialPlan.success
       ? {
           editorial: {

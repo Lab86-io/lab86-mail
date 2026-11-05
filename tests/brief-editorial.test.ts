@@ -388,6 +388,8 @@ test('a user on the live Today page gets short facts and no editor run', async (
       { title: 'Northwind renews November 12.', line: 'The seat price rises 8 percent.' },
     ]);
     expect(briefWebEdition(finalized).worthKnowing).toEqual(finalized.worthKnowing);
+    // A stored edition keeps its facts when it is read again.
+    expect(migrateDailyReport(finalized, NOW).worthKnowing).toEqual(finalized.worthKnowing);
     // No editor run is not a fallback: the budget record stays clean.
     const metered = await runWithBriefMeter(new BriefEditionMeter({}), async () =>
       withEditionBudget(finalized),
